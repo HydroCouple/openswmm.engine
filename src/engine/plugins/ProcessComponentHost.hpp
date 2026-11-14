@@ -21,8 +21,8 @@ bool foreign_component(const ProcessComponentSpec& spec);
  */
 class ProcessComponentHost {
 public:
-    ProcessComponentHost(void* engine, const SimulationContext& context,
-                         PluginFactory& libraries, const std::string& model_directory);
+    ProcessComponentHost(void* engine, const SimulationContext& context, PluginFactory& libraries,
+                         const std::string& model_directory);
     ~ProcessComponentHost();
     void start();
     double nextBoundary() const;

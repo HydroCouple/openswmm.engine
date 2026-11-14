@@ -73,10 +73,10 @@ struct MeshData {
     // Vertex arrays — indexed by vertex index [0, n_vertices)
     // -----------------------------------------------------------------------
 
-    std::vector<double> vx;        ///< Vertex X coordinate
-    std::vector<double> vy;        ///< Vertex Y coordinate
-    std::vector<double> vz;        ///< Vertex Z (ground elevation)
-    InternedStrings vtag;          ///< Optional vertex tag
+    std::vector<double> vx; ///< Vertex X coordinate
+    std::vector<double> vy; ///< Vertex Y coordinate
+    std::vector<double> vz; ///< Vertex Z (ground elevation)
+    InternedStrings vtag;   ///< Optional vertex tag
 
     // -----------------------------------------------------------------------
     // Cell static properties — indexed by cell index [0, n_triangles())
@@ -134,9 +134,9 @@ struct MeshData {
     /// prescribed, the cell then starts from tri_init_depth. A finite value overrides
     /// tri_init_depth and is clamped at the cell invert when the surface initializes.
     LazyArray<double> tri_init_hgl;
-    LazyArray<double> tri_init_u;     ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
-    LazyArray<double> tri_init_v;     ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
-    InternedStrings tri_tag;            ///< Optional triangle tag
+    LazyArray<double> tri_init_u; ///< [2D_INITIAL_VELOCITY] u (m/s, default 0)
+    LazyArray<double> tri_init_v; ///< [2D_INITIAL_VELOCITY] v (m/s, default 0)
+    InternedStrings tri_tag;      ///< Optional triangle tag
 
     // -----------------------------------------------------------------------
     // Vertex reconstruction stencil (pseudo-Laplacian weights)
@@ -330,8 +330,10 @@ struct MeshData {
             std::abs(0.5 * ((px[2] - px[0]) * (py[3] - py[0]) - (px[3] - px[0]) * (py[2] - py[0])));
         const double area = a1 + a2;
         if (area > 0.0) {
-            x = (a1 * ((px[0] + px[1] + px[2]) / 3.0) + a2 * ((px[0] + px[2] + px[3]) / 3.0)) / area;
-            y = (a1 * ((py[0] + py[1] + py[2]) / 3.0) + a2 * ((py[0] + py[2] + py[3]) / 3.0)) / area;
+            x = (a1 * ((px[0] + px[1] + px[2]) / 3.0) + a2 * ((px[0] + px[2] + px[3]) / 3.0)) /
+                area;
+            y = (a1 * ((py[0] + py[1] + py[2]) / 3.0) + a2 * ((py[0] + py[2] + py[3]) / 3.0)) /
+                area;
         } else {
             x = 0.25 * (px[0] + px[1] + px[2] + px[3]);
             y = 0.25 * (py[0] + py[1] + py[2] + py[3]);
@@ -545,8 +547,7 @@ struct MeshData {
         const auto n4 = n * static_cast<std::size_t>(kMaxCellVerts);
         for (auto* v : {&tri_area, &tri_cx, &tri_cy, &tri_cz})
             v->assign(n, 0.0);
-        for (auto* v :
-             {&edge_length, &edge_nx, &edge_ny})
+        for (auto* v : {&edge_length, &edge_nx, &edge_ny})
             v->assign(n4, 0.0);
     }
 
@@ -590,8 +591,10 @@ struct MeshData {
         if (s >= edge_nx.size() || !edge_ends(s, a, b))
             return 0.0;
         const auto c = static_cast<std::size_t>(slot_cell(static_cast<int>(s)));
-        const double to_mid_x = 0.5 * (vx[static_cast<std::size_t>(a)] + vx[static_cast<std::size_t>(b)]) - tri_cx[c];
-        const double to_mid_y = 0.5 * (vy[static_cast<std::size_t>(a)] + vy[static_cast<std::size_t>(b)]) - tri_cy[c];
+        const double to_mid_x =
+            0.5 * (vx[static_cast<std::size_t>(a)] + vx[static_cast<std::size_t>(b)]) - tri_cx[c];
+        const double to_mid_y =
+            0.5 * (vy[static_cast<std::size_t>(a)] + vy[static_cast<std::size_t>(b)]) - tri_cy[c];
         return to_mid_x * edge_nx[s] + to_mid_y * edge_ny[s];
     }
     /// The centroid distances of every slot as the array they replaced (empty until

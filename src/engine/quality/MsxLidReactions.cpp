@@ -77,6 +77,7 @@ public:
     PoolScratchLease(const PoolScratchLease&) = delete;
     PoolScratchLease& operator=(const PoolScratchLease&) = delete;
     PoolScratch& get() noexcept { return *scratch_; }
+
 private:
     std::optional<PoolScratch> fallback_;
     PoolScratch* scratch_;

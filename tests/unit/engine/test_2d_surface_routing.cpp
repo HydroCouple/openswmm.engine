@@ -1989,10 +1989,9 @@ TEST(InputReaderText, SkippedSectionsAreDroppedWhileReading) {
                 "ROWS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
                     rows = int(l.size());
                 });
-            registry.register_custom(
-                "STRINGS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
-                    strings = l;
-                });
+            registry.register_custom("STRINGS",
+                                     [&](openswmm::SimulationContext&,
+                                         const std::vector<std::string>& l) { strings = l; });
             openswmm::input::InputReader reader(registry);
             if (skipping)
                 reader.set_sections_to_skip({"MESH", "ROWS", "UNREGISTERED"});
@@ -2004,9 +2003,9 @@ TEST(InputReaderText, SkippedSectionsAreDroppedWhileReading) {
             EXPECT_EQ(strings, std::vector<std::string>{"b 2"});
             EXPECT_EQ(mesh_rows, skipping ? -1 : 2);
             EXPECT_EQ(rows, skipping ? -1 : 1);
-            EXPECT_EQ(reader.skipped_sections(),
-                      skipping ? std::vector<std::string>{}
-                               : std::vector<std::string>{"UNREGISTERED"});
+            EXPECT_EQ(reader.skipped_sections(), skipping
+                                                     ? std::vector<std::string>{}
+                                                     : std::vector<std::string>{"UNREGISTERED"});
             EXPECT_EQ(reader.lines_read(), 11);
             EXPECT_EQ(observed, 11); // the observer still sees every line
         }
@@ -2137,7 +2136,8 @@ TEST(SurfaceState, VelocityEnvelopesExcludeUnavailableSamples) {
     state.update_statistics({1.0, 1.0}, 1.0);
     EXPECT_TRUE(std::isnan(state.stat_max_velocity[0]));
     EXPECT_EQ(state.stat_max_velocity[1], 0.0); // A valid still/dry cell.
-    state.face_vx[0] = 3.; state.face_vy[0] = 4.;
+    state.face_vx[0] = 3.;
+    state.face_vy[0] = 4.;
     state.update_statistics({1.0, 1.0}, 1.0);
     EXPECT_EQ(state.stat_max_velocity[0], 5.0);
     state.face_vx[0] = state.face_vy[0] = missing;

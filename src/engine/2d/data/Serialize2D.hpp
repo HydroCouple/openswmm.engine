@@ -93,7 +93,8 @@ inline std::vector<PendingBoundaryRow> collectBCRows(const std::vector<PendingBo
 
     std::unordered_map<int, std::string> groups;
     if (pending)
-        for (const auto& p : *pending) groups[MeshData::slot(p.tri,p.edge)] = p.group;
+        for (const auto& p : *pending)
+            groups[MeshData::slot(p.tri, p.edge)] = p.group;
     const int n = boundary->size();
     for (int idx = 0; idx < n; ++idx) {
         const auto type = static_cast<BoundaryType>(boundary->edge_bc_type[idx]);
@@ -105,7 +106,8 @@ inline std::vector<PendingBoundaryRow> collectBCRows(const std::vector<PendingBo
         r.tri = MeshData::slot_cell(idx);
         r.edge = MeshData::slot_local(idx);
         r.bc_type = static_cast<int>(type);
-        if (auto it = groups.find(idx); it != groups.end()) r.group = it->second;
+        if (auto it = groups.find(idx); it != groups.end())
+            r.group = it->second;
 
         switch (type) {
         case BoundaryType::NORMAL_FLOW:

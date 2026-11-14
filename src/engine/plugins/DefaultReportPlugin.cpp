@@ -40,7 +40,7 @@
 #include "../quality/MsxLidReactions.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
-#include "../output/ReportTables.hpp" // G-08: summary tables shared with swmm_summary_*
+#include "../output/ReportTables.hpp"   // G-08: summary tables shared with swmm_summary_*
 #include "../hydraulics/Node.hpp"       // node::getVolume — storage volume from its depth-relation
 #include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
 #include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
@@ -969,8 +969,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
 
     // Scaling affects results even when [REPORT] INPUT is NO. Keep ordinary
     // unscaled reports unchanged, but make configured scaling visible.
-    const bool scaled_rain = std::any_of(ctx.gages.scale_factor.begin(),
-        ctx.gages.scale_factor.end(), [](double factor) { return factor != 1.0; });
+    const bool scaled_rain =
+        std::any_of(ctx.gages.scale_factor.begin(), ctx.gages.scale_factor.end(),
+                    [](double factor) { return factor != 1.0; });
     if (scaled_rain) {
         WRITE(f, "************************");
         WRITE(f, "Rainfall Scaling Factors");
@@ -1637,10 +1638,13 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 for (auto count : clock->stability_to_period)
                     std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
                 const auto total = clock->firings[0] + clock->firings[1] + clock->firings[2];
-                const auto early = clock->budget_firings[0] + clock->budget_firings[1] + clock->budget_firings[2];
-                std::fprintf(f, "\n  Budget-triggered firings (%%)  %.6g\n", total ? 100. * early / total : 0.);
+                const auto early =
+                    clock->budget_firings[0] + clock->budget_firings[1] + clock->budget_firings[2];
+                std::fprintf(f, "\n  Budget-triggered firings (%%)  %.6g\n",
+                             total ? 100. * early / total : 0.);
                 for (int k = 0; k < 3; ++k) {
-                    std::fprintf(f, "  %s max budget exceedance in/out (m3): %.9g %.9g; bins:", names[k], clock->excess_in[k], clock->excess_out[k]);
+                    std::fprintf(f, "  %s max budget exceedance in/out (m3): %.9g %.9g; bins:",
+                                 names[k], clock->excess_in[k], clock->excess_out[k]);
                     std::fprintf(f, " max return depth (m): %.9g;", clock->max_return_depth[k]);
                     for (auto count : clock->budget_exceedance[k])
                         std::fprintf(f, " %llu", static_cast<unsigned long long>(count));
@@ -1681,7 +1685,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             // A combined-system continuity calculation must include both
             // domains' inventories. Removing exchange terms from the 1D
             // ledger alone does not produce a combined-system error.
-
         }
     }
 
@@ -2994,8 +2997,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
             std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
-            std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f", r.values[0],
-                         r.values[1], r.values[2], r.values[3], r.values[4], r.values[5]);
+            std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f", r.values[0], r.values[1],
+                         r.values[2], r.values[3], r.values[4], r.values[5]);
             std::fprintf(f, "    %4d  %02d:%02d  ", days, hrs, mins);
             std::fprintf(f, ff, r.values[7]);
         }
@@ -3467,9 +3470,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             for (int p = 0; p < np; ++p) {
                 auto up = static_cast<std::size_t>(p);
                 auto idx = uj * static_cast<std::size_t>(np) + up;
-                double x = ((idx < ctx.links.stat_total_load.size()) ? ctx.links.stat_total_load[idx]
-                                                                      : 0.0) *
-                           mass_cf[up];
+                double x =
+                    ((idx < ctx.links.stat_total_load.size()) ? ctx.links.stat_total_load[idx]
+                                                              : 0.0) *
+                    mass_cf[up];
                 if (isCount(p) && x > 0.0)
                     x = std::log10(x);
                 std::fprintf(f, x < 10000.0 ? "%14.3f" : "%14.3e", x);

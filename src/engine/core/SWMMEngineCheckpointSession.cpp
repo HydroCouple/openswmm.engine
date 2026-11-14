@@ -113,8 +113,8 @@ void SWMMEngine::initializeCommonSourceStage(CheckpointSessionResources& resourc
     if (spatial) {
         // Initialization normalizes mesh units; recompute physical SI
         // shares with the same authoritative geometry/area resolver.
-        preview = twoD::resolveSurfaceOwnership(ctx_, r.mesh(), r.options(),
-                        r.aquiferConfig(), owners);
+        preview =
+            twoD::resolveSurfaceOwnership(ctx_, r.mesh(), r.options(), r.aquiferConfig(), owners);
         reviewed(preview);
         for (const auto& owner : owners)
             seeds.push_back(ctx_.subcatch_names.find(owner.subcatch));
@@ -129,29 +129,34 @@ void SWMMEngine::initializeCommonSourceStage(CheckpointSessionResources& resourc
     const bool returns = spatial;
     checked(resources.sources.initialize(ctx_, seeds, areas, &lid_, returns));
     checked(resources.stage.initialize(r.mesh(), r.state(), r.options(), r.subsurface(),
-                resources.sources, preview, !spatial));
+                                       resources.sources, preview, !spatial));
 }
 #endif
 void SWMMEngine::initializeSplitSources() {
 #ifdef OPENSWMM_HAS_2D
-    if (!split_ || !split_->spatial_sources || split_->role != SWMM_SPLIT_SURFACE) return;
+    if (!split_ || !split_->spatial_sources || split_->role != SWMM_SPLIT_SURFACE)
+        return;
     auto resources = std::make_shared<CheckpointSessionResources>();
     {
         // The private native source owner retains the original routed model;
         // only the boundary engine disables its duplicate hydraulic solve.
-        struct Restore { bool& flag; bool value; ~Restore() { flag=value; } } restore{ctx_.options.ignore_routing,ctx_.options.ignore_routing};
-        ctx_.options.ignore_routing=false;
+        struct Restore {
+            bool& flag;
+            bool value;
+            ~Restore() { flag = value; }
+        } restore{ctx_.options.ignore_routing, ctx_.options.ignore_routing};
+        ctx_.options.ignore_routing = false;
         initializeCommonSourceStage(*resources);
     }
-    auto bridge=std::make_unique<runoff::SourceWaterDeliveryBridge>();
+    auto bridge = std::make_unique<runoff::SourceWaterDeliveryBridge>();
     checked(bridge->initialize(resources->sources));
     checked(bridge->validateReceiver(ctx_));
-    surface_router_.setExternalSourceStage(ctx_,resources->stage);
-    source_stage_=&resources->stage;
-    source_delivery_=std::move(bridge);
-    checkpoint_session_resources_=resources; // lifetime only; recovery stays disabled
+    surface_router_.setExternalSourceStage(ctx_, resources->stage);
+    source_stage_ = &resources->stage;
+    source_delivery_ = std::move(bridge);
+    checkpoint_session_resources_ = resources; // lifetime only; recovery stays disabled
     computeFinalStorage();
-    ctx_.mass_balance.runoff_init_store=ctx_.mass_balance.runoff_final_store;
+    ctx_.mass_balance.runoff_init_store = ctx_.mass_balance.runoff_final_store;
 #endif
 }
 std::string SWMMEngine::startCheckpointSession(int output, const std::string& source_path,

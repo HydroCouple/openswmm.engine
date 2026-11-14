@@ -832,82 +832,80 @@ void expectColumns(const std::vector<SummaryTable>& tables, bool si) {
                       svol = si ? "1000 m3" : "1000 ft3", vel = si ? "m/sec" : "ft/sec",
                       load = si ? "kg" : "lbs";
     using Cols = std::vector<std::pair<std::string, std::string>>;
-    const std::vector<Cols> want = {
-        {{"Average Depth", len},
-         {"Maximum Depth", len},
-         {"Maximum HGL", len},
-         {"Time of Max Occurrence", "days"},
-         {"Reported Max Depth", len}},
-        {{"Maximum Lateral Inflow", flow},
-         {"Maximum Total Inflow", flow},
-         {"Time of Max Occurrence", "days"},
-         {"Lateral Inflow Volume", vol},
-         {"Total Inflow Volume", vol},
-         {"Flow Balance Error", "%"},
-         {"Flow Balance Error Volume", si ? "ltr" : "gal"}},
-        {{"Hours Surcharged", "hours"},
-         {"Max. Height Above Crown", len},
-         {"Min. Depth Below Rim", len}},
-        {{"Hours Flooded", "hours"},
-         {"Maximum Rate", flow},
-         {"Time of Max Occurrence", "days"},
-         {"Total Flood Volume", vol},
-         {"Maximum Ponded Depth", len}},
-        {{"Average Volume", svol},
-         {"Avg Pcnt Full", "%"},
-         {"Evap Pcnt Loss", "%"},
-         {"Exfil Pcnt Loss", "%"},
-         {"Maximum Volume", svol},
-         {"Max Pcnt Full", "%"},
-         {"Time of Max Occurrence", "days"},
-         {"Maximum Outflow", flow}},
-        {{"Flow Freq", "%"},
-         {"Avg Flow", flow},
-         {"Max Flow", flow},
-         {"Total Volume", vol},
-         {"TSS", load},
-         {si ? "ZN" : "LEAD", load},
-         {si ? "ECOLI" : "FC", "LogN"}},
-        {{"Maximum |Flow|", flow},
-         {"Time of Max Occurrence", "days"},
-         {"Maximum |Veloc|", vel},
-         {"Max/Full Flow", ""},
-         {"Max/Full Depth", ""}},
-        {{"Adjusted/Actual Length", ""},
-         {"Dry", ""},
-         {"Up Dry", ""},
-         {"Down Dry", ""},
-         {"Sub Crit", ""},
-         {"Sup Crit", ""},
-         {"Up Crit", ""},
-         {"Down Crit", ""},
-         {"Norm Ltd", ""},
-         {"Inlet Ctrl", ""}},
-        {{"Hours Full Both Ends", "hours"},
-         {"Hours Full Upstream", "hours"},
-         {"Hours Full Dnstream", "hours"},
-         {"Hours Above Full Normal Flow", "hours"},
-         {"Hours Capacity Limited", "hours"}},
-        {{"Percent Utilized", "%"},
-         {"Number of Start-Ups", ""},
-         {"Min Flow", flow},
-         {"Avg Flow", flow},
-         {"Max Flow", flow},
-         {"Total Volume", vol},
-         {"Power Usage", "Kw-hr"},
-         {"Time Off Pump Curve Low", "%"},
-         {"Time Off Pump Curve High", "%"}},
-        {{"Total Inflow", depth},
-         {"Evap Loss", depth},
-         {"Infil Loss", depth},
-         {"Surface Runoff", depth},
-         {"Drain Flow", depth}}};
-    const char* const titles[] = {"Node Depth Summary",          "Node Inflow Summary",
-                                  "Node Surcharge Summary",      "Node Flooding Summary",
-                                  "Storage Volume Summary",      "Outfall Loading Summary",
-                                  "Link Flow Summary",           "Flow Classification Summary",
-                                  "Conduit Surcharge Summary",   "Pumping Summary",
-                                  "LID Performance Summary"};
+    const std::vector<Cols> want = {{{"Average Depth", len},
+                                     {"Maximum Depth", len},
+                                     {"Maximum HGL", len},
+                                     {"Time of Max Occurrence", "days"},
+                                     {"Reported Max Depth", len}},
+                                    {{"Maximum Lateral Inflow", flow},
+                                     {"Maximum Total Inflow", flow},
+                                     {"Time of Max Occurrence", "days"},
+                                     {"Lateral Inflow Volume", vol},
+                                     {"Total Inflow Volume", vol},
+                                     {"Flow Balance Error", "%"},
+                                     {"Flow Balance Error Volume", si ? "ltr" : "gal"}},
+                                    {{"Hours Surcharged", "hours"},
+                                     {"Max. Height Above Crown", len},
+                                     {"Min. Depth Below Rim", len}},
+                                    {{"Hours Flooded", "hours"},
+                                     {"Maximum Rate", flow},
+                                     {"Time of Max Occurrence", "days"},
+                                     {"Total Flood Volume", vol},
+                                     {"Maximum Ponded Depth", len}},
+                                    {{"Average Volume", svol},
+                                     {"Avg Pcnt Full", "%"},
+                                     {"Evap Pcnt Loss", "%"},
+                                     {"Exfil Pcnt Loss", "%"},
+                                     {"Maximum Volume", svol},
+                                     {"Max Pcnt Full", "%"},
+                                     {"Time of Max Occurrence", "days"},
+                                     {"Maximum Outflow", flow}},
+                                    {{"Flow Freq", "%"},
+                                     {"Avg Flow", flow},
+                                     {"Max Flow", flow},
+                                     {"Total Volume", vol},
+                                     {"TSS", load},
+                                     {si ? "ZN" : "LEAD", load},
+                                     {si ? "ECOLI" : "FC", "LogN"}},
+                                    {{"Maximum |Flow|", flow},
+                                     {"Time of Max Occurrence", "days"},
+                                     {"Maximum |Veloc|", vel},
+                                     {"Max/Full Flow", ""},
+                                     {"Max/Full Depth", ""}},
+                                    {{"Adjusted/Actual Length", ""},
+                                     {"Dry", ""},
+                                     {"Up Dry", ""},
+                                     {"Down Dry", ""},
+                                     {"Sub Crit", ""},
+                                     {"Sup Crit", ""},
+                                     {"Up Crit", ""},
+                                     {"Down Crit", ""},
+                                     {"Norm Ltd", ""},
+                                     {"Inlet Ctrl", ""}},
+                                    {{"Hours Full Both Ends", "hours"},
+                                     {"Hours Full Upstream", "hours"},
+                                     {"Hours Full Dnstream", "hours"},
+                                     {"Hours Above Full Normal Flow", "hours"},
+                                     {"Hours Capacity Limited", "hours"}},
+                                    {{"Percent Utilized", "%"},
+                                     {"Number of Start-Ups", ""},
+                                     {"Min Flow", flow},
+                                     {"Avg Flow", flow},
+                                     {"Max Flow", flow},
+                                     {"Total Volume", vol},
+                                     {"Power Usage", "Kw-hr"},
+                                     {"Time Off Pump Curve Low", "%"},
+                                     {"Time Off Pump Curve High", "%"}},
+                                    {{"Total Inflow", depth},
+                                     {"Evap Loss", depth},
+                                     {"Infil Loss", depth},
+                                     {"Surface Runoff", depth},
+                                     {"Drain Flow", depth}}};
+    const char* const titles[] = {
+        "Node Depth Summary",    "Node Inflow Summary",         "Node Surcharge Summary",
+        "Node Flooding Summary", "Storage Volume Summary",      "Outfall Loading Summary",
+        "Link Flow Summary",     "Flow Classification Summary", "Conduit Surcharge Summary",
+        "Pumping Summary",       "LID Performance Summary"};
     ASSERT_EQ(tables.size(), want.size());
     for (std::size_t t = 0; t < want.size(); ++t) {
         EXPECT_EQ(tables[t].title, titles[t]);
@@ -970,8 +968,7 @@ TEST(ReportTables, SiDeckEveryTableMatchesTheReport) {
 // pollutant deck. Outputs go to report_tables/, inputs are read where they are.
 TEST(ReportTables, ReportFixturesMatchTheReport) {
     fs::create_directories(kDir);
-    for (const auto& [inp, name] :
-         std::vector<std::pair<std::string, std::string>>{
+    for (const auto& [inp, name] : std::vector<std::pair<std::string, std::string>>{
              {"mc_storm_parity/report_statistics.inp", "report_statistics"},
              {"site_drainage_model.inp", "site_drainage_model"}}) {
         SCOPED_TRACE(inp);
@@ -1005,9 +1002,9 @@ TEST(ReportTables, IgnoredRoutingLeavesOnlyTheLidTable) {
 TEST(ReportTables, KinematicWaveSkipsDynamicWaveAndAbsentObjectTables) {
     const DeckRun run = runAndCompare(writeDeck("kinwave", kKinwaveDeck), "kinwave");
     ASSERT_TRUE(run.ok);
-    for (const int t : {SWMM_SUMMARY_NODE_SURCHARGE, SWMM_SUMMARY_STORAGE_VOLUME,
-                        SWMM_SUMMARY_FLOW_CLASSIFICATION, SWMM_SUMMARY_PUMPING,
-                        SWMM_SUMMARY_LID_PERFORMANCE}) {
+    for (const int t :
+         {SWMM_SUMMARY_NODE_SURCHARGE, SWMM_SUMMARY_STORAGE_VOLUME,
+          SWMM_SUMMARY_FLOW_CLASSIFICATION, SWMM_SUMMARY_PUMPING, SWMM_SUMMARY_LID_PERFORMANCE}) {
         EXPECT_TRUE(table(run, t).rows.empty()) << table(run, t).title;
         EXPECT_EQ(run.rpt.find("  " + table(run, t).title + "\n"), std::string::npos)
             << table(run, t).title;
@@ -1073,9 +1070,9 @@ TEST(ReportTables, IndependentOracle) {
 
     // Node Depth: one row per node, in node order, typed; depth and HGL from the raw maximum.
     const std::map<std::string, std::string> node_type = {
-        {"J1", "JUNCTION"}, {"JDRY", "JUNCTION"}, {"J3", "JUNCTION"}, {"J2", "JUNCTION"},
-        {"J4", "JUNCTION"}, {"WW", "JUNCTION"},   {"J5", "JUNCTION"}, {"JX", "JUNCTION"},
-        {"OUT1", "OUTFALL"}, {"OUT2", "OUTFALL"}, {"OUT3", "OUTFALL"}, {"ST1", "STORAGE"}};
+        {"J1", "JUNCTION"},  {"JDRY", "JUNCTION"}, {"J3", "JUNCTION"},  {"J2", "JUNCTION"},
+        {"J4", "JUNCTION"},  {"WW", "JUNCTION"},   {"J5", "JUNCTION"},  {"JX", "JUNCTION"},
+        {"OUT1", "OUTFALL"}, {"OUT2", "OUTFALL"},  {"OUT3", "OUTFALL"}, {"ST1", "STORAGE"}};
     ASSERT_EQ(T(SWMM_SUMMARY_NODE_DEPTH).rows.size(), node_type.size());
     for (int i = 0; i < swmm_node_count(e); ++i) {
         const auto& row = T(SWMM_SUMMARY_NODE_DEPTH).rows[static_cast<std::size_t>(i)];
@@ -1140,8 +1137,7 @@ TEST(ReportTables, IndependentOracle) {
               outfalls[0].values[3] + outfalls[1].values[3] + outfalls[2].values[3]);
     for (std::size_t c = 4; c < 6; ++c) // mass loads add (FC prints LOG10)
         EXPECT_NEAR(outfalls[3].values[c],
-                    outfalls[0].values[c] + outfalls[1].values[c] + outfalls[2].values[c],
-                    1e-12);
+                    outfalls[0].values[c] + outfalls[1].values[c] + outfalls[2].values[c], 1e-12);
 
     // Link Flow: one row per link, labeled as the report types it; blanks where it prints none.
     struct LinkWant {
@@ -1149,11 +1145,11 @@ TEST(ReportTables, IndependentOracle) {
         bool vel, ratio, depth;
     };
     const std::map<std::string, LinkWant> links = {
-        {"C1", {"CONDUIT", true, true, true}},   {"C2", {"CONDUIT", true, true, true}},
-        {"C3", {"CONDUIT", true, true, true}},   {"C4", {"CONDUIT", true, true, true}},
-        {"C5", {"CONDUIT", true, true, true}},   {"C6", {"CHANNEL", true, true, true}},
-        {"CX", {"CONDUIT", true, true, true}},   {"P1", {"PUMP", false, true, false}},
-        {"P2", {"PUMP", false, false, false}},   {"OR1", {"ORIFICE", false, false, false}},
+        {"C1", {"CONDUIT", true, true, true}},    {"C2", {"CONDUIT", true, true, true}},
+        {"C3", {"CONDUIT", true, true, true}},    {"C4", {"CONDUIT", true, true, true}},
+        {"C5", {"CONDUIT", true, true, true}},    {"C6", {"CHANNEL", true, true, true}},
+        {"CX", {"CONDUIT", true, true, true}},    {"P1", {"PUMP", false, true, false}},
+        {"P2", {"PUMP", false, false, false}},    {"OR1", {"ORIFICE", false, false, false}},
         {"OR2", {"ORIFICE", false, false, true}}, {"W1", {"WEIR", false, false, true}},
         {"OL1", {"DUMMY", false, false, false}}};
     ASSERT_EQ(T(SWMM_SUMMARY_LINK_FLOW).rows.size(), links.size());
@@ -1434,8 +1430,7 @@ TEST(ReportTables, BadIndicesAndBuffersAreRefused) {
     EXPECT_EQ(swmm_summary_rows_read(e, SWMM_SUMMARY_PUMPING, types, indices, 4), SWMM_OK);
     EXPECT_EQ(swmm_summary_values_read(e, SWMM_SUMMARY_PUMPING, values, 16), SWMM_OK);
     n = -1;
-    EXPECT_EQ(swmm_summary_labels_read(e, SWMM_SUMMARY_PUMPING, nullptr, 0, &n),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_summary_labels_read(e, SWMM_SUMMARY_PUMPING, nullptr, 0, &n), SWMM_ERR_BADPARAM);
     EXPECT_EQ(n, 1);
     EXPECT_EQ(swmm_summary_labels_read(e, SWMM_SUMMARY_PUMPING, text, 1, &n), SWMM_OK);
     EXPECT_STREQ(text, "");

@@ -289,7 +289,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
     // and OpenMP worker loops; scalar operations are unchanged.
     const auto update = [&](int i)
 #if defined(__GNUC__) || defined(__clang__)
-        __attribute__((always_inline))
+                            __attribute__((always_inline))
 #endif
     {
         auto ui = static_cast<std::size_t>(i);
@@ -391,8 +391,9 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
         double x[2] = {theta_0, lower_d_0};
 
         // Legacy ignores ODE return code; match that behavior
-        ode::integrateCallable(x, 2, 0.0, dt, GWTOL, dt,
-                       [&c](double t, const double* y, double* dydx) { getDxDt(c, t, y, dydx); });
+        ode::integrateCallable(
+            x, 2, 0.0, dt, GWTOL, dt,
+            [&c](double t, const double* y, double* dydx) { getDxDt(c, t, y, dydx); });
 
         // --- Bound state variables (matching legacy) ---
         x[0] = std::max(x[0], c.wilt_point);
@@ -429,7 +430,7 @@ void GWSolver::execute(SimulationContext& ctx, double dt, double max_evap, const
     };
 #ifdef SWMM_USE_OPENMP
     const int threads = n >= 512 ? (ctx.options.num_threads > 0 ? ctx.options.num_threads
-                                                              : threadinfo::ompMaxThreads())
+                                                                : threadinfo::ompMaxThreads())
                                  : 1;
     if (threads > 1) {
         // Per-aquifer inputs/context are stable and state writes are disjoint.

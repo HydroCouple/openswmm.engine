@@ -205,7 +205,7 @@ public:
         for (auto it = values_.begin(); it != values_.end();) {
             f(it->first, it->second);
             it = std::memcmp(&it->second, &default_, sizeof(T)) == 0 ? values_.erase(it)
-                                                                      : std::next(it);
+                                                                     : std::next(it);
         }
     }
     /// Every stored (non-default) value as (slot, value) pairs in ascending slot order.

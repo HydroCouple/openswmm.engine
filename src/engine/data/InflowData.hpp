@@ -118,8 +118,7 @@ struct ExtInflowData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
      *        delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&ExtInflowData::node_idx);
         f(&ExtInflowData::node_name);
         f(&ExtInflowData::constituent);
@@ -207,8 +206,7 @@ struct DwfData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
      *        delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&DwfData::node_idx);
         f(&DwfData::node_name);
         f(&DwfData::constituent);
@@ -281,8 +279,7 @@ struct RDIIAssignData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase and the
      *        delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&RDIIAssignData::node_idx);
         f(&RDIIAssignData::node_name);
         f(&RDIIAssignData::uh_name);

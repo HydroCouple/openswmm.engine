@@ -163,7 +163,8 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 
         // Units
         const std::string units_str = Tokenizer::to_upper(tok[1]);
-        ctx.pollutants.unit_declaration_valid[idx] = units_str == "MG/L" || units_str == "UG/L" || units_str == "#/L";
+        ctx.pollutants.unit_declaration_valid[idx] =
+            units_str == "MG/L" || units_str == "UG/L" || units_str == "#/L";
         if (units_str == "UG/L")
             ctx.pollutants.units[idx] = MassUnits::UG_PER_L;
         else if (units_str == "#/L")
@@ -391,8 +392,11 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
             continue;
 
         const int p_idx = ctx.pollutant_names.find(tok[1]);
-        if (p_idx >= 0 && tok.size()>5 && findmatch_prefix(Tokenizer::to_upper(tok[2]), {"NONE", "POW", "EXP", "SAT", "EXT"})==4 && ctx.find_timeseries(tok[5])<0) {
-            ctx.deferred_section_rows.emplace_back("BUILDUP",line);
+        if (p_idx >= 0 && tok.size() > 5 &&
+            findmatch_prefix(Tokenizer::to_upper(tok[2]), {"NONE", "POW", "EXP", "SAT", "EXT"}) ==
+                4 &&
+            ctx.find_timeseries(tok[5]) < 0) {
+            ctx.deferred_section_rows.emplace_back("BUILDUP", line);
             continue;
         }
 

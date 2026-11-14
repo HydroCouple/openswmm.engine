@@ -1554,9 +1554,9 @@ void Router::initFv(SimulationContext& ctx) {
     if (std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
                     [](double area) { return area > 0.0; }) &&
         !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
-        throw std::runtime_error("Junction StorageArea requires the CPU finite-volume backend; select FV_BACKEND CPU");
+        throw std::runtime_error(
+            "Junction StorageArea requires the CPU finite-volume backend; select FV_BACKEND CPU");
     }
-
 
     // The per-substep refresh is a callback into HydStructures, which a device
     // backend cannot reach. Say so rather than letting the option go quiet.
@@ -1569,18 +1569,23 @@ void Router::initFv(SimulationContext& ctx) {
                                       "clamped to ROUTING_STEP"));
     }
     fv_solver_->initialize(fv_mesh_, fv_state_, fv_opts_);
-    if(dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))
-        for(int n=0;n<nn;++n)ctx.nodes.volume[n]=ctx.nodes.type[n]==NodeType::OUTFALL?0:fv_state_.node_volume[n];
+    if (dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))
+        for (int n = 0; n < nn; ++n)
+            ctx.nodes.volume[n] =
+                ctx.nodes.type[n] == NodeType::OUTFALL ? 0 : fv_state_.node_volume[n];
 
     if (std::getenv("OPENSWMM_FV_RECEIPT_TRACE") ||
-        (!ctx.options.ignore_quality && ctx.options.quality_solver==QualitySolverKind::LEGACY &&
-         (ctx.n_pollutants()>0 || ctx.reactions.n_species()>0 || ctx.options.water_age || ctx.options.heat_transport)))
-        if (auto* native=dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
+        (!ctx.options.ignore_quality && ctx.options.quality_solver == QualitySolverKind::LEGACY &&
+         (ctx.n_pollutants() > 0 || ctx.reactions.n_species() > 0 || ctx.options.water_age ||
+          ctx.options.heat_transport)))
+        if (auto* native = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
             native->trackAcceptedWater(true);
-            native->requireConservativeNodeBalance(!ctx.options.ignore_quality && ctx.options.quality_solver==QualitySolverKind::LEGACY &&
-                (ctx.n_pollutants()>0 || ctx.reactions.n_species()>0 || ctx.options.water_age || ctx.options.heat_transport));
+            native->requireConservativeNodeBalance(
+                !ctx.options.ignore_quality &&
+                ctx.options.quality_solver == QualitySolverKind::LEGACY &&
+                (ctx.n_pollutants() > 0 || ctx.reactions.n_species() > 0 || ctx.options.water_age ||
+                 ctx.options.heat_transport));
         }
-
 
     fv_lateral_.assign(static_cast<std::size_t>(nn), 0.0);
     fv_fixed_head_.assign(static_cast<std::size_t>(nn), std::numeric_limits<double>::quiet_NaN());
@@ -1610,13 +1615,15 @@ int Router::stepFv(SimulationContext& ctx, double dt,
 
     const int nn = ctx.n_nodes();
     const int nl = ctx.n_links();
-    auto* native=dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
-    bool has_withdrawals=false;
-    auto user_rate=[&](std::size_t n) {
-        double q=ctx.nodes.user_lat_flow[n];
-        if(n<ctx.forcing.node_lat_inflow_mode.size()) {
-            if(ctx.forcing.node_lat_inflow_mode[n]==ForcingMode::OVERRIDE)q=ctx.forcing.node_lat_inflow_value[n];
-            else if(ctx.forcing.node_lat_inflow_mode[n]==ForcingMode::ADD)q+=ctx.forcing.node_lat_inflow_value[n];
+    auto* native = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    bool has_withdrawals = false;
+    auto user_rate = [&](std::size_t n) {
+        double q = ctx.nodes.user_lat_flow[n];
+        if (n < ctx.forcing.node_lat_inflow_mode.size()) {
+            if (ctx.forcing.node_lat_inflow_mode[n] == ForcingMode::OVERRIDE)
+                q = ctx.forcing.node_lat_inflow_value[n];
+            else if (ctx.forcing.node_lat_inflow_mode[n] == ForcingMode::ADD)
+                q += ctx.forcing.node_lat_inflow_value[n];
         }
         return q;
     };
@@ -1634,14 +1641,16 @@ int Router::stepFv(SimulationContext& ctx, double dt,
         // was charged for water the solver still held, a continuity error
         // scaling with the number of storage units that lose.
         fv_lateral_[un] = ctx.nodes.lat_flow[un] - ctx.nodes.losses[un];
-        if(native) {
-            double withdrawal=0;
-            for(double q:{ctx.nodes.ext_inflow[un],ctx.nodes.dwf_inflow[un],ctx.nodes.gw_inflow[un],
-                          ctx.nodes.rdii_inflow[un],ctx.nodes.iface_inflow[un],user_rate(un)})
-                withdrawal+=std::max(0.0,-q);
-            native->withdrawalRates()[un]=withdrawal;
-            has_withdrawals|=withdrawal>0;
-            if(withdrawal>0 && native->acceptedWater().face_forward.empty()) native->trackAcceptedWater(true);
+        if (native) {
+            double withdrawal = 0;
+            for (double q :
+                 {ctx.nodes.ext_inflow[un], ctx.nodes.dwf_inflow[un], ctx.nodes.gw_inflow[un],
+                  ctx.nodes.rdii_inflow[un], ctx.nodes.iface_inflow[un], user_rate(un)})
+                withdrawal += std::max(0.0, -q);
+            native->withdrawalRates()[un] = withdrawal;
+            has_withdrawals |= withdrawal > 0;
+            if (withdrawal > 0 && native->acceptedWater().face_forward.empty())
+                native->trackAcceptedWater(true);
         }
 
         // Outfalls (and anything else the engine pins) are stage boundaries:
@@ -1699,7 +1708,8 @@ int Router::stepFv(SimulationContext& ctx, double dt,
             fv_lateral_[un] += paid / dt;
             // The structures read the published state.
             ctx.nodes.head[un] = fv_state_.node_head[un];
-            ctx.nodes.depth[un] = std::max(0.0, fv_state_.node_head[un] - ctx.nodes.invert_elev[un]);
+            ctx.nodes.depth[un] =
+                std::max(0.0, fv_state_.node_head[un] - ctx.nodes.invert_elev[un]);
             ctx.nodes.volume[un] = fv_state_.node_volume[un];
         }
     }
@@ -1729,13 +1739,14 @@ int Router::stepFv(SimulationContext& ctx, double dt,
         const double len = fv_mesh_.cell_dx[static_cast<std::size_t>(begin)] *
                            static_cast<double>(fv_mesh_.conduit_cell_count[ur]);
         fv_cond_loss_[ur] = (len > 0.0) ? rate / len : 0.0;
-        if(native && rate!=0.0 && native->acceptedWater().face_forward.empty())native->trackAcceptedWater(true);
-
+        if (native && rate != 0.0 && native->acceptedWater().face_forward.empty())
+            native->trackAcceptedWater(true);
     }
 
     fv::FvStepForcing forcing;
     forcing.node_lateral = fv_lateral_.data();
-    forcing.node_withdrawal = native && has_withdrawals?native->withdrawalRates().data():nullptr;
+    forcing.node_withdrawal =
+        native && has_withdrawals ? native->withdrawalRates().data() : nullptr;
     forcing.node_fixed_head = fv_fixed_head_.data();
     forcing.node_source_max =
         ctx.surface_outfall_link_limit.empty() ? nullptr : ctx.surface_outfall_link_limit.data();
@@ -1770,100 +1781,119 @@ int Router::stepFv(SimulationContext& ctx, double dt,
         };
     }
 
-
     std::vector<double> trace_start_cells, trace_start_nodes, trace_start_carry;
-    auto* trace_native=dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
-    const char* trace_path=std::getenv("OPENSWMM_FV_RECEIPT_TRACE");
+    auto* trace_native = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    const char* trace_path = std::getenv("OPENSWMM_FV_RECEIPT_TRACE");
     if (trace_path && trace_native) {
-        trace_start_cells=fv_state_.cell_a; trace_start_nodes=fv_state_.node_volume;
-        trace_start_carry=trace_native->node_continuity_carry();
+        trace_start_cells = fv_state_.cell_a;
+        trace_start_nodes = fv_state_.node_volume;
+        trace_start_carry = trace_native->node_continuity_carry();
     }
     fv::advanceNetworkChecked(*fv_solver_, 0.0, dt, forcing);
     if (trace_path && trace_native) {
-        std::ofstream os(trace_path,std::ios::app); os << std::setprecision(17);
-        const auto& water=trace_native->acceptedWater();
-        for (int c=0;c<fv_mesh_.n_cells();++c) {
-            double net=water.cell_lateral[c]-water.cell_loss[c];
-            for(int side=0;side<2;++side) {
-                int f=side?fv_mesh_.cell_face1[c]:fv_mesh_.cell_face0[c];
-                int owns=side?fv_mesh_.cell_side1[c]:fv_mesh_.cell_side0[c];
-                net+=(owns?1.:-1.)*(water.face_forward[f]-water.face_reverse[f]);
+        std::ofstream os(trace_path, std::ios::app);
+        os << std::setprecision(17);
+        const auto& water = trace_native->acceptedWater();
+        for (int c = 0; c < fv_mesh_.n_cells(); ++c) {
+            double net = water.cell_lateral[c] - water.cell_loss[c];
+            for (int side = 0; side < 2; ++side) {
+                int f = side ? fv_mesh_.cell_face1[c] : fv_mesh_.cell_face0[c];
+                int owns = side ? fv_mesh_.cell_side1[c] : fv_mesh_.cell_side0[c];
+                net += (owns ? 1. : -1.) * (water.face_forward[f] - water.face_reverse[f]);
             }
-            const double oldv=trace_start_cells[c]*fv_mesh_.cell_dx[c];
-            const double newv=fv_state_.cell_a[c]*fv_mesh_.cell_dx[c];
-            os << ctx.current_time << ",cell," << c << ',' << oldv << ',' << newv << ',' << net << ',' << (newv-oldv-net) << ",0,0," << water.cell_lateral[c] << ',' << water.cell_loss[c] << "\n";
+            const double oldv = trace_start_cells[c] * fv_mesh_.cell_dx[c];
+            const double newv = fv_state_.cell_a[c] * fv_mesh_.cell_dx[c];
+            os << ctx.current_time << ",cell," << c << ',' << oldv << ',' << newv << ',' << net
+               << ',' << (newv - oldv - net) << ",0,0," << water.cell_lateral[c] << ','
+               << water.cell_loss[c] << "\n";
         }
-        for (int n=0;n<fv_mesh_.n_nodes();++n) {
-            double net=0;
-            for(int pp=fv_mesh_.node_face_ptr[n];pp<fv_mesh_.node_face_ptr[n+1];++pp) {
-                int f=fv_mesh_.node_face_idx[pp];
-                net+=fv_mesh_.node_face_sign[pp]*(water.face_forward[f]-water.face_reverse[f]);
+        for (int n = 0; n < fv_mesh_.n_nodes(); ++n) {
+            double net = 0;
+            for (int pp = fv_mesh_.node_face_ptr[n]; pp < fv_mesh_.node_face_ptr[n + 1]; ++pp) {
+                int f = fv_mesh_.node_face_idx[pp];
+                net +=
+                    fv_mesh_.node_face_sign[pp] * (water.face_forward[f] - water.face_reverse[f]);
             }
-            for(std::size_t s=0;s<fv_mesh_.struct_link.size();++s) {
-                double volume=water.structure_forward[s]-water.structure_reverse[s];
-                if(fv_mesh_.struct_n1[s]==n)net-=volume;
-                if(fv_mesh_.struct_n2[s]==n)net+=volume;
+            for (std::size_t s = 0; s < fv_mesh_.struct_link.size(); ++s) {
+                double volume = water.structure_forward[s] - water.structure_reverse[s];
+                if (fv_mesh_.struct_n1[s] == n)
+                    net -= volume;
+                if (fv_mesh_.struct_n2[s] == n)
+                    net += volume;
             }
-            net+=fv_lateral_[n]*dt-trace_native->node_flood_volume()[n];
-            const double oldv=trace_start_nodes[n],newv=fv_state_.node_volume[n];
-            os << ctx.current_time << ",node," << n << ',' << oldv << ',' << newv << ',' << net << ',' << (newv-oldv-net) << ',' << trace_start_carry[n] << ',' << trace_native->node_continuity_carry()[n] << ',' << fv_lateral_[n]*dt << ',' << water.node_deficit[n] << "\n";
+            net += fv_lateral_[n] * dt - trace_native->node_flood_volume()[n];
+            const double oldv = trace_start_nodes[n], newv = fv_state_.node_volume[n];
+            os << ctx.current_time << ",node," << n << ',' << oldv << ',' << newv << ',' << net
+               << ',' << (newv - oldv - net) << ',' << trace_start_carry[n] << ','
+               << trace_native->node_continuity_carry()[n] << ',' << fv_lateral_[n] * dt << ','
+               << water.node_deficit[n] << "\n";
         }
     }
 
-
-    if(native && has_withdrawals && dt>0) {
-        std::vector<double> refused=native->unmetWithdrawalVolumes();
+    if (native && has_withdrawals && dt > 0) {
+        std::vector<double> refused = native->unmetWithdrawalVolumes();
         // Virtual/direct-cell sources own their unavailable extraction at
         // the source port. Gross face directions never cancel this refund.
-        const auto& water=native->acceptedWater();
-        if(!water.face_forward.empty()) {
-            std::vector<double> source_port(ctx.n_nodes(),0.0);
-            for(int f=0;f<fv_mesh_.n_faces();++f) {
-                int n=fv_mesh_.face_node[f];if(n<0)n=fv_mesh_.face_vj_node[f];
-                if(n>=0)source_port[n]+=water.face_lateral_left[f]+water.face_lateral_right[f];
+        const auto& water = native->acceptedWater();
+        if (!water.face_forward.empty()) {
+            std::vector<double> source_port(ctx.n_nodes(), 0.0);
+            for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
+                int n = fv_mesh_.face_node[f];
+                if (n < 0)
+                    n = fv_mesh_.face_vj_node[f];
+                if (n >= 0)
+                    source_port[n] += water.face_lateral_left[f] + water.face_lateral_right[f];
             }
             // A negative source-port receipt means some portion of the
             // window was delivered through cells. Its magnitude cannot exceed
             // that window's requested net removal. A full-window cell
             // diversion leaves no node-side unmet amount.
-            for(int n=0;n<ctx.n_nodes();++n)
-                if(fv_mesh_.node_kind[n]==fv::kNodeVirtual && fv_lateral_[n]<0)
-                    refused[n]+=std::max(0.0,-fv_lateral_[n]*dt+source_port[n]);
+            for (int n = 0; n < ctx.n_nodes(); ++n)
+                if (fv_mesh_.node_kind[n] == fv::kNodeVirtual && fv_lateral_[n] < 0)
+                    refused[n] += std::max(0.0, -fv_lateral_[n] * dt + source_port[n]);
         }
-        for(int n=0;n<ctx.n_nodes();++n) {
-            const auto un=static_cast<std::size_t>(n);
-            const double requested=native->withdrawalRates()[un];
-            const double refund=std::min(requested,std::max(0.0,refused[un]/dt));
-            const double fraction=requested>0?refund/requested:0;
-            const double accepted_user=std::max(0.0,-user_rate(un))*(1-fraction);
-            ctx.mass_balance.step_ext_withdrawal+=accepted_user;
-            native->withdrawalRates()[un]=std::max(0.0,requested-refund);
-            if(refund<=0)continue;
-            auto reduce=[&](double& q,double& category,double sign) {
-                if(q>=0)return;
-                const double accepted_refund=-q*fraction;
-                q+=accepted_refund;category+=sign*accepted_refund;
+        for (int n = 0; n < ctx.n_nodes(); ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            const double requested = native->withdrawalRates()[un];
+            const double refund = std::min(requested, std::max(0.0, refused[un] / dt));
+            const double fraction = requested > 0 ? refund / requested : 0;
+            const double accepted_user = std::max(0.0, -user_rate(un)) * (1 - fraction);
+            ctx.mass_balance.step_ext_withdrawal += accepted_user;
+            native->withdrawalRates()[un] = std::max(0.0, requested - refund);
+            if (refund <= 0)
+                continue;
+            auto reduce = [&](double& q, double& category, double sign) {
+                if (q >= 0)
+                    return;
+                const double accepted_refund = -q * fraction;
+                q += accepted_refund;
+                category += sign * accepted_refund;
             };
-            reduce(ctx.nodes.ext_inflow[un],ctx.mass_balance.step_ext_withdrawal,-1);
-            reduce(ctx.nodes.dwf_inflow[un],ctx.mass_balance.step_dw_inflow,1);
-            reduce(ctx.nodes.gw_inflow[un],ctx.mass_balance.step_gw_inflow,1);
-            reduce(ctx.nodes.rdii_inflow[un],ctx.mass_balance.step_rdii_inflow,1);
-            reduce(ctx.nodes.iface_inflow[un],ctx.mass_balance.step_ext_inflow,1);
+            reduce(ctx.nodes.ext_inflow[un], ctx.mass_balance.step_ext_withdrawal, -1);
+            reduce(ctx.nodes.dwf_inflow[un], ctx.mass_balance.step_dw_inflow, 1);
+            reduce(ctx.nodes.gw_inflow[un], ctx.mass_balance.step_gw_inflow, 1);
+            reduce(ctx.nodes.rdii_inflow[un], ctx.mass_balance.step_rdii_inflow, 1);
+            reduce(ctx.nodes.iface_inflow[un], ctx.mass_balance.step_ext_inflow, 1);
             // Runtime forcing is persistent requested input; never overwrite it.
-            ctx.nodes.lat_flow[un]+=refund;
+            ctx.nodes.lat_flow[un] += refund;
         }
     }
-    if(native && dt>0 && !native->acceptedWater().face_forward.empty()) {
-        auto& cd=ctx.link_subtypes.conduits;
-        const auto& accepted=native->acceptedWater();
-        for(int row=0;row<fv_mesh_.n_conduits();++row) {
-            int begin=fv_mesh_.conduit_cell_begin[row],count=fv_mesh_.conduit_cell_count[row];
-            if(begin<0 || count<=0)continue;
-            const double requested=(cd.seep_loss_rate[row]+cd.evap_loss_rate[row])*std::max(1,cd.barrels[row])*dt;
-            double actual=0;for(int c=begin;c<begin+count;++c)actual+=accepted.cell_loss[c];
-            if(requested!=0) {
-                const double ratio=actual/requested;
-                cd.seep_loss_rate[row]*=ratio;cd.evap_loss_rate[row]*=ratio;
+    if (native && dt > 0 && !native->acceptedWater().face_forward.empty()) {
+        auto& cd = ctx.link_subtypes.conduits;
+        const auto& accepted = native->acceptedWater();
+        for (int row = 0; row < fv_mesh_.n_conduits(); ++row) {
+            int begin = fv_mesh_.conduit_cell_begin[row], count = fv_mesh_.conduit_cell_count[row];
+            if (begin < 0 || count <= 0)
+                continue;
+            const double requested = (cd.seep_loss_rate[row] + cd.evap_loss_rate[row]) *
+                                     std::max(1, cd.barrels[row]) * dt;
+            double actual = 0;
+            for (int c = begin; c < begin + count; ++c)
+                actual += accepted.cell_loss[c];
+            if (requested != 0) {
+                const double ratio = actual / requested;
+                cd.seep_loss_rate[row] *= ratio;
+                cd.evap_loss_rate[row] *= ratio;
             }
         }
     }
@@ -2187,7 +2217,9 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         }
         // Head may be a reconstructed diagnostic at an algebraic junction;
         // its bucket must not be reconstructed into conserved water/quality.
-        if(impl)ctx.nodes.volume[un]=ctx.nodes.type[un]==NodeType::OUTFALL?0:fv_state_.node_volume[un];
+        if (impl)
+            ctx.nodes.volume[un] =
+                ctx.nodes.type[un] == NodeType::OUTFALL ? 0 : fv_state_.node_volume[un];
         if (impl && dt > 0.0)
             ctx.nodes.overflow[un] = impl->node_flood_volume()[un] / dt;
 
@@ -2358,125 +2390,160 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
 
 } // namespace openswmm
 
-
 namespace openswmm {
 void Router::acceptedQualityWater(const SimulationContext& ctx, double dt,
-                                 quality::FvTransportWater& out) const {
-    out.ready=false;
-    const auto* native=dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get());
-    if(!native || dt<=0 || native->acceptedWater().face_forward.empty())return;
-    const std::size_t nn=ctx.n_nodes(),nl=ctx.n_links(),n=nn+nl;
-    auto& w=out.water;auto& r=native->acceptedWater();
-    w.old_volume.assign(n,0);w.new_volume.assign(n,0);w.source_volume.assign(n,0);
-    w.exported.assign(n,0);w.seeped.assign(n,0);w.evaporated.assign(n,0);w.transfers.clear();
-    out.boundary_imports.clear();out.withdrawal.assign(nn,0);out.flooding.assign(nn,0);
-    for(std::size_t i=0;i<nn;++i) {
-        if(ctx.nodes.type[i]!=NodeType::OUTFALL) {
+                                  quality::FvTransportWater& out) const {
+    out.ready = false;
+    const auto* native = dynamic_cast<const fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (!native || dt <= 0 || native->acceptedWater().face_forward.empty())
+        return;
+    const std::size_t nn = ctx.n_nodes(), nl = ctx.n_links(), n = nn + nl;
+    auto& w = out.water;
+    auto& r = native->acceptedWater();
+    w.old_volume.assign(n, 0);
+    w.new_volume.assign(n, 0);
+    w.source_volume.assign(n, 0);
+    w.exported.assign(n, 0);
+    w.seeped.assign(n, 0);
+    w.evaporated.assign(n, 0);
+    w.transfers.clear();
+    out.boundary_imports.clear();
+    out.withdrawal.assign(nn, 0);
+    out.flooding.assign(nn, 0);
+    for (std::size_t i = 0; i < nn; ++i) {
+        if (ctx.nodes.type[i] != NodeType::OUTFALL) {
             // Water, not the published volume: a ponding (demoted) pondable
             // algebraic junction publishes base + pond, and the base is not
             // water (ExplicitFvSolver::pondBase). Every step a coupled
             // junction started or stopped ponding left the graph a whole
             // base short or over (1,236.8 ft3 at a 30 m junction) and the run
             // aborted: coupled FV with any pollutant never completed.
-            const double base=native->nodePondBase(static_cast<int>(i));
-            auto water=[base](double v){return base>0 && v>=base ? v-base : v;};
-            w.old_volume[i]=water(ctx.nodes.old_volume[i]);w.new_volume[i]=water(ctx.nodes.volume[i]);
+            const double base = native->nodePondBase(static_cast<int>(i));
+            auto water = [base](double v) { return base > 0 && v >= base ? v - base : v; };
+            w.old_volume[i] = water(ctx.nodes.old_volume[i]);
+            w.new_volume[i] = water(ctx.nodes.volume[i]);
         }
-        const int row=ctx.node_subtypes.storage_row(static_cast<int>(i));
-        if(row>=0) {
-            const auto& st=ctx.node_subtypes.storages;
-            w.seeped[i]=st.exfil_loss[row];w.evaporated[i]=st.evap_loss[row];
+        const int row = ctx.node_subtypes.storage_row(static_cast<int>(i));
+        if (row >= 0) {
+            const auto& st = ctx.node_subtypes.storages;
+            w.seeped[i] = st.exfil_loss[row];
+            w.evaporated[i] = st.evap_loss[row];
         }
-        if(!fv_mesh_.node_can_pond[i])out.flooding[i]=native->node_flood_volume()[i];
-        out.withdrawal[i]=native->withdrawalRates()[i]*dt;
-        if(ctx.nodes.type[i]==NodeType::OUTFALL && out.withdrawal[i]>0) {
-            out.boundary_imports.push_back({i,i,out.withdrawal[i]});
-            w.source_volume[i]+=out.withdrawal[i];
+        if (!fv_mesh_.node_can_pond[i])
+            out.flooding[i] = native->node_flood_volume()[i];
+        out.withdrawal[i] = native->withdrawalRates()[i] * dt;
+        if (ctx.nodes.type[i] == NodeType::OUTFALL && out.withdrawal[i] > 0) {
+            out.boundary_imports.push_back({i, i, out.withdrawal[i]});
+            w.source_volume[i] += out.withdrawal[i];
         }
-        w.exported[i]=out.withdrawal[i]+out.flooding[i];
-        if(ctx.nodes.type[i]!=NodeType::OUTFALL) {
+        w.exported[i] = out.withdrawal[i] + out.flooding[i];
+        if (ctx.nodes.type[i] != NodeType::OUTFALL) {
             // The 1D->2D spill leaves the node, the part paid out of it before
             // the advance and any part left in the lateral alike; water a
             // floor raised to pay it is a (concentration-free) source.
-            w.exported[i]+=std::max(0.0,-ctx.nodes.coupling_inflow[i])*dt;
-            w.source_volume[i]+=r.node_deficit[i];
+            w.exported[i] += std::max(0.0, -ctx.nodes.coupling_inflow[i]) * dt;
+            w.source_volume[i] += r.node_deficit[i];
         }
     }
-    for(std::size_t j=0;j<nl;++j) {
-        if(ctx.links.type[j]!=LinkType::CONDUIT || ctx.links.xsect_shape[j]==XsectShape::DUMMY)continue;
-        w.old_volume[nn+j]=ctx.links.old_volume[j];w.new_volume[nn+j]=ctx.links.volume[j];
-        int cr=ctx.link_subtypes.conduit_row(static_cast<int>(j));
-        if(cr>=0) {
-            const auto& cd=ctx.link_subtypes.conduits;
-            w.seeped[nn+j]=std::max(0.0,cd.seep_loss_rate[cr])*std::max(1,cd.barrels[cr])*dt;
-            w.evaporated[nn+j]=std::max(0.0,cd.evap_loss_rate[cr])*std::max(1,cd.barrels[cr])*dt;
+    for (std::size_t j = 0; j < nl; ++j) {
+        if (ctx.links.type[j] != LinkType::CONDUIT || ctx.links.xsect_shape[j] == XsectShape::DUMMY)
+            continue;
+        w.old_volume[nn + j] = ctx.links.old_volume[j];
+        w.new_volume[nn + j] = ctx.links.volume[j];
+        int cr = ctx.link_subtypes.conduit_row(static_cast<int>(j));
+        if (cr >= 0) {
+            const auto& cd = ctx.link_subtypes.conduits;
+            w.seeped[nn + j] =
+                std::max(0.0, cd.seep_loss_rate[cr]) * std::max(1, cd.barrels[cr]) * dt;
+            w.evaporated[nn + j] =
+                std::max(0.0, cd.evap_loss_rate[cr]) * std::max(1, cd.barrels[cr]) * dt;
         }
     }
-    auto transfer=[&](std::size_t donor,std::size_t receiver,double v) {
-        if(v<=0 || donor==receiver)return;
-        if(donor<nn && ctx.nodes.type[donor]==NodeType::OUTFALL) {
+    auto transfer = [&](std::size_t donor, std::size_t receiver, double v) {
+        if (v <= 0 || donor == receiver)
+            return;
+        if (donor < nn && ctx.nodes.type[donor] == NodeType::OUTFALL) {
             // A reservoir's returning water uses its prescribed/held boundary
             // quality, independently of this window's exported mixture.
-            out.boundary_imports.push_back({donor,receiver,v});w.source_volume[receiver]+=v;
+            out.boundary_imports.push_back({donor, receiver, v});
+            w.source_volume[receiver] += v;
         } else {
-            w.transfers.push_back({donor,receiver,v});
-            if(receiver<nn && ctx.nodes.type[receiver]==NodeType::OUTFALL)w.exported[receiver]+=v;
+            w.transfers.push_back({donor, receiver, v});
+            if (receiver < nn && ctx.nodes.type[receiver] == NodeType::OUTFALL)
+                w.exported[receiver] += v;
         }
     };
-    auto cellcv=[&](int c) {return nn+static_cast<std::size_t>(fv_mesh_.conduit_link[fv_mesh_.cell_conduit[c]]);};
-    for(int f=0;f<fv_mesh_.n_faces();++f) {
-        int cl=fv_mesh_.face_cl[f],cr=fv_mesh_.face_cr[f],nd=fv_mesh_.face_node[f];
-        int vj=fv_mesh_.face_vj_node[f];
-        if(cl>=0 && cr>=0 && fv_mesh_.cell_conduit[cl]==fv_mesh_.cell_conduit[cr])continue;
-        if(vj>=0) {
-            transfer(cellcv(cl),vj,r.face_forward[f]);transfer(vj,cellcv(cr),r.face_forward[f]);
-            transfer(cellcv(cr),vj,r.face_reverse[f]);transfer(vj,cellcv(cl),r.face_reverse[f]);nd=vj;
-        } else if(nd>=0) {
-            auto left=cl>=0?cellcv(cl):static_cast<std::size_t>(nd);
-            auto right=cr>=0?cellcv(cr):static_cast<std::size_t>(nd);
-            transfer(left,right,r.face_forward[f]);transfer(right,left,r.face_reverse[f]);
+    auto cellcv = [&](int c) {
+        return nn + static_cast<std::size_t>(fv_mesh_.conduit_link[fv_mesh_.cell_conduit[c]]);
+    };
+    for (int f = 0; f < fv_mesh_.n_faces(); ++f) {
+        int cl = fv_mesh_.face_cl[f], cr = fv_mesh_.face_cr[f], nd = fv_mesh_.face_node[f];
+        int vj = fv_mesh_.face_vj_node[f];
+        if (cl >= 0 && cr >= 0 && fv_mesh_.cell_conduit[cl] == fv_mesh_.cell_conduit[cr])
+            continue;
+        if (vj >= 0) {
+            transfer(cellcv(cl), vj, r.face_forward[f]);
+            transfer(vj, cellcv(cr), r.face_forward[f]);
+            transfer(cellcv(cr), vj, r.face_reverse[f]);
+            transfer(vj, cellcv(cl), r.face_reverse[f]);
+            nd = vj;
+        } else if (nd >= 0) {
+            auto left = cl >= 0 ? cellcv(cl) : static_cast<std::size_t>(nd);
+            auto right = cr >= 0 ? cellcv(cr) : static_cast<std::size_t>(nd);
+            transfer(left, right, r.face_forward[f]);
+            transfer(right, left, r.face_reverse[f]);
         }
-        if(nd>=0) {
-            for(int side=0;side<2;++side) {
-                int c=side?cr:cl;if(c<0)continue;
-                double v=side?r.face_lateral_right[f]:r.face_lateral_left[f];
-                if(v>=0)transfer(nd,cellcv(c),v);else transfer(cellcv(c),nd,-v);
+        if (nd >= 0) {
+            for (int side = 0; side < 2; ++side) {
+                int c = side ? cr : cl;
+                if (c < 0)
+                    continue;
+                double v = side ? r.face_lateral_right[f] : r.face_lateral_left[f];
+                if (v >= 0)
+                    transfer(nd, cellcv(c), v);
+                else
+                    transfer(cellcv(c), nd, -v);
             }
-            if(r.face_spill[f]>0)transfer(cellcv(cl>=0?cl:cr),nd,r.face_spill[f]);
+            if (r.face_spill[f] > 0)
+                transfer(cellcv(cl >= 0 ? cl : cr), nd, r.face_spill[f]);
         }
     }
-    for(std::size_t i=0;i<fv_mesh_.struct_link.size();++i) {
-        transfer(fv_mesh_.struct_n1[i],fv_mesh_.struct_n2[i],r.structure_forward[i]);
-        transfer(fv_mesh_.struct_n2[i],fv_mesh_.struct_n1[i],r.structure_reverse[i]);
+    for (std::size_t i = 0; i < fv_mesh_.struct_link.size(); ++i) {
+        transfer(fv_mesh_.struct_n1[i], fv_mesh_.struct_n2[i], r.structure_forward[i]);
+        transfer(fv_mesh_.struct_n2[i], fv_mesh_.struct_n1[i], r.structure_reverse[i]);
     }
-    out.ready=true;
+    out.ready = true;
 }
 } // namespace
 
 namespace openswmm {
 void Router::restoreFvClassicState(SimulationContext& ctx) {
-    if(ctx.options.routing_model!=RoutingModel::FV ||
-       !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))return;
+    if (ctx.options.routing_model != RoutingModel::FV ||
+        !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get()))
+        return;
     // Classic records hold aggregate conduit volume, not a cell profile.
     // Restore that inventory exactly on the existing mesh rather than retaining
     // the pre-hotstart cells (including their dry-start seed water).
-    for(int r=0;r<fv_mesh_.n_conduits();++r) {
-        const int begin=fv_mesh_.conduit_cell_begin[r],count=fv_mesh_.conduit_cell_count[r];
-        if(begin<0 || count<=0)continue;
-        const int j=fv_mesh_.conduit_link[r];double length=0;
-        for(int c=begin;c<begin+count;++c)length+=fv_mesh_.cell_dx[c];
-        const double area=length>0?ctx.links.volume[j]/length:0;
-        for(int c=begin;c<begin+count;++c) {
-            fv_state_.cell_a[c]=area;
-            fv_state_.cell_q[c]=area>fv::kernels::kDryArea?ctx.links.flow[j]:0;
+    for (int r = 0; r < fv_mesh_.n_conduits(); ++r) {
+        const int begin = fv_mesh_.conduit_cell_begin[r], count = fv_mesh_.conduit_cell_count[r];
+        if (begin < 0 || count <= 0)
+            continue;
+        const int j = fv_mesh_.conduit_link[r];
+        double length = 0;
+        for (int c = begin; c < begin + count; ++c)
+            length += fv_mesh_.cell_dx[c];
+        const double area = length > 0 ? ctx.links.volume[j] / length : 0;
+        for (int c = begin; c < begin + count; ++c) {
+            fv_state_.cell_a[c] = area;
+            fv_state_.cell_q[c] = area > fv::kernels::kDryArea ? ctx.links.flow[j] : 0;
         }
     }
-    for(int n=0;n<fv_mesh_.n_nodes();++n)
-        fv_state_.node_head[n]=ctx.nodes.invert_elev[n]+ctx.nodes.depth[n];
+    for (int n = 0; n < fv_mesh_.n_nodes(); ++n)
+        fv_state_.node_head[n] = ctx.nodes.invert_elev[n] + ctx.nodes.depth[n];
     // A restart boundary is the only reinitialization here. It resets pending
     // receipts, RK2/LTS history and closure caches before the next routed step.
-    fv_solver_->initialize(fv_mesh_,fv_state_,fv_opts_);
-    for(int n=0;n<fv_mesh_.n_nodes();++n)
-        fv_state_.node_volume[n]=ctx.nodes.type[n]==NodeType::OUTFALL?0:ctx.nodes.volume[n];
+    fv_solver_->initialize(fv_mesh_, fv_state_, fv_opts_);
+    for (int n = 0; n < fv_mesh_.n_nodes(); ++n)
+        fv_state_.node_volume[n] = ctx.nodes.type[n] == NodeType::OUTFALL ? 0 : ctx.nodes.volume[n];
 }
 }

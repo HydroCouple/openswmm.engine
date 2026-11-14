@@ -41,7 +41,8 @@ TEST(SigmaPorewaterMap, ReusedBuffersMatchFreshMapsAndRefusalsKeepEveryField) {
         ASSERT_TRUE(reused.configure(m, ns, entries, partition, canonical, held).empty());
         EXPECT_EQ(snapshot(reused), snapshot(fresh));
         // Interleave another map to exercise shared per-thread staging storage.
-        ASSERT_TRUE(other.configure(m, ns, {}, partition, canonical, std::vector<double>(ns)).empty());
+        ASSERT_TRUE(
+            other.configure(m, ns, {}, partition, canonical, std::vector<double>(ns)).empty());
         ASSERT_TRUE(reused.apply(0, 0, .001));
         const auto before = snapshot(reused);
         auto invalid = canonical;
@@ -66,8 +67,9 @@ TEST(SigmaPorewaterMap, PublishCommitsOnceAndInvalidOwnerLeavesMapAndInventoryUn
     tr.layer_mass = {1, 2, 3, 4};
     tr.sat_mass = {5, 6};
     SigmaPorewaterMap map;
-    ASSERT_TRUE(map.configure(2, 2, {{0, 0, .2, .4}, {0, 1, .3, .4}, {1, 2, .4, .6}},
-                              {0., .1}, {1, 2, 5, 3, 4, 6}, {0., 0.}).empty());
+    ASSERT_TRUE(map.configure(2, 2, {{0, 0, .2, .4}, {0, 1, .3, .4}, {1, 2, .4, .6}}, {0., .1},
+                              {1, 2, 5, 3, 4, 6}, {0., 0.})
+                    .empty());
     ASSERT_TRUE(map.apply(0, 0, .5));
     const auto before = snapshot(map);
     const auto layers = tr.layer_mass, sat = tr.sat_mass;

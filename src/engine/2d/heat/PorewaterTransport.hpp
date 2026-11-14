@@ -28,11 +28,11 @@ struct PorewaterTransportScratch {
     std::vector<unsigned char> residue;
     std::vector<LayerTransportMove> moves;
 };
-PorewaterAdvection& advectPorewater(
-    const std::vector<double>& old_water, const std::vector<double>& new_water,
-    const std::vector<double>& retention, const std::vector<double>& mass,
-    const std::vector<double>& external_water, const std::vector<double>& external_mass,
-    const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch);
+PorewaterAdvection&
+advectPorewater(const std::vector<double>& old_water, const std::vector<double>& new_water,
+                const std::vector<double>& retention, const std::vector<double>& mass,
+                const std::vector<double>& external_water, const std::vector<double>& external_mass,
+                const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch);
 PorewaterAdvection& advectPorewaterEuler(
     const std::vector<double>& old_water, const std::vector<double>& retention,
     const std::vector<double>& mass, const std::vector<double>& water_change,

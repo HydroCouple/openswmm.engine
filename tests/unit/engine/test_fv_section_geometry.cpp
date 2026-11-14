@@ -447,20 +447,27 @@ TEST(FvSectionGeometry, FusedFrictionRadiusIsBitIdenticalAtPanelBoundaries) {
                     const auto actual = k::closureEval(table, h, radius);
                     const auto expected = k::closureEval(table, h);
                     const auto r = k::closureHydRad(table, h);
-                    EXPECT_EQ(std::memcmp(&actual.a, &expected.a, sizeof(double)), 0) << c.name << " h=" << h;
-                    EXPECT_EQ(std::memcmp(&actual.t, &expected.t, sizeof(double)), 0) << c.name << " h=" << h;
-                    EXPECT_EQ(std::memcmp(&actual.i1, &expected.i1, sizeof(double)), 0) << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&actual.a, &expected.a, sizeof(double)), 0)
+                        << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&actual.t, &expected.t, sizeof(double)), 0)
+                        << c.name << " h=" << h;
+                    EXPECT_EQ(std::memcmp(&actual.i1, &expected.i1, sizeof(double)), 0)
+                        << c.name << " h=" << h;
                     EXPECT_EQ(std::memcmp(&radius, &r, sizeof(double)), 0) << c.name << " h=" << h;
                 };
-                check(-1.0); check(-0.0); check(0.0);
+                check(-1.0);
+                check(-0.0);
+                check(0.0);
                 check(std::nextafter(0.0, 1.0));
                 for (int i = 0; i <= openswmm::fv::kClosurePanels; ++i) {
                     const double h = i * table.dh;
-                    check(h); check(std::nextafter(h, -INFINITY));
+                    check(h);
+                    check(std::nextafter(h, -INFINITY));
                     check(std::nextafter(h, INFINITY));
                     check(h + 0.37 * table.dh);
                 }
-                check(table.y_full); check(std::nextafter(table.y_full, 0.0));
+                check(table.y_full);
+                check(std::nextafter(table.y_full, 0.0));
                 check(std::nextafter(table.y_full, INFINITY));
                 check(table.y_full + 100.0);
             }

@@ -38,8 +38,8 @@ struct ReportRow {
     std::string label;     ///< the report's text column: node/link type, LID control name, or ""
     std::vector<double> values; ///< one per column; NaN where the report prints nothing
     std::uint64_t blank = 0;    ///< bit c set: the report leaves column c blank
-    bool truncated = false; ///< the report ends the line after its last printed column
-    double date = 0.0;      ///< absolute date of the row's maximum, as elapsedToParts() takes it
+    bool truncated = false;     ///< the report ends the line after its last printed column
+    double date = 0.0; ///< absolute date of the row's maximum, as elapsedToParts() takes it
 
     /** @return Whether the report prints column @p column of this row. */
     bool shows(int column) const { return ((blank >> column) & 1u) == 0; }
@@ -50,8 +50,8 @@ struct ReportTable {
     std::string title;
     bool reported = false; ///< whether the report prints this section for this run
     std::vector<ReportColumn> columns;
-    int row_count = 0;            ///< rows the report lists, System rows included
-    std::vector<ReportRow> rows;  ///< all of them, or only the one a builder was asked for
+    int row_count = 0;           ///< rows the report lists, System rows included
+    std::vector<ReportRow> rows; ///< all of them, or only the one a builder was asked for
 };
 
 namespace report_tables {

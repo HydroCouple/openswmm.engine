@@ -466,17 +466,21 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
                                                double next_report_ms,
                                                const SimulationSnapshot& snap, hsize_t steps,
                                                double next_due, bool groundwater) const {
-    require(
-        checkpoint_fresh_ && !checkpoint_header_.empty() && n_buildup_ == 0 &&
-            (checkpoint_material_ || n_species_ == 0),
-        "Mesh checkpoint requires its prepared writer and qualified species profile.");
-    if(checkpoint_material_) {
-        const auto unit=ctx.pollutants.units.empty()?-1:static_cast<int>(ctx.pollutants.units[0]);
-        const char* units[]={"MG/L","UG/L","#/L"};
-        require(ctx.n_pollutants()==1 && unit>=0 && unit<3 && snap.surface_species_count==1 &&
-            snap.surface_species_names && *snap.surface_species_names==ctx.pollutant_names.names() &&
-            snap.surface_species_units && *snap.surface_species_units==std::vector<std::string>{units[unit]} &&
-            snap.surface_species_conc.size()==n_faces_ && snap.surface_buildup_count==0 && want(report2d::SPECIES),
+    require(checkpoint_fresh_ && !checkpoint_header_.empty() && n_buildup_ == 0 &&
+                (checkpoint_material_ || n_species_ == 0),
+            "Mesh checkpoint requires its prepared writer and qualified species profile.");
+    if (checkpoint_material_) {
+        const auto unit =
+            ctx.pollutants.units.empty() ? -1 : static_cast<int>(ctx.pollutants.units[0]);
+        const char* units[] = {"MG/L", "UG/L", "#/L"};
+        require(
+            ctx.n_pollutants() == 1 && unit >= 0 && unit < 3 && snap.surface_species_count == 1 &&
+                snap.surface_species_names &&
+                *snap.surface_species_names == ctx.pollutant_names.names() &&
+                snap.surface_species_units &&
+                *snap.surface_species_units == std::vector<std::string>{units[unit]} &&
+                snap.surface_species_conc.size() == n_faces_ && snap.surface_buildup_count == 0 &&
+                want(report2d::SPECIES),
             "Material mesh checkpoint requires its named pollutant concentration and declared unit.");
     }
     Default2DOutputPlugin reference("");
@@ -487,14 +491,18 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
     reference.compression_ = compression_;
     reference.native_species_units_ = native_species_units_;
     reference.species_filter_ = species_filter_;
-    if(checkpoint_material_) {
+    if (checkpoint_material_) {
         reference.createSpeciesDatasets(snap);
-        require(reference.n_species_==1 && reference.ds_face_species_conc_>=0 && reference.species_rows_==std::vector<int>{0},
-            "Material mesh checkpoint cannot omit its pollutant row.");
-        if(steps==0) {
-            H5Dclose(reference.ds_face_species_conc_);reference.ds_face_species_conc_=H5I_INVALID_HID;
-            require(H5Ldelete(reference.file_id_,"Mesh2_face_species_conc",H5P_DEFAULT)>=0,"Cannot validate initial material mesh schema.");
-            reference.n_species_=0;reference.species_rows_.clear();
+        require(reference.n_species_ == 1 && reference.ds_face_species_conc_ >= 0 &&
+                    reference.species_rows_ == std::vector<int>{0},
+                "Material mesh checkpoint cannot omit its pollutant row.");
+        if (steps == 0) {
+            H5Dclose(reference.ds_face_species_conc_);
+            reference.ds_face_species_conc_ = H5I_INVALID_HID;
+            require(H5Ldelete(reference.file_id_, "Mesh2_face_species_conc", H5P_DEFAULT) >= 0,
+                    "Cannot validate initial material mesh schema.");
+            reference.n_species_ = 0;
+            reference.species_rows_.clear();
         }
     }
     require(groundwater == (steps > 0 && want(report2d::GROUNDWATER) && snap.gw2d_active),
@@ -588,8 +596,13 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
                  name == "Mesh2_face_vy" || name == "Mesh2_face_max_velocity")
             missing.assign(n_faces_, 1);
         if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
-            visitNumbers(b.id, name=="Mesh2_face_species_conc" ? std::function<void(double)>{[](double value){
-                require(value>=0,"Negative material mesh checkpoint concentration.");}} : std::function<void(double)>{}, missing);
+            visitNumbers(
+                b.id,
+                name == "Mesh2_face_species_conc" ? std::function<void(double)>{[](double value) {
+                    require(value >= 0, "Negative material mesh checkpoint concentration.");
+                }}
+                                                  : std::function<void(double)>{},
+                missing);
         else
             require(H5Tget_class(bt.id) == H5T_STRING && !series,
                     "Unsupported mesh checkpoint dataset type.");
@@ -707,8 +720,8 @@ std::shared_ptr<Default2DOutputPlugin::PreparedCheckpoint> Default2DOutputPlugin
     auto result = std::make_shared<PreparedCheckpoint>();
     in(version, step, result->steps, result->next_due, result->groundwater, prefix);
     in.finish();
-    require(version == (checkpoint_material_ ? 2u : 1u) && step == report_2d_step_days_ && !prefix.empty() &&
-                prefix.size() <= maxBytes,
+    require(version == (checkpoint_material_ ? 2u : 1u) && step == report_2d_step_days_ &&
+                !prefix.empty() && prefix.size() <= maxBytes,
             "Mesh checkpoint format or reporting interval differs.");
     const auto path = io::utf8_path(h5_path_);
     static std::atomic<unsigned long long> serial{0};
@@ -770,12 +783,14 @@ void Default2DOutputPlugin::resolveCheckpointDatasets(PreparedCheckpoint& result
     reference.compression_ = compression_;
     reference.native_species_units_ = native_species_units_;
     reference.species_filter_ = species_filter_;
-    if(checkpoint_material_ && result.steps>0) {
+    if (checkpoint_material_ && result.steps > 0) {
         reference.createSpeciesDatasets(snap);
-        require(reference.n_species_==1 && reference.ds_face_species_conc_>=0 && reference.species_rows_==std::vector<int>{0},
-            "Cannot reopen material pollutant schema.");
+        require(reference.n_species_ == 1 && reference.ds_face_species_conc_ >= 0 &&
+                    reference.species_rows_ == std::vector<int>{0},
+                "Cannot reopen material pollutant schema.");
     }
-    result.species=reference.n_species_;result.species_rows=std::move(reference.species_rows_);
+    result.species = reference.n_species_;
+    result.species_rows = std::move(reference.species_rows_);
     if (result.groundwater)
         reference.createGroundwaterDatasets(snap);
     if (result.steps > 0)
@@ -953,7 +968,8 @@ void Default2DOutputPlugin::adoptCheckpoint(PreparedCheckpoint& prepared) noexce
         prepared.file_copy->retain();
     prepared.staging.clear();
     n_steps_ = prepared.steps;
-    n_species_=prepared.species;species_rows_=std::move(prepared.species_rows);
+    n_species_ = prepared.species;
+    species_rows_ = std::move(prepared.species_rows);
     next_due_days_ = prepared.next_due;
     gw_created_ = prepared.groundwater;
     n_gw_beds_ = prepared.beds;

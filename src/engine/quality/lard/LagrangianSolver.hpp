@@ -641,7 +641,8 @@ public:
                 if (is_msx && !zero_bf)
                     m += transport::reactionBoosterMass(ctx, n, s - L.msx_first, m, denom,
                                                         v_in + nodes.qual_vol_in[un] * frac);
-                const double st_new = (zero_bf && !is_temp) ? 0.0 : ((denom > 1.0e-12) ? m / denom : st_old);
+                const double st_new =
+                    (zero_bf && !is_temp) ? 0.0 : ((denom > 1.0e-12) ? m / denom : st_old);
                 if (is_age)
                     ws.node_age[un] = st_new;
                 else if (is_temp)

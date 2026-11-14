@@ -610,8 +610,7 @@ SWMM_ENGINE_API int swmm_options_ext_key_count(SWMM_Engine engine, int* count);
  * @return SWMM_OK on success; SWMM_ERR_BADHANDLE for null engine or SWMM_ERR_BADPARAM for an
  *     out-of-range index or invalid buffer.
  */
-SWMM_ENGINE_API int swmm_options_ext_key_at(SWMM_Engine engine, int index, char* buf,
-                                            int buflen);
+SWMM_ENGINE_API int swmm_options_ext_key_at(SWMM_Engine engine, int index, char* buf, int buflen);
 
 /**
  * @brief Copy the configured coordinate-reference-system string.

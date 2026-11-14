@@ -95,7 +95,7 @@ inline constexpr double kEtaDeadband = 1.0e-12;
  * the face loop. Inputs are validated by the option parser/solver owner.
  */
 OPENSWMM_KERNEL_FN double momentumBlendFraction(double theta, double dt,
-                                                 double reference_step) noexcept {
+                                                double reference_step) noexcept {
     if (!(reference_step > 0.0))
         return 1.0 - theta;
     if (!(dt > 0.0) || theta == 1.0)

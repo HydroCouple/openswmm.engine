@@ -761,11 +761,10 @@ TEST(InletCaptureDeck, SurchargedCaptureNodeBackflowClosesContinuity) {
 // that row negative (-0.038 ac-ft before).
 TEST(InletCaptureDeck, PondingFvCaptureNodeKeepsItsOverflow) {
     std::string text = streetModel(false, /*undersized_trunk=*/true);
-    for (const auto& [from, to] :
-         {std::pair<std::string, std::string>{"FLOW_ROUTING         DYNWAVE",
-                                              "FLOW_ROUTING         FV"},
-          {"ALLOW_PONDING        NO", "ALLOW_PONDING        YES"},
-          {"MH1      90.0  1.0\n", "MH1      90.0  1.0  0  0  10\n"}}) {
+    for (const auto& [from, to] : {std::pair<std::string, std::string>{
+                                       "FLOW_ROUTING         DYNWAVE", "FLOW_ROUTING         FV"},
+                                   {"ALLOW_PONDING        NO", "ALLOW_PONDING        YES"},
+                                   {"MH1      90.0  1.0\n", "MH1      90.0  1.0  0  0  10\n"}}) {
         const auto at = text.find(from);
         ASSERT_NE(at, std::string::npos) << from;
         text.replace(at, from.size(), to);

@@ -262,8 +262,7 @@ struct ConduitData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&ConduitData::link_idx);
         f(&ConduitData::roughness);
         f(&ConduitData::length);
@@ -383,8 +382,7 @@ struct PumpData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&PumpData::link_idx);
         f(&PumpData::curve);
         f(&PumpData::init_state);
@@ -471,8 +469,7 @@ struct OrificeData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&OrificeData::link_idx);
         f(&OrificeData::orifice_type);
         f(&OrificeData::cd);
@@ -588,8 +585,7 @@ struct WeirData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&WeirData::link_idx);
         f(&WeirData::weir_type);
         f(&WeirData::cd);
@@ -693,8 +689,7 @@ struct OutletData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&OutletData::link_idx);
         f(&OutletData::outlet_type);
         f(&OutletData::crest_height);
@@ -924,9 +919,8 @@ struct LinkSubtypes {
                 }
             return false;
         };
-        drop(conduits, taken.conduit) || drop(pumps, taken.pump) ||
-            drop(orifices, taken.orifice) || drop(weirs, taken.weir) ||
-            drop(outlets, taken.outlet);
+        drop(conduits, taken.conduit) || drop(pumps, taken.pump) || drop(orifices, taken.orifice) ||
+            drop(weirs, taken.weir) || drop(outlets, taken.outlet);
 
         auto shift = [i](std::vector<int>& keys) {
             for (auto& k : keys)
@@ -965,12 +959,23 @@ struct LinkSubtypes {
             soa::put_row(tbl, std::min(taken.row, tbl.count()), std::move(row));
         };
         switch (taken.table) {
-        case 0: put(conduits, taken.conduit); break;
-        case 1: put(pumps, taken.pump); break;
-        case 2: put(orifices, taken.orifice); break;
-        case 3: put(weirs, taken.weir); break;
-        case 4: put(outlets, taken.outlet); break;
-        default: break;
+        case 0:
+            put(conduits, taken.conduit);
+            break;
+        case 1:
+            put(pumps, taken.pump);
+            break;
+        case 2:
+            put(orifices, taken.orifice);
+            break;
+        case 3:
+            put(weirs, taken.weir);
+            break;
+        case 4:
+            put(outlets, taken.outlet);
+            break;
+        default:
+            break;
         }
         rebuild_index(n);
     }

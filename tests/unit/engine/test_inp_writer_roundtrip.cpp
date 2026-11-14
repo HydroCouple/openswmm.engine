@@ -1604,12 +1604,13 @@ TEST(InpWriterRoundTrip, GuiAnnotationSectionsSurviveVerbatim) {
         << "padding inside the quotes was reformatted away";
 }
 
-
 TEST(InpWriterRoundTrip, NormalFlowNeitherIsWrittenAsLegacyNone) {
     SWMMEngine eng;
-    ASSERT_EQ(eng.open("warnerr_base.inp", data("_normal_flow_open.rpt").c_str(), nullptr), SWMM_OK);
-    ASSERT_EQ(swmm_options_set(reinterpret_cast<SWMM_Engine>(&eng), "NORMAL_FLOW_LIMITED", "NEITHER"),
+    ASSERT_EQ(eng.open("warnerr_base.inp", data("_normal_flow_open.rpt").c_str(), nullptr),
               SWMM_OK);
+    ASSERT_EQ(
+        swmm_options_set(reinterpret_cast<SWMM_Engine>(&eng), "NORMAL_FLOW_LIMITED", "NEITHER"),
+        SWMM_OK);
     const auto path = data("_normal_flow_none.inp");
     ASSERT_EQ(openswmm::inp_writer::writeInpFile(eng.context(), path), 0);
     const auto options = row(slurp(path), "OPTIONS", "NORMAL_FLOW_LIMITED");
@@ -1621,7 +1622,8 @@ TEST(InpWriterRoundTrip, NormalFlowNeitherIsWrittenAsLegacyNone) {
     swmm_close();
     EXPECT_EQ(legacy_rc, 0) << slurp(data("_normal_flow_legacy.rpt"));
     SWMMEngine reopened;
-    ASSERT_EQ(reopened.open(path.c_str(), data("_normal_flow_reopen.rpt").c_str(), nullptr), SWMM_OK);
+    ASSERT_EQ(reopened.open(path.c_str(), data("_normal_flow_reopen.rpt").c_str(), nullptr),
+              SWMM_OK);
     EXPECT_EQ(reopened.context().options.normal_flow_ltd, 3);
 }
 
@@ -1695,8 +1697,8 @@ TEST(InpWriterRoundTrip, UserFlagValuesAreWrittenSorted) {
         keys.push_back(c[0] + " " + c[1] + " " + c[2] + " " + c[3]);
     }
     const std::vector<std::string> expected = {
-        "LINK C1 ZONE 1",    "LINK C2 OWNER city",   "LINK C3 ZONE 2",       "NODE J3 OWNER city",
-        "NODE J3 ZONE 3",    "NODE J30 OWNER state", "NODE J4 OWNER county", "NODE J4 ZONE 4",
+        "LINK C1 ZONE 1", "LINK C2 OWNER city",   "LINK C3 ZONE 2",       "NODE J3 OWNER city",
+        "NODE J3 ZONE 3", "NODE J30 OWNER state", "NODE J4 OWNER county", "NODE J4 ZONE 4",
     };
     EXPECT_EQ(keys, expected);
 

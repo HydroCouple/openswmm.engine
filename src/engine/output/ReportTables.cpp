@@ -157,10 +157,10 @@ ReportTable nodeDepth(const SimulationContext& ctx, int only_row) {
             double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * u.len_ucf;
             double rpt_max = ctx.nodes.stat_max_rpt_depth[uj]; // already display units
             const double date = ctx.nodes.stat_max_depth_date[uj];
-            return makeRow(SWMM_SUMMARY_OBJECT_NODE, j, nodeTypeWord(nt),
-                           {avg_d, max_d, max_hgl, elapsedDays(date, ctx.options.report_start),
-                            rpt_max},
-                           date);
+            return makeRow(
+                SWMM_SUMMARY_OBJECT_NODE, j, nodeTypeWord(nt),
+                {avg_d, max_d, max_hgl, elapsedDays(date, ctx.options.report_start), rpt_max},
+                date);
         });
     return t;
 }
@@ -292,8 +292,8 @@ ReportTable nodeFlooding(const SimulationContext& ctx, int only_row) {
                 ponded = std::max(ponded, 0.0);
             }
             return makeRow(SWMM_SUMMARY_OBJECT_NODE, j, "",
-                           {hours, max_rate, elapsedDays(date, ctx.options.report_start),
-                            vol_mgal, ponded * u.len_ucf},
+                           {hours, max_rate, elapsedDays(date, ctx.options.report_start), vol_mgal,
+                            ponded * u.len_ucf},
                            date);
         });
     }
@@ -307,10 +307,10 @@ ReportTable storageVolume(const SimulationContext& ctx, int only_row) {
     const Units u(ctx);
     ReportTable t;
     t.title = "Storage Volume Summary";
-    t.columns = {{"Average Volume", u.svol},          {"Avg Pcnt Full", "%"},
-                 {"Evap Pcnt Loss", "%"},             {"Exfil Pcnt Loss", "%"},
-                 {"Maximum Volume", u.svol},          {"Max Pcnt Full", "%"},
-                 {"Time of Max Occurrence", "days"}, {"Maximum Outflow", u.flow}};
+    t.columns = {
+        {"Average Volume", u.svol},         {"Avg Pcnt Full", "%"},     {"Evap Pcnt Loss", "%"},
+        {"Exfil Pcnt Loss", "%"},           {"Maximum Volume", u.svol}, {"Max Pcnt Full", "%"},
+        {"Time of Max Occurrence", "days"}, {"Maximum Outflow", u.flow}};
     bool any_storage = false;
     for (int j = 0; j < ctx.n_nodes(); ++j)
         if (ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::STORAGE) {
@@ -365,10 +365,8 @@ ReportTable outfallLoading(const SimulationContext& ctx, int only_row) {
     const int np = ctx.n_pollutants();
     ReportTable t;
     t.title = "Outfall Loading Summary";
-    t.columns = {{"Flow Freq", "%"},
-                 {"Avg Flow", u.flow},
-                 {"Max Flow", u.flow},
-                 {"Total Volume", u.vol}};
+    t.columns = {
+        {"Flow Freq", "%"}, {"Avg Flow", u.flow}, {"Max Flow", u.flow}, {"Total Volume", u.vol}};
     // legacy LoadUnitsWords: lbs | kg, LogN for a count pollutant
     for (int p = 0; p < np; ++p)
         t.columns.push_back(
@@ -422,8 +420,7 @@ ReportTable outfallLoading(const SimulationContext& ctx, int only_row) {
                                : (mu == MassUnits::UG_PER_L) ? u.cont_mass / 1000.0
                                                              : 1.0;
             double load =
-                ((idx < ctx.nodes.stat_total_load.size()) ? ctx.nodes.stat_total_load[idx]
-                                                          : 0.0) *
+                ((idx < ctx.nodes.stat_total_load.size()) ? ctx.nodes.stat_total_load[idx] : 0.0) *
                 28.317 * mcf;
             pol_totals[static_cast<std::size_t>(p)] += load;
             if (mu == MassUnits::COUNTS_PER_L && load > 0.0)
@@ -497,13 +494,12 @@ ReportTable linkFlow(const SimulationContext& ctx, int only_row) {
             const bool pump = lt == static_cast<int>(LinkType::PUMP);
             const bool dummy =
                 !pump && (shape == XsectShape::DUMMY || lt == static_cast<int>(LinkType::OUTLET));
-            ReportRow r = makeRow(SWMM_SUMMARY_OBJECT_LINK, j,
-                                  dummy                              ? "DUMMY"
-                                  : shape == XsectShape::IRREGULAR   ? "CHANNEL"
-                                                                     : linkTypeWord(lt),
-                                  {mf, elapsedDays(date, ctx.options.report_start), mv,
-                                   flow_ratio, fill},
-                                  date);
+            ReportRow r = makeRow(
+                SWMM_SUMMARY_OBJECT_LINK, j,
+                dummy                            ? "DUMMY"
+                : shape == XsectShape::IRREGULAR ? "CHANNEL"
+                                                 : linkTypeWord(lt),
+                {mf, elapsedDays(date, ctx.options.report_start), mv, flow_ratio, fill}, date);
 
             // Pumps: max flow over the pump curve's largest flow (legacy
             // Link.qFull, link.c:1505-1516; 0 for an ideal pump).
@@ -690,8 +686,7 @@ ReportTable pumping(const SimulationContext& ctx, int only_row) {
             // The minimum flow prints as 0.0; start-ups are exact as a double.
             return makeRow(
                 SWMM_SUMMARY_OBJECT_LINK, j, "",
-                {pctUtilized, static_cast<double>(startUps), 0.0, avgFlow, max_flow, vol,
-                 energyKwh,
+                {pctUtilized, static_cast<double>(startUps), 0.0, avgFlow, max_flow, vol, energyKwh,
                  on_time > 0.0 ? ctx.links.stat_pump_off_curve_low[uj] / on_time * 100.0 : 0.0,
                  on_time > 0.0 ? ctx.links.stat_pump_off_curve_high[uj] / on_time * 100.0 : 0.0});
         });
@@ -703,8 +698,7 @@ ReportTable pumping(const SimulationContext& ctx, int only_row) {
 // LID Performance Summary — legacy writeLidPerformance()
 // wb_* fields are in ft depth; converted to in | mm.
 // ---------------------------------------------------------------------------
-ReportTable lidPerformance(const SimulationContext& ctx, const LidUsageStore& usage,
-                           int only_row) {
+ReportTable lidPerformance(const SimulationContext& ctx, const LidUsageStore& usage, int only_row) {
     const Units u(ctx);
     ReportTable t;
     t.title = "LID Performance Summary";

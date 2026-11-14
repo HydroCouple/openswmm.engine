@@ -907,12 +907,24 @@ TEST(Infil2DParallel, MixedMethodsAndOwnersRetainEverySerialHistoryBit) {
             }
             Infil2DRow row;
             switch (i % 6) {
-            case 0: row = rowOf(InfilModel::HORTON, 90, 10, 2, 4); break;
-            case 1: row = rowOf(InfilModel::MOD_HORTON, 90, 10, 2, 4); break;
-            case 2: row = rowOf(InfilModel::GREEN_AMPT, 80, 8, .3); break;
-            case 3: row = rowOf(InfilModel::MOD_GREEN_AMPT, 80, 8, .3); break;
-            case 4: row = rowOf(InfilModel::CURVE_NUM, 70, 0, 4); break;
-            case 5: row = rowOf(InfilModel::CONSTANT, 20); break;
+            case 0:
+                row = rowOf(InfilModel::HORTON, 90, 10, 2, 4);
+                break;
+            case 1:
+                row = rowOf(InfilModel::MOD_HORTON, 90, 10, 2, 4);
+                break;
+            case 2:
+                row = rowOf(InfilModel::GREEN_AMPT, 80, 8, .3);
+                break;
+            case 3:
+                row = rowOf(InfilModel::MOD_GREEN_AMPT, 80, 8, .3);
+                break;
+            case 4:
+                row = rowOf(InfilModel::CURVE_NUM, 70, 0, 4);
+                break;
+            case 5:
+                row = rowOf(InfilModel::CONSTANT, 20);
+                break;
             }
             if (i % 13 == 0)
                 row.has_method = false;
@@ -958,7 +970,8 @@ TEST(Infil2DParallel, MixedMethodsAndOwnersRetainEverySerialHistoryBit) {
             const auto bytes = archive.bytes();
             std::ofstream(std::filesystem::path(output) /
                               ("infil_threads_" + std::to_string(threads) + ".bin"),
-                          std::ios::binary).write(bytes.data(), bytes.size());
+                          std::ios::binary)
+                .write(bytes.data(), bytes.size());
         }
     }
 }

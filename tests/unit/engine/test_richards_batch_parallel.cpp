@@ -44,7 +44,8 @@ TEST(RichardsBatchParallel, CompleteHistoriesMatchSerialAcrossPackingAndGroupBou
     GTEST_SKIP() << "Worker control was not linked into this test; parallel coverage unavailable";
 #endif
     if (!threadinfo::ompAvailable())
-        GTEST_SKIP() << "Engine has no OpenMP support; original Richards tests cover serial kernels";
+        GTEST_SKIP()
+            << "Engine has no OpenMP support; original Richards tests cover serial kernels";
     for (int count : {0, 7, 8, 9, 63, 64, 65, 255, 256, 257, 1027})
         for (int budget : {0, 1, 2})
             for (bool mixed : {false, true}) {
@@ -73,7 +74,8 @@ TEST(RichardsBatchParallel, CompleteHistoriesMatchSerialAcrossPackingAndGroupBou
                     }
                     if (workers == 1)
                         serial = history.bytes();
-                    ASSERT_TRUE(history.bytes() == serial) << "Complete water/report history differs from serial";
+                    ASSERT_TRUE(history.bytes() == serial)
+                        << "Complete water/report history differs from serial";
                     save(name, workers, history.bytes());
                 }
             }
@@ -83,7 +85,8 @@ TEST(RichardsBatchParallel, FailureReportPrefixWaterRollbackAndRecoveryMatchSeri
     GTEST_SKIP() << "Worker control was not linked into this test; parallel coverage unavailable";
 #endif
     if (!threadinfo::ompAvailable())
-        GTEST_SKIP() << "Engine has no OpenMP support; original Richards tests cover serial kernels";
+        GTEST_SKIP()
+            << "Engine has no OpenMP support; original Richards tests cover serial kernels";
     for (int count : {257, 1027})
         for (int bad : {0, 65, count - 1, count - 2})
             for (int budget : {0, 1, 2}) {
@@ -106,7 +109,8 @@ TEST(RichardsBatchParallel, FailureReportPrefixWaterRollbackAndRecoveryMatchSeri
                         ASSERT_FALSE(r.ok);
                         ASSERT_FALSE(r.error.empty());
                     }
-                    ASSERT_TRUE(richards::test::water(columns) == before) << "Caller water changed on refusal";
+                    ASSERT_TRUE(richards::test::water(columns) == before)
+                        << "Caller water changed on refusal";
                     detail::CompletedSourceArchive history;
                     richards::test::record(history, columns, failed);
                     et = original_et;
@@ -115,7 +119,8 @@ TEST(RichardsBatchParallel, FailureReportPrefixWaterRollbackAndRecoveryMatchSeri
                     richards::test::record(history, columns, recovered);
                     if (workers == 1)
                         serial = history.bytes();
-                    ASSERT_TRUE(history.bytes() == serial) << "Complete water/report history differs from serial";
+                    ASSERT_TRUE(history.bytes() == serial)
+                        << "Complete water/report history differs from serial";
                     save(name, workers, history.bytes());
                 }
             }

@@ -74,38 +74,40 @@ void DefaultInputPlugin::registerContextSections(SimulationContext& ctx) {
     const auto& io = ctx.twod_io;
     if (r) {
         twoD::register2DSections(r->mesh(), r->options(), r->pendingBCRows(),
-            r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
-            r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(), registry_);
+                                 r->pendingEdgeConveyanceRows(), r->pendingInitialQualityRows(),
+                                 r->pendingInitialBedQualityRows(), r->pendingBoundaryQualityRows(),
+                                 registry_);
         twoD::registerGwTransportSections(r->gwTransport(), registry_);
         twoD::registerSurfaceQualitySections(r->surfaceQuality(), registry_);
         twoD::registerSubsurfaceSections(r->aquiferConfig(), r->aquiferNodeNames(),
-                                        r->aquiferLinkNames(), registry_);
+                                         r->aquiferLinkNames(), registry_);
         return;
     }
     if (io.options) {
         // Detached persistence contexts carry authored storage without a running router.
-        registry_.register_custom("2D_OPTIONS", [options = io.options](
-                                                  SimulationContext& model,
-                                                  const std::vector<std::string>& lines) {
-            for (const auto& line : lines) {
-                const auto tokens = input::Tokenizer::tokenize(line);
-                if (tokens.empty())
-                    continue;
-                const auto error = twoD::parse2DOptionsLine(tokens, *options, &model.warnings);
-                if (!error.empty()) {
-                    model.error_code = 5; // SWMM_ERR_PARSE
-                    model.error_message = "[2D] " + error + " — line: " + line;
-                    return;
+        registry_.register_custom(
+            "2D_OPTIONS", [options = io.options](SimulationContext& model,
+                                                 const std::vector<std::string>& lines) {
+                for (const auto& line : lines) {
+                    const auto tokens = input::Tokenizer::tokenize(line);
+                    if (tokens.empty())
+                        continue;
+                    const auto error = twoD::parse2DOptionsLine(tokens, *options, &model.warnings);
+                    if (!error.empty()) {
+                        model.error_code = 5; // SWMM_ERR_PARSE
+                        model.error_message = "[2D] " + error + " — line: " + line;
+                        return;
+                    }
                 }
-            }
-        });
+            });
     }
     if (io.gw)
         twoD::registerGwTransportSections(*io.gw, registry_);
     if (io.surface_quality)
         twoD::registerSurfaceQualitySections(*io.surface_quality, registry_);
     if (io.aquifer && io.aquifer_nodes && io.aquifer_links)
-        twoD::registerSubsurfaceSections(*io.aquifer, *io.aquifer_nodes, *io.aquifer_links, registry_);
+        twoD::registerSubsurfaceSections(*io.aquifer, *io.aquifer_nodes, *io.aquifer_links,
+                                         registry_);
 #else
     (void)ctx;
 #endif

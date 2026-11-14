@@ -441,8 +441,7 @@ struct GageData {
      *
      * @param[in] f Callable taking a pointer to a std::vector member of GageData.
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&GageData::rain_type);
         f(&GageData::source);
         f(&GageData::ts_index);

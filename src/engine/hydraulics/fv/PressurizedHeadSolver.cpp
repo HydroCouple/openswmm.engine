@@ -362,8 +362,8 @@ void PressurizedHeadSolver::prepare(const PressurizedView& v, double dt) {
         // section's crown area — both sides were reconstructed in it.
         const int nd = mesh.face_node[uf];
         const FvGeometry& gf = mesh.faceSection(
-            F.face, nd >= 0 && !v.node_pass->empty() && (*v.node_pass)[static_cast<std::size_t>(nd)] &&
-                        algActive(v, nd));
+            F.face, nd >= 0 && !v.node_pass->empty() &&
+                        (*v.node_pass)[static_cast<std::size_t>(nd)] && algActive(v, nd));
         const double ahat = std::min(0.5 * (L.a + R.a), std::max(gf.a_crown, k::kDryArea));
         const double Lf = mesh.face_dx[uf];
         F.cond = 0.0;

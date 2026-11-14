@@ -1244,7 +1244,8 @@ std::vector<std::string> resolveSubsurface(SimulationContext& ctx, const MeshDat
         int enrolled = 0;
         for (int ni = 0; ni < ctx.n_nodes(); ++ni) {
             const auto ui = static_cast<std::size_t>(ni);
-            if (named[ui] || (ui < ctx.nodes.type.size() && ctx.nodes.type[ui] == NodeType::OUTFALL))
+            if (named[ui] ||
+                (ui < ctx.nodes.type.size() && ctx.nodes.type[ui] == NodeType::OUTFALL))
                 continue;
             const int c = locateNode(ni);
             if (c < 0)

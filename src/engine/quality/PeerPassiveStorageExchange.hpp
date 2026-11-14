@@ -5,8 +5,15 @@
 #include "PassiveStorageExchange.hpp"
 #include <memory>
 
-namespace openswmm::twoD { struct SurfaceStateData; }
-namespace openswmm { class SWMMEngine; namespace twoD { class SurfaceRouter2D; } }
+namespace openswmm::twoD {
+struct SurfaceStateData;
+}
+namespace openswmm {
+class SWMMEngine;
+namespace twoD {
+class SurfaceRouter2D;
+}
+}
 namespace openswmm::quality {
 class PeerPassiveStorageProducer;
 struct PeerFundingToken;
@@ -15,10 +22,12 @@ class PeerFundingRecipient {
 public:
     PeerFundingRecipient(const PeerFundingRecipient&) = delete;
     PeerFundingRecipient& operator=(const PeerFundingRecipient&) = delete;
+
 private:
     friend class PeerPassiveStorageFunding;
     friend class PeerPassiveStorageProducer;
-    explicit PeerFundingRecipient(std::shared_ptr<PeerRecipientBinding> binding) : binding_(std::move(binding)) {}
+    explicit PeerFundingRecipient(std::shared_ptr<PeerRecipientBinding> binding)
+        : binding_(std::move(binding)) {}
     std::shared_ptr<PeerRecipientBinding> binding_;
 };
 struct PeerFundingView {
@@ -38,6 +47,7 @@ public:
     PeerFundingOffer(const PeerFundingOffer&) = delete;
     PeerFundingOffer& operator=(const PeerFundingOffer&) = delete;
     const PeerFundingView& view() const noexcept { return view_; }
+
 private:
     friend class PeerFundingReply;
     friend class PeerPassiveStorageFunding;
@@ -54,6 +64,7 @@ public:
     const PassiveStorageExchange::LiveProof& proof() const noexcept { return proof_; }
     const std::vector<PassiveStorageExchange::Row>& rows() const noexcept { return rows_; }
     const std::vector<NativeAmountSum>& spend() const noexcept { return spent_; }
+
 private:
     friend class PeerPassiveStorageCheckpoint;
     friend class PeerPassiveStorageFunding;
@@ -69,10 +80,12 @@ class PeerFundingAcknowledgement {
 public:
     PeerFundingAcknowledgement(const PeerFundingAcknowledgement&) = delete;
     PeerFundingAcknowledgement& operator=(const PeerFundingAcknowledgement&) = delete;
+
 private:
     friend class PeerPassiveStorageFunding;
     friend class PeerPassiveStorageProducer;
-    explicit PeerFundingAcknowledgement(std::shared_ptr<PeerFundingToken> token) : token_(std::move(token)) {}
+    explicit PeerFundingAcknowledgement(std::shared_ptr<PeerFundingToken> token)
+        : token_(std::move(token)) {}
     std::shared_ptr<PeerFundingToken> token_;
 };
 
@@ -89,8 +102,10 @@ public:
     using Identity = PassiveStorageExchange::PeerIdentity;
     using Phase = PassiveStorageExchange::Phase;
     static void validateProfile(const SimulationContext& context);
-    PeerPassiveStorageFunding(SimulationContext& network, std::uint64_t issuer, std::uint64_t recipient,
-        std::vector<PassiveStorageExchange::HydraulicPoint> points, double factor, std::size_t capacity = 4096);
+    PeerPassiveStorageFunding(SimulationContext& network, std::uint64_t issuer,
+                              std::uint64_t recipient,
+                              std::vector<PassiveStorageExchange::HydraulicPoint> points,
+                              double factor, std::size_t capacity = 4096);
     ~PeerPassiveStorageFunding();
     PeerPassiveStorageFunding(const PeerPassiveStorageFunding&) = delete;
     Identity identity() const noexcept { return identity_; }
@@ -100,16 +115,20 @@ public:
     void receive(QualitySolver& solver, double dt);
     std::unique_ptr<PeerFundingOffer> issue(Phase phase, double start_ms, double end_ms);
     void accept(std::unique_ptr<PeerFundingReply> reply);
-    void validateWaterBooking(const std::vector<double>& queue,const std::vector<double>& direct,double remaining) const;
+    void validateWaterBooking(const std::vector<double>& queue, const std::vector<double>& direct,
+                              double remaining) const;
     std::unique_ptr<PeerFundingAcknowledgement> confirmWater();
     void fail(const char* reason) noexcept;
     bool failed() const noexcept;
     bool unresolved() const noexcept;
-    const char* error() const noexcept { return failure_ ? failure_ : "Peer funding receiving failed."; }
+    const char* error() const noexcept {
+        return failure_ ? failure_ : "Peer funding receiving failed.";
+    }
     const PassiveStorageExchange& receipts() const noexcept { return book_; }
     const PeerFundingReply* returnedReply() const noexcept { return reply_.get(); }
-    std::array<double,2> lastWindow() const noexcept;
+    std::array<double, 2> lastWindow() const noexcept;
     bool reportPublishedAt(double elapsed_ms) const noexcept;
+
 private:
     friend class PeerPassiveStorageCheckpoint;
     void ready() const;
@@ -119,7 +138,8 @@ private:
     double factor_;
     std::size_t capacity_;
     PassiveStorageExchange book_{PassiveStorageArithmetic::RETAIN_EXACT_SLICES,
-        PassiveStorageLaw::CHANGING_VOLUME,PassiveStorageWaterArithmetic::RETAIN_AGGREGATES};
+                                 PassiveStorageLaw::CHANGING_VOLUME,
+                                 PassiveStorageWaterArithmetic::RETAIN_AGGREGATES};
     std::shared_ptr<PeerFundingToken> token_;
     std::shared_ptr<PeerRecipientBinding> recipient_;
     std::unique_ptr<PeerFundingReply> reply_;
@@ -132,7 +152,7 @@ class PeerPassiveStorageWindow {
 public:
     virtual ~PeerPassiveStorageWindow() = default;
     virtual std::unique_ptr<PeerFundingOffer> ready(PassiveStorageExchange::Phase phase,
-        double start_ms,double end_ms) = 0;
+                                                    double start_ms, double end_ms) = 0;
     virtual void returned(std::unique_ptr<PeerFundingReply> reply) = 0;
 };
 
@@ -140,25 +160,33 @@ class PeerPassiveStorageProducer final : public PassiveStorageAdmission {
 public:
     using Identity = PassiveStorageExchange::PeerIdentity;
     using Leg = PassiveStorageExchange::AppliedLeg;
-    PeerPassiveStorageProducer(const SimulationContext& surface, const twoD::SurfaceStateData& state,
-        std::unique_ptr<PeerFundingRecipient> recipient, double factor, std::size_t capacity = 4096);
+    PeerPassiveStorageProducer(const SimulationContext& surface,
+                               const twoD::SurfaceStateData& state,
+                               std::unique_ptr<PeerFundingRecipient> recipient, double factor,
+                               std::size_t capacity = 4096);
     ~PeerPassiveStorageProducer() override;
     PeerPassiveStorageProducer(const PeerPassiveStorageProducer&) = delete;
     void begin(std::unique_ptr<PeerFundingOffer> offer);
-    bool admit(std::size_t point, int cell, int node, double water, double mass,
-        double before, double volume_before, double offset, double duration, double withdrawal = 0) noexcept override;
+    bool admit(std::size_t point, int cell, int node, double water, double mass, double before,
+               double volume_before, double offset, double duration,
+               double withdrawal = 0) noexcept override;
     void applied(double actual_after, double volume_after) noexcept override;
     std::unique_ptr<PeerFundingReply> seal(const std::vector<double>& hydraulic_exchange_si);
     void acknowledge(std::unique_ptr<PeerFundingAcknowledgement> acknowledgement);
     void fail(const char* reason) noexcept override;
     bool failed() const noexcept override;
-    const char* error() const noexcept override { return failure_ ? failure_ : "Peer passive session failed."; }
-    bool owns(const twoD::SurfaceStateData* state) const noexcept override { return state==state_; }
+    const char* error() const noexcept override {
+        return failure_ ? failure_ : "Peer passive session failed.";
+    }
+    bool owns(const twoD::SurfaceStateData* state) const noexcept override {
+        return state == state_;
+    }
     const Leg& leg(std::size_t index) const { return legs_.at(index); }
     std::size_t legCount() const noexcept { return count_; }
     const Leg& attempted() const noexcept { return attempted_; }
     bool awaitingAcknowledgement() const noexcept { return awaiting_ack_; }
     const std::vector<NativeAmountSum>& spend() const noexcept { return spent_; }
+
 private:
     friend class PeerPassiveStorageCheckpoint;
     friend class openswmm::twoD::SurfaceRouter2D;
@@ -194,22 +222,25 @@ public:
         // and address-stable contexts/state through preparation and installation;
         // all numerical state must already be validated and installed without throws.
         void install() noexcept;
+
     private:
         friend class PeerPassiveStorageCheckpoint;
         friend class openswmm::SWMMEngine;
         const PeerPassiveStorageProducer& producer() const;
         const PeerPassiveStorageFunding& funding() const;
-        void rekey(std::uint64_t issuer, std::uint64_t recipient,
-                   std::uint64_t archived_issuer, std::uint64_t archived_recipient);
+        void rekey(std::uint64_t issuer, std::uint64_t recipient, std::uint64_t archived_issuer,
+                   std::uint64_t archived_recipient);
         struct State;
         explicit Prepared(std::unique_ptr<State> state);
         std::unique_ptr<State> state_;
     };
     static std::string save(const PeerPassiveStorageFunding&, const PeerPassiveStorageProducer&);
     static Prepared prepare(std::unique_ptr<PeerPassiveStorageFunding>& fresh_issuer,
-        std::unique_ptr<PeerPassiveStorageProducer>& fresh_producer,
-        const SimulationContext& incoming_network, const SimulationContext& incoming_surface,
-        const twoD::SurfaceStateData& incoming_state, const std::string& bytes);
+                            std::unique_ptr<PeerPassiveStorageProducer>& fresh_producer,
+                            const SimulationContext& incoming_network,
+                            const SimulationContext& incoming_surface,
+                            const twoD::SurfaceStateData& incoming_state, const std::string& bytes);
+
 private:
     friend class openswmm::SWMMEngine;
     static std::uint64_t recoveryIdentity();
@@ -218,6 +249,6 @@ private:
     struct Journal;
     static Journal journal(const PeerPassiveStorageFunding&);
     static void surface(const PeerPassiveStorageFunding&, const SimulationContext&,
-        const SimulationContext&, const twoD::SurfaceStateData&);
+                        const SimulationContext&, const twoD::SurfaceStateData&);
 };
 }

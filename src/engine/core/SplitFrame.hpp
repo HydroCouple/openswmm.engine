@@ -17,7 +17,8 @@ struct SplitFrame {
     MassUnits material_units = MassUnits::MG_PER_L;
     double material_factor = 0;
     std::vector<quality::PassiveStorageExchange::HydraulicPoint> material_points;
-    std::vector<double> material_concentration, material_full_volume, material_ponded_area, material_rate;
+    std::vector<double> material_concentration, material_full_volume, material_ponded_area,
+        material_rate;
     double start = 0, dt = 0, remaining = 0;
     std::string model;
     int node_count = 0;
@@ -29,7 +30,7 @@ struct SplitFrame {
     std::vector<int> source_groups;
     std::vector<double> source_rates, source_previous_rates;
     std::vector<double> source_pending_runoff, source_pending_drain;
-    std::array<double,6> source_totals{};
+    std::array<double, 6> source_totals{};
     double source_storage = 0;
     std::vector<int> lid_nodes;
     std::vector<int> mesh_richards_nodes;
@@ -41,23 +42,34 @@ struct SplitFrame {
     struct LidRow {
         int node = -1;
         LidNodeState state;
-        double head=0, depth=0, volume=0, full_volume=0, rpt_full_volume=0, lat_flow=0;
-        double evap_loss=0, exfil_loss=0;
+        double head = 0, depth = 0, volume = 0, full_volume = 0, rpt_full_volume = 0, lat_flow = 0;
+        double evap_loss = 0, exfil_loss = 0;
         static LidRow capture(const SimulationContext& ctx, int node) {
-            const int r=ctx.node_subtypes.storage_row(node);
-            const auto& st=ctx.node_subtypes.storages;
-            return {node,st.lid_state[r],ctx.nodes.head[node],ctx.nodes.depth[node],
-                ctx.nodes.volume[node],ctx.nodes.full_volume[node],ctx.nodes.rpt_full_volume[node],
-                ctx.nodes.lat_flow[node],st.evap_loss[r],st.exfil_loss[r]};
+            const int r = ctx.node_subtypes.storage_row(node);
+            const auto& st = ctx.node_subtypes.storages;
+            return {node,
+                    st.lid_state[r],
+                    ctx.nodes.head[node],
+                    ctx.nodes.depth[node],
+                    ctx.nodes.volume[node],
+                    ctx.nodes.full_volume[node],
+                    ctx.nodes.rpt_full_volume[node],
+                    ctx.nodes.lat_flow[node],
+                    st.evap_loss[r],
+                    st.exfil_loss[r]};
         }
         void publish(SimulationContext& ctx) const {
-            const int r=ctx.node_subtypes.storage_row(node);
-            auto& st=ctx.node_subtypes.storages;
-            st.lid_state[r]=state;
-            st.evap_loss[r]=evap_loss; st.exfil_loss[r]=exfil_loss;
-            ctx.nodes.head[node]=head; ctx.nodes.depth[node]=depth;
-            ctx.nodes.volume[node]=volume; ctx.nodes.full_volume[node]=full_volume;
-            ctx.nodes.rpt_full_volume[node]=rpt_full_volume; ctx.nodes.lat_flow[node]=lat_flow;
+            const int r = ctx.node_subtypes.storage_row(node);
+            auto& st = ctx.node_subtypes.storages;
+            st.lid_state[r] = state;
+            st.evap_loss[r] = evap_loss;
+            st.exfil_loss[r] = exfil_loss;
+            ctx.nodes.head[node] = head;
+            ctx.nodes.depth[node] = depth;
+            ctx.nodes.volume[node] = volume;
+            ctx.nodes.full_volume[node] = full_volume;
+            ctx.nodes.rpt_full_volume[node] = rpt_full_volume;
+            ctx.nodes.lat_flow[node] = lat_flow;
         }
     };
     std::vector<LidRow> lids;
@@ -81,7 +93,7 @@ struct SplitFrame {
             target.gw_gain_max = gain_limit;
         }
     } conduits;
-    std::array<double,16> groundwater_ledger{};
+    std::array<double, 16> groundwater_ledger{};
     std::vector<SplitGageSample> weather;
     std::vector<double> gage_rates;
     std::vector<int> gage_current;

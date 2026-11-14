@@ -210,14 +210,15 @@ struct InletUsageStore {
      */
     int count() const { return static_cast<int>(design_index.size()); }
 
-    std::vector<int> link_index;     ///< Host conduit link index (-1 for an inlet junction)
-    std::vector<int> node_host;      ///< Host inlet-junction node index (-1 for a conduit usage)
-    std::vector<int> design_index;   ///< Index into InletStore
-    std::vector<int> node_index;     ///< Capture (receiving / underdrain) node index
-    std::vector<int> num_inlets;     ///< Number of inlets per side
-    std::vector<int> placement;      ///< 0=auto, 1=on_grade, 2=on_sag
-    std::vector<double> pct_clogged; ///< Percent clogged (0..99), as authored; the solver uses 1 - pct/100
-    std::vector<double> flow_limit;  ///< Max capture flow per inlet (user flow units), 0=unlimited
+    std::vector<int> link_index;   ///< Host conduit link index (-1 for an inlet junction)
+    std::vector<int> node_host;    ///< Host inlet-junction node index (-1 for a conduit usage)
+    std::vector<int> design_index; ///< Index into InletStore
+    std::vector<int> node_index;   ///< Capture (receiving / underdrain) node index
+    std::vector<int> num_inlets;   ///< Number of inlets per side
+    std::vector<int> placement;    ///< 0=auto, 1=on_grade, 2=on_sag
+    std::vector<double>
+        pct_clogged; ///< Percent clogged (0..99), as authored; the solver uses 1 - pct/100
+    std::vector<double> flow_limit; ///< Max capture flow per inlet (user flow units), 0=unlimited
     std::vector<double> local_depress; ///< Local gutter depression (user length units)
     std::vector<double> local_width;   ///< Local depression width (user length units)
     std::vector<int>
@@ -266,16 +267,13 @@ struct InletUsageStore {
      *
      * @param[in] idx Row index; negative or out-of-range values skip each column independently.
      */
-    void erase_row(int idx) {
-        (void)soa::take_row(*this, idx);
-    }
+    void erase_row(int idx) { (void)soa::take_row(*this, idx); }
 
     /**
      * @brief Call @p f with a pointer to every per-row column member; the one list the erase and
      *        the delete record's take/put share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&InletUsageStore::link_index);
         f(&InletUsageStore::node_host);
         f(&InletUsageStore::design_index);

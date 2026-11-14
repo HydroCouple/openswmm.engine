@@ -169,14 +169,22 @@ public:
     /// Native lateral assembly must already have drained the captured span.
     /// Receiving failure is terminal for the exclusive receipt owner.
     void execute(SimulationContext& ctx, double dt, PassiveStorageExchange& exchange);
-    FvTransportWater& fvWater() noexcept {return fv_transport_.water;}
-    bool fvTransportAccepted() const noexcept {return fv_transport_.accepted();}
-    bool hasFvRetainedDryMass() const noexcept {return fv_transport_.hasRetainedDryMass();}
-    std::string fvDryRestartState(const SimulationContext& ctx) const {return fv_transport_.dryRestartState(ctx);}
-    std::string restoreFvDryRestart(SimulationContext& ctx,const std::string& blob,bool apply) {return fv_transport_.restoreDryRestart(ctx,blob,apply);}
-    std::vector<double> fvRetainedPollutantMass(const SimulationContext& ctx) const {return fv_transport_.retainedPollutantMass(ctx);}
-    std::vector<double> fvRetainedSpeciesMass(const SimulationContext& ctx) const {return fv_transport_.retainedSpeciesMass(ctx);}
-    void beginFvWindow() noexcept {fv_transport_.beginWindow();}
+    FvTransportWater& fvWater() noexcept { return fv_transport_.water; }
+    bool fvTransportAccepted() const noexcept { return fv_transport_.accepted(); }
+    bool hasFvRetainedDryMass() const noexcept { return fv_transport_.hasRetainedDryMass(); }
+    std::string fvDryRestartState(const SimulationContext& ctx) const {
+        return fv_transport_.dryRestartState(ctx);
+    }
+    std::string restoreFvDryRestart(SimulationContext& ctx, const std::string& blob, bool apply) {
+        return fv_transport_.restoreDryRestart(ctx, blob, apply);
+    }
+    std::vector<double> fvRetainedPollutantMass(const SimulationContext& ctx) const {
+        return fv_transport_.retainedPollutantMass(ctx);
+    }
+    std::vector<double> fvRetainedSpeciesMass(const SimulationContext& ctx) const {
+        return fv_transport_.retainedSpeciesMass(ctx);
+    }
+    void beginFvWindow() noexcept { fv_transport_.beginWindow(); }
 
     /**
      * @brief Stage 1 of execute() only: reset the assembly arrays and run the external-load

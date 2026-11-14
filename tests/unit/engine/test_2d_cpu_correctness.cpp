@@ -224,8 +224,7 @@ struct ExplicitInertialSolverTestAccess {
                 for (std::size_t e = 0; e < s.face_accum_.size() / stride; ++e)
                     rows[side].push_back(s.face_accum_[e * stride + side]);
         } else {
-            rows = {s.facc_L_, s.facc_R_, s.macc_x_L_, s.macc_x_R_,
-                    s.macc_y_L_, s.macc_y_R_};
+            rows = {s.facc_L_, s.facc_R_, s.macc_x_L_, s.macc_x_R_, s.macc_y_L_, s.macc_y_R_};
         }
         return rows;
     }
@@ -233,8 +232,9 @@ struct ExplicitInertialSolverTestAccess {
         auto rows = packetRows(s);
         for (std::size_t side = 0; side < rows.size(); ++side)
             for (std::size_t e = 0; e < rows[side].size(); ++e)
-                rows[side][e] = (e + side) % 7 == 0 ? -0.0 :
-                    (side % 2 ? 1.0 : -1.0) * (side + 1) * (e + 1) * 0x1p-30;
+                rows[side][e] = (e + side) % 7 == 0
+                                    ? -0.0
+                                    : (side % 2 ? 1.0 : -1.0) * (side + 1) * (e + 1) * 0x1p-30;
         if (nonfinite && !rows[0].empty())
             rows[0][0] = std::numeric_limits<double>::quiet_NaN();
         if constexpr (requires { s.face_accum_; }) {
@@ -242,9 +242,12 @@ struct ExplicitInertialSolverTestAccess {
                 for (std::size_t e = 0; e < rows[side].size(); ++e)
                     s.face_accum_[e * s.face_accum_stride_ + side] = rows[side][e];
         } else {
-            s.facc_L_ = rows[0]; s.facc_R_ = rows[1];
-            s.macc_x_L_ = rows[2]; s.macc_x_R_ = rows[3];
-            s.macc_y_L_ = rows[4]; s.macc_y_R_ = rows[5];
+            s.facc_L_ = rows[0];
+            s.facc_R_ = rows[1];
+            s.macc_x_L_ = rows[2];
+            s.macc_x_R_ = rows[3];
+            s.macc_y_L_ = rows[4];
+            s.macc_y_R_ = rows[5];
         }
         s.accumulators_pending_ = true;
     }
@@ -266,9 +269,7 @@ struct ExplicitInertialSolverTestAccess {
     static int macroSubsteps(const ExplicitInertialSolver& s) {
         return 1 << (s.cells_by_tier_.size() - 1);
     }
-    static double macroSpan(const ExplicitInertialSolver& s) {
-        return macroSubsteps(s) * s.dt0_;
-    }
+    static double macroSpan(const ExplicitInertialSolver& s) { return macroSubsteps(s) * s.dt0_; }
     static long macroFaceVisits(const ExplicitInertialSolver& s) {
         long count = 0;
         for (std::size_t k = 0; k < s.edges_by_tier_.size(); ++k)
@@ -300,30 +301,37 @@ struct ExplicitInertialSolverTestAccess {
                 return false;
             }
         }
-        return active == s.active_cells_ && cells == s.cells_by_tier_ &&
-               faces == s.active_faces_ && edges == s.edges_by_tier_;
+        return active == s.active_cells_ && cells == s.cells_by_tier_ && faces == s.active_faces_ &&
+               edges == s.edges_by_tier_;
     }
     static std::string orderedListsFrame(ExplicitInertialSolver& s) {
         openswmm::detail::CompletedSourceArchive a;
-        a(s.dt0_, s.cell_active_, s.active_cells_, s.tier_, s.cells_by_tier_,
-          s.face_tier_, s.edges_by_tier_, s.active_faces_, s.q_,
-          s.state_->volume, s.state_->depth, s.state_->head, s.qcx_, s.qcy_);
+        a(s.dt0_, s.cell_active_, s.active_cells_, s.tier_, s.cells_by_tier_, s.face_tier_,
+          s.edges_by_tier_, s.active_faces_, s.q_, s.state_->volume, s.state_->depth,
+          s.state_->head, s.qcx_, s.qcy_);
         return a.bytes();
     }
     // Internal-state framing is deliberately separate from public restart qualification.
     static std::pair<std::string, std::string> packetArchive(ExplicitInertialSolver& s) {
         openswmm::detail::CompletedSourceArchive a;
         std::string error;
-        try { s.checkpointState(a); }
-        catch (const std::exception& e) { error = e.what(); }
+        try {
+            s.checkpointState(a);
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
         return {a.bytes(), error};
     }
-    static std::pair<std::string, std::string> readPacketArchive(
-            ExplicitInertialSolver& s, std::string bytes) {
+    static std::pair<std::string, std::string> readPacketArchive(ExplicitInertialSolver& s,
+                                                                 std::string bytes) {
         openswmm::detail::CompletedSourceArchive a(std::move(bytes));
         std::string error;
-        try { s.checkpointState(a); a.finish(); }
-        catch (const std::exception& e) { error = e.what(); }
+        try {
+            s.checkpointState(a);
+            a.finish();
+        } catch (const std::exception& e) {
+            error = e.what();
+        }
         return {packetArchive(s).first, error};
     }
 
@@ -1450,11 +1458,13 @@ using Access = openswmm::twoD::ExplicitInertialSolverTestAccess;
 using namespace openswmm::twoD;
 
 inline void require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error(message);
+    if (!value)
+        throw std::runtime_error(message);
 }
 inline std::string encodeRows(Rows rows) {
     Archive a;
-    for (auto& row : rows) a.fixed(row);
+    for (auto& row : rows)
+        a.fixed(row);
     return a.bytes();
 }
 inline Rows unpack(const std::vector<double>& packed, std::size_t n, std::size_t stride) {
@@ -1477,8 +1487,13 @@ void packedFields(A& a, std::vector<double>& packed, std::size_t n, std::size_t 
     } else {
         // The baseline owns separate vectors. Preserve partial decode on a later exception.
         auto rows = unpack(packed, n, stride);
-        try { for (auto& row : rows) a.fixed(row); }
-        catch (...) { pack(rows, packed, stride); throw; }
+        try {
+            for (auto& row : rows)
+                a.fixed(row);
+        } catch (...) {
+            pack(rows, packed, stride);
+            throw;
+        }
         pack(rows, packed, stride);
     }
 }
@@ -1497,7 +1512,10 @@ inline void overwriteCount(std::string& bytes, std::size_t offset, uint64_t valu
     require(offset + sizeof(value) <= bytes.size(), "fixture count offset");
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
 }
-struct CodecResult { std::string records; std::size_t cases = 0; };
+struct CodecResult {
+    std::string records;
+    std::size_t cases = 0;
+};
 inline CodecResult codecHistory() {
     Archive history;
     std::string magic = "L1_FACE_CODEC_V1";
@@ -1506,9 +1524,14 @@ inline CodecResult codecHistory() {
     for (std::size_t stride : {2, 6})
         for (std::size_t n : {0, 1, 8, 33, 257}) {
             Rows source;
-            const uint64_t bits[] = {0, uint64_t(1) << 63, 0x3ff123456789abcdULL,
-                0xbfc23456789abcdeULL, 0x7ff8000000000042ULL, 0x7ff0000000000000ULL,
-                0xfff0000000000000ULL, 1};
+            const uint64_t bits[] = {0,
+                                     uint64_t(1) << 63,
+                                     0x3ff123456789abcdULL,
+                                     0xbfc23456789abcdeULL,
+                                     0x7ff8000000000042ULL,
+                                     0x7ff0000000000000ULL,
+                                     0xfff0000000000000ULL,
+                                     1};
             for (std::size_t side = 0; side < stride; ++side)
                 for (std::size_t e = 0; e < n; ++e)
                     source[side].push_back(std::bit_cast<double>(bits[(side + e) % 8]));
@@ -1525,10 +1548,13 @@ inline CodecResult codecHistory() {
                 offset += sizeof(uint64_t) + source[side].size() * sizeof(double);
             }
             std::vector<std::pair<std::string, std::string>> inputs = {
-                {"valid", wire}, {"empty", ""}, {"short-count", wire.substr(0, 7)},
+                {"valid", wire},
+                {"empty", ""},
+                {"short-count", wire.substr(0, 7)},
                 {"last-byte", wire.substr(0, wire.size() - 1)},
                 {"mid-field", wire.substr(0, 8 + (n ? 3 : 0))},
-                {"later-count", wire.substr(0, offsets[3] + 3)}, {"trailing", wire + 'x'}};
+                {"later-count", wire.substr(0, offsets[3] + 3)},
+                {"trailing", wire + 'x'}};
             for (std::size_t side : {0, 3, 5}) {
                 auto bad = wire;
                 overwriteCount(bad, offsets[side], source[side].size() + 1);
@@ -1542,31 +1568,44 @@ inline CodecResult codecHistory() {
             overwriteCount(oversized, 0, 64 * 1024 * 1024 / 8 + 1);
             inputs.emplace_back("oversized-budget", oversized);
             // Padding lets each no-element sequence pass its original count<=remaining test.
-            inputs.emplace_back("cumulative-budget", budgetPrefix() + wire + std::string(8192, '\0'));
+            inputs.emplace_back("cumulative-budget",
+                                budgetPrefix() + wire + std::string(8192, '\0'));
             for (auto [label, input] : inputs) {
                 Rows legacy = source;
-                for (auto& row : legacy) for (double& v : row) v = -1234.5;
+                for (auto& row : legacy)
+                    for (double& v : row)
+                        v = -1234.5;
                 std::vector<double> actual(n * stride + 2, -1234.5);
-                actual[n * stride] = -0.0; actual[n * stride + 1] = 0x1.1234p+30;
-                auto guards = std::string(reinterpret_cast<const char*>(actual.data() + n * stride), 16);
+                actual[n * stride] = -0.0;
+                actual[n * stride + 1] = 0x1.1234p+30;
+                auto guards =
+                    std::string(reinterpret_cast<const char*>(actual.data() + n * stride), 16);
                 Archive oldReader(input), newReader(input);
                 std::string oldError, newError;
                 const bool budget = label == "cumulative-budget";
                 try {
-                    if (budget) consumeBudget(oldReader);
-                    for (auto& row : legacy) oldReader.fixed(row);
+                    if (budget)
+                        consumeBudget(oldReader);
+                    for (auto& row : legacy)
+                        oldReader.fixed(row);
                     oldReader.finish();
-                } catch (const std::exception& e) { oldError = e.what(); }
+                } catch (const std::exception& e) {
+                    oldError = e.what();
+                }
                 try {
-                    if (budget) consumeBudget(newReader);
+                    if (budget)
+                        consumeBudget(newReader);
                     packedFields(newReader, actual, n, stride);
                     newReader.finish();
-                } catch (const std::exception& e) { newError = e.what(); }
+                } catch (const std::exception& e) {
+                    newError = e.what();
+                }
                 require(oldError == newError, "codec diagnostic differs: " + label);
                 auto decoded = unpack(actual, n, stride);
                 auto logical = encodeRows(decoded);
                 require(logical == encodeRows(legacy), "codec partial-prefix differs: " + label);
-                require(std::string(reinterpret_cast<const char*>(actual.data() + n * stride), 16) == guards,
+                require(std::string(reinterpret_cast<const char*>(actual.data() + n * stride),
+                                    16) == guards,
                         "untouched codec guard differs");
                 require((label == "valid") == oldError.empty(), "codec expected refusal differs");
                 history(stride, n, label, input, oldError, logical, guards);
@@ -1575,11 +1614,21 @@ inline CodecResult codecHistory() {
             // Write-budget behavior must match too, including already-written count headers.
             Archive oldWriter, newWriter;
             std::string oldError, newError;
-            try { consumeBudget(oldWriter); for (auto& row : source) oldWriter.fixed(row); }
-            catch (const std::exception& e) { oldError = e.what(); }
-            try { consumeBudget(newWriter); packedFields(newWriter, packed, n, stride); }
-            catch (const std::exception& e) { newError = e.what(); }
-            require(oldError == newError && oldWriter.bytes() == newWriter.bytes(), "write-budget differs");
+            try {
+                consumeBudget(oldWriter);
+                for (auto& row : source)
+                    oldWriter.fixed(row);
+            } catch (const std::exception& e) {
+                oldError = e.what();
+            }
+            try {
+                consumeBudget(newWriter);
+                packedFields(newWriter, packed, n, stride);
+            } catch (const std::exception& e) {
+                newError = e.what();
+            }
+            require(oldError == newError && oldWriter.bytes() == newWriter.bytes(),
+                    "write-budget differs");
             auto written = oldWriter.bytes();
             history(stride, n, oldError, written);
         }
@@ -1591,18 +1640,25 @@ inline CodecResult codecHistory() {
 inline MeshData faceGrid(int n, bool quad) {
     MeshData m;
     m.resize_vertices((n + 1) * (n + 1));
-    for (int y = 0; y <= n; ++y) for (int x = 0; x <= n; ++x) {
-        const int v = y * (n + 1) + x;
-        m.vx[v] = x; m.vy[v] = y;
-        m.vz[v] = 0.001 * x + 0.0007 * y;
-    }
+    for (int y = 0; y <= n; ++y)
+        for (int x = 0; x <= n; ++x) {
+            const int v = y * (n + 1) + x;
+            m.vx[v] = x;
+            m.vy[v] = y;
+            m.vz[v] = 0.001 * x + 0.0007 * y;
+        }
     m.resize_triangles((quad ? 1 : 2) * n * n);
     int c = 0;
-    for (int y = 0; y < n; ++y) for (int x = 0; x < n; ++x) {
-        int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, e = d + 1;
-        if (quad) m.set_quad(c++, a, b, e, d);
-        else { m.set_triangle(c++, a, b, e); m.set_triangle(c++, a, e, d); }
-    }
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+            int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, e = d + 1;
+            if (quad)
+                m.set_quad(c++, a, b, e, d);
+            else {
+                m.set_triangle(c++, a, b, e);
+                m.set_triangle(c++, a, e, d);
+            }
+        }
     buildMeshTopology(m);
     return m;
 }
@@ -1615,11 +1671,17 @@ inline SurfaceStateData faceState(const MeshData& m) {
 }
 inline SolverOptions2D faceOptions(Momentum2D mode, int threads) {
     SolverOptions2D options;
-    options.num_threads = threads; options.momentum = mode;
-    options.max_timestep = .005; options.lts_tiers = 4; options.cfl_number = .4;
+    options.num_threads = threads;
+    options.momentum = mode;
+    options.max_timestep = .005;
+    options.lts_tiers = 4;
+    options.cfl_number = .4;
     return options;
 }
-struct EngineResult { std::string records; std::size_t contexts = 0, stages = 0; };
+struct EngineResult {
+    std::string records;
+    std::size_t contexts = 0, stages = 0;
+};
 inline EngineResult engineHistory() {
     Archive header;
     std::string magic = "L1_FACE_ENGINE_V1";
@@ -1632,117 +1694,127 @@ inline EngineResult engineHistory() {
         result.records += frame.bytes();
     };
     ExplicitInertialSolver solver;
-    for (int threads : {1, 4, 8}) for (bool quad : {false, true})
-        for (int n : {1, 8, 2, 33, 1})
-            for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
-                              Momentum2D::DIFFUSIVE_WAVE}) {
-                auto mesh = faceGrid(n, quad);
-                auto state = faceState(mesh);
-                auto options = faceOptions(mode, threads);
-                if (n == 33) {
-                    options.max_timestep = 1;
-                    for (int i = 0; i < mesh.n_cells(); ++i)
-                        state.volume[i] = (mesh.tri_cx[i] < 4 ? .3 : .0041) * mesh.tri_area[i];
+    for (int threads : {1, 4, 8})
+        for (bool quad : {false, true})
+            for (int n : {1, 8, 2, 33, 1})
+                for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
+                                  Momentum2D::DIFFUSIVE_WAVE}) {
+                    auto mesh = faceGrid(n, quad);
+                    auto state = faceState(mesh);
+                    auto options = faceOptions(mode, threads);
+                    if (n == 33) {
+                        options.max_timestep = 1;
+                        for (int i = 0; i < mesh.n_cells(); ++i)
+                            state.volume[i] = (mesh.tri_cx[i] < 4 ? .3 : .0041) * mesh.tri_area[i];
+                    }
+                    solver.initialize(mesh, state, options);
+                    ++result.contexts;
+                    auto capture = [&](std::string label, ExplicitInertialSolver& owner,
+                                       SurfaceStateData& canonical, std::string refusal = {}) {
+                        auto rows = Access::packetRows(owner);
+                        Archive surface;
+                        checkpoint::meshState(surface, canonical);
+                        auto [wire, error] = Access::livePackets(owner)
+                                                 ? Access::packetArchive(owner)
+                                                 : std::pair<std::string, std::string>{};
+                        auto logical = encodeRows(rows);
+                        auto canonicalBytes = surface.bytes();
+                        Archive record;
+                        uint8_t kind = 0;
+                        record(kind, threads, quad, n, mode, label, logical, canonicalBytes, wire,
+                               error, refusal);
+                        append(record.bytes());
+                        ++result.stages;
+                    };
+                    capture("initialize", solver, state);
+                    Access::rebuild(solver);
+                    capture("prepared", solver, state);
+                    Access::seedPackets(solver);
+                    capture("six-lane-seed", solver, state);
+                    const auto untouched = Access::packetArchive(solver);
+                    {
+                        auto trial = solver;
+                        auto trialState = state;
+                        Access::rebindFixtureState(trial, trialState);
+                        Access::settle(trial);
+                        capture("copy-settle", trial, trialState);
+                    }
+                    require(Access::packetArchive(solver) == untouched,
+                            "copy changed original packets");
+                    Access::settle(solver);
+                    capture("settle", solver, state);
+                    Access::firePackets(solver, .0001);
+                    Access::firePackets(solver, .0002);
+                    capture("two-firings-pending", solver, state);
+                    Access::rebuild(solver);
+                    capture("rebuild-settles", solver, state);
+                    double firstEnd = .02;
+                    const auto before = solver.run_stats();
+                    long expectedFaces = 0;
+                    int expectedSubsteps = 0;
+                    if (n == 33) {
+                        require(Access::hasTierMix(solver), "fixture has no heterogeneous tiers");
+                        Access::refresh(solver);
+                        firstEnd = Access::macroSpan(solver);
+                        expectedFaces = Access::macroFaceVisits(solver);
+                        expectedSubsteps = Access::macroSubsteps(solver);
+                    }
+                    solver.advance(0, firstEnd);
+                    if (n == 33) {
+                        const auto after = solver.run_stats();
+                        require(after.nsteps - before.nsteps == expectedSubsteps,
+                                "fixture did not run exactly one full macrocycle");
+                        require(after.nrhs - before.nrhs == expectedFaces,
+                                "fixture face visits do not follow heterogeneous tier cadence");
+                    }
+                    capture("first-advance", solver, state);
+                    const double end = firstEnd + .021;
+                    solver.advance(firstEnd, end);
+                    capture("second-advance", solver, state);
+                    const auto clean = Access::packetArchive(solver);
+                    require(clean.second.empty(),
+                            "accepted internal state archive refused: " + clean.second);
+                    {
+                        auto trial = solver;
+                        auto trialState = state;
+                        Access::rebindFixtureState(trial, trialState);
+                        auto truncated = clean.first.substr(0, clean.first.size() - 1);
+                        auto refused = Access::readPacketArchive(trial, truncated);
+                        require(!refused.second.empty(), "truncated internal state accepted");
+                        capture("private-refusal-trial", trial, trialState, refused.second);
+                        auto restored = Access::readPacketArchive(trial, clean.first);
+                        require(restored.second.empty(), "exact private restore refused");
+                        require(Access::packetArchive(trial) == clean,
+                                "exact private restore differs");
+                        capture("private-restore", trial, trialState);
+                    }
+                    require(Access::packetArchive(solver) == clean,
+                            "private refusal changed original");
+                    Access::seedPackets(solver, true);
+                    capture("nonfinite-refusal", solver, state);
+                    if (Access::edges(solver).ne > 0)
+                        require(Access::packetArchive(solver).second ==
+                                    "Nonfinite CPU checkpoint state.",
+                                "nonfinite packet diagnostic differs");
+                    solver.reinitialize(end);
+                    capture("reinitialize-drops", solver, state);
+                    std::fill(state.volume.begin(), state.volume.end(), 0.0);
+                    solver.reinitialize(
+                        end); // authoritative external volume edit reconstructs depths
+                    Access::seedPackets(solver);
+                    Access::rebuildAt(solver, end);
+                    require(Access::allCellsInactive(solver),
+                            "all-dry fixture retained active cells");
+                    for (const auto& row : Access::packetRows(solver))
+                        for (double value : row)
+                            require(value == 0, "deactivation stranded a packet");
+                    capture("deactivate-rebuild", solver, state);
+                    Access::seedPackets(solver);
+                    solver.finalize();
+                    capture("finalize-settles-clears", solver, state);
+                    for (const auto& row : Access::packetRows(solver))
+                        require(row.empty(), "finalize retained packets");
                 }
-                solver.initialize(mesh, state, options);
-                ++result.contexts;
-                auto capture = [&](std::string label, ExplicitInertialSolver& owner,
-                                   SurfaceStateData& canonical, std::string refusal = {}) {
-                    auto rows = Access::packetRows(owner);
-                    Archive surface;
-                    checkpoint::meshState(surface, canonical);
-                    auto [wire, error] = Access::livePackets(owner) ? Access::packetArchive(owner) :
-                        std::pair<std::string, std::string>{};
-                    auto logical = encodeRows(rows);
-                    auto canonicalBytes = surface.bytes();
-                    Archive record;
-                    uint8_t kind = 0;
-                    record(kind, threads, quad, n, mode, label, logical, canonicalBytes,
-                           wire, error, refusal);
-                    append(record.bytes());
-                    ++result.stages;
-                };
-                capture("initialize", solver, state);
-                Access::rebuild(solver);
-                capture("prepared", solver, state);
-                Access::seedPackets(solver);
-                capture("six-lane-seed", solver, state);
-                const auto untouched = Access::packetArchive(solver);
-                {
-                    auto trial = solver;
-                    auto trialState = state;
-                    Access::rebindFixtureState(trial, trialState);
-                    Access::settle(trial);
-                    capture("copy-settle", trial, trialState);
-                }
-                require(Access::packetArchive(solver) == untouched, "copy changed original packets");
-                Access::settle(solver);
-                capture("settle", solver, state);
-                Access::firePackets(solver, .0001);
-                Access::firePackets(solver, .0002);
-                capture("two-firings-pending", solver, state);
-                Access::rebuild(solver);
-                capture("rebuild-settles", solver, state);
-                double firstEnd = .02;
-                const auto before = solver.run_stats();
-                long expectedFaces = 0;
-                int expectedSubsteps = 0;
-                if (n == 33) {
-                    require(Access::hasTierMix(solver), "fixture has no heterogeneous tiers");
-                    Access::refresh(solver);
-                    firstEnd = Access::macroSpan(solver);
-                    expectedFaces = Access::macroFaceVisits(solver);
-                    expectedSubsteps = Access::macroSubsteps(solver);
-                }
-                solver.advance(0, firstEnd);
-                if (n == 33) {
-                    const auto after = solver.run_stats();
-                    require(after.nsteps - before.nsteps == expectedSubsteps,
-                            "fixture did not run exactly one full macrocycle");
-                    require(after.nrhs - before.nrhs == expectedFaces,
-                            "fixture face visits do not follow heterogeneous tier cadence");
-                }
-                capture("first-advance", solver, state);
-                const double end = firstEnd + .021;
-                solver.advance(firstEnd, end);
-                capture("second-advance", solver, state);
-                const auto clean = Access::packetArchive(solver);
-                require(clean.second.empty(), "accepted internal state archive refused: " + clean.second);
-                {
-                    auto trial = solver;
-                    auto trialState = state;
-                    Access::rebindFixtureState(trial, trialState);
-                    auto truncated = clean.first.substr(0, clean.first.size() - 1);
-                    auto refused = Access::readPacketArchive(trial, truncated);
-                    require(!refused.second.empty(), "truncated internal state accepted");
-                    capture("private-refusal-trial", trial, trialState, refused.second);
-                    auto restored = Access::readPacketArchive(trial, clean.first);
-                    require(restored.second.empty(), "exact private restore refused");
-                    require(Access::packetArchive(trial) == clean, "exact private restore differs");
-                    capture("private-restore", trial, trialState);
-                }
-                require(Access::packetArchive(solver) == clean, "private refusal changed original");
-                Access::seedPackets(solver, true);
-                capture("nonfinite-refusal", solver, state);
-                if (Access::edges(solver).ne > 0)
-                    require(Access::packetArchive(solver).second == "Nonfinite CPU checkpoint state.",
-                            "nonfinite packet diagnostic differs");
-                solver.reinitialize(end);
-                capture("reinitialize-drops", solver, state);
-                std::fill(state.volume.begin(), state.volume.end(), 0.0);
-                solver.reinitialize(end); // authoritative external volume edit reconstructs depths
-                Access::seedPackets(solver);
-                Access::rebuildAt(solver, end);
-                require(Access::allCellsInactive(solver), "all-dry fixture retained active cells");
-                for (const auto& row : Access::packetRows(solver))
-                    for (double value : row) require(value == 0, "deactivation stranded a packet");
-                capture("deactivate-rebuild", solver, state);
-                Access::seedPackets(solver);
-                solver.finalize();
-                capture("finalize-settles-clears", solver, state);
-                for (const auto& row : Access::packetRows(solver))
-                    require(row.empty(), "finalize retained packets");
-            }
     Archive footer;
     uint8_t kind = 1;
     footer(kind, result.contexts, result.stages);
@@ -1776,8 +1848,7 @@ namespace ordered_lists_fixture {
 using Access = openswmm::twoD::ExplicitInertialSolverTestAccess;
 void seed(const MeshData& mesh, SurfaceStateData& state, int stage) {
     for (int i = 0; i < mesh.n_cells(); ++i) {
-        const bool wet = stage % 4 == 0 || stage % 4 == 3 ||
-                         (stage % 4 == 1 && mesh.tri_cx[i] < 2);
+        const bool wet = stage % 4 == 0 || stage % 4 == 3 || (stage % 4 == 1 && mesh.tri_cx[i] < 2);
         state.volume[i] = wet ? (.01 + (i % 5) * .02) * mesh.tri_area[i] : 0.0;
     }
 }
@@ -1816,7 +1887,8 @@ void history(std::ostream* output) {
                     if ((stage == 0 || stage == 3) && !Access::hasTierMix(solver))
                         throw std::runtime_error("fixture did not exercise multiple tiers");
                     if (!Access::orderedLists(solver))
-                        throw std::runtime_error("ordered scheduler lists differ from serial oracle");
+                        throw std::runtime_error(
+                            "ordered scheduler lists differ from serial oracle");
                     if (output)
                         capture(*output, Access::orderedListsFrame(solver));
                 }

@@ -5,10 +5,8 @@
 #include <openswmm/engine/openswmm_trace.h>
 #include <vector>
 
-namespace
-{
-struct Fixture
-{
+namespace {
+struct Fixture {
     SWMM_Trace h = nullptr;
     std::vector<SWMM_TraceNodeAverage> na;
     std::vector<SWMM_TraceLinkAverage> la;
@@ -16,20 +14,17 @@ struct Fixture
     SWMM_TraceSummary summary{};
     Fixture(std::initializer_list<SWMM_TraceNodeInput> nodes,
             std::initializer_list<SWMM_TraceLinkInput> links)
-        : na(nodes.size()), la(links.size()), nv(nodes.size()), lv(links.size())
-    {
+        : na(nodes.size()), la(links.size()), nv(nodes.size()), lv(links.size()) {
         EXPECT_EQ(0, swmm_trace_create(nodes.begin(), int(nodes.size()), links.begin(),
                                        int(links.size()), nullptr, &h));
     }
     ~Fixture() { swmm_trace_close(h); }
-    void flow(int i, double q, double velocity = 1)
-    {
+    void flow(int i, double q, double velocity = 1) {
         la[i].net_flow_m3s = q;
         la[i].absolute_flow_m3s = std::abs(q);
         la[i].absolute_velocity_mps = velocity;
     }
-    void run(int seed = 0, int dir = 0)
-    {
+    void run(int seed = 0, int dir = 0) {
         ASSERT_EQ(0, swmm_trace_set_averages(h, na.data(), int(na.size()), la.data(),
                                              int(la.size()), nullptr));
         ASSERT_EQ(0, swmm_trace_estimate(h, dir, seed, nv.data(), int(nv.size()), lv.data(),
@@ -37,8 +32,7 @@ struct Fixture
             << swmm_trace_error(h);
     }
 };
-TEST(FlowTrace, SplitAndConfluence)
-{
+TEST(FlowTrace, SplitAndConfluence) {
     Fixture f({{"S", 0, 0}, {"A", 0, 0}, {"B", 0, 0}, {"O", 1, 0}},
               {{"SA", 0, 1, 0, 10}, {"SB", 0, 2, 0, 20}, {"AO", 1, 3, 0, 10}, {"BO", 2, 3, 0, 20}});
     f.flow(0, 6);
@@ -58,8 +52,7 @@ TEST(FlowTrace, SplitAndConfluence)
     EXPECT_NEAR(1, f.summary.terminal[SWMM_TRACE_SOURCE], 1e-12);
     EXPECT_NEAR(28, f.nv[0].time_s, 1e-12);
 }
-TEST(FlowTrace, StorageDelayAndLocalSource)
-{
+TEST(FlowTrace, StorageDelayAndLocalSource) {
     Fixture f({{"A", 0, 0}, {"Tank", 2, 0}, {"O", 1, 0}},
               {{"AT", 0, 1, 0, 10}, {"TO", 1, 2, 0, 20}});
     f.flow(0, 6);
@@ -75,8 +68,7 @@ TEST(FlowTrace, StorageDelayAndLocalSource)
     EXPECT_NEAR(40, f.nv[0].time_s, 1e-12);
     EXPECT_NEAR(30, f.nv[1].time_s, 1e-12);
 }
-TEST(FlowTrace, LeakyCycleCountsRepeatPassages)
-{
+TEST(FlowTrace, LeakyCycleCountsRepeatPassages) {
     Fixture f({{"S", 0, 0}, {"A", 0, 0}, {"O", 1, 0}},
               {{"SA", 0, 1, 0, 4}, {"AS", 1, 0, 0, 6}, {"AO", 1, 2, 0, 2}});
     f.flow(0, 2);
@@ -91,8 +83,7 @@ TEST(FlowTrace, LeakyCycleCountsRepeatPassages)
     EXPECT_NEAR(16, f.nv[2].time_s, 1e-9);
     EXPECT_NEAR(10, f.nv[0].time_s, 1e-9);
 }
-TEST(FlowTrace, ClosedCycleTerminatesAsTrapped)
-{
+TEST(FlowTrace, ClosedCycleTerminatesAsTrapped) {
     Fixture f({{"S", 0, 0}, {"A", 0, 0}, {"B", 0, 0}},
               {{"SA", 0, 1, 0, 1}, {"AB", 1, 2, 0, 1}, {"BA", 2, 1, 0, 1}});
     f.flow(0, 1);
@@ -104,8 +95,7 @@ TEST(FlowTrace, ClosedCycleTerminatesAsTrapped)
     EXPECT_TRUE(std::isnan(f.nv[1].time_s));
     EXPECT_TRUE(f.lv[1].flags & SWMM_TRACE_TRAPPED);
 }
-TEST(FlowTrace, UnknownPathRetainsFlowAndReportsCoverage)
-{
+TEST(FlowTrace, UnknownPathRetainsFlowAndReportsCoverage) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"known", 0, 1, 0, 10}, {"unknown", 0, 1, 0, 10}});
     f.flow(0, 6, 1);
     f.flow(1, 4, 0);
@@ -116,8 +106,7 @@ TEST(FlowTrace, UnknownPathRetainsFlowAndReportsCoverage)
     EXPECT_TRUE(f.nv[1].flags & SWMM_TRACE_PARTIAL_TIME);
     EXPECT_TRUE(std::isnan(f.lv[1].time_s));
 }
-TEST(FlowTrace, ReversalUsesNetNotGrossWeight)
-{
+TEST(FlowTrace, ReversalUsesNetNotGrossWeight) {
     Fixture f({{"S", 0, 0}, {"O1", 1, 0}, {"O2", 1, 0}},
               {{"reverse", 1, 0, 0, 10}, {"forward", 0, 2, 0, 10}});
     f.flow(0, -1);
@@ -130,8 +119,7 @@ TEST(FlowTrace, ReversalUsesNetNotGrossWeight)
     EXPECT_NEAR(10, f.lv[0].from_time_s, 1e-12);
     EXPECT_NEAR(0, f.lv[0].to_time_s, 1e-12);
 }
-TEST(FlowTrace, OverflowAndWithdrawalAbsorbSeparatelyFromLinks)
-{
+TEST(FlowTrace, OverflowAndWithdrawalAbsorbSeparatelyFromLinks) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 10}});
     f.flow(0, 6);
     f.na[0].withdrawal_m3s = 2;
@@ -140,8 +128,7 @@ TEST(FlowTrace, OverflowAndWithdrawalAbsorbSeparatelyFromLinks)
     EXPECT_NEAR(.6, f.lv[0].ratio, 1e-12);
     EXPECT_NEAR(.4, f.summary.terminal[SWMM_TRACE_LOSS], 1e-12);
 }
-TEST(FlowTrace, PondedOverflowIsNotIrreversibleLoss)
-{
+TEST(FlowTrace, PondedOverflowIsNotIrreversibleLoss) {
     Fixture f({{"S", 0, SWMM_TRACE_PONDING}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 10}});
     f.flow(0, 6);
     f.na[0].overflow_m3s = 4;
@@ -150,8 +137,7 @@ TEST(FlowTrace, PondedOverflowIsNotIrreversibleLoss)
     EXPECT_NEAR(0, f.summary.terminal[SWMM_TRACE_LOSS], 1e-12);
     EXPECT_TRUE(f.nv[0].flags & SWMM_TRACE_APPROXIMATE);
 }
-TEST(FlowTrace, ArbitraryDryNodeAndOutfall)
-{
+TEST(FlowTrace, ArbitraryDryNodeAndOutfall) {
     Fixture f({{"dry", 0, 0}, {"out", 1, 0}}, {});
     f.run();
     EXPECT_NEAR(1, f.summary.terminal[SWMM_TRACE_RETAINED], 1e-12);
@@ -160,15 +146,14 @@ TEST(FlowTrace, ArbitraryDryNodeAndOutfall)
     EXPECT_NEAR(1, f.summary.terminal[SWMM_TRACE_OUTFALL], 1e-12);
     EXPECT_DOUBLE_EQ(0, f.nv[1].time_s);
 }
-TEST(FlowTrace, ValidationAndCancellation)
-{
+TEST(FlowTrace, ValidationAndCancellation) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 1}});
     f.flow(0, 1);
     f.run();
     EXPECT_EQ(SWMM_TRACE_INVALID, swmm_trace_estimate(f.h, 0, 8, f.nv.data(), 2, f.lv.data(), 1,
                                                       &f.summary, nullptr, nullptr));
     EXPECT_EQ(SWMM_TRACE_INVALID, swmm_trace_get_averages(f.h, f.na.data(), 1, nullptr, 0));
-    auto cancel = [](double, const char *, void *) { return 1; };
+    auto cancel = [](double, const char*, void*) { return 1; };
     EXPECT_EQ(SWMM_TRACE_CANCELLED, swmm_trace_estimate(f.h, 0, 0, f.nv.data(), 2, f.lv.data(), 1,
                                                         &f.summary, cancel, nullptr));
 }
@@ -179,21 +164,19 @@ TEST(FlowTrace, ValidationAndCancellation)
 #include <fstream>
 #include <iterator>
 #include <string>
-namespace
-{
+namespace {
 // A small public-format .out fixture gives exact integrals at unequal report
 // intervals and exercises ID remapping independently of simulation dynamics.
-std::string writeOutput(const std::string &name, int units = 3, bool invalidTime = false,
+std::string writeOutput(const std::string& name, int units = 3, bool invalidTime = false,
                         int count = 3, int extra = 0, bool noLinks = false,
-                        bool missingOverflow = false)
-{
+                        bool missingOverflow = false) {
     const auto folder = std::filesystem::path(TRACE_TEST_OUTPUT);
     std::filesystem::create_directories(folder);
     auto path = (folder / name).string();
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    auto integer = [&](int32_t v) { file.write(reinterpret_cast<const char *>(&v), 4); };
-    auto real = [&](float v) { file.write(reinterpret_cast<const char *>(&v), 4); };
-    auto date = [&](double v) { file.write(reinterpret_cast<const char *>(&v), 8); };
+    auto integer = [&](int32_t v) { file.write(reinterpret_cast<const char*>(&v), 4); };
+    auto real = [&](float v) { file.write(reinterpret_cast<const char*>(&v), 4); };
+    auto date = [&](double v) { file.write(reinterpret_cast<const char*>(&v), 8); };
     const int subcatchments = extra ? 1 : 0;
     for (auto n : {516114522, 60000, units, subcatchments, 2, noLinks ? 0 : 1, extra})
         integer(n);
@@ -206,8 +189,7 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
         ids.push_back("SO");
     for (int i = 0; i < extra; ++i)
         ids.push_back("P" + std::to_string(i));
-    for (const std::string &id : ids)
-    {
+    for (const std::string& id : ids) {
         integer(int(id.size()));
         file.write(id.data(), id.size());
     }
@@ -219,8 +201,7 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     integer(3);
     for (int i = 0; i < 3; ++i)
         integer(i);
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         integer(i == 0 ? 1 : 0);
         real(0);
         real(10);
@@ -228,14 +209,13 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     integer(5);
     for (int i = 0; i < 5; ++i)
         integer(i);
-    if (!noLinks)
-    {
+    if (!noLinks) {
         integer(0);
         for (int i = 0; i < 4; ++i)
             real(1);
     }
-    for (int vars : {subcatchments ? 8 + extra : 0, 6 + extra - int(missingOverflow), 5 + extra, 0})
-    {
+    for (int vars :
+         {subcatchments ? 8 + extra : 0, 6 + extra - int(missingOverflow), 5 + extra, 0}) {
         integer(vars);
         for (int i = 0; i < vars; ++i)
             integer(i);
@@ -245,14 +225,12 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
     int outputPosition = int(file.tellp());
     const double times[] = {1. / 24, 2. / 24, 4. / 24};
     const float flows[] = {-2, 2, 6}, volumes[] = {10, 20, 40};
-    for (int i = 0; i < count; ++i)
-    {
+    for (int i = 0; i < count; ++i) {
         date(45000 + (invalidTime ? times[0] : times[i]));
         if (subcatchments)
             for (int k = 0; k < 8 + extra; ++k)
                 real(99);
-        for (int node = 0; node < 2; ++node)
-        {
+        for (int node = 0; node < 2; ++node) {
             real(0);
             real(0);
             real(node ? volumes[i] : 0);
@@ -263,8 +241,7 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
             for (int k = 0; k < extra; ++k)
                 real(std::numeric_limits<float>::quiet_NaN());
         }
-        if (!noLinks)
-        {
+        if (!noLinks) {
             real(flows[i]);
             real(0);
             real(flows[i]);
@@ -278,8 +255,7 @@ std::string writeOutput(const std::string &name, int units = 3, bool invalidTime
         integer(n);
     return path;
 }
-TEST(FlowTraceReports, BlockReadsSkipSubcatchmentsAndUnusedPollutantColumns)
-{
+TEST(FlowTraceReports, BlockReadsSkipSubcatchmentsAndUnusedPollutantColumns) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
     const auto baseline = writeOutput("block-baseline.out");
     ASSERT_EQ(0, swmm_trace_prepare(f.h, baseline.c_str(), nullptr, nullptr, nullptr, nullptr));
@@ -289,8 +265,7 @@ TEST(FlowTraceReports, BlockReadsSkipSubcatchmentsAndUnusedPollutantColumns)
     const auto wide = writeOutput("block-pollutants.out", 3, false, 3, 4);
     ASSERT_EQ(0, swmm_trace_prepare(f.h, wide.c_str(), nullptr, nullptr, nullptr, nullptr));
     ASSERT_EQ(0, swmm_trace_get_averages(f.h, f.na.data(), 2, f.la.data(), 1));
-    for (int i = 0; i < 2; ++i)
-    {
+    for (int i = 0; i < 2; ++i) {
         EXPECT_DOUBLE_EQ(nodes[i].volume_m3, f.na[i].volume_m3);
         EXPECT_DOUBLE_EQ(nodes[i].lateral_in_m3s, f.na[i].lateral_in_m3s);
         EXPECT_DOUBLE_EQ(nodes[i].withdrawal_m3s, f.na[i].withdrawal_m3s);
@@ -303,12 +278,11 @@ TEST(FlowTraceReports, BlockReadsSkipSubcatchmentsAndUnusedPollutantColumns)
     EXPECT_DOUBLE_EQ(links[0].absolute_velocity_mps, f.la[0].absolute_velocity_mps);
     EXPECT_DOUBLE_EQ(links[0].last_volume_m3, f.la[0].last_volume_m3);
     EXPECT_EQ(links[0].flags, f.la[0].flags);
-    auto cancel = [](double progress, const char *, void *) { return int(progress > .05); };
+    auto cancel = [](double progress, const char*, void*) { return int(progress > .05); };
     EXPECT_EQ(SWMM_TRACE_CANCELLED,
               swmm_trace_prepare(f.h, wide.c_str(), nullptr, nullptr, cancel, nullptr));
 }
-TEST(FlowTraceReports, BlockReadsHandleNoLinksAndRejectMissingHydraulicFields)
-{
+TEST(FlowTraceReports, BlockReadsHandleNoLinksAndRejectMissingHydraulicFields) {
     Fixture isolated({{"S", 0, 0}, {"O", 1, 0}}, {});
     const auto noLinks = writeOutput("block-no-links.out", 3, false, 3, 0, true);
     ASSERT_EQ(0,
@@ -320,8 +294,7 @@ TEST(FlowTraceReports, BlockReadsHandleNoLinksAndRejectMissingHydraulicFields)
     EXPECT_EQ(SWMM_TRACE_IO,
               swmm_trace_prepare(f.h, missing.c_str(), nullptr, nullptr, nullptr, nullptr));
 }
-TEST(FlowTraceReports, UnequalIntervalsCrossingsUnitsAndCache)
-{
+TEST(FlowTraceReports, UnequalIntervalsCrossingsUnitsAndCache) {
     const std::string path = writeOutput("unequal.out");
     const auto cache = std::string(TRACE_TEST_OUTPUT) + "/unequal.trace.nc";
     std::filesystem::remove(cache);
@@ -363,8 +336,7 @@ TEST(FlowTraceReports, UnequalIntervalsCrossingsUnitsAndCache)
     EXPECT_NEAR(3 * .3048, f.la[0].absolute_velocity_mps, 1e-8);
     EXPECT_NEAR(25 * .028316846592, f.na[0].volume_m3, 1e-8);
 }
-TEST(FlowTraceReports, LiveOutputScansThePeriodsWrittenSoFar)
-{
+TEST(FlowTraceReports, LiveOutputScansThePeriodsWrittenSoFar) {
     // Same data as unequal.out, but without the 24-byte footer the engine writes at
     // the end of a run, and with half of a fourth record appended mid-write.
     const std::string complete = writeOutput("live-complete.out", 3, false, 2);
@@ -380,7 +352,8 @@ TEST(FlowTraceReports, LiveOutputScansThePeriodsWrittenSoFar)
     Fixture a({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
     Fixture b({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
     EXPECT_NE(0, swmm_trace_prepare(a.h, live.c_str(), nullptr, nullptr, nullptr, nullptr));
-    ASSERT_EQ(0, swmm_trace_prepare_live(a.h, live.c_str(), nullptr, nullptr)) << swmm_trace_error(a.h);
+    ASSERT_EQ(0, swmm_trace_prepare_live(a.h, live.c_str(), nullptr, nullptr))
+        << swmm_trace_error(a.h);
     ASSERT_EQ(0, swmm_trace_prepare(b.h, complete.c_str(), nullptr, nullptr, nullptr, nullptr));
     SWMM_TraceInfo ia{}, ib{};
     swmm_trace_get_info(a.h, &ia);
@@ -399,14 +372,13 @@ TEST(FlowTraceReports, LiveOutputScansThePeriodsWrittenSoFar)
     swmm_trace_get_info(a.h, &ia);
     EXPECT_EQ(2, ia.periods);
 }
-TEST(FlowTraceReports, InvalidTimestampMissingIdsCancellationAndSnapshot)
-{
+TEST(FlowTraceReports, InvalidTimestampMissingIdsCancellationAndSnapshot) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
     auto bad = writeOutput("bad-dates.out", 3, true);
     EXPECT_EQ(SWMM_TRACE_INVALID,
               swmm_trace_prepare(f.h, bad.c_str(), nullptr, nullptr, nullptr, nullptr));
     const auto good = writeOutput("valid.out");
-    auto cancel = [](double, const char *, void *) { return 1; };
+    auto cancel = [](double, const char*, void*) { return 1; };
     EXPECT_EQ(SWMM_TRACE_CANCELLED,
               swmm_trace_prepare(f.h, good.c_str(), nullptr, nullptr, cancel, nullptr));
     Fixture wrong({{"missing", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
@@ -421,8 +393,7 @@ TEST(FlowTraceReports, InvalidTimestampMissingIdsCancellationAndSnapshot)
                                      nullptr));
     EXPECT_TRUE(std::isnan(f.summary.partial_balance_residual_m3));
 }
-TEST(FlowTrace, OutfallBoundaryIsIncludedInPartialBudget)
-{
+TEST(FlowTrace, OutfallBoundaryIsIncludedInPartialBudget) {
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 10}});
     f.flow(0, 2);
     f.na[0].lateral_in_m3s = 2;
@@ -434,15 +405,12 @@ TEST(FlowTrace, OutfallBoundaryIsIncludedInPartialBudget)
     EXPECT_NEAR(0, f.summary.partial_balance_residual_m3, 1e-7);
 }
 } // namespace
-namespace
-{
-TEST(FlowTraceReports, EveryFlowUnitAndCorruptCacheRecovery)
-{
+namespace {
+TEST(FlowTraceReports, EveryFlowUnitAndCorruptCacheRecovery) {
     const double factors[] = {.028316846592, .0000630901964,     .04381263638888889, 1,
                               .001,          .011574074074074073};
     Fixture f({{"S", 0, 0}, {"O", 1, 0}}, {{"SO", 0, 1, 0, 30}});
-    for (int unit = 0; unit < 6; ++unit)
-    {
+    for (int unit = 0; unit < 6; ++unit) {
         auto path = writeOutput("units-" + std::to_string(unit) + ".out", unit);
         ASSERT_EQ(0, swmm_trace_prepare(f.h, path.c_str(), nullptr, nullptr, nullptr, nullptr));
         swmm_trace_get_averages(f.h, f.na.data(), 2, f.la.data(), 1);
@@ -459,7 +427,7 @@ TEST(FlowTraceReports, EveryFlowUnitAndCorruptCacheRecovery)
     SWMM_TraceInfo info{};
     swmm_trace_get_info(f.h, &info);
     EXPECT_EQ(info.cache_loaded, 0);
-    auto cancel = [](double, const char *, void *) { return 1; };
+    auto cancel = [](double, const char*, void*) { return 1; };
     EXPECT_EQ(SWMM_TRACE_CANCELLED, swmm_trace_prepare(f.h, path.c_str(), cache.c_str(),
                                                        "correct-digest", cancel, nullptr));
     ASSERT_EQ(0, swmm_trace_prepare(f.h, path.c_str(), cache.c_str(), "correct-digest", nullptr,
@@ -467,8 +435,7 @@ TEST(FlowTraceReports, EveryFlowUnitAndCorruptCacheRecovery)
     swmm_trace_get_info(f.h, &info);
     EXPECT_EQ(info.cache_loaded, 1);
 }
-TEST(FlowTrace, UnreachableCyclesAndUnresolvedBoundaries)
-{
+TEST(FlowTrace, UnreachableCyclesAndUnresolvedBoundaries) {
     Fixture f({{"S", 0, 0}, {"O", 1, SWMM_TRACE_ROUTED_OUTFALL}, {"A", 0, 0}, {"B", 0, 0}},
               {{"SO", 0, 1, 0, 1}, {"AB", 2, 3, 0, 1}, {"BA", 3, 2, 0, 1}});
     f.flow(0, 1);
@@ -483,10 +450,8 @@ TEST(FlowTrace, UnreachableCyclesAndUnresolvedBoundaries)
 
 #include <chrono>
 #include <iostream>
-namespace
-{
-TEST(FlowTraceScale, TenThousandLinkWarmSolve)
-{
+namespace {
+TEST(FlowTraceScale, TenThousandLinkWarmSolve) {
     constexpr int count = 10000;
     std::vector<std::string> nodeIds, linkIds;
     nodeIds.reserve(count + 1);
@@ -507,8 +472,7 @@ TEST(FlowTraceScale, TenThousandLinkWarmSolve)
     std::vector<SWMM_TraceNodeAverage> na(count + 1);
     std::vector<SWMM_TraceLinkAverage> la(count);
     na[0].lateral_in_m3s = 1;
-    for (auto &v : la)
-    {
+    for (auto& v : la) {
         v.net_flow_m3s = v.absolute_flow_m3s = v.absolute_velocity_mps = 1;
     }
     ASSERT_EQ(0,

@@ -44,7 +44,8 @@
 namespace openswmm::h5io {
 namespace {
 
-template <typename... Args> bool checked_column(hid_t parent, const std::string& name, Args&&... args) {
+template <typename... Args>
+bool checked_column(hid_t parent, const std::string& name, Args&&... args) {
     if (!write_column(parent, name, std::forward<Args>(args)...))
         throw std::runtime_error("HDF5: cannot write dataset " + name);
     return true;
@@ -55,7 +56,8 @@ template <typename T> void checked_attr(hid_t parent, const std::string& name, T
 }
 Handle checked_group(hid_t parent, const std::string& name) {
     auto group = make_group(parent, name);
-    if (!group) throw std::runtime_error("HDF5: cannot create group " + name);
+    if (!group)
+        throw std::runtime_error("HDF5: cannot create group " + name);
     return group;
 }
 
@@ -237,7 +239,7 @@ void write_root_attrs(hid_t file, const SimulationContext& ctx, int us) {
     checked_attr(file, "schema_version", std::string(kSchemaVersion));
     checked_attr(file, "format", std::string("openswmm-model-hdf5"));
     checked_attr(file, "flow_units",
-               std::string(flow_units_keyword(static_cast<int>(ctx.options.flow_units))));
+                 std::string(flow_units_keyword(static_cast<int>(ctx.options.flow_units))));
     checked_attr(file, "unit_system", std::string(us == 0 ? "US" : "SI"));
     // Units are AUTHORED, not the engine's internal feet/cfs — the one thing a
     // consumer most needs to know and the decision STRATEGY.md §4 turns on.
@@ -304,8 +306,9 @@ void write_nodes(hid_t file, const SimulationContext& ctx, const UnitWords& u) {
     checked_column(g.get(), "init_depth", init, u.length, "initial water depth");
     checked_column(g.get(), "sur_depth", sur, u.length, "surcharge depth above ground");
     checked_column(g.get(), "ponded_area", ponded, std::string(u.length) + "^2",
-                 "ponded surface area when flooded");
-    checked_column(g.get(), "storage_area", storage_area, std::string(u.length) + "^2", "physical junction chamber area");
+                   "ponded surface area when flooded");
+    checked_column(g.get(), "storage_area", storage_area, std::string(u.length) + "^2",
+                   "physical junction chamber area");
     checked_column(g.get(), "tag", tag, "user tag");
     checked_column(g.get(), "comment", comment, "authored comment");
 }
@@ -379,7 +382,8 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             checked_column(g.get(), "name", name, "node id");
             checked_column(g.get(), "bc_type", bc, "FREE | NORMAL | FIXED | TIDAL | TIMESERIES");
             checked_column(g.get(), "stage", stage, u.length, "fixed stage elevation");
-            checked_column(g.get(), "stage_series", stage_curve, "tidal curve or stage time series");
+            checked_column(g.get(), "stage_series", stage_curve,
+                           "tidal curve or stage time series");
             checked_column(g.get(), "has_flap_gate", gated, "boolean", "flap gate present");
             checked_column(g.get(), "route_to", route_to, "subcatchment receiving the outflow");
         }
@@ -479,14 +483,15 @@ void write_node_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
             // end-to-end by design (legacy converts per call in node.c), so
             // they are already authored here.
             checked_column(g.get(), "a1", a1, "model",
-                         "FUNCTIONAL coefficient A1 in A(d) = A0 + A1*d^A2");
+                           "FUNCTIONAL coefficient A1 in A(d) = A0 + A1*d^A2");
             checked_column(g.get(), "a2", a2, "dimensionless", "FUNCTIONAL exponent A2");
             checked_column(g.get(), "a0", a0, "model", "FUNCTIONAL constant A0");
             checked_column(g.get(), "p1", p1, u.length, "geometric shape parameter 1 (L)");
             checked_column(g.get(), "p2", p2, u.length, "geometric shape parameter 2 (W)");
             checked_column(g.get(), "p3", p3, u.length, "geometric shape parameter 3 (Z/H)");
             checked_column(g.get(), "evap_frac", fevap, "fraction", "evaporation factor");
-            checked_column(g.get(), "exfil_suction", suction, u.length, "exfiltration suction head");
+            checked_column(g.get(), "exfil_suction", suction, u.length,
+                           "exfiltration suction head");
             checked_column(g.get(), "exfil_ksat", ksat, u.depth_rate, "exfiltration conductivity");
             checked_column(g.get(), "exfil_imd", imd, "fraction", "initial moisture deficit");
         }
@@ -607,7 +612,7 @@ void write_xsections(hid_t file, const SimulationContext& ctx, const UnitWords& 
     checked_column(g.get(), "link", link, "link id");
     checked_column(g.get(), "shape", shape, "legacy shape keyword");
     checked_column(g.get(), "reference", ref,
-                 "transect / street / shape-curve name for IRREGULAR, STREET, CUSTOM");
+                   "transect / street / shape-curve name for IRREGULAR, STREET, CUSTOM");
     const char* geom_note =
         "raw authored Geom value; meaning is shape-dependent — see STRATEGY.md and "
         "the cross-section matrix in plans/FILE_IO_PARITY_AUDIT_2026-09-22.md";
@@ -617,11 +622,11 @@ void write_xsections(hid_t file, const SimulationContext& ctx, const UnitWords& 
     checked_column(g.get(), "geom4", g4, "shape-dependent", geom_note);
     checked_column(g.get(), "barrels", barrels, "count", "identical parallel barrels");
     checked_column(g.get(), "culvert_code", culvert, "code",
-                 "FHWA culvert inlet-control code, 0 = not a culvert");
+                   "FHWA culvert inlet-control code, 0 = not a culvert");
     checked_attr(g.get(), "note",
-               std::string("For HORIZ_ELLIPSE, VERT_ELLIPSE and ARCH a nonzero geom3 "
-                           "(or geom1 with geom2 == 0) is a STANDARD SIZE CODE, not a "
-                           "dimension. Preserved verbatim."));
+                 std::string("For HORIZ_ELLIPSE, VERT_ELLIPSE and ARCH a nonzero geom3 "
+                             "(or geom1 with geom2 == 0) is a STANDARD SIZE CODE, not a "
+                             "dimension. Preserved verbatim."));
     (void)u;
 }
 
@@ -717,9 +722,11 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         if (g) {
             checked_column(g.get(), "name", name, "link id");
             checked_column(g.get(), "orientation", orient, "SIDE | BOTTOM");
-            checked_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
+            checked_column(g.get(), "crest_height", crest, u.length,
+                           "offset above the node invert");
             checked_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
-            checked_column(g.get(), "open_close_time", orate, "hours", "time to open or close fully");
+            checked_column(g.get(), "open_close_time", orate, "hours",
+                           "time to open or close fully");
         }
     }
 
@@ -751,11 +758,11 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         if (g) {
             checked_column(g.get(), "name", name, "link id");
             checked_column(g.get(), "weir_type", wtype,
-                         "TRANSVERSE | SIDEFLOW | V-NOTCH | TRAPEZOIDAL | ROADWAY");
+                           "TRANSVERSE | SIDEFLOW | V-NOTCH | TRAPEZOIDAL | ROADWAY");
             checked_column(g.get(), "crest_height", crest, u.length, "crest above the node invert");
             checked_column(g.get(), "discharge_coeff", cd, "dimensionless", "Cd");
             checked_column(g.get(), "discharge_coeff2", cd2, "dimensionless",
-                         "second Cd (TRAPEZOIDAL sides)");
+                           "second Cd (TRAPEZOIDAL sides)");
             checked_column(g.get(), "end_contractions", end_con, "count", "end contractions");
             checked_column(g.get(), "road_width", road_width, u.length, "ROADWAY width");
             checked_column(g.get(), "can_surcharge", surcharge, "boolean", "may surcharge");
@@ -787,8 +794,9 @@ void write_link_subtypes(hid_t file, const SimulationContext& ctx, const UnitWor
         if (g) {
             checked_column(g.get(), "name", name, "link id");
             checked_column(g.get(), "rating_type", rating,
-                         "FUNCTIONAL|TABULAR crossed with HEAD|DEPTH");
-            checked_column(g.get(), "crest_height", crest, u.length, "offset above the node invert");
+                           "FUNCTIONAL|TABULAR crossed with HEAD|DEPTH");
+            checked_column(g.get(), "crest_height", crest, u.length,
+                           "offset above the node invert");
             checked_column(g.get(), "rating_curve", curve, "rating curve name (TABULAR)");
             checked_column(g.get(), "coefficient", coeff, "model", "FUNCTIONAL coefficient");
             checked_column(g.get(), "exponent", expon, "dimensionless", "FUNCTIONAL exponent");
@@ -858,7 +866,7 @@ void write_subcatchments(hid_t file, const SimulationContext& ctx, const UnitWor
     checked_column(g.get(), "s_imperv", s_imp, "depth", "depression storage, impervious");
     checked_column(g.get(), "s_perv", s_perv, "depth", "depression storage, pervious");
     checked_column(g.get(), "pct_zero_imperv", pct_zero, "percent",
-                 "impervious area with no depression storage");
+                   "impervious area with no depression storage");
     checked_column(g.get(), "route_to", route_to, "OUTLET | IMPERVIOUS | PERVIOUS");
     checked_column(g.get(), "pct_routed", pct_routed, "percent", "runoff routed between subareas");
     checked_column(g.get(), "tag", tag, "user tag");
@@ -908,7 +916,7 @@ void write_tables(hid_t file, const SimulationContext& ctx) {
             checked_column(g.get(), "name", cname, "curve id");
             checked_column(g.get(), "type", ctype, "STORAGE | RATING | PUMP1..5 | SHAPE | ...");
             checked_column(g.get(), "offsets", coffs, "index",
-                         "CSR row starts into x/y; row i spans [offsets[i], offsets[i+1])");
+                           "CSR row starts into x/y; row i spans [offsets[i], offsets[i+1])");
             checked_column(g.get(), "x", cx, "model", "abscissa values, all curves concatenated");
             checked_column(g.get(), "y", cy, "model", "ordinate values, all curves concatenated");
         }
@@ -1031,7 +1039,7 @@ void write_transects_and_streets(hid_t file, const SimulationContext& ctx, const
             checked_column(g.get(), "x_factor", xf, "dimensionless", "station multiplier");
             checked_column(g.get(), "y_factor", yf, u.length, "elevation offset");
             checked_column(g.get(), "offsets", offs, "index",
-                         "CSR row starts into station/elevation");
+                           "CSR row starts into station/elevation");
             checked_column(g.get(), "station", station, u.length, "horizontal station");
             checked_column(g.get(), "elevation", elevation, u.length, "ground elevation");
         }
@@ -1101,7 +1109,8 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     io::AtomicOutputFile output(io::utf8_path(path), true);
     const auto staging = output.externalWriterPath();
     if (staging.empty()) {
-        if (warnings) warnings->push_back(output.error());
+        if (warnings)
+            warnings->push_back(output.error());
         return 1;
     }
     Handle file(H5Fcreate(io::path_utf8(staging).c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT),
@@ -1127,27 +1136,32 @@ int write_model(const std::string& path, const SimulationContext& ctx_internal,
     // The native input carries all configuration alongside the analysis columns.
     // Older column-only files remain distinguishable and cannot be mistaken for
     // complete editable models.
-    if (!checked_column(file.get(), "native_input", std::vector<std::string>{
-            inp_writer::modelText(ctx_internal, path)})) {
-        if (warnings) warnings->push_back("HDF5: cannot write native model configuration");
+    if (!checked_column(file.get(), "native_input",
+                        std::vector<std::string>{inp_writer::modelText(ctx_internal, path)})) {
+        if (warnings)
+            warnings->push_back("HDF5: cannot write native model configuration");
         return 1;
     }
     std::vector<std::string> ids, configurations;
     for (const auto& [id, text] : native_model::configurations(ctx_internal)) {
-        ids.push_back(id); configurations.push_back(text);
+        ids.push_back(id);
+        configurations.push_back(text);
     }
     if (!ids.empty() && (!checked_column(file.get(), "component_ids", ids) ||
-                        !checked_column(file.get(), "component_configurations", configurations))) {
-        if (warnings) warnings->push_back("HDF5: cannot preserve process component configurations");
+                         !checked_column(file.get(), "component_configurations", configurations))) {
+        if (warnings)
+            warnings->push_back("HDF5: cannot preserve process component configurations");
         return 1;
     }
     if (H5Fflush(file.get(), H5F_SCOPE_GLOBAL) < 0) {
-        if (warnings) warnings->push_back("HDF5: cannot flush model configuration");
+        if (warnings)
+            warnings->push_back("HDF5: cannot flush model configuration");
         return 1;
     }
     file = Handle{};
     if (!output.commit()) {
-        if (warnings) warnings->push_back(output.error());
+        if (warnings)
+            warnings->push_back(output.error());
         return 1;
     }
     return 0;

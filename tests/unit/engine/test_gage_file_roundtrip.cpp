@@ -333,10 +333,8 @@ TEST(GageFileRoundTrip, DefaultCsvColumnRetainsTenfoldScale) {
 }
 
 TEST(GageFileRoundTrip, PrecipitationFactorsKeepPrecisionForEverySource) {
-    for (const auto& source : {"TIMESERIES TS1 1.23456789",
-                               "FILE \"rain.dat\" STA MM * 1.23456789",
-                               "FILE \"rain.csv:RAIN\" 1.23456789",
-                               "TIMESERIES * 1.23456789"}) {
+    for (const auto& source : {"TIMESERIES TS1 1.23456789", "FILE \"rain.dat\" STA MM * 1.23456789",
+                               "FILE \"rain.csv:RAIN\" 1.23456789", "TIMESERIES * 1.23456789"}) {
         SCOPED_TRACE(source);
         SimulationContext ctx;
         ctx.tables.add("TS1", openswmm::TableType::TIMESERIES);

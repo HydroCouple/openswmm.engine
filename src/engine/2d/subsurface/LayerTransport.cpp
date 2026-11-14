@@ -23,10 +23,10 @@ LayerTransportResult solveLayerTransport(const std::vector<double>& capacity,
     return std::move(scratch.result);
 }
 const LayerTransportResult& solveLayerTransport(const std::vector<double>& capacity,
-                                               const std::vector<double>& rhs,
-                                               const std::vector<LayerTransportMove>& moves,
-                                               LayerTransportScratch& scratch,
-                                               bool signed_species) {
+                                                const std::vector<double>& rhs,
+                                                const std::vector<LayerTransportMove>& moves,
+                                                LayerTransportScratch& scratch,
+                                                bool signed_species) {
     auto& r = scratch.result;
     r.mass.clear();
     r.concentration.clear();
@@ -112,14 +112,17 @@ LayerTransportResult advanceLayerTransportEuler(const std::vector<double>& capac
                                                 bool signed_species,
                                                 const std::vector<double>* donor_available) {
     LayerTransportScratch scratch;
-    advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch, signed_species, donor_available);
+    advanceLayerTransportEuler(capacity, initial, rhs, moves, scratch, signed_species,
+                               donor_available);
     return std::move(scratch.result);
 }
-const LayerTransportResult& advanceLayerTransportEuler(
-    const std::vector<double>& capacity, const std::vector<double>& initial,
-    const std::vector<double>& rhs, const std::vector<LayerTransportMove>& moves,
-    LayerTransportScratch& scratch, bool signed_species,
-    const std::vector<double>* donor_available) {
+const LayerTransportResult& advanceLayerTransportEuler(const std::vector<double>& capacity,
+                                                       const std::vector<double>& initial,
+                                                       const std::vector<double>& rhs,
+                                                       const std::vector<LayerTransportMove>& moves,
+                                                       LayerTransportScratch& scratch,
+                                                       bool signed_species,
+                                                       const std::vector<double>* donor_available) {
     auto& r = scratch.result;
     r.mass.clear();
     r.concentration.clear();

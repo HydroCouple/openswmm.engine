@@ -81,15 +81,28 @@ double reservedRate(double limit, double spent, double step) {
         rate = std::nextafter(rate, 0.0);
     return rate;
 }
-template<bool Packed> struct Batch {
+template <bool Packed> struct Batch {
     int n, lanes;
     std::vector<Column*> columns;
     std::vector<double> y, volume, lower_bound;
     std::vector<Report*> reports;
     std::vector<double> head, K, f, fp, residual, lo, di, up, delta, perturbed, epsilon;
     std::vector<uint8_t> done;
-    enum Coefficient { Area, Z, Dz, ThetaS, Ks, Wilting, PotentialEt,
-                       ThetaR, Alpha, N, L, SpecificStorage, CoefficientCount };
+    enum Coefficient {
+        Area,
+        Z,
+        Dz,
+        ThetaS,
+        Ks,
+        Wilting,
+        PotentialEt,
+        ThetaR,
+        Alpha,
+        N,
+        L,
+        SpecificStorage,
+        CoefficientCount
+    };
     std::vector<double> coefficients;
     /** @brief Read private cell-major lanes, or retain the borrowed small-batch view.
      * Packed coefficients are frozen by construction for this advance only. Returning
@@ -99,8 +112,14 @@ template<bool Packed> struct Batch {
         if constexpr (Packed) {
             const auto i = static_cast<std::size_t>(k * lanes + a);
             const auto field = [&](Coefficient p) { return coefficients[p * y.size() + i]; };
-            return Cell{volume[i], field(Area), field(Z), field(Dz), field(ThetaS), field(Ks),
-                        field(Wilting), field(PotentialEt),
+            return Cell{volume[i],
+                        field(Area),
+                        field(Z),
+                        field(Dz),
+                        field(ThetaS),
+                        field(Ks),
+                        field(Wilting),
+                        field(PotentialEt),
                         {field(ThetaR), field(Alpha), field(N), field(L), field(SpecificStorage)}};
         } else {
             return static_cast<const Cell&>(columns[a]->cells[k]);
@@ -119,8 +138,8 @@ template<bool Packed> struct Batch {
         y.resize(n * lanes);
         volume.resize(y.size());
         lower_bound.resize(y.size());
-        for (auto* scratch : {&head, &K, &f, &fp, &residual, &lo, &di, &up, &delta,
-                              &perturbed, &epsilon})
+        for (auto* scratch :
+             {&head, &K, &f, &fp, &residual, &lo, &di, &up, &delta, &perturbed, &epsilon})
             scratch->resize(y.size());
         done.resize(lanes);
         if constexpr (Packed)
@@ -132,9 +151,18 @@ template<bool Packed> struct Batch {
                 y[i] = columns[a]->water[k];
                 volume[i] = cell.volume;
                 if constexpr (Packed) {
-                    const double values[] = {cell.area, cell.z, cell.dz, cell.theta_s, cell.Ks,
-                        cell.wilting, cell.potential_et, cell.material.theta_r, cell.material.alpha,
-                        cell.material.n, cell.material.l, cell.material.specific_storage};
+                    const double values[] = {cell.area,
+                                             cell.z,
+                                             cell.dz,
+                                             cell.theta_s,
+                                             cell.Ks,
+                                             cell.wilting,
+                                             cell.potential_et,
+                                             cell.material.theta_r,
+                                             cell.material.alpha,
+                                             cell.material.n,
+                                             cell.material.l,
+                                             cell.material.specific_storage};
                     for (int p = 0; p < CoefficientCount; ++p)
                         coefficients[p * y.size() + i] = values[p];
                 }
@@ -670,16 +698,19 @@ std::vector<Report> advance(std::vector<Column*>& columns, double dt) {
     for (std::size_t a = 0; a < trial.size(); ++a) {
         const auto& col = trial[a];
         const auto& report = reports[a];
-        const double initial = std::accumulate(columns[a]->water.begin(), columns[a]->water.end(), 0.0);
+        const double initial =
+            std::accumulate(columns[a]->water.begin(), columns[a]->water.end(), 0.0);
         const double final = std::accumulate(col.water.begin(), col.water.end(), 0.0);
-        const double scale = std::max({std::abs(initial), std::abs(final),
-                                      std::abs(report.inflow), std::abs(report.bottom_volume),
-                                      std::abs(report.evaporation)});
-        const double tolerance = 16 * (col.options.atol * col.cells.size() + col.options.rtol * scale);
+        const double scale =
+            std::max({std::abs(initial), std::abs(final), std::abs(report.inflow),
+                      std::abs(report.bottom_volume), std::abs(report.evaporation)});
+        const double tolerance =
+            16 * (col.options.atol * col.cells.size() + col.options.rtol * scale);
         if (!std::isfinite(report.balance) || std::abs(report.balance) > tolerance) {
             for (auto& result : reports) {
                 result.ok = false;
-                result.error = "Richards water balance exceeded integration tolerance; batch rolled back";
+                result.error =
+                    "Richards water balance exceeded integration tolerance; batch rolled back";
             }
             return reports;
         }

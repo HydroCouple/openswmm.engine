@@ -472,7 +472,8 @@ void dispersionSolve(const SpeciesKernelView& v, double dt) {
                     const int cm = mesh_->chain_cells[static_cast<std::size_t>(b + i - 1)];
                     const double am =
                         std::max(state_->cell_a[static_cast<std::size_t>(cm)], k::kDryArea);
-                    lo = 0.5 * (dc + cellD(cm)) * 0.5 * (a + am) * dt / (dx * 0.5 * (dx + mesh_->cell_dx[static_cast<std::size_t>(cm)]) * a);
+                    lo = 0.5 * (dc + cellD(cm)) * 0.5 * (a + am) * dt /
+                         (dx * 0.5 * (dx + mesh_->cell_dx[static_cast<std::size_t>(cm)]) * a);
                 }
                 if (i < m - 1) {
                     const int cp = mesh_->chain_cells[static_cast<std::size_t>(b + i + 1)];

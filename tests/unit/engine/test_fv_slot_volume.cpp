@@ -418,8 +418,8 @@ TEST(FvSlotCelerityDefault, apiAndWriterStateTheDefaultInProjectUnits) {
     EXPECT_DOUBLE_EQ(std::stod(cfs), 100.0) << "API returned '" << cfs << "'";
 
     // An explicit value is reported as given, in either system.
-    const std::string given = openAndGetOption("si_celerity_api_given",
-                                               siDeck("FV_SLOT_CELERITY     100\n"), "FV_SLOT_CELERITY");
+    const std::string given = openAndGetOption(
+        "si_celerity_api_given", siDeck("FV_SLOT_CELERITY     100\n"), "FV_SLOT_CELERITY");
     EXPECT_DOUBLE_EQ(std::stod(given), 100.0) << "API returned '" << given << "'";
 
     // The rewritten SI deck carries the default spelled out in m/s.

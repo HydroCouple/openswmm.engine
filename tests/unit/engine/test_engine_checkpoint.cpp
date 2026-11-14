@@ -440,9 +440,11 @@ void startRunoff(SWMMEngine& e, const std::string& name, int method = 0, int rai
     deck +=
         "\n[PATTERNS]\nMonth MONTHLY .8 1.2 1 1 1 1 1 1 1 1 1 1\n[ADJUSTMENTS]\nRAIN .9 1.2 1 1 1 1 1 1 1 1 1 1\nINFIL A Month\nN-PERV B Month\nDSTORE D Month\n";
     if (thermal) {
-        write(p.string() + ".heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 18\nEXTERNAL_INFLOW GLOBAL 18\n");
-        deck += "[OPTIONS]\nHEAT_TRANSPORT ON\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" +
-                p.string() + ".heat\"\n";
+        write(p.string() + ".heat",
+              "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 18\nEXTERNAL_INFLOW GLOBAL 18\n");
+        deck +=
+            "[OPTIONS]\nHEAT_TRANSPORT ON\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.heat config=\"" +
+            p.string() + ".heat\"\n";
     }
     write(p.string() + ".inp", deck);
     if (e.open((p.string() + ".inp").c_str(), (p.string() + ".rpt").c_str(), nullptr))
@@ -11259,7 +11261,8 @@ TEST(EngineCheckpoint, IndependentGroundwaterSnapshotsAndHeldReadsPreserveUninte
         double value = 0;
         const int status = swmm_gw2d_get_cell(&saved, 0, var, &value);
         // Feddes stress is undefined until this held cell has evaluated ET.
-        if (var == SWMM_GW2D_VAR_ET_STRESS && status == SWMM_ERR_LIFECYCLE) continue;
+        if (var == SWMM_GW2D_VAR_ET_STRESS && status == SWMM_ERR_LIFECYCLE)
+            continue;
         ASSERT_EQ(status, SWMM_OK) << var;
     }
     const auto cp = root() / "independent-clock-held.chk",
@@ -11296,7 +11299,8 @@ TEST(EngineCheckpoint, IndependentGroundwaterRejectsDifferentBudgetPolicy) {
         SWMMEngine a, b;
         int serial = 0;
         for (auto* eng : {&a, &b}) {
-            const auto name = "independent-policy-" + std::to_string(fraction) + "-" + std::to_string(serial++);
+            const auto name =
+                "independent-policy-" + std::to_string(fraction) + "-" + std::to_string(serial++);
             ASSERT_NO_THROW(managedSurfaceOpen(*eng, name, 0, 0, 0, false));
             auto& options = eng->surfaceRouter2D().aquiferConfig().options;
             options.independent_clock = true;
@@ -13609,18 +13613,18 @@ TEST(EngineCheckpoint, ConventionalLidLayerScalarsSurviveThermalRestart) {
 #ifdef OPENSWMM_HAS_2D
 TEST(EngineCheckpoint, RuntimeThermalBoundaryQualityRefusesAtomicallyInsteadOfDiscardingTuple) {
     SurfaceSession session;
-    ASSERT_NO_THROW(session.start("review-boundary-heat-tuple", 0, 1, 0, 0, true, false,
-                                  false, -1, false, 0, false, "mesh water driver revision 1",
-                                  true, 0, 0, false, 0, true));
+    ASSERT_NO_THROW(session.start("review-boundary-heat-tuple", 0, 1, 0, 0, true, false, false, -1,
+                                  false, 0, false, "mesh water driver revision 1", true, 0, 0,
+                                  false, 0, true));
     auto& router = session.engine.surfaceRouter2D();
     ASSERT_TRUE(router.runtimeBoundaryCheckpointing());
     const int count = router.state().transport.n_species;
     ASSERT_GT(count, 0);
     const std::vector<double> concentration(count, 18);
-    SWMM_CouplingBoundary row{sizeof(row), 0, 0, exterior(session.engine, 0), 1, .75,
-                              count, concentration.data()};
-    SWMM_CouplingFrame frame{sizeof(frame), 1, "review-quality", 0, nullptr, 1, &row,
-                             0, nullptr, 0, nullptr};
+    SWMM_CouplingBoundary row{sizeof(row), 0,   0,     exterior(session.engine, 0),
+                              1,           .75, count, concentration.data()};
+    SWMM_CouplingFrame frame{sizeof(frame), 1, "review-quality", 0, nullptr, 1,
+                             &row,          0, nullptr,          0, nullptr};
     const auto owners = router.boundary().runtime_owner;
     const auto quality = router.state().transport.runtime_bc_conc;
     const double time = session.engine.context().current_time;

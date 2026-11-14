@@ -2053,8 +2053,7 @@ SWMM_ENGINE_API int swmm_2d_boundary_edge_count(SWMM_Engine engine, int* count);
  * invalid cell/edge; SWMM_ERR_BADPARAM for null output, no mesh or unprepared
  * boundary storage. Output remains unchanged on failure.
  */
-SWMM_ENGINE_API int swmm_2d_edge_is_exterior(SWMM_Engine engine, int cell, int edge,
-                                           int* exterior);
+SWMM_ENGINE_API int swmm_2d_edge_is_exterior(SWMM_Engine engine, int cell, int edge, int* exterior);
 
 /**
  * @brief Get boundary condition type for an edge.
@@ -2415,15 +2414,18 @@ SWMM_ENGINE_API int swmm_2d_set_edge_bc_head(SWMM_Engine engine, int tri_idx, in
  * OPENED/BUILDING only; nonempty names require an exterior edge and cannot
  * contain whitespace or INP delimiters. Groups are organizational metadata.
  */
-SWMM_ENGINE_API int swmm_2d_set_edge_bc_group(SWMM_Engine engine, int tri_idx, int edge, const char* group);
+SWMM_ENGINE_API int swmm_2d_set_edge_bc_group(SWMM_Engine engine, int tri_idx, int edge,
+                                              const char* group);
 
 /** Tangential WALL traction tau/rho=-Cw|ut|ut. Finite Cw>=0, zero free-slip.
  * Getter uses a valid prepared mesh slot. Setter is authoring-only (OPENED/BUILDING);
  * positive values require an exterior WALL edge. CPU FULL_SWE, LTS_TIERS 1,
  * uncoupled hydraulics required when running. No density or 1/2 in Cw convention.
  */
-SWMM_ENGINE_API int swmm_2d_get_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double* cw);
-SWMM_ENGINE_API int swmm_2d_set_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge, double cw);
+SWMM_ENGINE_API int swmm_2d_get_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge,
+                                               double* cw);
+SWMM_ENGINE_API int swmm_2d_set_edge_wall_drag(SWMM_Engine engine, int tri_idx, int edge,
+                                               double cw);
 
 /**
  * @brief Get normal flow boundary slope for an edge.

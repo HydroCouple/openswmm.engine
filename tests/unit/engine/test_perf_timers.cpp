@@ -89,7 +89,8 @@ TEST(ProcessPerf, NestedTimersBookSelfTimeAndCountCalls) {
         {
             perf::ProcessTimer child(perf::ProcessPhase::gw_cells);
             perf::SigmaEvaluations firing;
-            for (int i = 0; i < 40; ++i) firing.evaluate();
+            for (int i = 0; i < 40; ++i)
+                firing.evaluate();
         }
     }
     const double wall = perf::since(start);
@@ -121,13 +122,15 @@ TEST(ProcessPerf, ParallelScopesAndExceptionExitRetainCounts) {
                 perf::count(perf::ProcessCounter::water_trial_copies);
             }
         });
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads)
+        thread.join();
     EXPECT_EQ(perf::process_calls[std::size_t(perf::ProcessPhase::surface_species)].load(), 8000);
     EXPECT_EQ(perf::value(perf::ProcessCounter::water_trial_copies), 8000);
     try {
         perf::ProcessTimer timer(perf::ProcessPhase::gw_cells);
         throw 1;
-    } catch (int) {}
+    } catch (int) {
+    }
     EXPECT_EQ(perf::process_calls[std::size_t(perf::ProcessPhase::gw_cells)].load(), 1);
 }
 
@@ -204,9 +207,11 @@ TEST(ProcessPerf, SimultaneousRegistrationsInvalidateOneCohort) {
     std::vector<std::thread> threads;
     for (int i = 0; i < 8; ++i)
         threads.emplace_back([&, i] { perf::begin_process_model(&models[i]); });
-    for (auto& thread : threads) thread.join();
+    for (auto& thread : threads)
+        thread.join();
     EXPECT_FALSE(perf::process_attribution_valid.load());
-    for (auto& model : models) perf::end_process_model(&model, false);
+    for (auto& model : models)
+        perf::end_process_model(&model, false);
     perf::begin_process_model(&models[0]);
     EXPECT_TRUE(perf::process_attribution_valid.load());
     perf::end_process_model(&models[0], false);

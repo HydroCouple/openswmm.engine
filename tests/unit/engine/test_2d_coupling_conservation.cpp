@@ -126,8 +126,8 @@ std::string build_model(const std::string& extra_2d_options = "") {
 
 struct RunResult {
     bool ok = false;
-    double received_1d = 0.0; // ∫ lateral_inflow(J1)·dt, geometric SI (m³)
-    double pending_1d = 0.0;  // queued exchange not yet delivered to 1D (m³)
+    double received_1d = 0.0;  // ∫ lateral_inflow(J1)·dt, geometric SI (m³)
+    double pending_1d = 0.0;   // queued exchange not yet delivered to 1D (m³)
     double given_2d_net = 0.0; // coupling_2d_to_1d_out − coupling_1d_to_2d_in (m³)
     double cont_2d = 0.0;
     double cont_routing = 0.0;
@@ -300,12 +300,11 @@ TEST_F(CouplingConservation2DTest, ReceivedEqualsGivenUnderVariableStep) {
 
     // Keep pending delivery explicit instead of hiding it in a loose tolerance.
     ASSERT_GT(r.pending_1d, 0.0) << "fixture must exercise in-flight exchange";
-    const double rel = std::abs(r.received_1d + r.pending_1d - r.given_2d_net) /
-                       std::abs(r.given_2d_net);
-    EXPECT_LT(rel, 1e-10) << "1D-received (" << r.received_1d << " m³) + pending ("
-                         << r.pending_1d << " m³) != 2D-given (" << r.given_2d_net
-                         << " m³); rel err " << rel
-                         << " — coupling not volume-conservative under VARIABLE_STEP";
+    const double rel =
+        std::abs(r.received_1d + r.pending_1d - r.given_2d_net) / std::abs(r.given_2d_net);
+    EXPECT_LT(rel, 1e-10) << "1D-received (" << r.received_1d << " m³) + pending (" << r.pending_1d
+                          << " m³) != 2D-given (" << r.given_2d_net << " m³); rel err " << rel
+                          << " — coupling not volume-conservative under VARIABLE_STEP";
 
     // Both domains' own continuity must also stay closed.
     EXPECT_LT(std::abs(r.cont_2d), 0.05) << "2D continuity error: " << r.cont_2d;

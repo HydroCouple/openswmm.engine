@@ -244,8 +244,7 @@ struct StorageData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&StorageData::node_idx);
         f(&StorageData::curve);
         f(&StorageData::curve_name);
@@ -399,8 +398,7 @@ struct OutfallData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&OutfallData::node_idx);
         f(&OutfallData::bc_type);
         f(&OutfallData::param);
@@ -531,8 +529,7 @@ struct DividerData {
      * @brief Call @p f with a pointer to every per-row column member; the one list erase_at and
      *        the delete record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&DividerData::node_idx);
         f(&DividerData::method);
         f(&DividerData::cutoff);
@@ -754,10 +751,17 @@ struct NodeSubtypes {
             soa::put_row(tbl, std::min(taken.row, tbl.count()), std::move(row));
         };
         switch (taken.table) {
-        case 0: put(storages, taken.storage); break;
-        case 1: put(outfalls, taken.outfall); break;
-        case 2: put(dividers, taken.divider); break;
-        default: break;
+        case 0:
+            put(storages, taken.storage);
+            break;
+        case 1:
+            put(outfalls, taken.outfall);
+            break;
+        case 2:
+            put(dividers, taken.divider);
+            break;
+        default:
+            break;
         }
         rebuild_index(n);
     }

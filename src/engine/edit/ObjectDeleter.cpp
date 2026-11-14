@@ -133,8 +133,7 @@ static void renumber_refs_up(std::vector<int>& refs, int inserted_idx) {
  *
  * The inverse is put_cell(v, idx, cell).
  */
-template <class T>
-static std::optional<T> take_cell(std::vector<T>& v, int idx) {
+template <class T> static std::optional<T> take_cell(std::vector<T>& v, int idx) {
     const auto ui = static_cast<std::size_t>(idx);
     if (ui >= v.size())
         return std::nullopt;
@@ -144,8 +143,7 @@ static std::optional<T> take_cell(std::vector<T>& v, int idx) {
 }
 
 /// Reinsert a cell taken by take_cell; does nothing when there was none.
-template <class T>
-static void put_cell(std::vector<T>& v, int idx, const std::optional<T>& cell) {
+template <class T> static void put_cell(std::vector<T>& v, int idx, const std::optional<T>& cell) {
     if (cell)
         v.insert(v.begin() + static_cast<std::ptrdiff_t>(idx), *cell);
 }
@@ -267,7 +265,8 @@ static void record_reaction_element(const SimulationContext& ctx, bool link, int
         insert_rows(r.wall_areas, walls);
         insert_rows(r.sources, sources);
         for (std::size_t j = 0; j < init_pos.size(); ++j) {
-            const auto at = static_cast<std::ptrdiff_t>(std::min(init_pos[j], r.init_elem_idx.size()));
+            const auto at =
+                static_cast<std::ptrdiff_t>(std::min(init_pos[j], r.init_elem_idx.size()));
             r.init_elem_is_link.insert(r.init_elem_is_link.begin() + at, link ? 1 : 0);
             r.init_elem_idx.insert(r.init_elem_idx.begin() + at, deleted);
             r.init_elem_species.insert(r.init_elem_species.begin() + at, init_species[j]);
@@ -788,7 +787,6 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* re
                     c.lid_usage.drain_to[static_cast<std::size_t>(row)] = name;
             });
 
-
     // --- Step 0: report (never edit) control rules referencing this node ---
     add_rule_refs(ctx, node_name, result);
 
@@ -849,7 +847,8 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* re
             },
             [cleared_outlets, cleared_gw, node_idx](SimulationContext& c) {
                 for (const auto& name : cleared_outlets)
-                    c.subcatches.outlet_node[static_cast<std::size_t>(c.subcatch_names.find(name))] =
+                    c.subcatches
+                        .outlet_node[static_cast<std::size_t>(c.subcatch_names.find(name))] =
                         node_idx;
                 for (const auto& name : cleared_gw)
                     c.subcatches.gw_node[static_cast<std::size_t>(c.subcatch_names.find(name))] =
@@ -899,8 +898,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* re
         [&](int i) { erase_inlet_usage(ctx, i); });
     auto node_rows = [&](auto member, int ref_type) {
         take_rows(
-            member,
-            [node_idx](const auto& s, std::size_t i) { return s.node_idx[i] == node_idx; },
+            member, [node_idx](const auto& s, std::size_t i) { return s.node_idx[i] == node_idx; },
             [&result, ref_type](const auto&, int i) { result.add(ref_type, i, "node_idx", true); },
             [&ctx, member](int i) { (ctx.*member).erase(i); });
     };
@@ -922,7 +920,8 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* re
             T.expressions.begin() + first, T.expressions.begin() + first + np);
         T.expressions.erase(T.expressions.begin() + first, T.expressions.begin() + first + np);
         std::shared_ptr<std::vector<treatment::TreatExpr>> compiled;
-        if (T.compiled.size() == static_cast<std::size_t>(T.n_nodes) * static_cast<std::size_t>(np)) {
+        if (T.compiled.size() ==
+            static_cast<std::size_t>(T.n_nodes) * static_cast<std::size_t>(np)) {
             compiled = std::make_shared<std::vector<treatment::TreatExpr>>(
                 T.compiled.begin() + first, T.compiled.begin() + first + np);
             T.compiled.erase(T.compiled.begin() + first, T.compiled.begin() + first + np);
@@ -965,8 +964,7 @@ CascadeResult delete_node(SimulationContext& ctx, int node_idx, DeleteRecord* re
         const int stat_np = ctx.nodes.stat_n_pollutants;
         record->add(
             [node_name, conc_np, stat_np](const SimulationContext& c) {
-                return c.node_names.find(node_name) < 0 &&
-                       c.nodes.conc_n_pollutants == conc_np &&
+                return c.node_names.find(node_name) < 0 && c.nodes.conc_n_pollutants == conc_np &&
                        c.nodes.stat_n_pollutants == stat_np;
             },
             [node_idx, node_name, row, subtype, coupling, x, y, has_xy](SimulationContext& c) {
@@ -1120,8 +1118,7 @@ CascadeResult delete_link(SimulationContext& ctx, int link_idx, DeleteRecord* re
         // a batch shrink its table (put_link clamps instead).
         record->add(
             [link_name, conc_np, stat_np](const SimulationContext& c) {
-                return c.link_names.find(link_name) < 0 &&
-                       c.links.conc_n_pollutants == conc_np &&
+                return c.link_names.find(link_name) < 0 && c.links.conc_n_pollutants == conc_np &&
                        c.links.stat_n_pollutants == stat_np;
             },
             [link_idx, link_name, row, subtype, x, y, vx, vy](SimulationContext& c) {
@@ -1192,7 +1189,9 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx, DeleteRecord* 
             });
     }
     moveNamedOverrides(ctx, "SUBCATCHMENT", sc_idx, sc_name, {});
-    if (surface.n_species > 0 && surface.init_loading.size() == static_cast<std::size_t>(ctx.n_subcatches()) * surface.n_species) {
+    if (surface.n_species > 0 &&
+        surface.init_loading.size() ==
+            static_cast<std::size_t>(ctx.n_subcatches()) * surface.n_species) {
         auto chunk = soa::take_chunk(surface.init_loading, sc_idx, surface.n_species);
         if (record)
             record->add(
@@ -1206,7 +1205,8 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx, DeleteRecord* 
     for (auto* laws : {&ctx.reactions.wet_laws, &ctx.reactions.buildup_laws}) {
         if (record) {
             const bool wet = laws == &ctx.reactions.wet_laws;
-            auto owned = rows_where(*laws, [sc_idx](const auto& l) { return l.subcatchment == sc_idx; });
+            auto owned =
+                rows_where(*laws, [sc_idx](const auto& l) { return l.subcatchment == sc_idx; });
             if (!laws->empty())
                 record->add({}, [wet, sc_idx, owned](SimulationContext& c) {
                     auto& v = wet ? c.reactions.wet_laws : c.reactions.buildup_laws;
@@ -1279,8 +1279,7 @@ CascadeResult delete_subcatch(SimulationContext& ctx, int sc_idx, DeleteRecord* 
             // Taken in descending order; reinsert ascending.
             for (auto it = taken_lids.rbegin(); it != taken_lids.rend(); ++it) {
                 auto row = it->second;
-                soa::put_row(c.lid_usage, std::min(it->first, c.lid_usage.count()),
-                             std::move(row));
+                soa::put_row(c.lid_usage, std::min(it->first, c.lid_usage.count()), std::move(row));
             }
         });
 
@@ -1413,7 +1412,8 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx, DeleteRecord* re
         record->add(
             [cleared_subcatches](const SimulationContext& c) {
                 for (int i : cleared_subcatches)
-                    if (i >= c.n_subcatches() || c.subcatches.gage[static_cast<std::size_t>(i)] != -1)
+                    if (i >= c.n_subcatches() ||
+                        c.subcatches.gage[static_cast<std::size_t>(i)] != -1)
                         return false;
                 return true;
             },
@@ -1444,7 +1444,8 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx, DeleteRecord* re
             record->add(
                 [cleared_groups, cleared_entries](const SimulationContext& c) {
                     for (std::size_t i : cleared_groups)
-                        if (i >= c.unit_hyds.gage_names.size() || !c.unit_hyds.gage_names[i].empty())
+                        if (i >= c.unit_hyds.gage_names.size() ||
+                            !c.unit_hyds.gage_names[i].empty())
                             return false;
                     for (std::size_t i : cleared_entries)
                         if (i >= c.unit_hyds.entries.size() ||
@@ -1485,7 +1486,9 @@ CascadeResult delete_gage(SimulationContext& ctx, int gage_idx, DeleteRecord* re
     // --- Step 3: renumber ---
     renumber_refs(ctx.subcatches.gage, gage_idx);
     if (record)
-        record->add({}, [gage_idx](SimulationContext& c) { renumber_refs_up(c.subcatches.gage, gage_idx); });
+        record->add({}, [gage_idx](SimulationContext& c) {
+            renumber_refs_up(c.subcatches.gage, gage_idx);
+        });
 
     return result;
 }
@@ -1603,8 +1606,8 @@ void seal_delete_record(const SimulationContext& ctx, DeleteRecord& record) {
     record.add(
         [nodes = ctx.n_nodes(), links = ctx.n_links(), subcatches = ctx.n_subcatches(),
          gages = ctx.n_gages()](const SimulationContext& c) {
-            return c.n_nodes() == nodes && c.n_links() == links &&
-                   c.n_subcatches() == subcatches && c.n_gages() == gages;
+            return c.n_nodes() == nodes && c.n_links() == links && c.n_subcatches() == subcatches &&
+                   c.n_gages() == gages;
         },
         {});
 }
@@ -2002,8 +2005,10 @@ CascadeResult delete_pollutant(SimulationContext& ctx, int pollut_idx) {
     const std::string pname = ctx.pollutant_names.name_of(pollut_idx);
 
     for (int row = ctx.initial_quality.count() - 1; row >= 0; --row) {
-        if (ctx.initial_quality.kind[row] == pollut_idx) ctx.initial_quality.erase(row);
-        else if (ctx.initial_quality.kind[row] > pollut_idx) --ctx.initial_quality.kind[row];
+        if (ctx.initial_quality.kind[row] == pollut_idx)
+            ctx.initial_quality.erase(row);
+        else if (ctx.initial_quality.kind[row] > pollut_idx)
+            --ctx.initial_quality.kind[row];
     }
 
     // --- Step 1: cascade-delete inflow rows keyed by constituent name ---

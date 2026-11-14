@@ -146,7 +146,7 @@ struct DWNodeArrays {
     std::vector<double> sumdqdh;
     std::vector<double> dYdT;
     std::vector<double> conduit_loss; ///< Incident net conduit loss (cfs)
-    std::vector<double> loss_factor; ///< Affordable fraction of conduit loss
+    std::vector<double> loss_factor;  ///< Affordable fraction of conduit loss
     std::vector<uint8_t> converged;
     std::vector<uint8_t> is_surcharged; ///< TRUE when node depth > crown elevation
 

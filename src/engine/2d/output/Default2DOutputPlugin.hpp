@@ -427,7 +427,7 @@ private:
     /// [nTime, mLayers, nFace]. Created lazily on the first update() with a
     /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
     /// `Mesh2_face_gw_closure` are static [nFace] and written once.
-    static constexpr int kGwFaceFields = 29; // + Mesh2_face_gw_qx/qy (Darcy velocity)
+    static constexpr int kGwFaceFields = 29;      // + Mesh2_face_gw_qx/qy (Darcy velocity)
     static constexpr hsize_t kGwLedgerTerms = 15; // G-X3: + link (LED 10), residual last
     hid_t ds_gw_face_[kGwFaceFields] = {
         H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
@@ -486,8 +486,8 @@ private:
     std::unique_ptr<InertialEdges> mixing_edges_;
     std::unique_ptr<MomentumPhysics2D> mixing_diagnostics_;
     bool mixing_enabled_ = false, momentum_velocity_ = false;
-    double mixing_cs_ = .1, mixing_background_ = 0, mixing_depth_coefficient_ = 0, mixing_dry_ = .001,
-           coriolis_f_ = 0;
+    double mixing_cs_ = .1, mixing_background_ = 0, mixing_depth_coefficient_ = 0,
+           mixing_dry_ = .001, coriolis_f_ = 0;
     const char* turbulence_name_ = "NONE"; ///< static TURBULENCE_MODEL token
     hid_t ds_face_eddy_viscosity_ = H5I_INVALID_HID;
     hid_t ds_face_strain_rate_ = H5I_INVALID_HID;

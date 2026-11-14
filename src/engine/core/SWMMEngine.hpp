@@ -240,7 +240,8 @@ public:
     /// Opt-in no-link passive-material pair.
     int configureMaterialSplit(int role) noexcept;
     int setMaterialTransport(SWMM_MaterialTransport callback, void* user) noexcept;
-    int bindMaterialPeer(SWMMEngine& surface, std::size_t capacity = 4096, bool require_transport = false) noexcept;
+    int bindMaterialPeer(SWMMEngine& surface, std::size_t capacity = 4096,
+                         bool require_transport = false) noexcept;
     const quality::PeerPassiveStorageFunding* peerMaterialFunding() const noexcept;
     const quality::PeerPassiveStorageProducer* peerMaterialProducer() const noexcept;
     // Private pair recovery. Both bound roles are captured/installed
@@ -250,7 +251,8 @@ public:
     bool materialPairCheckpointAccessReady(bool attached = true) const noexcept;
     static std::string validateMaterialPairCheckpointEnvelope(const std::string& bytes);
     std::string materialPairCheckpointBytes(std::string& result) const;
-    std::string restoreMaterialPairCheckpoint(const std::string& bytes, double expected_seconds = -1);
+    std::string restoreMaterialPairCheckpoint(const std::string& bytes,
+                                              double expected_seconds = -1);
     int splitGeometry(SWMM_SplitFrame* frame) noexcept;
     int applySplitGeometry(SWMM_SplitFrame frame) noexcept;
     int setSplitCallback(SWMM_SplitCallback callback, void* user) noexcept;
@@ -991,15 +993,18 @@ public:
     }
     std::string attachLivePassiveExchange(std::size_t journal_capacity = 4096);
     std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity = 4096);
-    std::string attachLiveChangingVolumeSlicedExchange(std::size_t journal_capacity = 4096, bool preflight_history = false);
+    std::string attachLiveChangingVolumeSlicedExchange(std::size_t journal_capacity = 4096,
+                                                       bool preflight_history = false);
     /// Conservative restart-history admission before stepping or flushing a pending window.
-    std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity, bool preflight_history);
+    std::string attachLiveChangingVolumeExchange(std::size_t journal_capacity,
+                                                 bool preflight_history);
     std::string attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic water,
-                                                 std::size_t journal_capacity = 4096, bool preflight_history = false);
+                                                 std::size_t journal_capacity = 4096,
+                                                 bool preflight_history = false);
     std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
-                                         std::size_t journal_capacity = 4096);
+                                          std::size_t journal_capacity = 4096);
     std::string attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
-                                         std::size_t journal_capacity, bool preflight_history);
+                                          std::size_t journal_capacity, bool preflight_history);
     const quality::LivePassiveStorageExchange* livePassiveExchange() const noexcept {
         return live_passive_exchange_.get();
     }
@@ -1441,7 +1446,7 @@ private:
     EngineCallbacks callbacks_; ///< Registered callback bundle
     void tracePhase(int phase, double start, double duration) noexcept;
     std::unique_ptr<components::ProcessComponentHost> process_component_host_;
-    int save_results_ = 0;      ///< Whether to save binary results
+    int save_results_ = 0; ///< Whether to save binary results
 
     /// Legacy DoRouting analog (swmm5.c:748): routing executes only when the
     /// model has nodes and IGNORE_ROUTING is off. Computed once in start();

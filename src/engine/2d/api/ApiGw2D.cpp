@@ -1236,7 +1236,8 @@ SWMM_ENGINE_API int swmm_gw2d_get_clock_stats(SWMM_Engine engine, SWMM_GwClockSt
             result.max_budget_excess_in[k] = clock->excess_in[k];
             result.max_budget_excess_out[k] = clock->excess_out[k];
             result.max_return_depth[k] = clock->max_return_depth[k];
-            std::copy(clock->budget_exceedance[k].begin(), clock->budget_exceedance[k].end(), result.budget_exceedance[k]);
+            std::copy(clock->budget_exceedance[k].begin(), clock->budget_exceedance[k].end(),
+                      result.budget_exceedance[k]);
             result.max_elapsed[k] = clock->maximum[k];
             result.mean_elapsed[k] = clock->firings[k] ? clock->elapsed[k] / clock->firings[k] : 0.;
         }

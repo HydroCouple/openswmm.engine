@@ -26,7 +26,8 @@ void compareReference(const std::string& stem, int kinds) {
     const auto report = outputs / (stem + ".rpt");
     const auto output = outputs / (stem + ".out");
     ASSERT_EQ(swmm_engine_run(input.string().c_str(), report.string().c_str(),
-                              output.string().c_str(), nullptr), SWMM_OK);
+                              output.string().c_str(), nullptr),
+              SWMM_OK);
     openswmm::OutputReader reference, actual;
     ASSERT_TRUE(reference.open(reference_path.string().c_str()));
     ASSERT_TRUE(actual.open(output.string().c_str()));
@@ -34,30 +35,38 @@ void compareReference(const std::string& stem, int kinds) {
     ASSERT_EQ(actual.error_code(), 0);
     ASSERT_EQ(reference.period_count(), actual.period_count());
     ASSERT_EQ(reference.report_step(), actual.report_step());
-    const int counts[] = {reference.subcatch_count(), reference.node_count(), reference.link_count()};
+    const int counts[] = {reference.subcatch_count(), reference.node_count(),
+                          reference.link_count()};
     const int actual_counts[] = {actual.subcatch_count(), actual.node_count(), actual.link_count()};
-    const int variables[] = {reference.subcatch_var_count(), reference.node_var_count(), reference.link_var_count()};
+    const int variables[] = {reference.subcatch_var_count(), reference.node_var_count(),
+                             reference.link_var_count()};
     for (int kind = 0; kind < kinds; ++kind) {
         ASSERT_EQ(counts[kind], actual_counts[kind]);
         std::vector<float> expected(counts[kind]), observed(counts[kind]);
-        if (counts[kind] == 0) continue;
+        if (counts[kind] == 0)
+            continue;
         for (int period = 0; period < reference.period_count(); ++period) {
             double expected_time = 0, observed_time = 0;
             ASSERT_TRUE(reference.get_period_time(period, &expected_time));
             ASSERT_TRUE(actual.get_period_time(period, &observed_time));
             ASSERT_DOUBLE_EQ(expected_time, observed_time);
             for (int variable = 0; variable < variables[kind]; ++variable) {
-                SCOPED_TRACE(::testing::Message() << "kind=" << kind << " period=" << period << " variable=" << variable);
+                SCOPED_TRACE(::testing::Message() << "kind=" << kind << " period=" << period
+                                                  << " variable=" << variable);
                 const auto read = [&](openswmm::OutputReader& reader, std::vector<float>& values) {
-                    if (kind == 0) return reader.get_subcatch_result(period, variable, values.data());
-                    if (kind == 1) return reader.get_node_result(period, variable, values.data());
+                    if (kind == 0)
+                        return reader.get_subcatch_result(period, variable, values.data());
+                    if (kind == 1)
+                        return reader.get_node_result(period, variable, values.data());
                     return reader.get_link_result(period, variable, values.data());
                 };
                 ASSERT_TRUE(read(reference, expected));
                 ASSERT_TRUE(read(actual, observed));
                 for (int object = 0; object < counts[kind]; ++object) {
                     ASSERT_TRUE(std::isfinite(observed[object]));
-                    EXPECT_NEAR(observed[object], expected[object], .001 + .001 * std::abs(expected[object])) << "object=" << object;
+                    EXPECT_NEAR(observed[object], expected[object],
+                                .001 + .001 * std::abs(expected[object]))
+                        << "object=" << object;
                 }
             }
         }

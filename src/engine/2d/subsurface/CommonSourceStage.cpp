@@ -695,15 +695,16 @@ std::string CommonSourceStage::checkpointBoundary() const {
     if (volume_roundoff_.size() != surface_->volume.size())
         return "Source water roundoff shape differs.";
     const auto valid_roundoff = [](double correction, double water) {
-        return std::isfinite(correction) && std::abs(correction) <=
-            8 * std::numeric_limits<double>::epsilon() * std::max(1., std::abs(water));
+        return std::isfinite(correction) &&
+               std::abs(correction) <=
+                   8 * std::numeric_limits<double>::epsilon() * std::max(1., std::abs(water));
     };
-    for (size_t i=0; i<volume_roundoff_.size(); ++i)
-        if (!valid_roundoff(volume_roundoff_[i],surface_->volume[i]))
+    for (size_t i = 0; i < volume_roundoff_.size(); ++i)
+        if (!valid_roundoff(volume_roundoff_[i], surface_->volume[i]))
             return "Invalid source volume roundoff.";
-    if (!valid_roundoff(ledger_roundoff_[0],mesh_rain_) ||
-        !valid_roundoff(ledger_roundoff_[1],mesh_evap_) ||
-        !valid_roundoff(ledger_roundoff_[2],mesh_return_))
+    if (!valid_roundoff(ledger_roundoff_[0], mesh_rain_) ||
+        !valid_roundoff(ledger_roundoff_[1], mesh_evap_) ||
+        !valid_roundoff(ledger_roundoff_[2], mesh_return_))
         return "Invalid source ledger roundoff.";
     if (surface_->snow.active() && surface_->snow.completedEnd() != completedEnd())
         return "Checkpoint mesh snow clock does not match the accepted source boundary.";
@@ -812,9 +813,9 @@ std::string CommonSourceStage::advance(double start, double end) {
         if (snow.active()) {
             if (!surface_->snow_context)
                 return "Mesh snow has no weather owner.";
-            const auto error = snow.advanceTrial(*surface_->snow_context, start, end,
-                                                 surface_->rainfall, surface_->snow_catch,
-                                                 &surface_->snow);
+            const auto error =
+                snow.advanceTrial(*surface_->snow_context, start, end, surface_->rainfall,
+                                  surface_->snow_catch, &surface_->snow);
             if (!error.empty())
                 return error;
         }
@@ -856,9 +857,8 @@ std::string CommonSourceStage::advance(double start, double end) {
         auto rain = surface_->rainfall;
         for (int i = 0; i < int(rain.size()); ++i)
             rain[i] = surface_->runtime_forcings.rate(1, i, rain[i]);
-        const auto error =
-            snow.advanceTrial(*surface_->snow_context, start, end, rain, surface_->snow_catch,
-                              &surface_->snow);
+        const auto error = snow.advanceTrial(*surface_->snow_context, start, end, rain,
+                                             surface_->snow_catch, &surface_->snow);
         if (!error.empty())
             return error;
     }
@@ -1360,21 +1360,21 @@ std::string CommonSourceStage::advance(double start, double end) {
         auto& volume = surface_->volume[m.cell];
         auto& roundoff = volume_roundoff_[m.cell];
         for (double water : {m.incoming, -m.evap, -m.out, -infil})
-            addWater(volume,water,roundoff);
+            addWater(volume, water, roundoff);
         if (volume <= 0) {
             volume = 0;
             roundoff = 0;
         }
         surface_->infil_applied[m.cell] += infil / A;
         surface_->coupling_applied[m.cell] += m.incoming - m.rain - m.out;
-        addWater(mesh_return_,mesh_return[m.cell],ledger_roundoff_[2]);
+        addWater(mesh_return_, mesh_return[m.cell], ledger_roundoff_[2]);
         surface_->evap_loss_total += m.evap;
         const auto& b = et_budget[m.cell];
         gw_->bookAreaEt(m.cell, dt, b.potential, b.evaporation, b.soil);
         inertial::cellEtaDepth(*mesh_, *options_, m.cell, surface_->volume[m.cell],
                                surface_->head[m.cell], surface_->depth[m.cell]);
-        addWater(mesh_rain_,m.rain,ledger_roundoff_[0]);
-        addWater(mesh_evap_,m.evap,ledger_roundoff_[1]);
+        addWater(mesh_rain_, m.rain, ledger_roundoff_[0]);
+        addWater(mesh_evap_, m.evap, ledger_roundoff_[1]);
         auto& tr = surface_->transport;
         for (int p = 0; p < ntransport; ++p) {
             const double taken = mesh_mass[mesh_index[m.cell]][p];

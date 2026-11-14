@@ -1099,11 +1099,13 @@ typedef struct SWMM_DividerParams {
 } SWMM_DividerParams;
 
 /** Read a divider record. Requires a divider node and non-null output. */
-SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx, SWMM_DividerParams* out);
+SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx,
+                                                 SWMM_DividerParams* out);
 /** Atomically write a divider record in BUILDING/OPENED. Checks method, finite nonnegative
  * numbers, outgoing diversion-link identity and DIVERSION curve type. TABULAR requires a curve;
  * WEIR requires positive height and coefficient. No mutation occurs on validation failure. */
-SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx, const SWMM_DividerParams* value);
+SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx,
+                                                 const SWMM_DividerParams* value);
 
 /* =========================================================================
  * Additional Geometry / State Getters

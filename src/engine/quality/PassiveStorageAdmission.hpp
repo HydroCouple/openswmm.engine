@@ -2,7 +2,9 @@
 // Copyright 2026 Caleb Buahin
 #pragma once
 #include <cstddef>
-namespace openswmm::twoD { struct SurfaceStateData; }
+namespace openswmm::twoD {
+struct SurfaceStateData;
+}
 
 namespace openswmm::quality {
 // Borrowed only during a real native producer window. No allocation or
@@ -11,8 +13,8 @@ class PassiveStorageAdmission {
 public:
     virtual ~PassiveStorageAdmission() = default;
     virtual bool admit(std::size_t point, int cell, int node, double signed_water_si,
-        double actual_mass_si, double before, double volume_before,
-        double offset_s, double duration_s, double withdrawal_si = 0) noexcept = 0;
+                       double actual_mass_si, double before, double volume_before, double offset_s,
+                       double duration_s, double withdrawal_si = 0) noexcept = 0;
     virtual void applied(double actual_after, double volume_after) noexcept = 0;
     virtual void fail(const char* reason) noexcept = 0;
     virtual bool failed() const noexcept = 0;

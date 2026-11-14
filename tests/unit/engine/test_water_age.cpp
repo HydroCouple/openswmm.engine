@@ -950,8 +950,7 @@ TEST(WaterAgeTest, DryElementRetainsAgedStateAndRefusesIncompleteRecordHotstart)
 
     // ARD also owns per-cell age inventories; publishing record-only ages
     // would claim a restart that cannot preserve the represented dry state.
-    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("ARD/LAGRANGIAN"),
-              std::string::npos);
+    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("ARD/LAGRANGIAN"), std::string::npos);
     EXPECT_FALSE(std::ifstream("_a2_dry.bin").good());
 }
 

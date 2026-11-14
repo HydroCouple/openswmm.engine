@@ -463,7 +463,8 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
                                                   int n_cells, bool plugin_capable) {
     if (opts.momentumPhysics()) {
         if (opts.momentum != Momentum2D::FULL_SWE || opts.lts_tiers != 1)
-            throw std::invalid_argument("Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
+            throw std::invalid_argument(
+                "Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
         // Never hand an enabled process to a plugin that has no such kernel,
         // even when a direct factory caller incorrectly advertises eligibility.
         plugin_capable = false;

@@ -1420,10 +1420,10 @@ TEST(Aquifer2D, IndependentCollapsedColumnKeepsTopRefundsWithTheirDonor) {
     }
     EXPECT_NEAR(refunds, intake, 1e-12);
     EXPECT_NEAR(emergence, inflow, 1e-12);
-    EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0) + refunds + emergence,
-                water + intake + inflow, 1e-12);
-    EXPECT_NEAR(tr.sat_mass[0] + tr.unsat_mass[0] + mass,
-                2. * (water + inflow) + 3. * intake, 1e-12);
+    EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0) + refunds + emergence, water + intake + inflow,
+                1e-12);
+    EXPECT_NEAR(tr.sat_mass[0] + tr.unsat_mass[0] + mass, 2. * (water + inflow) + 3. * intake,
+                1e-12);
     finish(r);
 }
 
@@ -1601,8 +1601,11 @@ TEST(Aquifer2D, IndependentLayerContactUsesItsReceivingLayerBudget) {
     }
     tr.sat_mass[0] = gw.satVolume(0) * concentration;
     const auto mass = [&] {
-        const auto sum = [](const auto& values) { return std::accumulate(values.begin(), values.end(), 0.); };
-        return sum(tr.sat_mass) + sum(tr.unsat_mass) + sum(tr.sacc_L) + sum(tr.sacc_R) + sum(tr.xacc_to_surface);
+        const auto sum = [](const auto& values) {
+            return std::accumulate(values.begin(), values.end(), 0.);
+        };
+        return sum(tr.sat_mass) + sum(tr.unsat_mass) + sum(tr.sacc_L) + sum(tr.sacc_R) +
+               sum(tr.xacc_to_surface);
     };
     const double water0 = s.liveStorage(), mass0 = mass();
     gw.prepareClock();
@@ -1620,8 +1623,10 @@ TEST(Aquifer2D, IndependentLayerContactUsesItsReceivingLayerBudget) {
 }
 
 TEST(Aquifer2D, RuntimeBoundaryEditLandsOnlyTheEditedIndependentCell) {
-    auto r = openDeck("clock-runtime-edit", deck(aquiferSection(
-        "CLOSURE ENSLAVED", "GW_CLOCK INDEPENDENT\nGW_MAX_STEP 1000\nNODE_ENROLMENT ROWS\n")));
+    auto r = openDeck(
+        "clock-runtime-edit",
+        deck(aquiferSection("CLOSURE ENSLAVED",
+                            "GW_CLOCK INDEPENDENT\nGW_MAX_STEP 1000\nNODE_ENROLMENT ROWS\n")));
     ASSERT_TRUE(r.opened);
     ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
@@ -1634,10 +1639,12 @@ TEST(Aquifer2D, RuntimeBoundaryEditLandsOnlyTheEditedIndependentCell) {
     EXPECT_EQ(held, 0.);
     const int ns = r.eng->surfaceRouter2D().subsurface().transport().n_species;
     std::vector<double> concentrations(ns, 0.);
-    ASSERT_NE(swmm_gw2d_set_runtime_boundary(r.e, 0, 15, 2, .0001, concentrations.data(),ns), SWMM_OK);
+    ASSERT_NE(swmm_gw2d_set_runtime_boundary(r.e, 0, 15, 2, .0001, concentrations.data(), ns),
+              SWMM_OK);
     ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
     EXPECT_EQ(held, 0.);
-    ASSERT_EQ(swmm_gw2d_set_runtime_boundary(r.e, 0, 0, 2, .0001, concentrations.data(),ns), SWMM_OK);
+    ASSERT_EQ(swmm_gw2d_set_runtime_boundary(r.e, 0, 0, 2, .0001, concentrations.data(), ns),
+              SWMM_OK);
     ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
     EXPECT_EQ(held, actual);
     ASSERT_EQ(swmm_gw2d_get_cell(r.e, 1, SWMM_GW2D_VAR_COMPLETED_TIME, &held), SWMM_OK);
@@ -1672,7 +1679,8 @@ TEST(Aquifer2D, ClockOptionsRoundTripAndSharedAlwaysBindsTheSurface) {
         ASSERT_EQ(swmm_model_write(r.e, path.string().c_str()), SWMM_OK);
         auto again = openDeck(std::string("clock-options-reopened-") + binding, readAll(path));
         ASSERT_TRUE(again.opened);
-        for (const char* key : {"GW_CLOCK", "GW_BASE_STEP", "GW_MAX_STEP", "GW_BINDS_SURFACE_DT", "GW_BUDGET_FRACTION", "GW_HEAD_TOLERANCE"}) {
+        for (const char* key : {"GW_CLOCK", "GW_BASE_STEP", "GW_MAX_STEP", "GW_BINDS_SURFACE_DT",
+                                "GW_BUDGET_FRACTION", "GW_HEAD_TOLERANCE"}) {
             char original[64]{};
             ASSERT_EQ(swmm_gw2d_option_get(r.e, key, original, sizeof(original)), SWMM_OK);
             ASSERT_EQ(swmm_gw2d_option_get(again.e, key, value, sizeof(value)), SWMM_OK);
@@ -2080,8 +2088,8 @@ TEST(AquiferInfiltration, PublishedHeadroomRetainsLiveSignedReceiptSummation) {
                     if (prescribed && pending < 0 && capacity > 0)
                         ASSERT_GT(rig.gw.infiltrationHeadroom(0), 0);
                     for (double requested : {-1., -0., 0., 1e-300, 1e-17, .1, 1.,
-                                              std::numeric_limits<double>::infinity(),
-                                              std::numeric_limits<double>::quiet_NaN()}) {
+                                             std::numeric_limits<double>::infinity(),
+                                             std::numeric_limits<double>::quiet_NaN()}) {
                         const double room = rig.gw.infiltrationHeadroom(0);
                         const double old_remaining = s.infil_remaining[0];
                         const double old_pending = s.xacc_from_surface[0];
@@ -3148,8 +3156,8 @@ TEST(AquiferBedLookup, InterleavedInactiveAndEmptyCellBedsSurviveRestoreAndRepea
         rig.config.node_beds[4].exchange = false;
         rig.config.node_beds[9].cell = -1;
         std::vector<std::string> warnings;
-        ASSERT_EQ(rig.gw.initialize(rig.mesh, rig.edges, rig.options, {}, 12, rig.config,
-                                    warnings), "");
+        ASSERT_EQ(rig.gw.initialize(rig.mesh, rig.edges, rig.options, {}, 12, rig.config, warnings),
+                  "");
         std::vector<double> concentrations(24, 3);
         if (species) {
             RowLayoutLite rows;
@@ -3367,9 +3375,9 @@ TEST(AquiferBedLookup, ParallelDtAndIntakeMatchSerialAcrossClosuresAndSoils) {
         for (auto* rig : {&serial, &parallel}) {
             auto& state = rig->gw.state();
             for (int i = 0; i < cells; ++i) {
-                state.closure[i] = static_cast<int8_t>(i % 3 == 0 ? GwClosure::SIGMA
-                                                      : i % 3 == 1 ? GwClosure::CLOSED_FORM
-                                                                   : GwClosure::ENSLAVED);
+                state.closure[i] = static_cast<int8_t>(i % 3 == 0   ? GwClosure::SIGMA
+                                                       : i % 3 == 1 ? GwClosure::CLOSED_FORM
+                                                                    : GwClosure::ENSLAVED);
                 state.soil_char[i] = static_cast<int8_t>(laws[i % 4]);
                 state.psi_b[i] = .2;
                 state.lambda[i] = .5;
@@ -3395,7 +3403,8 @@ TEST(AquiferBedLookup, ParallelDtAndIntakeMatchSerialAcrossClosuresAndSoils) {
             EXPECT_EQ(a.infil_rate, b.infil_rate);
             EXPECT_EQ(bedState(serial.gw), bedState(parallel.gw));
             saveBedState("parallel_dt_intake_" + std::to_string(threads) + "_" +
-                             std::to_string(step), parallel.gw);
+                             std::to_string(step),
+                         parallel.gw);
         }
     }
 }
@@ -3420,8 +3429,8 @@ TEST(RichardsSurfaceSnapshots, PreservesUnusedFieldsAndUnselectedInfiltrationSlo
             const auto before = surface;
             rig.gw.state().infil_interval[0] = 1;
             auto column = trialColumn();
-            auto result = acceptRichardsBedsAtFiring(rig.gw, surface, 0, 1,
-                                                      {owner(0, column, -2.5)});
+            auto result =
+                acceptRichardsBedsAtFiring(rig.gw, surface, 0, 1, {owner(0, column, -2.5)});
             ASSERT_TRUE(result.error.empty()) << result.error;
             EXPECT_EQ(surface.depth, before.depth);
             EXPECT_EQ(surface.head, before.head);
@@ -3459,8 +3468,8 @@ TEST(RichardsSurfaceSnapshots, NestedLateRefusalPreservesSurfaceAndRetryPublishe
     const auto before_surface = surface;
     openswmm::detail::CompletedSourceArchive before;
     rig.gw.checkpoint(before, false);
-    auto bad = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2,
-        {.5, 1, 2}, {owner(0, column, -2.5)});
+    auto bad = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2, {.5, 1, 2},
+                                                    {owner(0, column, -2.5)});
     ASSERT_NE(bad.error.find("refunded"), std::string::npos) << bad.error;
     EXPECT_EQ(column.water, water);
     EXPECT_EQ(surface.depth, before_surface.depth);
@@ -3472,8 +3481,8 @@ TEST(RichardsSurfaceSnapshots, NestedLateRefusalPreservesSurfaceAndRetryPublishe
     rig.gw.checkpoint(after, false);
     EXPECT_EQ(before.bytes(), after.bytes());
     rig.gw.state().nacc[1] = 0;
-    auto accepted = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2,
-        {.5, 1, 2}, {owner(0, column, -2.5)});
+    auto accepted = acceptRichardsBedsForTierAcrossSteps(rig.gw, surface, 0, 0, 2, {.5, 1, 2},
+                                                         {owner(0, column, -2.5)});
     ASSERT_TRUE(accepted.error.empty()) << accepted.error;
     EXPECT_EQ(surface.depth, before_surface.depth);
     EXPECT_EQ(surface.head, before_surface.head);
@@ -3653,7 +3662,8 @@ TEST(Aquifer2D, DarcyVelocityCountsRuntimeFlowBoundaryEdges) {
     ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_QX, &qx), SWMM_OK);
     ASSERT_EQ(swmm_gw2d_get_cell(r.e, 0, SWMM_GW2D_VAR_QY, &qy), SWMM_OK);
     const double expected = -Q * 5.0 / (100.0 * g.hg[0]);
-    EXPECT_NEAR(qx, expected, 0.02 * std::abs(expected)) << "the runtime FLOW face is in the moment";
+    EXPECT_NEAR(qx, expected, 0.02 * std::abs(expected))
+        << "the runtime FLOW face is in the moment";
     EXPECT_NEAR(qy, 0.0, 1e-3 * std::abs(expected));
     finish(r);
 }

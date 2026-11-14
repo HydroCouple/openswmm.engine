@@ -100,9 +100,9 @@ std::string build_model(const Deck& d) {
 
 struct RunResult {
     bool ok = false;
-    std::vector<double> depth0; ///< per-cell depth right after start (m)
-    std::vector<double> head0;  ///< per-cell head right after start (m)
-    std::vector<double> depth1; ///< per-cell depth after the run (m)
+    std::vector<double> depth0;  ///< per-cell depth right after start (m)
+    std::vector<double> head0;   ///< per-cell head right after start (m)
+    std::vector<double> depth1;  ///< per-cell depth after the run (m)
     std::vector<double> api_hgl; ///< authored HGL read back before initialize (mesh units)
 };
 
@@ -368,16 +368,17 @@ TEST(InitHgl2D, MeshFileCarriesTheSection) {
         std::ofstream m(kOutDir / "sidecar_mesh.2dm");
         m << full.substr(at) << "\n[2D_INITIAL_HGL]\n*  1.0\n";
     }
-    const std::string inp_text =
-        full.substr(0, at) + "[2D_MESH_FILE]\nFILE  sidecar_mesh.2dm\n";
+    const std::string inp_text = full.substr(0, at) + "[2D_MESH_FILE]\nFILE  sidecar_mesh.2dm\n";
     const RunResult r = run_model(inp_text, "sidecar_hgl");
     ASSERT_TRUE(r.ok);
     EXPECT_NEAR(r.depth0[0], 1.0 - kBed0, 1e-9);
     EXPECT_EQ(r.depth0[1], 0.0);
 
-    const fs::path inp = write_deck(inp_text + "\n[2D_INITIAL_HGL]\n*  1.0\n", "sidecar_inline_hgl");
+    const fs::path inp =
+        write_deck(inp_text + "\n[2D_INITIAL_HGL]\n*  1.0\n", "sidecar_inline_hgl");
     SWMM_Engine eng = swmm_engine_create();
-    const fs::path rpt = kOutDir / "sidecar_inline_hgl.rpt", out = kOutDir / "sidecar_inline_hgl.out";
+    const fs::path rpt = kOutDir / "sidecar_inline_hgl.rpt",
+                   out = kOutDir / "sidecar_inline_hgl.out";
     EXPECT_NE(swmm_engine_open(eng, inp.string().c_str(), rpt.string().c_str(),
                                out.string().c_str(), nullptr),
               SWMM_OK);

@@ -390,8 +390,7 @@ const openswmm::ReportRow* summaryRow(const openswmm::ReportTable& t, int row) {
 
 extern "C" {
 
-SWMM_ENGINE_API int swmm_summary_table_title(SWMM_Engine engine, int table, char* buf,
-                                             int buflen) {
+SWMM_ENGINE_API int swmm_summary_table_title(SWMM_Engine engine, int table, char* buf, int buflen) {
     openswmm::ReportTable t;
     const int rc = buildSummaryTable(engine, table, openswmm::report_tables::kNoRows, t);
     if (rc != SWMM_OK)
@@ -444,8 +443,8 @@ SWMM_ENGINE_API int swmm_summary_row_count(SWMM_Engine engine, int table, int* c
 SWMM_ENGINE_API int swmm_summary_row(SWMM_Engine engine, int table, int row, int* object_type,
                                      int* object_index, char* label, int label_len) {
     openswmm::ReportTable t;
-    const int rc = buildSummaryTable(
-        engine, table, row < 0 ? openswmm::report_tables::kNoRows : row, t);
+    const int rc =
+        buildSummaryTable(engine, table, row < 0 ? openswmm::report_tables::kNoRows : row, t);
     if (rc != SWMM_OK)
         return rc;
     const openswmm::ReportRow* r = summaryRow(t, row);
@@ -464,8 +463,8 @@ SWMM_ENGINE_API int swmm_summary_row(SWMM_Engine engine, int table, int row, int
 SWMM_ENGINE_API int swmm_summary_value(SWMM_Engine engine, int table, int row, int column,
                                        double* value) {
     openswmm::ReportTable t;
-    const int rc = buildSummaryTable(
-        engine, table, row < 0 ? openswmm::report_tables::kNoRows : row, t);
+    const int rc =
+        buildSummaryTable(engine, table, row < 0 ? openswmm::report_tables::kNoRows : row, t);
     if (rc != SWMM_OK)
         return rc;
     const openswmm::ReportRow* r = summaryRow(t, row);
@@ -514,8 +513,8 @@ SWMM_ENGINE_API int swmm_summary_values_read(SWMM_Engine engine, int table, doub
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_summary_labels_read(SWMM_Engine engine, int table, char* buf,
-                                             int buflen, int* needed) {
+SWMM_ENGINE_API int swmm_summary_labels_read(SWMM_Engine engine, int table, char* buf, int buflen,
+                                             int* needed) {
     openswmm::ReportTable t;
     if (const int rc = buildSummaryTable(engine, table, openswmm::report_tables::kAllRows, t);
         rc != SWMM_OK)

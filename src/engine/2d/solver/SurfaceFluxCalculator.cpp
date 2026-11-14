@@ -444,8 +444,7 @@ void computeFaceVelocity(const MeshData& mesh, SurfaceStateData& state,
                 // Match the stage-boundary closure: LI uses the centroid
                 // bed; DW uses the upwind cell/ghost depth for MEAN faces.
                 hf = opts.momentum == Momentum2D::DIFFUSIVE_WAVE
-                         ? (state.head[i] > stage ? depth
-                                                 : std::max(stage - mesh.tri_cz[i], 0.0))
+                         ? (state.head[i] > stage ? depth : std::max(stage - mesh.tri_cz[i], 0.0))
                          : inertial::faceFlowDepth(eta, eta, mesh.tri_cz[i]);
             }
             if (opts.face_reconstruction == FaceDepth2D::VFR_FACE) {

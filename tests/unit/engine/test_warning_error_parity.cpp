@@ -103,8 +103,7 @@ TEST(WarningErrorParity, UndefinedOutletIsFatal209) {
 // run as CFS.
 TEST(WarningErrorParity, UnknownFlowUnitsIsFatal205) {
     std::string rpt_text;
-    const int rc =
-        open_model("warnerr_bad_flow_units.inp", "warnerr_bad_flow_units.rpt", rpt_text);
+    const int rc = open_model("warnerr_bad_flow_units.inp", "warnerr_bad_flow_units.rpt", rpt_text);
     EXPECT_EQ(rc, SWMM_ERR_PARSE);
     EXPECT_TRUE(contains(rpt_text, "ERROR 205")) << rpt_text;
     EXPECT_TRUE(contains(rpt_text, "FURLONGS")) << rpt_text;

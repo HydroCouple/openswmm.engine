@@ -25,3 +25,10 @@ StatementMacros:
   - X
   - Q_UNUSED
   - QT_REQUIRE_VERSION
+  # Local field-list macros whose bodies end in ';' and are called without one.
+  - FIELD
+  - COL
+  - COLUMN
+  - MIRROR
+  - OBSERVE
+  - SAME

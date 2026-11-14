@@ -4,7 +4,9 @@
 #include <cstdlib>
 
 #if TEST_PLUGIN_ABI == 1
-OPENSWMM_PLUGIN_EXPORT const char* openswmm_plugin_abi_tag() { return "obsolete-sdk"; }
+OPENSWMM_PLUGIN_EXPORT const char* openswmm_plugin_abi_tag() {
+    return "obsolete-sdk";
+}
 #elif TEST_PLUGIN_ABI == 2
 OPENSWMM_DECLARE_PLUGIN_ABI()
 #endif

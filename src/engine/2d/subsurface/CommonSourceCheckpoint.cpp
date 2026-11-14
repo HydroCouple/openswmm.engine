@@ -116,12 +116,12 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
     // The forcing overrides are unallocated until used; the archive keeps one value per cell.
     fixedSlots(a, s.depth, s.head, s.volume, s.grad_hx, s.grad_hy, s.grad_hx_lim, s.grad_hy_lim,
                s.vert_head, s.vert_depth_signed, s.face_vx, s.face_vy, s.cell_continuity_err,
-               s.edge_flux, s.rainfall, s.evap_rate, s.infil_rate, s.infil_applied,
-               s.coupling_flux, s.coupling_applied, s.net_source, s.rainfall_forced,
-               s.rainfall_persist, s.rainfall_force_val, s.evap_forced, s.evap_persist,
-               s.evap_force_val, s.coupling_forced, s.coupling_persist, s.coupling_force_val,
-               s.coupling_native, s.old_depth, s.old_volume, s.stat_max_depth,
-               s.stat_max_velocity, s.stat_max_cont_err, s.stat_cum_volume);
+               s.edge_flux, s.rainfall, s.evap_rate, s.infil_rate, s.infil_applied, s.coupling_flux,
+               s.coupling_applied, s.net_source, s.rainfall_forced, s.rainfall_persist,
+               s.rainfall_force_val, s.evap_forced, s.evap_persist, s.evap_force_val,
+               s.coupling_forced, s.coupling_persist, s.coupling_force_val, s.coupling_native,
+               s.old_depth, s.old_volume, s.stat_max_depth, s.stat_max_velocity,
+               s.stat_max_cont_err, s.stat_cum_volume);
     a(s.forcing_dirty, s.forcing_ever_set, s.evap_loss_total);
     if (s.snow.active()) {
         auto bytes = a.reading() ? std::string{} : s.snow.saveCheckpoint();
@@ -284,7 +284,9 @@ using checkpoint::meshState;
 /** Archive the shared mesh/options/transport identity in the existing field order. */
 void checkpoint::meshModel(Archive& a, const MeshData& mesh, const SolverOptions2D& options,
                            const SurfaceTransportState& transport) {
-    auto m = mesh; auto o = options; auto t = transport;
+    auto m = mesh;
+    auto o = options;
+    auto t = transport;
     // Tags and coupled node names are interned in memory; the archive keeps one string each.
     auto vtag = m.vtag.dense(), tri_tag = m.tri_tag.dense(),
          vert_node_name = m.vert_coupled_node_name.dense(),
@@ -297,11 +299,10 @@ void checkpoint::meshModel(Archive& a, const MeshData& mesh, const SolverOptions
          edge_mz = m.edge_mid_values(2), edge_dist_c = m.edge_dist_c_values();
     a(m.vx, m.vy, m.vz, vtag, m.cell_nv, m.cell_v, m.cell_nbr, m.tri_area, m.tri_cx, m.tri_cy,
       m.tri_cz, m.edge_length, m.edge_nx, m.edge_ny, edge_mx, edge_my, edge_mz, edge_dist_c,
-      m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, init_u,
-      init_v, tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt,
-      m.vert_coupled_node, m.tri_coupled_node, m.vert_coupling_cd, m.vert_coupling_area,
-      m.vert_coupling_area_set, m.tri_coupling_cd, m.tri_coupling_area, vert_node_name,
-      tri_node_name);
+      m.quad_vfr_z, m.quad_vfr_a, m.edge_conveyance, m.mannings_n, m.tri_init_depth, init_u, init_v,
+      tri_tag, m.vert_stencil_ptr, m.vert_stencil_idx, m.vert_stencil_wt, m.vert_coupled_node,
+      m.tri_coupled_node, m.vert_coupling_cd, m.vert_coupling_area, m.vert_coupling_area_set,
+      m.tri_coupling_cd, m.tri_coupling_area, vert_node_name, tri_node_name);
     a(o.momentum, o.front_rebuild, o.reconstruction_order, o.max_timestep, o.dry_depth,
       o.limiter_epsilon, o.flux_dh_eps, o.coupling_sync, o.coupling_cd, o.report_2d,
       o.output_compression, o.report_2d_vars, o.report_2d_step, o.infiltration, o.infil_step,
@@ -445,7 +446,7 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
         }
         auto volume_roundoff = volume_roundoff_;
         auto ledger_roundoff = ledger_roundoff_;
-        state(volume_roundoff,ledger_roundoff);
+        state(volume_roundoff, ledger_roundoff);
         std::string magic = "OpenSWMM source boundary";
         uint32_t version = runtimeCatchmentForcingEnabled() ? (runtimeBoundariesEnabled() ? 5 : 4)
                            : runtimeBoundariesEnabled()     ? 3
@@ -625,7 +626,7 @@ std::string CommonSourceStage::loadCheckpointBytes(
             state.fixed(trial.volume_roundoff_);
             state(trial.ledger_roundoff_);
         } else {
-            std::fill(trial.volume_roundoff_.begin(),trial.volume_roundoff_.end(),0);
+            std::fill(trial.volume_roundoff_.begin(), trial.volume_roundoff_.end(), 0);
             trial.ledger_roundoff_ = {};
         }
         state.finish();

@@ -332,9 +332,12 @@ MeshBuildReport buildNetworkMesh(SimulationContext& ctx, const FvOptions& opts,
                 mesh.node_vol_tbl.push_back(
                     node::getVolume(ctx.nodes, i, d, &ctx.tables, us, &ctx.node_subtypes));
             }
-            mesh.node_vol_atop[ui] = ctx.nodes.storage_area[ui] > 0.0 ? 0.0 :
-                std::max(node::getSurfArea(ctx.nodes, i, dmax, &ctx.tables, us, &ctx.node_subtypes),
-                         constants::MIN_SURFAREA);
+            mesh.node_vol_atop[ui] =
+                ctx.nodes.storage_area[ui] > 0.0
+                    ? 0.0
+                    : std::max(node::getSurfArea(ctx.nodes, i, dmax, &ctx.tables, us,
+                                                 &ctx.node_subtypes),
+                               constants::MIN_SURFAREA);
         }
     }
 

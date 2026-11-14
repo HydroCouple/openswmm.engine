@@ -119,7 +119,8 @@ TEST(EditorSubcatchOutlet, TargetsAreExclusiveAndCascadeCyclesAreRejected) {
     auto e = makeEngine();
     ASSERT_NE(e, nullptr);
     ASSERT_EQ(swmm_node_add(e, "N", SWMM_NODE_JUNCTION), SWMM_OK);
-    for (const char* id : {"A", "B", "C"}) ASSERT_EQ(swmm_subcatch_add(e, id), SWMM_OK);
+    for (const char* id : {"A", "B", "C"})
+        ASSERT_EQ(swmm_subcatch_add(e, id), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_outlet(e, 0, 0), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_outlet_subcatch(e, 0, 1), SWMM_OK);
     int node = -2, sc = -2;
@@ -167,7 +168,8 @@ TEST(EditorRainSource, SavedFileSourceDoesNotRevertToALatentSeries) {
     const char* path = "editor_rain_source_roundtrip.inp";
     ASSERT_EQ(swmm_model_write(e, path), SWMM_OK);
     std::ifstream file(path);
-    const std::string saved((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::string saved((std::istreambuf_iterator<char>(file)),
+                            std::istreambuf_iterator<char>());
     EXPECT_NE(saved.find("FILE "), std::string::npos);
     EXPECT_EQ(saved.find("TIMESERIES Rain"), std::string::npos);
     destroy(e);
@@ -395,7 +397,8 @@ TEST(EditorRoundtripApi, LidLayersAndTypeRoundTrip) {
                   SWMM_ERR_BADPARAM);
     double degree = -1.0;
     ASSERT_EQ(swmm_lid_get_pavement_ex(e, 1, &p_thick, nullptr, nullptr, nullptr, nullptr, nullptr,
-                                      &degree), SWMM_OK);
+                                       &degree),
+              SWMM_OK);
     EXPECT_DOUBLE_EQ(p_thick, 7.0);
     EXPECT_DOUBLE_EQ(degree, 0.5);
 

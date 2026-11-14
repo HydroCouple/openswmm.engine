@@ -51,19 +51,19 @@ namespace detail {
 // ============================================================================
 
 OdeWorkspace::~OdeWorkspace() {
-        std::free(y);
-        std::free(yscal);
-        std::free(dydx);
-        std::free(yerr);
-        std::free(ytemp);
-        std::free(ak);
-        // Reset to the constructed state, as legacy odesolve_close() does.
-        // nmax = 0 matters: ensureWorkspace() early-returns while nmax >= n, so
-        // leaving it set would hand freed pointers to any integrate() that ran
-        // after teardown (thread_local destruction order is not guaranteed).
-        y = yscal = dydx = yerr = ytemp = ak = nullptr;
-        nmax = 0;
-    }
+    std::free(y);
+    std::free(yscal);
+    std::free(dydx);
+    std::free(yerr);
+    std::free(ytemp);
+    std::free(ak);
+    // Reset to the constructed state, as legacy odesolve_close() does.
+    // nmax = 0 matters: ensureWorkspace() early-returns while nmax >= n, so
+    // leaving it set would hand freed pointers to any integrate() that ran
+    // after teardown (thread_local destruction order is not guaranteed).
+    y = yscal = dydx = yerr = ytemp = ak = nullptr;
+    nmax = 0;
+}
 
 // Pins the property the destructor exists for. If it is ever removed or
 // =default'd, the leak returns silently on every platform whose leak checker

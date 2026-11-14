@@ -267,33 +267,52 @@ SWMM_ENGINE_API int swmm_table_clear(SWMM_Engine engine, int idx) {
 }
 
 SWMM_ENGINE_API int swmm_table_validate_points(SWMM_Engine engine, int idx, const double* x,
-    const double* y, int count, int relative_count, double anchor) {
+                                               const double* y, int count, int relative_count,
+                                               double anchor) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_tables());
     if (count < 0 || (count && (!x || !y)) || relative_count < 0 || relative_count > count ||
-        !std::isfinite(anchor) || (ctx.tables[idx].type != openswmm::TableType::TIMESERIES && relative_count))
+        !std::isfinite(anchor) ||
+        (ctx.tables[idx].type != openswmm::TableType::TIMESERIES && relative_count))
         return SWMM_ERR_BADPARAM;
     for (int i = 0; i < count; ++i)
-        if (!std::isfinite(x[i]) || !std::isfinite(y[i]) || (i && x[i] <= x[i-1])) return SWMM_ERR_BADPARAM;
+        if (!std::isfinite(x[i]) || !std::isfinite(y[i]) || (i && x[i] <= x[i - 1]))
+            return SWMM_ERR_BADPARAM;
     return SWMM_OK;
 }
 SWMM_ENGINE_API int swmm_table_replace_points(SWMM_Engine engine, int idx, const double* x,
-    const double* y, int count, int relative_count, double anchor, const char* file_token) {
+                                              const double* y, int count, int relative_count,
+                                              double anchor, const char* file_token) {
     const int rc = swmm_table_validate_points(engine, idx, x, y, count, relative_count, anchor);
-    if (rc != SWMM_OK) return rc;
+    if (rc != SWMM_OK)
+        return rc;
     auto& table = to_engine(engine)->context().tables[idx];
-    if (file_token && table.type != openswmm::TableType::TIMESERIES) return SWMM_ERR_BADPARAM;
-    std::vector<double> xx, yy;
-    if (count) { xx.assign(x, x + count); yy.assign(y, y + count); }
-    if (file_token && swmm_file_path_set(engine, SWMM_FILE_TIMESERIES_DATA, table.id.c_str(), file_token) != SWMM_OK)
+    if (file_token && table.type != openswmm::TableType::TIMESERIES)
         return SWMM_ERR_BADPARAM;
-    if (table.file_handle) { std::fclose(table.file_handle); table.file_handle = nullptr; }
+    std::vector<double> xx, yy;
+    if (count) {
+        xx.assign(x, x + count);
+        yy.assign(y, y + count);
+    }
+    if (file_token && swmm_file_path_set(engine, SWMM_FILE_TIMESERIES_DATA, table.id.c_str(),
+                                         file_token) != SWMM_OK)
+        return SWMM_ERR_BADPARAM;
+    if (table.file_handle) {
+        std::fclose(table.file_handle);
+        table.file_handle = nullptr;
+    }
     table.is_file_based = false;
-    table.x.swap(xx); table.y.swap(yy); table.cursor.reset();
-    table.first_boundary = {}; table.last_boundary = {}; table.cache = {}; table.row_offsets.clear();
-    table.n_relative = relative_count; table.rel_anchor = anchor;
+    table.x.swap(xx);
+    table.y.swap(yy);
+    table.cursor.reset();
+    table.first_boundary = {};
+    table.last_boundary = {};
+    table.cache = {};
+    table.row_offsets.clear();
+    table.n_relative = relative_count;
+    table.rel_anchor = anchor;
     return SWMM_OK;
 }
 

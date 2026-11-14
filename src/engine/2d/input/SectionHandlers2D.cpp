@@ -229,8 +229,7 @@ double tryParseDouble(const std::string& s, bool& ok) {
  * null scans in row order. Without it a section of tag rows costs rows x n.
  * @return Zero-based first match or -1.
  */
-int findFirstTag(const InternedStrings& tags, int n, const std::string& tag,
-                 TagIndex* index) {
+int findFirstTag(const InternedStrings& tags, int n, const std::string& tag, TagIndex* index) {
     if (index == nullptr) {
         for (int i = 0; i < n; ++i) {
             if (tags[i] == tag)
@@ -388,42 +387,58 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
             return "Unknown MOMENTUM_EQUATION: " + val +
                    " (expected LOCAL_INERTIAL|FULL_SWE|DIFFUSIVE_WAVE)";
     } else if (iequals(key, "CORIOLIS")) {
-        if (iequals(val, "OFF")) opts.coriolis = Coriolis2D::OFF;
-        else if (iequals(val, "LATITUDE")) opts.coriolis = Coriolis2D::LATITUDE;
-        else if (iequals(val, "CONSTANT_F")) opts.coriolis = Coriolis2D::CONSTANT_F;
-        else return "Invalid CORIOLIS (OFF|LATITUDE|CONSTANT_F)";
+        if (iequals(val, "OFF"))
+            opts.coriolis = Coriolis2D::OFF;
+        else if (iequals(val, "LATITUDE"))
+            opts.coriolis = Coriolis2D::LATITUDE;
+        else if (iequals(val, "CONSTANT_F"))
+            opts.coriolis = Coriolis2D::CONSTANT_F;
+        else
+            return "Invalid CORIOLIS (OFF|LATITUDE|CONSTANT_F)";
     } else if (iequals(key, "CORIOLIS_LATITUDE") || iequals(key, "CORIOLIS_F") ||
                iequals(key, "SMAGORINSKY_CS") || iequals(key, "EDDY_VISCOSITY_BACKGROUND") ||
                iequals(key, "MIXING_LENGTH_COEFFICIENT")) {
-        if (iequals(val, "UNSET") && (iequals(key, "CORIOLIS_LATITUDE") || iequals(key, "CORIOLIS_F"))) {
-            if (iequals(key, "CORIOLIS_LATITUDE")) opts.coriolis_latitude_set = false;
-            else opts.coriolis_f_set = false;
+        if (iequals(val, "UNSET") &&
+            (iequals(key, "CORIOLIS_LATITUDE") || iequals(key, "CORIOLIS_F"))) {
+            if (iequals(key, "CORIOLIS_LATITUDE"))
+                opts.coriolis_latitude_set = false;
+            else
+                opts.coriolis_f_set = false;
             return {};
         }
         const double x = tryParseDouble(val, ok);
-        if (!ok || !std::isfinite(x)) return "Invalid finite value for " + key;
+        if (!ok || !std::isfinite(x))
+            return "Invalid finite value for " + key;
         if (iequals(key, "CORIOLIS_LATITUDE")) {
-            if (x < -90 || x > 90) return "CORIOLIS_LATITUDE must be in [-90,90] degrees north";
+            if (x < -90 || x > 90)
+                return "CORIOLIS_LATITUDE must be in [-90,90] degrees north";
             opts.coriolis_latitude = x;
             opts.coriolis_latitude_set = true;
         } else if (iequals(key, "CORIOLIS_F")) {
             opts.coriolis_f = x;
             opts.coriolis_f_set = true;
         } else if (iequals(key, "SMAGORINSKY_CS")) {
-            if (x < 0) return "SMAGORINSKY_CS must be nonnegative";
+            if (x < 0)
+                return "SMAGORINSKY_CS must be nonnegative";
             opts.smagorinsky_cs = x;
         } else if (iequals(key, "EDDY_VISCOSITY_BACKGROUND")) {
-            if (x < 0) return "EDDY_VISCOSITY_BACKGROUND must be nonnegative";
+            if (x < 0)
+                return "EDDY_VISCOSITY_BACKGROUND must be nonnegative";
             opts.eddy_viscosity_background = x;
         } else {
-            if (x < 0) return "MIXING_LENGTH_COEFFICIENT must be nonnegative";
+            if (x < 0)
+                return "MIXING_LENGTH_COEFFICIENT must be nonnegative";
             opts.mixing_length_coefficient = x;
         }
     } else if (iequals(key, "TURBULENCE_MODEL")) {
-        if (iequals(val, "NONE")) opts.turbulence = Turbulence2D::NONE;
-        else if (iequals(val, "SMAGORINSKY")) opts.turbulence = Turbulence2D::SMAGORINSKY;
-        else if (iequals(val, "MIXING_LENGTH")) opts.turbulence = Turbulence2D::MIXING_LENGTH;
-        else return "Invalid TURBULENCE_MODEL (NONE|SMAGORINSKY|MIXING_LENGTH)";
+        if (iequals(val, "NONE"))
+            opts.turbulence = Turbulence2D::NONE;
+        else if (iequals(val, "SMAGORINSKY"))
+            opts.turbulence = Turbulence2D::SMAGORINSKY;
+        else if (iequals(val, "MIXING_LENGTH"))
+            opts.turbulence = Turbulence2D::MIXING_LENGTH;
+        else
+            return "Invalid TURBULENCE_MODEL (NONE|SMAGORINSKY|MIXING_LENGTH)";
     } else if (iequals(key, "FRONT_REBUILD")) {
         if (iequals(val, "AUTO"))
             opts.front_rebuild = -1;
@@ -806,8 +821,13 @@ std::span<const char* const> current2DOptionKeys() {
         "OUTPUT_FILE",
         "INTEGRATOR",
         "MOMENTUM_EQUATION",
-        "CORIOLIS", "CORIOLIS_LATITUDE", "CORIOLIS_F",
-        "TURBULENCE_MODEL", "SMAGORINSKY_CS", "EDDY_VISCOSITY_BACKGROUND", "MIXING_LENGTH_COEFFICIENT",
+        "CORIOLIS",
+        "CORIOLIS_LATITUDE",
+        "CORIOLIS_F",
+        "TURBULENCE_MODEL",
+        "SMAGORINSKY_CS",
+        "EDDY_VISCOSITY_BACKGROUND",
+        "MIXING_LENGTH_COEFFICIENT",
         "RECONSTRUCTION_ORDER",
         "FRONT_REBUILD",
         "THETA",
@@ -951,16 +971,24 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
         return "LOCAL_INERTIAL";
     }
     if (iequals(key, "CORIOLIS"))
-        return opts.coriolis == Coriolis2D::LATITUDE ? "LATITUDE" :
-               opts.coriolis == Coriolis2D::CONSTANT_F ? "CONSTANT_F" : "OFF";
-    auto exact = [](double x) { char value[32]; std::snprintf(value,sizeof value,"%.17g",x);return std::string(value); };
+        return opts.coriolis == Coriolis2D::LATITUDE     ? "LATITUDE"
+               : opts.coriolis == Coriolis2D::CONSTANT_F ? "CONSTANT_F"
+                                                         : "OFF";
+    auto exact = [](double x) {
+        char value[32];
+        std::snprintf(value, sizeof value, "%.17g", x);
+        return std::string(value);
+    };
     if (iequals(key, "CORIOLIS_LATITUDE"))
         return opts.coriolis_latitude_set ? exact(opts.coriolis_latitude) : "UNSET";
     if (iequals(key, "CORIOLIS_F"))
         return opts.coriolis_f_set ? exact(opts.coriolis_f) : "UNSET";
-    if (iequals(key, "SMAGORINSKY_CS")) return exact(opts.smagorinsky_cs);
-    if (iequals(key, "EDDY_VISCOSITY_BACKGROUND")) return exact(opts.eddy_viscosity_background);
-    if (iequals(key, "MIXING_LENGTH_COEFFICIENT")) return exact(opts.mixing_length_coefficient);
+    if (iequals(key, "SMAGORINSKY_CS"))
+        return exact(opts.smagorinsky_cs);
+    if (iequals(key, "EDDY_VISCOSITY_BACKGROUND"))
+        return exact(opts.eddy_viscosity_background);
+    if (iequals(key, "MIXING_LENGTH_COEFFICIENT"))
+        return exact(opts.mixing_length_coefficient);
     if (iequals(key, "TURBULENCE_MODEL"))
         return turbulenceName(opts.turbulence);
     if (iequals(key, "RECONSTRUCTION_ORDER"))

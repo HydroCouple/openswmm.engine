@@ -499,14 +499,17 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
         if (!buf.good())
             return false;
     }
-    if(hs.header.version>=18u) {
-        if(hs.fv_dry_state.size()>64u*1024u*1024u || !write_pod(buf,static_cast<uint32_t>(hs.fv_dry_state.size())))return false;
-        buf.write(hs.fv_dry_state.data(),static_cast<std::streamsize>(hs.fv_dry_state.size()));
-        if(!buf.good())return false;
+    if (hs.header.version >= 18u) {
+        if (hs.fv_dry_state.size() > 64u * 1024u * 1024u ||
+            !write_pod(buf, static_cast<uint32_t>(hs.fv_dry_state.size())))
+            return false;
+        buf.write(hs.fv_dry_state.data(), static_cast<std::streamsize>(hs.fv_dry_state.size()));
+        if (!buf.good())
+            return false;
     }
-    if (hs.header.version == 19u &&
-        (hs.engine_checkpoint.empty() || hs.gw_transport_state.empty() ||
-         !write_pod(buf, uint32_t{1}))) return false;
+    if (hs.header.version == 19u && (hs.engine_checkpoint.empty() ||
+                                     hs.gw_transport_state.empty() || !write_pod(buf, uint32_t{1})))
+        return false;
     // Compute CRC32 over the body
     const std::string body = buf.str();
     const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
@@ -518,7 +521,8 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
     }
     if (std::fwrite(body.data(), 1, body.size(), file.stream()) != body.size() ||
         std::fwrite(&crc, sizeof crc, 1, file.stream()) != 1 || !file.commit()) {
-        tl_last_io_error = file.error().empty() ? "Hotstart write failed for '" + path + "'" : file.error();
+        tl_last_io_error =
+            file.error().empty() ? "Hotstart write failed for '" + path + "'" : file.error();
         return false;
     }
     return true;
@@ -859,18 +863,24 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
     }
     if (hs.header.version >= 17u) {
         uint32_t size = 0;
-        if (!read_pod(is, size) || (size == 0 && hs.header.version < 18u) || size > 64u * 1024u * 1024u || size > file_size)
+        if (!read_pod(is, size) || (size == 0 && hs.header.version < 18u) ||
+            size > 64u * 1024u * 1024u || size > file_size)
             return false;
         hs.gw_transport_state.resize(size);
         is.read(hs.gw_transport_state.data(), size);
         if (!is.good())
             return false;
     }
-    if(hs.header.version>=18u) {
-        uint32_t size=0;
-        if(!read_pod(is,size)||size>64u*1024u*1024u||size>file_size)return false;
+    if (hs.header.version >= 18u) {
+        uint32_t size = 0;
+        if (!read_pod(is, size) || size > 64u * 1024u * 1024u || size > file_size)
+            return false;
         hs.fv_dry_state.resize(size);
-        if(size) {is.read(hs.fv_dry_state.data(),size);if(!is.good())return false;}
+        if (size) {
+            is.read(hs.fv_dry_state.data(), size);
+            if (!is.good())
+                return false;
+        }
     }
     if (hs.header.version == 19u) {
         uint32_t clock_schema = 0;
@@ -1628,8 +1638,10 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path) {
     tl_last_io_error.clear();
 
-    if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
-        tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
+    if (ctx.state_accessors.has_fv_retained_dry_mass &&
+        ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
+        tl_last_io_error =
+            "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
         return nullptr;
     }
     if (!ctx.reactions.lid_controls.empty()) {
@@ -1659,7 +1671,8 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
     if (ctx.options.heat_transport || ctx.lid_layer_state.active() ||
         (ctx.options.quality_solver != QualitySolverKind::LEGACY &&
          (ctx.options.water_age || ctx.n_pollutants() > 0 || ctx.reactions.configured))) {
-        tl_last_io_error = "Record hotstart cannot preserve heat, LID-layer age or ARD/LAGRANGIAN inventories; use a supported full engine checkpoint.";
+        tl_last_io_error =
+            "Record hotstart cannot preserve heat, LID-layer age or ARD/LAGRANGIAN inventories; use a supported full engine checkpoint.";
         return nullptr;
     }
 
@@ -1783,7 +1796,8 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
     if (!hs->gw_interface.empty())
         hs->header.version = std::max(hs->header.version, 13u);
     try {
-        if(ctx.state_accessors.get_fv_dry_state)hs->fv_dry_state=ctx.state_accessors.get_fv_dry_state();
+        if (ctx.state_accessors.get_fv_dry_state)
+            hs->fv_dry_state = ctx.state_accessors.get_fv_dry_state();
         if (ctx.state_accessors.get_snow_state)
             hs->snow_state = ctx.state_accessors.get_snow_state();
         if (!hs->snow_state.empty())
@@ -1799,7 +1813,8 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
         if (!hs->gw_transport_state.empty())
             hs->header.version = 17u;
 #endif
-        if(!hs->fv_dry_state.empty())hs->header.version=18u;
+        if (!hs->fv_dry_state.empty())
+            hs->header.version = 18u;
     } catch (const std::exception& e) {
         tl_last_io_error = e.what();
         delete hs;
@@ -1830,8 +1845,10 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     const std::string& engine_checkpoint) {
     tl_last_io_error.clear();
 
-    if(ctx.state_accessors.has_fv_retained_dry_mass && ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
-        tl_last_io_error = "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
+    if (ctx.state_accessors.has_fv_retained_dry_mass &&
+        ctx.state_accessors.has_fv_retained_dry_mass() && !ctx.state_accessors.get_fv_dry_state) {
+        tl_last_io_error =
+            "Hotstart cannot preserve retained FV dry scalar inventory; save after it remobilizes.";
         return nullptr;
     }
     if (engine_checkpoint.empty() && !ctx.reactions.lid_controls.empty()) {
@@ -1866,7 +1883,8 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
         (ctx.options.heat_transport || ctx.lid_layer_state.active() ||
          (ctx.options.quality_solver != QualitySolverKind::LEGACY &&
           (ctx.options.water_age || ctx.n_pollutants() > 0 || ctx.reactions.configured)))) {
-        tl_last_io_error = "Record hotstart requires a full engine checkpoint for heat, LID layers or ARD/LAGRANGIAN inventories.";
+        tl_last_io_error =
+            "Record hotstart requires a full engine checkpoint for heat, LID layers or ARD/LAGRANGIAN inventories.";
         return nullptr;
     }
 
@@ -1988,7 +2006,8 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
     if (!hs->gw_interface.empty())
         hs->header.version = std::max(hs->header.version, 13u);
     try {
-        if(ctx.state_accessors.get_fv_dry_state)hs->fv_dry_state=ctx.state_accessors.get_fv_dry_state();
+        if (ctx.state_accessors.get_fv_dry_state)
+            hs->fv_dry_state = ctx.state_accessors.get_fv_dry_state();
         if (ctx.state_accessors.get_snow_state)
             hs->snow_state = ctx.state_accessors.get_snow_state();
         if (!hs->snow_state.empty())
@@ -2004,7 +2023,8 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
         if (!hs->gw_transport_state.empty())
             hs->header.version = 17u;
 #endif
-        if(!hs->fv_dry_state.empty())hs->header.version=18u;
+        if (!hs->fv_dry_state.empty())
+            hs->header.version = 18u;
     } catch (const std::exception& e) {
         tl_last_io_error = e.what();
         delete hs;
@@ -2074,10 +2094,17 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
             warn_cb(tl_last_io_error);
         return -1;
     }
-    if(!hs.fv_dry_state.empty() || ctx.state_accessors.set_fv_dry_state) {
-        const auto error=ctx.state_accessors.set_fv_dry_state
-            ?ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state,false):"FV dry inventory accessor is unavailable.";
-        if(!error.empty()) {tl_last_io_error=error;hs.warnings.push_back(error);if(warn_cb)warn_cb(error);return -1;}
+    if (!hs.fv_dry_state.empty() || ctx.state_accessors.set_fv_dry_state) {
+        const auto error = ctx.state_accessors.set_fv_dry_state
+                               ? ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state, false)
+                               : "FV dry inventory accessor is unavailable.";
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            hs.warnings.push_back(error);
+            if (warn_cb)
+                warn_cb(error);
+            return -1;
+        }
     }
     if (!hs.snow_state.empty()) {
         const std::string error = ctx.state_accessors.set_snow_state
@@ -2281,15 +2308,14 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         // barrels (initialization's rule); other links store none.
         if (!std::isfinite(rec.volume)) {
             ctx.links.volume[i] = 0.0;
-            const int cr = ctx.links.type[i] == LinkType::CONDUIT
-                               ? ctx.link_subtypes.conduit_row(idx)
-                               : -1;
+            const int cr =
+                ctx.links.type[i] == LinkType::CONDUIT ? ctx.link_subtypes.conduit_row(idx) : -1;
             if (cr >= 0) {
                 const auto& conduits = ctx.link_subtypes.conduits;
                 const auto ucr = static_cast<std::size_t>(cr);
                 const XSectParams xs = link::buildXSectParams(ctx.links, i, &ctx.transect_tables);
-                ctx.links.volume[i] =
-                    xsect::getAofY(xs, rec.depth) * conduits.true_length[ucr] * conduits.barrels[ucr];
+                ctx.links.volume[i] = xsect::getAofY(xs, rec.depth) * conduits.true_length[ucr] *
+                                      conduits.barrels[ucr];
             }
         }
         if (rec.age >= 0.0 && ctx.options.water_age) {
@@ -2397,9 +2423,12 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         }
     }
 #endif
-    if(ctx.state_accessors.set_fv_dry_state) {
-        const auto error=ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state,true);
-        if(!error.empty()) {tl_last_io_error=error;return -1;}
+    if (ctx.state_accessors.set_fv_dry_state) {
+        const auto error = ctx.state_accessors.set_fv_dry_state(hs.fv_dry_state, true);
+        if (!error.empty()) {
+            tl_last_io_error = error;
+            return -1;
+        }
     }
     return missing;
 }
@@ -2478,8 +2507,7 @@ std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx, in
     return n;
 }
 
-HotStartFile* HotStartManager::read_legacy(const std::string& path,
-                                          const SimulationContext& ctx) {
+HotStartFile* HotStartManager::read_legacy(const std::string& path, const SimulationContext& ctx) {
     tl_last_io_error.clear();
     std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
     if (!file) {
@@ -2523,13 +2551,12 @@ HotStartFile* HotStartManager::read_legacy(const std::string& path,
         return truncated("header");
     if (nSub != ctx.n_subcatches() || nNodes != ctx.n_nodes() || nLinks != ctx.n_links() ||
         nPollut != ctx.n_pollutants() || nLand < 0) {
-        tl_last_io_error = "The hotstart file was written for another model: it holds " +
-                           std::to_string(nSub) + " subcatchments, " + std::to_string(nNodes) +
-                           " nodes, " + std::to_string(nLinks) + " links and " +
-                           std::to_string(nPollut) + " pollutants; the model has " +
-                           std::to_string(ctx.n_subcatches()) + ", " +
-                           std::to_string(ctx.n_nodes()) + ", " + std::to_string(ctx.n_links()) +
-                           " and " + std::to_string(ctx.n_pollutants()) + ".";
+        tl_last_io_error =
+            "The hotstart file was written for another model: it holds " + std::to_string(nSub) +
+            " subcatchments, " + std::to_string(nNodes) + " nodes, " + std::to_string(nLinks) +
+            " links and " + std::to_string(nPollut) + " pollutants; the model has " +
+            std::to_string(ctx.n_subcatches()) + ", " + std::to_string(ctx.n_nodes()) + ", " +
+            std::to_string(ctx.n_links()) + " and " + std::to_string(ctx.n_pollutants()) + ".";
         return nullptr;
     }
     const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -3033,7 +3060,8 @@ int HotStartManager::save_legacy_routing(const std::string& path, const Simulati
     }
     if (ctx.options.water_age || ctx.options.heat_transport || ctx.lid_layer_state.active() ||
         ctx.runtime_coupling_used || ctx.snowpacks.runtime.active) {
-        tl_last_io_error = "Legacy hotstart cannot preserve age, heat, LID layers, UEB snow or runtime coupling; use NATIVE.";
+        tl_last_io_error =
+            "Legacy hotstart cannot preserve age, heat, LID layers, UEB snow or runtime coupling; use NATIVE.";
         return 1;
     }
 #ifdef OPENSWMM_HAS_2D
@@ -3142,7 +3170,8 @@ int HotStartManager::save_legacy_routing(const std::string& path, const Simulati
     if (!output.stream() ||
         std::fwrite(bytes.data(), 1, bytes.size(), output.stream()) != bytes.size() ||
         !output.commit()) {
-        tl_last_io_error = output.error().empty() ? "Hotstart write failed for '" + path + "'" : output.error();
+        tl_last_io_error =
+            output.error().empty() ? "Hotstart write failed for '" + path + "'" : output.error();
         return 1;
     }
     tl_last_io_error.clear();

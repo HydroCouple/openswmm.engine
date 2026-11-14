@@ -31,7 +31,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr double kFt = 0.3048;   // m per ft; legacy reads SI lengths as x / UCF(LENGTH) with UCF(LENGTH) = 0.3048
+constexpr double kFt =
+    0.3048; // m per ft; legacy reads SI lengths as x / UCF(LENGTH) with UCF(LENGTH) = 0.3048
 
 const char* kInp =
     "[OPTIONS]\n"
@@ -79,25 +80,29 @@ const char* kInp =
 class GroundwaterInitSI : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
-    void TearDown() override { if (engine_) swmm_engine_destroy(engine_); }
+    void TearDown() override {
+        if (engine_)
+            swmm_engine_destroy(engine_);
+    }
     openswmm::SWMMEngine& eng() { return *static_cast<openswmm::SWMMEngine*>(engine_); }
 
     void open_and_start() {
         const fs::path dir = "groundwater_init";
         fs::create_directories(dir);
         const auto inp = dir / "gw_init_si.inp";
-        { std::ofstream f(inp, std::ios::trunc); f << kInp; }
+        {
+            std::ofstream f(inp, std::ios::trunc);
+            f << kInp;
+        }
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
         ASSERT_EQ(swmm_engine_open(engine_, inp.string().c_str(),
                                    (dir / "gw_init_si.rpt").string().c_str(),
-                                   (dir / "gw_init_si.out").string().c_str(),
-                                   nullptr), SWMM_OK)
+                                   (dir / "gw_init_si.out").string().c_str(), nullptr),
+                  SWMM_OK)
             << swmm_get_last_error_msg(engine_);
-        ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK)
-            << swmm_get_last_error_msg(engine_);
-        ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK)
-            << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK) << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(swmm_engine_start(engine_, 0), SWMM_OK) << swmm_get_last_error_msg(engine_);
     }
 };
 
@@ -134,9 +139,9 @@ TEST_F(GroundwaterInitSI, RunKeepsContinuityAndInfiltrates) {
     open_and_start();
     double elapsed = 0.0;
     for (;;) {
-        ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK)
-            << swmm_get_last_error_msg(engine_);
-        if (elapsed <= 0.0) break;
+        ASSERT_EQ(swmm_engine_step(engine_, &elapsed), SWMM_OK) << swmm_get_last_error_msg(engine_);
+        if (elapsed <= 0.0)
+            break;
     }
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
 

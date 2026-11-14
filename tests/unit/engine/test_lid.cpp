@@ -1394,12 +1394,15 @@ TEST(LIDPavementRegen, InpRoundTripReproducesLegacyRunoff) {
     const char* saved = "lid_area_out/pavement_regen.inp";
     SWMMEngine engine;
     ASSERT_EQ(swmm_engine_open(&engine, "lid_pavement_regen.inp", "lid_area_out/regen_input.rpt",
-                          "lid_area_out/regen_input.out", nullptr), SWMM_OK);
+                               "lid_area_out/regen_input.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_model_write(&engine, saved), SWMM_OK);
 
     SWMMEngine reopened;
     ASSERT_EQ(swmm_engine_open(&reopened, saved, "lid_area_out/regen.rpt", "lid_area_out/regen.out",
-                               nullptr), SWMM_OK) << swmm_get_last_error_msg(&reopened);
+                               nullptr),
+              SWMM_OK)
+        << swmm_get_last_error_msg(&reopened);
     ASSERT_EQ(swmm_engine_initialize(&reopened), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(&reopened, 0), SWMM_OK);
     double elapsed;
@@ -1408,9 +1411,12 @@ TEST(LIDPavementRegen, InpRoundTripReproducesLegacyRunoff) {
     } while (elapsed > 0.0);
 
     // Reference runoff depths (inches) from the legacy solver with this deck.
-    struct Case { const char* subcatch; double inches; };
-    for (const Case c : {Case{"S_omitted", 19.372}, Case{"S_zero", 19.372},
-                         Case{"S_half", 7.777}, Case{"S_full", 0.0}, Case{"S_disabled", 19.372}}) {
+    struct Case {
+        const char* subcatch;
+        double inches;
+    };
+    for (const Case c : {Case{"S_omitted", 19.372}, Case{"S_zero", 19.372}, Case{"S_half", 7.777},
+                         Case{"S_full", 0.0}, Case{"S_disabled", 19.372}}) {
         SCOPED_TRACE(c.subcatch);
         int idx = swmm_subcatch_index(&reopened, c.subcatch);
         double volume;

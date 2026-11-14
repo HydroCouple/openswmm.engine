@@ -45,7 +45,8 @@ typedef struct SWMM_PassiveAmountV1 {
 typedef struct SWMM_PassiveStatusV1 {
     uint64_t receipt_count, leg_count, unsealed_leg_count;
     int pollutant, units; /* index 0; units: 0 MG/L, 1 UG/L, 2 #/L */
-    int failed, window_open, delivery_frozen, history_preflight, checkpoint_attached, history_refused;
+    int failed, window_open, delivery_frozen, history_preflight, checkpoint_attached,
+        history_refused;
     double elapsed_ms, delivery_seconds;
 } SWMM_PassiveStatusV1;
 
@@ -53,7 +54,7 @@ typedef struct SWMM_PassivePoolV1 {
     int node, units;
     double settled_volume_ft3, settled_depth_ft, settled_concentration;
     double settled_physical_amount; /* native rounded C*V; R is separate */
-    double hydraulic_volume_ft3; /* may differ after an unsuccessful step */
+    double hydraulic_volume_ft3;    /* may differ after an unsuccessful step */
     SWMM_PassiveAmountV1 roundoff, pending_drain, pending_spill; /* sealed only */
 } SWMM_PassivePoolV1;
 
@@ -91,16 +92,19 @@ typedef struct SWMM_PassiveLegV1 {
  * Pollutant identity is read through swmm_pollutant_id(engine,status.pollutant).
  */
 SWMM_ENGINE_API int swmm_passive_exchange_status_v1(SWMM_Engine, size_t, SWMM_PassiveStatusV1*);
-SWMM_ENGINE_API int swmm_passive_exchange_pool_v1(SWMM_Engine, int node, size_t, SWMM_PassivePoolV1*);
+SWMM_ENGINE_API int swmm_passive_exchange_pool_v1(SWMM_Engine, int node, size_t,
+                                                  SWMM_PassivePoolV1*);
 /* Receipt and row ordinals are zero-based. remaining must be 0 (accepted
  * original rows) or 1 (current remaining rows). */
-SWMM_ENGINE_API int swmm_passive_exchange_receipt_v1(SWMM_Engine, uint64_t receipt, size_t, SWMM_PassiveReceiptV1*);
+SWMM_ENGINE_API int swmm_passive_exchange_receipt_v1(SWMM_Engine, uint64_t receipt, size_t,
+                                                     SWMM_PassiveReceiptV1*);
 SWMM_ENGINE_API int swmm_passive_exchange_row_v1(SWMM_Engine, uint64_t receipt, int remaining,
-                                               uint64_t row, size_t, SWMM_PassiveRowV1*);
+                                                 uint64_t row, size_t, SWMM_PassiveRowV1*);
 /* Global journal order includes unsealed legs; receipt.first_leg locates its
  * immutable proof legs in this journal. Attempt may describe a refused leg
  * that was never appended. Before the first attempt it has no carrier and applied==0. */
-SWMM_ENGINE_API int swmm_passive_exchange_leg_v1(SWMM_Engine, uint64_t leg, size_t, SWMM_PassiveLegV1*);
+SWMM_ENGINE_API int swmm_passive_exchange_leg_v1(SWMM_Engine, uint64_t leg, size_t,
+                                                 SWMM_PassiveLegV1*);
 SWMM_ENGINE_API int swmm_passive_exchange_attempt_v1(SWMM_Engine, size_t, SWMM_PassiveLegV1*);
 /* Thread-local UTF-8 diagnostic; overwritten by the next facade operation.
  * This getter does not clear it. It does not replace engine/checkpoint errors. */

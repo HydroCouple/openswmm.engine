@@ -224,7 +224,8 @@ SWMM_ENGINE_API int swmm_snowpack_apply(SWMM_Engine engine, const SWMM_SnowpackE
                 return fail("Invalid melt range or snowpack fraction.");
         }
         if (!openswmm::SnowpackStore::validRemoval(edit.removal))
-            return fail("Snow removal values must be nonnegative and fractions sum to at most one.");
+            return fail(
+                "Snow removal values must be nonnegative and fractions sum to at most one.");
         const std::string destination = edit.removal_subcatch ? edit.removal_subcatch : "";
         if (destination.find_first_of("\r\n\"") != std::string::npos)
             return fail("Invalid snow removal destination.");

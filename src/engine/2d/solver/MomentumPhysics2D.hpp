@@ -37,10 +37,10 @@ public:
      * second-order at fixed h. Uses actual wetted edge area for VFR, cell h
      * for FLAT. Returns kinetic energy removed divided by water density.
      */
-    static double wallDrag(const MeshData& m, const BoundaryData& b,
-                           const std::vector<int>& slots, const std::vector<double>& h,
-                           const std::vector<double>& eta, std::vector<double>& qx,
-                           std::vector<double>& qy, double dry, double seconds, bool vfr);
+    static double wallDrag(const MeshData& m, const BoundaryData& b, const std::vector<int>& slots,
+                           const std::vector<double>& h, const std::vector<double>& eta,
+                           std::vector<double>& qx, std::vector<double>& qy, double dry,
+                           double seconds, bool vfr);
 
     static void rotate(std::vector<double>& qx, std::vector<double>& qy, double angle);
 

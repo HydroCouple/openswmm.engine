@@ -733,11 +733,11 @@ SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_Inle
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine,
-                                               const SWMM_InletDesign* design,
+SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine, const SWMM_InletDesign* design,
                                                SWMM_InletDesign* normalized) {
     CHECK_HANDLE(engine);
-    if (!design) return SWMM_ERR_BADPARAM;
+    if (!design)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     if (design->type < 0 || design->type > SWMM_INLET_CUSTOM)
@@ -798,22 +798,27 @@ SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine,
     result.type = design->type;
     result.throat = SWMM_THROAT_VERTICAL;
     if (is_grate_kind(design->type)) {
-        result.grate_length = design->grate_length; result.grate_width = design->grate_width;
-        result.grate_type = design->grate_type; result.open_area = design->open_area;
+        result.grate_length = design->grate_length;
+        result.grate_width = design->grate_width;
+        result.grate_type = design->grate_type;
+        result.open_area = design->open_area;
         result.splash_veloc = design->splash_veloc;
     }
     if (is_curb_kind(design->type)) {
-        result.curb_length = design->curb_length; result.curb_height = design->curb_height;
+        result.curb_length = design->curb_length;
+        result.curb_height = design->curb_height;
         result.throat = design->throat;
     }
     if (design->type == SWMM_INLET_SLOTTED) {
-        result.slot_length = design->slot_length; result.slot_width = design->slot_width;
+        result.slot_length = design->slot_length;
+        result.slot_width = design->slot_width;
     }
     if (design->type == SWMM_INLET_CUSTOM) {
         copy_str(design->curve_id, result.curve_id, sizeof(result.curve_id));
         result.curve_kind = custom_curve_kind;
     }
-    if (normalized) *normalized = result;
+    if (normalized)
+        *normalized = result;
     return SWMM_OK;
 }
 
@@ -825,9 +830,11 @@ SWMM_ENGINE_API int swmm_inlet_set_design(SWMM_Engine engine, int idx,
     CHECK_INDEX(idx >= 0 && idx < ctx.inlets.count());
     SWMM_InletDesign normalized{};
     const int rc = swmm_inlet_validate_design(engine, design, &normalized);
-    if (rc != SWMM_OK) return rc;
+    if (rc != SWMM_OK)
+        return rc;
     design = &normalized;
-    const int custom_curve_index = design->type == SWMM_INLET_CUSTOM ? ctx.find_curve(design->curve_id) : -1;
+    const int custom_curve_index =
+        design->type == SWMM_INLET_CUSTOM ? ctx.find_curve(design->curve_id) : -1;
     const int custom_curve_kind = design->curve_kind;
 
     const auto ui = static_cast<std::size_t>(idx);
@@ -1144,23 +1151,32 @@ SWMM_ENGINE_API int swmm_lid_validate_type(SWMM_Engine engine, int idx, int type
 
 SWMM_ENGINE_API int swmm_lid_set_type(SWMM_Engine engine, int idx, int type) {
     const int result = swmm_lid_validate_type(engine, idx, type);
-    if (result != SWMM_OK) return result;
+    if (result != SWMM_OK)
+        return result;
     to_engine(engine)->context().lid_controls.lid_type[idx] = lid_type_code(type);
     return SWMM_OK;
 }
 
 static double* lid_extra(openswmm::LidControlStore& rows, int idx, int field) {
     switch (field) {
-    case SWMM_LID_SURFACE_VEGETATION: return &rows.surface[idx][1];
-    case SWMM_LID_SURFACE_SIDE_SLOPE: return &rows.surface[idx][4];
-    case SWMM_LID_SOIL_SUCTION: return &rows.soil[idx][6];
-    case SWMM_LID_STORAGE_CLOGGING: return &rows.storage[idx][3];
-    case SWMM_LID_DRAIN_DELAY: return &rows.drain[idx][3];
-    case SWMM_LID_DRAIN_OPEN: return &rows.drain[idx][4];
-    case SWMM_LID_DRAIN_CLOSE: return &rows.drain[idx][5];
+    case SWMM_LID_SURFACE_VEGETATION:
+        return &rows.surface[idx][1];
+    case SWMM_LID_SURFACE_SIDE_SLOPE:
+        return &rows.surface[idx][4];
+    case SWMM_LID_SOIL_SUCTION:
+        return &rows.soil[idx][6];
+    case SWMM_LID_STORAGE_CLOGGING:
+        return &rows.storage[idx][3];
+    case SWMM_LID_DRAIN_DELAY:
+        return &rows.drain[idx][3];
+    case SWMM_LID_DRAIN_OPEN:
+        return &rows.drain[idx][4];
+    case SWMM_LID_DRAIN_CLOSE:
+        return &rows.drain[idx][5];
     case SWMM_LID_STORAGE_COVERED:
         return &rows.storage[idx][4];
-    default: return nullptr;
+    default:
+        return nullptr;
     }
 }
 SWMM_ENGINE_API int swmm_lid_get_extra(SWMM_Engine engine, int idx, int field, double* value) {
@@ -1168,7 +1184,8 @@ SWMM_ENGINE_API int swmm_lid_get_extra(SWMM_Engine engine, int idx, int field, d
     auto& rows = to_engine(engine)->context().lid_controls;
     CHECK_INDEX(idx >= 0 && idx < rows.count());
     const auto* stored = lid_extra(rows, idx, field);
-    if (!stored || !value) return SWMM_ERR_BADPARAM;
+    if (!stored || !value)
+        return SWMM_ERR_BADPARAM;
     *value = *stored;
     return SWMM_OK;
 }
@@ -1194,9 +1211,11 @@ SWMM_ENGINE_API int swmm_lid_set_extra(SWMM_Engine engine, int idx, int field, d
     return SWMM_OK;
 }
 SWMM_ENGINE_API const char* swmm_lid_get_drain_curve(SWMM_Engine engine, int idx) {
-    if (!engine) return nullptr;
+    if (!engine)
+        return nullptr;
     const auto& rows = to_engine(engine)->context().lid_controls;
-    if (idx < 0 || idx >= rows.count()) return nullptr;
+    if (idx < 0 || idx >= rows.count())
+        return nullptr;
     return idx < static_cast<int>(rows.drain_curve.size()) ? rows.drain_curve[idx].c_str() : "";
 }
 
@@ -1724,31 +1743,38 @@ SWMM_ENGINE_API int swmm_lid_usage_remove(SWMM_Engine engine, int usage_idx) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row, SWMM_LidUsageRecord* out) {
+SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row,
+                                              SWMM_LidUsageRecord* out) {
     CHECK_HANDLE(engine);
-    if (!out) return SWMM_ERR_BADPARAM;
+    if (!out)
+        return SWMM_ERR_BADPARAM;
     const auto& u = to_engine(engine)->context().lid_usage;
     CHECK_INDEX(row >= 0 && row < u.count());
     const int status = swmm_lid_usage_get(engine, row, &out->subcatch_idx, &out->control_idx,
-        &out->number, &out->area, &out->width, &out->init_sat, &out->from_imperv,
-        &out->to_perv, &out->from_perv);
-    if (status != SWMM_OK) return status;
+                                          &out->number, &out->area, &out->width, &out->init_sat,
+                                          &out->from_imperv, &out->to_perv, &out->from_perv);
+    if (status != SWMM_OK)
+        return status;
     out->report_file = u.rpt_file[row].original.c_str();
     out->report_file_resolved = u.rpt_file[row].absolute.c_str();
     out->drain_to = u.drain_to[row].c_str();
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine, const SWMM_LidUsageRecord* row) {
+SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine,
+                                                   const SWMM_LidUsageRecord* row) {
     CHECK_HANDLE(engine);
-    if (!row) return SWMM_ERR_BADPARAM;
+    if (!row)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(row->subcatch_idx >= 0 && row->subcatch_idx < ctx.n_subcatches());
     CHECK_INDEX(row->control_idx >= 0 && row->control_idx < ctx.lid_controls.count());
-    if (ctx.lid_controls.lid_type[row->control_idx] == "NODE") return SWMM_ERR_BADPARAM;
+    if (ctx.lid_controls.lid_type[row->control_idx] == "NODE")
+        return SWMM_ERR_BADPARAM;
     for (double value : {row->area, row->width, row->init_sat, row->from_imperv, row->from_perv})
-        if (!std::isfinite(value)) return SWMM_ERR_BADPARAM;
+        if (!std::isfinite(value))
+            return SWMM_ERR_BADPARAM;
     return SWMM_OK;
 }
 
@@ -1758,39 +1784,68 @@ SWMM_ENGINE_API int swmm_lid_usage_replace_subcatch(SWMM_Engine engine, int subc
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(subcatch_idx >= 0 && subcatch_idx < ctx.n_subcatches());
-    if (count < 0 || (count > 0 && !rows)) return SWMM_ERR_BADPARAM;
+    if (count < 0 || (count > 0 && !rows))
+        return SWMM_ERR_BADPARAM;
     for (int i = 0; i < count; ++i) {
-        if (rows[i].subcatch_idx != subcatch_idx) return SWMM_ERR_BADPARAM;
+        if (rows[i].subcatch_idx != subcatch_idx)
+            return SWMM_ERR_BADPARAM;
         const int status = swmm_lid_usage_validate_record(engine, &rows[i]);
-        if (status != SWMM_OK) return status;
+        if (status != SWMM_OK)
+            return status;
     }
     // Build separately: even strings borrowed from the current store stay live until publication.
     auto next = ctx.lid_usage;
     int position = next.count();
     for (int i = next.count() - 1; i >= 0; --i) {
-        if (next.subcatch_index[i] != subcatch_idx) continue;
+        if (next.subcatch_index[i] != subcatch_idx)
+            continue;
         position = i;
-        const auto erase = [i](auto& v) { if (i < static_cast<int>(v.size())) v.erase(v.begin() + i); };
-        erase(next.subcatch_index); erase(next.lid_index); erase(next.number);
-        erase(next.area); erase(next.width); erase(next.init_sat); erase(next.from_imperv);
-        erase(next.to_perv); erase(next.rpt_file); erase(next.drain_to); erase(next.from_perv);
-        erase(next.wb_inflow); erase(next.wb_evap); erase(next.wb_infil); erase(next.wb_surf_flow);
-        erase(next.wb_drain_flow); erase(next.wb_init_vol); erase(next.wb_final_vol);
+        const auto erase = [i](auto& v) {
+            if (i < static_cast<int>(v.size()))
+                v.erase(v.begin() + i);
+        };
+        erase(next.subcatch_index);
+        erase(next.lid_index);
+        erase(next.number);
+        erase(next.area);
+        erase(next.width);
+        erase(next.init_sat);
+        erase(next.from_imperv);
+        erase(next.to_perv);
+        erase(next.rpt_file);
+        erase(next.drain_to);
+        erase(next.from_perv);
+        erase(next.wb_inflow);
+        erase(next.wb_evap);
+        erase(next.wb_infil);
+        erase(next.wb_surf_flow);
+        erase(next.wb_drain_flow);
+        erase(next.wb_init_vol);
+        erase(next.wb_final_vol);
     }
     for (auto* v : {&next.wb_inflow, &next.wb_evap, &next.wb_infil, &next.wb_surf_flow,
                     &next.wb_drain_flow, &next.wb_init_vol, &next.wb_final_vol})
         v->resize(next.count(), 0.0);
     for (int i = 0; i < count; ++i) {
         const auto& r = rows[i];
-        const auto insert = [at = position + i](auto& v, auto value) { v.insert(v.begin() + at, std::move(value)); };
+        const auto insert = [at = position + i](auto& v, auto value) {
+            v.insert(v.begin() + at, std::move(value));
+        };
         openswmm::FilePathPair path;
         path.original = r.report_file ? r.report_file : "";
         path.absolute = r.report_file_resolved ? r.report_file_resolved : "";
-        insert(next.subcatch_index, subcatch_idx); insert(next.lid_index, r.control_idx);
-        insert(next.number, r.number); insert(next.area, r.area); insert(next.width, r.width);
-        insert(next.init_sat, r.init_sat); insert(next.from_imperv, r.from_imperv);
-        insert(next.to_perv, r.to_perv); insert(next.rpt_file, std::move(path));
-        insert(next.drain_to, std::string(r.drain_to && std::string(r.drain_to) != "*" ? r.drain_to : "")); insert(next.from_perv, r.from_perv);
+        insert(next.subcatch_index, subcatch_idx);
+        insert(next.lid_index, r.control_idx);
+        insert(next.number, r.number);
+        insert(next.area, r.area);
+        insert(next.width, r.width);
+        insert(next.init_sat, r.init_sat);
+        insert(next.from_imperv, r.from_imperv);
+        insert(next.to_perv, r.to_perv);
+        insert(next.rpt_file, std::move(path));
+        insert(next.drain_to,
+               std::string(r.drain_to && std::string(r.drain_to) != "*" ? r.drain_to : ""));
+        insert(next.from_perv, r.from_perv);
         for (auto* v : {&next.wb_inflow, &next.wb_evap, &next.wb_infil, &next.wb_surf_flow,
                         &next.wb_drain_flow, &next.wb_init_vol, &next.wb_final_vol})
             insert(*v, 0.0);

@@ -209,9 +209,9 @@ SWMM_ENGINE_API int swmm_gw2d_boundary_species(SWMM_Engine engine, int index, in
 #define SWMM_GW2D_VAR_ET_UNUSED_CUM 25  /**< Cumulative expired unused soil demand (m3) */
 #define SWMM_GW2D_VAR_ET_SURFACE                                                                   \
     26 /**< Actual surface evaporation at last surface interval (m s-1) */
-#define SWMM_GW2D_VAR_ET_POTENTIAL 27 /**< Potential demand at last surface interval (m s-1) */
-#define SWMM_GW2D_VAR_ET_STRESS 28    /**< Single extraction-site moisture stress factor (1) */
-#define SWMM_GW2D_VAR_ET_REFRESH 29   /**< Last completed demand interval end since start (s) */
+#define SWMM_GW2D_VAR_ET_POTENTIAL 27   /**< Potential demand at last surface interval (m s-1) */
+#define SWMM_GW2D_VAR_ET_STRESS 28      /**< Single extraction-site moisture stress factor (1) */
+#define SWMM_GW2D_VAR_ET_REFRESH 29     /**< Last completed demand interval end since start (s) */
 #define SWMM_GW2D_VAR_COMPLETED_TIME 30 /**< Last committed groundwater state (elapsed seconds). */
 #define SWMM_GW2D_VAR_PENDING_IN 31     /**< Pending incoming water (m3). */
 #define SWMM_GW2D_VAR_PENDING_OUT 32    /**< Pending water withdrawals and soil ET demand (m3). */
@@ -854,7 +854,7 @@ typedef struct SWMM_GwClockStats {
     double mean_elapsed[3], max_elapsed[3];
     double max_budget_excess_in[3], max_budget_excess_out[3]; /* m3, per compartment */
     uint64_t budget_exceedance[3][5]; /* exceedance/budget: 0, <=.25, <=.5, <=1, >1 */
-    double max_return_depth[3]; /* m on the surface twin, one physical cell update */
+    double max_return_depth[3];       /* m on the surface twin, one physical cell update */
 } SWMM_GwClockStats;
 SWMM_ENGINE_API int swmm_gw2d_get_clock_stats(SWMM_Engine engine, SWMM_GwClockStats* stats);
 

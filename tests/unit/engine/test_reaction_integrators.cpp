@@ -434,10 +434,12 @@ TEST(RxIntegrators, RateSystemConservesMassWithDefaultAndExplicitCoupling) {
     for (const char* solver : {"EUL", "RK5", "ROS2", "BDF2"}) {
         for (const char* coupling : {"", "COUPLING NONE\n", "COUPLING FULL\n"}) {
             SCOPED_TRACE(std::string(solver) + " " + coupling);
-            SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
-                "\nRATE_UNITS SEC\n" + coupling + "ATOL 1e-10\nRTOL 1e-8\n"
-                "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-                "[REACTION_TANKS]\nRATE A -0.001 * A\nRATE B 0.001 * A\n");
+            SWMM_Engine e =
+                open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+                              "\nRATE_UNITS SEC\n" + coupling +
+                              "ATOL 1e-10\nRTOL 1e-8\n"
+                              "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                              "[REACTION_TANKS]\nRATE A -0.001 * A\nRATE B 0.001 * A\n");
             double species[2] = {1.0, 0.0};
             const auto rep = run_step(as_cpp_engine(e).context().reactions, 300, species);
             ASSERT_TRUE(rep.ok) << rep.error;
@@ -455,9 +457,10 @@ TEST(RxIntegrators, FullCouplingProjectsAlgebraicSpeciesInsideRateStages) {
         for (const char* form : {"EQUIL B B - 2 * A", "FORMULA B 2 * A"}) {
             SCOPED_TRACE(std::string(solver) + " " + form);
             SWMM_Engine e = open_with_rxn(std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
-                "\nCOUPLING FULL\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
-                "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
-                "[REACTION_TANKS]\nRATE A -0.001 * B\n" + form + "\n");
+                                          "\nCOUPLING FULL\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n"
+                                          "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                                          "[REACTION_TANKS]\nRATE A -0.001 * B\n" +
+                                          form + "\n");
             double species[2] = {1, 2};
             const auto rep = run_step(as_cpp_engine(e).context().reactions, 300, species);
             ASSERT_TRUE(rep.ok) << rep.error;
@@ -477,7 +480,8 @@ TEST(RxIntegrators, ReinitializedWorkspaceMatchesFreshAcrossSystems) {
     std::vector<EngineOwner> engines;
     for (const char* solver : {"EUL", "RK5", "ROS2", "BDF2"}) {
         for (int n : {1, 6, 2}) {
-            std::string body = std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
+            std::string body =
+                std::string("[REACTION_OPTIONS]\nSOLVER ") + solver +
                 "\nRATE_UNITS SEC\nCOUPLING FULL\nATOL 1e-10\nRTOL 1e-8\n[REACTION_SPECIES]\n";
             for (int i = 0; i < n; ++i)
                 body += "BULK X" + std::to_string(i) + " MG\n";
@@ -485,15 +489,16 @@ TEST(RxIntegrators, ReinitializedWorkspaceMatchesFreshAcrossSystems) {
                 body += "[REACTION_TERMS]\nHALF .5*X0\nTWICE 2*HALF\n";
             body += "[REACTION_TANKS]\n";
             for (int i = 0; i < n; ++i)
-                body += "RATE X" + std::to_string(i) + " -.001*X" + std::to_string(i) +
-                    "*X" + std::to_string(i) + (n > 1 ? "+0*TWICE\n" : "\n");
+                body += "RATE X" + std::to_string(i) + " -.001*X" + std::to_string(i) + "*X" +
+                        std::to_string(i) + (n > 1 ? "+0*TWICE\n" : "\n");
             engines.emplace_back(open_with_rxn(body), &swmm_engine_destroy);
             ASSERT_NE(engines.back(), nullptr);
             ASSERT_TRUE(as_cpp_engine(engines.back().get()).context().reactions.compiled);
         }
     }
     engines.emplace_back(open_with_rxn("[REACTION_SPECIES]\nBULK X0 MG\n"
-                         "[REACTION_TANKS]\nFORMULA X0 SQRT(-1)\n"), &swmm_engine_destroy);
+                                       "[REACTION_TANKS]\nFORMULA X0 SQRT(-1)\n"),
+                         &swmm_engine_destroy);
     ASSERT_NE(engines.back(), nullptr);
     RxWorkspace retained;
     for (int cycle = 0; cycle < 3; ++cycle) {
@@ -505,9 +510,12 @@ TEST(RxIntegrators, ReinitializedWorkspaceMatchesFreshAcrossSystems) {
             retained.init(rx);
             RxWorkspace fresh;
             fresh.init(rx);
-            const auto a = ReactionIntegrator::step(rx, true, .25, actual.data(), actual_hv, retained);
-            const auto b = ReactionIntegrator::step(rx, true, .25, expected.data(), expected_hv, fresh);
-            EXPECT_EQ(0, std::memcmp(actual.data(), expected.data(), actual.size()*sizeof(double)));
+            const auto a =
+                ReactionIntegrator::step(rx, true, .25, actual.data(), actual_hv, retained);
+            const auto b =
+                ReactionIntegrator::step(rx, true, .25, expected.data(), expected_hv, fresh);
+            EXPECT_EQ(0,
+                      std::memcmp(actual.data(), expected.data(), actual.size() * sizeof(double)));
             EXPECT_EQ(0, std::memcmp(actual_hv, expected_hv, sizeof(actual_hv)));
             EXPECT_EQ(a.ok, b.ok);
             EXPECT_EQ(a.interval_limit, b.interval_limit);
@@ -520,8 +528,9 @@ TEST(RxIntegrators, ReinitializedWorkspaceMatchesFreshAcrossSystems) {
 
 TEST(RxIntegrators, ConcurrentEngineBindingsMatchIndependentAnalyticDecay) {
     auto e1 = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n"
-        "[REACTION_SPECIES]\nBULK A MG\n[REACTION_TANKS]\nRATE A -0.001 * A\n");
-    auto e2 = open_with_rxn("[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n"
+                            "[REACTION_SPECIES]\nBULK A MG\n[REACTION_TANKS]\nRATE A -0.001 * A\n");
+    auto e2 = open_with_rxn(
+        "[REACTION_OPTIONS]\nSOLVER RK5\nRATE_UNITS SEC\n"
         "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_TANKS]\nRATE A -0.002 * A\nRATE B -0.003 * B\n");
     const auto run = [](SWMM_Engine e, int count) {
         auto& ctx = as_cpp_engine(e).context();

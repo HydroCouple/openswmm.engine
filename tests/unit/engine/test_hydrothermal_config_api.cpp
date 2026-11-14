@@ -636,20 +636,20 @@ std::string ardState(SWMM_Engine e) {
         swmm_transport_get_conduit_disp(e, i, &link, &value);
         s << "|disp " << link << ' ' << value;
     }
-    const auto rows = [&](const char* tag, int (*n)(SWMM_Engine, int*),
-                          int (*get)(SWMM_Engine, int, char*, int, char*, int, int*, double*,
-                                     char*, int)) {
-        int rowCount = 0;
-        n(e, &rowCount);
-        for (int i = 0; i < rowCount; ++i) {
-            char element[64]{}, species[64]{}, series[64]{};
-            int isTs = -1;
-            get(e, i, element, sizeof element, species, sizeof species, &isTs, &value, series,
-                sizeof series);
-            s << '|' << tag << ' ' << element << ' ' << species << ' ' << isTs << ' ' << value
-              << ' ' << series;
-        }
-    };
+    const auto rows =
+        [&](const char* tag, int (*n)(SWMM_Engine, int*),
+            int (*get)(SWMM_Engine, int, char*, int, char*, int, int*, double*, char*, int)) {
+            int rowCount = 0;
+            n(e, &rowCount);
+            for (int i = 0; i < rowCount; ++i) {
+                char element[64]{}, species[64]{}, series[64]{};
+                int isTs = -1;
+                get(e, i, element, sizeof element, species, sizeof species, &isTs, &value, series,
+                    sizeof series);
+                s << '|' << tag << ' ' << element << ' ' << species << ' ' << isTs << ' ' << value
+                  << ' ' << series;
+            }
+        };
     rows("bc", swmm_transport_boundary_count, swmm_transport_get_boundary);
     rows("src", swmm_transport_source_count, swmm_transport_get_source);
     return s.str();

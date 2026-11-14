@@ -364,8 +364,7 @@ TEST_F(ReactionsConfigTest, EmbeddedSectionsSurviveSaveAndReopen) {
     swmm_engine_destroy(engine_);
     engine_ = swmm_engine_create();
     ASSERT_NE(engine_, nullptr);
-    ASSERT_EQ(open_deck("_rx_saved.inp", "", ""), SWMM_OK)
-        << swmm_get_last_error_msg(engine_);
+    ASSERT_EQ(open_deck("_rx_saved.inp", "", ""), SWMM_OK) << swmm_get_last_error_msg(engine_);
     const auto& restored = as_cpp_engine(engine_).context();
     EXPECT_TRUE(restored.reactions.configured);
     EXPECT_GE(restored.species_registry.find("EMB_A"), 0);

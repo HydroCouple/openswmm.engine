@@ -239,10 +239,11 @@ std::vector<std::string> resolve_process_components(SimulationContext& ctx,
             try {
                 if (spec.config_path.empty())
                     throw std::runtime_error("missing config= hosting document");
-                const auto path = std::filesystem::absolute(
-                    io::utf8_path(base_dir) / io::utf8_path(spec.config_path));
+                const auto path = std::filesystem::absolute(io::utf8_path(base_dir) /
+                                                            io::utf8_path(spec.config_path));
                 std::ifstream file(path);
-                if (!file) throw std::runtime_error("cannot read " + io::path_utf8(path));
+                if (!file)
+                    throw std::runtime_error("cannot read " + io::path_utf8(path));
                 nlohmann::json config;
                 file >> config;
                 if (config.at("schema") != "openswmm.hosted-component/1")

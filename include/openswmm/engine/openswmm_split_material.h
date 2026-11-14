@@ -35,14 +35,16 @@ extern "C" {
  * Lost proof retains the full grant; lost ACK retains the committed receipt
  * and the producer's pending acknowledgement. Both failures stop the session.
  */
-typedef int (*SWMM_MaterialTransport)(SWMM_Engine network, int stage,
-    const char* request, size_t length, const char** response, size_t* response_length, void* user);
+typedef int (*SWMM_MaterialTransport)(SWMM_Engine network, int stage, const char* request,
+                                      size_t length, const char** response, size_t* response_length,
+                                      void* user);
 /* Read-only authored eligibility on an OPENED executable or metadata handle.
  * No role, geometry, runtime owner, clock or output is created by this check. */
 SWMM_ENGINE_API int swmm_split_material_validate_input(SWMM_Engine);
 SWMM_ENGINE_API int swmm_split_material_configure(SWMM_Engine, int role);
 SWMM_ENGINE_API int swmm_split_material_set_transport(SWMM_Engine, SWMM_MaterialTransport, void*);
-SWMM_ENGINE_API int swmm_split_material_bind(SWMM_Engine network, SWMM_Engine surface, uint64_t capacity);
+SWMM_ENGINE_API int swmm_split_material_bind(SWMM_Engine network, SWMM_Engine surface,
+                                             uint64_t capacity);
 
 #define SWMM_MATERIAL_CHECKPOINT_NUMERICAL (1UL << 0)
 #define SWMM_MATERIAL_CHECKPOINT_OUTPUTS (1UL << 1)
@@ -71,12 +73,16 @@ SWMM_ENGINE_API int swmm_split_material_checkpoint_prepare_outputs(SWMM_Engine);
  * Original callbacks/channels remain target-local. No per-role, graph or in-flight
  * rollback is implied. Existing native arithmetic/work/size limits still apply. */
 SWMM_ENGINE_API int swmm_split_material_checkpoint_enable(SWMM_Engine network, int outputs);
-SWMM_ENGINE_API int swmm_split_material_checkpoint_capture(SWMM_Engine network, SWMM_MaterialCheckpoint* snapshot);
-SWMM_ENGINE_API int swmm_split_material_checkpoint_restore(SWMM_Engine network, SWMM_MaterialCheckpoint snapshot);
+SWMM_ENGINE_API int swmm_split_material_checkpoint_capture(SWMM_Engine network,
+                                                           SWMM_MaterialCheckpoint* snapshot);
+SWMM_ENGINE_API int swmm_split_material_checkpoint_restore(SWMM_Engine network,
+                                                           SWMM_MaterialCheckpoint snapshot);
 /* Collective component clock join. Finite nonnegative expected_seconds must exactly
  * equal the incoming elapsed_ms/1000 before any numerical/output publication.
  * All other ownership, fresh-target and failure guarantees are those of restore. */
-SWMM_ENGINE_API int swmm_split_material_checkpoint_restore_at(SWMM_Engine network, SWMM_MaterialCheckpoint snapshot, double expected_seconds);
+SWMM_ENGINE_API int swmm_split_material_checkpoint_restore_at(SWMM_Engine network,
+                                                              SWMM_MaterialCheckpoint snapshot,
+                                                              double expected_seconds);
 /* Snapshots are immutable independent binary values, valid after engine close.
  * Import copies 1..MAX_BYTES caller bytes and validates outer framing, native
  * magic/version/endian/word size and checksum. Full model/numerical/output-prefix
@@ -87,8 +93,10 @@ SWMM_ENGINE_API int swmm_split_material_checkpoint_restore_at(SWMM_Engine networ
  * All errors preserve every output argument. Borrowed data remains valid until
  * snapshot destruction; it is not NUL-terminated text. Do not mutate/free it.
  * No operation is safe concurrently with destruction or another engine operation. */
-SWMM_ENGINE_API int swmm_split_material_checkpoint_from_bytes(const void* bytes, size_t length, SWMM_MaterialCheckpoint* snapshot);
-SWMM_ENGINE_API int swmm_split_material_checkpoint_data(SWMM_MaterialCheckpoint snapshot, const void** bytes, size_t* length);
+SWMM_ENGINE_API int swmm_split_material_checkpoint_from_bytes(const void* bytes, size_t length,
+                                                              SWMM_MaterialCheckpoint* snapshot);
+SWMM_ENGINE_API int swmm_split_material_checkpoint_data(SWMM_MaterialCheckpoint snapshot,
+                                                        const void** bytes, size_t* length);
 SWMM_ENGINE_API void swmm_split_material_checkpoint_destroy(SWMM_MaterialCheckpoint snapshot);
 /* Separate no-throw TLS diagnostic; never overwrites either engine's root error.
  * Null handles => BADHANDLE; invalid outputs/mode/binary envelope => BADPARAM;
@@ -109,7 +117,8 @@ SWMM_ENGINE_API const char* swmm_split_material_checkpoint_last_error(void);
  * No-2D/no-component builds return SWMM_ERR_PLUGIN after argument validation.
  */
 SWMM_ENGINE_API int swmm_split_material_packet_encode(SWMM_Engine, SWMM_SplitFrame, char**);
-SWMM_ENGINE_API int swmm_split_material_packet_decode(SWMM_Engine, const char*, size_t, SWMM_SplitFrame*);
+SWMM_ENGINE_API int swmm_split_material_packet_decode(SWMM_Engine, const char*, size_t,
+                                                      SWMM_SplitFrame*);
 SWMM_ENGINE_API int swmm_split_material_packet_copy(SWMM_Engine, const char*, size_t, char**);
 SWMM_ENGINE_API const char* swmm_split_material_last_error(void);
 #ifdef __cplusplus

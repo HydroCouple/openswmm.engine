@@ -108,8 +108,11 @@ std::string join_args(const std::vector<std::string>& args) {
  * @param[in] v Scalar in its retained option units; NaN/inf are not rejected.
  * @return Owned current-C-locale %g text; finite ordinary values aim to round-trip through strtod.
  */
-template<class T> requires std::is_integral_v<T>
-std::string fmt_full(T value) { return std::to_string(value); }
+template <class T>
+    requires std::is_integral_v<T>
+std::string fmt_full(T value) {
+    return std::to_string(value);
+}
 
 std::string fmt_full(double v) {
     char b[40];
@@ -443,12 +446,12 @@ void forwardWriteWarnings(openswmm::SimulationContext& ctx, std::vector<std::str
         ctx.warnings.push_back(std::move(w));
 }
 
-int finishNativeWrite(openswmm::SimulationContext& ctx, int result,
-                      const std::string& path, std::vector<std::string> warnings) {
+int finishNativeWrite(openswmm::SimulationContext& ctx, int result, const std::string& path,
+                      std::vector<std::string> warnings) {
     if (result != 0) {
         ctx.error_code = SWMM_ERR_IO;
-        ctx.error_message = warnings.empty() ? "Cannot write model to '" + path + "'"
-                                             : warnings.back();
+        ctx.error_message =
+            warnings.empty() ? "Cannot write model to '" + path + "'" : warnings.back();
     }
     forwardWriteWarnings(ctx, std::move(warnings));
     return result == 0 ? SWMM_OK : SWMM_ERR_IO;
@@ -532,12 +535,14 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
     openswmm::IPluginComponentInfo* info = eng->plugin_factory().find_component(output_plugin_id);
     if (!info) {
         eng->context().error_code = SWMM_ERR_BADPARAM;
-        eng->context().error_message = std::string("Unknown model writer plugin: ") + output_plugin_id;
+        eng->context().error_message =
+            std::string("Unknown model writer plugin: ") + output_plugin_id;
         return SWMM_ERR_BADPARAM;
     }
     if (!info->has_input()) {
         eng->context().error_code = SWMM_ERR_PLUGIN;
-        eng->context().error_message = std::string("Plugin cannot write models: ") + output_plugin_id;
+        eng->context().error_message =
+            std::string("Plugin cannot write models: ") + output_plugin_id;
         return SWMM_ERR_PLUGIN;
     }
 
@@ -546,7 +551,8 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
     openswmm::IInputPlugin* writer = info->create_input_plugin();
     if (!writer) {
         eng->context().error_code = SWMM_ERR_PLUGIN;
-        eng->context().error_message = std::string("Cannot create model writer: ") + output_plugin_id;
+        eng->context().error_message =
+            std::string("Cannot create model writer: ") + output_plugin_id;
         return SWMM_ERR_PLUGIN;
     }
 
@@ -560,13 +566,15 @@ SWMM_ENGINE_API int swmm_model_write_with_plugin(SWMM_Engine engine, const char*
     if (finalRc != 0) {
         if (writer->last_error_message()[0])
             forwardWriteWarnings(eng->context(), {writer->last_error_message()});
-        if (rc == 0) rc = finalRc;
+        if (rc == 0)
+            rc = finalRc;
     }
     if (rc != 0) {
         eng->context().error_code = SWMM_ERR_PLUGIN;
-        eng->context().error_message = writer->last_error_message()[0]
-            ? writer->last_error_message()
-            : "Cannot write model to '" + std::string(new_path) + "'";
+        eng->context().error_message =
+            writer->last_error_message()[0]
+                ? writer->last_error_message()
+                : "Cannot write model to '" + std::string(new_path) + "'";
     }
     delete writer;
 
@@ -1115,26 +1123,107 @@ namespace {
 // Canonical keys of the swmm_options_get branches below, in branch order (aliases omitted).
 // python/tests/test_api_coverage.py fails when a branch is added without its key here.
 const char* const kStandardOptionKeys[] = {
-    "FLOW_UNITS", "FLOW_ROUTING", "LINK_OFFSETS", "ROUTING_STEP", "REPORT_STEP", "CRS",
-    "RPT_DISABLED", "RPT_INPUT", "RPT_CONTINUITY", "RPT_FLOWSTATS", "RPT_CONTROLS", "RPT_AVERAGES",
-    "RPT_LINK_STEPS", "RPT_SUBCATCHMENTS", "RPT_NODES", "RPT_LINKS", "START_DATE", "START_TIME",
-    "END_DATE", "END_TIME", "REPORT_START_DATE", "REPORT_START_TIME", "DRY_STEP", "WET_STEP",
-    "RULE_STEP", "DRY_DAYS", "SWEEP_START", "SWEEP_END", "INFILTRATION", "ALLOW_PONDING",
-    "SKIP_STEADY_STATE", "IGNORE_RAINFALL", "IGNORE_SNOWMELT", "IGNORE_GROUNDWATER", "IGNORE_RDII",
-    "IGNORE_QUALITY", "IGNORE_ROUTING", "IGNORE_2D", "SURCHARGE_METHOD", "TPA_CELERITY",
-    "UNSTEADY_FRICTION", "UF_K3", "REPORT_SIGNED_HEADS", "NODE_CONTINUITY", "FORCE_MAIN_EQUATION",
-    "NORMAL_FLOW_LIMITED", "INERTIAL_DAMPING", "ANDERSON_ACCEL", "DPS_CELERITY", "DPS_ALPHA",
-    "DPS_DECAY_TIME", "LENGTHENING_STEP", "VARIABLE_STEP", "MINIMUM_STEP", "MAX_TRIALS",
-    "HEAD_TOLERANCE", "LAT_FLOW_TOL", "SYS_FLOW_TOL", "MIN_SURFAREA", "MIN_SLOPE", "FV_CELL_LENGTH",
-    "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER", "FV_LIMITER", "FV_SCALAR_SCHEME",
-    "FV_TIME_INTEGRATION", "FV_SLOT_CELERITY", "FV_PRESSURIZED_IMPLICIT", "FV_PRESSURE_CLOSURE",
-    "FV_DISPERSION", "FV_STRUCTURE_COUPLING", "FV_COMPACTION", "FV_NODE_COUPLING", "FV_NODE_DT",
-    "FV_NODE_PICARD", "FV_NODE_CELL_COUPLING", "FV_JUNCTION_MODEL", "FV_BACKEND",
-    "FV_MIN_PARALLEL_CELLS", "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-    "QUALITY_SOLVER", "WATER_AGE", "OUTFALL_BACKFLOW_QUALITY", "HEAT_TRANSPORT", "QUALITY_STEP",
-    "MAX_SEGMENTS_PER_LINK", "DISPERSION", "RWPT_SEED", "WATER_DENSITY",
-    "WATER_SPECIFIC_HEAT_CAPACITY", "WIND_FUNC_COEFF_A", "WIND_FUNC_COEFF_B", "PRESSURE_RATIO",
-    "FV_NODE_FEEDBACK_DT", "WRITE_ABSOLUTE_PATHS", "COMPATIBILITY", "VIRTUAL_JUNCTION_MOMENTUM",
+    "FLOW_UNITS",
+    "FLOW_ROUTING",
+    "LINK_OFFSETS",
+    "ROUTING_STEP",
+    "REPORT_STEP",
+    "CRS",
+    "RPT_DISABLED",
+    "RPT_INPUT",
+    "RPT_CONTINUITY",
+    "RPT_FLOWSTATS",
+    "RPT_CONTROLS",
+    "RPT_AVERAGES",
+    "RPT_LINK_STEPS",
+    "RPT_SUBCATCHMENTS",
+    "RPT_NODES",
+    "RPT_LINKS",
+    "START_DATE",
+    "START_TIME",
+    "END_DATE",
+    "END_TIME",
+    "REPORT_START_DATE",
+    "REPORT_START_TIME",
+    "DRY_STEP",
+    "WET_STEP",
+    "RULE_STEP",
+    "DRY_DAYS",
+    "SWEEP_START",
+    "SWEEP_END",
+    "INFILTRATION",
+    "ALLOW_PONDING",
+    "SKIP_STEADY_STATE",
+    "IGNORE_RAINFALL",
+    "IGNORE_SNOWMELT",
+    "IGNORE_GROUNDWATER",
+    "IGNORE_RDII",
+    "IGNORE_QUALITY",
+    "IGNORE_ROUTING",
+    "IGNORE_2D",
+    "SURCHARGE_METHOD",
+    "TPA_CELERITY",
+    "UNSTEADY_FRICTION",
+    "UF_K3",
+    "REPORT_SIGNED_HEADS",
+    "NODE_CONTINUITY",
+    "FORCE_MAIN_EQUATION",
+    "NORMAL_FLOW_LIMITED",
+    "INERTIAL_DAMPING",
+    "ANDERSON_ACCEL",
+    "DPS_CELERITY",
+    "DPS_ALPHA",
+    "DPS_DECAY_TIME",
+    "LENGTHENING_STEP",
+    "VARIABLE_STEP",
+    "MINIMUM_STEP",
+    "MAX_TRIALS",
+    "HEAD_TOLERANCE",
+    "LAT_FLOW_TOL",
+    "SYS_FLOW_TOL",
+    "MIN_SURFAREA",
+    "MIN_SLOPE",
+    "FV_CELL_LENGTH",
+    "FV_MIN_CELLS",
+    "FV_CFL",
+    "FV_RIEMANN",
+    "FV_ORDER",
+    "FV_LIMITER",
+    "FV_SCALAR_SCHEME",
+    "FV_TIME_INTEGRATION",
+    "FV_SLOT_CELERITY",
+    "FV_PRESSURIZED_IMPLICIT",
+    "FV_PRESSURE_CLOSURE",
+    "FV_DISPERSION",
+    "FV_STRUCTURE_COUPLING",
+    "FV_COMPACTION",
+    "FV_NODE_COUPLING",
+    "FV_NODE_DT",
+    "FV_NODE_PICARD",
+    "FV_NODE_CELL_COUPLING",
+    "FV_JUNCTION_MODEL",
+    "FV_BACKEND",
+    "FV_MIN_PARALLEL_CELLS",
+    "FV_LTS",
+    "FV_LTS_MAX_TIERS",
+    "FV_CFL_CENSUS_INTERVAL",
+    "QUALITY_SOLVER",
+    "WATER_AGE",
+    "OUTFALL_BACKFLOW_QUALITY",
+    "HEAT_TRANSPORT",
+    "QUALITY_STEP",
+    "MAX_SEGMENTS_PER_LINK",
+    "DISPERSION",
+    "RWPT_SEED",
+    "WATER_DENSITY",
+    "WATER_SPECIFIC_HEAT_CAPACITY",
+    "WIND_FUNC_COEFF_A",
+    "WIND_FUNC_COEFF_B",
+    "PRESSURE_RATIO",
+    "FV_NODE_FEEDBACK_DT",
+    "WRITE_ABSOLUTE_PATHS",
+    "COMPATIBILITY",
+    "VIRTUAL_JUNCTION_MOMENTUM",
     "THREADS",
 };
 
@@ -2437,8 +2526,7 @@ SWMM_ENGINE_API int swmm_options_ext_key_count(SWMM_Engine engine, int* count) {
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_options_ext_key_at(SWMM_Engine engine, int index, char* buf,
-                                            int buflen) {
+SWMM_ENGINE_API int swmm_options_ext_key_at(SWMM_Engine engine, int index, char* buf, int buflen) {
     CHECK_HANDLE(engine);
     if (!buf || buflen <= 0 || index < 0)
         return SWMM_ERR_BADPARAM;

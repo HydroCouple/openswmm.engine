@@ -493,8 +493,8 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
                                                               "REPORT_SIGNED_HEADS  YES\n",
                                                               true));
     ASSERT_TRUE(on.ok);
-    const auto off = runDrawdown("tpa_dd_unsigned", overTopModel("FV_PRESSURE_CLOSURE  TPA\n",
-                                                               true));
+    const auto off =
+        runDrawdown("tpa_dd_unsigned", overTopModel("FV_PRESSURE_CLOSURE  TPA\n", true));
     ASSERT_TRUE(off.ok);
     // Minimum of the APEX node's HEAD series specifically — a global
     // minimum would trivially pick the outfall at elevation 0.
@@ -522,7 +522,7 @@ TEST(FvTpa, SignedHeadsReachTheOutFile) {
             found = true;
             // Returns 0 on success (not a count).
             const int rc = swmm_output_get_node_series(out, n, SWMM_OUT_NODE_HEAD, 0, periods - 1,
-                                                      series.data());
+                                                       series.data());
             EXPECT_EQ(rc, 0);
             if (rc != 0)
                 continue;

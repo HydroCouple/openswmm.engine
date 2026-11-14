@@ -471,8 +471,8 @@ bool ArdEngine::init(SimulationContext& ctx) {
         // The store is the water the continuity equation attributes to the
         // node (node::storeVolume), not nodes.volume: the routers book that
         // in legacy's convention, which is 0 for a junction below its rim.
-        node_vol_[und] = node::storeVolume(ctx.nodes, nd, ctx.nodes.old_depth[und],
-                                           ctx.nodes.old_volume[und]);
+        node_vol_[und] =
+            node::storeVolume(ctx.nodes, nd, ctx.nodes.old_depth[und], ctx.nodes.old_volume[und]);
         for (int s = 0; s < np; ++s)
             node_mass_[und * uns + static_cast<std::size_t>(s)] =
                 ctx.nodes.conc[und * unp + static_cast<std::size_t>(s)] * node_vol_[und];
@@ -1167,7 +1167,8 @@ void ArdEngine::substep(SimulationContext& ctx, double dt_sub, double load_frac)
                         (!fresh_outfall && vol > kMinStoreVol)
                             ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
                             : ((s == temp_row_ && und < ctx.heat_state.node_temp.size())
-                                   ? ctx.heat_state.node_temp[und] : 0.0);
+                                   ? ctx.heat_state.node_temp[und]
+                                   : 0.0);
                     f_phi_flux_[static_cast<std::size_t>(s) * unf + uf] = fq * cnode;
                 }
             }
@@ -1425,8 +1426,8 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
     for (int nd = 0; nd < nn; ++nd) {
         const auto und = static_cast<std::size_t>(nd);
         const double v_old = node_vol_[und];
-        const double v_new = node::storeVolume(ctx.nodes, nd, ctx.nodes.old_depth[und],
-                                                ctx.nodes.old_volume[und]);
+        const double v_new =
+            node::storeVolume(ctx.nodes, nd, ctx.nodes.old_depth[und], ctx.nodes.old_volume[und]);
 
         // Water that leaves the SYSTEM — outfall discharge, flooding — rides no
         // mesh face, so the store never saw it go. Preserving mass across the
@@ -1454,10 +1455,9 @@ void ArdEngine::step(SimulationContext& ctx, double dt) {
         // including a dry store's configured initial temperature.
         if (temp_row_ >= 0 && v_new > v_old &&
             (v_old <= kMinStoreVol || v_new / v_old - 1.0 > kResyncNoiseRel)) {
-            const double held = und < ctx.heat_state.node_temp.size()
-                                    ? ctx.heat_state.node_temp[und] : 0.0;
-            node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] +=
-                (v_new - v_old) * held;
+            const double held =
+                und < ctx.heat_state.node_temp.size() ? ctx.heat_state.node_temp[und] : 0.0;
+            node_mass_[und * uns + static_cast<std::size_t>(temp_row_)] += (v_new - v_old) * held;
         }
         node_vol_[und] = v_new;
     }
@@ -2034,9 +2034,11 @@ void ArdEngine::publish(SimulationContext& ctx) {
                 donor = face_q_[face] >= 0 ? mesh_.face_cl[face] : mesh_.face_cr[face];
         }
         for (int s = 0; s < ns; ++s) {
-            const double conc = donor >= 0
-                                    ? state_.cell_phi[static_cast<std::size_t>(s) * unc + donor]
-                                    : ((vol > 1.0e-12) ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol : 0.0);
+            const double conc =
+                donor >= 0
+                    ? state_.cell_phi[static_cast<std::size_t>(s) * unc + donor]
+                    : ((vol > 1.0e-12) ? node_mass_[und * uns + static_cast<std::size_t>(s)] / vol
+                                       : 0.0);
             if (s == age_row_) {
                 if (und < ctx.water_age_state.node_age.size())
                     ctx.water_age_state.node_age[und] = conc;

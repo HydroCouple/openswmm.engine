@@ -8,7 +8,10 @@
 namespace openswmm::quality {
 /// One accepted internal water transfer, ft3. Donor and receiver are control
 /// volume indices; the same transported amount must be used on both sides.
-struct WaterTransfer { std::size_t donor, receiver; double volume; };
+struct WaterTransfer {
+    std::size_t donor, receiver;
+    double volume;
+};
 struct MixingWater {
     std::vector<double> old_volume, new_volume, source_volume;
     std::vector<double> exported, seeped, evaporated;
@@ -28,19 +31,20 @@ struct MixedScalar {
 class ConservativeMixing {
 public:
     struct Result {
-        bool converged=false;
-        double max_water_residual=0, mass_residual=0;
-        int iterations=0;
+        bool converged = false;
+        double max_water_residual = 0, mass_residual = 0;
+        int iterations = 0;
     };
-    bool prepare(const MixingWater& water, double relative_water_tolerance=1e-9);
+    bool prepare(const MixingWater& water, double relative_water_tolerance = 1e-9);
     Result solve(const MixingScalar& scalar, MixedScalar& output);
+
 private:
     MixingWater water_;
     std::vector<double> diagonal_, rhs_, image_, correction_, guess_;
     fv::NativeGmres gmres_;
     MixedScalar candidate_;
     std::vector<double> incoming_, outgoing_;
-    bool prepared_=false;
-    double water_residual_=0;
+    bool prepared_ = false;
+    double water_residual_ = 0;
 };
 } // namespace openswmm::quality

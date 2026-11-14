@@ -28,20 +28,19 @@ inline std::vector<Ring> rings(const std::vector<double>& x, const std::vector<d
     return out;
 }
 
-inline bool contains(const std::vector<double>& x, const std::vector<double>& y,
-                     Ring ring, double px, double py) {
+inline bool contains(const std::vector<double>& x, const std::vector<double>& y, Ring ring,
+                     double px, double py) {
     bool inside = false;
     for (std::size_t i = 0, j = ring.count - 1; i < ring.count; j = i++) {
         const auto a = ring.first + i, b = ring.first + j;
-        if ((y[a] > py) != (y[b] > py) &&
-            px < (x[b] - x[a]) * (py - y[a]) / (y[b] - y[a]) + x[a])
+        if ((y[a] > py) != (y[b] > py) && px < (x[b] - x[a]) * (py - y[a]) / (y[b] - y[a]) + x[a])
             inside = !inside;
     }
     return inside;
 }
 
-inline bool contains(const std::vector<double>& x, const std::vector<double>& y,
-                     double px, double py) {
+inline bool contains(const std::vector<double>& x, const std::vector<double>& y, double px,
+                     double py) {
     bool inside = false;
     for (auto ring : rings(x, y))
         inside ^= contains(x, y, ring, px, py);

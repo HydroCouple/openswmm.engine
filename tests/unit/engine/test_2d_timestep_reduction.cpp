@@ -12,8 +12,7 @@
 using namespace openswmm::twoD;
 
 TEST(TimestepReduction, MoreRequestedWorkersThanWetCellsMatchesSerialInEveryMomentumMode) {
-    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
-                      Momentum2D::DIFFUSIVE_WAVE})
+    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE, Momentum2D::DIFFUSIVE_WAVE})
         for (int wet : {0, 1, 2}) {
             std::string reference;
             for (int threads : {1, 16}) {
@@ -43,8 +42,7 @@ TEST(TimestepReduction, MoreRequestedWorkersThanWetCellsMatchesSerialInEveryMome
                 solver.initialize(mesh, state, options);
                 openswmm::detail::CompletedSourceArchive archive;
                 for (int step = 0; step < 3; ++step) {
-                    ASSERT_DOUBLE_EQ(solver.advance(step * .5, (step + 1) * .5),
-                                     (step + 1) * .5);
+                    ASSERT_DOUBLE_EQ(solver.advance(step * .5, (step + 1) * .5), (step + 1) * .5);
                     auto count = solver.last_num_steps();
                     auto dt = solver.last_step_size();
                     archive(state.depth, state.head, state.volume, state.edge_flux, count, dt);
@@ -56,8 +54,8 @@ TEST(TimestepReduction, MoreRequestedWorkersThanWetCellsMatchesSerialInEveryMome
                     EXPECT_EQ(bytes, reference) << int(mode) << '/' << wet;
                 if (const char* output = std::getenv("OPENSWMM_DT_REDUCTION_TEST_OUT")) {
                     std::filesystem::create_directories(output);
-                    const auto file = std::to_string(int(mode)) + "-" + std::to_string(wet) +
-                                      "-" + std::to_string(threads) + ".bin";
+                    const auto file = std::to_string(int(mode)) + "-" + std::to_string(wet) + "-" +
+                                      std::to_string(threads) + ".bin";
                     std::ofstream(std::filesystem::path(output) / file, std::ios::binary)
                         .write(bytes.data(), bytes.size());
                 }

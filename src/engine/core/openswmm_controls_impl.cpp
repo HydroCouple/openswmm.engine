@@ -48,20 +48,27 @@ namespace {
  * @return Owned name token, or empty for missing keyword/name/keyword separator.
  */
 std::string parse_rule_name(const std::string& text) {
-    std::size_t start=0;
-    while (start<text.size()) {
-        const auto end=text.find('\n',start);
-        const auto line=text.substr(start,end==std::string::npos?text.size()-start:end-start);
-        auto first=line.find_first_not_of(" \t\r");
-        if(first!=std::string::npos && line.size()>=first+5) {
-            const auto word=line.substr(first,4);
-            if(std::tolower(static_cast<unsigned char>(word[0]))=='r' && std::tolower(static_cast<unsigned char>(word[1]))=='u' &&
-               std::tolower(static_cast<unsigned char>(word[2]))=='l' && std::tolower(static_cast<unsigned char>(word[3]))=='e' && std::isspace(static_cast<unsigned char>(line[first+4]))) {
-                auto name=line.find_first_not_of(" \t\r",first+4);
-                if(name!=std::string::npos)return line.substr(name,line.find_first_of(" \t\r",name)-name);
+    std::size_t start = 0;
+    while (start < text.size()) {
+        const auto end = text.find('\n', start);
+        const auto line =
+            text.substr(start, end == std::string::npos ? text.size() - start : end - start);
+        auto first = line.find_first_not_of(" \t\r");
+        if (first != std::string::npos && line.size() >= first + 5) {
+            const auto word = line.substr(first, 4);
+            if (std::tolower(static_cast<unsigned char>(word[0])) == 'r' &&
+                std::tolower(static_cast<unsigned char>(word[1])) == 'u' &&
+                std::tolower(static_cast<unsigned char>(word[2])) == 'l' &&
+                std::tolower(static_cast<unsigned char>(word[3])) == 'e' &&
+                std::isspace(static_cast<unsigned char>(line[first + 4]))) {
+                auto name = line.find_first_not_of(" \t\r", first + 4);
+                if (name != std::string::npos)
+                    return line.substr(name, line.find_first_of(" \t\r", name) - name);
             }
         }
-        if(end==std::string::npos)break;start=end+1;
+        if (end == std::string::npos)
+            break;
+        start = end + 1;
     }
     return {};
 }
@@ -271,21 +278,30 @@ SWMM_ENGINE_API int swmm_control_validate_rule(SWMM_Engine engine, const char* r
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_control_replace_program(SWMM_Engine engine, const char* const* blocks,
-    int count, int publish, char* error, int error_capacity) {
+                                                 int count, int publish, char* error,
+                                                 int error_capacity) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
-    if (count < 0 || (count && !blocks) || (publish != 0 && publish != 1)) return SWMM_ERR_BADPARAM;
-    std::vector<std::string> candidate; candidate.reserve(count);
+    if (count < 0 || (count && !blocks) || (publish != 0 && publish != 1))
+        return SWMM_ERR_BADPARAM;
+    std::vector<std::string> candidate;
+    candidate.reserve(count);
     std::string program;
     for (int i = 0; i < count; ++i) {
-        if (!blocks[i]) return SWMM_ERR_BADPARAM;
-        candidate.emplace_back(blocks[i]); program += candidate.back(); program += '\n';
+        if (!blocks[i])
+            return SWMM_ERR_BADPARAM;
+        candidate.emplace_back(blocks[i]);
+        program += candidate.back();
+        program += '\n';
     }
-    if (count && swmm_control_validate_rule(engine, program.c_str(), error, error_capacity, nullptr) != SWMM_OK)
+    if (count && swmm_control_validate_rule(engine, program.c_str(), error, error_capacity,
+                                            nullptr) != SWMM_OK)
         return SWMM_ERR_BADPARAM;
-    if (error && error_capacity > 0) error[0] = '\0';
-    if (publish) ctx.control_rules.rule_text.swap(candidate);
+    if (error && error_capacity > 0)
+        error[0] = '\0';
+    if (publish)
+        ctx.control_rules.rule_text.swap(candidate);
     return SWMM_OK;
 }
 

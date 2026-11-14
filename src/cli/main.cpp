@@ -136,18 +136,20 @@ int main(int argc, char* argv[]) {
 #ifdef OPENSWMM_HAS_2D
         char path[4096]{}, original[4096]{}, diagnostic[4096]{};
         int count = 0, objects = 0, shares = 0, cells = 0, valid = 0;
-        err = swmm_file_path_get(engine, SWMM_FILE_OUTPUT_2D, nullptr, path, sizeof(path),
-                                original, sizeof(original));
+        err = swmm_file_path_get(engine, SWMM_FILE_OUTPUT_2D, nullptr, path, sizeof(path), original,
+                                 sizeof(original));
         if (!err && path[0]) {
             const auto absolute = std::filesystem::absolute(path).string();
             err = swmm_2d_set_results_file(engine, absolute.c_str());
-            options.output = out_file[0] ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_MESH;
+            options.output =
+                out_file[0] ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_MESH;
         }
-        if (!err) err = swmm_surface_owner_get(engine, nullptr, 0, &count);
+        if (!err)
+            err = swmm_surface_owner_get(engine, nullptr, 0, &count);
         if (!err && count) {
-            err = swmm_surface_owner_preview(engine, nullptr, -1, nullptr, 0, &objects,
-                nullptr, 0, &shares, nullptr, 0, &cells, &valid, token, sizeof(token),
-                diagnostic, sizeof(diagnostic), nullptr, nullptr);
+            err = swmm_surface_owner_preview(
+                engine, nullptr, -1, nullptr, 0, &objects, nullptr, 0, &shares, nullptr, 0, &cells,
+                &valid, token, sizeof(token), diagnostic, sizeof(diagnostic), nullptr, nullptr);
             if (!err && !valid) {
                 std::printf("Invalid surface ownership: %s\n", diagnostic);
                 err = SWMM_ERR_BADPARAM;
@@ -157,7 +159,8 @@ int main(int argc, char* argv[]) {
 #endif
         if (!err) {
             err = swmm_checkpoint_start_session(engine, &options);
-            if (err) std::printf("Managed session: %s\n", swmm_checkpoint_last_error_msg());
+            if (err)
+                std::printf("Managed session: %s\n", swmm_checkpoint_last_error_msg());
         }
     } else
         err = swmm_engine_initialize(engine);

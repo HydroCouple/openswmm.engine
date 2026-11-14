@@ -397,40 +397,56 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
                       : (val == "DIFFUSIVE_WAVE") ? twoD::Momentum2D::DIFFUSIVE_WAVE
                                                   : twoD::Momentum2D::LOCAL_INERTIAL;
     else if (key == "2D_CORIOLIS") {
-        if (val == "OFF") o->coriolis = twoD::Coriolis2D::OFF;
-        else if (val == "LATITUDE") o->coriolis = twoD::Coriolis2D::LATITUDE;
-        else if (val == "CONSTANT_F") o->coriolis = twoD::Coriolis2D::CONSTANT_F;
-        else throw std::runtime_error("Invalid 2D_CORIOLIS value");
+        if (val == "OFF")
+            o->coriolis = twoD::Coriolis2D::OFF;
+        else if (val == "LATITUDE")
+            o->coriolis = twoD::Coriolis2D::LATITUDE;
+        else if (val == "CONSTANT_F")
+            o->coriolis = twoD::Coriolis2D::CONSTANT_F;
+        else
+            throw std::runtime_error("Invalid 2D_CORIOLIS value");
     } else if (key == "2D_TURBULENCE_MODEL") {
-        if (val == "NONE") o->turbulence = twoD::Turbulence2D::NONE;
-        else if (val == "SMAGORINSKY") o->turbulence = twoD::Turbulence2D::SMAGORINSKY;
-        else if (val == "MIXING_LENGTH") o->turbulence = twoD::Turbulence2D::MIXING_LENGTH;
-        else throw std::runtime_error("Invalid 2D_TURBULENCE_MODEL value");
-    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" || key == "2D_SMAGORINSKY_CS" ||
-               key == "2D_EDDY_VISCOSITY_BACKGROUND" || key == "2D_MIXING_LENGTH_COEFFICIENT") {
+        if (val == "NONE")
+            o->turbulence = twoD::Turbulence2D::NONE;
+        else if (val == "SMAGORINSKY")
+            o->turbulence = twoD::Turbulence2D::SMAGORINSKY;
+        else if (val == "MIXING_LENGTH")
+            o->turbulence = twoD::Turbulence2D::MIXING_LENGTH;
+        else
+            throw std::runtime_error("Invalid 2D_TURBULENCE_MODEL value");
+    } else if (key == "2D_CORIOLIS_LATITUDE" || key == "2D_CORIOLIS_F" ||
+               key == "2D_SMAGORINSKY_CS" || key == "2D_EDDY_VISCOSITY_BACKGROUND" ||
+               key == "2D_MIXING_LENGTH_COEFFICIENT") {
         std::size_t used = 0;
         const double x = std::stod(val, &used);
-        if (!std::isfinite(x) || used != val.size()) throw std::runtime_error("Invalid " + key);
+        if (!std::isfinite(x) || used != val.size())
+            throw std::runtime_error("Invalid " + key);
         if (key == "2D_CORIOLIS_LATITUDE") {
-            if (std::abs(x) > 90) throw std::runtime_error("Invalid 2D_CORIOLIS_LATITUDE");
-            o->coriolis_latitude = x; o->coriolis_latitude_set = true;
+            if (std::abs(x) > 90)
+                throw std::runtime_error("Invalid 2D_CORIOLIS_LATITUDE");
+            o->coriolis_latitude = x;
+            o->coriolis_latitude_set = true;
         } else if (key == "2D_CORIOLIS_F") {
-            o->coriolis_f = x; o->coriolis_f_set = true;
+            o->coriolis_f = x;
+            o->coriolis_f_set = true;
         } else if (key == "2D_SMAGORINSKY_CS") {
-            if (x < 0) throw std::runtime_error("Invalid 2D_SMAGORINSKY_CS");
+            if (x < 0)
+                throw std::runtime_error("Invalid 2D_SMAGORINSKY_CS");
             o->smagorinsky_cs = x;
         } else if (key == "2D_EDDY_VISCOSITY_BACKGROUND") {
-            if (x < 0) throw std::runtime_error("Invalid 2D_EDDY_VISCOSITY_BACKGROUND");
+            if (x < 0)
+                throw std::runtime_error("Invalid 2D_EDDY_VISCOSITY_BACKGROUND");
             o->eddy_viscosity_background = x;
         } else {
-            if (x < 0) throw std::runtime_error("Invalid 2D_MIXING_LENGTH_COEFFICIENT");
+            if (x < 0)
+                throw std::runtime_error("Invalid 2D_MIXING_LENGTH_COEFFICIENT");
             o->mixing_length_coefficient = x;
         }
     } else if (key == "2D_RECONSTRUCTION_ORDER") {
-        if (val != "1" && val != "2") throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");
+        if (val != "1" && val != "2")
+            throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");
         o->reconstruction_order = val == "2" ? 2 : 1;
-    }
-    else if (key == "2D_BACKEND")
+    } else if (key == "2D_BACKEND")
         o->backend = (val == "CPU")    ? twoD::Backend2D::CPU
                      : (val == "OMP")  ? twoD::Backend2D::OMP
                      : (val == "CUDA") ? twoD::Backend2D::CUDA
@@ -1499,7 +1515,8 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
         grow(ctx.pollutants.co_frac);
 
         const auto unit_code = column_text(stmt.get(), 1);
-        ctx.pollutants.unit_declaration_valid[idx] = unit_code == "0" || unit_code == "1" || unit_code == "2";
+        ctx.pollutants.unit_declaration_valid[idx] =
+            unit_code == "0" || unit_code == "1" || unit_code == "2";
         ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
         ctx.pollutants.c_rain[idx] = column_double(stmt.get(), 2);
         ctx.pollutants.c_gw[idx] = column_double(stmt.get(), 3);
@@ -3053,9 +3070,10 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                 mesh.resize_triangles(nt0 + nq);
                 const bool has_init_hgl = column_exists(db, "mesh_2d_quads", "init_hgl");
                 auto stmt = prepare(
-                    db, std::string("SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth") +
-                            (has_init_hgl ? ", init_hgl" : "") +
-                            " FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
+                    db,
+                    std::string("SELECT quad_idx, v0, v1, v2, v3, mannings_n, tag, init_depth") +
+                        (has_init_hgl ? ", init_hgl" : "") +
+                        " FROM mesh_2d_quads WHERE simulation_id = ? ORDER BY quad_idx");
                 bind_text(stmt.get(), 1, sim_id);
                 while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
                     const int q = column_int(stmt.get(), 0);
@@ -3147,9 +3165,11 @@ static void read_mesh_2d(sqlite3* db, SimulationContext& ctx, const std::string&
                 row.param1 = column_double(stmt.get(), 3);
             if (type == 0) {
                 if (column_text(stmt.get(), 2) == "WALL_DRAG") {
-                    if (column_is_null(stmt.get(), 3) || !std::isfinite(row.param1) || row.param1 < 0)
+                    if (column_is_null(stmt.get(), 3) || !std::isfinite(row.param1) ||
+                        row.param1 < 0)
                         throw std::runtime_error("WALL_DRAG requires finite nonnegative Cw");
-                } else row.param1 = 0; // retain legacy WALL semantics
+                } else
+                    row.param1 = 0; // retain legacy WALL semantics
             }
             row.name = type == 0 ? "" : column_text(stmt.get(), 4);
             row.group = column_text(stmt.get(), 5);
@@ -3212,7 +3232,8 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         read_options(db, ctx, simulation_id);
         read_nodes(db, ctx, simulation_id);
         if (column_exists(db, "nodes", "storage_area")) {
-            auto areas = prepare(db, "SELECT node_id, storage_area FROM nodes WHERE simulation_id = ?");
+            auto areas =
+                prepare(db, "SELECT node_id, storage_area FROM nodes WHERE simulation_id = ?");
             bind_text(areas.get(), 1, simulation_id);
             while (sqlite3_step(areas.get()) == SQLITE_ROW) {
                 const int n = ctx.node_names.find(column_text(areas.get(), 0));
@@ -3258,7 +3279,8 @@ int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulatio
         // already applied by read_options above, so mesh_units_si is set
         // before SurfaceRouter2D::initialize() ever looks at it.
         read_mesh_2d(db, ctx, simulation_id);
-        if (!has_model_supplement(db, simulation_id) && table_exists(db, "surface_ownership_2d_input")) {
+        if (!has_model_supplement(db, simulation_id) &&
+            table_exists(db, "surface_ownership_2d_input")) {
             auto row = prepare(
                 db, "SELECT sections FROM surface_ownership_2d_input WHERE simulation_id=?");
             bind_text(row.get(), 1, simulation_id);

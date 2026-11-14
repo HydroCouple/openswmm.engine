@@ -223,17 +223,20 @@ public:
     void trackAcceptedWater(bool enabled) {
         water_tracking_ = enabled;
         if (enabled && mesh_)
-            water_.resize(mesh_->n_faces(), mesh_->struct_link.size(), mesh_->n_cells(), mesh_->n_nodes());
-        else water_ = {};
-        save_water_ = water_; rk_water_ = water_;
+            water_.resize(mesh_->n_faces(), mesh_->struct_link.size(), mesh_->n_cells(),
+                          mesh_->n_nodes());
+        else
+            water_ = {};
+        save_water_ = water_;
+        rk_water_ = water_;
     }
     const AcceptedWaterVolumes& acceptedWater() const noexcept { return water_; }
-    void requireConservativeNodeBalance(bool enabled) noexcept {conservative_node_balance_=enabled;}
+    void requireConservativeNodeBalance(bool enabled) noexcept {
+        conservative_node_balance_ = enabled;
+    }
     std::vector<double>& withdrawalRates() noexcept { return withdrawal_rates_; }
     const std::vector<double>& withdrawalRates() const noexcept { return withdrawal_rates_; }
     const std::vector<double>& unmetWithdrawalVolumes() const noexcept { return unmet_withdrawal_; }
-
-
 
     /**
      * @brief Borrow the signed numerical node-continuity carry.
@@ -773,7 +776,9 @@ public:
      * @param[in] node Valid node index of an initialized solver.
      * @return node_vfull_ for a pondable algebraic junction, else 0 (ft3).
      */
-    double nodePondBase(int node) const noexcept { return pondBase(static_cast<std::size_t>(node)); }
+    double nodePondBase(int node) const noexcept {
+        return pondBase(static_cast<std::size_t>(node));
+    }
 
     /**
      * @brief Pay a 1D->2D spill out of a node before an advance.
@@ -792,7 +797,6 @@ public:
     double debitNode(int node, double volume);
 
 private:
-
     /**
      * @brief Inspect adjacent cells for pressure-band or latched TPA state.
      *
@@ -910,7 +914,8 @@ private:
      *     dt; must match the imminent node update.
      */
     template <class ArrivedFn>
-    void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived, bool book_receipts = true);
+    void refreshDummyFlows(double dt, const FvStepForcing& forcing, ArrivedFn&& arrived,
+                           bool book_receipts = true);
 
     /**
      * @brief Bound frozen structure transfers by the water each bucket donor holds.

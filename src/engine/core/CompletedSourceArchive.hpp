@@ -87,8 +87,8 @@ public:
      * @param stride Positive element stride; caller supplies a valid indexed layout.
      * Charges the same logical allocation budget and preserves fixed-vector read diagnostics.
      * Read failure can leave earlier logical elements mutated; no independent rollback. */
-    void fixedStrided(std::vector<double>& value, std::size_t extent,
-                      std::size_t first, std::size_t stride) {
+    void fixedStrided(std::vector<double>& value, std::size_t extent, std::size_t first,
+                      std::size_t stride) {
         uint64_t size = extent;
         field(size);
         allocate(size, sizeof(double));

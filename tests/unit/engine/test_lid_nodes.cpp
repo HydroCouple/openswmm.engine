@@ -3544,16 +3544,19 @@ TEST(LidNodes, CompleteProfileValidationIsPureIncludingAssignedGeometry) {
     EXPECT_EQ(c.lid_controls.node_layers[0][1].params, before[1].params);
     EXPECT_DOUBLE_EQ(c.lid_controls.node_layers[0][1].retention.alpha, before[1].retention.alpha);
     materials[1].alpha = 0;
-    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials),
+              SWMM_ERR_BADPARAM);
     EXPECT_EQ(c.nodes.full_depth, depths);
     EXPECT_EQ(c.lid_controls.node_layers[0][1].params, before[1].params);
     c.state = EngineState::RUNNING;
-    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_lid_node_validate_flow(h, 0, rows, 4, nullptr, 0, &options, materials),
+              SWMM_ERR_LIFECYCLE);
 }
 
 TEST(LidNodes, StandardExtraFieldsPreserveSiblingsAndTypePreflightDoesNotMutate) {
     SWMMEngine engine;
-    auto& c = engine.context(); c.state = EngineState::BUILDING;
+    auto& c = engine.context();
+    c.state = EngineState::BUILDING;
     const auto h = reinterpret_cast<SWMM_Engine>(&engine);
     ASSERT_EQ(swmm_lid_add(h, "Design", 0), SWMM_OK);
     ASSERT_EQ(swmm_lid_set_surface(h, 0, 6, .1, 2), SWMM_OK);
@@ -3572,7 +3575,8 @@ TEST(LidNodes, StandardExtraFieldsPreserveSiblingsAndTypePreflightDoesNotMutate)
     }
     EXPECT_DOUBLE_EQ(c.lid_controls.surface[0][0], surface[0]);
     EXPECT_DOUBLE_EQ(c.lid_controls.surface[0][2], surface[2]);
-    for (int i = 0; i < 6; ++i) EXPECT_DOUBLE_EQ(c.lid_controls.soil[0][i], soil[i]);
+    for (int i = 0; i < 6; ++i)
+        EXPECT_DOUBLE_EQ(c.lid_controls.soil[0][i], soil[i]);
     EXPECT_EQ(swmm_lid_set_extra(h, 0, SWMM_LID_SURFACE_VEGETATION, 1), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_lid_get_extra(h, 0, 99, nullptr), SWMM_ERR_BADPARAM);
     ASSERT_EQ(swmm_lid_validate_type(h, 0, 4), SWMM_OK);

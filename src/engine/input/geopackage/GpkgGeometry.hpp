@@ -267,8 +267,8 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
     std::vector<int> depth(rings.size(), 0), parent(rings.size(), -1);
     for (size_t i = 0; i < rings.size(); ++i)
         for (size_t j = 0; j < rings.size(); ++j)
-            if (i != j && polygon::contains(xs, ys, rings[j], xs[rings[i].first],
-                                            ys[rings[i].first]))
+            if (i != j &&
+                polygon::contains(xs, ys, rings[j], xs[rings[i].first], ys[rings[i].first]))
                 ++depth[i];
     for (size_t i = 0; i < rings.size(); ++i)
         if (depth[i] % 2)
@@ -282,12 +282,12 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
     const auto minmax_x = std::minmax_element(xs.begin(), xs.end());
     const auto minmax_y = std::minmax_element(ys.begin(), ys.end());
     std::vector<uint8_t> buf;
-    detail::write_gp_header(buf, srs_id, *minmax_x.first, *minmax_y.first,
-                            *minmax_x.second, *minmax_y.second);
+    detail::write_gp_header(buf, srs_id, *minmax_x.first, *minmax_y.first, *minmax_x.second,
+                            *minmax_y.second);
     detail::append_u8(buf, WKB_LITTLE_ENDIAN);
     detail::append_u32(buf, WKB_MULTIPOLYGON);
-    const auto polygon_count = std::count_if(depth.begin(), depth.end(),
-                                             [](int d) { return d % 2 == 0; });
+    const auto polygon_count =
+        std::count_if(depth.begin(), depth.end(), [](int d) { return d % 2 == 0; });
     detail::append_u32(buf, static_cast<uint32_t>(polygon_count));
     const auto write_ring = [&](polygon::Ring ring) {
         detail::append_u32(buf, static_cast<uint32_t>(ring.count + 1));
@@ -302,8 +302,8 @@ inline std::vector<uint8_t> encode_multipolygon(const std::vector<double>& xs,
             continue;
         detail::append_u8(buf, WKB_LITTLE_ENDIAN);
         detail::append_u32(buf, WKB_POLYGON);
-        detail::append_u32(buf, 1 + static_cast<uint32_t>(
-            std::count(parent.begin(), parent.end(), static_cast<int>(i))));
+        detail::append_u32(buf, 1 + static_cast<uint32_t>(std::count(parent.begin(), parent.end(),
+                                                                     static_cast<int>(i))));
         write_ring(rings[i]);
         for (size_t j = 0; j < rings.size(); ++j)
             if (parent[j] == static_cast<int>(i))

@@ -315,10 +315,10 @@ TEST(SubcatchScaleRoundTrip, RainAndSnowFactorsKeepPrecision) {
     SimulationContext reopened;
     parseSub(reopened, line);
     ASSERT_EQ(reopened.n_subcatches(), 1);
-    EXPECT_DOUBLE_EQ(reopened.subcatches.rain_scale_factor[0],
-                     ctx.subcatches.rain_scale_factor[0]) << line;
-    EXPECT_DOUBLE_EQ(reopened.subcatches.snow_scale_factor[0],
-                     ctx.subcatches.snow_scale_factor[0]) << line;
+    EXPECT_DOUBLE_EQ(reopened.subcatches.rain_scale_factor[0], ctx.subcatches.rain_scale_factor[0])
+        << line;
+    EXPECT_DOUBLE_EQ(reopened.subcatches.snow_scale_factor[0], ctx.subcatches.snow_scale_factor[0])
+        << line;
 }
 
 // ============================================================================

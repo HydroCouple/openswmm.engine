@@ -1066,9 +1066,10 @@ void InletSolver::computeAll(SimulationContext& ctx, double dt,
         // --- capture node's overflow becomes the inlet's backflow, unless the
         // node kept it (a pondable node on the native FV solver holds it as
         // pond water: returning it to the street as well created it)
-        double qbf = (overflow_kept && overflow_kept(capture))
-                         ? 0.0
-                         : nodes.overflow[static_cast<std::size_t>(capture)] * soa_.backflow_ratio[ui];
+        double qbf =
+            (overflow_kept && overflow_kept(capture))
+                ? 0.0
+                : nodes.overflow[static_cast<std::size_t>(capture)] * soa_.backflow_ratio[ui];
         if (std::fabs(qbf) < INLET_FUDGE)
             qbf = 0.0;
         soa_.backflow[ui] = qbf;

@@ -263,8 +263,7 @@ private:
     // Public advance passes null and retains its own runtime rollback copy.
     std::string advanceTrial(SimulationContext& context, double start, double end,
                              const std::vector<double>& precipitation_ms,
-                             const std::vector<double>& snow_catch,
-                             const MeshSnow* configuration);
+                             const std::vector<double>& snow_catch, const MeshSnow* configuration);
     /** @brief Mutate a private runtime trial over one qualified completed interval.
      * @param configuration Stable initialized original owner, borrowed only during this call.
      * Its geometry, assignments, contact mask, step and depletion curve are read-only.

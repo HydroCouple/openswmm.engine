@@ -215,8 +215,7 @@ struct LidUsageStore {
      * @brief Call @p f with a pointer to every per-row column member; the one list the
      *        subcatchment delete and its record share (SoaRow.hpp).
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&LidUsageStore::subcatch_index);
         f(&LidUsageStore::lid_index);
         f(&LidUsageStore::number);

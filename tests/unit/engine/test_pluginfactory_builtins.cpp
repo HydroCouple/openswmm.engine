@@ -161,7 +161,8 @@ TEST(PluginFactoryBuiltins, DynamicPluginsRequireMatchingAbiBeforeFactoryCall) {
     openswmm::PluginFactory factory;
     for (const char* path : {TEST_IO_ABI_0, TEST_IO_ABI_1}) {
         std::string warning;
-        EXPECT_EQ(factory.load_library(path, [&](const std::string& text) { warning = text; }), nullptr);
+        EXPECT_EQ(factory.load_library(path, [&](const std::string& text) { warning = text; }),
+                  nullptr);
         EXPECT_NE(warning.find("ABI tag"), std::string::npos);
     }
     auto* info = factory.load_library(TEST_IO_ABI_2);

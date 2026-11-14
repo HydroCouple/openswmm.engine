@@ -33,6 +33,7 @@ namespace checkpoint {
  * whole-engine framing or ownership transfer occurs here.
  */
 void meshState(detail::CompletedSourceArchive&, SurfaceStateData&);
-void meshModel(detail::CompletedSourceArchive&, const MeshData&, const SolverOptions2D&, const SurfaceTransportState&);
+void meshModel(detail::CompletedSourceArchive&, const MeshData&, const SolverOptions2D&,
+               const SurfaceTransportState&);
 }
 }

@@ -1370,8 +1370,8 @@ struct SWMMEngine::RestartState {
             bedZoneState(a, bed);
         }
         if (layer_profile)
-            a(lid_layers.n_units, lid_layers.n_species, lid_layers.group_offset,
-              lid_layers.value, lid_layers.vol_prev, lid_layers.drain_value, lid_layers.inflow_value);
+            a(lid_layers.n_units, lid_layers.n_species, lid_layers.group_offset, lid_layers.value,
+              lid_layers.vol_prev, lid_layers.drain_value, lid_layers.inflow_value);
         if (reaction_profile) {
             detail::reactionState(a, reaction);
             a(ard_attempted, ard_bytes, lard_bytes);
@@ -1440,12 +1440,14 @@ struct SWMMEngine::RestartState {
         if (layer_profile) {
             const auto offsets = transport::buildOffsets(e.lid_);
             const int units = offsets.empty() ? 0 : offsets.back();
-            require(lid_layers.n_units == units &&
-                        (units == 0 || (lid_layers.n_species == static_cast<int>(LidSpecies::COUNT_) &&
-                                       lid_layers.group_offset == offsets)),
-                    "Engine LID-layer checkpoint layout differs.");
+            require(
+                lid_layers.n_units == units &&
+                    (units == 0 || (lid_layers.n_species == static_cast<int>(LidSpecies::COUNT_) &&
+                                    lid_layers.group_offset == offsets)),
+                "Engine LID-layer checkpoint layout differs.");
             const auto rows = std::size_t(lid_layers.n_units) * LidLayerSpeciesState::kLayerCount;
-            const auto scalars = std::size_t(lid_layers.n_units) * std::size_t(lid_layers.n_species);
+            const auto scalars =
+                std::size_t(lid_layers.n_units) * std::size_t(lid_layers.n_species);
             require(lid_layers.value.size() == rows * lid_layers.n_species &&
                         lid_layers.vol_prev.size() == rows &&
                         lid_layers.drain_value.size() == scalars &&
@@ -1890,17 +1892,22 @@ struct SWMMEngine::RestartState {
 void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_) {
-        if (live_passive_exchange_) checkLivePassiveExchange();
+        if (live_passive_exchange_)
+            checkLivePassiveExchange();
         if (surface_router_.paired_water_checkpoint_) {
-            require(!split_ && !process_component_host_ && !runtime_water_driver_ && !runtime_pipeline_ &&
-                        !source_delivery_ && !source_stage_ && !engine_source_stream_ && !engine_source_history_ &&
-                        exchange_target_ < 0 && pending_hotstart_checkpoint_.empty() && ctx_.files.hotstart_saves.empty(),
-                    "Coupled water checkpoint excludes split, process, source and runtime owners and public hotstarts.");
+            require(
+                !split_ && !process_component_host_ && !runtime_water_driver_ &&
+                    !runtime_pipeline_ && !source_delivery_ && !source_stage_ &&
+                    !engine_source_stream_ && !engine_source_history_ && exchange_target_ < 0 &&
+                    pending_hotstart_checkpoint_.empty() && ctx_.files.hotstart_saves.empty(),
+                "Coupled water checkpoint excludes split, process, source and runtime owners and public hotstarts.");
             const auto error = surface_router_.coupledWaterProfile(ctx_, surface_router_.state_);
             require(error.empty(), error.c_str());
         }
-        require(!save_results_ && !checkpoint_output_ && !checkpoint_surface_output_ && !surface_output_plugin_,
-                "Live checkpoint currently supports native physical state without output continuation.");
+        require(
+            !save_results_ && !checkpoint_output_ && !checkpoint_surface_output_ &&
+                !surface_output_plugin_,
+            "Live checkpoint currently supports native physical state without output continuation.");
     }
 #endif
     bool advancing_catchments = false;
@@ -1984,8 +1991,10 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
 #endif
         require(
             attaching_surface ||
-                ((live_passive_exchange_ || surface_router_.paired_water_checkpoint_) && surface_router_.joint_hydraulic_ == &router_ &&
-                 surface_router_.source_context_ == &ctx_) || surface_router_.standaloneRk2Checkpointing() ||
+                ((live_passive_exchange_ || surface_router_.paired_water_checkpoint_) &&
+                 surface_router_.joint_hydraulic_ == &router_ &&
+                 surface_router_.source_context_ == &ctx_) ||
+                surface_router_.standaloneRk2Checkpointing() ||
                 (surface_router_.joint_hydraulic_ == &router_ && surface_router_.common_stage_ &&
                  (surface_router_.common_stage_->meshOnly() ||
                   (source_delivery_ && source_stage_ == surface_router_.common_stage_))),
@@ -2178,7 +2187,8 @@ std::string SWMMEngine::checkpointModel() const {
     }
     a(lc.names, lc.lid_type, lc.surface, lc.soil);
     // Keep the model identity of older checkpoints when all degrees are zero.
-    if (std::any_of(lc.pavement.begin(), lc.pavement.end(), [](const auto& p) { return p[6] != 0.0; }))
+    if (std::any_of(lc.pavement.begin(), lc.pavement.end(),
+                    [](const auto& p) { return p[6] != 0.0; }))
         a(lc.pavement);
     else
         a.sequence(lc.pavement, [&](auto& p) { a(p[0], p[1], p[2], p[3], p[4], p[5]); });
@@ -2198,8 +2208,9 @@ std::string SWMMEngine::checkpointModel() const {
     a(hydraulic);
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_) {
-        std::string profile = surface_router_.paired_water_checkpoint_ ?
-            "paired native water transfer owner v1" : "paired native passive transfer owner v1";
+        std::string profile = surface_router_.paired_water_checkpoint_
+                                  ? "paired native water transfer owner v1"
+                                  : "paired native passive transfer owner v1";
         auto live = surface_router_.liveCheckpointModel(ctx_);
         a(profile, live);
     }
@@ -2470,7 +2481,9 @@ std::string SWMMEngine::enableCheckpointingImpl(
         require(!live_passive_exchange_ || !stage,
                 "Live checkpoint cannot also attach a source stage.");
 #endif
-        require(!split_, "Split participants require coordinated graph recovery; native checkpoint attachment is unavailable.");
+        require(
+            !split_,
+            "Split participants require coordinated graph recovery; native checkpoint attachment is unavailable.");
         require(!step_active_ && !runtime_pipeline_ && exchange_target_ < 0 &&
                     !checkpoint_enabled_ && ctx_.current_time == 0,
                 "Enable engine checkpointing at start's initial session boundary.");
@@ -2529,7 +2542,8 @@ std::string SWMMEngine::enableCheckpointingImpl(
             require(initial.bytes() == matching.bytes(),
                     "Spatial source initial water differs from the live engine.");
         }
-        checkCheckpointProfile(stage != nullptr || rk2_attachment || live_passive_exchange_ != nullptr ||
+        checkCheckpointProfile(stage != nullptr || rk2_attachment ||
+                               live_passive_exchange_ != nullptr ||
                                surface_router_.paired_water_checkpoint_);
 #else
         checkCheckpointProfile();
@@ -2631,8 +2645,10 @@ std::string SWMMEngine::checkpointBytes(std::string& result, bool include_output
         if (surface_router_.isActive()) {
             version = source_delivery_ ? 105 : 104;
             error = surface_router_.checkpointBytes(ctx_, hydraulic);
-            if (live_passive_exchange_) version = live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003;
-            if (surface_router_.paired_water_checkpoint_) version = 3004;
+            if (live_passive_exchange_)
+                version = live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003;
+            if (surface_router_.paired_water_checkpoint_)
+                version = 3004;
         } else
 #endif
             error = router_.checkpointBytes(ctx_, hydraulic);
@@ -3106,8 +3122,12 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
         uint32_t expected_version = 103;
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.isActive())
-            expected_version = surface_router_.paired_water_checkpoint_ ? 3004 :
-                live_passive_exchange_ ? (live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003) : source_delivery_ ? 105 : 104;
+            expected_version =
+                surface_router_.paired_water_checkpoint_ ? 3004
+                : live_passive_exchange_
+                    ? (live_passive_exchange_->receipts().changingVolume() ? 3005 : 3003)
+                : source_delivery_ ? 105
+                                   : 104;
         if (surface_router_.runtimeWaterCheckpointing())
             expected_version += 20;
         if (runtime_water_driver_)
@@ -3340,101 +3360,174 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
 namespace {
 struct MaterialPairArchive {
     std::uint32_t version;
-    std::string model,body;
+    std::string model, body;
 };
 MaterialPairArchive materialPairArchive(const std::string& bytes) {
-    require(!bytes.empty() && bytes.size()<=maxBytes,"Material pair archive exceeds its size bound.");
-    Archive envelope(bytes);std::string magic;std::uint32_t endian,word,crc;MaterialPairArchive out;
-    envelope(magic,out.version,endian,word,out.model,crc,out.body);envelope.finish();
-    require(magic=="OpenSWMM material network/surface numerical checkpoint" &&
-        (out.version==1 || out.version==2) && endian==0x01020304 && word==sizeof(long) &&
-        !out.model.empty() && !out.body.empty() && crc==checksum(out.body),
-        "Material pair format/platform/checksum differs.");
+    require(!bytes.empty() && bytes.size() <= maxBytes,
+            "Material pair archive exceeds its size bound.");
+    Archive envelope(bytes);
+    std::string magic;
+    std::uint32_t endian, word, crc;
+    MaterialPairArchive out;
+    envelope(magic, out.version, endian, word, out.model, crc, out.body);
+    envelope.finish();
+    require(magic == "OpenSWMM material network/surface numerical checkpoint" &&
+                (out.version == 1 || out.version == 2) && endian == 0x01020304 &&
+                word == sizeof(long) && !out.model.empty() && !out.body.empty() &&
+                crc == checksum(out.body),
+            "Material pair format/platform/checksum differs.");
     return out;
 }
 struct MaterialSplitState {
     std::uint64_t sequence;
     bool report_flush;
-    double output_start,output_dt,prepared_dt,requested_dt,weather_since;
+    double output_start, output_dt, prepared_dt, requested_dt, weather_since;
     std::vector<SplitGageSample> weather;
-    explicit MaterialSplitState(const SplitExecution& s):sequence(s.sequence),report_flush(s.report_flush),
-        output_start(s.output_start),output_dt(s.output_dt),prepared_dt(s.prepared_dt),requested_dt(s.requested_dt),
-        weather_since(s.weather_since),weather(s.weather){}
+    explicit MaterialSplitState(const SplitExecution& s)
+        : sequence(s.sequence), report_flush(s.report_flush), output_start(s.output_start),
+          output_dt(s.output_dt), prepared_dt(s.prepared_dt), requested_dt(s.requested_dt),
+          weather_since(s.weather_since), weather(s.weather) {}
     void archive(Archive& a) {
-        a(sequence,report_flush,output_start,output_dt,prepared_dt,requested_dt,weather_since);
-        a.sequence(weather,[&](auto& w){a(w.start);a.fixed(w.rates);});
-        require(weather.size()<=4096,"Material weather history exceeds its bound.");
+        a(sequence, report_flush, output_start, output_dt, prepared_dt, requested_dt,
+          weather_since);
+        a.sequence(weather, [&](auto& w) {
+            a(w.start);
+            a.fixed(w.rates);
+        });
+        require(weather.size() <= 4096, "Material weather history exceeds its bound.");
     }
     void validate(double time) const {
-        require(sequence<std::numeric_limits<std::uint64_t>::max()/2 && ((time==0)==(sequence==0)),"Material checkpoint phase sequence differs.");
-        for(double value:{output_start,output_dt,prepared_dt,requested_dt})
-            require(std::isfinite(value) && value>=0 && value<=time,"Material checkpoint split clock differs.");
-        require(std::isfinite(weather_since) && weather_since>=-1 && weather_since<=time,"Material weather cursor differs.");
-        double previous=-1;
-        for(const auto& w:weather) {require(w.rates.empty() && w.start>=0 && w.start<=time && w.start>=previous,"Material weather journal differs.");previous=w.start;}
-    }
-    void install(SplitExecution& s) noexcept {
-        s.sequence=sequence;s.report_flush=report_flush;s.output_start=output_start;s.output_dt=output_dt;
-        s.prepared_dt=prepared_dt;s.requested_dt=requested_dt;s.weather_since=weather_since;s.weather=std::move(weather);
-    }
-};
-void materialContext(const SimulationContext& model,SimulationContext& c,const std::array<double,6>& clocks) {
-    for(const auto& n:model.node_names.names())c.node_names.add(n);
-    for(const auto& n:model.pollutant_names.names())c.pollutant_names.add(n);
-    c.allocate_objects();c.options=model.options;c.pollutants=model.pollutants;c.nodes=model.nodes;
-    c.node_subtypes=model.node_subtypes;c.coupled_node=model.coupled_node;c.mass_balance_2d=model.mass_balance_2d;
-    c.current_time=clocks[0];c.current_date=clocks[1];c.elapsed_ms=clocks[2];c.old_elapsed_ms=clocks[3];
-    c.next_report_ms=clocks[4];c.climate_state.evap_rate=clocks[5];
-}
-void materialMirrors(const SimulationContext& n,const SimulationContext& s) {
-#define MIRROR(v) require(n.nodes.v==s.nodes.v,"Material mirrored native node columns differ: " #v);
-    MIRROR(head) MIRROR(depth) MIRROR(volume) MIRROR(full_volume) MIRROR(rpt_full_volume) MIRROR(ponded_area)
-    MIRROR(inflow) MIRROR(outflow) MIRROR(coupling_inflow) MIRROR(lat_flow) MIRROR(coupling_queue) MIRROR(coupling_volume) MIRROR(conc)
-#undef MIRROR
-}
-void materialWaterHistory(const quality::PeerPassiveStorageFunding& owner,const SimulationContext& surface,
-        double to_native,double to_si) {
-    double incoming=0,outgoing=0;
-    for(const auto& receipt:owner.receipts().receipts()) {
-        std::vector<double> booked(surface.n_nodes(),0);std::vector<unsigned char> seen(booked.size(),0);
-        for(const auto& p:receipt.proof.points)booked.at(p.node)+=p.exchange_si*to_native;
-        // Native updateMassBalance deduplicates in physical point order and
-        // converts the already accumulated native per-node booking back to SI.
-        for(const auto& p:receipt.proof.points)if(!seen.at(p.node)) {
-            seen[p.node]=1;
-            const double volume=booked[p.node]*to_si;
-            if(volume>0)outgoing+=volume;else incoming+=-volume;
+        require(sequence < std::numeric_limits<std::uint64_t>::max() / 2 &&
+                    ((time == 0) == (sequence == 0)),
+                "Material checkpoint phase sequence differs.");
+        for (double value : {output_start, output_dt, prepared_dt, requested_dt})
+            require(std::isfinite(value) && value >= 0 && value <= time,
+                    "Material checkpoint split clock differs.");
+        require(std::isfinite(weather_since) && weather_since >= -1 && weather_since <= time,
+                "Material weather cursor differs.");
+        double previous = -1;
+        for (const auto& w : weather) {
+            require(w.rates.empty() && w.start >= 0 && w.start <= time && w.start >= previous,
+                    "Material weather journal differs.");
+            previous = w.start;
         }
     }
-    require(incoming==surface.mass_balance_2d.coupling_1d_to_2d_in && outgoing==surface.mass_balance_2d.coupling_2d_to_1d_out,
-        "Material surface directional water history differs from native bookings.");
+    void install(SplitExecution& s) noexcept {
+        s.sequence = sequence;
+        s.report_flush = report_flush;
+        s.output_start = output_start;
+        s.output_dt = output_dt;
+        s.prepared_dt = prepared_dt;
+        s.requested_dt = requested_dt;
+        s.weather_since = weather_since;
+        s.weather = std::move(weather);
+    }
+};
+void materialContext(const SimulationContext& model, SimulationContext& c,
+                     const std::array<double, 6>& clocks) {
+    for (const auto& n : model.node_names.names())
+        c.node_names.add(n);
+    for (const auto& n : model.pollutant_names.names())
+        c.pollutant_names.add(n);
+    c.allocate_objects();
+    c.options = model.options;
+    c.pollutants = model.pollutants;
+    c.nodes = model.nodes;
+    c.node_subtypes = model.node_subtypes;
+    c.coupled_node = model.coupled_node;
+    c.mass_balance_2d = model.mass_balance_2d;
+    c.current_time = clocks[0];
+    c.current_date = clocks[1];
+    c.elapsed_ms = clocks[2];
+    c.old_elapsed_ms = clocks[3];
+    c.next_report_ms = clocks[4];
+    c.climate_state.evap_rate = clocks[5];
+}
+void materialMirrors(const SimulationContext& n, const SimulationContext& s) {
+#define MIRROR(v)                                                                                  \
+    require(n.nodes.v == s.nodes.v, "Material mirrored native node columns differ: " #v);
+    MIRROR(head)
+    MIRROR(depth)
+    MIRROR(volume)
+    MIRROR(full_volume)
+    MIRROR(rpt_full_volume)
+    MIRROR(ponded_area)
+    MIRROR(inflow)
+    MIRROR(outflow)
+    MIRROR(coupling_inflow)
+    MIRROR(lat_flow)
+    MIRROR(coupling_queue)
+    MIRROR(coupling_volume)
+    MIRROR(conc)
+#undef MIRROR
+}
+void materialWaterHistory(const quality::PeerPassiveStorageFunding& owner,
+                          const SimulationContext& surface, double to_native, double to_si) {
+    double incoming = 0, outgoing = 0;
+    for (const auto& receipt : owner.receipts().receipts()) {
+        std::vector<double> booked(surface.n_nodes(), 0);
+        std::vector<unsigned char> seen(booked.size(), 0);
+        for (const auto& p : receipt.proof.points)
+            booked.at(p.node) += p.exchange_si * to_native;
+        // Native updateMassBalance deduplicates in physical point order and
+        // converts the already accumulated native per-node booking back to SI.
+        for (const auto& p : receipt.proof.points)
+            if (!seen.at(p.node)) {
+                seen[p.node] = 1;
+                const double volume = booked[p.node] * to_si;
+                if (volume > 0)
+                    outgoing += volume;
+                else
+                    incoming += -volume;
+            }
+    }
+    require(incoming == surface.mass_balance_2d.coupling_1d_to_2d_in &&
+                outgoing == surface.mass_balance_2d.coupling_2d_to_1d_out,
+            "Material surface directional water history differs from native bookings.");
 }
 }
 #endif
 std::string SWMMEngine::validateMaterialPairCheckpointEnvelope(const std::string& bytes) {
 #ifdef OPENSWMM_HAS_2D
-    try {materialPairArchive(bytes);return {};}catch(const std::exception& e){return e.what();}
+    try {
+        materialPairArchive(bytes);
+        return {};
+    } catch (const std::exception& e) {
+        return e.what();
+    }
 #else
     return "Material pair checkpoint requires the surface build.";
 #endif
 }
 bool SWMMEngine::materialPairCheckpointAccessReady(bool attached) const noexcept {
-    if(!split_ || !split_->material || split_->role!=SWMM_SPLIT_NETWORK || !split_->material_pair)return false;
-    const auto& p=*split_->material_pair;const auto* peer=p.surface;
-    if(p.network!=this || !peer || !peer->split_ || peer->split_->material_pair!=split_->material_pair || p.active || p.transporting)return false;
-    if(attached && (!p.checkpoint_enabled || !p.checkpoint_accepted))return false;
-    for(const auto* e:{this,peer})if(e->ctx_.state!=EngineState::RUNNING || e->ctx_.error_code ||
-        e->step_active_ || e->runtime_pipeline_ || e->split_->reporting || e->split_->awaiting_report ||
-        e->split_->material_acceptance_pending || e->split_->failed || e->split_->finished || e->split_->material_finalized)return false;
+    if (!split_ || !split_->material || split_->role != SWMM_SPLIT_NETWORK ||
+        !split_->material_pair)
+        return false;
+    const auto& p = *split_->material_pair;
+    const auto* peer = p.surface;
+    if (p.network != this || !peer || !peer->split_ ||
+        peer->split_->material_pair != split_->material_pair || p.active || p.transporting)
+        return false;
+    if (attached && (!p.checkpoint_enabled || !p.checkpoint_accepted))
+        return false;
+    for (const auto* e : {this, peer})
+        if (e->ctx_.state != EngineState::RUNNING || e->ctx_.error_code || e->step_active_ ||
+            e->runtime_pipeline_ || e->split_->reporting || e->split_->awaiting_report ||
+            e->split_->material_acceptance_pending || e->split_->failed || e->split_->finished ||
+            e->split_->material_finalized)
+            return false;
     return true;
 }
 std::string SWMMEngine::prepareMaterialPairOutputCheckpointing() {
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-    if(!split_ || !split_->material || (split_->role!=SWMM_SPLIT_NETWORK && split_->role!=SWMM_SPLIT_SURFACE) ||
-        split_->material_pair || ctx_.state!=EngineState::INITIALIZED || step_active_ || runtime_pipeline_ ||
-        checkpoint_output_ || checkpoint_surface_output_ || checkpoint_enabled_)
+    if (!split_ || !split_->material ||
+        (split_->role != SWMM_SPLIT_NETWORK && split_->role != SWMM_SPLIT_SURFACE) ||
+        split_->material_pair || ctx_.state != EngineState::INITIALIZED || step_active_ ||
+        runtime_pipeline_ || checkpoint_output_ || checkpoint_surface_output_ ||
+        checkpoint_enabled_)
         return "Prepare each configured material output role once before start.";
-    return split_->role==SWMM_SPLIT_NETWORK?prepareOutputCheckpointing():prepareSurfaceOutputCheckpointing();
+    return split_->role == SWMM_SPLIT_NETWORK ? prepareOutputCheckpointing()
+                                              : prepareSurfaceOutputCheckpointing();
 #else
     return "Material output checkpoint requires HDF5 output support.";
 #endif
@@ -3443,20 +3536,30 @@ std::string SWMMEngine::materialPairModel() const {
 #ifndef OPENSWMM_HAS_2D
     throw std::invalid_argument("Material pair checkpoint requires the surface build.");
 #else
-    const auto& peer=*split_->material_pair->surface;
-    Archive a;std::string marker="closed material network/surface numerical pair v1";
-    auto network=checkpointModel(),surface=peer.checkpointModel(),mesh=peer.surface_router_.liveCheckpointModel(peer.ctx_);
-    auto input=split_->model;auto footprint=peer.ctx_.nodes.ponded_area;auto depth=peer.ctx_.nodes.full_depth;
-    auto initial_water=peer.ctx_.mass_balance_2d.init_storage;
-    if(split_->material_pair->checkpoint_outputs)marker="closed material network/surface numerical pair with outputs v2";
-    a(marker,input,network,surface,mesh,footprint,depth,initial_water);
+    const auto& peer = *split_->material_pair->surface;
+    Archive a;
+    std::string marker = "closed material network/surface numerical pair v1";
+    auto network = checkpointModel(), surface = peer.checkpointModel(),
+         mesh = peer.surface_router_.liveCheckpointModel(peer.ctx_);
+    auto input = split_->model;
+    auto footprint = peer.ctx_.nodes.ponded_area;
+    auto depth = peer.ctx_.nodes.full_depth;
+    auto initial_water = peer.ctx_.mass_balance_2d.init_storage;
+    if (split_->material_pair->checkpoint_outputs)
+        marker = "closed material network/surface numerical pair with outputs v2";
+    a(marker, input, network, surface, mesh, footprint, depth, initial_water);
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-    if(split_->material_pair->checkpoint_outputs) {
+    if (split_->material_pair->checkpoint_outputs) {
         std::lock_guard<std::recursive_mutex> lock(io::resultHdf5Mutex());
-        const auto& w=*peer.surface_output_plugin_;
-        auto compressed=w.compression_;auto vars=w.report_vars_;auto filter=w.species_filter_;auto cadence=w.report_2d_step_days_;
-        const auto equal=H5Tequal(w.storage_type_,H5T_IEEE_F32LE);require(equal>=0,"Cannot inspect material mesh precision.");bool single=equal>0;
-        a(compressed,vars,filter,cadence,single);
+        const auto& w = *peer.surface_output_plugin_;
+        auto compressed = w.compression_;
+        auto vars = w.report_vars_;
+        auto filter = w.species_filter_;
+        auto cadence = w.report_2d_step_days_;
+        const auto equal = H5Tequal(w.storage_type_, H5T_IEEE_F32LE);
+        require(equal >= 0, "Cannot inspect material mesh precision.");
+        bool single = equal > 0;
+        a(compressed, vars, filter, cadence, single);
     }
 #endif
     return a.bytes();
@@ -3466,106 +3569,165 @@ void SWMMEngine::checkMaterialPairBoundary() const {
 #ifndef OPENSWMM_HAS_2D
     throw std::invalid_argument("Material pair checkpoint requires the surface build.");
 #else
-    require(split_ && split_->role==SWMM_SPLIT_NETWORK && split_->material && split_->material_pair,
-        "Material checkpoint requires its bound network role.");
-    const auto& pair=*split_->material_pair;auto* surface=pair.surface;
-    require(pair.checkpoint_enabled && pair.checkpoint_accepted && pair.network==this && surface &&
-        surface->split_ && surface->split_->material_pair==split_->material_pair && !pair.active && !pair.transporting,
-        "Material checkpoint requires an acknowledged inactive pair.");
-    for(const auto* e:{this,static_cast<const SWMMEngine*>(surface)}) {
-        const auto& s=*e->split_;
-        require(e->ctx_.state==EngineState::RUNNING && !e->ctx_.error_code && !e->step_active_ && !e->runtime_pipeline_ &&
-            e->exchange_target_<0 && !e->checkpoint_enabled_ && !e->process_component_host_ &&
-            !e->live_passive_exchange_ && !e->source_delivery_ && !e->source_stage_ && !e->runtime_water_driver_ &&
-            !e->engine_source_stream_ && !e->engine_source_history_ && e->ctx_.plugin_specs.empty() &&
-            !s.failed && s.geometry && s.material && s.settled_reports && !s.finished && !s.material_finalized &&
-            !s.material_acceptance_pending && !s.awaiting_report && !s.reporting && !s.routing_prepared &&
-            !s.source_prepared && !s.lid_prepared && !s.lid_trial && !s.source_count && !s.aquifer &&
-            !s.spatial_sources && s.lid_nodes.empty() && s.mapped_outfalls.empty(),
+    require(split_ && split_->role == SWMM_SPLIT_NETWORK && split_->material &&
+                split_->material_pair,
+            "Material checkpoint requires its bound network role.");
+    const auto& pair = *split_->material_pair;
+    auto* surface = pair.surface;
+    require(pair.checkpoint_enabled && pair.checkpoint_accepted && pair.network == this &&
+                surface && surface->split_ &&
+                surface->split_->material_pair == split_->material_pair && !pair.active &&
+                !pair.transporting,
+            "Material checkpoint requires an acknowledged inactive pair.");
+    for (const auto* e : {this, static_cast<const SWMMEngine*>(surface)}) {
+        const auto& s = *e->split_;
+        require(
+            e->ctx_.state == EngineState::RUNNING && !e->ctx_.error_code && !e->step_active_ &&
+                !e->runtime_pipeline_ && e->exchange_target_ < 0 && !e->checkpoint_enabled_ &&
+                !e->process_component_host_ && !e->live_passive_exchange_ && !e->source_delivery_ &&
+                !e->source_stage_ && !e->runtime_water_driver_ && !e->engine_source_stream_ &&
+                !e->engine_source_history_ && e->ctx_.plugin_specs.empty() && !s.failed &&
+                s.geometry && s.material && s.settled_reports && !s.finished &&
+                !s.material_finalized && !s.material_acceptance_pending && !s.awaiting_report &&
+                !s.reporting && !s.routing_prepared && !s.source_prepared && !s.lid_prepared &&
+                !s.lid_trial && !s.source_count && !s.aquifer && !s.spatial_sources &&
+                s.lid_nodes.empty() && s.mapped_outfalls.empty(),
             "Material checkpoint has unsupported outputs, providers or unfinished native work.");
-        if(!pair.checkpoint_outputs)require(!e->save_results_ && !e->surface_output_plugin_ && e->surface_router_.options_.output_file.empty(),
-            "Material outputs-off checkpoint has an output writer.");
+        if (!pair.checkpoint_outputs)
+            require(!e->save_results_ && !e->surface_output_plugin_ &&
+                        e->surface_router_.options_.output_file.empty(),
+                    "Material outputs-off checkpoint has an output writer.");
         else {
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-            require(!e->ctx_.options.rpt_averages && e->rpt_path_.empty() && e->plugins_.output_plugins().size()==1,
+            require(
+                !e->ctx_.options.rpt_averages && e->rpt_path_.empty() &&
+                    e->plugins_.output_plugins().size() == 1,
                 "Material output checkpoint excludes averaging, text reports and extra writers.");
-            if(e==this)require(e->save_results_ && e->checkpoint_output_ && !e->checkpoint_surface_output_ &&
-                e->binary_output_plugin_ && e->binary_output_plugin_->checkpoint_fresh_ && e->binary_output_plugin_->out_file_ &&
-                e->plugins_.output_plugins().front()==e->binary_output_plugin_ && !e->surface_output_plugin_,
-                "Material network checkpoint requires its prepared built-in binary writer.");
-            else require(!e->save_results_ && !e->checkpoint_output_ && e->checkpoint_surface_output_ && e->surface_output_plugin_ &&
-                e->surface_output_plugin_->checkpoint_fresh_ && e->surface_output_plugin_->checkpoint_material_ &&
-                e->plugins_.output_plugins().front()==e->surface_output_plugin_,
-                "Material surface checkpoint requires its prepared pollutant mesh writer.");
+            if (e == this)
+                require(
+                    e->save_results_ && e->checkpoint_output_ && !e->checkpoint_surface_output_ &&
+                        e->binary_output_plugin_ && e->binary_output_plugin_->checkpoint_fresh_ &&
+                        e->binary_output_plugin_->out_file_ &&
+                        e->plugins_.output_plugins().front() == e->binary_output_plugin_ &&
+                        !e->surface_output_plugin_,
+                    "Material network checkpoint requires its prepared built-in binary writer.");
+            else
+                require(!e->save_results_ && !e->checkpoint_output_ &&
+                            e->checkpoint_surface_output_ && e->surface_output_plugin_ &&
+                            e->surface_output_plugin_->checkpoint_fresh_ &&
+                            e->surface_output_plugin_->checkpoint_material_ &&
+                            e->plugins_.output_plugins().front() == e->surface_output_plugin_,
+                        "Material surface checkpoint requires its prepared pollutant mesh writer.");
 #else
-            require(false,"Material output checkpoint requires HDF5 output support.");
+            require(false, "Material output checkpoint requires HDF5 output support.");
 #endif
         }
-        RestartState state(*e);state.validate(*e);
+        RestartState state(*e);
+        state.validate(*e);
     }
-    require(surface->split_->role==SWMM_SPLIT_SURFACE && split_->sequence==surface->split_->sequence &&
-        ctx_.current_time==surface->ctx_.current_time && ctx_.elapsed_ms==surface->ctx_.elapsed_ms &&
-        ctx_.current_date==surface->ctx_.current_date && ctx_.next_report_ms==surface->ctx_.next_report_ms &&
-        ctx_.nodes.conc==surface->ctx_.nodes.conc && ctx_.coupling_delivery_remaining==surface->ctx_.coupling_delivery_remaining &&
-        pair.checkpoint_model==materialPairModel(),"Material pair model or accepted role boundary differs.");
-    std::string routing;auto error=router_.checkpointBytes(ctx_,routing);require(error.empty(),error.c_str());
-    materialMirrors(ctx_,surface->ctx_);
-    if(ctx_.current_time>0) {
-        SimulationContext a,b;a.mass_balance_2d=ctx_.mass_balance_2d;b.mass_balance_2d=surface->ctx_.mass_balance_2d;
-        Archive first,second;twoD::SurfaceRouter2D::checkpointMaterialBalance(first,a);twoD::SurfaceRouter2D::checkpointMaterialBalance(second,b);
-        require(first.bytes()==second.bytes(),"Material role surface balances differ.");
+    require(surface->split_->role == SWMM_SPLIT_SURFACE &&
+                split_->sequence == surface->split_->sequence &&
+                ctx_.current_time == surface->ctx_.current_time &&
+                ctx_.elapsed_ms == surface->ctx_.elapsed_ms &&
+                ctx_.current_date == surface->ctx_.current_date &&
+                ctx_.next_report_ms == surface->ctx_.next_report_ms &&
+                ctx_.nodes.conc == surface->ctx_.nodes.conc &&
+                ctx_.coupling_delivery_remaining == surface->ctx_.coupling_delivery_remaining &&
+                pair.checkpoint_model == materialPairModel(),
+            "Material pair model or accepted role boundary differs.");
+    std::string routing;
+    auto error = router_.checkpointBytes(ctx_, routing);
+    require(error.empty(), error.c_str());
+    materialMirrors(ctx_, surface->ctx_);
+    if (ctx_.current_time > 0) {
+        SimulationContext a, b;
+        a.mass_balance_2d = ctx_.mass_balance_2d;
+        b.mass_balance_2d = surface->ctx_.mass_balance_2d;
+        Archive first, second;
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(first, a);
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(second, b);
+        require(first.bytes() == second.bytes(), "Material role surface balances differ.");
     }
-    quality::PeerPassiveStorageCheckpoint::save(*split_->material_issuer,*surface->split_->material_producer);
-    materialWaterHistory(*split_->material_issuer,surface->ctx_,surface->surface_router_.options_.flow_2d_to_1d,
-        surface->surface_router_.options_.vol_1d_to_2d);
-    surface->surface_router_.validateMaterialCheckpoint(surface->ctx_,*surface->split_->material_producer,
-        pair.initial_material,pair.initial_loss,pair.initial_gain,split_->material_issuer->lastWindow(),
-        pair.checkpoint_outputs,split_->material_issuer->reportPublishedAt(ctx_.elapsed_ms));
+    quality::PeerPassiveStorageCheckpoint::save(*split_->material_issuer,
+                                                *surface->split_->material_producer);
+    materialWaterHistory(*split_->material_issuer, surface->ctx_,
+                         surface->surface_router_.options_.flow_2d_to_1d,
+                         surface->surface_router_.options_.vol_1d_to_2d);
+    surface->surface_router_.validateMaterialCheckpoint(
+        surface->ctx_, *surface->split_->material_producer, pair.initial_material,
+        pair.initial_loss, pair.initial_gain, split_->material_issuer->lastWindow(),
+        pair.checkpoint_outputs, split_->material_issuer->reportPublishedAt(ctx_.elapsed_ms));
 #endif
 }
 std::string SWMMEngine::enableMaterialPairCheckpoint(bool outputs) {
 #ifndef OPENSWMM_HAS_2D
     return "Material pair checkpoint requires the surface build.";
 #else
-    bool attached=false;bool old_owned=router_.checkpoint_owned_session_;
+    bool attached = false;
+    bool old_owned = router_.checkpoint_owned_session_;
     try {
-        require(materialPairCheckpointAccessReady(false) && split_->role==SWMM_SPLIT_NETWORK && split_->material_pair &&
-            split_->material_pair->surface && !split_->material_pair->checkpoint_enabled && !router_.checkpoint_context_ &&
-            ctx_.current_time==0 && split_->material_pair->surface->ctx_.current_time==0,
-            "Attach material checkpoints to a fresh bound pair only.");
-        auto& pair=*split_->material_pair;auto& peer=*pair.surface;
+        require(materialPairCheckpointAccessReady(false) && split_->role == SWMM_SPLIT_NETWORK &&
+                    split_->material_pair && split_->material_pair->surface &&
+                    !split_->material_pair->checkpoint_enabled && !router_.checkpoint_context_ &&
+                    ctx_.current_time == 0 &&
+                    split_->material_pair->surface->ctx_.current_time == 0,
+                "Attach material checkpoints to a fresh bound pair only.");
+        auto& pair = *split_->material_pair;
+        auto& peer = *pair.surface;
 #ifndef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        require(!outputs,"Material output checkpoint requires HDF5 output support.");
+        require(!outputs, "Material output checkpoint requires HDF5 output support.");
 #else
-        require(!outputs || (checkpoint_output_ && peer.checkpoint_surface_output_ && peer.surface_output_plugin_),
-            "Prepare both material output writers before start.");
+        require(!outputs || (checkpoint_output_ && peer.checkpoint_surface_output_ &&
+                             peer.surface_output_plugin_),
+                "Prepare both material output writers before start.");
 #endif
-        router_.checkpoint_owned_session_=true;router_.enableCheckpointing(ctx_);attached=true;
-        pair.checkpoint_outputs=outputs;
+        router_.checkpoint_owned_session_ = true;
+        router_.enableCheckpointing(ctx_);
+        attached = true;
+        pair.checkpoint_outputs = outputs;
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        if(outputs)peer.surface_output_plugin_->checkpoint_material_=true;
+        if (outputs)
+            peer.surface_output_plugin_->checkpoint_material_ = true;
 #endif
-        const auto& tr=peer.surface_router_.state_.transport;
-        pair.initial_material=tr.totalIncludingLedgers(0);pair.initial_loss=tr.lost_coupling.at(0);pair.initial_gain=tr.gained_coupling.at(0);
-        pair.checkpoint_model=materialPairModel();pair.checkpoint_enabled=pair.checkpoint_accepted=true;
+        const auto& tr = peer.surface_router_.state_.transport;
+        pair.initial_material = tr.totalIncludingLedgers(0);
+        pair.initial_loss = tr.lost_coupling.at(0);
+        pair.initial_gain = tr.gained_coupling.at(0);
+        pair.checkpoint_model = materialPairModel();
+        pair.checkpoint_enabled = pair.checkpoint_accepted = true;
         checkMaterialPairBoundary();
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        if(outputs) {
-            require(io_thread_.flush()==0 && peer.io_thread_.flush()==0,"Cannot attach failed material writers.");
-            binary_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms);
-            SimulationSnapshot snap;peer.fillSurfaceSnapshot(snap);snap.sim_time=peer.ctx_.current_time;
-            peer.surface_output_plugin_->checkpointBytes(peer.ctx_,peer.ctx_.next_report_ms,snap);
+        if (outputs) {
+            require(io_thread_.flush() == 0 && peer.io_thread_.flush() == 0,
+                    "Cannot attach failed material writers.");
+            binary_output_plugin_->checkpointBytes(ctx_, ctx_.next_report_ms);
+            SimulationSnapshot snap;
+            peer.fillSurfaceSnapshot(snap);
+            snap.sim_time = peer.ctx_.current_time;
+            peer.surface_output_plugin_->checkpointBytes(peer.ctx_, peer.ctx_.next_report_ms, snap);
         }
 #endif
-        material_checkpoint_network_=true;return {};
-    }catch(const std::exception& e) {
-        if(attached && split_ && split_->material_pair){auto& p=*split_->material_pair;p.checkpoint_enabled=false;p.checkpoint_accepted=false;
+        material_checkpoint_network_ = true;
+        return {};
+    } catch (const std::exception& e) {
+        if (attached && split_ && split_->material_pair) {
+            auto& p = *split_->material_pair;
+            p.checkpoint_enabled = false;
+            p.checkpoint_accepted = false;
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-            if(p.checkpoint_outputs && p.surface && p.surface->surface_output_plugin_)p.surface->surface_output_plugin_->checkpoint_material_=false;
+            if (p.checkpoint_outputs && p.surface && p.surface->surface_output_plugin_)
+                p.surface->surface_output_plugin_->checkpoint_material_ = false;
 #endif
-            p.checkpoint_outputs=false;}
-        if(attached){router_.checkpoint_context_=nullptr;router_.checkpoint_model_.clear();router_.checkpoint_ready_=false;material_checkpoint_network_=false;}
-        router_.checkpoint_owned_session_=old_owned;return e.what();
+            p.checkpoint_outputs = false;
+        }
+        if (attached) {
+            router_.checkpoint_context_ = nullptr;
+            router_.checkpoint_model_.clear();
+            router_.checkpoint_ready_ = false;
+            material_checkpoint_network_ = false;
+        }
+        router_.checkpoint_owned_session_ = old_owned;
+        return e.what();
     }
 #endif
 }
@@ -3573,142 +3735,256 @@ std::string SWMMEngine::materialPairCheckpointBytes(std::string& result) const {
     try {
         checkMaterialPairBoundary();
 #ifdef OPENSWMM_HAS_2D
-        const auto& pair=*split_->material_pair;auto& peer=*pair.surface;
-        RestartState network(*this),surface(peer);Archive payload;
-        std::string role="network";payload(role);network.archive(payload);role="surface";payload(role);surface.archive(payload);
-        std::string routing;auto error=router_.checkpointBytes(ctx_,routing);require(error.empty(),error.c_str());payload(routing);
-        auto nodes=peer.ctx_.nodes;
+        const auto& pair = *split_->material_pair;
+        auto& peer = *pair.surface;
+        RestartState network(*this), surface(peer);
+        Archive payload;
+        std::string role = "network";
+        payload(role);
+        network.archive(payload);
+        role = "surface";
+        payload(role);
+        surface.archive(payload);
+        std::string routing;
+        auto error = router_.checkpointBytes(ctx_, routing);
+        require(error.empty(), error.c_str());
+        payload(routing);
+        auto nodes = peer.ctx_.nodes;
         // Same absent no-LID history canonicalization as the native Router.
-        if(nodes.lid_drain_qual_load_old.empty())nodes.lid_drain_qual_load_old.assign(std::size_t(peer.ctx_.n_nodes()),0.);
-        Router::checkpointNodeColumns(payload,nodes,true);
-        auto footprint=nodes.ponded_area;double delivery=ctx_.coupling_delivery_remaining,peer_delivery=peer.ctx_.coupling_delivery_remaining;
-        auto balance=ctx_.mass_balance_2d;SimulationContext balance_context;balance_context.mass_balance_2d=balance;
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(payload,balance_context);
-        balance_context.mass_balance_2d=peer.ctx_.mass_balance_2d;
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(payload,balance_context);
-        payload(footprint,delivery,peer_delivery);
-        auto mesh=peer.surface_router_.materialCheckpointBytes(peer.ctx_,pair.checkpoint_outputs);
-        auto owners=quality::PeerPassiveStorageCheckpoint::save(*split_->material_issuer,*peer.split_->material_producer);
-        payload(mesh,owners);
+        if (nodes.lid_drain_qual_load_old.empty())
+            nodes.lid_drain_qual_load_old.assign(std::size_t(peer.ctx_.n_nodes()), 0.);
+        Router::checkpointNodeColumns(payload, nodes, true);
+        auto footprint = nodes.ponded_area;
+        double delivery = ctx_.coupling_delivery_remaining,
+               peer_delivery = peer.ctx_.coupling_delivery_remaining;
+        auto balance = ctx_.mass_balance_2d;
+        SimulationContext balance_context;
+        balance_context.mass_balance_2d = balance;
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(payload, balance_context);
+        balance_context.mass_balance_2d = peer.ctx_.mass_balance_2d;
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(payload, balance_context);
+        payload(footprint, delivery, peer_delivery);
+        auto mesh =
+            peer.surface_router_.materialCheckpointBytes(peer.ctx_, pair.checkpoint_outputs);
+        auto owners = quality::PeerPassiveStorageCheckpoint::save(*split_->material_issuer,
+                                                                  *peer.split_->material_producer);
+        payload(mesh, owners);
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        if(pair.checkpoint_outputs) {
-            require(io_thread_.flush()==0 && peer.io_thread_.flush()==0,"Cannot checkpoint failed material output writes.");
-            auto binary=binary_output_plugin_->checkpointBytes(ctx_,ctx_.next_report_ms);
-            SimulationSnapshot snap;peer.fillSurfaceSnapshot(snap);snap.sim_time=peer.ctx_.current_time;
-            auto surface_output=peer.surface_output_plugin_->checkpointBytes(peer.ctx_,peer.ctx_.next_report_ms,snap);
-            Archive output;std::string label="OpenSWMM material pair output prefixes v1";output(label,binary,surface_output);auto output_bytes=output.bytes();payload(output_bytes);
+        if (pair.checkpoint_outputs) {
+            require(io_thread_.flush() == 0 && peer.io_thread_.flush() == 0,
+                    "Cannot checkpoint failed material output writes.");
+            auto binary = binary_output_plugin_->checkpointBytes(ctx_, ctx_.next_report_ms);
+            SimulationSnapshot snap;
+            peer.fillSurfaceSnapshot(snap);
+            snap.sim_time = peer.ctx_.current_time;
+            auto surface_output = peer.surface_output_plugin_->checkpointBytes(
+                peer.ctx_, peer.ctx_.next_report_ms, snap);
+            Archive output;
+            std::string label = "OpenSWMM material pair output prefixes v1";
+            output(label, binary, surface_output);
+            auto output_bytes = output.bytes();
+            payload(output_bytes);
         }
 #endif
-        MaterialSplitState n(*split_),s(*peer.split_);n.archive(payload);s.archive(payload);
-        auto first=split_->identity,second=peer.split_->identity;payload(first,second);
-        auto bytes=payload.bytes(),model=pair.checkpoint_model;std::string magic="OpenSWMM material network/surface numerical checkpoint";
-        std::uint32_t version=pair.checkpoint_outputs?2:1,endian=0x01020304,word=sizeof(long),crc=checksum(bytes);
-        Archive out;out(magic,version,endian,word,model,crc,bytes);
-        require(out.bytes().size()<=maxBytes,"Material pair checkpoint exceeds its size bound.");result=out.bytes();return {};
+        MaterialSplitState n(*split_), s(*peer.split_);
+        n.archive(payload);
+        s.archive(payload);
+        auto first = split_->identity, second = peer.split_->identity;
+        payload(first, second);
+        auto bytes = payload.bytes(), model = pair.checkpoint_model;
+        std::string magic = "OpenSWMM material network/surface numerical checkpoint";
+        std::uint32_t version = pair.checkpoint_outputs ? 2 : 1, endian = 0x01020304,
+                      word = sizeof(long), crc = checksum(bytes);
+        Archive out;
+        out(magic, version, endian, word, model, crc, bytes);
+        require(out.bytes().size() <= maxBytes, "Material pair checkpoint exceeds its size bound.");
+        result = out.bytes();
+        return {};
 #else
         return "Material pair checkpoint requires the surface build.";
 #endif
-    }catch(const std::exception& e){return e.what();}
+    } catch (const std::exception& e) {
+        return e.what();
+    }
 }
-std::string SWMMEngine::restoreMaterialPairCheckpoint(const std::string& bytes, double expected_seconds) {
+std::string SWMMEngine::restoreMaterialPairCheckpoint(const std::string& bytes,
+                                                      double expected_seconds) {
     try {
         checkMaterialPairBoundary();
 #ifdef OPENSWMM_HAS_2D
-        auto& pair=*split_->material_pair;auto& peer=*pair.surface;
-        require(ctx_.current_time==0 && peer.ctx_.current_time==0 && split_->sequence==0 && peer.split_->sequence==0,
-            "Material pair restore requires two fresh bound targets.");
-        auto envelope=materialPairArchive(bytes);
-        require(envelope.version==(pair.checkpoint_outputs?2u:1u) && envelope.model==pair.checkpoint_model,"Material pair model/output mode differs.");
-        RestartState n(*this),s(peer);Archive in(std::move(envelope.body));std::string role;
-        in(role);require(role=="network","Material checkpoint network role differs.");n.archive(in);
-        in(role);require(role=="surface","Material checkpoint surface role differs.");s.archive(in);n.validate(*this);s.validate(peer);
-        require(n.boundary==s.boundary,"Material incoming role clocks differ.");
-        require(expected_seconds==-1 || (std::isfinite(expected_seconds) && expected_seconds>=0 &&
-            expected_seconds==n.boundary[2]/1000.0),"Material component/native accepted seconds differ.");
-        std::string routing;in(routing);auto prepared_router=router_.prepareCheckpointBytes(ctx_,std::move(routing),&n.boundary);
-        SimulationContext incoming,source;materialContext(ctx_,incoming,n.boundary);materialContext(peer.ctx_,source,s.boundary);
-        Router::copyCheckpointContext(prepared_router,incoming);
-        if(source.nodes.lid_drain_qual_load_old.empty())source.nodes.lid_drain_qual_load_old.assign(std::size_t(source.n_nodes()),0.);
-        Router::checkpointNodeColumns(in,source.nodes,true);
-        for(double value:source.nodes.lid_drain_qual_load_old)
-            require(value==0,"Material source contains unowned old LID quality load.");
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(in,incoming);
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(in,source);
-        require(source.mass_balance_2d.init_storage==peer.ctx_.mass_balance_2d.init_storage,
-            "Material surface initial water differs from its fresh model anchor.");
-        std::vector<double> footprint;in(footprint,incoming.coupling_delivery_remaining,source.coupling_delivery_remaining);
-        require(footprint==peer.ctx_.nodes.ponded_area && incoming.coupling_delivery_remaining==source.coupling_delivery_remaining,
-            "Material decoded footprint/delivery differs.");
-        for(int node=0;node<source.n_nodes();++node)
-            require(source.nodes.volume[node]>0 && source.nodes.old_volume[node]>=0 && source.nodes.depth[node]>0 &&
-                source.nodes.conc[node]>=0 && source.nodes.conc_old[node]>=0 &&
-                source.nodes.full_volume[node]==peer.ctx_.nodes.full_volume[node] &&
-                source.nodes.rpt_full_volume[node]==peer.ctx_.nodes.rpt_full_volume[node] &&
-                std::abs(source.nodes.head[node]-source.nodes.invert_elev[node]-source.nodes.depth[node])<=
-                    1e-11*std::max(1.,std::abs(source.nodes.head[node])),
-                "Invalid material source native node inventory.");
-        materialMirrors(incoming,source);
-        SimulationContext balances;Archive first_balance,second_balance;balances.mass_balance_2d=incoming.mass_balance_2d;
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(first_balance,balances);
-        balances.mass_balance_2d=n.boundary[0]>0?source.mass_balance_2d:ctx_.mass_balance_2d;
-        twoD::SurfaceRouter2D::checkpointMaterialBalance(second_balance,balances);
-        require(first_balance.bytes()==second_balance.bytes(),"Material decoded role surface balance differs.");
-        if(n.boundary[0]>0)Router::validateSessionStorage(prepared_router,ctx_,n.balance.routing_final_storage,n.stats.sum_iterations>0);
-        Router::validateJointDelivery(incoming.nodes,ctx_.coupled_node,incoming.coupling_delivery_remaining);
-        std::string mesh,owners;in(mesh,owners);
-        auto prepared_surface=peer.surface_router_.prepareMaterialCheckpoint(source,std::move(mesh),pair.checkpoint_outputs);
-        auto prepared_owners=quality::PeerPassiveStorageCheckpoint::prepare(split_->material_issuer,peer.split_->material_producer,
-            incoming,source,peer.surface_router_.materialCheckpointState(prepared_surface),owners);
-        materialWaterHistory(prepared_owners.funding(),source,peer.surface_router_.options_.flow_2d_to_1d,
-            peer.surface_router_.options_.vol_1d_to_2d);
+        auto& pair = *split_->material_pair;
+        auto& peer = *pair.surface;
+        require(ctx_.current_time == 0 && peer.ctx_.current_time == 0 && split_->sequence == 0 &&
+                    peer.split_->sequence == 0,
+                "Material pair restore requires two fresh bound targets.");
+        auto envelope = materialPairArchive(bytes);
+        require(envelope.version == (pair.checkpoint_outputs ? 2u : 1u) &&
+                    envelope.model == pair.checkpoint_model,
+                "Material pair model/output mode differs.");
+        RestartState n(*this), s(peer);
+        Archive in(std::move(envelope.body));
+        std::string role;
+        in(role);
+        require(role == "network", "Material checkpoint network role differs.");
+        n.archive(in);
+        in(role);
+        require(role == "surface", "Material checkpoint surface role differs.");
+        s.archive(in);
+        n.validate(*this);
+        s.validate(peer);
+        require(n.boundary == s.boundary, "Material incoming role clocks differ.");
+        require(expected_seconds == -1 ||
+                    (std::isfinite(expected_seconds) && expected_seconds >= 0 &&
+                     expected_seconds == n.boundary[2] / 1000.0),
+                "Material component/native accepted seconds differ.");
+        std::string routing;
+        in(routing);
+        auto prepared_router =
+            router_.prepareCheckpointBytes(ctx_, std::move(routing), &n.boundary);
+        SimulationContext incoming, source;
+        materialContext(ctx_, incoming, n.boundary);
+        materialContext(peer.ctx_, source, s.boundary);
+        Router::copyCheckpointContext(prepared_router, incoming);
+        if (source.nodes.lid_drain_qual_load_old.empty())
+            source.nodes.lid_drain_qual_load_old.assign(std::size_t(source.n_nodes()), 0.);
+        Router::checkpointNodeColumns(in, source.nodes, true);
+        for (double value : source.nodes.lid_drain_qual_load_old)
+            require(value == 0, "Material source contains unowned old LID quality load.");
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(in, incoming);
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(in, source);
+        require(source.mass_balance_2d.init_storage == peer.ctx_.mass_balance_2d.init_storage,
+                "Material surface initial water differs from its fresh model anchor.");
+        std::vector<double> footprint;
+        in(footprint, incoming.coupling_delivery_remaining, source.coupling_delivery_remaining);
+        require(footprint == peer.ctx_.nodes.ponded_area &&
+                    incoming.coupling_delivery_remaining == source.coupling_delivery_remaining,
+                "Material decoded footprint/delivery differs.");
+        for (int node = 0; node < source.n_nodes(); ++node)
+            require(source.nodes.volume[node] > 0 && source.nodes.old_volume[node] >= 0 &&
+                        source.nodes.depth[node] > 0 && source.nodes.conc[node] >= 0 &&
+                        source.nodes.conc_old[node] >= 0 &&
+                        source.nodes.full_volume[node] == peer.ctx_.nodes.full_volume[node] &&
+                        source.nodes.rpt_full_volume[node] ==
+                            peer.ctx_.nodes.rpt_full_volume[node] &&
+                        std::abs(source.nodes.head[node] - source.nodes.invert_elev[node] -
+                                 source.nodes.depth[node]) <=
+                            1e-11 * std::max(1., std::abs(source.nodes.head[node])),
+                    "Invalid material source native node inventory.");
+        materialMirrors(incoming, source);
+        SimulationContext balances;
+        Archive first_balance, second_balance;
+        balances.mass_balance_2d = incoming.mass_balance_2d;
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(first_balance, balances);
+        balances.mass_balance_2d =
+            n.boundary[0] > 0 ? source.mass_balance_2d : ctx_.mass_balance_2d;
+        twoD::SurfaceRouter2D::checkpointMaterialBalance(second_balance, balances);
+        require(first_balance.bytes() == second_balance.bytes(),
+                "Material decoded role surface balance differs.");
+        if (n.boundary[0] > 0)
+            Router::validateSessionStorage(prepared_router, ctx_, n.balance.routing_final_storage,
+                                           n.stats.sum_iterations > 0);
+        Router::validateJointDelivery(incoming.nodes, ctx_.coupled_node,
+                                      incoming.coupling_delivery_remaining);
+        std::string mesh, owners;
+        in(mesh, owners);
+        auto prepared_surface = peer.surface_router_.prepareMaterialCheckpoint(
+            source, std::move(mesh), pair.checkpoint_outputs);
+        auto prepared_owners = quality::PeerPassiveStorageCheckpoint::prepare(
+            split_->material_issuer, peer.split_->material_producer, incoming, source,
+            peer.surface_router_.materialCheckpointState(prepared_surface), owners);
+        materialWaterHistory(prepared_owners.funding(), source,
+                             peer.surface_router_.options_.flow_2d_to_1d,
+                             peer.surface_router_.options_.vol_1d_to_2d);
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
         std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_binary;
         std::shared_ptr<twoD::Default2DOutputPlugin::PreparedCheckpoint> prepared_mesh_output;
-        if(pair.checkpoint_outputs) {
-            std::string binary,mesh_output,output_bytes,label;in(output_bytes);Archive output(std::move(output_bytes));output(label,binary,mesh_output);output.finish();
-            require(label=="OpenSWMM material pair output prefixes v1","Material output role envelope differs.");
-            require(io_thread_.flush()==0 && peer.io_thread_.flush()==0,"Cannot restore failed material output writes.");
-            prepared_binary=binary_output_plugin_->prepareCheckpoint(ctx_,n.boundary[4],std::move(binary));
-            SimulationSnapshot snap;peer.fillSurfaceSnapshot(snap);snap.sim_time=s.boundary[0];
-            prepared_mesh_output=peer.surface_output_plugin_->prepareCheckpoint(peer.ctx_,s.boundary[4],snap,nullptr,std::move(mesh_output));
+        if (pair.checkpoint_outputs) {
+            std::string binary, mesh_output, output_bytes, label;
+            in(output_bytes);
+            Archive output(std::move(output_bytes));
+            output(label, binary, mesh_output);
+            output.finish();
+            require(label == "OpenSWMM material pair output prefixes v1",
+                    "Material output role envelope differs.");
+            require(io_thread_.flush() == 0 && peer.io_thread_.flush() == 0,
+                    "Cannot restore failed material output writes.");
+            prepared_binary =
+                binary_output_plugin_->prepareCheckpoint(ctx_, n.boundary[4], std::move(binary));
+            SimulationSnapshot snap;
+            peer.fillSurfaceSnapshot(snap);
+            snap.sim_time = s.boundary[0];
+            prepared_mesh_output = peer.surface_output_plugin_->prepareCheckpoint(
+                peer.ctx_, s.boundary[4], snap, nullptr, std::move(mesh_output));
         }
 #endif
-        MaterialSplitState ns(*split_),ss(*peer.split_);ns.archive(in);ss.archive(in);
-        std::uint64_t old_first,old_second;in(old_first,old_second);in.finish();
-        ns.validate(n.boundary[0]);ss.validate(s.boundary[0]);
-        require(ns.sequence==ss.sequence && old_first && old_second && old_first!=old_second,"Material archived role sequence/identity differs.");
-        auto fresh=[&](){std::uint64_t value;do{value=quality::PeerPassiveStorageCheckpoint::recoveryIdentity();}
-            while(value==old_first || value==old_second || value==split_->identity || value==peer.split_->identity);return value;};
-        auto first=fresh(),second=fresh();while(second==first)second=fresh();prepared_owners.rekey(first,second,old_first,old_second);
-        peer.surface_router_.validateMaterialCheckpoint(source,prepared_owners.producer(),pair.initial_material,pair.initial_loss,pair.initial_gain,
-            prepared_owners.funding().lastWindow(),pair.checkpoint_outputs,
-            prepared_owners.funding().reportPublishedAt(source.elapsed_ms),prepared_surface);
-        checkMaterialPairBoundary();prepared_owners.validateTarget();
+        MaterialSplitState ns(*split_), ss(*peer.split_);
+        ns.archive(in);
+        ss.archive(in);
+        std::uint64_t old_first, old_second;
+        in(old_first, old_second);
+        in.finish();
+        ns.validate(n.boundary[0]);
+        ss.validate(s.boundary[0]);
+        require(ns.sequence == ss.sequence && old_first && old_second && old_first != old_second,
+                "Material archived role sequence/identity differs.");
+        auto fresh = [&]() {
+            std::uint64_t value;
+            do {
+                value = quality::PeerPassiveStorageCheckpoint::recoveryIdentity();
+            } while (value == old_first || value == old_second || value == split_->identity ||
+                     value == peer.split_->identity);
+            return value;
+        };
+        auto first = fresh(), second = fresh();
+        while (second == first)
+            second = fresh();
+        prepared_owners.rekey(first, second, old_first, old_second);
+        peer.surface_router_.validateMaterialCheckpoint(
+            source, prepared_owners.producer(), pair.initial_material, pair.initial_loss,
+            pair.initial_gain, prepared_owners.funding().lastWindow(), pair.checkpoint_outputs,
+            prepared_owners.funding().reportPublishedAt(source.elapsed_ms), prepared_surface);
+        checkMaterialPairBoundary();
+        prepared_owners.validateTarget();
         // Complete validation precedes all publication. Stable target objects,
         // native channels and callbacks survive; only owned runtime is replaced.
         static_assert(std::is_nothrow_move_assignable_v<NodeData> &&
-            std::is_nothrow_copy_assignable_v<SimulationContext::MassBalance2D>);
+                      std::is_nothrow_copy_assignable_v<SimulationContext::MassBalance2D>);
 #ifdef OPENSWMM_HAS_2D_HDF5_OUTPUT
-        std::unique_lock<std::recursive_mutex> output_lock(io::resultHdf5Mutex(),std::defer_lock);
-        if(pair.checkpoint_outputs) {
+        std::unique_lock<std::recursive_mutex> output_lock(io::resultHdf5Mutex(), std::defer_lock);
+        if (pair.checkpoint_outputs) {
             output_lock.lock();
-            io::CheckpointOutputPublication publication({binary_output_plugin_->checkpointPublication(*prepared_binary),
-                peer.surface_output_plugin_->checkpointPublication(*prepared_mesh_output)});
+            io::CheckpointOutputPublication publication(
+                {binary_output_plugin_->checkpointPublication(*prepared_binary),
+                 peer.surface_output_plugin_->checkpointPublication(*prepared_mesh_output)});
             publication.publish();
-            binary_output_plugin_->adoptCheckpoint(*prepared_binary);peer.surface_output_plugin_->adoptCheckpoint(*prepared_mesh_output);
+            binary_output_plugin_->adoptCheckpoint(*prepared_binary);
+            peer.surface_output_plugin_->adoptCheckpoint(*prepared_mesh_output);
         }
 #endif
-        router_.installCheckpoint(ctx_,std::move(prepared_router));n.install(*this);
-        peer.ctx_.nodes=std::move(source.nodes);s.install(peer);
-        peer.surface_router_.installMaterialCheckpoint(peer.ctx_,std::move(prepared_surface));
-        ctx_.coupling_delivery_remaining=incoming.coupling_delivery_remaining;peer.ctx_.coupling_delivery_remaining=source.coupling_delivery_remaining;
-        ctx_.mass_balance_2d=incoming.mass_balance_2d;
-        ns.install(*split_);ss.install(*peer.split_);split_->identity=first;split_->peer=second;peer.split_->identity=second;peer.split_->peer=first;
-        prepared_owners.install();peer.surface_router_.peer_passive_exchange_=peer.split_->material_producer.get();
-        checkpoint_ready_=peer.checkpoint_ready_=false;pair.checkpoint_accepted=true;return {};
+        router_.installCheckpoint(ctx_, std::move(prepared_router));
+        n.install(*this);
+        peer.ctx_.nodes = std::move(source.nodes);
+        s.install(peer);
+        peer.surface_router_.installMaterialCheckpoint(peer.ctx_, std::move(prepared_surface));
+        ctx_.coupling_delivery_remaining = incoming.coupling_delivery_remaining;
+        peer.ctx_.coupling_delivery_remaining = source.coupling_delivery_remaining;
+        ctx_.mass_balance_2d = incoming.mass_balance_2d;
+        ns.install(*split_);
+        ss.install(*peer.split_);
+        split_->identity = first;
+        split_->peer = second;
+        peer.split_->identity = second;
+        peer.split_->peer = first;
+        prepared_owners.install();
+        peer.surface_router_.peer_passive_exchange_ = peer.split_->material_producer.get();
+        checkpoint_ready_ = peer.checkpoint_ready_ = false;
+        pair.checkpoint_accepted = true;
+        return {};
 #else
         return "Material pair checkpoint requires the surface build.";
 #endif
-    }catch(const std::exception& e){return e.what();}
+    } catch (const std::exception& e) {
+        return e.what();
+    }
 }
 } // namespace openswmm

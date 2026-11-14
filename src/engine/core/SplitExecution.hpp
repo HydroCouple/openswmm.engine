@@ -12,7 +12,11 @@
 namespace openswmm {
 struct SimulationContext;
 class SWMMEngine;
-namespace quality { class PeerPassiveStorageFunding; class PeerPassiveStorageProducer; class PeerPassiveStorageWindow; }
+namespace quality {
+class PeerPassiveStorageFunding;
+class PeerPassiveStorageProducer;
+class PeerPassiveStorageWindow;
+}
 struct MaterialPairLifetime {
     SWMMEngine* network = nullptr;
     SWMMEngine* surface = nullptr;
@@ -25,7 +29,9 @@ struct MaterialPairLifetime {
     double initial_material = 0, initial_loss = 0, initial_gain = 0;
 };
 bool reviewedGroundwaterExchange(const SimulationContext&);
-namespace lidnode { struct MeshRichardsTrial; }
+namespace lidnode {
+struct MeshRichardsTrial;
+}
 struct SplitGageSample {
     double start = 0;
     std::vector<double> rates;
@@ -68,7 +74,7 @@ struct SplitExecution {
     std::vector<double> accepted_inflow, accepted_outflow;
     std::vector<int> source_groups;
     std::vector<double> source_rates, source_previous_rates;
-    std::array<double,6> source_totals{};
+    std::array<double, 6> source_totals{};
     double source_storage = 0;
     bool source_prepared = false;
     double source_prepared_dt = 0;

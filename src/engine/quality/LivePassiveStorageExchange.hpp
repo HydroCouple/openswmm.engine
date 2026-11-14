@@ -27,13 +27,13 @@ class LivePassiveStorageExchange : public PassiveStorageAdmission {
 public:
     using Phase = PassiveStorageExchange::Phase;
     using Leg = PassiveStorageExchange::AppliedLeg;
-    LivePassiveStorageExchange(const SimulationContext& ctx,
-                               const twoD::SurfaceStateData& state,
-                               const std::vector<twoD::CouplingPoint>& points,
-                               double si_to_native, std::size_t capacity = 4096,
-                               PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT, bool preflight_history = false,
-                               PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
-                               PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT);
+    LivePassiveStorageExchange(
+        const SimulationContext& ctx, const twoD::SurfaceStateData& state,
+        const std::vector<twoD::CouplingPoint>& points, double si_to_native,
+        std::size_t capacity = 4096,
+        PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT,
+        bool preflight_history = false, PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
+        PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT);
     LivePassiveStorageExchange(const LivePassiveStorageExchange&) = delete;
     LivePassiveStorageExchange& operator=(const LivePassiveStorageExchange&) = delete;
     /// Opt-in conservative archive admission. A refusal preserves the accepted owner.
@@ -47,34 +47,48 @@ public:
     void beginWindow(const SimulationContext& ctx, const twoD::SurfaceStateData& state,
                      double start_ms, double end_ms, Phase phase);
     /// Same actual operands the native writer will use. Allocation-free, before all leg effects.
-    bool admit(std::size_t point, int cell, int node, double signed_water_si,
-               double actual_mass_si, double before, double volume_before,
-               double offset_s, double duration_s, double withdrawal_si = 0) noexcept override;
+    bool admit(std::size_t point, int cell, int node, double signed_water_si, double actual_mass_si,
+               double before, double volume_before, double offset_s, double duration_s,
+               double withdrawal_si = 0) noexcept override;
     /// Called only after the native leg was applied. Allocation-free and nonthrowing.
     void applied(double actual_after, double volume_after) noexcept override;
     void seal(const SimulationContext& ctx, const std::vector<double>& hydraulic_exchange_si);
     void observeWaterBooking(const SimulationContext& ctx);
     void fail(const char* reason) noexcept override;
     bool failed() const noexcept override { return failure_ != nullptr || book_.failed(); }
-    const char* error() const noexcept override { return failure_ ? failure_ : "Live passive exchange receiving failed."; }
+    const char* error() const noexcept override {
+        return failure_ ? failure_ : "Live passive exchange receiving failed.";
+    }
     bool windowOpen() const noexcept { return open_; }
     std::size_t legCount() const noexcept { return count_; }
     const Leg& leg(std::size_t index) const { return legs_.at(index); }
     const Leg& attempted() const noexcept { return attempted_; }
     const PassiveStorageExchange& receipts() const noexcept { return book_; }
     std::string checkpoint(const SimulationContext& ctx, const twoD::SurfaceStateData& state) const;
-    std::unique_ptr<LivePassiveStorageExchange> prepareRestore(
-        const SimulationContext& incoming, const twoD::SurfaceStateData& surface,
-        const std::string& bytes) const;
+    std::unique_ptr<LivePassiveStorageExchange>
+    prepareRestore(const SimulationContext& incoming, const twoD::SurfaceStateData& surface,
+                   const std::string& bytes) const;
     /// Internal staged setup, before the first live window only; shares the same funding owner.
-    void reserveInitial(const SimulationContext& ctx, std::vector<PassiveStorageExchange::Row> rows);
+    void reserveInitial(const SimulationContext& ctx,
+                        std::vector<PassiveStorageExchange::Row> rows);
+
 private:
     friend class twoD::SurfaceRouter2D;
-    struct Point { int cell, node; };
-    struct Budget { int node; double volume, depth, concentration; NativeAmountSum sealed, open; };
+    struct Point {
+        int cell, node;
+    };
+    struct Budget {
+        int node;
+        double volume, depth, concentration;
+        NativeAmountSum sealed, open;
+    };
     void requireReady() const;
     void validateSurface(const twoD::SurfaceStateData& state) const;
-    void rebind(const SimulationContext& ctx) noexcept { context_ = &ctx; if (book_.owner_) book_.owner_ = &ctx; }
+    void rebind(const SimulationContext& ctx) noexcept {
+        context_ = &ctx;
+        if (book_.owner_)
+            book_.owner_ = &ctx;
+    }
     void installFrom(LivePassiveStorageExchange& candidate, const SimulationContext& ctx) noexcept;
     const SimulationContext* context_;
     std::vector<Point> points_;

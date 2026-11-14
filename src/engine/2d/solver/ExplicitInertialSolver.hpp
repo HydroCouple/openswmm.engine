@@ -1288,7 +1288,10 @@ public:
      * @note Requires exclusive completed owner boundary. Replacing a running owner with pending
      * receipts is unsupported without the enclosing coordinated transaction.
      */
-    void setSubsurface(SubsurfaceSolver* gw, double end = -1) noexcept { gw_ = gw; gw_end_time_ = end; }
+    void setSubsurface(SubsurfaceSolver* gw, double end = -1) noexcept {
+        gw_ = gw;
+        gw_end_time_ = end;
+    }
     /**
      * @brief Rebuild exact-name native surface-to-groundwater row mapping after owners are
      * prepared.

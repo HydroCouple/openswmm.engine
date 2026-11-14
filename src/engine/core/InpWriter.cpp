@@ -174,17 +174,22 @@ template <std::size_t N> static void fmt_date(char (&buf)[N], double oadate) {
  * @param[out] buf Caller-owned N-byte array, N>0 for a terminator.
  * @param[in] oadate Engine OADate supported by datetime::decodeTime.
  */
-template <std::size_t N> static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
+template <std::size_t N>
+static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
     const double nearest = std::round(seconds);
     const double ulp = std::abs(std::nextafter(day, std::numeric_limits<double>::infinity()) - day);
-    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0)) seconds = nearest;
+    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0))
+        seconds = nearest;
     const auto h = static_cast<long long>(std::floor(seconds / 3600.0));
     const int m = static_cast<int>(std::floor((seconds - h * 3600.0) / 60.0));
     const double second = seconds - h * 3600.0 - m * 60.0;
-    if (elapsed && second == 0.0) std::snprintf(buf, N, "%lld:%02d", h, m);
+    if (elapsed && second == 0.0)
+        std::snprintf(buf, N, "%lld:%02d", h, m);
     else if (second == std::floor(second))
-        std::snprintf(buf, N, elapsed ? "%lld:%02d:%02d" : "%02lld:%02d:%02d", h, m, static_cast<int>(second));
-    else std::snprintf(buf, N, elapsed ? "%lld:%02d:%.17g" : "%02lld:%02d:%.17g", h, m, second);
+        std::snprintf(buf, N, elapsed ? "%lld:%02d:%02d" : "%02lld:%02d:%02d", h, m,
+                      static_cast<int>(second));
+    else
+        std::snprintf(buf, N, elapsed ? "%lld:%02d:%.17g" : "%02lld:%02d:%.17g", h, m, second);
 }
 
 template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
@@ -203,7 +208,8 @@ template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
  * @param[in] secs Finite timestep seconds representable by lround and the derived int hour count;
  *     normally nonnegative.
  */
-template <std::size_t N> static void fmt_step(char (&buf)[N], double secs, bool clock_fraction = false) {
+template <std::size_t N>
+static void fmt_step(char (&buf)[N], double secs, bool clock_fraction = false) {
     long r = std::lround(secs);
     if (secs == static_cast<double>(r)) {
         int ss = static_cast<int>(r % 60);
@@ -969,8 +975,7 @@ static void emitGwTransportSections(FILE* f, const SimulationContext& ctx) {
         for (const auto& r : gw->sorption) {
             scope_col(r.scope, r.tag, r.cell, sc, sizeof sc);
             if (r.decay >= 0.0)
-                std::fprintf(f, "%-16s %-16s %.17g %.17g\n", sc, r.species.c_str(), r.kd,
-                             r.decay);
+                std::fprintf(f, "%-16s %-16s %.17g %.17g\n", sc, r.species.c_str(), r.kd, r.decay);
             else
                 std::fprintf(f, "%-16s %-16s %.17g -\n", sc, r.species.c_str(), r.kd);
         }
@@ -1933,7 +1938,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             input::convert_internal_to_authored(ctx_display);
     }
     const SimulationContext& ctx =
-        ((needs_display_conv && !opts.internal_units) || needs_authored_conv) ? ctx_display : ctx_internal;
+        ((needs_display_conv && !opts.internal_units) || needs_authored_conv) ? ctx_display
+                                                                              : ctx_internal;
 
     // SWMM 5.x write profile (MULTI_ENGINE plan V2 Phase 4): omit the v6-only
     // sections and option keys, map incompatible option values, and write
@@ -1951,7 +1957,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
 
     if (stock5 && std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
                               [](double a) { return a > 0.0; })) {
-        note("Stock EPA SWMM cannot represent junction StorageArea. Use OpenSWMM 5.3.0 or 6.0.0; export refused to avoid dropping physical storage.");
+        note(
+            "Stock EPA SWMM cannot represent junction StorageArea. Use OpenSWMM 5.3.0 or 6.0.0; export refused to avoid dropping physical storage.");
         return -1;
     }
 
@@ -1978,7 +1985,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         return -1;
     std::unique_ptr<openswmm::io::AtomicOutputFile> output;
     if (!opts.stream)
-        output = std::make_unique<openswmm::io::AtomicOutputFile>(openswmm::io::utf8_path(physical));
+        output =
+            std::make_unique<openswmm::io::AtomicOutputFile>(openswmm::io::utf8_path(physical));
     FILE* f = opts.stream ? opts.stream : output->stream();
     if (!f) {
         note(output->error());
@@ -2278,13 +2286,16 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // keeps only the first value token.
             if (kv.first.rfind("GWF:", 0) == 0)
                 continue;
-            if (swmm5 && kv.first.starts_with("IO_")) continue;
+            if (swmm5 && kv.first.starts_with("IO_"))
+                continue;
             if (kv.first.starts_with("IO_")) {
                 std::string value = kv.second;
                 if (kv.first.ends_with("_PATH") && !value.empty()) {
                     if (!io::isAbsolutePath(value))
-                        value = io::path_utf8(io::utf8_path(ctx.inp_file_path).parent_path() / io::utf8_path(value));
-                    if (!force_abs_paths && !dst_dir.empty()) value = io::makeRelative(value, dst_dir).path;
+                        value = io::path_utf8(io::utf8_path(ctx.inp_file_path).parent_path() /
+                                              io::utf8_path(value));
+                    if (!force_abs_paths && !dst_dir.empty())
+                        value = io::makeRelative(value, dst_dir).path;
                 }
                 std::fprintf(f, "%-20s %s\n", kv.first.c_str(), quote_argument(value).c_str());
             } else if (!swmm5 || !kv.first.starts_with("FV_"))
@@ -2548,8 +2559,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
 
         if (has_adj) {
             sec(f, "ADJUSTMENTS");
-            auto write12 = [&](const char* key, const double* arr,
-                               const char* format = " %.17g") {
+            auto write12 = [&](const char* key, const double* arr, const char* format = " %.17g") {
                 std::fprintf(f, "%-12s", key);
                 for (int i = 0; i < 12; ++i)
                     std::fprintf(f, format, arr[i]);
@@ -2654,7 +2664,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (sf != 1.0)
                     std::fprintf(f, " %.17g", sf);
                 std::fprintf(f, "\n");
-            } else if (ctx.gages.source[u] == RainSource::FILE_RAIN && !ctx.gages.file_path[u].empty()) {
+            } else if (ctx.gages.source[u] == RainSource::FILE_RAIN &&
+                       !ctx.gages.file_path[u].empty()) {
                 const std::string tok =
                     emit_path_token(ctx.gages.file_path[u], dst_dir, force_abs_paths, warnings);
                 if (ctx.gages.file_format[u] == RainFileFormat::USER_CSV) {
@@ -2847,8 +2858,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         for (int j = 0; j < ctx.aquifers.count(); ++j) {
             auto u = static_cast<size_t>(j);
             std::fprintf(
-                f,
-                "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
+                f, "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
                 ctx.aquifers.names[u].c_str(), ctx.aquifers.porosity[u],
                 ctx.aquifers.wilting_point[u], ctx.aquifers.field_capacity[u],
                 ctx.aquifers.conductivity[u], ctx.aquifers.conduct_slope[u],
@@ -2904,14 +2914,13 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                             "\": receiving node unresolved; row omitted");
                     continue;
                 }
-                std::fprintf(
-                    f,
-                    "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
-                    ctx.subcatch_names.name_of(s).c_str(),
-                    ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
-                    nN(ctx, ctx.subcatches.gw_node[u]), ctx.subcatches.gw_surf_elev[u],
-                    ctx.subcatches.gw_a1[u], ctx.subcatches.gw_b1[u], ctx.subcatches.gw_a2[u],
-                    ctx.subcatches.gw_b2[u], ctx.subcatches.gw_a3[u], ctx.subcatches.gw_tw[u]);
+                std::fprintf(f, "%-16s %-16s %-16s %.17g %.17g %.17g %.17g %.17g %.17g %.17g",
+                             ctx.subcatch_names.name_of(s).c_str(),
+                             ctx.aquifers.names[static_cast<size_t>(aq)].c_str(),
+                             nN(ctx, ctx.subcatches.gw_node[u]), ctx.subcatches.gw_surf_elev[u],
+                             ctx.subcatches.gw_a1[u], ctx.subcatches.gw_b1[u],
+                             ctx.subcatches.gw_a2[u], ctx.subcatches.gw_b2[u],
+                             ctx.subcatches.gw_a3[u], ctx.subcatches.gw_tw[u]);
                 // Optional Egwt Ebot Wgw Umc: legacy reads `*` (or absence) as MISSING —
                 // the node invert / the aquifer's values — so a missing field is written
                 // as `*`, and only as far as the last field actually given.
@@ -3093,7 +3102,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             // DRAIN (6 params)
             if (uj < ctx.lid_controls.drain.size()) {
                 const auto& p = ctx.lid_controls.drain[uj];
-                bool has = uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty();
+                bool has = uj < ctx.lid_controls.drain_curve.size() &&
+                           !ctx.lid_controls.drain_curve[uj].empty();
                 for (int k = 0; k < 6; ++k)
                     if (p[k] != 0.0) {
                         has = true;
@@ -3103,7 +3113,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     std::fprintf(f, "%-16s DRAIN      ", name);
                     for (int k = 0; k < 6; ++k)
                         std::fprintf(f, " %.17g", p[k]);
-                    if (uj < ctx.lid_controls.drain_curve.size() && !ctx.lid_controls.drain_curve[uj].empty())
+                    if (uj < ctx.lid_controls.drain_curve.size() &&
+                        !ctx.lid_controls.drain_curve[uj].empty())
                         std::fprintf(f, " %s", ctx.lid_controls.drain_curve[uj].c_str());
                     std::fprintf(f, "\n");
                 }
@@ -3257,8 +3268,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     // ordinary junctions (no [VIRTUAL_JUNCTIONS] / [INLET_JUNCTIONS] in 5.x).
     if (hasRegularJunction(ctx) || (swmm5 && (hasVirtualJunction(ctx) || hasInletJunction(ctx)))) {
         sec(f, "JUNCTIONS");
-        const bool has_chamber = std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
-                                             [](double area) { return area > 0.0; });
+        const bool has_chamber =
+            std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
+                        [](double area) { return area > 0.0; });
         std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s%s\n", "Name", "Elev", "MaxDepth",
                      "InitDepth", "SurDepth", "Aponded", has_chamber ? " StorageArea" : "");
         std::fprintf(f, ";;%-16s %-12s %-12s %-12s %-12s %-12s\n", "----------------",
@@ -3487,8 +3499,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 double maxd = (drow >= 0) ? D.max_depth[static_cast<size_t>(drow)] : 0.0;
                 // Legacy column order: qMin dhMax cWeir (node.c:1112)
                 std::fprintf(
-                    f,
-                    "%-16s %.17g %-16s WEIR     %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
+                    f, "%-16s %.17g %-16s WEIR     %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n",
                     ctx.node_names.name_of(j).c_str(), ctx.nodes.invert_elev[u], divLinkName,
                     cutoff, maxd, cd, ctx.nodes.full_depth[u], ctx.nodes.init_depth[u],
                     ctx.nodes.sur_depth[u], ctx.nodes.ponded_area[u]);
@@ -3553,7 +3564,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const double ksat = (srow >= 0) ? S.exfil_ksat[static_cast<size_t>(srow)] : 0.0;
                 std::fprintf(f, " %.17g %.17g", ctx.nodes.sur_depth[u], fevap);
                 if (ksat != 0.0)
-                    std::fprintf(f, " %.17g %.17g %.17g", S.exfil_suction[static_cast<size_t>(srow)], ksat,
+                    std::fprintf(f, " %.17g %.17g %.17g",
+                                 S.exfil_suction[static_cast<size_t>(srow)], ksat,
                                  S.exfil_imd[static_cast<size_t>(srow)]);
                 std::fprintf(f, "\n");
             }
@@ -3932,7 +3944,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             int nsta = static_cast<int>(ctx.transects.stations[ut].size());
             if (swmm5 && (ctx.transects.x_left_encroachment[ut] != 0.0 ||
                           ctx.transects.x_right_encroachment[ut] != 0.0))
-                note("Transect " + ctx.transects.names[ut] + ": encroachment stations omitted (SWMM 5.x profile)");
+                note("Transect " + ctx.transects.names[ut] +
+                     ": encroachment stations omitted (SWMM 5.x profile)");
             // Native X1 uses the two legacy placeholders for encroachment stations.
             // X1 layout per EPA SWMM 5 (transect.c::setParams):
             //   X1 Name Nsta Xleft Xright 0 0 Lfactor Xfactor Yfactor
@@ -3944,8 +3957,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                          ctx.transects.x_right_bank[ut],
                          swmm5 ? 0.0 : ctx.transects.x_left_encroachment[ut],
                          swmm5 ? 0.0 : ctx.transects.x_right_encroachment[ut],
-                         ctx.transects.length_factor[ut],
-                         ctx.transects.x_factor[ut], ctx.transects.y_factor[ut]);
+                         ctx.transects.length_factor[ut], ctx.transects.x_factor[ut],
+                         ctx.transects.y_factor[ut]);
             // Full precision on the GR pairs: they are token-parsed on both engines
             // (column width is not load-bearing) and the former four-decimal format rounded >4-dp
             // stations/elevations on every save. Matches the [XSECTIONS] precedent.
@@ -3969,12 +3982,12 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                      "Sback", "nBack");
         for (int j = 0; j < ctx.streets.count(); ++j) {
             auto u = static_cast<size_t>(j);
-            std::fprintf(
-                f, "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %8d %.17g %.17g %.17g\n",
-                ctx.streets.names[u].c_str(), ctx.streets.t_crown[u], ctx.streets.h_curb[u],
-                ctx.streets.sx[u], ctx.streets.n_road[u], ctx.streets.gutter_depres[u],
-                ctx.streets.gutter_width[u], ctx.streets.sides[u], ctx.streets.back_width[u],
-                ctx.streets.back_slope[u], ctx.streets.back_n[u]);
+            std::fprintf(f, "%-16s %.17g %.17g %.17g %.17g %.17g %.17g %8d %.17g %.17g %.17g\n",
+                         ctx.streets.names[u].c_str(), ctx.streets.t_crown[u],
+                         ctx.streets.h_curb[u], ctx.streets.sx[u], ctx.streets.n_road[u],
+                         ctx.streets.gutter_depres[u], ctx.streets.gutter_width[u],
+                         ctx.streets.sides[u], ctx.streets.back_width[u], ctx.streets.back_slope[u],
+                         ctx.streets.back_n[u]);
         }
     }
 
@@ -4084,9 +4097,9 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                          ctx.link_names.name_of(li).c_str(),
                          ctx.inlets.names[static_cast<size_t>(di)].c_str(),
                          ctx.node_names.name_of(ni).c_str(), ctx.inlet_usages.num_inlets[u],
-                         ctx.inlet_usages.pct_clogged[u],
-                         ctx.inlet_usages.flow_limit[u], ctx.inlet_usages.local_depress[u],
-                         ctx.inlet_usages.local_width[u], kPlacement[pl]);
+                         ctx.inlet_usages.pct_clogged[u], ctx.inlet_usages.flow_limit[u],
+                         ctx.inlet_usages.local_depress[u], ctx.inlet_usages.local_width[u],
+                         kPlacement[pl]);
         }
     }
 
@@ -4152,16 +4165,17 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             if (ctx.pollutants.units[u] == MassUnits::COUNTS_PER_L)
                 un = "#/L";
             std::fprintf(
-                f, "%-16s %-8s %.17g %.17g %.17g %.17g %-10s %-16s %.17g %.17g %.17g",
-                pN(ctx, p), un, ctx.pollutants.c_rain[u], ctx.pollutants.c_gw[u],
-                ctx.pollutants.c_rdii[u], ctx.pollutants.k_decay[u] * constants::SEC_PER_DAY,
+                f, "%-16s %-8s %.17g %.17g %.17g %.17g %-10s %-16s %.17g %.17g %.17g", pN(ctx, p),
+                un, ctx.pollutants.c_rain[u], ctx.pollutants.c_gw[u], ctx.pollutants.c_rdii[u],
+                ctx.pollutants.k_decay[u] * constants::SEC_PER_DAY,
                 ctx.pollutants.snow_only[u] ? "YES" : "NO",
                 ctx.pollutants.co_pollut[u] >= 0 ? pN(ctx, ctx.pollutants.co_pollut[u]) : "*",
                 ctx.pollutants.co_frac[u], ctx.pollutants.c_dwf[u], ctx.pollutants.init_conc[u]);
             if (!swmm5)
                 std::fprintf(f, " %.17g", ctx.pollutants.mwt[u]);
             else if (ctx.pollutants.mwt[u] != 1.0)
-                note("Pollutant " + ctx.pollutant_names.name_of(p) + ": molecular weight omitted (SWMM 5.x profile)");
+                note("Pollutant " + ctx.pollutant_names.name_of(p) +
+                     ": molecular weight omitted (SWMM 5.x profile)");
             std::fprintf(f, "\n");
         }
     }
@@ -4273,15 +4287,20 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 if (ft == 0)
                     continue;
                 if (ft == 4) {
-                    const int ti=static_cast<int>(ctx.buildup.coeff3[idx]);
-                    const auto token=ti>=0 && ti<ctx.n_tables()?ctx.tables[ti].id:std::string("*");
-                    std::fprintf(f,"%-16s %-16s EXT %.17g %.17g %s %s\n",ctx.landuse_names.name_of(lu).c_str(),pN(ctx,p),ctx.buildup.coeff1[idx],ctx.buildup.coeff2[idx],token.c_str(),ctx.buildup.normalizer[idx]==0?"AREA":"CURB");
+                    const int ti = static_cast<int>(ctx.buildup.coeff3[idx]);
+                    const auto token =
+                        ti >= 0 && ti < ctx.n_tables() ? ctx.tables[ti].id : std::string("*");
+                    std::fprintf(f, "%-16s %-16s EXT %.17g %.17g %s %s\n",
+                                 ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
+                                 ctx.buildup.coeff1[idx], ctx.buildup.coeff2[idx], token.c_str(),
+                                 ctx.buildup.normalizer[idx] == 0 ? "AREA" : "CURB");
                 } else {
-                std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
-                             ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
-                             (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE", ctx.buildup.coeff1[idx],
-                             ctx.buildup.coeff2[idx], ctx.buildup.coeff3[idx],
-                             ctx.buildup.normalizer[idx] == 0 ? "AREA" : "CURB");
+                    std::fprintf(f, "%-16s %-16s %-10s %.17g %.17g %.17g %-8s\n",
+                                 ctx.landuse_names.name_of(lu).c_str(), pN(ctx, p),
+                                 (ft >= 0 && ft <= 4) ? buNames[ft] : "NONE",
+                                 ctx.buildup.coeff1[idx], ctx.buildup.coeff2[idx],
+                                 ctx.buildup.coeff3[idx],
+                                 ctx.buildup.normalizer[idx] == 0 ? "AREA" : "CURB");
                 }
             }
         }
@@ -4528,9 +4547,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         static const char* decayResp[] = {"SHORT", "MEDIUM", "LONG"};
         for (const auto& e : ctx.rdii_decay.entries) {
             const char* r = (e.response >= 0 && e.response <= 2) ? decayResp[e.response] : "SHORT";
-            std::fprintf(f, "%-16s %-8s %.17g %.17g %.17g %.17g %.17g %.17g",
-                         e.uh_name.c_str(), r, e.k_dep, e.k_0, e.k_T, e.T_ref, e.theta_rec,
-                         e.T_freeze);
+            std::fprintf(f, "%-16s %-8s %.17g %.17g %.17g %.17g %.17g %.17g", e.uh_name.c_str(), r,
+                         e.k_dep, e.k_0, e.k_T, e.T_ref, e.theta_rec, e.T_freeze);
             // Retain inactive authoring parameters without enabling the snow law.
             std::fprintf(f, " %s %.17g %.17g", e.snow_on ? "SNOW" : "NOSNOW", e.snow_T, e.snow_ddf);
             std::fprintf(f, "\n");
@@ -4672,8 +4690,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 // geometry or the pump's operating point, and the former fixed-decimal format rounded both
                 // on every save.
                 for (size_t k = 0; k < tb.x.size(); ++k)
-                    std::fprintf(f, "%-16s %-12s %.17g %.17g\n", tN(ctx, t),
-                                 (k == 0 ? lbl : ""), tb.x[k], tb.y[k]);
+                    std::fprintf(f, "%-16s %-12s %.17g %.17g\n", tN(ctx, t), (k == 0 ? lbl : ""),
+                                 tb.x[k], tb.y[k]);
             }
         }
     }
@@ -4753,8 +4771,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const auto& vx = ctx.spatial.link_vertices_x[u];
                 const auto& vy = ctx.spatial.link_vertices_y[u];
                 for (size_t k = 0; k < vx.size(); ++k)
-                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.link_names.name_of(j).c_str(),
-                                 vx[k], vy[k]);
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.link_names.name_of(j).c_str(), vx[k],
+                                 vy[k]);
             }
         }
 
@@ -4774,8 +4792,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 const auto& px = ctx.spatial.subcatch_polygon_x[u];
                 const auto& py = ctx.spatial.subcatch_polygon_y[u];
                 for (size_t k = 0; k < px.size(); ++k)
-                    std::fprintf(f, "%-16s %.17g %.17g\n",
-                                 ctx.subcatch_names.name_of(j).c_str(), px[k], py[k]);
+                    std::fprintf(f, "%-16s %.17g %.17g\n", ctx.subcatch_names.name_of(j).c_str(),
+                                 px[k], py[k]);
             }
         }
 
@@ -4902,8 +4920,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
             auto p2 = k.find(':', p1 + 1);
             if (p2 == std::string::npos)
                 continue;
-            rows.push_back({k.substr(0, p1), k.substr(p1 + 1, p2 - p1 - 1), k.substr(p2 + 1),
-                            &kv.second});
+            rows.push_back(
+                {k.substr(0, p1), k.substr(p1 + 1, p2 - p1 - 1), k.substr(p2 + 1), &kv.second});
         }
         const auto ci_less = [](const std::string& a, const std::string& b) {
             return std::lexicographical_compare(
@@ -5034,7 +5052,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                     emit_path_token(pc.config_path, dst_dir, force_abs_paths, warnings);
                 std::fprintf(f, " config=\"%s\"", cfg.c_str());
 
-                if (!opts.skip_component_files && !writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts))
+                if (!opts.skip_component_files &&
+                    !writeComponentConfig(ctx, pc, cfg, dst_dir, warnings, opts))
                     return -1;
             }
             for (const auto& a : pc.args)
@@ -5055,7 +5074,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 continue;
             }
             sec(f, section.first.c_str());
-            for (const auto& line : section.second) std::fprintf(f, "%s\n", line.c_str());
+            for (const auto& line : section.second)
+                std::fprintf(f, "%s\n", line.c_str());
         }
     }
 
@@ -5090,7 +5110,8 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
     return 0;
 }
 
-std::string modelText(const SimulationContext& ctx, const std::string& anchor, bool internal_units) {
+std::string modelText(const SimulationContext& ctx, const std::string& anchor,
+                      bool internal_units) {
     std::unique_ptr<FILE, decltype(&std::fclose)> file(std::tmpfile(), &std::fclose);
     if (!file)
         throw std::runtime_error("Cannot create native model serialization stream");
@@ -5098,15 +5119,16 @@ std::string modelText(const SimulationContext& ctx, const std::string& anchor, b
     // a copy in that case; ordinary API models avoid this extra allocation.
     std::unique_ptr<SimulationContext> completed;
     const bool sparse = ctx.nodes.comments.size() < std::size_t(ctx.n_nodes()) ||
-        ctx.links.direction.size() < std::size_t(ctx.n_links()) ||
-        ctx.subcatches.snowpack_name.size() < std::size_t(ctx.n_subcatches()) ||
-        ctx.gages.scale_factor.size() < std::size_t(ctx.gage_names.size()) ||
-        ctx.pollutants.mwt.size() < std::size_t(ctx.n_pollutants());
+                        ctx.links.direction.size() < std::size_t(ctx.n_links()) ||
+                        ctx.subcatches.snowpack_name.size() < std::size_t(ctx.n_subcatches()) ||
+                        ctx.gages.scale_factor.size() < std::size_t(ctx.gage_names.size()) ||
+                        ctx.pollutants.mwt.size() < std::size_t(ctx.n_pollutants());
     if (sparse) {
         completed = std::make_unique<SimulationContext>(ctx);
         auto grow = [](auto& store, auto& primary, int count) {
             auto values = std::move(primary);
-            primary.clear(); store.grow_to(count);
+            primary.clear();
+            store.grow_to(count);
             std::copy_n(values.begin(), std::min(values.size(), primary.size()), primary.begin());
         };
         grow(completed->nodes, completed->nodes.type, ctx.n_nodes());
@@ -5122,8 +5144,10 @@ std::string modelText(const SimulationContext& ctx, const std::string& anchor, b
     options.internal_units = internal_units;
     options.skip_component_files = true;
     std::vector<std::string> warnings;
-    if (writeInpFile(completed ? *completed : ctx, anchor, &warnings, options) != 0 || std::fflush(file.get()) != 0)
-        throw std::runtime_error(warnings.empty() ? "Cannot serialize native model" : warnings.back());
+    if (writeInpFile(completed ? *completed : ctx, anchor, &warnings, options) != 0 ||
+        std::fflush(file.get()) != 0)
+        throw std::runtime_error(warnings.empty() ? "Cannot serialize native model"
+                                                  : warnings.back());
     std::rewind(file.get());
     std::string text;
     char buffer[16384];

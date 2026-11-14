@@ -217,11 +217,10 @@ SWMM_ENGINE_API int swmm_lid_richards_material_get(SWMM_Engine engine, int contr
     *out = {p.theta_r, p.alpha, p.n, p.l, p.specific_storage};
     return SWMM_OK;
 }
-static int configure_node_flow(SWMM_Engine engine, int control,
-                                                 const SWMM_LidNodeLayer* rows, int count,
-                                                 const SWMM_LidLayerTreatment* treatment, int nt,
-                                                 const SWMM_LidRichardsOptions* options,
-                                                 const SWMM_LidRichardsMaterial* material, bool publish) {
+static int configure_node_flow(SWMM_Engine engine, int control, const SWMM_LidNodeLayer* rows,
+                               int count, const SWMM_LidLayerTreatment* treatment, int nt,
+                               const SWMM_LidRichardsOptions* options,
+                               const SWMM_LidRichardsMaterial* material, bool publish) {
     CHECK_HANDLE(engine);
     auto& c = to_engine(engine)->context();
     if (!editable(c))
@@ -278,14 +277,20 @@ static int configure_node_flow(SWMM_Engine engine, int control,
     return SWMM_OK;
 }
 SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control,
-    const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatment, int nt,
-    const SWMM_LidRichardsOptions* options, const SWMM_LidRichardsMaterial* material) {
-    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material, true);
+                                                 const SWMM_LidNodeLayer* rows, int count,
+                                                 const SWMM_LidLayerTreatment* treatment, int nt,
+                                                 const SWMM_LidRichardsOptions* options,
+                                                 const SWMM_LidRichardsMaterial* material) {
+    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material,
+                               true);
 }
 SWMM_ENGINE_API int swmm_lid_node_validate_flow(SWMM_Engine engine, int control,
-    const SWMM_LidNodeLayer* rows, int count, const SWMM_LidLayerTreatment* treatment, int nt,
-    const SWMM_LidRichardsOptions* options, const SWMM_LidRichardsMaterial* material) {
-    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material, false);
+                                                const SWMM_LidNodeLayer* rows, int count,
+                                                const SWMM_LidLayerTreatment* treatment, int nt,
+                                                const SWMM_LidRichardsOptions* options,
+                                                const SWMM_LidRichardsMaterial* material) {
+    return configure_node_flow(engine, control, rows, count, treatment, nt, options, material,
+                               false);
 }
 SWMM_ENGINE_API int swmm_storage_lid_get(SWMM_Engine engine, int node, SWMM_StorageLidState* out) {
     CHECK_HANDLE(engine);

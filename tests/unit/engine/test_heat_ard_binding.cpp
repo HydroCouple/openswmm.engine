@@ -389,7 +389,8 @@ TEST(HeatArdBindingTest, ArdAndLegacyAgreeOnTransportedTemperature) {
                /*extra_options=*/"", /*end_time=*/"00:05:00");
     SWMM_Engine sd = swmm_engine_create();
     ASSERT_NE(sd, nullptr);
-    ASSERT_EQ(swmm_engine_open(sd, "_h4_seed.inp", "_h4_seed.rpt", "_h4_seed.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(sd, "_h4_seed.inp", "_h4_seed.rpt", "_h4_seed.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(sd), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(sd, 1), SWMM_OK);
     double elapsed = 0;

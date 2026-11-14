@@ -45,7 +45,7 @@ namespace fs = std::filesystem;
 namespace {
 
 const fs::path kOut = "fv_coupled_ponding_out";
-constexpr int kN = 10;                       // 10 x 10 m patch of 1 m squares
+constexpr int kN = 10;                                // 10 x 10 m patch of 1 m squares
 constexpr int kVertex = (kN / 2) * (kN + 1) + kN / 2; // J1's coupling vertex
 
 /**
@@ -85,11 +85,11 @@ std::string deck(const char* routing, const char* opts2d = "") {
 
 struct PondRun {
     bool ok = false;
-    double peak_depth = 0.0;     ///< J1, m
-    int ponded_steps = 0;        ///< routing steps with J1 more than 2 cm above its rim
-    double worst_hgl_gap = 0.0;  ///< max |J1 head - 2D head at its vertex| while ponded, m
-    double mean_hgl_gap = 0.0;   ///< mean of the same, m
-    int reversals = 0;           ///< sign changes of J1's coupling inflow
+    double peak_depth = 0.0;    ///< J1, m
+    int ponded_steps = 0;       ///< routing steps with J1 more than 2 cm above its rim
+    double worst_hgl_gap = 0.0; ///< max |J1 head - 2D head at its vertex| while ponded, m
+    double mean_hgl_gap = 0.0;  ///< mean of the same, m
+    int reversals = 0;          ///< sign changes of J1's coupling inflow
     double spilled = 0.0, drained = 0.0, cont_2d = 0.0, cont_routing = 0.0;
 };
 
@@ -120,8 +120,9 @@ PondRun run(const std::string& tag, const char* routing, const char* opts2d = ""
     const auto uj = static_cast<std::size_t>(j1);
     const double invert_m = ctx.nodes.invert_elev[uj] * 0.3048;
     std::ofstream trace(kOut / (tag + "_trace.csv"));
-    trace << "elapsed_days,j1_depth_m,j1_head_m,eta_2d_vertex_m,coupling_inflow,j1_volume_m3,lat_flow_cfs,"
-             "overflow_cfs,c1_flow_cms,spilled_m3,drained_m3\n";
+    trace
+        << "elapsed_days,j1_depth_m,j1_head_m,eta_2d_vertex_m,coupling_inflow,j1_volume_m3,lat_flow_cfs,"
+           "overflow_cfs,c1_flow_cms,spilled_m3,drained_m3\n";
     double elapsed = 0.0, gap_sum = 0.0;
     int last_sign = 0;
     for (;;) {
@@ -233,9 +234,14 @@ PondOnly pondOnly(const char* routing, const char* end_time = "00:40:00") {
     if (std::string(end_time) != "00:40:00")
         tag += "_ends_ponded";
     const fs::path inp = kOut / (tag + ".inp");
-    { std::ofstream f(inp); f << pondOnlyDeck(routing, end_time); }
+    {
+        std::ofstream f(inp);
+        f << pondOnlyDeck(routing, end_time);
+    }
     SWMM_Engine e = swmm_engine_create();
-    EXPECT_EQ(swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(), "", nullptr), SWMM_OK);
+    EXPECT_EQ(swmm_engine_open(e, inp.string().c_str(), (kOut / (tag + ".rpt")).string().c_str(),
+                               "", nullptr),
+              SWMM_OK);
     EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
     EXPECT_EQ(swmm_engine_start(e, 0), SWMM_OK);
     const int j1 = swmm_node_index(e, "J1");
@@ -243,17 +249,28 @@ PondOnly pondOnly(const char* routing, const char* end_time = "00:40:00") {
     std::ofstream trace(kOut / (tag + "_trace.csv"));
     trace << "t_s,depth_m,volume_m3,lat_cfs,overflow_cfs,c1_cms\n";
     for (;;) {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK || elapsed <= 0.0)
+            break;
         double d = 0, v = 0, q = 0, o = 0, c = 0;
-        swmm_node_get_depth(e, j1, &d); swmm_node_get_volume(e, j1, &v); swmm_node_get_lateral_inflow(e, j1, &q);
-        swmm_node_get_overflow(e, j1, &o); swmm_link_get_flow(e, swmm_link_index(e, "C1"), &c);
-        peak = std::max(peak, d); vmax = std::max(vmax, v);
-        trace << elapsed * 86400 << ',' << d << ',' << v << ',' << q << ',' << o << ',' << c << '\n';
+        swmm_node_get_depth(e, j1, &d);
+        swmm_node_get_volume(e, j1, &v);
+        swmm_node_get_lateral_inflow(e, j1, &q);
+        swmm_node_get_overflow(e, j1, &o);
+        swmm_link_get_flow(e, swmm_link_index(e, "C1"), &c);
+        peak = std::max(peak, d);
+        vmax = std::max(vmax, v);
+        trace << elapsed * 86400 << ',' << d << ',' << v << ',' << q << ',' << o << ',' << c
+              << '\n';
     }
     swmm_engine_end(e);
-    double cont = 0.0; swmm_get_routing_continuity_error(e, &cont);
-    swmm_engine_report(e); swmm_engine_close(e); swmm_engine_destroy(e);
-    std::printf("[fv-pond-only] %-8s peak depth %.3f m, max volume %.3f m3, routing continuity %.4f\n", routing, peak, vmax, cont);
+    double cont = 0.0;
+    swmm_get_routing_continuity_error(e, &cont);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    std::printf(
+        "[fv-pond-only] %-8s peak depth %.3f m, max volume %.3f m3, routing continuity %.4f\n",
+        routing, peak, vmax, cont);
     out.peak_depth = peak;
     out.max_volume = vmax;
     out.continuity = cont;
@@ -311,7 +328,9 @@ std::string chamberDeck() {
             m << v(i, j) << " " << v(i + 1, j + 1) << " " << v(i, j + 1) << " 0.03\n";
         }
     m << "\n[2D_VERTEX_NODE_MAP]\n"
-      << kVertex << " J1\n" << kVertex - 3 << " J0\n" << kVertex - 33 << " J00\n";
+      << kVertex << " J1\n"
+      << kVertex - 3 << " J0\n"
+      << kVertex - 33 << " J00\n";
     return m.str();
 }
 } // namespace
@@ -327,10 +346,14 @@ std::string chamberDeck() {
 TEST(FvCoupledPonding, ASpillingWeirChamberNeitherCreatesNorLosesWater) {
     fs::create_directories(kOut);
     const fs::path inp = kOut / "chamber.inp";
-    { std::ofstream f(inp); f << chamberDeck(); }
+    {
+        std::ofstream f(inp);
+        f << chamberDeck();
+    }
     SWMM_Engine e = swmm_engine_create();
     ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), (kOut / "chamber.rpt").string().c_str(), "",
-                               nullptr), SWMM_OK);
+                               nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
     double elapsed = 0.0;
@@ -352,9 +375,9 @@ TEST(FvCoupledPonding, ASpillingWeirChamberNeitherCreatesNorLosesWater) {
         const auto u = static_cast<std::size_t>(swmm_node_index(e, name));
         const double in = nodes.stat_total_inflow_vol[u];
         if (in > 0.0)
-            worst_node = std::max(
-                worst_node,
-                std::fabs(1.0 - (nodes.stat_total_outflow_vol[u] + nodes.volume[u]) / in));
+            worst_node =
+                std::max(worst_node,
+                         std::fabs(1.0 - (nodes.stat_total_outflow_vol[u] + nodes.volume[u]) / in));
     }
     swmm_engine_report(e);
     swmm_engine_close(e);
@@ -400,11 +423,16 @@ TEST(FvCoupledPonding, ACoupledFvModelWithAPollutantRunsAndCloses) {
     for (const auto& [tag, text] : decks) {
         fs::create_directories(kOut);
         const fs::path inp = kOut / (std::string(tag) + ".inp");
-        { std::ofstream f(inp); f << text; }
+        {
+            std::ofstream f(inp);
+            f << text;
+        }
         SWMM_Engine e = swmm_engine_create();
         ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(),
                                    (kOut / (std::string(tag) + ".rpt")).string().c_str(), "",
-                                   nullptr), SWMM_OK) << tag;
+                                   nullptr),
+                  SWMM_OK)
+            << tag;
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << tag;
         ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK) << tag;
         double elapsed = 0.0;
@@ -418,8 +446,8 @@ TEST(FvCoupledPonding, ACoupledFvModelWithAPollutantRunsAndCloses) {
         swmm_engine_report(e);
         swmm_engine_close(e);
         swmm_engine_destroy(e);
-        std::printf("[fv-coupled-quality] %-12s status %d, routing %.6f, quality %.6f\n", tag, status,
-                    flow, quality);
+        std::printf("[fv-coupled-quality] %-12s status %d, routing %.6f, quality %.6f\n", tag,
+                    status, flow, quality);
         EXPECT_EQ(status, SWMM_OK) << tag << ": the run aborted";
         EXPECT_LT(std::fabs(flow), 1.0e-3) << tag;
         EXPECT_LT(std::fabs(quality), 1.0e-3) << tag;

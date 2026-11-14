@@ -213,15 +213,18 @@ struct MsxSurfaceData {
             values.assign(static_cast<std::size_t>(new_rows) * nm, initial);
             for (int row = 0; row < old_rows && row < new_rows; ++row)
                 for (int col = 0; col < nm; ++col) {
-                    const int old_col = removed_species >= 0 && col >= removed_species ? col + 1 : col;
+                    const int old_col =
+                        removed_species >= 0 && col >= removed_species ? col + 1 : col;
                     const auto from = static_cast<std::size_t>(row) * old_nm + old_col;
                     if (old_col < old_nm && from < previous.size())
                         values[static_cast<std::size_t>(row) * nm + col] = previous[from];
                 }
         };
-        for (auto* v : {&bu_type, &bu_normalizer, &wo_type}) repack(*v, old_nlu, nlu, 0);
-        for (auto* v : {&bu_c1, &bu_c2, &bu_c3, &bu_max_days, &wo_coeff, &wo_expon,
-                        &wo_sweep_effic, &wo_bmp_effic}) repack(*v, old_nlu, nlu, 0.0);
+        for (auto* v : {&bu_type, &bu_normalizer, &wo_type})
+            repack(*v, old_nlu, nlu, 0);
+        for (auto* v : {&bu_c1, &bu_c2, &bu_c3, &bu_max_days, &wo_coeff, &wo_expon, &wo_sweep_effic,
+                        &wo_bmp_effic})
+            repack(*v, old_nlu, nlu, 0.0);
         const int old_nsc = old_nm > 0 ? static_cast<int>(init_loading.size() / old_nm) : 0;
         repack(init_loading, old_nsc, nsc, 0.0);
         repack(mcf, 1, 1, 1.0);

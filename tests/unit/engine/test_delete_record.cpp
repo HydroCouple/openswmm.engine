@@ -420,12 +420,12 @@ std::vector<std::string> heat_rows(SWMM_Engine e) {
 }
 
 void add_heat_overrides(SWMM_Engine e) {
-    ASSERT_EQ(swmm_heat_set_element_override(e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK, "GUT1",
-                                             0.3),
-              SWMM_OK);
-    ASSERT_EQ(swmm_heat_set_element_override(e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK, "C3",
-                                             0.4),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_heat_set_element_override(e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK, "GUT1", 0.3),
+        SWMM_OK);
+    ASSERT_EQ(
+        swmm_heat_set_element_override(e, SWMM_HEAT_ATTR_ALBEDO, SWMM_HEAT_SCOPE_LINK, "C3", 0.4),
+        SWMM_OK);
 }
 
 std::vector<std::string> link_ids(SWMM_Engine e) {
@@ -863,10 +863,10 @@ std::vector<std::string> node_refs(SWMM_Engine e) {
     for (int u = 0; u < swmm_inlet_usage_count(e); ++u) {
         SWMM_InletUsage usage{};
         EXPECT_EQ(swmm_inlet_usage_get(e, u, &usage), SWMM_OK);
-        refs.push_back("usage host " +
-                       (usage.host_kind == SWMM_INLET_HOST_NODE ? name(usage.host_idx)
-                                                                : std::string("link")) +
-                       " capture " + name(usage.capture_node_idx));
+        refs.push_back(
+            "usage host " +
+            (usage.host_kind == SWMM_INLET_HOST_NODE ? name(usage.host_idx) : std::string("link")) +
+            " capture " + name(usage.capture_node_idx));
     }
     return refs;
 }
@@ -1207,7 +1207,9 @@ SUBCATCHMENT S3 RATE A -0.3*A
 // Every index-based reference into the subcatchment table, as names.
 std::vector<std::string> subcatch_refs(SWMM_Engine e) {
     std::vector<std::string> refs;
-    auto name = [&](int i) { return i < 0 ? std::string("-") : std::string(swmm_subcatch_id(e, i)); };
+    auto name = [&](int i) {
+        return i < 0 ? std::string("-") : std::string(swmm_subcatch_id(e, i));
+    };
     for (int s = 0; s < swmm_subcatch_count(e); ++s) {
         int sc = -2;
         EXPECT_EQ(swmm_subcatch_get_outlet_subcatch(e, s, &sc), SWMM_OK);
@@ -1289,9 +1291,8 @@ TEST_F(DeleteRecordTest, SubcatchBatchRestoresExactly) {
     for (const char* id : {"S1", "S2", "S3"})
         indices.push_back(swmm_subcatch_index(engine, id));
     SWMM_DeleteRecord record = nullptr;
-    ASSERT_EQ(swmm_subcatch_delete_many_recorded(engine, indices.data(),
-                                                 static_cast<int>(indices.size()), nullptr,
-                                                 &record),
+    ASSERT_EQ(swmm_subcatch_delete_many_recorded(
+                  engine, indices.data(), static_cast<int>(indices.size()), nullptr, &record),
               SWMM_OK);
     write("2_deleted.inp");
     EXPECT_EQ(subcatch_ids(engine), std::vector<std::string>{"S4"});
@@ -1308,9 +1309,9 @@ TEST_F(DeleteRecordTest, SubcatchBatchRestoresExactly) {
 TEST_F(DeleteRecordTest, SubcatchRestoreRefusesATakenName) {
     open_fixture(kSubcatchInp);
     SWMM_DeleteRecord record = nullptr;
-    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr,
-                                            &record),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr, &record),
+        SWMM_OK);
     ASSERT_EQ(swmm_subcatch_rename(engine, swmm_subcatch_index(engine, "S4"), "S2"), SWMM_OK);
     const std::string before = write("1_deleted_then_renamed.inp");
     EXPECT_EQ(swmm_delete_record_restore(engine, record), SWMM_ERR_BADPARAM);
@@ -1338,16 +1339,16 @@ TEST_F(DeleteRecordTest, SubcatchRestoresSurfaceLoadings) {
                  "S3      X    8.5\n\n"
                  "[BUILDUP]\nLU1  X  POW  100  2  1  AREA\n\n"
                  "[WASHOFF]\nLU1  X  EXP  0.1  1.0  0  0\n");
-    text += "\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" +
-            rxn.string() + "\"\n";
+    text += "\n[PROCESS_COMPONENTS]\norg.hydrocouple.openswmm.reactions config=\"" + rxn.string() +
+            "\"\n";
     open_fixture(text.c_str());
     const std::string original = write("1_original.inp");
     ASSERT_NE(original.find("S2               X"), std::string::npos) << original;
 
     SWMM_DeleteRecord record = nullptr;
-    ASSERT_EQ(swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr,
-                                            &record),
-              SWMM_OK);
+    ASSERT_EQ(
+        swmm_subcatch_delete_recorded(engine, swmm_subcatch_index(engine, "S2"), nullptr, &record),
+        SWMM_OK);
     const std::string deleted = write("2_deleted.inp");
     EXPECT_EQ(deleted.find("S2               X"), std::string::npos);
     EXPECT_NE(deleted.find("S3               X"), std::string::npos);
@@ -1358,9 +1359,8 @@ TEST_F(DeleteRecordTest, SubcatchRestoresSurfaceLoadings) {
     std::vector<int> indices;
     for (const char* id : {"S2", "S3"})
         indices.push_back(swmm_subcatch_index(engine, id));
-    ASSERT_EQ(swmm_subcatch_delete_many_recorded(engine, indices.data(),
-                                                 static_cast<int>(indices.size()), nullptr,
-                                                 &record),
+    ASSERT_EQ(swmm_subcatch_delete_many_recorded(
+                  engine, indices.data(), static_cast<int>(indices.size()), nullptr, &record),
               SWMM_OK);
     ASSERT_EQ(swmm_delete_record_restore(engine, record), SWMM_OK);
     swmm_delete_record_destroy(record);

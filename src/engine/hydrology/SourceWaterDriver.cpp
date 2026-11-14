@@ -276,6 +276,7 @@ class DeliveryHistory {
     std::shared_ptr<Entry> last_;
     std::size_t count_ = 0;
     mutable std::shared_ptr<const std::vector<SourceWaterDelivery>> contiguous_;
+
 public:
     void push_back(SourceWaterDelivery value) {
         auto next = std::make_shared<Entry>(std::move(value), last_);
@@ -1085,7 +1086,8 @@ std::string SourceWaterDriver::stage(int group, double end, double completed_thr
                 // snow; weather intervals may also end sooner at gage changes.
                 double at = f.start;
                 while (at < f.end) {
-                    const double span = surface::ueb::nextSnowBoundary(*trial_->ctx, at, f.end - at);
+                    const double span =
+                        surface::ueb::nextSnowBoundary(*trial_->ctx, at, f.end - at);
                     const double next = std::min(f.end, at + span);
                     if (!(next > at))
                         throw std::runtime_error("Snow source boundary failed to advance.");

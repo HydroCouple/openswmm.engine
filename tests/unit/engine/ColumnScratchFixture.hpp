@@ -21,12 +21,13 @@ inline ThermalCase thermalCase(int n, int variant = 0) {
     c.seconds = variant == 0 ? .25 : variant == 1 ? 10 : 100;
     for (int j = 0; j < n; ++j) {
         const double capacity = 1000 + 37 * j + 100 * variant;
-        c.stores.push_back({capacity, j == 0 && variant == 0
-                                         ? -0. : capacity * ((j % 5) - 2 + .25 * variant)});
+        c.stores.push_back(
+            {capacity, j == 0 && variant == 0 ? -0. : capacity * ((j % 5) - 2 + .25 * variant)});
         if (j)
             c.contacts.push_back({j - 1, j, j % 4 == 0 ? 0. : 20. + variant * j});
     }
-    if (n > 2) c.contacts.push_back({0, n - 1, 7.});
+    if (n > 2)
+        c.contacts.push_back({0, n - 1, 7.});
     if (n) {
         c.boundaries.push_back({0, 1. + variant, -4. + variant, .125});
         c.boundaries.push_back({n - 1, 0., 12., -.25});
@@ -36,32 +37,61 @@ inline ThermalCase thermalCase(int n, int variant = 0) {
 inline std::vector<ThermalCase> thermalCases() {
     std::vector<ThermalCase> out;
     for (int n : {0, 1, 2, 3, 8, 17, 33, 8, 1, 0})
-        for (int v : {0, 1, 2}) out.push_back(thermalCase(n, v));
+        for (int v : {0, 1, 2})
+            out.push_back(thermalCase(n, v));
     const auto add = [&](ThermalCase c, const std::string& label) {
-        c.label = label; out.push_back(std::move(c));
-        auto recovery = thermalCase(3, 1); recovery.label = "recovery-" + label;
+        c.label = label;
+        out.push_back(std::move(c));
+        auto recovery = thermalCase(3, 1);
+        recovery.label = "recovery-" + label;
         out.push_back(std::move(recovery));
     };
     for (double dt : {0., -1., std::numeric_limits<double>::infinity(),
                       std::numeric_limits<double>::quiet_NaN(),
                       std::numeric_limits<double>::denorm_min(), 1.e20}) {
-        auto c = thermalCase(3, 1); c.seconds = dt; add(c, "interval-" + std::to_string(out.size()));
+        auto c = thermalCase(3, 1);
+        c.seconds = dt;
+        add(c, "interval-" + std::to_string(out.size()));
     }
     for (int error = 0; error < 12; ++error) {
         auto c = thermalCase(3, 1);
         switch (error) {
-        case 0: c.stores[1].capacity = 0; break;
-        case 1: c.stores[1].energy = std::numeric_limits<double>::infinity(); break;
-        case 2: c.stores[1].capacity = std::numeric_limits<double>::quiet_NaN(); break;
-        case 3: c.contacts[0].b = c.contacts[0].a; break;
-        case 4: c.contacts[0].a = -1; break;
-        case 5: c.contacts[0].b = 3; break;
-        case 6: c.contacts[0].conductance = -1; break;
-        case 7: c.contacts[0].conductance = std::numeric_limits<double>::infinity(); break;
-        case 8: c.boundaries[0].store = -1; break;
-        case 9: c.boundaries[0].temperature = std::numeric_limits<double>::infinity(); break;
-        case 10: c.boundaries[0].power = std::numeric_limits<double>::quiet_NaN(); break;
-        case 11: c.boundaries[0].conductance = -1; break;
+        case 0:
+            c.stores[1].capacity = 0;
+            break;
+        case 1:
+            c.stores[1].energy = std::numeric_limits<double>::infinity();
+            break;
+        case 2:
+            c.stores[1].capacity = std::numeric_limits<double>::quiet_NaN();
+            break;
+        case 3:
+            c.contacts[0].b = c.contacts[0].a;
+            break;
+        case 4:
+            c.contacts[0].a = -1;
+            break;
+        case 5:
+            c.contacts[0].b = 3;
+            break;
+        case 6:
+            c.contacts[0].conductance = -1;
+            break;
+        case 7:
+            c.contacts[0].conductance = std::numeric_limits<double>::infinity();
+            break;
+        case 8:
+            c.boundaries[0].store = -1;
+            break;
+        case 9:
+            c.boundaries[0].temperature = std::numeric_limits<double>::infinity();
+            break;
+        case 10:
+            c.boundaries[0].power = std::numeric_limits<double>::quiet_NaN();
+            break;
+        case 11:
+            c.boundaries[0].conductance = -1;
+            break;
         }
         add(c, "invalid-" + std::to_string(error));
     }
@@ -98,15 +128,18 @@ inline PorewaterCase porewaterCase(int n, int variant = 0) {
     c.label = "porewater-" + std::to_string(n) + "-" + std::to_string(variant);
     std::vector<double> flux(n + 1, 0);
     if (variant == 0)
-        for (int j = 1; j < n; ++j) flux[j] = j % 2 ? .025 : -.025;
+        for (int j = 1; j < n; ++j)
+            flux[j] = j % 2 ? .025 : -.025;
     for (int j = 0; j < n; ++j) {
         const double water = variant == 1 && j % 4 == 0 ? 0. : 1. + .1 * j;
         const double mass = variant == 2 ? 0. : water > 0 ? water * (1 + j % 4) : 2.;
         const double change = flux[j] - flux[j + 1];
-        c.old_water.push_back(water); c.new_water.push_back(water + change);
+        c.old_water.push_back(water);
+        c.new_water.push_back(water + change);
         c.retention.push_back(variant == 1 ? 0. : .3 * (j % 3));
         c.mass.push_back(j == 0 && variant == 2 ? -0. : mass);
-        c.change.push_back(change); c.external_water.push_back(0.);
+        c.change.push_back(change);
+        c.external_water.push_back(0.);
         c.external_mass.push_back(variant == 2 ? .125 : 0.);
         c.withdrawal.push_back(water > 0 ? .05 : 0.);
         c.reserved_water.push_back(variant == 2 ? .1 * water : 0.);
@@ -117,44 +150,84 @@ inline PorewaterCase porewaterCase(int n, int variant = 0) {
 inline std::vector<PorewaterCase> porewaterCases() {
     std::vector<PorewaterCase> out;
     for (int n : {0, 1, 2, 3, 8, 17, 33, 8, 1, 0})
-        for (int v : {0, 1, 2}) out.push_back(porewaterCase(n, v));
+        for (int v : {0, 1, 2})
+            out.push_back(porewaterCase(n, v));
     const auto add = [&](PorewaterCase c, const std::string& label) {
-        c.label = label; out.push_back(std::move(c));
-        auto recovery = porewaterCase(3, 0); recovery.label = "recovery-" + label;
+        c.label = label;
+        out.push_back(std::move(c));
+        auto recovery = porewaterCase(3, 0);
+        recovery.label = "recovery-" + label;
         out.push_back(std::move(recovery));
     };
     for (int error = 0; error < 13; ++error) {
         auto c = porewaterCase(3, 0);
         switch (error) {
-        case 0: c.old_water.pop_back(); break;
-        case 1: c.new_water.pop_back(); break;
-        case 2: c.mass[1] = -1; break;
-        case 3: c.retention[1] = std::numeric_limits<double>::infinity(); break;
-        case 4: c.external_mass[1] = std::numeric_limits<double>::quiet_NaN(); break;
-        case 5: c.external_water[1] = .5; break;
-        case 6: c.change[1] += .5; break;
-        case 7: c.withdrawal[1] = -1; break;
-        case 8: c.reserved_water[1] = 10; break;
-        case 9: c.reserved_mass[1] = 10; break;
-        case 10: c.reserved_water.pop_back(); break;
-        case 11: c.external_mass[1] = -10; break;
-        case 12: c.new_water[1] = -1; break;
+        case 0:
+            c.old_water.pop_back();
+            break;
+        case 1:
+            c.new_water.pop_back();
+            break;
+        case 2:
+            c.mass[1] = -1;
+            break;
+        case 3:
+            c.retention[1] = std::numeric_limits<double>::infinity();
+            break;
+        case 4:
+            c.external_mass[1] = std::numeric_limits<double>::quiet_NaN();
+            break;
+        case 5:
+            c.external_water[1] = .5;
+            break;
+        case 6:
+            c.change[1] += .5;
+            break;
+        case 7:
+            c.withdrawal[1] = -1;
+            break;
+        case 8:
+            c.reserved_water[1] = 10;
+            break;
+        case 9:
+            c.reserved_mass[1] = 10;
+            break;
+        case 10:
+            c.reserved_water.pop_back();
+            break;
+        case 11:
+            c.external_mass[1] = -10;
+            break;
+        case 12:
+            c.new_water[1] = -1;
+            break;
         }
         add(c, "invalid-" + std::to_string(error));
     }
     auto late = porewaterCase(3, 2);
-    late.retention.assign(3, 0); late.withdrawal.assign(3, 0);
-    late.reserved_water.assign(3, 0); late.reserved_mass.assign(3, 0);
+    late.retention.assign(3, 0);
+    late.withdrawal.assign(3, 0);
+    late.reserved_water.assign(3, 0);
+    late.reserved_mass.assign(3, 0);
     late.external_mass.assign(3, std::numeric_limits<double>::max() * .6);
     add(late, "late-receipt-refusal");
     PorewaterCase dry;
-    dry.old_water = {1}; dry.new_water = {0}; dry.change = {-1};
-    dry.retention = {0}; dry.mass = {2}; dry.external_water = {-1};
-    dry.external_mass = {0}; dry.withdrawal = {0};
+    dry.old_water = {1};
+    dry.new_water = {0};
+    dry.change = {-1};
+    dry.retention = {0};
+    dry.mass = {2};
+    dry.external_water = {-1};
+    dry.external_mass = {0};
+    dry.withdrawal = {0};
     add(dry, "dry-residue");
     auto through = dry;
-    through.old_water = {0}; through.change = {0}; through.external_water = {0};
-    through.mass = {0}; through.external_mass = {2}; through.withdrawal = {1};
+    through.old_water = {0};
+    through.change = {0};
+    through.external_water = {0};
+    through.mass = {0};
+    through.external_mass = {2};
+    through.withdrawal = {1};
     add(through, "dry-throughflow");
     return out;
 }

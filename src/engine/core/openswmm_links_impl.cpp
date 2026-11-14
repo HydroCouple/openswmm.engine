@@ -317,10 +317,13 @@ SWMM_ENGINE_API int swmm_link_set_offset_up(SWMM_Engine engine, int idx, double 
     const double internal = to_internal(ctx, openswmm::ucf::LENGTH, offset);
     const int weir = ctx.link_subtypes.weir_row(idx), outlet = ctx.link_subtypes.outlet_row(idx);
     if (weir >= 0 || outlet >= 0) {
-        if (weir >= 0) ctx.link_subtypes.weirs.crest_height[weir] = internal;
-        if (outlet >= 0) ctx.link_subtypes.outlets.crest_height[outlet] = internal;
+        if (weir >= 0)
+            ctx.link_subtypes.weirs.crest_height[weir] = internal;
+        if (outlet >= 0)
+            ctx.link_subtypes.outlets.crest_height[outlet] = internal;
         ctx.links.offset1[idx] = ctx.links.offset2[idx] = internal;
-    } else ctx.links.offset1[idx] = internal + offsetBump(ctx, idx);
+    } else
+        ctx.links.offset1[idx] = internal + offsetBump(ctx, idx);
     return SWMM_OK;
 }
 
@@ -1721,9 +1724,9 @@ SWMM_ENGINE_API int swmm_link_get_offset_up(SWMM_Engine engine, int idx, double*
     // units: internal ft -> display LENGTH; stored -> authored (sediment bump)
     if (offset) {
         const int wr = ctx.link_subtypes.weir_row(idx), out = ctx.link_subtypes.outlet_row(idx);
-        const double value = wr >= 0 ? ctx.link_subtypes.weirs.crest_height[wr]
-            : out >= 0 ? ctx.link_subtypes.outlets.crest_height[out]
-                       : ctx.links.offset1[idx] - offsetBump(ctx, idx);
+        const double value = wr >= 0    ? ctx.link_subtypes.weirs.crest_height[wr]
+                             : out >= 0 ? ctx.link_subtypes.outlets.crest_height[out]
+                                        : ctx.links.offset1[idx] - offsetBump(ctx, idx);
         *offset = to_display(ctx, openswmm::ucf::LENGTH, value);
     }
     return SWMM_OK;
@@ -1929,7 +1932,8 @@ SWMM_ENGINE_API int swmm_link_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_links());
     const std::string previous = ctx.link_names.name_of(idx);
-    if (!ctx.link_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
+    if (!ctx.link_names.rename(idx, newId))
+        return SWMM_ERR_BADPARAM;
     openswmm::moveNamedOverrides(ctx, "LINK", idx, previous, ctx.link_names.name_of(idx));
     openswmm::refreshNamedHeatOverrides(ctx);
     return SWMM_OK;

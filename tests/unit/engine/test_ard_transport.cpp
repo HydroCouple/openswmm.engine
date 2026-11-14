@@ -484,11 +484,15 @@ J0 FLOW 1
 J0 TSS 12.5
 )";
     auto e = swmm_engine_create();
-    ASSERT_EQ(swmm_engine_open(e, "_ard_review_virtual.inp", "_ard_review_virtual.rpt", nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(
+        swmm_engine_open(e, "_ard_review_virtual.inp", "_ard_review_virtual.rpt", nullptr, nullptr),
+        SWMM_OK);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
     double elapsed = 0;
-    do { ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK); } while (elapsed > 0);
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+    } while (elapsed > 0);
     const auto& ctx = as_cpp_engine(e).context();
     const int middle = ctx.node_names.find("MID");
     ASSERT_GE(middle, 0);

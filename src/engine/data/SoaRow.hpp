@@ -45,8 +45,7 @@ namespace openswmm::soa {
  * @param[in] idx Zero-based row; columns too short to hold it are left alone.
  * @return Store whose columns each hold that row's cell, or nothing.
  */
-template <class Store>
-Store take_row(Store& store, int idx) {
+template <class Store> Store take_row(Store& store, int idx) {
     Store row{};
     const auto ui = static_cast<std::size_t>(idx);
     Store::for_each_column([&](auto member) {
@@ -65,8 +64,7 @@ Store take_row(Store& store, int idx) {
  * @param[in] idx Zero-based row; columns too short to hold it contribute nothing.
  * @return One-row store, as take_row would return.
  */
-template <class Store>
-Store copy_row(const Store& store, int idx) {
+template <class Store> Store copy_row(const Store& store, int idx) {
     Store row{};
     const auto ui = static_cast<std::size_t>(idx);
     Store::for_each_column([&](auto member) {
@@ -84,8 +82,7 @@ Store copy_row(const Store& store, int idx) {
  *     cells.
  * @param[in] row One-row store; its cells are moved out.
  */
-template <class Store>
-void put_row(Store& store, int idx, Store&& row) {
+template <class Store> void put_row(Store& store, int idx, Store&& row) {
     Store::for_each_column([&](auto member) {
         auto& from = row.*member;
         if (from.empty())
@@ -99,8 +96,7 @@ void put_row(Store& store, int idx, Store&& row) {
  * @brief Remove the `stride` cells of row idx from a flat [row * stride + k] column.
  * @return The removed cells, or nothing when stride is not positive or the column is too short.
  */
-template <class T>
-std::vector<T> take_chunk(std::vector<T>& v, int idx, int stride) {
+template <class T> std::vector<T> take_chunk(std::vector<T>& v, int idx, int stride) {
     std::vector<T> chunk;
     if (stride <= 0)
         return chunk;
@@ -110,7 +106,8 @@ std::vector<T> take_chunk(std::vector<T>& v, int idx, int stride) {
         return chunk;
     chunk.assign(v.begin() + static_cast<std::ptrdiff_t>(base),
                  v.begin() + static_cast<std::ptrdiff_t>(end));
-    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base), v.begin() + static_cast<std::ptrdiff_t>(end));
+    v.erase(v.begin() + static_cast<std::ptrdiff_t>(base),
+            v.begin() + static_cast<std::ptrdiff_t>(end));
     return chunk;
 }
 

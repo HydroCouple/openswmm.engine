@@ -151,8 +151,7 @@ void prepareColumn(const soil::Params& p, const double* theta, int m, int stride
         const double se_lo = std::max(se - dse, 1.0e-8);
         const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
         const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
-        prepared.celerity[j] =
-            std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
+        prepared.celerity[j] = std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
         prepared.psi[j] = soil::suctionAtSaturation(p, se);
         prepared.conductivity[j] = soil::conductivity(p, prepared.psi[j]);
         prepared.diffusivity[j] = st.capillary ? soil::diffusivity(p, prepared.psi[j]) : 0.0;
@@ -257,8 +256,10 @@ static void advancePreparedColumn(const soil::Params& p, double* theta, int m, i
 
         // (c) capillary diffusion, harmonic-mean D̄ across the face.
         if (st.capillary) {
-            const double d_up = prepared ? prepared->diffusivity[up] : soil::diffusivity(p, psiOf(th_up));
-            const double d_dn = prepared ? prepared->diffusivity[dn] : soil::diffusivity(p, psiOf(th_dn));
+            const double d_up =
+                prepared ? prepared->diffusivity[up] : soil::diffusivity(p, psiOf(th_up));
+            const double d_dn =
+                prepared ? prepared->diffusivity[dn] : soil::diffusivity(p, psiOf(th_dn));
             const double dbar = harmonic(d_up, d_dn);
             flux -= dbar * (th_dn - th_up) / std::max(L0 * dsig, 1.0e-12);
         }

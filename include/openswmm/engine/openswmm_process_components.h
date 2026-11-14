@@ -80,13 +80,14 @@ SWMM_ENGINE_API int swmm_process_component_get(SWMM_Engine engine, int idx, char
  * NUL-termination/truncation rules as swmm_process_component_get. */
 SWMM_ENGINE_API int swmm_process_component_argument_count(SWMM_Engine engine, int idx);
 SWMM_ENGINE_API int swmm_process_component_argument_get(SWMM_Engine engine, int idx, int argument,
-    char* key, int key_length, char* value, int value_length);
+                                                        char* key, int key_length, char* value,
+                                                        int value_length);
 /** Set/replace an authored argument in BUILDING/OPENED. NULL value removes it.
  * Keys must be nonempty tokens without whitespace, control characters or '=';
  * CONFIG is reserved for the registration's config_path, case-insensitively.
  * Changes are consumed at the next model open; they do not rebind a live host. */
 SWMM_ENGINE_API int swmm_process_component_argument_set(SWMM_Engine engine, int idx,
-    const char* key, const char* value);
+                                                        const char* key, const char* value);
 
 /**
  * @brief Find a model registration by exact component ID.

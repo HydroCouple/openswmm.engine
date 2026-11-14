@@ -2248,8 +2248,7 @@ int setNodeValue(int property, int index, int subIndex, int pollutantIndex, doub
                 return ERR_API_PROPERTY_VALUE;
         case swmm_NODE_STORAGE_AREA:
             if (!isfinite(value) || value < 0.0 || Node[index].type != JUNCTION ||
-                (value > 0.0 && RouteModel != DW) ||
-                !isfinite(value / (UCF(LENGTH) * UCF(LENGTH))))
+                (value > 0.0 && RouteModel != DW) || !isfinite(value / (UCF(LENGTH) * UCF(LENGTH))))
                 return ERR_API_PROPERTY_VALUE;
             Node[index].storageArea = value / (UCF(LENGTH) * UCF(LENGTH));
             return 0;

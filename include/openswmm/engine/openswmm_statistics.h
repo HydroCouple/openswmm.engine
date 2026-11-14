@@ -524,8 +524,7 @@ typedef enum SWMM_SummaryTable {
  *     SWMM_ERR_BADINDEX for an unknown table; SWMM_ERR_BADPARAM for a null buffer or
  *     nonpositive length.
  */
-SWMM_ENGINE_API int swmm_summary_table_title(SWMM_Engine engine, int table, char* buf,
-                                             int buflen);
+SWMM_ENGINE_API int swmm_summary_table_title(SWMM_Engine engine, int table, char* buf, int buflen);
 
 /**
  * @brief Count a summary table's value columns (the object name and label are not columns).
@@ -655,8 +654,8 @@ SWMM_ENGINE_API int swmm_summary_values_read(SWMM_Engine engine, int table, doub
  *     @p buflen, or @p buflen below the needed length. A buffer that is too small gets only a
  *     NUL at buf[0] (when buflen > 0); a NULL buffer gets nothing.
  */
-SWMM_ENGINE_API int swmm_summary_labels_read(SWMM_Engine engine, int table, char* buf,
-                                             int buflen, int* needed);
+SWMM_ENGINE_API int swmm_summary_labels_read(SWMM_Engine engine, int table, char* buf, int buflen,
+                                             int* needed);
 
 #ifdef __cplusplus
 } /* extern "C" */

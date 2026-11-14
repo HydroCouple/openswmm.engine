@@ -395,16 +395,20 @@ public:
      * Vector allocation can throw; host serializes initialization/output-list reads.
      */
     std::vector<HC::IInput*> inputs() const override {
-        if (material_ && !material_->surface) return {&material_->request};
-        if (split_ && !split_->surface) return {&split_->request};
+        if (material_ && !material_->surface)
+            return {&material_->request};
+        if (split_ && !split_->surface)
+            return {&split_->request};
         return {};
     }
     std::vector<HC::IOutput*> outputs() const override {
         std::vector<HC::IOutput*> result;
         for (const auto& item : outputs_)
             result.push_back(item.get());
-        if (split_ && split_->surface) result.push_back(&split_->receipt);
-        if (material_ && material_->surface) result.push_back(&material_->receipt);
+        if (split_ && split_->surface)
+            result.push_back(&split_->receipt);
+        if (material_ && material_->surface)
+            result.push_back(&material_->receipt);
         return result;
     }
     /**
@@ -420,15 +424,18 @@ public:
      * transition/diagnostic allocation can propagate. Host supplies stable paths/files/identity.
      */
     void initialize() override {
-        if(rejectLifecycleReentry())return;
+        if (rejectLifecycleReentry())
+            return;
         if (material_ && material_->connected()) {
-            reportError("Disconnect inactive material ports before reinitializing"); return;
+            reportError("Disconnect inactive material ports before reinitializing");
+            return;
         }
         ComponentOperation call(lifecycleActive_);
         std::optional<MaterialPhaseLink::Operation> operation;
         try {
             transition(CS::Initializing);
-            if(!close())throw std::runtime_error("Native material close refused; handle retained");
+            if (!close())
+                throw std::runtime_error("Native material close refused; handle retained");
             outputs_.clear();
             fields_.clear();
             species_.clear();
@@ -440,71 +447,109 @@ public:
             reasons_.clear();
             componentFiles_.clear();
             materialOutputOwned_ = false;
-            materialRecovery_=materialRecoveryOutputs_=materialRecoveryEnabled_=false;
+            materialRecovery_ = materialRecoveryOutputs_ = materialRecoveryEnabled_ = false;
             config_ = configuration_.load(base_);
             if (config_.at("schema") != "openswmm.component/1")
                 throw std::invalid_argument("Use schema openswmm.component/1");
             for (const auto& [key, value] : config_.items())
                 if (key != "schema" && key != "role" && key != "model" &&
-                    key != "output_directory" && key != "outfalls" &&
-                    key != "exchange_times_s" && key != "managed_session" && key != "surface_results" && key != "material_capacity")
+                    key != "output_directory" && key != "outfalls" && key != "exchange_times_s" &&
+                    key != "managed_session" && key != "surface_results" &&
+                    key != "material_capacity")
                     throw std::invalid_argument("Unknown component configuration key: " + key);
             managed_ = config_.value("managed_session", false);
             ownershipToken_.clear();
             role_ = config_.value("role", std::string("complete_model"));
             if (config_.contains("surface_results") &&
-                ((role_ != "integrated2d" && role_ != "split_material_surface") || !config_.at("surface_results").is_boolean()))
-                throw std::invalid_argument("surface_results is a Boolean for a surface-owner role");
+                ((role_ != "integrated2d" && role_ != "split_material_surface") ||
+                 !config_.at("surface_results").is_boolean()))
+                throw std::invalid_argument(
+                    "surface_results is a Boolean for a surface-owner role");
             split_.reset();
             material_.reset();
-            const bool materialRole = role_ == "split_material_network" || role_ == "split_material_surface";
+            const bool materialRole =
+                role_ == "split_material_network" || role_ == "split_material_surface";
             if (config_.contains("material_capacity") && !materialRole)
                 throw std::invalid_argument("material_capacity requires a material split role");
             if (materialRole) {
 #ifdef OPENSWMM_COMPONENT_2D_RESULTS
-                if (managed_ || config_.contains("outfalls") || config_.contains("exchange_times_s"))
-                    throw std::invalid_argument("Material roles require native scheduling without other session/export owners");
-                const auto capacity = config_.value("material_capacity",Json(4096));
+                if (managed_ || config_.contains("outfalls") ||
+                    config_.contains("exchange_times_s"))
+                    throw std::invalid_argument(
+                        "Material roles require native scheduling without other session/export owners");
+                const auto capacity = config_.value("material_capacity", Json(4096));
                 if (!capacity.is_number_integer() || capacity <= 0 || capacity > 65536)
-                    throw std::invalid_argument("material_capacity must be an integer from 1 to 65536");
-                material_ = std::make_unique<MaterialPhaseLink>(this,role_ == "split_material_surface",capacity.get<std::uint64_t>());
+                    throw std::invalid_argument(
+                        "material_capacity must be an integer from 1 to 65536");
+                material_ = std::make_unique<MaterialPhaseLink>(
+                    this, role_ == "split_material_surface", capacity.get<std::uint64_t>());
                 operation.emplace(material_->operation());
                 material_->request.finishAt = [this](double at) {
-                    if (lifecycleActive_ || !material_->authorizedFinish() || status()!=CS::Updated || time_!=at)
-                        throw std::invalid_argument("Material final settlement requires its shared accepted boundary");
+                    if (lifecycleActive_ || !material_->authorizedFinish() ||
+                        status() != CS::Updated || time_ != at)
+                        throw std::invalid_argument(
+                            "Material final settlement requires its shared accepted boundary");
                     ComponentOperation call(lifecycleActive_);
-                    try { transition(CS::Updating); startMaterialNetwork();material_->finishNetwork(engine_); recordMaterialState(true); transition(CS::Done); }
-                    catch(const std::exception& ex){fail(ex.what());recordMaterialFailure();throw;}
+                    try {
+                        transition(CS::Updating);
+                        startMaterialNetwork();
+                        material_->finishNetwork(engine_);
+                        recordMaterialState(true);
+                        transition(CS::Done);
+                    } catch (const std::exception& ex) {
+                        fail(ex.what());
+                        recordMaterialFailure();
+                        throw;
+                    }
                 };
                 material_->receipt.serve = [this](const HC::IInput* query) {
-                    try {material_->evaluate(engine_,query);}
-                    catch(const std::exception& ex){fail(ex.what());throw;}
+                    try {
+                        material_->evaluate(engine_, query);
+                    } catch (const std::exception& ex) {
+                        fail(ex.what());
+                        throw;
+                    }
                 };
-                material_->publish = [this](double at,bool ended) {
-                    time_=at;recordMaterialState(false);
-                    if(ended && status()==CS::Updated){transition(CS::Updating);transition(CS::Done);}
+                material_->publish = [this](double at, bool ended) {
+                    time_ = at;
+                    recordMaterialState(false);
+                    if (ended && status() == CS::Updated) {
+                        transition(CS::Updating);
+                        transition(CS::Done);
+                    }
                 };
-                material_->receipt.observe = [this]{recordMaterialState(true);};
+                material_->receipt.observe = [this] { recordMaterialState(true); };
 #else
-                throw std::invalid_argument("Material component roles require the CPU surface and HDF5 build");
+                throw std::invalid_argument(
+                    "Material component roles require the CPU surface and HDF5 build");
 #endif
             } else if (role_ == "split_network" || role_ == "integrated2d") {
 #ifdef OPENSWMM_COMPONENT_2D_RESULTS
-                if (managed_ || config_.contains("outfalls") || config_.contains("exchange_times_s"))
-                    throw std::invalid_argument("Split water roles require native phase scheduling without outfall exports or managed sessions");
-                split_ = std::make_unique<WaterPhaseLink>(this,role_ == "integrated2d");
+                if (managed_ || config_.contains("outfalls") ||
+                    config_.contains("exchange_times_s"))
+                    throw std::invalid_argument(
+                        "Split water roles require native phase scheduling without outfall exports or managed sessions");
+                split_ = std::make_unique<WaterPhaseLink>(this, role_ == "integrated2d");
                 split_->request.finalizeAt = [this](double at) {
                     if (status() != CS::Updated || time_ != at)
-                        throw std::invalid_argument("Final settlement requires a shared accepted boundary");
+                        throw std::invalid_argument(
+                            "Final settlement requires a shared accepted boundary");
                     try {
                         transition(CS::Updating);
                         split_->finishNetwork(engine_);
                         transition(CS::Done);
-                    } catch (const std::exception& ex) { fail(ex.what()); throw; }
+                    } catch (const std::exception& ex) {
+                        fail(ex.what());
+                        throw;
+                    }
                 };
                 split_->receipt.serve = [this](const HC::IInput* query) {
-                    try { split_->evaluate(engine_,query,time_); }
-                    catch (const std::exception& ex) { fail(ex.what()); throw; }
+                    try {
+                        split_->evaluate(engine_, query, time_);
+                    } catch (const std::exception& ex) {
+                        fail(ex.what());
+                        throw;
+                    }
                 };
 #else
                 throw std::invalid_argument("Split roles require the CPU surface and HDF5 build");
@@ -525,7 +570,11 @@ public:
                     "Model changed during metadata discovery; initialize again");
             auto* metadata = add("model_metadata", HC::DataKind::String);
             metadata->text = metadata_.dump();
-            if(material_){auto* state=add("material_session",HC::DataKind::String);state->text=material_->snapshot().dump();fields_["material_session"]=state;}
+            if (material_) {
+                auto* state = add("material_session", HC::DataKind::String);
+                state->text = material_->snapshot().dump();
+                fields_["material_session"] = state;
+            }
             if (!outfalls_.empty())
                 createTransferPorts();
             transition(CS::Initialized);
@@ -546,15 +595,17 @@ public:
      * wiring and lifecycle.
      */
     std::vector<std::string> validate() override {
-        if(rejectLifecycleReentry())return {"Component lifecycle is already active"};
-        if(material_ && material_->ready()) {
+        if (rejectLifecycleReentry())
+            return {"Component lifecycle is already active"};
+        if (material_ && material_->ready()) {
             reportError("Material validation requires an inactive unprepared component");
             return {"Material validation requires an inactive unprepared component"};
         }
         ComponentOperation call(lifecycleActive_);
         std::optional<MaterialPhaseLink::Operation> operation;
         try {
-            if(material_)operation.emplace(material_->operation());
+            if (material_)
+                operation.emplace(material_->operation());
             transition(CS::Validating);
             if (!reasons_.empty())
                 throw std::invalid_argument(reasons_.front());
@@ -578,14 +629,19 @@ public:
      * immutable configuration; output/connection pointers kept alive through run.
      */
     void prepare() override {
-        if(rejectLifecycleReentry())return;
-        if(material_ && material_->ready()) {
-            reportError("Material component is active or already prepared");return;
+        if (rejectLifecycleReentry())
+            return;
+        if (material_ && material_->ready()) {
+            reportError("Material component is active or already prepared");
+            return;
         }
         ComponentOperation call(lifecycleActive_);
         std::optional<MaterialPhaseLink::Operation> operation;
         try {
-            if(material_){operation.emplace(material_->operation());material_->freeze();}
+            if (material_) {
+                operation.emplace(material_->operation());
+                material_->freeze();
+            }
             transition(CS::Preparing);
             if (!reasons_.empty())
                 throw std::invalid_argument(reasons_.front());
@@ -602,7 +658,8 @@ public:
                 const char* backend = std::getenv("OPENSWMM_2D_BACKEND");
                 if (backend && backend[0] && std::string(backend) != "cpu" &&
                     std::string(backend) != "CPU")
-                    throw std::invalid_argument("Surface component requires CPU backend override or no override");
+                    throw std::invalid_argument(
+                        "Surface component requires CPU backend override or no override");
             }
             if (!fs::create_directories(output_))
                 throw std::invalid_argument(
@@ -611,39 +668,56 @@ public:
             engine_ = swmm_engine_create();
             if (!engine_)
                 throw std::runtime_error("Cannot create runtime engine");
-            check(engine_, swmm_engine_open(engine_, pathText(model_).c_str(),
-                                            materialRecovery_ ? nullptr : pathText(output_ / "model.rpt").c_str(),
-                                            (split_ && split_->surface) || (material_ && (material_->surface || (materialRecovery_ && !materialRecoveryOutputs_))) ? nullptr : pathText(output_ / "model.out").c_str(), nullptr));
-            if(material_)
-                check(engine_,swmm_split_material_configure(engine_,material_->surface?SWMM_SPLIT_SURFACE:SWMM_SPLIT_NETWORK));
+            check(engine_,
+                  swmm_engine_open(
+                      engine_, pathText(model_).c_str(),
+                      materialRecovery_ ? nullptr : pathText(output_ / "model.rpt").c_str(),
+                      (split_ && split_->surface) ||
+                              (material_ && (material_->surface ||
+                                             (materialRecovery_ && !materialRecoveryOutputs_)))
+                          ? nullptr
+                          : pathText(output_ / "model.out").c_str(),
+                      nullptr));
+            if (material_)
+                check(engine_, swmm_split_material_configure(engine_, material_->surface
+                                                                          ? SWMM_SPLIT_SURFACE
+                                                                          : SWMM_SPLIT_NETWORK));
             if (split_)
-                check(engine_, swmm_split_configure(engine_, split_->surface ? SWMM_SPLIT_SURFACE : SWMM_SPLIT_NETWORK));
+                check(engine_, swmm_split_configure(engine_, split_->surface ? SWMM_SPLIT_SURFACE
+                                                                             : SWMM_SPLIT_NETWORK));
             if (role_ == "network_only")
                 check(engine_, swmm_options_set(engine_, "IGNORE_2D", "YES"));
 #ifdef OPENSWMM_HAS_2D
-            if (surfaceExecution_ && config_.value("surface_results",true) && (!materialRecovery_ || materialRecoveryOutputs_))
-                check(engine_, swmm_2d_set_results_file(
-                                   engine_, pathText(output_ / "model.2d.h5").c_str()));
+            if (surfaceExecution_ && config_.value("surface_results", true) &&
+                (!materialRecovery_ || materialRecoveryOutputs_))
+                check(engine_,
+                      swmm_2d_set_results_file(engine_, pathText(output_ / "model.2d.h5").c_str()));
 #endif
             if (managed_) {
                 SWMM_CheckpointSessionOptions options{};
                 options.struct_size = sizeof(options);
                 options.schema_version = 1;
                 options.output = surfaceExecution_ ? SWMM_CHECKPOINT_OUTPUT_COMBINED
-                                                  : SWMM_CHECKPOINT_OUTPUT_BINARY;
-                options.ownership_token = ownershipToken_.empty() ? nullptr : ownershipToken_.c_str();
+                                                   : SWMM_CHECKPOINT_OUTPUT_BINARY;
+                options.ownership_token =
+                    ownershipToken_.empty() ? nullptr : ownershipToken_.c_str();
                 const int code = swmm_checkpoint_start_session(engine_, &options);
                 if (code)
                     throw std::runtime_error(swmm_checkpoint_last_error_msg());
             } else {
                 check(engine_, swmm_engine_initialize(engine_));
-                if(material_){
-                    if(materialRecovery_ && materialRecoveryOutputs_)
-                        checkMaterialRecovery(swmm_split_material_checkpoint_prepare_outputs(engine_));
-                    if(material_->surface)material_->prepareSurface(engine_);else material_->preparedNetwork(engine_);
-                }
-                else if (!split_) check(engine_, swmm_engine_start(engine_, 1));
-                else if (split_->surface) split_->prepareSurface(engine_);
+                if (material_) {
+                    if (materialRecovery_ && materialRecoveryOutputs_)
+                        checkMaterialRecovery(
+                            swmm_split_material_checkpoint_prepare_outputs(engine_));
+                    if (material_->surface)
+                        material_->prepareSurface(engine_);
+                    else
+                        material_->preparedNetwork(engine_);
+                } else if (!split_)
+                    check(engine_, swmm_engine_start(engine_, 1));
+                else if (split_->surface)
+                    split_->prepareSurface(engine_);
             }
             for (auto& outfall : outfalls_) {
                 outfall.amounts.assign(species_.size(), 0);
@@ -679,7 +753,8 @@ public:
      * Exclusive once-only host scheduling.
      */
     void update(const std::vector<HC::IOutput*>& = {}) override {
-        if(rejectLifecycleReentry())return;
+        if (rejectLifecycleReentry())
+            return;
         if (status() != CS::Updated) {
             reportError("Engine component is not ready to update");
             return;
@@ -687,26 +762,41 @@ public:
         ComponentOperation call(lifecycleActive_);
         std::optional<MaterialPhaseLink::Operation> operation;
         try {
-            if(material_){operation.emplace(material_->operation());material_->validate();}
+            if (material_) {
+                operation.emplace(material_->operation());
+                material_->validate();
+            }
             verifyReceipt();
             transition(CS::Updating);
-            if(material_){
-                if(material_->surface){transition(material_->ended()?CS::Done:CS::Updated);return;}
-                startMaterialNetwork();double elapsed=0;
-                check(engine_,swmm_engine_step(engine_,&elapsed));check(engine_,swmm_engine_get_elapsed_seconds(engine_,&time_));
-                if(elapsed==0)material_->finishNetwork(engine_);else material_->accepted(time_);
-                recordMaterialState(elapsed==0);transition(elapsed==0?CS::Done:CS::Updated);return;
+            if (material_) {
+                if (material_->surface) {
+                    transition(material_->ended() ? CS::Done : CS::Updated);
+                    return;
+                }
+                startMaterialNetwork();
+                double elapsed = 0;
+                check(engine_, swmm_engine_step(engine_, &elapsed));
+                check(engine_, swmm_engine_get_elapsed_seconds(engine_, &time_));
+                if (elapsed == 0)
+                    material_->finishNetwork(engine_);
+                else
+                    material_->accepted(time_);
+                recordMaterialState(elapsed == 0);
+                transition(elapsed == 0 ? CS::Done : CS::Updated);
+                return;
             }
             if (split_ && split_->surface) {
                 transition(split_->ended ? CS::Done : CS::Updated);
                 return;
             }
-            if (split_) split_->startNetwork(engine_);
+            if (split_)
+                split_->startNetwork(engine_);
             if (outfalls_.empty()) {
                 double elapsed = 0;
                 check(engine_, swmm_engine_step(engine_, &elapsed));
                 check(engine_, swmm_engine_get_elapsed_seconds(engine_, &time_));
-                if (split_ && elapsed == 0) split_->finishNetwork(engine_);
+                if (split_ && elapsed == 0)
+                    split_->finishNetwork(engine_);
                 transition(elapsed == 0 ? CS::Done : CS::Updated);
                 return;
             }
@@ -775,25 +865,41 @@ public:
      * acknowledgment check completes.
      */
     void finish() override {
-        if(rejectLifecycleReentry())return;
+        if (rejectLifecycleReentry())
+            return;
         if (status() == CS::Finished)
             return;
         ComponentOperation call(lifecycleActive_);
         std::optional<MaterialPhaseLink::Operation> operation;
         try {
-            if(material_)operation.emplace(material_->operation());
+            if (material_)
+                operation.emplace(material_->operation());
             const bool failed = status() == CS::Failed || (material_ && material_->terminal());
             if (!failed)
                 verifyReceipt();
             transition(CS::Finishing);
             if (engine_ && !failed) {
-                if(material_){if(material_->surface)material_->finishSurface(time_);else {startMaterialNetwork();material_->finishNetwork(engine_);}}
-                else if (!split_) check(engine_, swmm_engine_end(engine_));
-                else if (!split_->surface) split_->finishNetwork(engine_);
-                else split_->finishSurface(time_);
+                if (material_) {
+                    if (material_->surface)
+                        material_->finishSurface(time_);
+                    else {
+                        startMaterialNetwork();
+                        material_->finishNetwork(engine_);
+                    }
+                } else if (!split_)
+                    check(engine_, swmm_engine_end(engine_));
+                else if (!split_->surface)
+                    split_->finishNetwork(engine_);
+                else
+                    split_->finishSurface(time_);
                 check(engine_, swmm_engine_report(engine_));
             }
-            if(!close()){fail("Native material close refused; handle retained: "+std::string(swmm_get_last_error_msg(engine_)));recordMaterialState(true);return;}
+            if (!close()) {
+                fail("Native material close refused; handle retained: " +
+                     std::string(swmm_get_last_error_msg(engine_)));
+                recordMaterialState(true);
+                return;
+            }
             recordMaterialState(true);
             transition(CS::Finished);
         } catch (const std::exception& error) {
@@ -830,7 +936,8 @@ public:
      * allocation; prepared schedule/sequence must remain stable through query.
      */
     double nextDateTimeJulianDay() const override {
-        if (status() != CS::Updated || (split_ && split_->surface) || (material_ && material_->surface))
+        if (status() != CS::Updated || (split_ && split_->surface) ||
+            (material_ && material_->surface))
             return epoch_ + time_ / 86400.;
         return epoch_ + (outfalls_.empty() ? std::min(duration_, time_ + routingStep_)
                                            : times_.at(sequence_)) /
@@ -840,14 +947,18 @@ public:
 private:
     struct ComponentOperation {
         bool& active;
-        explicit ComponentOperation(bool& flag):active(flag){active=true;}
-        ~ComponentOperation(){active=false;}
+        explicit ComponentOperation(bool& flag) : active(flag) { active = true; }
+        ~ComponentOperation() { active = false; }
     };
     friend struct MaterialGroupRecovery;
-    bool materialRecovery_=false, materialRecoveryOutputs_=false, materialRecoveryEnabled_=false;
-    bool lifecycleActive_=false;
-    bool rejectLifecycleReentry(){
-        if(lifecycleActive_ || (material_ && material_->busy())){reportError("Component lifecycle is already active");return true;}
+    bool materialRecovery_ = false, materialRecoveryOutputs_ = false,
+         materialRecoveryEnabled_ = false;
+    bool lifecycleActive_ = false;
+    bool rejectLifecycleReentry() {
+        if (lifecycleActive_ || (material_ && material_->busy())) {
+            reportError("Component lifecycle is already active");
+            return true;
+        }
         return false;
     }
     struct Outfall {
@@ -895,33 +1006,48 @@ private:
      */
     bool close() noexcept {
         if (engine_) {
-            const int code=swmm_engine_close(engine_);
-            if(material_ && code!=SWMM_OK)return false;
-            if(material_)material_->release();
+            const int code = swmm_engine_close(engine_);
+            if (material_ && code != SWMM_OK)
+                return false;
+            if (material_)
+                material_->release();
             swmm_engine_destroy(engine_);
             engine_ = nullptr;
-        }else if(material_)material_->release();
+        } else if (material_)
+            material_->release();
         return true;
     }
     static void checkMaterialRecovery(int code) {
-        if(code)throw std::runtime_error(swmm_split_material_checkpoint_last_error());
+        if (code)
+            throw std::runtime_error(swmm_split_material_checkpoint_last_error());
     }
     void startMaterialNetwork() {
-        if(material_->ended())return;
-        material_->startNetwork(engine_,!materialRecovery_ || materialRecoveryOutputs_);
-        if(materialRecovery_ && !materialRecoveryEnabled_) {
-            checkMaterialRecovery(swmm_split_material_checkpoint_enable(engine_,materialRecoveryOutputs_));
-            materialRecoveryEnabled_=true;
+        if (material_->ended())
+            return;
+        material_->startNetwork(engine_, !materialRecovery_ || materialRecoveryOutputs_);
+        if (materialRecovery_ && !materialRecoveryEnabled_) {
+            checkMaterialRecovery(
+                swmm_split_material_checkpoint_enable(engine_, materialRecoveryOutputs_));
+            materialRecoveryEnabled_ = true;
         }
     }
     void recordMaterialState(bool persist) {
-        if(!material_)return;const auto snapshot=material_->snapshot();
-        if(const auto it=fields_.find("material_session");it!=fields_.end())it->second->text=snapshot.dump();
-        if(persist && materialOutputOwned_)write("material-session.json",snapshot);
+        if (!material_)
+            return;
+        const auto snapshot = material_->snapshot();
+        if (const auto it = fields_.find("material_session"); it != fields_.end())
+            it->second->text = snapshot.dump();
+        if (persist && materialOutputOwned_)
+            write("material-session.json", snapshot);
     }
-    void recordMaterialFailure()noexcept {
-        if(!material_)return;
-        try{recordMaterialState(true);material_->observePeer();}catch(...){}
+    void recordMaterialFailure() noexcept {
+        if (!material_)
+            return;
+        try {
+            recordMaterialState(true);
+            material_->observePeer();
+        } catch (...) {
+        }
     }
     /**
      * @brief Transition component to Failed with a diagnostic unless already Failed/Finished.
@@ -931,10 +1057,13 @@ private:
      * lifecycle.
      */
     void fail(const std::string& message) {
-        if(material_)material_->fail(message);
+        if (material_)
+            material_->fail(message);
         if (status() != CS::Failed && status() != CS::Finished)
-            transition(CS::Failed, material_ && !material_->error().empty() ? material_->error() :
-                split_ && !split_->error.empty() ? message + ": " + split_->error : message);
+            transition(CS::Failed, material_ && !material_->error().empty() ? material_->error()
+                                   : split_ && !split_->error.empty()
+                                       ? message + ": " + split_->error
+                                       : message);
     }
     /**
      * @brief Write one JSON boundary/configuration artifact under the component output
@@ -975,49 +1104,53 @@ private:
      */
     bool groundwaterWaterProfile(SWMM_Engine engine, int rows) const {
         auto aquifer = [&](const char* key) {
-            return readText([&](char* b, int n) {
-                check(engine, swmm_gw2d_option_get(engine, key, b, n));
-            });
+            return readText(
+                [&](char* b, int n) { check(engine, swmm_gw2d_option_get(engine, key, b, n)); });
         };
         auto transport = [&](const char* key) {
             return readText([&](char* b, int n) {
                 check(engine, swmm_gw_transport_option_get(engine, key, b, n));
             });
         };
-        if (rows < 1 || aquifer("MODE") != "MESH" ||
-            option(engine, "FLOW_ROUTING") != "DYNWAVE" ||
+        if (rows < 1 || aquifer("MODE") != "MESH" || option(engine, "FLOW_ROUTING") != "DYNWAVE" ||
             transport("THERMAL_MODEL") != "WATER_ONLY" || transport("CONDUCTION") != "NO")
             return false;
         for (const char* key :
              {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE"})
-            if (transport(key) != "NO") return false;
+            if (transport(key) != "NO")
+                return false;
         // The managed native builder owns the broader source/Richards/closure
         // profiles and retains its own compatibility checks before initialization.
         if (managed_ || split_)
             return true;
-        if (aquifer("CLOSURE") != "CLOSED_FORM" ||
-            aquifer("SOIL_CHAR") != "GARDNER" || aquifer("GW_ET") != "NONE" ||
-            aquifer("NODE_ENROLMENT") != "ROWS" || option(engine, "FLOW_ROUTING") != "DYNWAVE" ||
-            swmm_subcatch_count(engine) || swmm_lid_usage_count(engine) ||
-            transport("THERMAL_MODEL") != "WATER_ONLY" || transport("CONDUCTION") != "NO")
+        if (aquifer("CLOSURE") != "CLOSED_FORM" || aquifer("SOIL_CHAR") != "GARDNER" ||
+            aquifer("GW_ET") != "NONE" || aquifer("NODE_ENROLMENT") != "ROWS" ||
+            option(engine, "FLOW_ROUTING") != "DYNWAVE" || swmm_subcatch_count(engine) ||
+            swmm_lid_usage_count(engine) || transport("THERMAL_MODEL") != "WATER_ONLY" ||
+            transport("CONDUCTION") != "NO")
             return false;
         for (const char* key :
              {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE"})
-            if (transport(key) != "NO") return false;
+            if (transport(key) != "NO")
+                return false;
         for (int row = 0; row < rows; ++row)
             for (const auto& property : std::vector<std::pair<const char*, int>>{
-                     {"CLOSURE", SWMM_GW2D_CLOSURE_CLOSED_FORM}, {"SOIL_CHAR", SWMM_GW2D_SOIL_GARDNER}}) {
+                     {"CLOSURE", SWMM_GW2D_CLOSURE_CLOSED_FORM},
+                     { "SOIL_CHAR",
+                       SWMM_GW2D_SOIL_GARDNER }}) {
                 double authored = 0, value = 0;
                 const auto flag = std::string(property.first) + "_SET";
                 check(engine, swmm_gw2d_row_get_property(engine, row, flag.c_str(), &authored));
                 check(engine, swmm_gw2d_row_get_property(engine, row, property.first, &value));
-                if (authored && value != property.second) return false;
+                if (authored && value != property.second)
+                    return false;
             }
         for (int node = 0; node < swmm_node_count(engine); ++node) {
             int lid = -1;
             double saturation = 0;
             check(engine, swmm_node_get_lid(engine, node, &lid, &saturation));
-            if (lid >= 0) return false;
+            if (lid >= 0)
+                return false;
         }
         return true;
     }
@@ -1079,15 +1212,13 @@ private:
             for (const auto& prefix : {"", "exported.", "unreceived."}) {
                 const std::string field = prefix + amountField(i);
                 // Water volume, enthalpy and species mass, each named by its QUDT kind.
-                fields_[field] = i == 0   ? add(field, HC::DataKind::Float64, "m3", 3, 0, 0,
-                                                HC::ValueKind::Extensive, 1,
-                                                qudtQuantityKind("Volume"))
-                                 : i == 1 ? add(field, HC::DataKind::Float64, "J", 2, 1, -2,
-                                                HC::ValueKind::Extensive, 1,
-                                                qudtQuantityKind("Enthalpy"))
-                                          : add(field, HC::DataKind::Float64, "kg", 0, 1, 0,
-                                                HC::ValueKind::Extensive, 1,
-                                                qudtQuantityKind("Mass"));
+                fields_[field] =
+                    i == 0   ? add(field, HC::DataKind::Float64, "m3", 3, 0, 0,
+                                   HC::ValueKind::Extensive, 1, qudtQuantityKind("Volume"))
+                    : i == 1 ? add(field, HC::DataKind::Float64, "J", 2, 1, -2,
+                                   HC::ValueKind::Extensive, 1, qudtQuantityKind("Enthalpy"))
+                             : add(field, HC::DataKind::Float64, "kg", 0, 1, 0,
+                                   HC::ValueKind::Extensive, 1, qudtQuantityKind("Mass"));
             }
     }
     /**
@@ -1258,21 +1389,27 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
         bool foreign = id.find_first_of("/\\") != std::string::npos || id.ends_with(".so") ||
                        id.ends_with(".dll") || id.ends_with(".dylib");
         const int count = swmm_process_component_argument_count(engine, i);
-        if (count < 0) throw std::runtime_error("Cannot inspect process component arguments");
+        if (count < 0)
+            throw std::runtime_error("Cannot inspect process component arguments");
         for (int argument = 0; argument < count; ++argument) {
             const auto key = readText([&](char* b, int n) {
-                check(engine, swmm_process_component_argument_get(engine, i, argument, b, n, ignored, 1));
+                check(engine,
+                      swmm_process_component_argument_get(engine, i, argument, b, n, ignored, 1));
             });
             const auto value = readText([&](char* b, int n) {
-                check(engine, swmm_process_component_argument_get(engine, i, argument, ignored, 1, b, n));
+                check(engine,
+                      swmm_process_component_argument_get(engine, i, argument, ignored, 1, b, n));
             });
             arguments.push_back({{"name", key}, {"value", value}});
             foreign = foreign || key == "library";
         }
-        metadata_["process_components"].push_back({{"id", id}, {"configuration_file", path},
-                                                   {"arguments", arguments}, {"foreign", foreign}});
+        metadata_["process_components"].push_back({{"id", id},
+                                                   {"configuration_file", path},
+                                                   {"arguments", arguments},
+                                                   {"foreign", foreign}});
         if (foreign)
-            reasons_.push_back("Native hosted components require separate nested graph ownership/recovery qualification in the engine wrapper");
+            reasons_.push_back(
+                "Native hosted components require separate nested graph ownership/recovery qualification in the engine wrapper");
         if (!path.empty())
             componentFiles_[pathFromText(path)] = readFile(pathFromText(path));
     }
@@ -1305,24 +1442,22 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     bool meshTransportExecution = false;
     if (vertices && !material_) {
         auto surfaceOption = [&](const char* key) {
-            return readText([&](char* b, int n) {
-                check(engine, swmm_options_get_ext(engine, key, b, n));
-            });
+            return readText(
+                [&](char* b, int n) { check(engine, swmm_options_get_ext(engine, key, b, n)); });
         };
 #ifdef OPENSWMM_COMPONENT_2D_RESULTS
-        surfaceExecution_ = (role_ == "complete_model" || split_) &&
-                            option(engine, "IGNORE_2D") != "YES" &&
-                            option(engine, "IGNORE_QUALITY") == "YES" &&
-                            option(engine, "HEAT_TRANSPORT") != "YES" && nr == 0 &&
-                            surfaceOption("BACKEND") == "CPU" &&
-                            surfaceOption("RECONSTRUCTION_ORDER") == "1" &&
-                            surfaceOption("TRANSPORT_POLLUTANTS") == "NO" &&
-                            surfaceOption("TRANSPORT_MSX") == "NO" &&
-                            surfaceOption("TRANSPORT_AGE") == "NO" &&
-                            surfaceOption("TRANSPORT_TEMPERATURE") == "NO" &&
-                            surfaceOption("BED_HEAT_MODEL") == "NONE";
+        surfaceExecution_ =
+            (role_ == "complete_model" || split_) && option(engine, "IGNORE_2D") != "YES" &&
+            option(engine, "IGNORE_QUALITY") == "YES" &&
+            option(engine, "HEAT_TRANSPORT") != "YES" && nr == 0 &&
+            surfaceOption("BACKEND") == "CPU" && surfaceOption("RECONSTRUCTION_ORDER") == "1" &&
+            surfaceOption("TRANSPORT_POLLUTANTS") == "NO" &&
+            surfaceOption("TRANSPORT_MSX") == "NO" && surfaceOption("TRANSPORT_AGE") == "NO" &&
+            surfaceOption("TRANSPORT_TEMPERATURE") == "NO" &&
+            surfaceOption("BED_HEAT_MODEL") == "NONE";
         if (groundwaterConfigured) {
-            groundwaterExecution = surfaceExecution_ && groundwaterWaterProfile(engine, spatialRows);
+            groundwaterExecution =
+                surfaceExecution_ && groundwaterWaterProfile(engine, spatialRows);
             surfaceExecution_ = groundwaterExecution;
         }
         // Native managed sessions already own matched mesh/GW tracer, age and
@@ -1332,10 +1467,10 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
                 check(engine, swmm_gw_transport_option_get(engine, key, b, n));
             });
         };
-        meshTransportExecution = managed_ && role_ == "complete_model" &&
-            groundwaterConfigured && spatialRows > 0 && groundwaterMode == "MESH" &&
-            swmm_node_count(engine) == 0 && swmm_link_count(engine) == 0 &&
-            swmm_subcatch_count(engine) == 0 && nr == 0 &&
+        meshTransportExecution =
+            managed_ && role_ == "complete_model" && groundwaterConfigured && spatialRows > 0 &&
+            groundwaterMode == "MESH" && swmm_node_count(engine) == 0 &&
+            swmm_link_count(engine) == 0 && swmm_subcatch_count(engine) == 0 && nr == 0 &&
             option(engine, "IGNORE_2D") != "YES" && surfaceOption("BACKEND") == "CPU" &&
             surfaceOption("RECONSTRUCTION_ORDER") == "1" &&
             ((option(engine, "HEAT_TRANSPORT") == "YES" &&
@@ -1344,62 +1479,82 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
               groundwaterTransport("THERMAL_MODEL") == "POROUS_EQUILIBRIUM") ||
              (option(engine, "HEAT_TRANSPORT") != "YES" &&
               surfaceOption("BED_HEAT_MODEL") == "NONE")) &&
-            surfaceOption("TRANSPORT_MSX") == "NO" &&
-            groundwaterTransport("TRANSPORT_MSX") == "NO";
-        if (meshTransportExecution) surfaceExecution_ = groundwaterExecution = true;
+            surfaceOption("TRANSPORT_MSX") == "NO" && groundwaterTransport("TRANSPORT_MSX") == "NO";
+        if (meshTransportExecution)
+            surfaceExecution_ = groundwaterExecution = true;
 #endif
         if (!surfaceExecution_)
-            reasons_.push_back("Surface component requires a qualified complete-model CPU first-order water or managed matched mesh/GW transport profile and HDF5 results writer");
+            reasons_.push_back(
+                "Surface component requires a qualified complete-model CPU first-order water or managed matched mesh/GW transport profile and HDF5 results writer");
     }
     if (groundwaterConfigured && !groundwaterExecution)
-        reasons_.push_back("Explicit groundwater requires a qualified MESH water profile or managed matched mesh/GW transport profile");
+        reasons_.push_back(
+            "Explicit groundwater requires a qualified MESH water profile or managed matched mesh/GW transport profile");
     if (split_) {
         if (!vertices || swmm_split_validate_input(engine) != SWMM_OK)
             reasons_.push_back(std::string("Split input: ") + swmm_get_last_error_msg(engine));
         surfaceExecution_ = split_->surface;
     }
-    if(material_){
-        if(!vertices || swmm_split_material_validate_input(engine)!=SWMM_OK)
-            reasons_.push_back(std::string("Material input: ")+swmm_split_material_last_error());
-        surfaceExecution_=material_->surface;
+    if (material_) {
+        if (!vertices || swmm_split_material_validate_input(engine) != SWMM_OK)
+            reasons_.push_back(std::string("Material input: ") + swmm_split_material_last_error());
+        surfaceExecution_ = material_->surface;
     }
     metadata_["managed_session"] = managed_;
-    if (managed_ && (!config_.value("outfalls", Json::array()).empty() || role_ != "complete_model"))
-        reasons_.push_back("Managed sessions require complete_model without external outfall ports");
+    if (managed_ &&
+        (!config_.value("outfalls", Json::array()).empty() || role_ != "complete_model"))
+        reasons_.push_back(
+            "Managed sessions require complete_model without external outfall ports");
     if (managed_ && vertices && !groundwaterExecution)
-        reasons_.push_back("Managed spatial sessions require a qualified native mesh aquifer profile");
+        reasons_.push_back(
+            "Managed spatial sessions require a qualified native mesh aquifer profile");
     metadata_["execution_profile"] = meshTransportExecution ? "native_cpu_managed_transport/1"
-                                     : groundwaterExecution && managed_ ? "native_cpu_managed_water/1"
+                                     : groundwaterExecution && managed_
+                                         ? "native_cpu_managed_water/1"
                                      : groundwaterExecution ? "native_cpu_integrated_water/1"
-                                     : surfaceExecution_ ? "native_cpu_surface_water/1" : "native_cpu_1d/1";
+                                     : surfaceExecution_    ? "native_cpu_surface_water/1"
+                                                            : "native_cpu_1d/1";
     metadata_["result_files"] = {{"report", "model.rpt"}, {"binary", "model.out"}};
     if (surfaceExecution_)
         metadata_["result_files"]["surface"] = "model.2d.h5";
     if (split_) {
         metadata_["execution_profile"] = "openswmm.node-surface-water/1";
         metadata_["phase_port"] = waterPhasePort;
-        metadata_["phase_packet_schemas"] = {"openswmm.node-surface-water/1", "openswmm.node-surface-water/2", "openswmm.node-surface-water/3", "openswmm.node-surface-water/4", "openswmm.node-surface-water/5", "openswmm.node-surface-water/6", "openswmm.node-surface-water/7", "openswmm.node-surface-water/8", "openswmm.node-surface-water/9"};
+        metadata_["phase_packet_schemas"] = {
+            "openswmm.node-surface-water/1", "openswmm.node-surface-water/2",
+            "openswmm.node-surface-water/3", "openswmm.node-surface-water/4",
+            "openswmm.node-surface-water/5", "openswmm.node-surface-water/6",
+            "openswmm.node-surface-water/7", "openswmm.node-surface-water/8",
+            "openswmm.node-surface-water/9"};
         metadata_["groundwater_owner"] = "integrated2d";
         metadata_["watershed_owner"] = "network";
-        metadata_["split_source_scope"] = "ordinary runoff and conventional LID outlets through native network routing";
-        if (split_->surface) metadata_["result_files"].erase("binary");
-        if (!config_.value("surface_results",true)) metadata_["result_files"].erase("surface");
+        metadata_["split_source_scope"] =
+            "ordinary runoff and conventional LID outlets through native network routing";
+        if (split_->surface)
+            metadata_["result_files"].erase("binary");
+        if (!config_.value("surface_results", true))
+            metadata_["result_files"].erase("surface");
     }
-    if(material_){
-        metadata_["execution_profile"]="openswmm.passive-material-pair/10";
-        metadata_["phase_port"]=materialPhasePort;
-        metadata_["phase_packet_schemas"]={"openswmm.node-surface-water/10"};
-        metadata_["material_trust"]="bound_trusted_in_process";
-        metadata_["material_native_volume_units"]="ft3";
-        metadata_["material_native_amount_basis"]="declared_concentration*ft3";
-        metadata_["material_journal_capacity"]=config_.value("material_capacity",Json(4096));
-        metadata_["receiving_quality_owner"]="split_material_network";
-        metadata_["surface_material_owner"]="split_material_surface";
-        metadata_["material_checkpointing"]=false;
-        metadata_["material_collective_recovery"]={{"service",OPENSWMM_COMPONENT_RECOVERY_SYMBOL},
-            {"version",OPENSWMM_COMPONENT_RECOVERY_VERSION},{"enrolled",false},{"scope","exclusive_pair_fresh_restore"}};
-        if(material_->surface)metadata_["result_files"].erase("binary");
-        if(!config_.value("surface_results",true))metadata_["result_files"].erase("surface");
+    if (material_) {
+        metadata_["execution_profile"] = "openswmm.passive-material-pair/10";
+        metadata_["phase_port"] = materialPhasePort;
+        metadata_["phase_packet_schemas"] = {"openswmm.node-surface-water/10"};
+        metadata_["material_trust"] = "bound_trusted_in_process";
+        metadata_["material_native_volume_units"] = "ft3";
+        metadata_["material_native_amount_basis"] = "declared_concentration*ft3";
+        metadata_["material_journal_capacity"] = config_.value("material_capacity", Json(4096));
+        metadata_["receiving_quality_owner"] = "split_material_network";
+        metadata_["surface_material_owner"] = "split_material_surface";
+        metadata_["material_checkpointing"] = false;
+        metadata_["material_collective_recovery"] = {
+            {"service", OPENSWMM_COMPONENT_RECOVERY_SYMBOL},
+            {"version", OPENSWMM_COMPONENT_RECOVERY_VERSION},
+            {"enrolled", false},
+            {"scope", "exclusive_pair_fresh_restore"}};
+        if (material_->surface)
+            metadata_["result_files"].erase("binary");
+        if (!config_.value("surface_results", true))
+            metadata_["result_files"].erase("surface");
     }
     // Retain ordinary model input files. Additional authored output channels
     // need their own isolated-output mapping before independent instances run.
@@ -1459,7 +1614,8 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     }
     if (!outfalls_.empty()) {
         if (surfaceExecution_)
-            reasons_.push_back("External outfall exports with spatial execution require separate receipt qualification");
+            reasons_.push_back(
+                "External outfall exports with spatial execution require separate receipt qualification");
         if (nr)
             reasons_.push_back(
                 "MSX outfall amount receipts are not yet qualified; MSX remains supported in uncoupled native output");
@@ -1637,9 +1793,9 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
         int layer = 0, top = 0;
         check(engine, swmm_lid_node_outlet_get(engine, i, &layer, &top));
         if (layer)
-            metadata_["lids"]["node_outlets"].push_back(
-                {{"link", swmm_link_id(engine, i)}, {"layer", layer},
-                 {"anchor", top ? "TOP" : "BOTTOM"}});
+            metadata_["lids"]["node_outlets"].push_back({{"link", swmm_link_id(engine, i)},
+                                                         {"layer", layer},
+                                                         {"anchor", top ? "TOP" : "BOTTOM"}});
     }
     Json surface = {{"owner", "native_integrated2d"},
                     {"vertices_m", Json::array()},
@@ -1672,8 +1828,8 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
         gw["options"][key] = readText(
             [&](char* b, int n) { check(engine, swmm_gw2d_option_get(engine, key, b, n)); });
     gw["transport_options"] = Json::object();
-    for (const char* key : {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE", "TRANSPORT_TEMPERATURE",
-                            "THERMAL_MODEL", "CONDUCTION"})
+    for (const char* key : {"TRANSPORT_POLLUTANTS", "TRANSPORT_MSX", "TRANSPORT_AGE",
+                            "TRANSPORT_TEMPERATURE", "THERMAL_MODEL", "CONDUCTION"})
         gw["transport_options"][key] = readText([&](char* b, int n) {
             check(engine, swmm_gw_transport_option_get(engine, key, b, n));
         });
@@ -1681,43 +1837,56 @@ void OpenSWMMEngineComponent::discoverGeometry(SWMM_Engine engine) {
     if (vertices) {
         int ownerCount = 0;
         check(engine, swmm_surface_owner_get(engine, nullptr, 0, &ownerCount));
-        surface["ownership"] = {{"authored_count", ownerCount}, {"objects", Json::array()},
-                                 {"shares", Json::array()}, {"revision", nullptr}};
+        surface["ownership"] = {{"authored_count", ownerCount},
+                                {"objects", Json::array()},
+                                {"shares", Json::array()},
+                                {"revision", nullptr}};
         if (ownerCount) {
             int objects = 0, shares = 0, cells = 0, valid = 0;
             char token[32]{}, diagnostic[4096]{};
             check(engine, swmm_surface_owner_preview(engine, nullptr, -1, nullptr, 0, &objects,
-                nullptr, 0, &shares, nullptr, 0, &cells, &valid, token, sizeof(token),
-                diagnostic, sizeof(diagnostic), nullptr, nullptr));
+                                                     nullptr, 0, &shares, nullptr, 0, &cells,
+                                                     &valid, token, sizeof(token), diagnostic,
+                                                     sizeof(diagnostic), nullptr, nullptr));
             std::vector<SWMM_SurfaceOwnerObject> ownerObjects(objects);
             std::vector<SWMM_SurfaceOwnerShare> ownerShares(shares);
-            check(engine, swmm_surface_owner_preview(engine, nullptr, -1, ownerObjects.data(), objects,
-                &objects, ownerShares.data(), shares, &shares, nullptr, 0, &cells, &valid,
-                token, sizeof(token), diagnostic, sizeof(diagnostic), nullptr, nullptr));
+            check(engine,
+                  swmm_surface_owner_preview(engine, nullptr, -1, ownerObjects.data(), objects,
+                                             &objects, ownerShares.data(), shares, &shares, nullptr,
+                                             0, &cells, &valid, token, sizeof(token), diagnostic,
+                                             sizeof(diagnostic), nullptr, nullptr));
             auto& ownership = surface["ownership"];
             ownership["revision"] = token;
             ownership["valid"] = valid != 0;
             ownership["diagnostics"] = diagnostic;
             for (const auto& object : ownerObjects)
                 ownership["objects"].push_back({{"subcatchment", object.name},
-                    {"reviewed", object.reviewed != 0}, {"status", object.status},
-                    {"declared_area_m2", object.declared_area}, {"inside_area_m2", object.inside_area},
-                    {"outside_area_m2", object.outside_area}, {"reason", object.reason}});
+                                                {"reviewed", object.reviewed != 0},
+                                                {"status", object.status},
+                                                {"declared_area_m2", object.declared_area},
+                                                {"inside_area_m2", object.inside_area},
+                                                {"outside_area_m2", object.outside_area},
+                                                {"reason", object.reason}});
             for (const auto& share : ownerShares)
                 ownership["shares"].push_back({{"subcatchment", subcatchId(share.subcatch)},
-                    {"cell", share.cell}, {"weather_area_m2", share.weather_area},
-                    {"pervious_area_m2", share.pervious_area},
-                    {"impervious_area_m2", share.impervious_area}, {"lid_area_m2", share.lid_area},
-                    {"native_lid_area_m2", share.native_lid_area}});
+                                               {"cell", share.cell},
+                                               {"weather_area_m2", share.weather_area},
+                                               {"pervious_area_m2", share.pervious_area},
+                                               {"impervious_area_m2", share.impervious_area},
+                                               {"lid_area_m2", share.lid_area},
+                                               {"native_lid_area_m2", share.native_lid_area}});
             if (managed_ || split_) {
                 if (!valid)
-                    reasons_.push_back(std::string("Invalid native surface ownership: ") + diagnostic);
+                    reasons_.push_back(std::string("Invalid native surface ownership: ") +
+                                       diagnostic);
                 else
                     ownershipToken_ = token;
                 if (split_) {
-                    metadata_["watershed_owners"]={{"ordinary","network"},{"reviewed","integrated2d"}};
-                    if (split_->surface && !config_.value("surface_results",true))
-                        reasons_.push_back("Reviewed split source ownership requires surface_results=true");
+                    metadata_["watershed_owners"] = {{"ordinary", "network"},
+                                                     {"reviewed", "integrated2d"}};
+                    if (split_->surface && !config_.value("surface_results", true))
+                        reasons_.push_back(
+                            "Reviewed split source ownership requires surface_results=true");
                 }
             } else
                 reasons_.push_back("Reviewed surface ownership requires managed_session=true");
@@ -1838,8 +2007,8 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
                     continue;
                 int type = 0;
                 check(engine, swmm_2d_get_edge_bc_type(engine, index, edge, &type));
-                static constexpr const char* types[] = {
-                    "WALL", "NORMAL_FLOW", "SPECIFIED_STAGE", "SPECIFIED_FLOW", "RATING_CURVE"};
+                static constexpr const char* types[] = {"WALL", "NORMAL_FLOW", "SPECIFIED_STAGE",
+                                                        "SPECIFIED_FLOW", "RATING_CURVE"};
                 if (type < SWMM_2D_BC_WALL || type > SWMM_2D_BC_RATING_CURVE)
                     throw std::runtime_error("Unknown surface boundary type");
                 Json row = {{"cell", index}, {"edge", edge}, {"type", types[type]}};
@@ -1857,7 +2026,8 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
                 } else if (type == SWMM_2D_BC_SPECIFIED_FLOW) {
                     check(engine, swmm_2d_get_edge_bc_flow(engine, index, edge, &value));
                     const auto series = readText([&](char* b, int n) {
-                        check(engine, swmm_2d_get_edge_bc_flow_tseries_name(engine, index, edge, b, n));
+                        check(engine,
+                              swmm_2d_get_edge_bc_flow_tseries_name(engine, index, edge, b, n));
                     });
                     row["timeseries"] = series;
                     row["units"] = metadata_["flow_units"].get<std::string>() + "/m";
@@ -1870,7 +2040,8 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
                     row["stage_units"] = metadata_["spatial"]["project_length_units"];
                     row["flow_units"] = metadata_["flow_units"].get<std::string>() + "/m";
                     row["rating_curve"] = readText([&](char* b, int n) {
-                        check(engine, swmm_2d_get_edge_bc_rating_curve_name(engine, index, edge, b, n));
+                        check(engine,
+                              swmm_2d_get_edge_bc_rating_curve_name(engine, index, edge, b, n));
                     });
                 }
                 surface["boundaries"].push_back(std::move(row));
@@ -1885,7 +2056,8 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
         const auto species = readText([&](char* b, int n) {
             check(engine, swmm_2d_get_boundary_quality(engine, i, &cell, &edge, b, n, &value));
         });
-        surface["boundary_quality"].push_back({{"cell", cell}, {"edge", edge},
+        surface["boundary_quality"].push_back({{"cell", cell},
+                                               {"edge", edge},
                                                {"species", species},
                                                {"concentration_native", value}});
     }
@@ -1904,7 +2076,9 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
         }
         const bool head = row.kind == SWMM_GW2D_BOUNDARY_HEAD;
         gw["boundaries"].push_back(
-            {{"cell", row.cell}, {"edge", row.edge}, {"type", head ? "HEAD" : "FLOW"},
+            {{"cell", row.cell},
+             {"edge", row.edge},
+             {"type", head ? "HEAD" : "FLOW"},
              {"value", row.value},
              {"units", head ? metadata_["spatial"]["project_length_units"] : Json("m3/s")},
              {"timeseries", series.data()}});
@@ -1914,54 +2088,63 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
         double value = 0;
         char kind[16]{};
         const auto species = readText([&](char* b, int n) {
-            check(engine, swmm_gw_boundary_quality_get(engine, i, &cell, &edge, b, n,
-                                                       kind, sizeof(kind), &value, nullptr, 0));
+            check(engine, swmm_gw_boundary_quality_get(engine, i, &cell, &edge, b, n, kind,
+                                                       sizeof(kind), &value, nullptr, 0));
         });
         const auto series = readText([&](char* b, int n) {
             check(engine, swmm_gw_boundary_quality_get(engine, i, nullptr, nullptr, nullptr, 0,
                                                        nullptr, 0, nullptr, b, n));
         });
-        gw["boundary_quality"].push_back({{"cell", cell}, {"edge", edge},
-                                          {"species", species}, {"kind", kind},
-                                          {"value_native", value}, {"timeseries", series}});
+        gw["boundary_quality"].push_back({{"cell", cell},
+                                          {"edge", edge},
+                                          {"species", species},
+                                          {"kind", kind},
+                                          {"value_native", value},
+                                          {"timeseries", series}});
     }
     for (int i = 0; i < swmm_gw_source_count(engine); ++i) {
         int scope = 0, cell = -1, xy = 0;
         double flow = 0, scale = 1, x = 0, y = 0;
         const auto name = readText([&](char* b, int n) {
-            check(engine, swmm_gw_source_get(engine, i, b, n, &scope, nullptr, 0, &cell,
-                                              &flow, nullptr, 0));
+            check(engine, swmm_gw_source_get(engine, i, b, n, &scope, nullptr, 0, &cell, &flow,
+                                             nullptr, 0));
         });
         const auto tag = readText([&](char* b, int n) {
-            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, b, n,
-                                              nullptr, nullptr, nullptr, 0));
+            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, b, n, nullptr, nullptr,
+                                             nullptr, 0));
         });
         const auto series = readText([&](char* b, int n) {
-            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, nullptr, 0,
-                                              nullptr, nullptr, b, n));
+            check(engine, swmm_gw_source_get(engine, i, nullptr, 0, nullptr, nullptr, 0, nullptr,
+                                             nullptr, b, n));
         });
         check(engine, swmm_gw_source_scale_get(engine, i, &scale));
         check(engine, swmm_gw_source_xy_get(engine, i, &xy, &x, &y));
-        Json source = {{"name", name}, {"scope", scope == SWMM_GW2D_SCOPE_CELL ? "CELL"
-                                                : scope == SWMM_GW2D_SCOPE_TAG ? "TAG" : "GLOBAL"},
+        Json source = {{"name", name},
+                       {"scope", scope == SWMM_GW2D_SCOPE_CELL  ? "CELL"
+                                 : scope == SWMM_GW2D_SCOPE_TAG ? "TAG"
+                                                                : "GLOBAL"},
                        {"cell", scope == SWMM_GW2D_SCOPE_CELL ? Json(cell) : Json(nullptr)},
-                       {"tag", tag}, {"coordinates", xy ? Json{x, y} : Json(nullptr)},
-                       {"flow_m3_s", flow}, {"flow_timeseries", series}, {"scale", scale},
+                       {"tag", tag},
+                       {"coordinates", xy ? Json{x, y} : Json(nullptr)},
+                       {"flow_m3_s", flow},
+                       {"flow_timeseries", series},
+                       {"scale", scale},
                        {"species_terms", Json::array()}};
         for (int term = 0; term < swmm_gw_source_species_count(engine, i); ++term) {
             double value = 0;
             char kind[16]{};
             const auto species = readText([&](char* b, int n) {
-                check(engine, swmm_gw_source_species_get(engine, i, term, b, n, kind,
-                                                         sizeof(kind), &value, nullptr, 0));
+                check(engine, swmm_gw_source_species_get(engine, i, term, b, n, kind, sizeof(kind),
+                                                         &value, nullptr, 0));
             });
             const auto timeseries = readText([&](char* b, int n) {
-                check(engine, swmm_gw_source_species_get(engine, i, term, nullptr, 0, nullptr,
-                                                         0, nullptr, b, n));
+                check(engine, swmm_gw_source_species_get(engine, i, term, nullptr, 0, nullptr, 0,
+                                                         nullptr, b, n));
             });
-            source["species_terms"].push_back({{"species", species}, {"kind", kind},
-                                                {"value_native", value},
-                                                {"timeseries", timeseries}});
+            source["species_terms"].push_back({{"species", species},
+                                               {"kind", kind},
+                                               {"value_native", value},
+                                               {"timeseries", timeseries}});
         }
         gw["sources"].push_back(std::move(source));
     }
@@ -1972,8 +2155,10 @@ void OpenSWMMEngineComponent::discoverBoundaries(SWMM_Engine engine) {
 
 void OpenSWMMEngineComponent::validateConnections() {
     receiver_ = nullptr;
-    if(material_)material_->validate();
-    if (split_) split_->validate();
+    if (material_)
+        material_->validate();
+    if (split_)
+        split_->validate();
     if (outfalls_.empty())
         return;
     std::vector<Output*> ports;
@@ -2215,6 +2400,6 @@ private:
 }
 HYDROCOUPLE_DECLARE_COMPONENT(openswmm::couplers::OpenSWMMEngineInfo)
 extern "C" HYDROCOUPLE_COMPONENT_EXPORT const OpenSWMM_MaterialRecoveryV1*
-openswmm_component_material_recovery(uint32_t version,size_t caller_size) {
-    return openswmm::couplers::MaterialGroupRecovery::service(version,caller_size);
+openswmm_component_material_recovery(uint32_t version, size_t caller_size) {
+    return openswmm::couplers::MaterialGroupRecovery::service(version, caller_size);
 }

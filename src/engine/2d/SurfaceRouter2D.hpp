@@ -67,8 +67,13 @@ namespace openswmm::runoff {
 class SourceWaterDriver;
 }
 namespace openswmm {
-namespace detail { class CompletedSourceArchive; }
-namespace quality { class PeerPassiveStorageProducer; class PeerPassiveStorageWindow; }
+namespace detail {
+class CompletedSourceArchive;
+}
+namespace quality {
+class PeerPassiveStorageProducer;
+class PeerPassiveStorageWindow;
+}
 struct SimulationContext;
 struct HeatState;
 namespace climate {
@@ -1168,7 +1173,9 @@ public:
     double netSource(int cell) const noexcept;
     void copyNetSources(double* values) const noexcept;
     bool hasOutfallCoupling() const noexcept {
-        for (const auto& point : coupling_points_) if (point.is_outfall) return true;
+        for (const auto& point : coupling_points_)
+            if (point.is_outfall)
+                return true;
         return false;
     }
 
@@ -1393,12 +1400,14 @@ private:
     struct MaterialRestart;
     double material_publisher_ms_ = -1;
     std::string materialCheckpointBytes(const SimulationContext&, bool outputs = false) const;
-    std::shared_ptr<MaterialRestart> prepareMaterialCheckpoint(const SimulationContext&, std::string, bool outputs = false) const;
+    std::shared_ptr<MaterialRestart>
+    prepareMaterialCheckpoint(const SimulationContext&, std::string, bool outputs = false) const;
     const SurfaceStateData& materialCheckpointState(const std::shared_ptr<MaterialRestart>&) const;
-    void validateMaterialCheckpoint(const SimulationContext&, const quality::PeerPassiveStorageProducer&,
-        double initial, double loss, double gain, const std::array<double,2>& window,
-        bool outputs = false, bool reported_now = false,
-        const std::shared_ptr<MaterialRestart>& = {}) const;
+    void validateMaterialCheckpoint(const SimulationContext&,
+                                    const quality::PeerPassiveStorageProducer&, double initial,
+                                    double loss, double gain, const std::array<double, 2>& window,
+                                    bool outputs = false, bool reported_now = false,
+                                    const std::shared_ptr<MaterialRestart>& = {}) const;
     void installMaterialCheckpoint(SimulationContext&, std::shared_ptr<MaterialRestart>) noexcept;
     static void checkpointMaterialBalance(detail::CompletedSourceArchive&, SimulationContext&);
     /**
@@ -1460,7 +1469,8 @@ private:
      * No physics/calendar advance; definition documents complete qualification and installed
      * identities. Exclusive lifecycle access.
      */
-    void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*, bool external = false);
+    void attachCommonSourceStage(SimulationContext&, CommonSourceStage&, Router*,
+                                 bool external = false);
     /**
      * @brief Test whether the router has attached standalone second-order checkpoint ownership.
      * @return True for nonnull source context, reconstruction order 2 and no common stage.
@@ -1540,16 +1550,20 @@ private:
      */
     std::string sourceBoundary(const SimulationContext& ctx) const;
     std::string liveCheckpointModel(const SimulationContext& ctx) const;
-    std::string coupledWaterProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const;
+    std::string coupledWaterProfile(const SimulationContext& ctx,
+                                    const SurfaceStateData& surface) const;
     std::string liveCheckpointBoundary(const SimulationContext& ctx) const;
-    std::string validateLivePhysical(const ExplicitInertialSolver& cpu, const SurfaceStateData& state,
-        double completed, double total, double pending) const;
+    std::string validateLivePhysical(const ExplicitInertialSolver& cpu,
+                                     const SurfaceStateData& state, double completed, double total,
+                                     double pending) const;
     void attachLiveCheckpoint(SimulationContext& ctx, Router& hydraulic);
     std::string liveCheckpointBytes(const SimulationContext& ctx, std::string& result) const;
     std::string loadLiveCheckpointBytes(SimulationContext& ctx, std::string bytes,
-        const std::array<double, 6>* engine_boundary, const std::vector<double>* engine_rainfall,
-        const double* engine_storage, bool engine_routed, const std::function<void()>* before_install,
-        double* inspect_source_end);
+                                        const std::array<double, 6>* engine_boundary,
+                                        const std::vector<double>* engine_rainfall,
+                                        const double* engine_storage, bool engine_routed,
+                                        const std::function<void()>* before_install,
+                                        double* inspect_source_end);
 
     /**
      * @brief Encode immutable router report/weather, coupling policy and authored boundary
@@ -1788,9 +1802,11 @@ private:
      * serialize access.
      */
     enum class BatchPhase { ADVANCE, REPORT, FINAL };
-    void coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase = BatchPhase::ADVANCE);
+    void coAdvanceStep(SimulationContext& ctx, double dt, double t,
+                       BatchPhase phase = BatchPhase::ADVANCE);
     std::string livePassiveProfile() const;
-    std::string changingVolumeProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const;
+    std::string changingVolumeProfile(const SimulationContext& ctx,
+                                      const SurfaceStateData& surface) const;
     quality::LivePassiveStorageExchange* live_passive_exchange_ = nullptr;
     quality::PeerPassiveStorageProducer* peer_passive_exchange_ = nullptr;
     quality::PeerPassiveStorageWindow* peer_window_ = nullptr;

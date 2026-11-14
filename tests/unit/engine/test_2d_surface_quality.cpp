@@ -506,7 +506,8 @@ TEST(SurfaceQuality2D_S7, LedgerClosesWhenWashoffOverdrawsANoBuildupStore) {
                        sq.ledBmp()[0] - sq.ledSweeping()[0];
     const double scale = sq.ledInitBuildup()[0] + sq.ledBuildup()[0];
     ASSERT_GT(sq.ledInitBuildup()[0], 0.0);
-    EXPECT_GT(sq.ledBuildup()[0], 0.0) << "the washoff must overdraw the store, else this is vacuous";
+    EXPECT_GT(sq.ledBuildup()[0], 0.0)
+        << "the washoff must overdraw the store, else this is vacuous";
     EXPECT_NEAR(lhs, final_store, 1e-10 * scale) << "init + net - washed - BMP - swept == store";
     close(r);
 }

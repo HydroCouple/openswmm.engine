@@ -51,8 +51,8 @@ int GeoPackageInputPlugin::read(const std::string& path, SimulationContext& ctx)
         // the first available simulation.
         bool has_default_model = false;
         if (simulation_id_ == "default") {
-            auto saved = prepare(db.get(),
-                                 "SELECT 1 FROM options WHERE simulation_id='default' LIMIT 1");
+            auto saved =
+                prepare(db.get(), "SELECT 1 FROM options WHERE simulation_id='default' LIMIT 1");
             has_default_model = sqlite3_step(saved.get()) == SQLITE_ROW;
         }
         if (simulation_id_ == "default" && !has_default_model) {

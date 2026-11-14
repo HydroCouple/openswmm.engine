@@ -380,8 +380,7 @@ TEST(Output2DOptions, TokenMaskRoundTrip) {
     EXPECT_STREQ(swmm_2d_output_variable_name(13), "GW_DETAILED");
     EXPECT_STREQ(swmm_2d_output_variable_name(14), "HEAT");
     EXPECT_STREQ(swmm_2d_output_variable_name(15), "TURBULENCE");
-    EXPECT_EQ(swmm_2d_output_variable_mask("TURBULENCE"),
-              report2d::DEPTH | report2d::TURBULENCE);
+    EXPECT_EQ(swmm_2d_output_variable_mask("TURBULENCE"), report2d::DEPTH | report2d::TURBULENCE);
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::BUILDUP, 0u);
     EXPECT_NE(report2d::DEFAULT_MASK & report2d::GROUNDWATER, 0u);
     EXPECT_EQ(report2d::DEFAULT_MASK & report2d::HEAT, 0u);
@@ -478,23 +477,25 @@ TEST(Output2DOptions, CApiExtRoundTripOnAModel) {
 // ---------------------------------------------------------------------------
 
 TEST(Output2DWriter, VelocityMetadataIdentifiesEveryMomentumClosure) {
-    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
-                      Momentum2D::DIFFUSIVE_WAVE}) {
+    for (auto mode :
+         {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE, Momentum2D::DIFFUSIVE_WAVE}) {
         SolverOptions2D opts;
         opts.momentum = mode;
-        const auto path = writeFile("velocity_mode_" + std::to_string(static_cast<int>(mode)),
-                                    opts, 30., 1, 30. / 86400.);
+        const auto path = writeFile("velocity_mode_" + std::to_string(static_cast<int>(mode)), opts,
+                                    30., 1, 30. / 86400.);
         H5File file(path);
         ASSERT_GE(file.id, 0);
         const bool native = mode == Momentum2D::FULL_SWE;
         EXPECT_EQ(file.dsAttr("Mesh2_face_vx", "long_name"),
-                  native ? "cell velocity X from conserved momentum" : "cell velocity X from wetted-edge normal velocities");
+                  native ? "cell velocity X from conserved momentum"
+                         : "cell velocity X from wetted-edge normal velocities");
         EXPECT_EQ(file.dsAttr("Mesh2_face_vy", "long_name"),
-                  native ? "cell velocity Y from conserved momentum" : "cell velocity Y from wetted-edge normal velocities");
-        EXPECT_EQ(file.dsAttr("Mesh2_face_vx", "reconstruction"), native ? "conserved_cell_momentum"
-            : "wetted_edge_area_weighted_least_squares");
+                  native ? "cell velocity Y from conserved momentum"
+                         : "cell velocity Y from wetted-edge normal velocities");
+        EXPECT_EQ(file.dsAttr("Mesh2_face_vx", "reconstruction"),
+                  native ? "conserved_cell_momentum" : "wetted_edge_area_weighted_least_squares");
         EXPECT_EQ(file.dsAttr("Mesh2_face_vy", "missing_value_meaning"),
-            "NaN: unavailable wet-cell velocity; dry cells are zero");
+                  "NaN: unavailable wet-cell velocity; dry cells are zero");
     }
 }
 
@@ -502,8 +503,9 @@ TEST(Output2DWriter, UnavailableVelocitySurvivesBothPrecisionsAndEnvelopeOutput)
     for (auto precision : {OutputPrecision2D::FLOAT32, OutputPrecision2D::FLOAT64}) {
         SolverOptions2D opts;
         opts.output_precision = precision;
-        const auto path = kOutDir / (precision == OutputPrecision2D::FLOAT32
-            ? "unavailable_velocity_float32.h5" : "unavailable_velocity_float64.h5");
+        const auto path =
+            kOutDir / (precision == OutputPrecision2D::FLOAT32 ? "unavailable_velocity_float32.h5"
+                                                               : "unavailable_velocity_float64.h5");
         fs::create_directories(kOutDir);
         auto mesh = unitSquare();
         Default2DOutputPlugin plugin(path.string());
@@ -1786,7 +1788,8 @@ TEST(Output2DSourceHistory, UnavailableVelocityCheckpointPreservesWaterAndReject
     EXPECT_TRUE(std::isnan(m.surface.stat_max_velocity[0]));
     EXPECT_EQ(m.surface.volume, volume);
     m.surface.face_vx[0] = std::numeric_limits<double>::infinity();
-    EXPECT_FALSE(m.stage.saveCheckpoint((kOutDir / "invalid_velocity.checkpoint").string()).empty());
+    EXPECT_FALSE(
+        m.stage.saveCheckpoint((kOutDir / "invalid_velocity.checkpoint").string()).empty());
 }
 
 TEST(Output2DSourceHistory, SavesSourceIntervalsIndependentlyOfReportCadenceAndKeepsMeshFields) {
@@ -2459,7 +2462,9 @@ TEST(Output2DWriter, AppliedNativeNodeExchangeReachesApiAndSavedCells) {
                 "IN_TS 0:13 0\nIN_TS 0:40 0\n"
                 "[2D_OPTIONS]\nBACKEND CPU\nINTEGRATOR EXPLICIT\nMAX_TIMESTEP 1\nLTS_TIERS 4\n"
                 "REPORT_2D YES\nOUTPUT_PRECISION FLOAT64\nREPORT_2D_VARIABLES DEPTH COUPLING\n"
-                "OUTPUT_FILE " << h5.filename().string() << "\n"
+                "OUTPUT_FILE "
+             << h5.filename().string()
+             << "\n"
                 "[2D_VERTICES]\n0 0 1\n10 0 1\n10 10 1\n0 10 1\n"
                 "[2D_TRIANGLES]\n0 1 2 0.03\n0 2 3 0.03\n";
         if (cellMap)
@@ -2470,8 +2475,9 @@ TEST(Output2DWriter, AppliedNativeNodeExchangeReachesApiAndSavedCells) {
         SWMM_Engine e = swmm_engine_create();
         ASSERT_NE(e, nullptr);
         ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(),
-            (kOutDir / (stem + ".rpt")).string().c_str(),
-            (kOutDir / (stem + ".out")).string().c_str(), nullptr), SWMM_OK);
+                                   (kOutDir / (stem + ".rpt")).string().c_str(),
+                                   (kOutDir / (stem + ".out")).string().c_str(), nullptr),
+                  SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
         double elapsed = 0, previousTime = 0, previous[2] = {0, 0};

@@ -14,15 +14,13 @@
 #include "openswmm_abi_tag.h"
 #include <gtest/gtest.h>
 
-TEST(EngineAbi, RuntimeMatchesInstalledHeader)
-{
+TEST(EngineAbi, RuntimeMatchesInstalledHeader) {
     ASSERT_NE(swmm_engine_abi_tag(), nullptr);
     EXPECT_STREQ(swmm_engine_abi_tag(), OPENSWMM_ENGINE_ABI_TAG);
 }
 
-TEST(EngineAbi, StableBeforeAndAfterModelLifetime)
-{
-    const auto *identity = swmm_engine_abi_tag();
+TEST(EngineAbi, StableBeforeAndAfterModelLifetime) {
+    const auto* identity = swmm_engine_abi_tag();
     auto engine = swmm_engine_create();
     ASSERT_NE(engine, nullptr);
     EXPECT_EQ(identity, swmm_engine_abi_tag());

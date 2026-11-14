@@ -174,11 +174,12 @@ namespace {
 struct LocalHeat {
     Model model;
     openswmm::twoD::SurfaceStateData state;
-    openswmm::twoD::SolverOptions2D options = [] { // LOCAL_INERTIAL: not the default since 2026-11-13
-        openswmm::twoD::SolverOptions2D o;
-        o.momentum = openswmm::twoD::Momentum2D::LOCAL_INERTIAL;
-        return o;
-    }();
+    openswmm::twoD::SolverOptions2D options =
+        [] { // LOCAL_INERTIAL: not the default since 2026-11-13
+            openswmm::twoD::SolverOptions2D o;
+            o.momentum = openswmm::twoD::Momentum2D::LOCAL_INERTIAL;
+            return o;
+        }();
     /**
      * @brief Prepare local cell-heat storage/options around a parsed fixture mesh.
      *
@@ -773,8 +774,9 @@ TEST(MeshHeat, DrySurfaceRetainsLocalBedTracerAndAgeAndCleanRewettingReturnsItsS
 }
 TEST(MeshHeat, LocalBedTracerAndAgeRunOnBothActualSpeciesKernelsWithSeparateExchangeReceipts) {
     for (int pollutants : {1, 8}) {
-        std::string extra = "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINFILTRATION NO\n"
-                            "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n";
+        std::string extra =
+            "[OPTIONS]\nWATER_AGE ON\n[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINFILTRATION NO\n"
+            "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0\n";
         for (int p = 1; p < pollutants; ++p)
             extra += "P" + std::to_string(p) + " MG/L 0 0 0 0 NO * 0 0\n";
         extra += "[2D_INITIAL_QUALITY]\n* Dye 10\n";
@@ -1650,12 +1652,13 @@ TEST(MeshHeat, ColumnWorkspaceReusePreservesShapeFailureRecoveryAndModeChanges) 
             ASSERT_NE(f.model.e, nullptr);
             f.options.bed_heat_model = 2;
             ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "THERMAL_LAYERS",
-                                                     std::to_string(n).c_str()), SWMM_OK);
+                                                   std::to_string(n).c_str()),
+                      SWMM_OK);
             ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "SURFACE_THERMAL_BC",
-                                                     row % 3 == 0 ? "ADIABATIC" : "FIXED 4"),
+                                                   row % 3 == 0 ? "ADIABATIC" : "FIXED 4"),
                       SWMM_OK);
             ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "DEEP_THERMAL_BC",
-                                                     row % 3 == 2 ? "FIXED_TEMP -10" : "ADIABATIC"),
+                                                   row % 3 == 2 ? "FIXED_TEMP -10" : "ADIABATIC"),
                       SWMM_OK);
             auto& sediment = f.model.ctx().heat_config.sediment;
             sediment.initial_temp = -5;
@@ -1666,10 +1669,10 @@ TEST(MeshHeat, ColumnWorkspaceReusePreservesShapeFailureRecoveryAndModeChanges) 
             auto& column = cell.column;
             ASSERT_EQ(column.energy.size(), std::size_t(n));
             auto identity = checkpoint::meshHeatModelIdentity(h);
-            const auto step = [&](std::string label, double mass, double volume,
-                                  double dt, bool midpoint) {
-                double value = applyMeshHeatCell(f.mesh(), f.options, h, 0, mass, volume,
-                                                        0, dt, midpoint);
+            const auto step = [&](std::string label, double mass, double volume, double dt,
+                                  bool midpoint) {
+                double value =
+                    applyMeshHeatCell(f.mesh(), f.options, h, 0, mass, volume, 0, dt, midpoint);
                 history(pass, row, n, identity, label, mass, volume, dt, midpoint, value);
                 checkpoint::meshHeat(history, h);
                 history(h.ground_column_seconds);
@@ -1685,7 +1688,9 @@ TEST(MeshHeat, ColumnWorkspaceReusePreservesShapeFailureRecoveryAndModeChanges) 
             EXPECT_DOUBLE_EQ(step("partial-assembly-refusal", 100, 5, 60, false), 100);
             EXPECT_EQ(h.failures[0], 1);
             EXPECT_EQ(column.energy, accepted);
-            EXPECT_EQ(cell.error, "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+            EXPECT_EQ(
+                cell.error,
+                "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
             column.capacity.back() = capacity;
             h.failures[0] = 0;
             cell.error.clear();
@@ -1705,9 +1710,9 @@ TEST(MeshHeat, ColumnWorkspaceReusePreservesShapeFailureRecoveryAndModeChanges) 
             std::vector<ThermalStore> stores;
             std::vector<ThermalContact> contacts;
             std::vector<ThermalBoundary> boundaries;
-            const auto assembled = appendGroundColumnSystem(
-                f.mesh(), f.options, h.standalone_ground, 0, &h, 20e-12, 1e-12, 0, 60,
-                0, stores, contacts, boundaries);
+            const auto assembled =
+                appendGroundColumnSystem(f.mesh(), f.options, h.standalone_ground, 0, &h, 20e-12,
+                                         1e-12, 0, 60, 0, stores, contacts, boundaries);
             ASSERT_FALSE(h.surface);
             ASSERT_FALSE(h.radiative);
             ASSERT_GE(assembled.water, 0);
@@ -1751,8 +1756,9 @@ TEST(MeshHeat, ColumnProducerReusePreservesPrefixesDisabledConductionAndRefusals
         LocalHeat f("column-producer-" + std::to_string(row));
         ASSERT_NE(f.model.e, nullptr);
         f.options.bed_heat_model = 2;
-        ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "THERMAL_LAYERS",
-                                                 std::to_string(n).c_str()), SWMM_OK);
+        ASSERT_EQ(
+            swmm_gw_transport_option_set(f.model.e, "THERMAL_LAYERS", std::to_string(n).c_str()),
+            SWMM_OK);
         ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "CONDUCTION", "YES"), SWMM_OK);
         ASSERT_EQ(swmm_gw_transport_option_set(f.model.e, "SURFACE_THERMAL_BC", "FIXED 4"),
                   SWMM_OK);
@@ -1798,16 +1804,18 @@ TEST(MeshHeat, ColumnProducerReusePreservesPrefixesDisabledConductionAndRefusals
             std::string error;
             GroundColumnAssembly assembled;
             try {
-                assembled = appendGroundColumnSystem(
-                    f.mesh(), f.options, owner, 0, wet ? &h : nullptr, mass, volume, 0, 60,
-                    channel, stores, contacts, boundaries);
+                assembled = appendGroundColumnSystem(f.mesh(), f.options, owner, 0,
+                                                     wet ? &h : nullptr, mass, volume, 0, 60,
+                                                     channel, stores, contacts, boundaries);
             } catch (const std::runtime_error& exception) {
                 refused = true;
                 error = exception.what();
             }
             EXPECT_EQ(refused, expected_refusal) << stage;
             if (stage == 3)
-                EXPECT_EQ(error, "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
+                EXPECT_EQ(
+                    error,
+                    "Accepted groundwater export leaves no active thermal capacity in its soil layer.");
             else if (stage == 5)
                 EXPECT_EQ(error, "Channel thermal footprint exceeds its soil cell area.");
             else {
@@ -1834,12 +1842,11 @@ TEST(MeshHeat, ColumnProducerReusePreservesPrefixesDisabledConductionAndRefusals
             auto after = snapshot();
             EXPECT_EQ(after, before);
             auto identity = checkpoint::meshHeatModelIdentity(h);
-            history(row, n, stage, enabled, fixed, wet, prefix, channel, mass, volume,
-                    refused, error, identity, before, after);
+            history(row, n, stage, enabled, fixed, wet, prefix, channel, mass, volume, refused,
+                    error, identity, before, after);
             history.sequence(stores, [&](auto& value) { history(value.capacity, value.energy); });
-            history.sequence(contacts, [&](auto& value) {
-                history(value.a, value.b, value.conductance);
-            });
+            history.sequence(contacts,
+                             [&](auto& value) { history(value.a, value.b, value.conductance); });
             history.sequence(boundaries, [&](auto& value) {
                 history(value.store, value.conductance, value.temperature, value.power);
             });
@@ -1851,9 +1858,8 @@ TEST(MeshHeat, ColumnProducerReusePreservesPrefixesDisabledConductionAndRefusals
                         assembled.mass, assembled.volume, assembled.evaporated, assembled.seconds,
                         assembled.wet, assembled.temperature, assembled.slope,
                         assembled.water_initial_j, assembled.flux0.radiation,
-                        assembled.flux0.sensible, assembled.flux0.latent,
-                        assembled.flux1.radiation, assembled.flux1.sensible,
-                        assembled.flux1.latent);
+                        assembled.flux0.sensible, assembled.flux0.latent, assembled.flux1.radiation,
+                        assembled.flux1.sensible, assembled.flux1.latent);
                 EXPECT_TRUE(assembled.lids.empty());
             }
             column.capacity.back() = capacity;
@@ -1871,7 +1877,8 @@ TEST(MeshHeat, InterleavedFiniteBedColumnsPreserveInactiveLayerAndSpeciesInvento
     namespace td = openswmm::twoD;
     const auto solve = [](int nl, bool inactive, bool euler, bool sigma) {
         LocalHeat f("finite-bed-interleaved");
-        if (!f.model.e) throw std::runtime_error("Finite bed fixture did not open.");
+        if (!f.model.e)
+            throw std::runtime_error("Finite bed fixture did not open.");
         auto& sediment = f.model.ctx().heat_config.sediment;
         sediment.bed_thickness = 1;
         sediment.solute_diffusivity = .0001;
@@ -1883,28 +1890,32 @@ TEST(MeshHeat, InterleavedFiniteBedColumnsPreserveInactiveLayerAndSpeciesInvento
         ground.cells.resize(2);
         td::ThermalMaterial material;
         std::vector<double> edges(nl + 1), theta(nl, .3), temperature(nl, 10);
-        for (int j = 0; j <= nl; ++j) edges[j] = double(j) / nl;
+        for (int j = 0; j <= nl; ++j)
+            edges[j] = double(j) / nl;
         if (inactive)
-            for (int j = 1; j < nl; j += 2) theta[j] = 0;
+            for (int j = 1; j < nl; j += 2)
+                theta[j] = 0;
         for (auto& cell : ground.cells) {
             auto error = cell.column.initialize(50, edges, material, theta, temperature);
-            if (!error.empty()) throw std::runtime_error(error);
+            if (!error.empty())
+                throw std::runtime_error(error);
             cell.saturated_water.assign(nl, 0);
             cell.reserved_out_water.assign(nl, 0);
-            error = cell.porewater.initialize(cell.column, cell.saturated_water,
-                                               {0, 0, 0}, {2, 4, 0}, {.001, 0, 0}, 1, 2);
-            if (!error.empty()) throw std::runtime_error(error);
+            error = cell.porewater.initialize(cell.column, cell.saturated_water, {0, 0, 0},
+                                              {2, 4, 0}, {.001, 0, 0}, 1, 2);
+            if (!error.empty())
+                throw std::runtime_error(error);
             if (sigma) {
                 std::vector<td::SigmaPorewaterMap::Overlap> overlap;
                 for (int j = 0; j < nl; ++j)
                     for (int reactor : {0, 1})
-                        overlap.push_back({j, reactor, .5 * theta[j] * 50 *
-                                                (edges[j + 1] - edges[j]),
+                        overlap.push_back({j, reactor,
+                                           .5 * theta[j] * 50 * (edges[j + 1] - edges[j]),
                                            .5 * 50 * (edges[j + 1] - edges[j])});
-                error = cell.porewater.sigma.configure(1, 3, std::move(overlap),
-                                                       {.001, 0, 0}, {1, 1, 2, 2, 0, 0},
-                                                       {0, 0, 0});
-                if (!error.empty()) throw std::runtime_error(error);
+                error = cell.porewater.sigma.configure(1, 3, std::move(overlap), {.001, 0, 0},
+                                                       {1, 1, 2, 2, 0, 0}, {0, 0, 0});
+                if (!error.empty())
+                    throw std::runtime_error(error);
                 cell.porewater.refreshSigmaView();
             }
         }
@@ -1916,13 +1927,15 @@ TEST(MeshHeat, InterleavedFiniteBedColumnsPreserveInactiveLayerAndSpeciesInvento
         heat.hyporheic_eligible = {1, 0};
         heat.channel_footprint = {0, 0};
         heat.failures = {0, 0};
-        heat.bed_species = 3; heat.bed_age_row = 1; heat.bed_temp_row = 2;
+        heat.bed_species = 3;
+        heat.bed_age_row = 1;
+        heat.bed_temp_row = 2;
         std::array<double, 2> surface{5, 7};
         for (int step = 0; step < 6; ++step) {
             const int row = step % 2;
-            surface[row] = euler
-                ? td::applyLocalBedSpeciesEuler(f.mesh(), heat, 0, row, surface[row], 5, .1)
-                : td::applyLocalBedSpecies(f.mesh(), heat, 0, row, surface[row], 5, .1);
+            surface[row] =
+                euler ? td::applyLocalBedSpeciesEuler(f.mesh(), heat, 0, row, surface[row], 5, .1)
+                      : td::applyLocalBedSpecies(f.mesh(), heat, 0, row, surface[row], 5, .1);
             if (!std::isfinite(surface[row]) || surface[row] < 0 || heat.failures[0])
                 throw std::runtime_error("Finite bed contact unexpectedly refused.");
         }

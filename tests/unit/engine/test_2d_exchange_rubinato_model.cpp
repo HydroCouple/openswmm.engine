@@ -198,7 +198,8 @@ struct Case {
  *     downstream normal flow and optional upstream flow boundary.
  */
 std::string deck(const Case& c, const std::map<std::string, double>& rig, const std::string& law,
-                 double h0, const std::string& extra2d, bool physical_shaft = false, double routing_step = 0.5) {
+                 double h0, const std::string& extra2d, bool physical_shaft = false,
+                 double routing_step = 0.5) {
     const double L = rig.at("flume_length_m"), W = rig.at("flume_width_m");
     const double slope = rig.at("flume_slope"), n = rig.at("flume_manning_n");
     const double zc = rig.at("z_crest_m"), xm = 0.5 * L, ym = 0.5 * W;
@@ -248,8 +249,8 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
         m << "C2 CIRCULAR " << rig.at("pipe_diameter_m") << " 0 0 0 1\n\n";
     if (sewer)
         m << "[INFLOWS]\nIN FLOW \"\" FLOW 1.0 1.0 " << c.q3 << "\n\n";
-    m << "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 1\nDRY_DEPTH 0.0002\nREPORT_2D NO\nCOUPLING_LAW " << law
-      << "\nCOUPLING_HEAD STENCIL_WET_MEAN\nCOUPLING_POND_MODE CHAMBER\n"
+    m << "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nMAX_TIMESTEP 1\nDRY_DEPTH 0.0002\nREPORT_2D NO\nCOUPLING_LAW "
+      << law << "\nCOUPLING_HEAD STENCIL_WET_MEAN\nCOUPLING_POND_MODE CHAMBER\n"
       << extra2d
       << "\n"
          "[2D_NODE_COUPLING]\nMH MANHOLE D="
@@ -554,21 +555,21 @@ TEST(RubinatoModel, PhysicalTimeMomentumSmoothingConvergesAcrossAllFourRegimes) 
         c.h_s = row.at("h_s_m").empty() ? 0.0 : std::stod(row.at("h_s_m"));
         c.h_p = row.at("h_p_m").empty() ? 0.0 : std::stod(row.at("h_p_m"));
         c.q1 = c.h_s > 0 ? std::stod(row.at("fr_s")) * std::sqrt(9.81 * c.h_s) * c.h_s *
-                              rig.at("flume_width_m") : 0.0;
-        c.q3 = c.scenario == "S1" ? 0.0 :
-            std::fabs(0.1 * c.q_e / std::stod(row.at("surcharge_pct")));
+                               rig.at("flume_width_m")
+                         : 0.0;
+        c.q3 =
+            c.scenario == "S1" ? 0.0 : std::fabs(0.1 * c.q_e / std::stod(row.at("surcharge_pct")));
         std::vector<double> rates;
         for (const double step : {0.00625, 0.003125}) {
             const std::string tag = "momentum_" + c.scenario + "_" + std::to_string(step);
-            const Result r = run(c, rig, "WEIR_ORIFICE", tag, 0.0,
-                                "THETA_REFERENCE_STEP 1", true, step);
+            const Result r =
+                run(c, rig, "WEIR_ORIFICE", tag, 0.0, "THETA_REFERENCE_STEP 1", true, step);
             ASSERT_TRUE(r.ok) << tag;
             EXPECT_EQ(r.q_num_lps > 0, c.scenario == "S3" || c.scenario == "S4");
             EXPECT_LT(std::fabs(r.q_num_lps - r.q_previous_lps), .02 * std::fabs(r.q_num_lps));
             EXPECT_LT(std::fabs(r.continuity_pct), 2.0);
-            csv << c.scenario << "," << step << "," << r.q_num_lps << "," << r.q_previous_lps
-                << "," << r.continuity_pct << "," << r.node_head_m << "," << r.surface_depth_m
-                << "\n";
+            csv << c.scenario << "," << step << "," << r.q_num_lps << "," << r.q_previous_lps << ","
+                << r.continuity_pct << "," << r.node_head_m << "," << r.surface_depth_m << "\n";
             rates.push_back(r.q_num_lps);
         }
         EXPECT_LT(std::fabs(rates[1] - rates[0]), .01 * std::fabs(rates[1])) << c.scenario;

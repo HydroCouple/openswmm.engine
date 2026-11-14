@@ -1818,66 +1818,73 @@ TEST(SourceWaterDriver, ProviderWeatherFailureLeavesPrivateStateAndClockRetryabl
     EXPECT_NEAR(d.balanceResidual(0), 0, 1e-14);
 }
 
-
 #include "core/CompletedSourceArchive.hpp"
 
 TEST(SourceWaterDriver, LongDeliveryHistoryRetainsBranchesCancellationAndRestartBytes) {
     auto c = pollutantLid("IT", 43200);
     SourceWaterDriver original;
     ASSERT_EQ(original.initialize(c, {0}, areas(c)), "");
-    for (int i=1; i<=2048; ++i)
-        ASSERT_NO_FATAL_FAILURE(step(original,i*.001));
-    const auto prefix=original.deliveries();
-    ASSERT_GT(prefix.size(),2048u);
-    ASSERT_EQ(prefix.back().mass.size(),2u);
-    EXPECT_GT(prefix.back().mass[0],0);
-    std::vector<std::array<std::string,3>> history;
-    const auto capture=[&](const char* tag, SourceWaterDriver& source) {
-        detail::CompletedSourceArchive model,state;
-        source.checkpoint(model,true); source.checkpoint(state,false);
-        history.push_back({tag,model.bytes(),state.bytes()});
-        return std::pair{model.bytes(),state.bytes()};
+    for (int i = 1; i <= 2048; ++i)
+        ASSERT_NO_FATAL_FAILURE(step(original, i * .001));
+    const auto prefix = original.deliveries();
+    ASSERT_GT(prefix.size(), 2048u);
+    ASSERT_EQ(prefix.back().mass.size(), 2u);
+    EXPECT_GT(prefix.back().mass[0], 0);
+    std::vector<std::array<std::string, 3>> history;
+    const auto capture = [&](const char* tag, SourceWaterDriver& source) {
+        detail::CompletedSourceArchive model, state;
+        source.checkpoint(model, true);
+        source.checkpoint(state, false);
+        history.push_back({tag, model.bytes(), state.bytes()});
+        return std::pair{model.bytes(), state.bytes()};
     };
-    const auto before=capture("prefix",original);
-    auto first=original.waterTrial(), second=original.waterTrial();
-    ASSERT_EQ(first.stage(0,2.1,2.1,&sealed),"");
-    EXPECT_GT(first.deliveries(true).size(),prefix.size());
-    EXPECT_EQ(capture("original_during_trial",original),before);
-    EXPECT_EQ(capture("second_during_trial",second),before);
+    const auto before = capture("prefix", original);
+    auto first = original.waterTrial(), second = original.waterTrial();
+    ASSERT_EQ(first.stage(0, 2.1, 2.1, &sealed), "");
+    EXPECT_GT(first.deliveries(true).size(), prefix.size());
+    EXPECT_EQ(capture("original_during_trial", original), before);
+    EXPECT_EQ(capture("second_during_trial", second), before);
     first.cancel();
-    EXPECT_EQ(capture("cancelled",first),before);
-    ASSERT_NO_FATAL_FAILURE(step(second,2.2));
-    const auto other=capture("second_committed",second);
-    EXPECT_EQ(capture("original_after_branch",original),before);
-    ASSERT_NO_FATAL_FAILURE(step(first,2.1));
-    ASSERT_NO_FATAL_FAILURE(step(original,2.1));
-    const auto after=capture("first_committed",first);
-    EXPECT_EQ(capture("original_committed",original),after);
-    EXPECT_NE(after.second,other.second);
+    EXPECT_EQ(capture("cancelled", first), before);
+    ASSERT_NO_FATAL_FAILURE(step(second, 2.2));
+    const auto other = capture("second_committed", second);
+    EXPECT_EQ(capture("original_after_branch", original), before);
+    ASSERT_NO_FATAL_FAILURE(step(first, 2.1));
+    ASSERT_NO_FATAL_FAILURE(step(original, 2.1));
+    const auto after = capture("first_committed", first);
+    EXPECT_EQ(capture("original_committed", original), after);
+    EXPECT_NE(after.second, other.second);
     SourceWaterDriver restored;
-    ASSERT_EQ(restored.initialize(c,{0},areas(c)),"");
-    detail::CompletedSourceArchive model(other.first),state(other.second);
-    restored.checkpoint(model,true); model.finish();
-    restored.checkpoint(state,false); state.finish();
-    EXPECT_EQ(capture("restored",restored),other);
-    ASSERT_NO_FATAL_FAILURE(step(second,2.3));
-    ASSERT_NO_FATAL_FAILURE(step(restored,2.3));
-    EXPECT_EQ(capture("restored_continued",restored),capture("second_continued",second));
-    const auto& records=restored.deliveries();
-    ASSERT_GT(records.size(),prefix.size());
-    for (size_t i=0; i<prefix.size(); ++i) {
-        const auto& a=prefix[i]; const auto& b=records[i];
-        EXPECT_EQ(a.source,b.source); EXPECT_EQ(a.node,b.node);
-        EXPECT_EQ(a.start,b.start); EXPECT_EQ(a.end,b.end);
-        EXPECT_EQ(a.volume,b.volume); EXPECT_EQ(a.drain,b.drain); EXPECT_EQ(a.mass,b.mass);
+    ASSERT_EQ(restored.initialize(c, {0}, areas(c)), "");
+    detail::CompletedSourceArchive model(other.first), state(other.second);
+    restored.checkpoint(model, true);
+    model.finish();
+    restored.checkpoint(state, false);
+    state.finish();
+    EXPECT_EQ(capture("restored", restored), other);
+    ASSERT_NO_FATAL_FAILURE(step(second, 2.3));
+    ASSERT_NO_FATAL_FAILURE(step(restored, 2.3));
+    EXPECT_EQ(capture("restored_continued", restored), capture("second_continued", second));
+    const auto& records = restored.deliveries();
+    ASSERT_GT(records.size(), prefix.size());
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        const auto& a = prefix[i];
+        const auto& b = records[i];
+        EXPECT_EQ(a.source, b.source);
+        EXPECT_EQ(a.node, b.node);
+        EXPECT_EQ(a.start, b.start);
+        EXPECT_EQ(a.end, b.end);
+        EXPECT_EQ(a.volume, b.volume);
+        EXPECT_EQ(a.drain, b.drain);
+        EXPECT_EQ(a.mass, b.mass);
     }
-    if (const char* output=std::getenv("OPENSWMM_SOURCE_DELIVERY_HISTORY")) {
+    if (const char* output = std::getenv("OPENSWMM_SOURCE_DELIVERY_HISTORY")) {
         detail::CompletedSourceArchive archive;
-        std::string magic="Source delivery branch history v1";
-        archive(magic,history);
+        std::string magic = "Source delivery branch history v1";
+        archive(magic, history);
         std::filesystem::create_directories(output);
-        std::ofstream out(std::filesystem::path(output)/"branches.bin",std::ios::binary);
-        out.write(archive.bytes().data(),archive.bytes().size());
+        std::ofstream out(std::filesystem::path(output) / "branches.bin", std::ios::binary);
+        out.write(archive.bytes().data(), archive.bytes().size());
         ASSERT_TRUE(out.good());
     }
 }
@@ -1952,7 +1959,8 @@ TEST(SourceWaterDriver, ContextSnapshotsStayIndependentAcrossAdvanceAndCheckpoin
 
 TEST(SourceWaterDriver, SelectedQualityTrialsPreserveOtherGroupsQueuedReturnsAndPools) {
     auto c = model(6);
-    c.pollutant_names.try_add("Dissolved"); c.pollutant_names.try_add("Counts");
+    c.pollutant_names.try_add("Dissolved");
+    c.pollutant_names.try_add("Counts");
     c.pollutants.resize_pollutants(2);
     c.pollutants.c_rain = {7, 23};
     c.pollutants.units[1] = MassUnits::COUNTS_PER_L;
@@ -1966,7 +1974,8 @@ TEST(SourceWaterDriver, SelectedQualityTrialsPreserveOtherGroupsQueuedReturnsAnd
         c.subcatches.outlet_subcatch[sc] = sc + 1;
         addLid(c, sc, "RB", .25, 0, 0, 0, 1);
     }
-    lid::LIDSolver initial; initial.init(c);
+    lid::LIDSolver initial;
+    initial.init(c);
     auto& barrels = initial.group(int(lid::LIDType::RAIN_BARREL));
     std::fill(barrels.stor_covered.begin(), barrels.stor_covered.end(), 1);
     SourceWaterDriver d;
@@ -1989,10 +1998,10 @@ TEST(SourceWaterDriver, SelectedQualityTrialsPreserveOtherGroupsQueuedReturnsAnd
         }
         for (auto b : d.pollutants())
             if (b.source < 2 || b.source >= 4)
-                archive(b.source, b.type, b.unit, b.layers, b.rain,
-                        b.spatial_infiltration, b.outside_infiltration, b.outlet,
-                        b.removed, b.surface_mass, b.drain_mass, b.impervious_mass,
-                        b.pervious_mass, b.aquifer_return, b.pending_routing, b.incoming);
+                archive(b.source, b.type, b.unit, b.layers, b.rain, b.spatial_infiltration,
+                        b.outside_infiltration, b.outlet, b.removed, b.surface_mass, b.drain_mass,
+                        b.impervious_mass, b.pervious_mass, b.aquifer_return, b.pending_routing,
+                        b.incoming);
         return archive.bytes();
     };
     const auto opening_peers = peers();
@@ -2008,14 +2017,18 @@ TEST(SourceWaterDriver, SelectedQualityTrialsPreserveOtherGroupsQueuedReturnsAnd
     ASSERT_EQ(d.commit(), "");
     EXPECT_EQ(peers(), opening_peers);
     detail::CompletedSourceArchive identity, runtime;
-    d.checkpoint(identity, true); d.checkpoint(runtime, false);
+    d.checkpoint(identity, true);
+    d.checkpoint(runtime, false);
     SourceWaterDriver restored;
     ASSERT_EQ(restored.initialize(c, {0, 2, 4}, areas(c), &initial), "");
     detail::CompletedSourceArchive model_reader(identity.bytes()), state_reader(runtime.bytes());
-    restored.checkpoint(model_reader, true); model_reader.finish();
-    restored.checkpoint(state_reader, false); state_reader.finish();
+    restored.checkpoint(model_reader, true);
+    model_reader.finish();
+    restored.checkpoint(state_reader, false);
+    state_reader.finish();
     detail::CompletedSourceArchive model_again, state_again;
-    restored.checkpoint(model_again, true); restored.checkpoint(state_again, false);
+    restored.checkpoint(model_again, true);
+    restored.checkpoint(state_again, false);
     EXPECT_EQ(identity.bytes(), model_again.bytes());
     EXPECT_EQ(runtime.bytes(), state_again.bytes());
 }

@@ -11,7 +11,7 @@
 
 // Export once per plugin, alongside openswmm_plugin_info. The installed tag
 // identifies engine API, plugin SDK, compiler ABI and enabled build features.
-#define OPENSWMM_DECLARE_PLUGIN_ABI() \
-    OPENSWMM_PLUGIN_EXPORT const char* openswmm_plugin_abi_tag() { \
-        return OPENSWMM_ENGINE_ABI_TAG; \
+#define OPENSWMM_DECLARE_PLUGIN_ABI()                                                              \
+    OPENSWMM_PLUGIN_EXPORT const char* openswmm_plugin_abi_tag() {                                 \
+        return OPENSWMM_ENGINE_ABI_TAG;                                                            \
     }

@@ -66,14 +66,14 @@ struct GroundwaterParallelFixture {
                 auto& expression = state.lateral_expr[i];
                 if (mathexpr::parse("0.000001 * HGW + 0.000002 * HSW", expression) != 0 ||
                     mathexpr::bind_variables(expression, groundwater::GW_VAR_NAMES,
-                                            groundwater::GWV_MAX) != 2)
+                                             groundwater::GWV_MAX) != 2)
                     throw std::logic_error("invalid groundwater fixture lateral expression");
             }
             if (i % 7 == 0) {
                 auto& expression = state.deep_expr[i];
                 if (mathexpr::parse("0.000001 * THETA + 0.000002 * K", expression) != 0 ||
                     mathexpr::bind_variables(expression, groundwater::GW_VAR_NAMES,
-                                            groundwater::GWV_MAX) != 2)
+                                             groundwater::GWV_MAX) != 2)
                     throw std::logic_error("invalid groundwater fixture deep expression");
             }
         }
@@ -87,31 +87,30 @@ struct GroundwaterParallelFixture {
     void prepare(int step) {
         context.current_date = datetime::encodeDate(2026, 3, 31) + step;
         for (std::size_t i = 0; i < infiltration.size(); ++i) {
-            infiltration[i] = (i + step) % 6 == 0 ? 0.
-                : (i % 6) * 2e-7 + (step % 5) * 1e-8;
+            infiltration[i] = (i + step) % 6 == 0 ? 0. : (i % 6) * 2e-7 + (step % 5) * 1e-8;
             surface_head[i] = i % 3 ? 2. : 8.;
             pervious[i] = i % 17 ? .2 + .1 * (i % 8) : 0.;
             surface_evaporation[i] = (i % 4) * 1e-8;
-            context.forcing.subcatch_evap_mode[i] =
-                (i + step) % 3 == 0 ? ForcingMode::NONE
-                : (i + step) % 3 == 1 ? ForcingMode::ADD : ForcingMode::OVERRIDE;
+            context.forcing.subcatch_evap_mode[i] = (i + step) % 3 == 0   ? ForcingMode::NONE
+                                                    : (i + step) % 3 == 1 ? ForcingMode::ADD
+                                                                          : ForcingMode::OVERRIDE;
             context.forcing.subcatch_evap_value[i] = (i % 5) * 2e-8;
         }
     }
 
     void advance(double dt, int step) {
         const int months[] = {0, 4, 12, 1, 9, 0, 6, -1, 2};
-        solver.execute(context, dt, 1e-7, infiltration.data(), surface_head.data(),
-                       pervious.data(), surface_evaporation.data(), months[step % 9]);
+        solver.execute(context, dt, 1e-7, infiltration.data(), surface_head.data(), pervious.data(),
+                       surface_evaporation.data(), months[step % 9]);
     }
 
     void capture(detail::CompletedSourceArchive& history) {
         auto& state = solver.state();
         auto& balance = context.mass_balance;
-        history(state.theta, state.lower_depth, state.old_flow, state.gw_flow,
-                state.upper_evap, state.lower_evap, state.deep_loss, state.max_infil_vol,
-                balance.gw_infil, balance.gw_upper_evap, balance.gw_lower_evap,
-                balance.gw_lower_perc, balance.gw_lateral_flow);
+        history(state.theta, state.lower_depth, state.old_flow, state.gw_flow, state.upper_evap,
+                state.lower_evap, state.deep_loss, state.max_infil_vol, balance.gw_infil,
+                balance.gw_upper_evap, balance.gw_lower_evap, balance.gw_lower_perc,
+                balance.gw_lateral_flow);
     }
 };
 }

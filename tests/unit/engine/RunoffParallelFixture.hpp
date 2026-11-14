@@ -45,8 +45,8 @@ struct Case {
         ctx.subcatch_n_perv_pattern.assign(n, 2);
         ctx.patterns.types.assign(3, 0);
         ctx.patterns.factors = {{.8, 1.2, .4, 1., 0., 1., 1., 1., 1., 1., 1., 1.},
-                               {1.1, .7, 1., 0., 1., 1., 1., 1., 1., 1., 1., 1.},
-                               {.9, 1.3, 1., 0., 1., 1., 1., 1., 1., 1., 1., 1.}};
+                                {1.1, .7, 1., 0., 1., 1., 1., 1., 1., 1., 1., 1.},
+                                {.9, 1.3, 1., 0., 1., 1., 1., 1., 1., 1., 1., 1.}};
         owners.assign(n, -1);
         completed.resize(n);
         for (int i = 0; i < n; ++i) {
@@ -116,8 +116,7 @@ struct Case {
             return false;
         };
         const auto call = [&] {
-            solver.execute(ctx, dt, 2e-7, .9, .85, step % 4,
-                           kind >= 5 ? &boundary : nullptr,
+            solver.execute(ctx, dt, 2e-7, .9, .85, step % 4, kind >= 5 ? &boundary : nullptr,
                            kind == 4 ? &completed : nullptr, nullptr,
                            kind == 1 ? &owners : nullptr);
         };
@@ -136,15 +135,15 @@ struct Case {
         detail::CompletedSourceArchive a;
         solver.checkpoint(a, false);
         auto& s = ctx.subcatches;
-        a(s.rainfall, s.runoff, s.subarea_runoff_rate, s.ponded_depth,
-          s.old_ponded_depth, s.evap_loss, s.infil_loss, s.stat_evap_vol,
-          s.stat_infil_vol, s.stat_imperv_vol, s.stat_perv_vol, s.lid_return_to_perv_cfs, callbacks);
+        a(s.rainfall, s.runoff, s.subarea_runoff_rate, s.ponded_depth, s.old_ponded_depth,
+          s.evap_loss, s.infil_loss, s.stat_evap_vol, s.stat_infil_vol, s.stat_imperv_vol,
+          s.stat_perv_vol, s.lid_return_to_perv_cfs, callbacks);
         return a.bytes();
     }
     void requireFinite() const {
         const auto& s = solver.soa();
-        for (const auto* values : {&s.runoff, &s.depth_imperv0, &s.depth_imperv1,
-                                  &s.depth_perv, &s.infil_vol, &ctx.subcatches.stat_evap_vol})
+        for (const auto* values : {&s.runoff, &s.depth_imperv0, &s.depth_imperv1, &s.depth_perv,
+                                   &s.infil_vol, &ctx.subcatches.stat_evap_vol})
             for (double x : *values)
                 if (!std::isfinite(x) || x < 0)
                     throw std::runtime_error("invalid runoff fixture state");
@@ -156,14 +155,18 @@ inline std::string history(int n, int threads, bool si, int kind) {
     for (int step = 0; step < 9; ++step) {
         f.prepare(step);
         bool threw = false;
-        try { f.advance(7. + 11. * (step % 4), step); }
-        catch (const std::runtime_error&) { threw = true; }
+        try {
+            f.advance(7. + 11. * (step % 4), step);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
         if (threw != (kind == 6 && n > 17))
             throw std::runtime_error("unexpected runoff fixture exception");
         f.requireFinite();
         auto frame = f.capture();
         history(frame, threw);
-        if (threw) break;
+        if (threw)
+            break;
     }
     return history.bytes();
 }

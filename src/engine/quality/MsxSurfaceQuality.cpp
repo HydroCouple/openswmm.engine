@@ -580,6 +580,7 @@ public:
     SurfaceScratchLease(const SurfaceScratchLease&) = delete;
     SurfaceScratchLease& operator=(const SurfaceScratchLease&) = delete;
     SurfaceScratch& get() noexcept { return *scratch_; }
+
 private:
     std::optional<SurfaceScratch> fallback_;
     SurfaceScratch* scratch_;
@@ -611,7 +612,6 @@ void speciesParams(const MsxSurfaceData& s, SpeciesParams& p) {
         wp.sweep_effic = s.wo_sweep_effic[k];
         wp.bmp_effic = s.wo_bmp_effic[k];
     }
-
 }
 /**
  * @brief Assemble a nonowning shared surface-kernel view of native species and ledgers.

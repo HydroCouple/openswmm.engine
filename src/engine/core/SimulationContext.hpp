@@ -304,7 +304,7 @@ struct StateAccessors {
     /// Guard saves when a caller has no FV dry-inventory accessor.
     std::function<bool()> has_fv_retained_dry_mass;
     std::function<std::string()> get_fv_dry_state;
-    std::function<std::string(const std::string&,bool)> set_fv_dry_state;
+    std::function<std::string(const std::string&, bool)> set_fv_dry_state;
     std::function<std::vector<double>()> get_fv_retained_pollutant_mass;
     std::function<std::vector<double>()> get_fv_retained_species_mass;
     std::function<std::vector<ChannelThermalRegion>()> get_channel_thermal_regions;

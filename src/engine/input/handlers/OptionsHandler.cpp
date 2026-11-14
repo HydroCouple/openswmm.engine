@@ -511,13 +511,13 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 // GUI/API clock spelling, including fractional seconds.
                 int hours = 0, minutes = 0, consumed = 0;
                 double seconds = 0.0;
-                int fields = std::sscanf(val.c_str(), "%d:%d:%lf%n", &hours, &minutes,
-                                         &seconds, &consumed);
+                int fields =
+                    std::sscanf(val.c_str(), "%d:%d:%lf%n", &hours, &minutes, &seconds, &consumed);
                 if (fields == 2)
                     fields = std::sscanf(val.c_str(), "%d:%d%n", &hours, &minutes, &consumed);
                 if (fields < 2 || consumed != static_cast<int>(val.size()) || hours < 0 ||
-                    minutes < 0 || minutes >= 60 || !std::isfinite(seconds) ||
-                    seconds < 0.0 || seconds >= 60.0)
+                    minutes < 0 || minutes >= 60 || !std::isfinite(seconds) || seconds < 0.0 ||
+                    seconds >= 60.0)
                     ctx.errors.push_back(format_error(ERR_NUMBER, val));
                 else
                     opt.min_routing_step = hours * 3600.0 + minutes * 60.0 + seconds;
@@ -535,8 +535,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
             // Explicit fractional seconds extend the clock spelling without
             // changing legacy decimal-hour tokens or RULE_STEP truncation.
             const auto last_colon = val.rfind(':');
-            const bool fractional_clock = key != "RULE_STEP" &&
-                last_colon != std::string::npos && val.find('.', last_colon) != std::string::npos;
+            const bool fractional_clock = key != "RULE_STEP" && last_colon != std::string::npos &&
+                                          val.find('.', last_colon) != std::string::npos;
             if (fractional_clock) {
                 int h = 0, m = 0;
                 double seconds = 0.0;
@@ -563,10 +563,14 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 ctx.errors.push_back(format_error(ERR_NUMBER, val));
                 continue;
             }
-            if (key == "DRY_STEP") opt.dry_step = step;
-            else if (key == "WET_STEP") opt.wet_step = step;
-            else if (key == "REPORT_STEP") opt.report_step = step;
-            else opt.rule_step = step;
+            if (key == "DRY_STEP")
+                opt.dry_step = step;
+            else if (key == "WET_STEP")
+                opt.wet_step = step;
+            else if (key == "REPORT_STEP")
+                opt.report_step = step;
+            else
+                opt.rule_step = step;
         } else if (key == "QUALITY_STEP") {
             // X3a: LARD transport substep (strategy §4.2). Same time
             // spelling as the other *_STEP keys.

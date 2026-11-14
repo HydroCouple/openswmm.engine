@@ -605,7 +605,8 @@ void massbal_updateRoutingTotals(double tStep) {
 
     for (j = 0; j < Nobjects[NODE]; j++) {
         NodeInflow[j] += Node[j].inflow * tStep;
-        if (Node[j].type == OUTFALL || (Node[j].degree == 0 && Node[j].type != STORAGE && Node[j].storageArea == 0.0)) {
+        if (Node[j].type == OUTFALL ||
+            (Node[j].degree == 0 && Node[j].type != STORAGE && Node[j].storageArea == 0.0)) {
             NodeOutflow[j] += Node[j].inflow * tStep;
         } else {
             NodeOutflow[j] += Node[j].outflow * tStep;

@@ -14,7 +14,6 @@
 #include "openswmm/engine/openswmm_engine.h"
 #include "openswmm_abi_tag.h"
 
-extern "C" const char *swmm_engine_abi_tag(void)
-{
+extern "C" const char* swmm_engine_abi_tag(void) {
     return OPENSWMM_ENGINE_ABI_TAG;
 }

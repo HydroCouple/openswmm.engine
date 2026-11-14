@@ -465,8 +465,8 @@ TEST_F(GeoPackageTest, MultipolygonRoundTrip) {
 TEST(GeoPackageMultipartGeometry, RetainsPartsHolesAndEmptyMembers) {
     // Independently assemble WKB: two disjoint polygons, with a hole in the
     // first. Ring winding deliberately matches, so nesting must be geometric.
-    const std::vector<double> x{0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
-    const std::vector<double> y{0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    const std::vector<double> x{0, 100, 100, 0, 0, 20, 40, 40, 20, 20, 200, 250, 250, 200, 200};
+    const std::vector<double> y{0, 0, 100, 100, 0, 20, 20, 40, 40, 20, 10, 10, 60, 60, 10};
     std::vector<uint8_t> blob;
     detail::write_gp_header(blob, 4326, 0, 0, 250, 100);
     detail::append_u8(blob, 1);
@@ -511,10 +511,10 @@ TEST_F(GeoPackageTest, MultipartSubcatchmentSurvivesSaveReopen) {
     auto ctx_out = build_test_context();
     const auto sub = ctx_out.subcatch_names.find("S1");
     ASSERT_GE(sub, 0);
-    ctx_out.spatial.subcatch_polygon_x[sub] =
-        {0,100,100,0,0, 20,40,40,20,20, 200,250,250,200,200};
-    ctx_out.spatial.subcatch_polygon_y[sub] =
-        {0,0,100,100,0, 20,20,40,40,20, 10,10,60,60,10};
+    ctx_out.spatial.subcatch_polygon_x[sub] = {0,  100, 100, 0,   0,   20,  40, 40,
+                                               20, 20,  200, 250, 250, 200, 200};
+    ctx_out.spatial.subcatch_polygon_y[sub] = {0,  0,  100, 100, 0,  20, 20, 40,
+                                               40, 20, 10,  10,  60, 60, 10};
     const fs::path retained = fs::current_path() / "multipart_geometry";
     fs::create_directories(retained);
     const auto path = (retained / "subcatchment.gpkg").string();
@@ -2582,20 +2582,41 @@ TEST(GeoPackageMapAnnotations, LabelsBackdropAndProfilesSurviveAGpkgRoundTrip) {
 }
 
 TEST(GeoPackagePollutantBasis, RawUnitCodesRetainDeclarationValidity) {
-    const auto root=fs::path(__FILE__).parent_path().parent_path().parent_path()/"verification/component_species_bases_2026-11-07/geopackage";
+    const auto root = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                      "verification/component_species_bases_2026-11-07/geopackage";
     fs::create_directories(root);
-    int index=0;
-    for(const auto code:{"0","1","2","junk","256","UG/L"}) {
-        SCOPED_TRACE(code);SimulationContext source;source.pollutant_names.add("Dye");source.allocate_objects();
-        const auto file=(root/(std::to_string(index)+".gpkg")).string();ASSERT_EQ(write_to_file(file,source,"basis"),0);
-        {auto db=open_database(file);auto query=prepare(db.get(),"UPDATE pollutants SET units=? WHERE simulation_id='basis'");bind_text(query.get(),1,code);ASSERT_EQ(sqlite3_step(query.get()),SQLITE_DONE);}
-        SimulationContext loaded;ASSERT_EQ(read_from_file(file,loaded,"basis"),0);ASSERT_EQ(loaded.pollutants.unit_declaration_valid.size(),1u);
-        const bool recognized=index<3;EXPECT_EQ(loaded.pollutants.unit_declaration_valid[0],recognized);
-        EXPECT_EQ(static_cast<int>(loaded.pollutants.units[0]),recognized?index:0);
-        if(!recognized) {
-            quality::PassiveStorageExchange book;quality::PassiveStorageExchange::Row row;row.pollutant="Dye";
-            try {book.reserve(loaded,1,{row});FAIL()<<"Malformed database units enrolled";}
-            catch(const std::exception& error) {EXPECT_NE(std::string(error.what()).find("unit declaration"),std::string::npos)<<error.what();}
+    int index = 0;
+    for (const auto code : {"0", "1", "2", "junk", "256", "UG/L"}) {
+        SCOPED_TRACE(code);
+        SimulationContext source;
+        source.pollutant_names.add("Dye");
+        source.allocate_objects();
+        const auto file = (root / (std::to_string(index) + ".gpkg")).string();
+        ASSERT_EQ(write_to_file(file, source, "basis"), 0);
+        {
+            auto db = open_database(file);
+            auto query =
+                prepare(db.get(), "UPDATE pollutants SET units=? WHERE simulation_id='basis'");
+            bind_text(query.get(), 1, code);
+            ASSERT_EQ(sqlite3_step(query.get()), SQLITE_DONE);
+        }
+        SimulationContext loaded;
+        ASSERT_EQ(read_from_file(file, loaded, "basis"), 0);
+        ASSERT_EQ(loaded.pollutants.unit_declaration_valid.size(), 1u);
+        const bool recognized = index < 3;
+        EXPECT_EQ(loaded.pollutants.unit_declaration_valid[0], recognized);
+        EXPECT_EQ(static_cast<int>(loaded.pollutants.units[0]), recognized ? index : 0);
+        if (!recognized) {
+            quality::PassiveStorageExchange book;
+            quality::PassiveStorageExchange::Row row;
+            row.pollutant = "Dye";
+            try {
+                book.reserve(loaded, 1, {row});
+                FAIL() << "Malformed database units enrolled";
+            } catch (const std::exception& error) {
+                EXPECT_NE(std::string(error.what()).find("unit declaration"), std::string::npos)
+                    << error.what();
+            }
         }
         ++index;
     }

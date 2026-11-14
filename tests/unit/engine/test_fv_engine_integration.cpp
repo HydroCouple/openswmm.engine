@@ -2699,8 +2699,8 @@ TEST(FvEngine, ReportedVolumesUseAcceptedWindows) {
             "[REPORT]\nNODES ALL\nLINKS ALL\n";
     file.close();
     openswmm::SWMMEngine engine;
-    ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
-                          (base + ".out").c_str()), 0);
+    ASSERT_EQ(
+        engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(), (base + ".out").c_str()), 0);
     ASSERT_EQ(engine.initialize(), 0);
     ASSERT_EQ(engine.start(1), 0);
     auto& ctx = engine.context();
@@ -2741,8 +2741,8 @@ TEST(FvEngine, VirtualJunctionTotalsUseTheSplicedFace) {
                 "END_DATE 01/01/2026\nEND_TIME 00:01:00\n"
                 "REPORT_STEP 00:00:01\nROUTING_STEP 3\nVARIABLE_STEP 0\n"
                 "FV_MIN_CELLS 4\nFV_TIME_INTEGRATION "
-             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS "
-             << (mode == "LTS" ? "YES" : "NO") << "\n"
+             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS " << (mode == "LTS" ? "YES" : "NO")
+             << "\n"
                 "[STORAGE]\nS 0 10 2 FUNCTIONAL 0 0 100\n"
                 "D 0 10 0.2 FUNCTIONAL 0 0 100\n"
                 "[OUTFALLS]\nO 0 FREE YES\n"
@@ -2752,8 +2752,9 @@ TEST(FvEngine, VirtualJunctionTotalsUseTheSplicedFace) {
                 "[REPORT]\nNODES ALL\nLINKS ALL\n";
         file.close();
         openswmm::SWMMEngine engine;
-        ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
-                              (base + ".out").c_str()), 0);
+        ASSERT_EQ(
+            engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(), (base + ".out").c_str()),
+            0);
         ASSERT_EQ(engine.initialize(), 0);
         ASSERT_EQ(engine.start(1), 0);
         auto& ctx = engine.context();
@@ -2798,8 +2799,8 @@ TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
                 "FV_MIN_CELLS 4\nFV_CFL 0.09375\nFV_ORDER 1\n"
                 "FV_SLOT_CELERITY 25\nFV_PRESSURIZED_IMPLICIT NO\n"
                 "FV_TIME_INTEGRATION "
-             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS "
-             << (mode == "LTS" ? "YES" : "NO") << "\n"
+             << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS " << (mode == "LTS" ? "YES" : "NO")
+             << "\n"
                 "[OUTFALLS]\nN0 25.50384 FIXED 29.50384 NO\n"
                 "N24 0 TIMESERIES LEVEL NO\n[VIRTUAL_JUNCTIONS]\n";
         const double lengths[] = {39.5, 40.0, 39.9};
@@ -2819,8 +2820,9 @@ TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
                 "[REPORT]\nNODES ALL\nLINKS ALL\n";
         file.close();
         openswmm::SWMMEngine engine;
-        ASSERT_EQ(engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(),
-                              (base + ".out").c_str()), 0);
+        ASSERT_EQ(
+            engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(), (base + ".out").c_str()),
+            0);
         ASSERT_EQ(engine.initialize(), 0);
         ASSERT_EQ(engine.start(0), 0);
         auto& ctx = engine.context();
@@ -2849,8 +2851,8 @@ TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
         for (int n = 0; n < ctx.n_nodes(); ++n) {
             EXPECT_NEAR(ctx.outfall_exports.reverse_m3[n], accepted_reverse[n], 1e-9)
                 << mode << " node " << n;
-            reversed |= ctx.outfall_exports.water_m3[n] > 0.0 &&
-                        ctx.outfall_exports.reverse_m3[n] > 0.0;
+            reversed |=
+                ctx.outfall_exports.water_m3[n] > 0.0 && ctx.outfall_exports.reverse_m3[n] > 0.0;
         }
         EXPECT_TRUE(reversed) << "fixture must exercise a reversing boundary: " << mode;
         ASSERT_EQ(engine.report(), 0);

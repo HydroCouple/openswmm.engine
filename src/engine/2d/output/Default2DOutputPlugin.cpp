@@ -642,9 +642,10 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
     if (mixing_enabled_) {
         if (mixing_depth_coefficient_ > 0) {
             writeDoubleAttr(file_id_, "mixing_length_coefficient", mixing_depth_coefficient_);
-            writeStringAttr(file_id_, "mixing_length",
-                            "min(coefficient * cell depth, 0.41 * distance to nearest boundary edge), "
-                            "SI metres; viscosity = background + length^2 * |vorticity|");
+            writeStringAttr(
+                file_id_, "mixing_length",
+                "min(coefficient * cell depth, 0.41 * distance to nearest boundary edge), "
+                "SI metres; viscosity = background + length^2 * |vorticity|");
         } else {
             writeDoubleAttr(file_id_, "smagorinsky_cs", mixing_cs_);
             writeStringAttr(file_id_, "smagorinsky_filter", "sqrt(cell area), SI metres");
@@ -658,7 +659,6 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
         mixing_edges_->build(mesh);
         mixing_diagnostics_ = std::make_unique<MomentumPhysics2D>();
     }
-
 
     // Results-file size controls, recorded so readers and the parity tooling
     // can tell how the time-varying datasets were stored.
@@ -751,16 +751,29 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceDS("Mesh2_face_infil_cum", "cumulative infiltrated depth", "m");
     }
     if (mixing_enabled_ && want(report2d::TURBULENCE)) {
-        ds_face_eddy_viscosity_ = createFaceDS("Mesh2_face_eddy_viscosity", "horizontal eddy viscosity (background plus closure)", "m2 s-1");
-        ds_face_strain_rate_ = createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
+        ds_face_eddy_viscosity_ =
+            createFaceDS("Mesh2_face_eddy_viscosity",
+                         "horizontal eddy viscosity (background plus closure)", "m2 s-1");
+        ds_face_strain_rate_ =
+            createFaceDS("Mesh2_face_strain_rate", "horizontal strain rate magnitude", "s-1");
     }
     if (want(report2d::VELOCITY)) {
-        ds_face_vx_ = createFaceDS("Mesh2_face_vx", momentum_velocity_ ? "cell velocity X from conserved momentum" : "cell velocity X from wetted-edge normal velocities", "m s-1");
-        ds_face_vy_ = createFaceDS("Mesh2_face_vy", momentum_velocity_ ? "cell velocity Y from conserved momentum" : "cell velocity Y from wetted-edge normal velocities", "m s-1");
+        ds_face_vx_ =
+            createFaceDS("Mesh2_face_vx",
+                         momentum_velocity_ ? "cell velocity X from conserved momentum"
+                                            : "cell velocity X from wetted-edge normal velocities",
+                         "m s-1");
+        ds_face_vy_ =
+            createFaceDS("Mesh2_face_vy",
+                         momentum_velocity_ ? "cell velocity Y from conserved momentum"
+                                            : "cell velocity Y from wetted-edge normal velocities",
+                         "m s-1");
         for (hid_t ds : {ds_face_vx_, ds_face_vy_}) {
-            writeStringAttr(ds, "reconstruction", momentum_velocity_ ? "conserved_cell_momentum"
-                : "wetted_edge_area_weighted_least_squares");
-            writeStringAttr(ds, "missing_value_meaning", "NaN: unavailable wet-cell velocity; dry cells are zero");
+            writeStringAttr(ds, "reconstruction",
+                            momentum_velocity_ ? "conserved_cell_momentum"
+                                               : "wetted_edge_area_weighted_least_squares");
+            writeStringAttr(ds, "missing_value_meaning",
+                            "NaN: unavailable wet-cell velocity; dry cells are zero");
         }
     }
     if (want(report2d::CONTINUITY))
@@ -807,7 +820,8 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceEnvelopeDataset("Mesh2_face_max_depth", "maximum overland flow depth", "m");
         ds_face_max_velocity_ = createFaceEnvelopeDataset(
             "Mesh2_face_max_velocity", "maximum cell velocity magnitude", "m s-1");
-        writeStringAttr(ds_face_max_velocity_, "sampling",
+        writeStringAttr(
+            ds_face_max_velocity_, "sampling",
             "maximum finite velocity samples; unavailable samples excluded; NaN if none");
         if (want(report2d::CONTINUITY))
             ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
@@ -950,12 +964,13 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         mixing_edges_->refreshConveyance(*mixing_mesh_);
         auto qx = snap.surface_face_vx, qy = snap.surface_face_vy;
         for (std::size_t k = 0; k < qx.size(); ++k) {
-            qx[k] *= snap.surface_depth[k]; qy[k] *= snap.surface_depth[k];
+            qx[k] *= snap.surface_depth[k];
+            qy[k] *= snap.surface_depth[k];
         }
         std::vector<double> rx, ry;
         mixing_diagnostics_->evaluate(*mixing_mesh_, *mixing_edges_, snap.surface_depth,
-            snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry, -1, mixing_background_,
-            mixing_depth_coefficient_);
+                                      snap.surface_head, qx, qy, mixing_dry_, mixing_cs_, rx, ry,
+                                      -1, mixing_background_, mixing_depth_coefficient_);
         face(ds_face_eddy_viscosity_, mixing_diagnostics_->viscosity);
         face(ds_face_strain_rate_, mixing_diagnostics_->strain);
     }
@@ -1594,7 +1609,8 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
          "m"},
         {"Mesh2_face_gw_hg", "saturated thickness", "m"},
         {"Mesh2_face_gw_hu",
-         "unsaturated storage (equivalent depth of water; the sigma column total under closure B)", "m"},
+         "unsaturated storage (equivalent depth of water; the sigma column total under closure B)",
+         "m"},
         {"Mesh2_face_gw_recharge",
          "recharge from the unsaturated to the saturated zone, positive down, negative = capillary rise (last firing, held)",
          "m s-1"},
@@ -1883,8 +1899,10 @@ void Default2DOutputPlugin::createGroundwaterDatasets(const SimulationSnapshot& 
 }
 
 void Default2DOutputPlugin::createSpeciesDatasets(const SimulationSnapshot& snap) {
-    if(ds_face_species_conc_!=H5I_INVALID_HID || !want(report2d::SPECIES) || snap.surface_species_count<=0 ||
-        snap.surface_species_conc.size()!=std::size_t(snap.surface_species_count)*n_faces_)return;
+    if (ds_face_species_conc_ != H5I_INVALID_HID || !want(report2d::SPECIES) ||
+        snap.surface_species_count <= 0 ||
+        snap.surface_species_conc.size() != std::size_t(snap.surface_species_count) * n_faces_)
+        return;
     // Resolve the row selection once, by name against the surface's
     // own row names (S4) or the pollutant list (pre-S4 fallback).
     const std::vector<std::string>* names_src =
@@ -1915,8 +1933,7 @@ void Default2DOutputPlugin::createSpeciesDatasets(const SimulationSnapshot& snap
         hsize_t chunk3[3] = {1, n_species_, std::min<hsize_t>(n_faces_, 4096)};
         ds_face_species_conc_ =
             createUnlimitedDataset("Mesh2_face_species_conc", 3, zero3s, chunk3);
-        writeStringAttr(ds_face_species_conc_, "long_name",
-                        "surface species concentration");
+        writeStringAttr(ds_face_species_conc_, "long_name", "surface species concentration");
         // Species units are per species; the dataset carries the
         // layout, a name list and (S4b) a parallel unit list so a
         // reader can join. "1" here means "see species_units".

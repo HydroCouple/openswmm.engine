@@ -806,7 +806,8 @@ std::map<std::string, double> runoffVolumes(const char* inp, const char* rpt, co
 // back to the global factor and a DAILY pattern was read as if it were monthly.
 TEST(SubcatchInfilPattern, FollowsLegacyForShortAndNonMonthlyPatterns) {
     writeInfilPatternDeck("_infil_pattern.inp");
-    const auto vol = runoffVolumes("_infil_pattern.inp", "_infil_pattern.rpt", "_infil_pattern.out");
+    const auto vol =
+        runoffVolumes("_infil_pattern.inp", "_infil_pattern.rpt", "_infil_pattern.out");
     ASSERT_EQ(vol.size(), 4u);
     EXPECT_GT(vol.at("S_NONE"), 1.05 * vol.at("S_FULL")); // the factor matters in this deck
     EXPECT_DOUBLE_EQ(vol.at("S_SHORT"), vol.at("S_FULL"));

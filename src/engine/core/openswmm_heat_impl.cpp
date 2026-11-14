@@ -1506,8 +1506,8 @@ struct ConfigurationSnapshot {
         : owner(engine), options(ctx.options), climate(ctx.climate_state),
           snow(ctx.snowpacks.config), meteorology(ctx.snowpacks.meteorology), heat(ctx.heat_config),
           components(ctx.process_component_specs), ard(ctx.ard_config),
-          shortwave_now(ctx.heat_state.shortwave_now),
-          cloud_now(ctx.heat_state.cloud_now), thermal_2d(ctx) {
+          shortwave_now(ctx.heat_state.shortwave_now), cloud_now(ctx.heat_state.cloud_now),
+          thermal_2d(ctx) {
         const double* source[] = {ctx.adjust_temp, ctx.adjust_evap, ctx.adjust_rain,
                                   ctx.adjust_hydcon};
         for (int row = 0; row < 4; ++row)

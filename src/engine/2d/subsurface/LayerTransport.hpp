@@ -33,15 +33,17 @@ struct LayerTransportScratch {
     LayerTransportResult result;
     std::vector<double> diagonal, upper, lower, b, dry, requested, remaining, scale;
 };
-const LayerTransportResult& solveLayerTransport(
-    const std::vector<double>& capacity, const std::vector<double>& rhs,
-    const std::vector<LayerTransportMove>& moves, LayerTransportScratch& scratch,
-    bool signed_species = false);
-const LayerTransportResult& advanceLayerTransportEuler(
-    const std::vector<double>& capacity, const std::vector<double>& initial,
-    const std::vector<double>& rhs, const std::vector<LayerTransportMove>& moves,
-    LayerTransportScratch& scratch, bool signed_species = false,
-    const std::vector<double>* donor_available = nullptr);
+const LayerTransportResult& solveLayerTransport(const std::vector<double>& capacity,
+                                                const std::vector<double>& rhs,
+                                                const std::vector<LayerTransportMove>& moves,
+                                                LayerTransportScratch& scratch,
+                                                bool signed_species = false);
+const LayerTransportResult&
+advanceLayerTransportEuler(const std::vector<double>& capacity, const std::vector<double>& initial,
+                           const std::vector<double>& rhs,
+                           const std::vector<LayerTransportMove>& moves,
+                           LayerTransportScratch& scratch, bool signed_species = false,
+                           const std::vector<double>* donor_available = nullptr);
 /**
  * @brief Conservative, positivity-preserving implicit donor transport on a column chain. rhs
  * holds mass after already-paired incoming/outgoing receipts; capacity is the final

@@ -277,7 +277,6 @@ struct SubsurfaceTransportState {
         return edge * static_cast<std::size_t>(n_species) + static_cast<std::size_t>(species);
     }
 
-
     /**
      * @brief Allocate/reset the core two-zone transport arrays and ledgers.
      * @param[in] n_spec Requested species count; nonpositive clamps to zero.

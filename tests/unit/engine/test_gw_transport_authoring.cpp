@@ -439,8 +439,7 @@ TEST(GwTransportAuthoring, SpeciesAndSeriesAreResolved) {
 // before the mesh builder fills the centroids, so every XY source landed in
 // the first cell (the Bellinge well). (5, 5) is the centroid of the quad.
 TEST(GwTransportAuthoring, XySourceLandsInTheNearestCell) {
-    DeckRun r =
-        openDeck("xy_source", deck("[GW_SOURCES]\nWell XY 5 5 FLOW 0.001 Cu CONC 10\n\n"));
+    DeckRun r = openDeck("xy_source", deck("[GW_SOURCES]\nWell XY 5 5 FLOW 0.001 Cu CONC 10\n\n"));
     ASSERT_TRUE(r.opened) << r.eng->context().error_message;
     char name[32] = {0}, tag[32] = {0}, series[32] = {0};
     int scope = -1, cell = -1;
@@ -490,13 +489,12 @@ TEST(GwTransportAuthoring, XyLocationReadsBackAndSets) {
 // names it; a stale name makes the saved file refuse to open (unknown species).
 TEST(GwTransportAuthoring, RenamesReachEvery2DAndGroundwaterRow) {
     DeckRun r = openDeck(
-        "rename",
-        deck("[LANDUSES]\nPad 0 0 0\n\n[WASHOFF]\nPad Cu EXP 0.1 1.0 0 0\n\n"
-             "[2D_COVERAGES]\nTAG PAN Pad 100\n\n[2D_LOADINGS]\nTAG PAN Cu 50\n\n"
-             "[2D_INITIAL_QUALITY]\n*  Cu  2.0\n\n[2D_BOUNDARY_QUALITY]\n0 0 Cu 1.0\n\n"
-             "[GW_SORPTION]\n*  Cu  0.5\n\n[GW_INITIAL_QUALITY]\n*  SAT  Cu  1.0\n\n"
-             "[GW_SOURCES]\nWell CELL 1 FLOW 0.001 Cu CONC 10\n\n",
-             "REPORT_2D_SPECIES Cu\n"));
+        "rename", deck("[LANDUSES]\nPad 0 0 0\n\n[WASHOFF]\nPad Cu EXP 0.1 1.0 0 0\n\n"
+                       "[2D_COVERAGES]\nTAG PAN Pad 100\n\n[2D_LOADINGS]\nTAG PAN Cu 50\n\n"
+                       "[2D_INITIAL_QUALITY]\n*  Cu  2.0\n\n[2D_BOUNDARY_QUALITY]\n0 0 Cu 1.0\n\n"
+                       "[GW_SORPTION]\n*  Cu  0.5\n\n[GW_INITIAL_QUALITY]\n*  SAT  Cu  1.0\n\n"
+                       "[GW_SOURCES]\nWell CELL 1 FLOW 0.001 Cu CONC 10\n\n",
+                       "REPORT_2D_SPECIES Cu\n"));
     ASSERT_TRUE(r.opened) << r.eng->context().error_message;
     ASSERT_EQ(swmm_pollutant_rename(r.e, 0, "Zn"), SWMM_OK);
     ASSERT_EQ(swmm_landuse_rename(r.e, 0, "Lot"), SWMM_OK);
@@ -505,11 +503,12 @@ TEST(GwTransportAuthoring, RenamesReachEvery2DAndGroundwaterRow) {
     finish(r);
 
     const std::string text = readAll(saved);
-    for (const char* sec : {"[2D_COVERAGES]", "[2D_LOADINGS]", "[2D_INITIAL_QUALITY]",
-                            "[2D_BOUNDARY_QUALITY]", "[GW_SORPTION]", "[GW_INITIAL_QUALITY]",
-                            "[GW_SOURCES]", "[2D_OPTIONS]"}) {
+    for (const char* sec :
+         {"[2D_COVERAGES]", "[2D_LOADINGS]", "[2D_INITIAL_QUALITY]", "[2D_BOUNDARY_QUALITY]",
+          "[GW_SORPTION]", "[GW_INITIAL_QUALITY]", "[GW_SOURCES]", "[2D_OPTIONS]"}) {
         const std::string body = section(text, sec);
-        EXPECT_EQ(body.find("Cu"), std::string::npos) << sec << " kept the old pollutant:\n" << body;
+        EXPECT_EQ(body.find("Cu"), std::string::npos) << sec << " kept the old pollutant:\n"
+                                                      << body;
         EXPECT_EQ(body.find("Pad"), std::string::npos) << sec << " kept the old land use";
     }
     EXPECT_NE(section(text, "[2D_COVERAGES]").find("Lot"), std::string::npos);

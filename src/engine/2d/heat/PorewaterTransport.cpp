@@ -160,11 +160,12 @@ inline __attribute__((always_inline))
 #else
 inline
 #endif
-PorewaterAdvection& advectPorewaterImpl(
-    const std::vector<double>& old_water, const std::vector<double>& new_water,
-    const std::vector<double>& retention, const std::vector<double>& mass,
-    const std::vector<double>& external_water, const std::vector<double>& external_mass,
-    const std::vector<double>& withdrawal, Scratch& scratch) {
+    PorewaterAdvection&
+    advectPorewaterImpl(const std::vector<double>& old_water, const std::vector<double>& new_water,
+                        const std::vector<double>& retention, const std::vector<double>& mass,
+                        const std::vector<double>& external_water,
+                        const std::vector<double>& external_mass,
+                        const std::vector<double>& withdrawal, Scratch& scratch) {
     auto& out = scratch.result;
     if constexpr (Reset)
         clearPorewaterAdvection(out);
@@ -313,15 +314,15 @@ advectPorewater(const std::vector<double>& old_water, const std::vector<double>&
                 const std::vector<double>& withdrawal) {
     ImplicitPorewaterScratch scratch;
     advectPorewaterImpl<false>(old_water, new_water, retention, mass, external_water, external_mass,
-                              withdrawal, scratch);
+                               withdrawal, scratch);
     return std::move(scratch.result);
 }
-PorewaterAdvection& advectPorewater(
-    const std::vector<double>& old_water, const std::vector<double>& new_water,
-    const std::vector<double>& retention, const std::vector<double>& mass,
-    const std::vector<double>& external_water, const std::vector<double>& external_mass,
-    const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch) {
+PorewaterAdvection&
+advectPorewater(const std::vector<double>& old_water, const std::vector<double>& new_water,
+                const std::vector<double>& retention, const std::vector<double>& mass,
+                const std::vector<double>& external_water, const std::vector<double>& external_mass,
+                const std::vector<double>& withdrawal, PorewaterTransportScratch& scratch) {
     return advectPorewaterImpl<true>(old_water, new_water, retention, mass, external_water,
-                                    external_mass, withdrawal, scratch);
+                                     external_mass, withdrawal, scratch);
 }
 } // namespace openswmm::twoD

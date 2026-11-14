@@ -250,9 +250,8 @@ TEST_F(UserFlagsCapiTest, RealValuesPreservePrecisionAndIgnoreGlobalLocale) {
     ASSERT_NE(std::setlocale(LC_NUMERIC, "C"), nullptr);
     std::locale::global(std::locale(std::locale::classic(), new Comma));
     ASSERT_EQ(swmm_userflag_define(engine, "REAL", kReal, ""), SWMM_OK);
-    for (const char* input : {"0", "-0", "0.1", "0.10000000000000002",
-                              "1.0000000000000002", "998.2", "1e-6",
-                              "1.7976931348623157e308", "-1.7976931348623157e308",
+    for (const char* input : {"0", "-0", "0.1", "0.10000000000000002", "1.0000000000000002",
+                              "998.2", "1e-6", "1.7976931348623157e308", "-1.7976931348623157e308",
                               "2.2250738585072014e-308", "4.9406564584124654e-324"}) {
         SCOPED_TRACE(input);
         ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", input), SWMM_OK);
@@ -267,8 +266,7 @@ TEST_F(UserFlagsCapiTest, RealValuesPreservePrecisionAndIgnoreGlobalLocale) {
         EXPECT_EQ(*end, '\0');
         EXPECT_EQ(actual, expected);
         EXPECT_EQ(std::signbit(actual), std::signbit(expected));
-        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", output.c_str()),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", output.c_str()), SWMM_OK);
         EXPECT_EQ(getValue("NODE", "J1", "REAL", &found), output);
     }
 }
@@ -355,7 +353,8 @@ TEST_F(UserFlagsCapiTest, CaseHandling) {
 
 TEST_F(UserFlagsCapiTest, RealValuesReadBackWithoutPrecisionLoss) {
     ASSERT_EQ(swmm_userflag_define(engine, "EXACT", kReal, ""), SWMM_OK);
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "0.12345678901234566"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "0.12345678901234566"),
+              SWMM_OK);
     int found = 0;
     const auto text = getValue("NODE", "A", "EXACT", &found);
     ASSERT_EQ(found, 1);

@@ -1132,8 +1132,7 @@ struct SubcatchData {
      * The pollutant-strided ([sc * np + p]) and land-use-strided ([sc * n_lu + lu]) columns are
      * handled by take_row/put_row.
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&SubcatchData::outlet_node);
         f(&SubcatchData::outlet_subcatch);
         f(&SubcatchData::outlet_name);

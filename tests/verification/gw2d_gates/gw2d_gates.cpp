@@ -95,9 +95,9 @@ int g_failures = 0;
 
 void report(const char* name, double residual, double tol) {
     const bool ok = std::isfinite(residual) && std::fabs(residual) <= tol;
-    if (!ok) ++g_failures;
-    std::printf("  %-46s %11.3e  (tol %7.1e)  %s\n", name, residual, tol,
-                ok ? "PASS" : "**FAIL**");
+    if (!ok)
+        ++g_failures;
+    std::printf("  %-46s %11.3e  (tol %7.1e)  %s\n", name, residual, tol, ok ? "PASS" : "**FAIL**");
 }
 
 // ---------------------------------------------------------------------------
@@ -106,11 +106,11 @@ void report(const char* name, double residual, double tol) {
 
 soil::Params sigmaSoil() {
     soil::Params p;
-    p.law     = SoilChar::RUSSO;
-    p.Ks      = 1.0e-5;
+    p.law = SoilChar::RUSSO;
+    p.Ks = 1.0e-5;
     p.theta_s = 0.45;
     p.theta_r = 0.10;
-    p.alpha   = 2.0;
+    p.alpha = 2.0;
     return p;
 }
 
@@ -127,8 +127,8 @@ soil::Params sigmaSoil() {
  * @param q_in    infiltration offered at the top (m/s)
  * @param q_et    ET demand at the top (m/s)
  */
-double sigmaResidual(int m, int nsteps, double dt,
-                     double (*table)(int, double), double q_in, double q_et) {
+double sigmaResidual(int m, int nsteps, double dt, double (*table)(int, double), double q_in,
+                     double q_et) {
     const soil::Params p = sigmaSoil();
     std::vector<double> theta(static_cast<std::size_t>(m), 0.0);
     double L = table(0, 0.0);
@@ -142,16 +142,16 @@ double sigmaResidual(int m, int nsteps, double dt,
         sigma::ColumnStep st;
         st.L_old = L;
         st.L_new = L_next;
-        st.dt    = dt;
-        st.q_in  = q_in;
-        st.q_et  = q_et;
+        st.dt = dt;
+        st.q_in = q_in;
+        st.q_et = q_et;
         sigma::advanceColumn(p, theta.data(), m, 1, st);
 
         const double S1 = sigma::columnStorage(theta.data(), m, 1, L_next);
         // The identity the solver relies on. Every term is one the solver
         // books somewhere, so a mis-report here is a leak there.
-        const double booked = dt * (st.f_top - st.et_taken - st.f_bot
-                                    - st.overflow_to_sat + st.deficit_from_sat);
+        const double booked =
+            dt * (st.f_top - st.et_taken - st.f_bot - st.overflow_to_sat + st.deficit_from_sat);
         worst = std::max(worst, std::fabs((S1 - S0) - booked));
         L = L_next;
     }
@@ -159,7 +159,9 @@ double sigmaResidual(int m, int nsteps, double dt,
 }
 
 /// A table that does not move: the pure-flux limit of the identity.
-double tableStill(int, double) { return 2.0; }
+double tableStill(int, double) {
+    return 2.0;
+}
 
 /// A table falling steadily — the column grows, faces sweep DOWN, and the
 /// grid term takes its donor from below. The sign of that upwind choice is
@@ -178,8 +180,8 @@ double tableOscillating(int s, double dt) {
 }
 
 void gateSigmaColumn() {
-    const int    m  = 8;
-    const int    ns = 2000;
+    const int m = 8;
+    const int ns = 2000;
     const double dt = 1.0;
 
     report("0a. sigma: still column books its fluxes",
@@ -217,8 +219,7 @@ void gateSigmaColumn() {
     // a lucky layer count. Worst residual across the sweep.
     double worst_m = 0.0;
     for (const int mm : {4, 8, 16, 32})
-        worst_m = std::max(worst_m,
-                           sigmaResidual(mm, 500, dt, tableOscillating, 1.0e-6, 0.0));
+        worst_m = std::max(worst_m, sigmaResidual(mm, 500, dt, tableOscillating, 1.0e-6, 0.0));
     report("0e. sigma: m in {4,8,16,32} all conserve", worst_m, 1.0e-12);
 }
 
@@ -259,8 +260,7 @@ void finishGeometry(MeshData& m) {
             double nxv = (len > 0.0) ? dy / len : 0.0;
             double nyv = (len > 0.0) ? -dx / len : 0.0;
             // Orient outward from the centroid.
-            if ((m.edge_mx(sl) - m.tri_cx[t]) * nxv +
-                (m.edge_my(sl) - m.tri_cy[t]) * nyv < 0.0) {
+            if ((m.edge_mx(sl) - m.tri_cx[t]) * nxv + (m.edge_my(sl) - m.tri_cy[t]) * nyv < 0.0) {
                 nxv = -nxv;
                 nyv = -nyv;
             }
@@ -282,7 +282,8 @@ MeshData oneCell(double z = 10.0) {
     m.size_neighbours();
     m.size_geometry();
     m.set_triangle(0, 0, 1, 2);
-    for (int k = 0; k < 3; ++k) m.cell_nbr[MeshData::slot(0, k)] = -1;
+    for (int k = 0; k < 3; ++k)
+        m.cell_nbr[MeshData::slot(0, k)] = -1;
     finishGeometry(m);
     return m;
 }
@@ -301,7 +302,8 @@ MeshData twoCells(double z0 = 10.0, double z1 = 10.0) {
     m.set_triangle(0, 0, 1, 2);
     m.set_triangle(1, 1, 3, 2);
     for (int t = 0; t < 2; ++t)
-        for (int k = 0; k < 3; ++k) m.cell_nbr[MeshData::slot(t, k)] = -1;
+        for (int k = 0; k < 3; ++k)
+            m.cell_nbr[MeshData::slot(t, k)] = -1;
     // Cell 0's edge opposite vertex 0 joins vertices 1,2 — the shared edge.
     m.cell_nbr[MeshData::slot(0, 0)] = 1;
     // Cell 1's edge opposite vertex 1 joins vertices 3,2 … the shared edge of
@@ -317,21 +319,20 @@ MeshData twoCells(double z0 = 10.0, double z1 = 10.0) {
 // ---------------------------------------------------------------------------
 
 struct Rig {
-    MeshData            mesh;
-    InertialEdges       edges;
-    SolverOptions2D     opts;
-    SurfaceStateData    surf;
-    SubsurfaceConfig    cfg;
-    SubsurfaceSolver    gw;
+    MeshData mesh;
+    InertialEdges edges;
+    SolverOptions2D opts;
+    SurfaceStateData surf;
+    SubsurfaceConfig cfg;
+    SubsurfaceSolver gw;
     std::vector<std::string> warnings;
 
     void build(int n_tiers = 1) {
         edges.build(mesh);
         opts.lts_tiers = n_tiers;
         surf.resize(mesh.n_triangles(), mesh.n_vertices());
-        GwUnitFactors uf;   // identity: the rows below are already SI
-        const std::string err =
-            gw.initialize(mesh, edges, opts, uf, 0, cfg, warnings);
+        GwUnitFactors uf; // identity: the rows below are already SI
+        const std::string err = gw.initialize(mesh, edges, opts, uf, 0, cfg, warnings);
         if (!err.empty()) {
             std::printf("  initialize failed: %s\n", err.c_str());
             ++g_failures;
@@ -344,10 +345,14 @@ struct Rig {
     /// invariant has to include the accumulators.
     double totalWater() const {
         double s = gw.state().storage();
-        for (double v : gw.state().eacc_L) s += v;
-        for (double v : gw.state().eacc_R) s += v;
-        for (double v : gw.state().xacc_from_surface) s += v;
-        for (double v : gw.state().xacc_to_surface) s += v;
+        for (double v : gw.state().eacc_L)
+            s += v;
+        for (double v : gw.state().eacc_R)
+            s += v;
+        for (double v : gw.state().xacc_from_surface)
+            s += v;
+        for (double v : gw.state().xacc_to_surface)
+            s += v;
         return s;
     }
 
@@ -363,11 +368,13 @@ struct Rig {
         const int K = gw.tierCount();
         for (int s = 0; s < nsub; ++s) {
             for (int k = 0; k < K; ++k) {
-                if (s % (1 << k)) continue;
+                if (s % (1 << k))
+                    continue;
                 gw.fireGwFaces(k, (1 << k) * dt0);
             }
             for (int k = 0; k < K; ++k) {
-                if (s % (1 << k)) continue;
+                if (s % (1 << k))
+                    continue;
                 gw.fireGwCells(k, (1 << k) * dt0, surf);
             }
         }
@@ -377,13 +384,13 @@ struct Rig {
 
 GwAquiferRow baseRow(GwClosure closure, SoilChar law = SoilChar::RUSSO) {
     GwAquiferRow r;
-    r.scope   = 0;
-    r.Ks      = 1.0e-5;      // m/s
-    r.zs      = 4.0;         // m
+    r.scope = 0;
+    r.Ks = 1.0e-5; // m/s
+    r.zs = 4.0;    // m
     r.theta_s = 0.45;
     r.theta_r = 0.10;
-    r.alpha   = 2.0;         // 1/m
-    r.hg0     = 1.0;         // m
+    r.alpha = 2.0; // 1/m
+    r.hg0 = 1.0;   // m
     r.closure = closure;
     r.closure_set = true;
     r.soil_char = law;
@@ -395,7 +402,8 @@ GwAquiferRow baseRow(GwClosure closure, SoilChar law = SoilChar::RUSSO) {
 /// a gate can put it back on the books.
 double drainToSurface(Rig& rig) {
     double v = 0.0;
-    for (int i = 0; i < rig.mesh.n_triangles(); ++i) v += rig.gw.takeToSurface(i);
+    for (int i = 0; i < rig.mesh.n_triangles(); ++i)
+        v += rig.gw.takeToSurface(i);
     rig.gw.compactPending();
     return v;
 }
@@ -411,7 +419,7 @@ void gateClosed(const char* label, GwClosure closure) {
     Rig rig;
     rig.mesh = oneCell();
     rig.cfg.options.authored = true;
-    rig.cfg.options.dunne    = true;
+    rig.cfg.options.dunne = true;
     rig.cfg.rows.push_back(baseRow(closure));
     rig.build();
 
@@ -427,8 +435,7 @@ void gateClosed(const char* label, GwClosure closure) {
 
 /// Constant infiltration into a closed cell: storage must rise by exactly the
 /// water delivered, less whatever came back up as saturation excess.
-void gateForced(const char* label, GwClosure closure, double q_in_mps,
-                int nsteps, double dt) {
+void gateForced(const char* label, GwClosure closure, double q_in_mps, int nsteps, double dt) {
     Rig rig;
     rig.mesh = oneCell();
     rig.cfg.options.authored = true;
@@ -436,7 +443,7 @@ void gateForced(const char* label, GwClosure closure, double q_in_mps,
     rig.build();
 
     rig.rebuild(dt);
-    const double A  = rig.mesh.tri_area[0];
+    const double A = rig.mesh.tri_area[0];
     const double S0 = rig.totalWater();
     double delivered = 0.0, returned = 0.0;
     for (int step = 0; step < nsteps; ++step) {
@@ -457,34 +464,32 @@ void gateDunne() {
     Rig rig;
     rig.mesh = oneCell();
     rig.cfg.options.authored = true;
-    rig.cfg.options.dunne    = true;
+    rig.cfg.options.dunne = true;
     auto r = baseRow(GwClosure::CLOSED_FORM);
-    r.hg0 = 3.9;               // a table 0.1 m below the surface
+    r.hg0 = 3.9; // a table 0.1 m below the surface
     rig.cfg.rows.push_back(r);
     rig.build();
 
     rig.rebuild(60.0);
-    const double A  = rig.mesh.tri_area[0];
+    const double A = rig.mesh.tri_area[0];
     const double S0 = rig.totalWater();
     double delivered = 0.0, returned = 0.0;
     for (int step = 0; step < 2000; ++step) {
-        const double vol = 1.0e-5 * A * 60.0;   // 36 mm/hr, well past capacity
+        const double vol = 1.0e-5 * A * 60.0; // 36 mm/hr, well past capacity
         rig.gw.bookInfiltrationFromSurface(0, vol);
         delivered += vol;
         rig.march(60.0, 1);
         returned += drainToSurface(rig);
     }
     report("5. Dunne: delivered == stored + returned",
-           (rig.totalWater() - S0) - (delivered - returned),
-           1.0e-9 + 1.0e-12 * delivered);
+           (rig.totalWater() - S0) - (delivered - returned), 1.0e-9 + 1.0e-12 * delivered);
     // …and it must actually have saturated, or the gate proves nothing.
     if (returned <= 0.0) {
         std::printf("  %-46s %11s               **FAIL** (never saturated)\n",
                     "5b. Dunne actually fired", "-");
         ++g_failures;
     } else {
-        std::printf("  %-46s %11.3e m3 returned    PASS\n",
-                    "5b. Dunne actually fired", returned);
+        std::printf("  %-46s %11.3e m3 returned    PASS\n", "5b. Dunne actually fired", returned);
     }
 }
 
@@ -496,14 +501,14 @@ Rig makeTwoCell(double hg_left, double hg_right, int n_tiers) {
     Rig rig;
     rig.mesh = twoCells();
     rig.cfg.options.authored = true;
-    rig.cfg.options.dunne    = false;   // isolate the lateral term
+    rig.cfg.options.dunne = false; // isolate the lateral term
     auto r = baseRow(GwClosure::CLOSED_FORM);
     r.hg0 = hg_left;
     rig.cfg.rows.push_back(r);
     auto r1 = baseRow(GwClosure::CLOSED_FORM);
     r1.scope = 2;
-    r1.cell  = 1;
-    r1.hg0   = hg_right;
+    r1.cell = 1;
+    r1.hg0 = hg_right;
     rig.cfg.rows.push_back(r1);
     rig.build(n_tiers);
     return rig;
@@ -512,8 +517,7 @@ Rig makeTwoCell(double hg_left, double hg_right, int n_tiers) {
 void gateLateral() {
     Rig rig = makeTwoCell(3.0, 0.5, 1);
     if (rig.edges.ne != 1) {
-        std::printf("  two-cell mesh produced %d interior edges, expected 1\n",
-                    rig.edges.ne);
+        std::printf("  two-cell mesh produced %d interior edges, expected 1\n", rig.edges.ne);
         ++g_failures;
         return;
     }
@@ -531,8 +535,8 @@ void gateLateral() {
     // Flat bed, equal soils: the two tables must approach each other, never
     // separate. A sign error here shows as d1 > d0 and nothing else.
     if (d1 < d0) {
-        std::printf("  %-46s %11.3e -> %.3e   PASS\n",
-                    "7. lateral Darcy equilibrates the tables", d0, d1);
+        std::printf("  %-46s %11.3e -> %.3e   PASS\n", "7. lateral Darcy equilibrates the tables",
+                    d0, d1);
     } else {
         std::printf("  %-46s %11.3e -> %.3e   **FAIL**\n",
                     "7. lateral Darcy equilibrates the tables", d0, d1);
@@ -570,7 +574,7 @@ void gateCrossTier() {
     }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
     std::printf("\nTwo-zone groundwater — plan numerical gates\n");
@@ -581,16 +585,13 @@ int main() {
 
     std::printf("\nOne cell, closed (no sources, no sinks):\n");
     gateClosed("1. CLOSED_FORM holds its water", GwClosure::CLOSED_FORM);
-    gateClosed("1b. SIGMA holds its water",       GwClosure::SIGMA);
-    gateClosed("1c. ENSLAVED holds its water",    GwClosure::ENSLAVED);
+    gateClosed("1b. SIGMA holds its water", GwClosure::SIGMA);
+    gateClosed("1c. ENSLAVED holds its water", GwClosure::ENSLAVED);
 
     std::printf("\nOne cell, constant infiltration:\n");
-    gateForced("2. CLOSED_FORM books what it is given",
-               GwClosure::CLOSED_FORM, 1.0e-7, 2000, 60.0);
-    gateForced("3. SIGMA books what it is given",
-               GwClosure::SIGMA, 1.0e-7, 2000, 60.0);
-    gateForced("4. ENSLAVED books what it is given",
-               GwClosure::ENSLAVED, 1.0e-7, 2000, 60.0);
+    gateForced("2. CLOSED_FORM books what it is given", GwClosure::CLOSED_FORM, 1.0e-7, 2000, 60.0);
+    gateForced("3. SIGMA books what it is given", GwClosure::SIGMA, 1.0e-7, 2000, 60.0);
+    gateForced("4. ENSLAVED books what it is given", GwClosure::ENSLAVED, 1.0e-7, 2000, 60.0);
 
     std::printf("\nSaturation excess:\n");
     gateDunne();
@@ -601,8 +602,7 @@ int main() {
     std::printf("\nCross-tier (guarantee G-B):\n");
     gateCrossTier();
 
-    std::printf("\n%s — %d failure(s)\n\n",
-                g_failures == 0 ? "ALL GATES PASS" : "GATES FAILED",
+    std::printf("\n%s — %d failure(s)\n\n", g_failures == 0 ? "ALL GATES PASS" : "GATES FAILED",
                 g_failures);
     return g_failures == 0 ? 0 : 1;
 }

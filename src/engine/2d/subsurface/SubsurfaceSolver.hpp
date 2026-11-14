@@ -673,8 +673,7 @@ public:
      * nodes.
      */
     void fireGwCells(int tier, double dt, SurfaceStateData& surf, double time = 0.0,
-                     double accepted_end = -1.0,
-                     GwFiringOrigin origin = GwFiringOrigin::direct);
+                     double accepted_end = -1.0, GwFiringOrigin origin = GwFiringOrigin::direct);
     /**
      * @brief Borrow mutable copied runtime source prescriptions, receipts and derived lookups.
      * @return Solver-owned RuntimeSources reference. Caller retains no ownership and must
@@ -1848,10 +1847,12 @@ private:
     void markPendingSurface(int i) noexcept;
 
     void publishCellInfiltration(int, SurfaceStateData&, double interval, double time);
-    struct ClockBudget { double in, out, room_in, room_out; };
+    struct ClockBudget {
+        double in, out, room_in, room_out;
+    };
     std::vector<ClockBudget> clockBudgets(int cell, double through) const;
-    double clockAmount(int cell, GwSlot field, const std::vector<double>& values,
-                       std::size_t index, double through) const;
+    double clockAmount(int cell, GwSlot field, const std::vector<double>& values, std::size_t index,
+                       double through) const;
     double clockAccuracyLimit(int cell) const;
     std::vector<std::vector<std::size_t>> cell_beds_;
     RuntimeSources runtime_sources_;
@@ -1879,7 +1880,8 @@ private:
      * water capacity. Refusal flags thermal failure; caller checks it. Does not book hydraulic
      * water itself.
      */
-    void bookPresetHeatOut(int cell, double volume, double temperature_volume, bool external = false);
+    void bookPresetHeatOut(int cell, double volume, double temperature_volume,
+                           bool external = false);
     /**
      * @brief Conduct a groundwater-owned column jointly with its persistent Richards LID stores.
      * - Argument cell (in): Prepared physical cell index, called i in source.

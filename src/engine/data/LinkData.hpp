@@ -968,8 +968,7 @@ struct LinkData {
      * chunked columns (conc, conc_old, stat_flow_class, stat_total_load, stat_lstep_bin_time) hold
      * several cells per link and are handled by take_row and put_row.
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&LinkData::type);
         f(&LinkData::node1);
         f(&LinkData::node2);

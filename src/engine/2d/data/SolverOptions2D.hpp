@@ -251,7 +251,9 @@ enum class Coriolis2D : int8_t { OFF = 0, LATITUDE = 1, CONSTANT_F = 2 };
 enum class Turbulence2D : int8_t { NONE = 0, SMAGORINSKY = 1, MIXING_LENGTH = 2 };
 /// [2D_OPTIONS] TURBULENCE_MODEL token for a closure.
 inline const char* turbulenceName(Turbulence2D t) noexcept {
-    return t == Turbulence2D::SMAGORINSKY ? "SMAGORINSKY" : t == Turbulence2D::MIXING_LENGTH ? "MIXING_LENGTH" : "NONE";
+    return t == Turbulence2D::SMAGORINSKY     ? "SMAGORINSKY"
+           : t == Turbulence2D::MIXING_LENGTH ? "MIXING_LENGTH"
+                                              : "NONE";
 }
 
 struct SolverOptions2D {
@@ -286,9 +288,9 @@ struct SolverOptions2D {
     }
     double coriolisParameter() const noexcept {
         return coriolis == Coriolis2D::CONSTANT_F ? coriolis_f
-             : coriolis == Coriolis2D::LATITUDE
-                 ? 1.4584231711061317e-4 * std::sin(coriolis_latitude * 0.017453292519943295)
-                 : 0.0;
+               : coriolis == Coriolis2D::LATITUDE
+                   ? 1.4584231711061317e-4 * std::sin(coriolis_latitude * 0.017453292519943295)
+                   : 0.0;
     }
     /// [2D_OPTIONS] FRONT_REBUILD AUTO|YES|NO — rebuild the flux-active set
     /// as soon as a wetting front reaches the edge of the active halo instead
@@ -472,17 +474,17 @@ struct SolverOptions2D {
     /// Face-update θ weighting (de Almeida & Bates 2013): 1 = pure Bates 2010
     /// (no numerical diffusion), <1 blends the Perot-reconstructed neighbour
     /// discharge to damp thin-film checkerboarding on steep faces.
-    double theta = 0.8;      ///< [2D_OPTIONS] THETA, (0, 1]
+    double theta = 0.8; ///< [2D_OPTIONS] THETA, (0, 1]
     /// Seconds over which THETA retains momentum. Zero preserves the legacy
     /// per-firing blend; positive values make its relaxation rate independent
     /// of face-step splitting and coupling-window tails.
     double theta_reference_step = 0.0; ///< [2D_OPTIONS] THETA_REFERENCE_STEP, s >= 0
-    double cfl_number = 0.7; ///< [2D_OPTIONS] CFL_NUMBER — α in
-                             ///< dt = α·L_char/(√(gh)+|u|). L_char is
-                             ///< derived from the discrete wave operator
-                             ///< (InertialEdges), so α is a TRUE Courant
-                             ///< fraction: 1.0 = linear stability limit,
-                             ///< 0.7 default = 30% margin on any mesh.
+    double cfl_number = 0.7;           ///< [2D_OPTIONS] CFL_NUMBER — α in
+                                       ///< dt = α·L_char/(√(gh)+|u|). L_char is
+                                       ///< derived from the discrete wave operator
+                                       ///< (InertialEdges), so α is a TRUE Courant
+                                       ///< fraction: 1.0 = linear stability limit,
+                                       ///< 0.7 default = 30% margin on any mesh.
     /// Flux-activation depth (m): cells below it are source-only (lazy rain
     /// accumulation, no face flux). Hysteresis band ±1 mm around it.
     double h_move = 0.003;   ///< [2D_OPTIONS] H_MOVE (m) — flux-active

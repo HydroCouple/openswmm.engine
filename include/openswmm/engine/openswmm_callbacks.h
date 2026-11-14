@@ -179,7 +179,7 @@ typedef void (*SWMM_StepEndCallback)(SWMM_Engine engine, double sim_time, double
  * an engine, or throw. Pointers are borrowed until unregistration/destruction.
  * Diagnostic callbacks are not persisted as physical checkpoint state. */
 typedef void (*SWMM_PhaseCallback)(SWMM_Engine engine, int phase, double start_seconds,
-                                  double end_seconds, void* user_data);
+                                   double end_seconds, void* user_data);
 
 /* =========================================================================
  * Plugin event callbacks (fired by the plugin system)

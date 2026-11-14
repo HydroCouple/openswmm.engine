@@ -316,7 +316,8 @@ TEST(LardHeatTest, RecordHotstartRefusesIncompleteTemperatureState) {
     const HeatRun a = run_deck("_lh_hs1", warm, "_lh_hs.bin", SWMM_ERR_HOTSTART);
     ASSERT_TRUE(a.ok);
     ASSERT_GT(a.link_temp_final[kC5], kTinit + 5.0);
-    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("Record hotstart"), std::string::npos);
+    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("Record hotstart"),
+              std::string::npos);
     EXPECT_FALSE(std::ifstream("_lh_hs.bin").good());
 }
 

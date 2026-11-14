@@ -115,7 +115,8 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
     openswmm::SimulationContext& ctx = eng->context();
 
 #ifdef OPENSWMM_HAS_2D
-    if (eng->livePassiveExchange()) return SWMM_ERR_HOTSTART;
+    if (eng->livePassiveExchange())
+        return SWMM_ERR_HOTSTART;
 #endif
 
     // Must be RUNNING or ENDED to save
@@ -301,8 +302,8 @@ SWMM_ENGINE_API int swmm_hotstart_set_node_state(SWMM_HotStart hs, const char* n
     return to_hs(hs)->set_node_state(node_id, depth) ? SWMM_OK : SWMM_ERR_BADPARAM;
 }
 
-SWMM_ENGINE_API int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id,
-                                                 double flow, double depth) {
+SWMM_ENGINE_API int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id, double flow,
+                                                 double depth) {
     CHECK_HS(hs);
     if (!link_id || !std::isfinite(flow) || !std::isfinite(depth) || depth < 0.0)
         return SWMM_ERR_BADPARAM;
@@ -525,16 +526,16 @@ SWMM_ENGINE_API int swmm_hotstart_get_node_species(SWMM_HotStart hs, int node_in
                                                    int species_index, double* value) {
     CHECK_HS(hs);
     const auto& f = *to_hs(hs);
-    return speciesValue(f.node_species, f.nodes.size(), node_index, f.species.size(),
-                        species_index, value);
+    return speciesValue(f.node_species, f.nodes.size(), node_index, f.species.size(), species_index,
+                        value);
 }
 
 SWMM_ENGINE_API int swmm_hotstart_get_link_species(SWMM_HotStart hs, int link_index,
                                                    int species_index, double* value) {
     CHECK_HS(hs);
     const auto& f = *to_hs(hs);
-    return speciesValue(f.link_species, f.links.size(), link_index, f.species.size(),
-                        species_index, value);
+    return speciesValue(f.link_species, f.links.size(), link_index, f.species.size(), species_index,
+                        value);
 }
 
 // ----------------------------------------------------------------------------

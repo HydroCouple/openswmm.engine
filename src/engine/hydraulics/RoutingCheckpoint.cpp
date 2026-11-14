@@ -912,15 +912,23 @@ struct Router::RestartState {
 };
 
 void Router::copyCheckpointContext(const std::shared_ptr<RestartState>& s, SimulationContext& c) {
-    c.nodes = s->nodes; c.links = s->links;
+    c.nodes = s->nodes;
+    c.links = s->links;
     c.node_subtypes.storages = s->storages;
     c.node_subtypes.outfalls = s->outfalls;
-    c.current_time = s->time; c.current_date = s->date; c.elapsed_ms = s->elapsed;
-    c.old_elapsed_ms = s->old_elapsed; c.next_report_ms = s->next_report;
+    c.current_time = s->time;
+    c.current_date = s->date;
+    c.elapsed_ms = s->elapsed;
+    c.old_elapsed_ms = s->old_elapsed;
+    c.next_report_ms = s->next_report;
     c.climate_state.evap_rate = s->evap;
 }
-void Router::checkpointNodeColumns(detail::CompletedSourceArchive& a, NodeData& nodes, bool validate) {
-#define FIELD(v) a.fixed(nodes.v); if (validate) finite(nodes.v);
+void Router::checkpointNodeColumns(detail::CompletedSourceArchive& a, NodeData& nodes,
+                                   bool validate) {
+#define FIELD(v)                                                                                   \
+    a.fixed(nodes.v);                                                                              \
+    if (validate)                                                                                  \
+        finite(nodes.v);
     NODE_STATE(FIELD)
 #undef FIELD
 }
@@ -1298,13 +1306,12 @@ void Router::validateJointDelivery(const NodeData& nodes, const std::vector<uint
                 nodes.coupling_inflow.size() == coupled.size(),
             "Joint checkpoint delivery layout differs.");
     for (std::size_t n = 0; n < coupled.size(); ++n)
-        require(
-            coupled[n] <= 1 && std::isfinite(nodes.coupling_queue[n]) &&
-                nodes.coupling_volume[n] == 0 &&
-                (coupled[n] || (!nodes.aquifer2d_bed.empty() && nodes.aquifer2d_bed[n] == 1) ||
-                 (nodes.coupling_queue[n] == 0 && nodes.coupling_inflow[n] == 0)) &&
-                (delivery > 0 || nodes.coupling_queue[n] == 0),
-            "Joint checkpoint has unpaired or undeliverable node exchange.");
+        require(coupled[n] <= 1 && std::isfinite(nodes.coupling_queue[n]) &&
+                    nodes.coupling_volume[n] == 0 &&
+                    (coupled[n] || (!nodes.aquifer2d_bed.empty() && nodes.aquifer2d_bed[n] == 1) ||
+                     (nodes.coupling_queue[n] == 0 && nodes.coupling_inflow[n] == 0)) &&
+                    (delivery > 0 || nodes.coupling_queue[n] == 0),
+                "Joint checkpoint has unpaired or undeliverable node exchange.");
 }
 void Router::installCheckpoint(SimulationContext& c, std::shared_ptr<RestartState> s) noexcept {
     s->install(*this, c);

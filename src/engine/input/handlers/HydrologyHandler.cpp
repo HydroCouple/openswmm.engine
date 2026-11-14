@@ -879,8 +879,8 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
                 ctx.lid_controls.soil[idx][i] = to_double(tok[2 + i]);
         } else if (layer == "PAVEMENT") {
             double degree = 0.0;
-            if (tok.size() > 8 && (!parse_double_strict(tok[8], degree) ||
-                                   !(degree >= 0.0 && degree <= 1.0))) {
+            if (tok.size() > 8 &&
+                (!parse_double_strict(tok[8], degree) || !(degree >= 0.0 && degree <= 1.0))) {
                 ctx.errors.push_back(format_error(ERR_NUMBER, tok[8]));
                 continue;
             }
@@ -899,7 +899,8 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drain[idx][i] = to_double(tok[2 + i]);
             ctx.lid_controls.drain_curve.resize(ctx.lid_controls.names.size());
-            if (tok.size() > 8) ctx.lid_controls.drain_curve[idx] = tok[8];
+            if (tok.size() > 8)
+                ctx.lid_controls.drain_curve[idx] = tok[8];
         } else if (layer == "DRAINMAT") {
             for (std::size_t i = 0; i < 3 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drainmat[idx][i] = to_double(tok[2 + i]);

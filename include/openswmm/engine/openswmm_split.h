@@ -30,8 +30,8 @@ typedef void* SWMM_SplitFrame;
  * is permitted. Callback, user and receiving engine must outlive the run.
  * Failure stops after any already-completed physics; there is no rollback/retry.
  */
-typedef int (*SWMM_SplitCallback)(SWMM_Engine network, int phase,
-    SWMM_SplitFrame request, SWMM_SplitFrame* reply, void* user);
+typedef int (*SWMM_SplitCallback)(SWMM_Engine network, int phase, SWMM_SplitFrame request,
+                                  SWMM_SplitFrame* reply, void* user);
 
 /** Select once in executable OPENED, before binding private output paths.
  * Profile: native CPU first-order DYNWAVE, water only, ordinary watershed and
@@ -77,28 +77,28 @@ SWMM_ENGINE_API int swmm_split_set_callback(SWMM_Engine network, SWMM_SplitCallb
  * Output handle is preserved on failure. Exclusive receiving-engine access is
  * required. Geometry/callback setup precedes start of either instance.
  */
-SWMM_ENGINE_API int swmm_split_evaluate(SWMM_Engine surface, int phase,
-                                        SWMM_SplitFrame request, SWMM_SplitFrame* reply);
+SWMM_ENGINE_API int swmm_split_evaluate(SWMM_Engine surface, int phase, SWMM_SplitFrame request,
+                                        SWMM_SplitFrame* reply);
 SWMM_ENGINE_API void swmm_split_frame_destroy(SWMM_SplitFrame frame);
 /** Read one native-node row as SI: head/depth m, queued/direct pending m3,
  * and remaining uniform delivery duration s. Inspection never advances time.
  */
-SWMM_ENGINE_API int swmm_split_frame_node(SWMM_SplitFrame frame, int node,
-    double* head_m, double* depth_m, double* queued_m3, double* direct_m3,
-    double* delivery_seconds);
+SWMM_ENGINE_API int swmm_split_frame_node(SWMM_SplitFrame frame, int node, double* head_m,
+                                          double* depth_m, double* queued_m3, double* direct_m3,
+                                          double* delivery_seconds);
 SWMM_ENGINE_API int swmm_split_frame_time(SWMM_SplitFrame frame, uint64_t* sequence,
-    double* start_seconds, double* duration_seconds);
+                                          double* start_seconds, double* duration_seconds);
 /** Read a reviewed-source receipt boundary. Rates are native ft3/s; pending
  * runoff/drain are ft3 held by the native bridge for a future receiving interval.
  * Geometry starts with zero rates. ADVANCE/FINISH retain the last accepted offer.
  * Receipt/geometry only; unchanged outputs on invalid/unavailable rows. */
-SWMM_ENGINE_API int swmm_split_frame_source(SWMM_SplitFrame frame, int node,
-    double* rate_cfs, double* previous_rate_cfs, double* pending_runoff_ft3,
-    double* pending_drain_ft3);
+SWMM_ENGINE_API int swmm_split_frame_source(SWMM_SplitFrame frame, int node, double* rate_cfs,
+                                            double* previous_rate_cfs, double* pending_runoff_ft3,
+                                            double* pending_drain_ft3);
 /** Inspect one accepted reviewed-source outfall return in an ADVANCE request or
  * receipt. Native ft3, including zero rows; unchanged output when unavailable. */
 SWMM_ENGINE_API int swmm_split_frame_return(SWMM_SplitFrame frame, int subcatchment,
-                                           double* volume_ft3);
+                                            double* volume_ft3);
 #ifdef __cplusplus
 }
 #endif

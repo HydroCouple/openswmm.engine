@@ -240,8 +240,12 @@ static void checkLakeAtRestExactFlatAndVfr(double reference_step) {
     }
 }
 
-TEST(InertialMarcher, LakeAtRestExactFlatAndVfr) { checkLakeAtRestExactFlatAndVfr(0.0); }
-TEST(InertialMomentum, LakeAtRestExactFlatAndVfr) { checkLakeAtRestExactFlatAndVfr(1.0); }
+TEST(InertialMarcher, LakeAtRestExactFlatAndVfr) {
+    checkLakeAtRestExactFlatAndVfr(0.0);
+}
+TEST(InertialMomentum, LakeAtRestExactFlatAndVfr) {
+    checkLakeAtRestExactFlatAndVfr(1.0);
+}
 
 // ---------------------------------------------------------------------------
 // C-property / dry wall: a puddle whose surface sits BELOW the interface bed
@@ -309,8 +313,12 @@ static void checkClosedBasinConservationAndPositivity(double reference_step) {
     solver.finalize();
 }
 
-TEST(InertialMarcher, ClosedBasinConservationAndPositivity) { checkClosedBasinConservationAndPositivity(0.0); }
-TEST(InertialMomentum, ClosedBasinConservationAndPositivity) { checkClosedBasinConservationAndPositivity(1.0); }
+TEST(InertialMarcher, ClosedBasinConservationAndPositivity) {
+    checkClosedBasinConservationAndPositivity(0.0);
+}
+TEST(InertialMomentum, ClosedBasinConservationAndPositivity) {
+    checkClosedBasinConservationAndPositivity(1.0);
+}
 
 // ---------------------------------------------------------------------------
 // Manning steady uniform slope: rain over an inclined strip draining through a
@@ -408,8 +416,12 @@ static void checkManningSteadySlopeRainOutflow(double reference_step) {
     solver.finalize();
 }
 
-TEST(InertialMarcher, ManningSteadySlopeRainOutflow) { checkManningSteadySlopeRainOutflow(0.0); }
-TEST(InertialMomentum, ManningSteadySlopeRainOutflow) { checkManningSteadySlopeRainOutflow(1.0); }
+TEST(InertialMarcher, ManningSteadySlopeRainOutflow) {
+    checkManningSteadySlopeRainOutflow(0.0);
+}
+TEST(InertialMomentum, ManningSteadySlopeRainOutflow) {
+    checkManningSteadySlopeRainOutflow(1.0);
+}
 
 // ---------------------------------------------------------------------------
 // Steady-slope surface smoothness: the same rain-fed inclined strip as the
@@ -497,8 +509,12 @@ static void checkSteadySlopeNoCheckerboard(double reference_step) {
     }
 }
 
-TEST(InertialMarcher, SteadySlopeNoCheckerboard) { checkSteadySlopeNoCheckerboard(0.0); }
-TEST(InertialMomentum, SteadySlopeNoCheckerboard) { checkSteadySlopeNoCheckerboard(1.0); }
+TEST(InertialMarcher, SteadySlopeNoCheckerboard) {
+    checkSteadySlopeNoCheckerboard(0.0);
+}
+TEST(InertialMomentum, SteadySlopeNoCheckerboard) {
+    checkSteadySlopeNoCheckerboard(1.0);
+}
 
 // ---------------------------------------------------------------------------
 // SPECIFIED_STAGE tailwater: a flat DRY basin with a stage BC along x = 0.
@@ -860,8 +876,8 @@ struct ExplicitInertialSolverTestAccess {
                     for (std::size_t e = 0; e < count; ++e)
                         values.push_back(solver.face_accum_[e * stride + side]);
             } else {
-                for (const auto* row : {&solver.facc_L_, &solver.facc_R_,
-                                       &solver.macc_x_L_, &solver.macc_x_R_})
+                for (const auto* row :
+                     {&solver.facc_L_, &solver.facc_R_, &solver.macc_x_L_, &solver.macc_x_R_})
                     values.insert(values.end(), row->begin(), row->end());
             }
         }(s);
@@ -11865,8 +11881,12 @@ TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndepen
             ctx.heat_state.shortwave_now = 500;
             ctx.heat_state.cloud_now = 0;
             auto& rc = ctx.heat_config.radiative;
-            rc.emiss_water = 1; rc.emiss_landcover = 0; rc.lw_reflection = 0;
-            rc.sky_view = 1; rc.albedo = 0; rc.shade_factor = 0;
+            rc.emiss_water = 1;
+            rc.emiss_landcover = 0;
+            rc.lw_reflection = 0;
+            rc.sky_view = 1;
+            rc.albedo = 0;
+            rc.shade_factor = 0;
         }
         void advance() {
             const double end = elapsed + .1;
@@ -11876,7 +11896,8 @@ TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndepen
         }
         std::string save(const std::filesystem::path& path) {
             const auto error = water.solver.saveCheckpoint(path.string());
-            if (!error.empty()) throw std::runtime_error(error);
+            if (!error.empty())
+                throw std::runtime_error(error);
             return rk2File(path);
         }
     };
@@ -11884,20 +11905,25 @@ TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndepen
     for (int layers : {1, 33, 8}) {
         const bool sigma = layers == 33;
         Owner reference(layers, sigma, true);
-        for (int step = 0; step < 3; ++step) reference.advance();
+        for (int step = 0; step < 3; ++step)
+            reference.advance();
         const auto expected = reference.save(rk2Output("atmos-reuse-reference.chk"));
         Owner other(33, true, false);
-        other.advance(); other.advance();
+        other.advance();
+        other.advance();
         Owner small(1, false, true);
-        small.advance(); small.advance();
+        small.advance();
+        small.advance();
         Owner actual(layers, sigma, true);
-        for (int step = 0; step < 3; ++step) actual.advance();
+        for (int step = 0; step < 3; ++step)
+            actual.advance();
         const auto saved = rk2Output("atmos-reuse-owner-" + std::to_string(index++) + ".chk");
         EXPECT_EQ(actual.save(saved), expected);
         Owner restored(layers, sigma, true);
         ASSERT_EQ(restored.water.solver.loadCheckpoint(saved.string()), "");
         EXPECT_EQ(restored.save(rk2Output("atmos-reuse-roundtrip.chk")), expected);
-        if (layers != 8) continue;
+        if (layers != 8)
+            continue;
         const double accepted = actual.water.state.transport.cell_mass[1];
         actual.water.state.transport.cell_mass[1] = -300 * actual.water.state.volume[1];
         const auto invalid = actual.save(rk2Output("atmos-reuse-invalid-before.chk"));
@@ -11905,7 +11931,8 @@ TEST(CoupledGroundwaterRk2, AtmosphericColumnsKeepShapeAndRefusalRecoveryIndepen
                      std::runtime_error);
         EXPECT_EQ(actual.save(rk2Output("atmos-reuse-invalid-after.chk")), invalid);
         actual.water.state.transport.cell_mass[1] = accepted;
-        actual.advance(); reference.advance();
+        actual.advance();
+        reference.advance();
         EXPECT_EQ(actual.save(rk2Output("atmos-reuse-recovered.chk")),
                   reference.save(rk2Output("atmos-reuse-recovery-reference.chk")));
     }

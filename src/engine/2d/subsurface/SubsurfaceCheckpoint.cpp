@@ -212,7 +212,8 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
         }
         if (independentClock()) {
             std::string profile = "Independent groundwater model v6 actual thin-column storage";
-            a(profile, o.base_step, o.max_step, o.binds_surface_dt, o.budget_fraction, o.head_tolerance);
+            a(profile, o.base_step, o.max_step, o.binds_surface_dt, o.budget_fraction,
+              o.head_tolerance);
         }
         if (recharge_backend_.evaluate) {
             std::string operator_profile = "host OpenMP CLOSED_FORM recharge v1";
@@ -242,10 +243,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
     a.fixed(t.sat_mass, t.unsat_mass);
     a.fixedColumnMajor(t.sacc_L, static_cast<std::size_t>(t.n_species));
     a.fixedColumnMajor(t.sacc_R, static_cast<std::size_t>(t.n_species));
-    a.fixed(t.xacc_from_surface, t.xacc_to_surface,
-            t.nacc_mass, t.lacc_mass, t.node_out_mass, t.lost_deep, t.lost_node, t.lost_link,
-            t.lost_dunne, t.lost_et, t.gained_infil, t.gained_node, t.gained_link, t.net_lateral,
-            t.gained_source, t.lost_source, t.lost_reaction, t.init_mass, t.internal_recharge);
+    a.fixed(t.xacc_from_surface, t.xacc_to_surface, t.nacc_mass, t.lacc_mass, t.node_out_mass,
+            t.lost_deep, t.lost_node, t.lost_link, t.lost_dunne, t.lost_et, t.gained_infil,
+            t.gained_node, t.gained_link, t.net_lateral, t.gained_source, t.lost_source,
+            t.lost_reaction, t.init_mass, t.internal_recharge);
 
     a(t.dispersion_limiter_binds, source_firing_end_, gather_fraction_, cells_by_tier_,
       faces_by_tier_, face_tier_, tier_firings_, pending_surface_, pending_flag_, drain_cap_binds_,
@@ -274,11 +275,12 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
         a(s.led_boundary_in, s.led_boundary_out, source_completed_end_);
         a.fixedColumnMajorBlocks(t.layer_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
         a.fixed(t.contact_water, t.contact_node_out, t.contact_link_out);
-        a.fixedColumnMajorBlocks(t.contact_node_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
-        a.fixedColumnMajorBlocks(t.contact_link_mass, std::size_t(t.n_species), std::size_t(t.n_layers));
-        a.fixed(t.boundary_in, t.boundary_out,
-                t.boundary_flux_in, t.boundary_flux_out, t.lout_mass, t.link_gain_shortfall,
-                cell_completed_);
+        a.fixedColumnMajorBlocks(t.contact_node_mass, std::size_t(t.n_species),
+                                 std::size_t(t.n_layers));
+        a.fixedColumnMajorBlocks(t.contact_link_mass, std::size_t(t.n_species),
+                                 std::size_t(t.n_layers));
+        a.fixed(t.boundary_in, t.boundary_out, t.boundary_flux_in, t.boundary_flux_out, t.lout_mass,
+                t.link_gain_shortfall, cell_completed_);
         a(t.generated_age, t.gained_contact);
         a.sequence(
             boundaries_,
@@ -611,19 +613,18 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
                 if (!std::isfinite(v))
                     throw std::runtime_error("Nonfinite t checkpoint state.");
         // Retain original logical species/edge first-error order on the new storage.
-        const auto face_count = t.sacc_L.size() /
-                                (t.n_species > 0 ? static_cast<std::size_t>(t.n_species) : 1);
+        const auto face_count =
+            t.sacc_L.size() / (t.n_species > 0 ? static_cast<std::size_t>(t.n_species) : 1);
         for (const auto* values : {&t.sacc_L, &t.sacc_R})
             for (int species = 0; species < t.n_species; ++species)
                 for (std::size_t edge = 0; edge < face_count; ++edge)
                     if (!std::isfinite((*values)[t.lateralIndex(species, edge)]))
                         throw std::runtime_error("Nonfinite t checkpoint state.");
         for (const auto* values :
-             {&t.xacc_from_surface, &t.xacc_to_surface, &t.nacc_mass,        &t.lacc_mass,
-              &t.node_out_mass,     &t.lost_deep,       &t.lost_node,        &t.lost_link,
-              &t.lost_dunne,        &t.lost_et,         &t.gained_infil,     &t.gained_node,
-              &t.gained_link,       &t.net_lateral,     &t.gained_source,    &t.lost_source,
-              &t.lost_reaction,     &t.init_mass,       &t.internal_recharge})
+             {&t.xacc_from_surface, &t.xacc_to_surface, &t.nacc_mass, &t.lacc_mass,
+              &t.node_out_mass, &t.lost_deep, &t.lost_node, &t.lost_link, &t.lost_dunne, &t.lost_et,
+              &t.gained_infil, &t.gained_node, &t.gained_link, &t.net_lateral, &t.gained_source,
+              &t.lost_source, &t.lost_reaction, &t.init_mass, &t.internal_recharge})
             for (double v : *values)
                 if (!std::isfinite(v))
                     throw std::runtime_error("Nonfinite t checkpoint state.");
@@ -757,8 +758,9 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
                     throw std::runtime_error("Invalid groundwater receipt-rate limit.");
             for (int k = 0; k < 3; ++k)
                 if (state.budget_firings[k] > state.firings[k] || !(state.excess_in[k] >= 0) ||
-                    !(state.excess_out[k] >= 0) || !std::isfinite(state.excess_in[k]) || !std::isfinite(state.excess_out[k]) ||
-                    !(state.max_return_depth[k] >= 0) || !std::isfinite(state.max_return_depth[k]))
+                    !(state.excess_out[k] >= 0) || !std::isfinite(state.excess_in[k]) ||
+                    !std::isfinite(state.excess_out[k]) || !(state.max_return_depth[k] >= 0) ||
+                    !std::isfinite(state.max_return_depth[k]))
                     throw std::runtime_error("Invalid groundwater budget telemetry.");
         }
         std::vector<std::pair<int, long>> batches(state.rung_batches.begin(),

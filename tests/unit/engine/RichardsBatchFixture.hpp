@@ -25,12 +25,12 @@ inline std::vector<Column> columns(int count, int budget, bool mixed_height) {
             s.Ks = 1.e-5 * (1. + .2 * (i % 4));
             s.wilting = .1 + .005 * (i % 5);
             s.potential_et = 1.e-8 * ((i + k) % 3);
-            s.material = {.04 + .002 * ((i + k) % 3), 1.8 + .1 * (k % 3),
-                          1.5 + .03 * (i % 4), .4 + .05 * (i % 3),
-                          1.e-4 * (1. + .1 * (k % 4))};
+            s.material = {.04 + .002 * ((i + k) % 3), 1.8 + .1 * (k % 3), 1.5 + .03 * (i % 4),
+                          .4 + .05 * (i % 3), 1.e-4 * (1. + .1 * (k % 4))};
             c.cells.push_back(s);
-            const double theta = i % 11 == 0 ? s.theta_s + .000001
-                : s.material.theta_r + .55 * (s.theta_s - s.material.theta_r);
+            const double theta = i % 11 == 0
+                                     ? s.theta_s + .000001
+                                     : s.material.theta_r + .55 * (s.theta_s - s.material.theta_r);
             c.water.push_back(theta * s.volume);
         }
         c.inflow = i % 2 ? 1.e-6 : 0.;
@@ -62,9 +62,9 @@ inline void record(detail::CompletedSourceArchive& out, std::vector<Column>& col
     out(count);
     for (std::size_t i = 0; i < columns.size(); ++i) {
         auto& r = reports[i];
-        out(columns[i].water, r.ok, r.error, r.accepted, r.rejected, r.rhs, r.newton,
-            r.min_step, r.bottom_volume, r.evaporation, r.balance, r.bottom_outflow,
-            r.bottom_inflow, r.inflow, r.bottom_out_limited, r.bottom_in_limited);
+        out(columns[i].water, r.ok, r.error, r.accepted, r.rejected, r.rhs, r.newton, r.min_step,
+            r.bottom_volume, r.evaporation, r.balance, r.bottom_outflow, r.bottom_inflow, r.inflow,
+            r.bottom_out_limited, r.bottom_in_limited);
         out.sequence(r.transfers, [&](auto& t) { out(t.from, t.to, t.volume); });
     }
 }

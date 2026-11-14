@@ -435,10 +435,9 @@ SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx, SWMM_ImpactRep
     auto& ctx = to_engine(engine)->context();                                                      \
     CHECK_EDITABLE(ctx);                                                                           \
     CHECK_INDEX(idx >= 0 && idx < (COUNT_EXPR));                                                   \
-    return run_recorded_delete(engine, ctx, cascade_out, record_out,                               \
-                               [&](openswmm::edit::DeleteRecord* r) {                              \
-                                   return openswmm::edit::DELETE_FN(ctx, idx, r);                  \
-                               })
+    return run_recorded_delete(                                                                    \
+        engine, ctx, cascade_out, record_out,                                                      \
+        [&](openswmm::edit::DeleteRecord* r) { return openswmm::edit::DELETE_FN(ctx, idx, r); })
 
 // Every index is validated before any change, as for swmm_*_delete_many.
 #define SWMM_DELETE_MANY_RECORDED_BODY(COUNT_EXPR, MANY_FN)                                        \

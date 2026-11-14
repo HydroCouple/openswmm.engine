@@ -54,12 +54,18 @@
 namespace {
 
 TEST(SpeciesLoadings, PreserveNamedRowsThroughAuthoringAndResolution) {
-    const auto e = swmm_engine_new(); ASSERT_NE(e, nullptr);
-    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{e};
-    for (const auto* name : {"Unused", "A", "Control"}) ASSERT_EQ(swmm_subcatch_add(e, name), SWMM_OK);
+    const auto e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
+    struct Cleanup {
+        SWMM_Engine e;
+        ~Cleanup() { swmm_engine_destroy(e); }
+    } cleanup{e};
+    for (const auto* name : {"Unused", "A", "Control"})
+        ASSERT_EQ(swmm_subcatch_add(e, name), SWMM_OK);
     ASSERT_EQ(swmm_pollutant_add(e, "P", 0), SWMM_OK);
     ASSERT_EQ(swmm_landuse_add(e, "Res"), SWMM_OK);
-    for (const auto* name : {"Unused", "X", "Y"}) ASSERT_EQ(swmm_reaction_species_add(e, name, 0, "MG", 0, 0), SWMM_OK);
+    for (const auto* name : {"Unused", "X", "Y"})
+        ASSERT_EQ(swmm_reaction_species_add(e, name, 0, "MG", 0, 0), SWMM_OK);
     ASSERT_EQ(swmm_reaction_species_add(e, "Wall", 1, "MG", 0, 0), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_initial_loading(e, 1, 2, 1.2345678901234567), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_initial_loading(e, 1, 3, 8.5), SWMM_OK);
@@ -68,43 +74,64 @@ TEST(SpeciesLoadings, PreserveNamedRowsThroughAuthoringAndResolution) {
     ASSERT_EQ(swmm_subcatch_add(e, "Added"), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_initial_loading(e, 3, 2, 6.25), SWMM_OK);
     double value = 0;
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 1, 3, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 8.5);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 1, 3, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 8.5);
     ASSERT_EQ(swmm_subcatch_delete(e, 0, nullptr), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_rename(e, 0, "Renamed"), SWMM_OK);
     ASSERT_EQ(swmm_reaction_species_remove(e, 0), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 1.2345678901234567);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 1.2345678901234567);
     ASSERT_EQ(swmm_reaction_species_add(e, "New", 0, "UG", 0, 0), SWMM_OK);
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 1, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 17);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 1, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 17);
     auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();
     EXPECT_TRUE(openswmm::msxsurf::resolve(ctx).empty());
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 1.2345678901234567);
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 2, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 8.5);
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 2, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 6.25);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 1.2345678901234567);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 2, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 8.5);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 2, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 6.25);
     ASSERT_EQ(swmm_subcatch_set_initial_loading(e, 0, 1, 0), SWMM_OK);
     EXPECT_TRUE(openswmm::msxsurf::resolve(ctx).empty());
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 0);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 0);
     ASSERT_EQ(swmm_subcatch_delete(e, 0, nullptr), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(e, "Renamed"), SWMM_OK);
     EXPECT_TRUE(openswmm::msxsurf::resolve(ctx).empty());
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 2, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 0);
-    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 17);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 2, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 0);
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 1, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 17);
 }
 
 TEST(SpeciesLoadings, PreparingStoragePreservesOtherSurfaceParameters) {
-    const auto e = swmm_engine_new(); ASSERT_NE(e, nullptr);
-    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{e};
+    const auto e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
+    struct Cleanup {
+        SWMM_Engine e;
+        ~Cleanup() { swmm_engine_destroy(e); }
+    } cleanup{e};
     ASSERT_EQ(swmm_subcatch_add(e, "S"), SWMM_OK);
     ASSERT_EQ(swmm_landuse_add(e, "Res"), SWMM_OK);
     ASSERT_EQ(swmm_reaction_species_add(e, "A", 0, "MG", 0, 0), SWMM_OK);
     auto& surface = static_cast<openswmm::SWMMEngine*>(e)->context().reactions.surface;
-    surface.bu_type[0] = 1; surface.bu_c1[0] = 123.5; surface.wo_coeff[0] = .25;
+    surface.bu_type[0] = 1;
+    surface.bu_c1[0] = 123.5;
+    surface.wo_coeff[0] = .25;
     ASSERT_EQ(swmm_landuse_add(e, "New"), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_set_initial_loading(e, 0, 0, 3.75), SWMM_OK);
-    EXPECT_EQ(surface.bu_type[0], 1); EXPECT_DOUBLE_EQ(surface.bu_c1[0], 123.5); EXPECT_DOUBLE_EQ(surface.wo_coeff[0], .25);
+    EXPECT_EQ(surface.bu_type[0], 1);
+    EXPECT_DOUBLE_EQ(surface.bu_c1[0], 123.5);
+    EXPECT_DOUBLE_EQ(surface.wo_coeff[0], .25);
     ASSERT_EQ(swmm_reaction_species_add(e, "B", 0, "UG", 0, 0), SWMM_OK);
-    EXPECT_EQ(surface.bu_type[0], 1); EXPECT_DOUBLE_EQ(surface.bu_c1[0], 123.5); EXPECT_DOUBLE_EQ(surface.wo_coeff[0], .25);
+    EXPECT_EQ(surface.bu_type[0], 1);
+    EXPECT_DOUBLE_EQ(surface.bu_c1[0], 123.5);
+    EXPECT_DOUBLE_EQ(surface.wo_coeff[0], .25);
     ASSERT_EQ(swmm_reaction_species_remove(e, 1), SWMM_OK);
-    double value = 0; ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 0, &value), SWMM_OK); EXPECT_DOUBLE_EQ(value, 3.75);
+    double value = 0;
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, 0, &value), SWMM_OK);
+    EXPECT_DOUBLE_EQ(value, 3.75);
 }
 
 class SubcatchEditorApiTest : public ::testing::Test {
@@ -472,7 +499,8 @@ TEST(SubcatchGroundwaterEditing, ExpressionsFollowRenameAndAreRemovedBeforeNameR
     char text[128] = {};
     for (const char* name : {"mixedcase", "Renamed"}) {
         ASSERT_EQ(swmm_subcatch_rename(engine, 0, name), SWMM_OK);
-        ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_LATERAL, text, 128), SWMM_OK);
+        ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_LATERAL, text, 128),
+                  SWMM_OK);
         EXPECT_STREQ(text, "0.25 * HGW");
         ASSERT_EQ(swmm_subcatch_get_gwf_expression(engine, 0, SWMM_GWF_DEEP, text, 128), SWMM_OK);
         EXPECT_STREQ(text, "KS * 0.1");
@@ -491,37 +519,63 @@ TEST(SubcatchGroundwaterEditing, ExpressionsFollowRenameAndAreRemovedBeforeNameR
 TEST(LidUsageEditing, CompleteOwnerReplacementPreservesRowsPathsAndRejectsInvalidLastRecord) {
     const auto engine = swmm_engine_new();
     ASSERT_NE(engine, nullptr);
-    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{engine};
+    struct Cleanup {
+        SWMM_Engine e;
+        ~Cleanup() { swmm_engine_destroy(e); }
+    } cleanup{engine};
     ASSERT_EQ(swmm_subcatch_add(engine, "A"), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(engine, "B"), SWMM_OK);
     ASSERT_EQ(swmm_lid_add(engine, "RainGarden", 1), SWMM_OK);
     ASSERT_EQ(swmm_lid_add(engine, "Other", 0), SWMM_OK);
-    SWMM_LidUsageRecord a{0, 0, 2, 12.1234567890123, 3, 25, 40, 1, 15,
-                         "reports/A report.txt", "/project/reports/A report.txt", "B"};
+    SWMM_LidUsageRecord a{0,
+                          0,
+                          2,
+                          12.1234567890123,
+                          3,
+                          25,
+                          40,
+                          1,
+                          15,
+                          "reports/A report.txt",
+                          "/project/reports/A report.txt",
+                          "B"};
     SWMM_LidUsageRecord b{1, 1, 3, 21, 4, 35, 50, 0, 20, "", "", "*"};
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, &a, 1), SWMM_OK);
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 1, &b, 1), SWMM_OK);
     SWMM_LidUsageRecord read{};
     ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK);
-    EXPECT_DOUBLE_EQ(read.area, a.area); EXPECT_STREQ(read.report_file, a.report_file);
-    EXPECT_STREQ(read.report_file_resolved, a.report_file_resolved); EXPECT_STREQ(read.drain_to, "B");
+    EXPECT_DOUBLE_EQ(read.area, a.area);
+    EXPECT_STREQ(read.report_file, a.report_file);
+    EXPECT_STREQ(read.report_file_resolved, a.report_file_resolved);
+    EXPECT_STREQ(read.drain_to, "B");
     // Borrowed getter strings must survive a replace call that reads that same store.
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, &read, 1), SWMM_OK);
-    SWMM_LidUsageRecord replacements[2]{a, a}; replacements[1].area = NAN;
+    SWMM_LidUsageRecord replacements[2]{a, a};
+    replacements[1].area = NAN;
     EXPECT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, replacements, 2), SWMM_ERR_BADPARAM);
-    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK); EXPECT_DOUBLE_EQ(read.area, a.area);
-    replacements[1] = a; replacements[1].control_idx = 1; replacements[1].area = 8;
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK);
+    EXPECT_DOUBLE_EQ(read.area, a.area);
+    replacements[1] = a;
+    replacements[1].control_idx = 1;
+    replacements[1].area = 8;
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, replacements, 2), SWMM_OK);
     ASSERT_EQ(swmm_lid_usage_get_record(engine, 2, &read), SWMM_OK);
-    EXPECT_EQ(read.subcatch_idx, 1); EXPECT_DOUBLE_EQ(read.area, 21); EXPECT_STREQ(read.drain_to, "");
+    EXPECT_EQ(read.subcatch_idx, 1);
+    EXPECT_DOUBLE_EQ(read.area, 21);
+    EXPECT_STREQ(read.drain_to, "");
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(engine, 0, nullptr, 0), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK); EXPECT_EQ(read.subcatch_idx, 1);
+    ASSERT_EQ(swmm_lid_usage_get_record(engine, 0, &read), SWMM_OK);
+    EXPECT_EQ(read.subcatch_idx, 1);
     EXPECT_EQ(swmm_lid_usage_count(engine), 1);
 }
 
 TEST(LidUsageEditing, DrainReferencesFollowTypedRenameAndCannotRebindOnDeletion) {
-    const auto e = swmm_engine_new(); ASSERT_NE(e, nullptr);
-    struct Cleanup { SWMM_Engine e; ~Cleanup() { swmm_engine_destroy(e); } } cleanup{e};
+    const auto e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
+    struct Cleanup {
+        SWMM_Engine e;
+        ~Cleanup() { swmm_engine_destroy(e); }
+    } cleanup{e};
     ASSERT_EQ(swmm_subcatch_add(e, "Source"), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_add(e, "Shared"), SWMM_OK);
     ASSERT_EQ(swmm_node_add(e, "Shared", 0), SWMM_OK);
@@ -529,21 +583,29 @@ TEST(LidUsageEditing, DrainReferencesFollowTypedRenameAndCannotRebindOnDeletion)
     SWMM_LidUsageRecord row{0, 0, 1, 10, 0, 0, 20, 0, 0, "", "", "sHaReD"}, got{};
     ASSERT_EQ(swmm_lid_usage_replace_subcatch(e, 0, &row, 1), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_rename(e, 1, "Catchment"), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "sHaReD");
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "sHaReD");
     ASSERT_EQ(swmm_node_rename(e, 0, "Receiver"), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "Receiver");
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "Receiver");
     ASSERT_EQ(swmm_node_delete(e, 0, nullptr), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "");
-    row.drain_to = "Catchment"; ASSERT_EQ(swmm_lid_usage_replace_subcatch(e, 0, &row, 1), SWMM_OK);
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "");
+    row.drain_to = "Catchment";
+    ASSERT_EQ(swmm_lid_usage_replace_subcatch(e, 0, &row, 1), SWMM_OK);
     ASSERT_EQ(swmm_subcatch_rename(e, 1, "NewCatchment"), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "NewCatchment");
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "NewCatchment");
     ASSERT_EQ(swmm_node_add(e, "Other", 0), SWMM_OK);
     EXPECT_EQ(swmm_subcatch_rename(e, 1, "Other"), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_node_rename(e, 0, "NewCatchment"), SWMM_ERR_BADPARAM);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "NewCatchment");
-    EXPECT_STREQ(swmm_subcatch_id(e, 1), "NewCatchment"); EXPECT_STREQ(swmm_node_id(e, 0), "Other");
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "NewCatchment");
+    EXPECT_STREQ(swmm_subcatch_id(e, 1), "NewCatchment");
+    EXPECT_STREQ(swmm_node_id(e, 0), "Other");
     ASSERT_EQ(swmm_subcatch_delete(e, 1, nullptr), SWMM_OK);
-    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK); EXPECT_STREQ(got.drain_to, "");
+    ASSERT_EQ(swmm_lid_usage_get_record(e, 0, &got), SWMM_OK);
+    EXPECT_STREQ(got.drain_to, "");
 }
 
 } // namespace

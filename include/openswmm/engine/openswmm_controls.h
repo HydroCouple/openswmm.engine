@@ -118,8 +118,8 @@ SWMM_ENGINE_API int swmm_control_clear_rules(SWMM_Engine engine);
  * the complete concatenated program and resolves current model references without mutation.
  * BUILDING/OPENED only. Empty program is allowed. All strings are borrowed for this call. */
 SWMM_ENGINE_API int swmm_control_replace_program(SWMM_Engine engine, const char* const* blocks,
-    int count, int publish, char* error, int error_capacity);
-
+                                                 int count, int publish, char* error,
+                                                 int error_capacity);
 
 /**
  * @brief Remove one stored control text block while the model is editable.

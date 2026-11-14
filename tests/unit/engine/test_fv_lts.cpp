@@ -231,8 +231,8 @@ struct CrownSurge {
  */
 CrownSurge runCrownSurge(bool lts, double window) {
     Channel ch = makeGradedChannel(
-        circular(1.0), 50, [](int i) { return (i < 10) ? 1.0 : 20.0; },
-        [](double) { return 0.0; }, 0.013);
+        circular(1.0), 50, [](int i) { return (i < 10) ? 1.0 : 20.0; }, [](double) { return 0.0; },
+        0.013);
     const FvGeometry& g = ch.mesh.geom[0];
     for (int i = 0; i < ch.n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
@@ -254,8 +254,8 @@ CrownSurge runCrownSurge(bool lts, double window) {
         s.advance(t, t + window, f);
         r.tiers = std::max(r.tiers, s.lts_tiers());
         for (int i = 0; i < ch.n; ++i)
-            r.peak_head = std::max(r.peak_head,
-                                   ch.state.cell_h[static_cast<std::size_t>(i)] - g.y_crown);
+            r.peak_head =
+                std::max(r.peak_head, ch.state.cell_h[static_cast<std::size_t>(i)] - g.y_crown);
     }
     r.vol_drift = std::fabs(totalVol(ch) - v0) / v0;
     r.rejected = s.run_stats().n_macro_rejected;
@@ -552,10 +552,10 @@ TEST(FvLts, ReinitializationPreservesSparseAndDenseFirings) {
     for (const int n : {4096, 257, 8192, 63, 4096}) {
         const bool storage = n >= 4096;
         auto initial = storage
-            ? makeNodedChannel(rectOpen(10.0, 20.0), n, 20.0,
-                               [](double) { return 0.0; }, 0.013)
-            : makeWalledChannel(rectOpen(10.0, 20.0), n, 20.0,
-                                [](double) { return 0.0; }, 0.013);
+                           ? makeNodedChannel(
+                                 rectOpen(10.0, 20.0), n, 20.0, [](double) { return 0.0; }, 0.013)
+                           : makeWalledChannel(
+                                 rectOpen(10.0, 20.0), n, 20.0, [](double) { return 0.0; }, 0.013);
         for (int c = 0; c < n; ++c) {
             initial.mesh.cell_dx[c] = (c >= n / 2 && c < n / 2 + 4) ? 0.5 : 20.0;
             initial.state.cell_a[c] = c < n / 2 ? 20.0 : 10.0;
@@ -563,7 +563,7 @@ TEST(FvLts, ReinitializationPreservesSparseAndDenseFirings) {
         for (int f = 0; f < initial.mesh.n_faces(); ++f) {
             const int l = initial.mesh.face_cl[f], r = initial.mesh.face_cr[f];
             initial.mesh.face_dx[f] = 0.5 * ((l >= 0 ? initial.mesh.cell_dx[l] : 0.0) +
-                                            (r >= 0 ? initial.mesh.cell_dx[r] : 0.0));
+                                             (r >= 0 ? initial.mesh.cell_dx[r] : 0.0));
         }
         if (storage) {
             initial.mesh.node_kind = {kNodeStorage, kNodeStorage};
@@ -573,8 +573,8 @@ TEST(FvLts, ReinitializationPreservesSparseAndDenseFirings) {
                     initial.mesh.node_area[j] * initial.state.node_head[j];
         }
         const auto volume = [](const Channel& ch) {
-            return totalVol(ch) + std::accumulate(ch.state.node_volume.begin(),
-                                                  ch.state.node_volume.end(), 0.0);
+            return totalVol(ch) +
+                   std::accumulate(ch.state.node_volume.begin(), ch.state.node_volume.end(), 0.0);
         };
         auto a = initial, b = initial;
         auto opts = defaultOptions();
@@ -596,7 +596,8 @@ TEST(FvLts, ReinitializationPreservesSparseAndDenseFirings) {
                 ASSERT_EQ(fields.first->size(), fields.second->size());
                 if (!fields.first->empty())
                     EXPECT_EQ(std::memcmp(fields.first->data(), fields.second->data(),
-                                          fields.first->size() * sizeof(double)), 0);
+                                          fields.first->size() * sizeof(double)),
+                              0);
             }
             EXPECT_EQ(reused.run_stats().nsteps, fresh.run_stats().nsteps);
             EXPECT_EQ(reused.run_stats().nflux, fresh.run_stats().nflux);

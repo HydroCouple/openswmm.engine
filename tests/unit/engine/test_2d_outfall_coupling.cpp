@@ -688,16 +688,23 @@ TEST(OutfallExchangeBudget, SpreadReceiversRefreshAfterWetChangesFailureAndReini
     for (int i = 0; i < 3; ++i)
         ctx.node_names.add("N" + std::to_string(i));
     CouplingPoint a{};
-    a.vertex_idx = -1; a.cell_idx = 0; a.node_idx = 0; a.is_outfall = true; a.spread = 10.;
+    a.vertex_idx = -1;
+    a.cell_idx = 0;
+    a.node_idx = 0;
+    a.is_outfall = true;
+    a.spread = 10.;
     auto b = a;
-    b.cell_idx = 2; b.node_idx = 1; b.spread = 0.;
+    b.cell_idx = 2;
+    b.node_idx = 1;
+    b.spread = 0.;
     std::vector<CouplingPoint> points{a, b};
     SolverOptions2D options;
     options.flow_1d_to_2d = 1.;
     OutfallExchange exchange;
     detail::CompletedSourceArchive history;
     for (int pass = 0; pass < 2; ++pass) {
-        if (pass) points[0].spread = 0.;
+        if (pass)
+            points[0].spread = 0.;
         exchange.initialize(mesh, points, ctx);
         for (int step = 0; step < 6; ++step) {
             SurfaceStateData state;
@@ -711,11 +718,12 @@ TEST(OutfallExchangeBudget, SpreadReceiversRefreshAfterWetChangesFailureAndReini
             ctx.nodes.outflow = {0., step == 2 ? 100. : 0., 0.};
             std::vector<double> accumulated(2, 0.), cell_accumulated(3, 0.), conc(3, 3.);
             if (step == 2)
-                EXPECT_THROW(exchange.apply(mesh, state, options, ctx, 1., accumulated,
-                                            &conc, &cell_accumulated), std::runtime_error);
+                EXPECT_THROW(exchange.apply(mesh, state, options, ctx, 1., accumulated, &conc,
+                                            &cell_accumulated),
+                             std::runtime_error);
             else {
-                ASSERT_TRUE(exchange.apply(mesh, state, options, ctx, 1., accumulated,
-                                          &conc, &cell_accumulated));
+                ASSERT_TRUE(exchange.apply(mesh, state, options, ctx, 1., accumulated, &conc,
+                                           &cell_accumulated));
                 if (!pass && step == 0) {
                     EXPECT_DOUBLE_EQ(state.volume[1], 1.);
                     EXPECT_DOUBLE_EQ(state.volume[2], 1.);
@@ -726,8 +734,8 @@ TEST(OutfallExchangeBudget, SpreadReceiversRefreshAfterWetChangesFailureAndReini
                     EXPECT_DOUBLE_EQ(state.volume[1], 1.);
             }
             history(state.volume, state.head, state.depth, state.coupling_applied,
-                    state.transport.cell_mass, state.transport.gained_coupling,
-                    accumulated, cell_accumulated, ctx.mass_balance_2d.outfall_in,
+                    state.transport.cell_mass, state.transport.gained_coupling, accumulated,
+                    cell_accumulated, ctx.mass_balance_2d.outfall_in,
                     ctx.mass_balance_2d.outfall_out, ctx.mass_balance_2d.final_storage);
         }
     }

@@ -520,8 +520,8 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
             // both Station and Units (at least eight tokens); treating the
             // sole numeric trailing token as a station silently loses the
             // multiplier and prevents content-based CSV detection on reopen.
-            if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP &&
-                tok.size() == 7 && to_double(tok[6], -1.0) > 0.0)
+            if (ctx.gages.file_format[idx] == RainFileFormat::STAN_PRCP && tok.size() == 7 &&
+                to_double(tok[6], -1.0) > 0.0)
                 ctx.gages.file_format[idx] = RainFileFormat::USER_CSV;
 
             // Standard SWMM FILE grammar (legacy gage.c gage_readParams):

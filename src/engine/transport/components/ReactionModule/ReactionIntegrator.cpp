@@ -486,7 +486,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
         const int ne = static_cast<int>(eidx.size());
         if (ne > 0) {
             auto residual = [&](double* out) {
-                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
+                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_,
+                          coefficients);
                 RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
                 for (int k = 0; k < ne; ++k)
                     out[k] = evalReactionExpression(
@@ -556,7 +557,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
         // FORMULA: declaration order, current values ------------------
         if (!ws.formula_idx_.empty()) {
             for (const int s : ws.formula_idx_) {
-                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_, coefficients);
+                evalTerms(rx, species, hydvar, pollutants, ws.terms_, ws.term_needed_,
+                          coefficients);
                 RxEvalEnv env{species, coefficients, ws.terms_.data(), hydvar, pollutants};
                 species[s] =
                     evalReactionExpression(rx.token_pool, spans[static_cast<std::size_t>(s)], env);
@@ -762,7 +764,8 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
                         if (rx.coupling == ReactionCoupling::FULL && !projectAlgebraic()) {
                             rep.ok = false;
                             if (rep.error.empty())
-                                rep.error = "algebraic projection failed after RATE Jacobian evaluation";
+                                rep.error =
+                                    "algebraic projection failed after RATE Jacobian evaluation";
                             return rep;
                         }
                     }

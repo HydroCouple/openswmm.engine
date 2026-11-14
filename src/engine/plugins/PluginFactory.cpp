@@ -450,7 +450,8 @@ std::vector<PluginFactory::ComponentEntry> PluginFactory::discovered_components(
 // ============================================================================
 
 int PluginFactory::load_plugins(const std::vector<PluginSpec>& specs,
-                                std::function<void(const std::string&)> warn_cb, const SimulationContext* io) {
+                                std::function<void(const std::string&)> warn_cb,
+                                const SimulationContext* io) {
     int loaded = 0;
 
     for (const auto& spec : specs) {
@@ -504,12 +505,16 @@ int PluginFactory::initialize_all(SimulationContext& /*ctx*/) {
     auto initialize = [&](auto* plugin, const std::vector<std::string>& args) {
         const auto it = instance_info_.find(plugin);
         const int rc = plugin->initialize(args, it == instance_info_.end() ? nullptr : it->second);
-        if (rc != 0) last_err = rc;
+        if (rc != 0)
+            last_err = rc;
     };
     for (std::size_t i = 0; i < output_plugins_.size(); ++i)
-        initialize(output_plugins_[i], i < init_args_.size() ? init_args_[i] : std::vector<std::string>{});
-    for (auto* plugin : report_plugins_) initialize(plugin, instance_args_[plugin]);
-    for (auto* plugin : state_io_plugins_) initialize(plugin, instance_args_[plugin]);
+        initialize(output_plugins_[i],
+                   i < init_args_.size() ? init_args_[i] : std::vector<std::string>{});
+    for (auto* plugin : report_plugins_)
+        initialize(plugin, instance_args_[plugin]);
+    for (auto* plugin : state_io_plugins_)
+        initialize(plugin, instance_args_[plugin]);
     return last_err;
 }
 
@@ -634,16 +639,18 @@ int PluginFactory::write_summary_all(SimulationContext& ctx) {
 // ============================================================================
 
 void PluginFactory::add_output_plugin(IOutputPlugin* plugin, std::vector<std::string> args,
-                                       IPluginComponentInfo* info) {
-    if (info) instance_info_[plugin] = info;
+                                      IPluginComponentInfo* info) {
+    if (info)
+        instance_info_[plugin] = info;
     output_plugins_.push_back(plugin);
     init_args_.push_back(std::move(args));
 }
 
 void PluginFactory::add_report_plugin(IReportPlugin* plugin, std::vector<std::string> args,
-                                       IPluginComponentInfo* info) {
+                                      IPluginComponentInfo* info) {
     instance_args_[plugin] = std::move(args);
-    if (info) instance_info_[plugin] = info;
+    if (info)
+        instance_info_[plugin] = info;
     report_plugins_.push_back(plugin);
 }
 

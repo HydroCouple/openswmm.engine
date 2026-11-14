@@ -18,10 +18,18 @@ class QualitySolver;
 class PeerPassiveStorageFunding;
 enum class PassiveStorageLaw : std::uint8_t { FIXED_VOLUME, CHANGING_VOLUME };
 enum class PassiveStorageWaterArithmetic : std::uint8_t { EXACT, RETAIN_AGGREGATES };
-enum class PassiveStorageArithmetic : std::uint8_t { EXACT, RETAIN_ROUNDOFF, RETAIN_AGGREGATES, RETAIN_POINT_AGGREGATES, RETAIN_EXACT_HALVES, RETAIN_EXACT_SLICES };
+enum class PassiveStorageArithmetic : std::uint8_t {
+    EXACT,
+    RETAIN_ROUNDOFF,
+    RETAIN_AGGREGATES,
+    RETAIN_POINT_AGGREGATES,
+    RETAIN_EXACT_HALVES,
+    RETAIN_EXACT_SLICES
+};
 inline bool retainsPointAggregates(PassiveStorageArithmetic policy) noexcept {
-    return policy == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES || policy == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ||
-        policy == PassiveStorageArithmetic::RETAIN_EXACT_SLICES;
+    return policy == PassiveStorageArithmetic::RETAIN_POINT_AGGREGATES ||
+           policy == PassiveStorageArithmetic::RETAIN_EXACT_HALVES ||
+           policy == PassiveStorageArithmetic::RETAIN_EXACT_SLICES;
 }
 inline bool retainsMaterialAggregates(PassiveStorageArithmetic policy) noexcept {
     return policy == PassiveStorageArithmetic::RETAIN_AGGREGATES || retainsPointAggregates(policy);
@@ -129,7 +137,8 @@ public:
         Publication publication;
         bool authenticated = false;
         LiveProof proof;
-        std::uint8_t half_state = 0; // retained after settlement; reconstructed through delivery replay
+        std::uint8_t half_state =
+            0; // retained after settlement; reconstructed through delivery replay
         // Current remainders in immutable proof-leg order; owned only by exact slices.
         std::vector<double> remaining_water_legs, remaining_mass_legs;
         bool operator==(const Receipt&) const = default;
@@ -163,12 +172,15 @@ public:
         bool peer_reported = false; // receipt information, never a local admission witness
         bool operator==(const FundingAllowance&) const = default;
     };
-    const FundingAllowance* fundingAllowance() const noexcept { return funding_ ? &*funding_ : nullptr; }
+    const FundingAllowance* fundingAllowance() const noexcept {
+        return funding_ ? &*funding_ : nullptr;
+    }
     bool materialSealPrepared() const noexcept { return seal_.has_value(); }
 
-    explicit PassiveStorageExchange(PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT,
-                                    PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
-                                    PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT)
+    explicit PassiveStorageExchange(
+        PassiveStorageArithmetic arithmetic = PassiveStorageArithmetic::EXACT,
+        PassiveStorageLaw law = PassiveStorageLaw::FIXED_VOLUME,
+        PassiveStorageWaterArithmetic water = PassiveStorageWaterArithmetic::EXACT)
         : arithmetic_(arithmetic), law_(law), water_arithmetic_(water) {}
     PassiveStorageExchange(const PassiveStorageExchange&) = delete;
     PassiveStorageExchange& operator=(const PassiveStorageExchange&) = delete;
@@ -206,15 +218,20 @@ public:
     PassiveStorageArithmetic arithmetic() const noexcept { return arithmetic_; }
     PassiveStorageLaw law() const noexcept { return law_; }
     PassiveStorageWaterArithmetic waterArithmetic() const noexcept { return water_arithmetic_; }
-    bool retainsWaterAggregates() const noexcept { return water_arithmetic_ == PassiveStorageWaterArithmetic::RETAIN_AGGREGATES; }
-    bool exactSlices() const noexcept { return arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_SLICES; }
+    bool retainsWaterAggregates() const noexcept {
+        return water_arithmetic_ == PassiveStorageWaterArithmetic::RETAIN_AGGREGATES;
+    }
+    bool exactSlices() const noexcept {
+        return arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_SLICES;
+    }
     bool changingVolume() const noexcept { return law_ == PassiveStorageLaw::CHANGING_VOLUME; }
     /// Bind every mapped pool before the first changing-volume delivery. Its
     /// settled inventory remains owned through empty cohorts and hydraulic tails.
     void bindChangingVolumePools(const SimulationContext& ctx, const std::vector<int>& nodes);
     const NativeAmountSum& storedRoundoff(int node) const noexcept;
     const Sample* settledPool(int node) const noexcept {
-        const auto it = pools_.find(node); return it == pools_.end() ? nullptr : &it->second;
+        const auto it = pools_.find(node);
+        return it == pools_.end() ? nullptr : &it->second;
     }
     /// Both physical and exact accountable inventory must fund this gross sum.
     bool canFund(int node, double physical_mass, double gross_spill) const noexcept;
@@ -235,8 +252,8 @@ private:
     // Columnar observations of native hydraulics. These are inputs to material
     // replay, not a second hydraulic solver or a claim of historical authenticity.
     struct WaterState {
-        std::vector<double> volume, old_volume, depth, old_depth, inflow, outflow,
-            old_net, old_lateral, old_inflow, rate, queue;
+        std::vector<double> volume, old_volume, depth, old_depth, inflow, outflow, old_net,
+            old_lateral, old_inflow, rate, queue;
         bool operator==(const WaterState&) const = default;
     };
     struct Delivery {
@@ -281,8 +298,8 @@ private:
     void grantFunding(const SimulationContext& ctx, std::uint64_t receipt, Phase phase,
                       double start_ms, double end_ms, std::size_t leg_capacity);
     bool spendFunding(const SimulationContext& ctx, const AppliedLeg& leg) noexcept;
-    void reconcileFunding(const SimulationContext& ctx, const LiveProof& proof,
-                          Phase phase, double start_ms, double end_ms) const;
+    void reconcileFunding(const SimulationContext& ctx, const LiveProof& proof, Phase phase,
+                          double start_ms, double end_ms) const;
     void reserveImpl(const SimulationContext& ctx, std::uint64_t id, std::vector<Row> rows,
                      Publication publication, const LiveProof* proof = nullptr);
     void reserveAuthenticated(const SimulationContext& ctx, std::uint64_t id, std::vector<Row> rows,
@@ -294,8 +311,9 @@ private:
                      const std::map<int, Sample>* closed_initial);
     void validateChangingReplay(const SimulationContext& ctx) const;
     struct ReplaySize {
-        std::size_t deliveries = 0, receipts = 0, rows = 0, nodes = 0, proof_items = 0, material_parts = 0, proof_legs = 0,
-            water_publications = 0, water_points = 0, water_parts = 0;
+        std::size_t deliveries = 0, receipts = 0, rows = 0, nodes = 0, proof_items = 0,
+                    material_parts = 0, proof_legs = 0, water_publications = 0, water_points = 0,
+                    water_parts = 0;
     };
     ReplaySize replaySize(std::size_t deliveries) const;
     static void checkReplaySize(const SimulationContext& ctx, const ReplaySize& size,
@@ -306,15 +324,16 @@ private:
     WaterState waterState(const SimulationContext& ctx) const;
     void installWaterState(SimulationContext& ctx, const WaterState& state) const;
     void validateWaterTransition(const SimulationContext& ctx) const;
-    void beginWaterPublication(const SimulationContext& ctx, const LiveProof& proof,
-                               Phase phase, double start_ms, double end_ms, double dt);
+    void beginWaterPublication(const SimulationContext& ctx, const LiveProof& proof, Phase phase,
+                               double start_ms, double end_ms, double dt);
     void finishWaterPublication(const SimulationContext& ctx);
     void begin(const SimulationContext& ctx, double dt);
     std::vector<Row> exactHalfRows(const Receipt& receipt, double span, double dt) const;
     std::vector<Row> exactSliceRows(Receipt& receipt, double span, double dt) const;
     void prepare(const SimulationContext& ctx, double dt);
     void commit(const SimulationContext& ctx);
-    double receivingConcentration(const Pool& pool, double amount, NativeAmountSum& next_roundoff) const;
+    double receivingConcentration(const Pool& pool, double amount,
+                                  NativeAmountSum& next_roundoff) const;
     double receivingConcentration(const Pool& pool, const NativeAmountSum& amount,
                                   NativeAmountSum& next_roundoff, double& mixer_amount) const;
     double changingConcentration(const Pool& pool, double volume, const NativeAmountSum& amount,

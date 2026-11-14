@@ -129,11 +129,11 @@ public:
 private:
     static constexpr std::size_t kMaxId = 65535;
     bool interned_ = true;
-    std::vector<std::uint16_t> ids_;                         ///< index into table_; 0 = empty
-    std::uint16_t last_ = 0;                                 ///< the id set() used last
-    std::deque<std::string> table_{std::string{}};           ///< distinct strings, [0] empty
+    std::vector<std::uint16_t> ids_;               ///< index into table_; 0 = empty
+    std::uint16_t last_ = 0;                       ///< the id set() used last
+    std::deque<std::string> table_{std::string{}}; ///< distinct strings, [0] empty
     std::unordered_map<std::string, std::uint16_t> index_{{std::string{}, 0}};
-    std::vector<std::string> strings_;                       ///< used once not interned_
+    std::vector<std::string> strings_; ///< used once not interned_
 };
 
 } // namespace openswmm::twoD

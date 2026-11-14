@@ -225,11 +225,13 @@ SWMM_ENGINE_API int swmm_node_set_storage_area(SWMM_Engine engine, int idx, doub
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     if (!std::isfinite(area) || area < 0.0 || ctx.nodes.type[idx] != openswmm::NodeType::JUNCTION ||
-        ctx.nodes.is_virtual[idx] || ctx.nodes.is_inlet[idx]) return SWMM_ERR_BADPARAM;
+        ctx.nodes.is_virtual[idx] || ctx.nodes.is_inlet[idx])
+        return SWMM_ERR_BADPARAM;
     const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
-    const double internal_area = area / (f*f);
-    if (!std::isfinite(internal_area)) return SWMM_ERR_BADPARAM;
-    ctx.nodes.storage_area[idx] = exact_inverse(internal_area, f*f, area);
+    const double internal_area = area / (f * f);
+    if (!std::isfinite(internal_area))
+        return SWMM_ERR_BADPARAM;
+    ctx.nodes.storage_area[idx] = exact_inverse(internal_area, f * f, area);
     return SWMM_OK;
 }
 
@@ -237,9 +239,10 @@ SWMM_ENGINE_API int swmm_node_get_storage_area(SWMM_Engine engine, int idx, doub
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
-    if (!area) return SWMM_ERR_BADPARAM;
+    if (!area)
+        return SWMM_ERR_BADPARAM;
     const double f = openswmm::ucf::UCF(openswmm::ucf::LENGTH, ctx.options);
-    *area = ctx.nodes.storage_area[idx] * (f*f);
+    *area = ctx.nodes.storage_area[idx] * (f * f);
     return SWMM_OK;
 }
 
@@ -1161,35 +1164,45 @@ SWMM_ENGINE_API int swmm_node_get_divider_type(SWMM_Engine engine, int idx, int*
 // Node Geometry/State Getters
 // ============================================================================
 
-SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx, SWMM_DividerParams* out) {
+SWMM_ENGINE_API int swmm_node_get_divider_params(SWMM_Engine engine, int idx,
+                                                 SWMM_DividerParams* out) {
     CHECK_HANDLE(engine);
-    if (!out) return SWMM_ERR_BADPARAM;
+    if (!out)
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const int row = ctx.node_subtypes.divider_row(idx);
-    if (row < 0) return SWMM_ERR_BADPARAM;
+    if (row < 0)
+        return SWMM_ERR_BADPARAM;
     const auto r = static_cast<std::size_t>(row);
     const auto& d = ctx.node_subtypes.dividers;
-    *out = {static_cast<int>(d.method[r]), d.link[r], d.curve[r],
-            to_display(ctx, openswmm::ucf::FLOW, d.cutoff[r]), d.max_depth[r], d.cd[r]};
+    *out = {static_cast<int>(d.method[r]),
+            d.link[r],
+            d.curve[r],
+            to_display(ctx, openswmm::ucf::FLOW, d.cutoff[r]),
+            d.max_depth[r],
+            d.cd[r]};
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx, const SWMM_DividerParams* value) {
+SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx,
+                                                 const SWMM_DividerParams* value) {
     CHECK_HANDLE(engine);
-    if (!value) return SWMM_ERR_BADPARAM;
+    if (!value)
+        return SWMM_ERR_BADPARAM;
     auto& ctx = to_engine(engine)->context();
     CHECK_GEOMETRY(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_nodes());
     const int row = ctx.node_subtypes.divider_row(idx);
-    if (row < 0 || value->method < 0 || value->method > 3 ||
-        !std::isfinite(value->cutoff_flow) || value->cutoff_flow < 0 ||
-        !std::isfinite(value->weir_height) || value->weir_height < 0 ||
+    if (row < 0 || value->method < 0 || value->method > 3 || !std::isfinite(value->cutoff_flow) ||
+        value->cutoff_flow < 0 || !std::isfinite(value->weir_height) || value->weir_height < 0 ||
         !std::isfinite(value->weir_coefficient) || value->weir_coefficient < 0 ||
         value->diversion_link < -1 || value->diversion_link >= ctx.n_links() ||
-        (value->diversion_link >= 0 && ctx.links.node1[static_cast<std::size_t>(value->diversion_link)] != idx) ||
+        (value->diversion_link >= 0 &&
+         ctx.links.node1[static_cast<std::size_t>(value->diversion_link)] != idx) ||
         value->curve < -1 || value->curve >= ctx.n_tables() ||
-        (value->curve >= 0 && ctx.tables[value->curve].type != openswmm::TableType::CURVE_DIVERSION) ||
+        (value->curve >= 0 &&
+         ctx.tables[value->curve].type != openswmm::TableType::CURVE_DIVERSION) ||
         (value->method == 2 && value->curve < 0) ||
         (value->method == 3 && (value->weir_height <= 0 || value->weir_coefficient <= 0)))
         return SWMM_ERR_BADPARAM;
@@ -1198,7 +1211,8 @@ SWMM_ENGINE_API int swmm_node_set_divider_params(SWMM_Engine engine, int idx, co
     d.method[r] = static_cast<openswmm::DividerType>(value->method);
     d.link[r] = value->diversion_link;
     d.curve[r] = value->curve;
-    d.link_name[r] = value->diversion_link >= 0 ? ctx.link_names.name_of(value->diversion_link) : "";
+    d.link_name[r] =
+        value->diversion_link >= 0 ? ctx.link_names.name_of(value->diversion_link) : "";
     d.curve_name[r] = value->curve >= 0 ? ctx.tables[value->curve].id : "";
     d.cutoff[r] = to_internal(ctx, openswmm::ucf::FLOW, value->cutoff_flow);
     d.max_depth[r] = value->weir_height;
@@ -1391,7 +1405,8 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
     std::vector<std::string*> node_beds;
     if (ctx.twod_io.aquifer_nodes)
         for (auto& name : *ctx.twod_io.aquifer_nodes)
-            if (ctx.node_names.find(name) == idx) node_beds.push_back(&name);
+            if (ctx.node_names.find(name) == idx)
+                node_beds.push_back(&name);
     std::vector<int> drains;
     const int same_named_catchment = ctx.subcatch_names.find(newId);
     for (int row = 0; row < ctx.lid_usage.count(); ++row) {
@@ -1401,11 +1416,15 @@ SWMM_ENGINE_API int swmm_node_rename(SWMM_Engine engine, int idx, const char* ne
         if (node < 0 && same_named_catchment >= 0 &&
             ctx.subcatch_names.find(target) == same_named_catchment)
             return SWMM_ERR_BADPARAM;
-        if (node == idx) drains.push_back(row);
+        if (node == idx)
+            drains.push_back(row);
     }
-    if (!ctx.node_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
-    for (auto* name : node_beds) *name = ctx.node_names.name_of(idx);
-    for (int row : drains) ctx.lid_usage.drain_to[row] = ctx.node_names.name_of(idx);
+    if (!ctx.node_names.rename(idx, newId))
+        return SWMM_ERR_BADPARAM;
+    for (auto* name : node_beds)
+        *name = ctx.node_names.name_of(idx);
+    for (int row : drains)
+        ctx.lid_usage.drain_to[row] = ctx.node_names.name_of(idx);
     openswmm::moveNamedOverrides(ctx, "NODE", idx, previous, ctx.node_names.name_of(idx));
     openswmm::refreshNamedHeatOverrides(ctx);
     return SWMM_OK;

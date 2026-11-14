@@ -82,16 +82,16 @@ static const int DEFAULT_MAXTRIALS = 8;           // Max. trials per time step
 //  Data Structures
 //-----------------------------------------------------------------------------
 typedef struct {
-    char converged;     // TRUE if iterations for a node done
+    char converged;                 // TRUE if iterations for a node done
     int chamberFirst, chamberCount; // incident conduit slice for physical volume inversion
-    double newSurfArea; // current surface area (ft2)
-    double oldSurfArea; // previous surface area (ft2)
-    double sumdqdh;     // sum of dqdh from adjoining links
-    double dYdT;        // change in depth w.r.t. time (ft/sec)
-    double chamberResidual; // last physical-chamber head iteration movement (ft)
-    double conduitLoss; // aggregate conduit loss charged to this node (cfs)
-    double lossFactor;  // fraction affordable without drying below zero
-    double conduitVolumeChange; // assigned change in adjacent conduit storage (ft3)
+    double newSurfArea;             // current surface area (ft2)
+    double oldSurfArea;             // previous surface area (ft2)
+    double sumdqdh;                 // sum of dqdh from adjoining links
+    double dYdT;                    // change in depth w.r.t. time (ft/sec)
+    double chamberResidual;         // last physical-chamber head iteration movement (ft)
+    double conduitLoss;             // aggregate conduit loss charged to this node (cfs)
+    double lossFactor;              // fraction affordable without drying below zero
+    double conduitVolumeChange;     // assigned change in adjacent conduit storage (ft3)
 } TXnode;
 
 //-----------------------------------------------------------------------------
@@ -102,8 +102,8 @@ static TXnode* Xnode;       // extended nodal information
 static int* ChamberLinks;   // chamber incidence, absent for zero-area models
 
 static int HasConduitLosses; // evaporation or seepage possible this step
-static double Omega; // actual under-relaxation parameter
-static int Steps;    // number of Picard iterations
+static double Omega;         // actual under-relaxation parameter
+static int Steps;            // number of Picard iterations
 
 //-----------------------------------------------------------------------------
 //  Function declarations
@@ -168,10 +168,13 @@ void dynwave_init() {
     // Build only the incidence needed by physical chamber volume inversion.
     {
         int count = 0;
-        for (i = 0; i < Nobjects[LINK]; ++i) if (isTrueConduit(i)) {
-            if (Node[Link[i].node1].storageArea > 0.0) ++Xnode[Link[i].node1].chamberCount;
-            if (Node[Link[i].node2].storageArea > 0.0) ++Xnode[Link[i].node2].chamberCount;
-        }
+        for (i = 0; i < Nobjects[LINK]; ++i)
+            if (isTrueConduit(i)) {
+                if (Node[Link[i].node1].storageArea > 0.0)
+                    ++Xnode[Link[i].node1].chamberCount;
+                if (Node[Link[i].node2].storageArea > 0.0)
+                    ++Xnode[Link[i].node2].chamberCount;
+            }
         for (i = 0; i < Nobjects[NODE]; ++i) {
             Xnode[i].chamberFirst = count;
             count += Xnode[i].chamberCount;
@@ -182,11 +185,14 @@ void dynwave_init() {
             report_writeErrorMsg(ERR_MEMORY, " Junction chamber incidence.");
             return;
         }
-        for (i = 0; i < Nobjects[LINK]; ++i) if (isTrueConduit(i)) {
-            int n1 = Link[i].node1, n2 = Link[i].node2;
-            if (Node[n1].storageArea > 0.0) ChamberLinks[Xnode[n1].chamberFirst + Xnode[n1].chamberCount++] = i;
-            if (Node[n2].storageArea > 0.0) ChamberLinks[Xnode[n2].chamberFirst + Xnode[n2].chamberCount++] = i;
-        }
+        for (i = 0; i < Nobjects[LINK]; ++i)
+            if (isTrueConduit(i)) {
+                int n1 = Link[i].node1, n2 = Link[i].node2;
+                if (Node[n1].storageArea > 0.0)
+                    ChamberLinks[Xnode[n1].chamberFirst + Xnode[n1].chamberCount++] = i;
+                if (Node[n2].storageArea > 0.0)
+                    ChamberLinks[Xnode[n2].chamberFirst + Xnode[n2].chamberCount++] = i;
+            }
     }
 
     // --- set crown cutoff for finding top width of closed conduits
@@ -292,21 +298,29 @@ int dynwave_execute(double tStep) {
     // Refuse an unclosed water budget instead of accepting a clipped dry state.
     {
         int i;
-        for (i = 0; i < Nobjects[NODE]; ++i) if (Node[i].storageArea > 0.0) {
-            double dv = .5 * (Node[i].oldNetInflow + Node[i].inflow - Node[i].outflow) * tStep;
-            double residual = Node[i].oldVolume + dv - Xnode[i].conduitVolumeChange - Node[i].newVolume;
-            double tolerance = MAX(4.e-7 * (Node[i].storageArea + Xnode[i].newSurfArea + .5 * tStep * Xnode[i].sumdqdh),
-                                   MAX(1.e-8, .0005 * (fabs(dv) + fabs(Xnode[i].conduitVolumeChange))));
-            if (!(AllowPonding && Node[i].pondedArea > 0.0)) residual -= Node[i].overflow * tStep;
-            if (fabs(residual) > tolerance || Xnode[i].chamberResidual > MAX(FUDGE, MIN(HeadTol, DEFAULT_HEADTOL))) {
-                char detail[256];
-                snprintf(detail, sizeof(detail), "Physical junction %s: continuity residual %.9g ft3 (tolerance %.9g), head iteration change %.9g ft; reduce ROUTING_STEP or increase MAX_TRIALS.",
-                         Node[i].ID, residual, tolerance, Xnode[i].chamberResidual);
-                report_writeLine(detail);
-                report_writeErrorMsg(ERR_TIMESTEP, "");
-                return Steps;
+        for (i = 0; i < Nobjects[NODE]; ++i)
+            if (Node[i].storageArea > 0.0) {
+                double dv = .5 * (Node[i].oldNetInflow + Node[i].inflow - Node[i].outflow) * tStep;
+                double residual =
+                    Node[i].oldVolume + dv - Xnode[i].conduitVolumeChange - Node[i].newVolume;
+                double tolerance =
+                    MAX(4.e-7 * (Node[i].storageArea + Xnode[i].newSurfArea +
+                                 .5 * tStep * Xnode[i].sumdqdh),
+                        MAX(1.e-8, .0005 * (fabs(dv) + fabs(Xnode[i].conduitVolumeChange))));
+                if (!(AllowPonding && Node[i].pondedArea > 0.0))
+                    residual -= Node[i].overflow * tStep;
+                if (fabs(residual) > tolerance ||
+                    Xnode[i].chamberResidual > MAX(FUDGE, MIN(HeadTol, DEFAULT_HEADTOL))) {
+                    char detail[256];
+                    snprintf(
+                        detail, sizeof(detail),
+                        "Physical junction %s: continuity residual %.9g ft3 (tolerance %.9g), head iteration change %.9g ft; reduce ROUTING_STEP or increase MAX_TRIALS.",
+                        Node[i].ID, residual, tolerance, Xnode[i].chamberResidual);
+                    report_writeLine(detail);
+                    report_writeErrorMsg(ERR_TIMESTEP, "");
+                    return Steps;
+                }
             }
-        }
     }
     if (!converged)
         updateConvergenceStats();
@@ -594,9 +608,11 @@ void findNonConduitSurfArea(int i) {
         Link[i].surfArea1 = 0.0;
 
     Link[i].surfArea2 = Link[i].surfArea1;
-    if (Link[i].flowClass == UP_CRITICAL || (Node[Link[i].node1].type == STORAGE || Node[Link[i].node1].storageArea > 0.0))
+    if (Link[i].flowClass == UP_CRITICAL ||
+        (Node[Link[i].node1].type == STORAGE || Node[Link[i].node1].storageArea > 0.0))
         Link[i].surfArea1 = 0.0;
-    if (Link[i].flowClass == DN_CRITICAL || (Node[Link[i].node2].type == STORAGE || Node[Link[i].node2].storageArea > 0.0))
+    if (Link[i].flowClass == DN_CRITICAL ||
+        (Node[Link[i].node2].type == STORAGE || Node[Link[i].node2].storageArea > 0.0))
         Link[i].surfArea2 = 0.0;
 }
 
@@ -620,8 +636,7 @@ static double chamberEndArea(TXsect* xsect, double depth) {
         return xsect_getAofY(xsect, depth);
     if (SurchargeMethod == SLOT && !xsect_isOpen(xsect->type)) {
         double ratio = depth / xsect->yFull;
-        slot = ratio > 1.78 ? 0.01 * xsect->wMax
-                           : xsect->wMax * 0.5423 * exp(-pow(ratio, 2.4));
+        slot = ratio > 1.78 ? 0.01 * xsect->wMax : xsect->wMax * 0.5423 * exp(-pow(ratio, 2.4));
     }
     return xsect->aFull + (depth - xsect->yFull) * slot;
 }
@@ -689,13 +704,15 @@ void updateNodeFlows(int i)
         double oldShare = old1 + old2 > 0.0 ? old1 / (old1 + old2) : 0.5;
         double newShare = now1 + now2 > 0.0 ? now1 / (now1 + now2) : 0.5;
         if (Node[n1].type != OUTFALL)
-            Xnode[n1].conduitVolumeChange += Node[n2].type == OUTFALL
-                ? Link[i].newVolume - Link[i].oldVolume
-                : newShare * Link[i].newVolume - oldShare * Link[i].oldVolume;
+            Xnode[n1].conduitVolumeChange +=
+                Node[n2].type == OUTFALL
+                    ? Link[i].newVolume - Link[i].oldVolume
+                    : newShare * Link[i].newVolume - oldShare * Link[i].oldVolume;
         if (Node[n2].type != OUTFALL)
-            Xnode[n2].conduitVolumeChange += Node[n1].type == OUTFALL
-                ? Link[i].newVolume - Link[i].oldVolume
-                : (1.0 - newShare) * Link[i].newVolume - (1.0 - oldShare) * Link[i].oldVolume;
+            Xnode[n2].conduitVolumeChange +=
+                Node[n1].type == OUTFALL
+                    ? Link[i].newVolume - Link[i].oldVolume
+                    : (1.0 - newShare) * Link[i].newVolume - (1.0 - oldShare) * Link[i].oldVolume;
     }
 
     // --- add surf. area contributions to upstream/downstream nodes
@@ -761,15 +778,16 @@ void limitConduitLosses(double dt) {
         rate = Xnode[i].conduitLoss;
         if (rate <= 0.0 || Node[i].type == OUTFALL)
             continue;
-        area = Node[i].storageArea > 0.0 ? Xnode[i].newSurfArea : MAX(Xnode[i].newSurfArea, MinSurfArea);
+        area = Node[i].storageArea > 0.0 ? Xnode[i].newSurfArea
+                                         : MAX(Xnode[i].newSurfArea, MinSurfArea);
         // FUDGE is a numerical wetting floor, not a renewable water supply.
         // Enforce both the step's water budget and trapezoidal continuity.
         available = Node[i].inflow - Node[i].outflow + rate;
         storageRate = Node[i].storageArea > 0.0
                           ? (Node[i].oldVolume - Xnode[i].conduitVolumeChange) / dt
                           : MAX(0.0, Node[i].oldDepth - FUDGE) * area / dt;
-        available = MIN(available + storageRate,
-                        available + Node[i].oldNetInflow + 2.0 * storageRate);
+        available =
+            MIN(available + storageRate, available + Node[i].oldNetInflow + 2.0 * storageRate);
         Xnode[i].lossFactor = MIN(1.0, MAX(0.0, available / rate));
     }
     for (j = 0; j < Nobjects[LINK]; j++) {
@@ -907,18 +925,26 @@ void setNodeDepth(int i, double dt) {
                 double jac = .5 * dt * Xnode[i].sumdqdh;
                 int trial;
                 if (canPond)
-                    high = MAX(Node[i].fullDepth, yLast + fabs(target-current) /
-                               MIN(Node[i].storageArea, Node[i].pondedArea) + 1.0);
+                    high = MAX(Node[i].fullDepth,
+                               yLast +
+                                   fabs(target - current) /
+                                       MIN(Node[i].storageArea, Node[i].pondedArea) +
+                                   1.0);
                 yNew = MIN(high, MAX(low, yNew));
                 for (trial = 0; trial < 40; ++trial) {
                     double volume = node_getVolume(i, yNew);
                     double residual;
                     if (canPond && yNew > Node[i].fullDepth)
                         volume += (yNew - Node[i].fullDepth) * Node[i].pondedArea;
-                    residual = volume + chamberPipePartVolume(i,yNew) - base + jac*(yNew-yLast) - target;
-                    if (fabs(residual) <= 1.e-10 * MAX(1.0, fabs(target))) break;
-                    if (residual > 0.0) high = yNew; else low = yNew;
-                    yNew = .5*(low+high);
+                    residual = volume + chamberPipePartVolume(i, yNew) - base +
+                               jac * (yNew - yLast) - target;
+                    if (fabs(residual) <= 1.e-10 * MAX(1.0, fabs(target)))
+                        break;
+                    if (residual > 0.0)
+                        high = yNew;
+                    else
+                        low = yNew;
+                    yNew = .5 * (low + high);
                 }
                 if (!canPond && yNew > Node[i].fullDepth + Node[i].surDepth - 1.e-8)
                     yNew = Node[i].fullDepth + Node[i].surDepth;
@@ -961,7 +987,8 @@ void setNodeDepth(int i, double dt) {
     // or storage node is surcharged but there is not a flow change with response to head
     // An example is a storage node that has external inflows and outflows
     // but not connecting links.
-    if (!isSurcharged || ((Node[i].type == STORAGE || Node[i].storageArea > 0.0) && Xnode[i].sumdqdh == 0.0)) {
+    if (!isSurcharged ||
+        ((Node[i].type == STORAGE || Node[i].storageArea > 0.0) && Xnode[i].sumdqdh == 0.0)) {
         dy = dV / surfArea;
         yNew = yOld + dy;
 

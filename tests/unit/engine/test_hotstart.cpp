@@ -1391,13 +1391,16 @@ TEST(HotStartReview, UnsupportedStateRefusesBeforeReplacingExistingFile) {
     const std::string previous = "last valid restart";
     for (int feature = 0; feature < 4; ++feature) {
         auto ctx = make_test_context();
-        if (feature == 0) ctx.options.heat_transport = true;
+        if (feature == 0)
+            ctx.options.heat_transport = true;
         if (feature == 1) {
             ctx.options.water_age = true;
             ctx.options.quality_solver = openswmm::QualitySolverKind::LAGRANGIAN;
         }
-        if (feature == 2) ctx.lid_layer_state.n_units = ctx.lid_layer_state.n_species = 1;
-        if (feature == 3) ctx.runtime_coupling_used = true;
+        if (feature == 2)
+            ctx.lid_layer_state.n_units = ctx.lid_layer_state.n_species = 1;
+        if (feature == 3)
+            ctx.runtime_coupling_used = true;
         std::ofstream(path, std::ios::binary) << previous;
         EXPECT_NE(HotStartManager::save_legacy_routing(path, ctx), 0);
         if (feature != 3) {
@@ -1419,14 +1422,17 @@ TEST(HotStartReview, AutoFormatPreservesLegacySolverWaterAge) {
     // FILES paths are relative to the input file's directory.
     std::ofstream(input) << splitRunDeck("02:00:00", "00:00:00", "SAVE HOTSTART \"age-native.hsf\"")
                          << "\n[OPTIONS]\nWATER_AGE ON\n";
-    std::ofstream(restart) << splitRunDeck("03:00:00", "02:00:00", "USE HOTSTART \"age-native.hsf\"")
+    std::ofstream(restart) << splitRunDeck("03:00:00", "02:00:00",
+                                           "USE HOTSTART \"age-native.hsf\"")
                            << "\n[OPTIONS]\nWATER_AGE ON\n";
     openswmm::SWMMEngine source, target;
     ASSERT_EQ(source.open(input.c_str(), "hotstart_review/age-save.rpt", nullptr), SWMM_OK);
     ASSERT_EQ(source.initialize(), SWMM_OK);
     ASSERT_EQ(source.start(0), SWMM_OK);
     double elapsed = 0;
-    do { ASSERT_EQ(source.step(&elapsed), SWMM_OK); } while (elapsed > 0);
+    do {
+        ASSERT_EQ(source.step(&elapsed), SWMM_OK);
+    } while (elapsed > 0);
     ASSERT_EQ(source.end(), SWMM_OK);
     std::unique_ptr<HotStartFile> saved(HotStartManager::open(file));
     ASSERT_NE(saved, nullptr) << HotStartManager::last_io_error();
@@ -1437,7 +1443,8 @@ TEST(HotStartReview, AutoFormatPreservesLegacySolverWaterAge) {
     EXPECT_EQ(source.context().water_age_state.node_age, target.context().water_age_state.node_age);
     EXPECT_EQ(source.context().water_age_state.link_age, target.context().water_age_state.link_age);
     EXPECT_GT(*std::max_element(source.context().water_age_state.link_age.begin(),
-                               source.context().water_age_state.link_age.end()), 0);
+                                source.context().water_age_state.link_age.end()),
+              0);
 }
 
 // ============================================================================
@@ -1455,8 +1462,7 @@ std::string inspectionDeck(const char* initDepth, const char* initFlow, const ch
                        "END_DATE 01/01/2024\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\n"
                        "WET_STEP 00:05:00\nDRY_STEP 00:05:00\nROUTING_STEP 0:00:10\n\n"
                        "[JUNCTIONS]\nJ1 100 10 ") +
-           initDepth +
-           " 0 0\nJ2 99 10 0 0 0\n\n[STORAGE]\nST1 98 12 " + initDepth +
+           initDepth + " 0 0\nJ2 99 10 0 0 0\n\n[STORAGE]\nST1 98 12 " + initDepth +
            " FUNCTIONAL 1000 0 0 0 0\n\n[OUTFALLS]\nO1 95 FREE NO\n\n[CONDUITS]\nC1 J1 J2 400 "
            "0.013 0 0 " +
            initFlow +
@@ -1544,9 +1550,9 @@ TEST(HotStartInspection, GettersReadEveryStoredRecord) {
     EXPECT_EQ(conc, saved->link_species[2]);
 
     // Bounds, null outputs and a short ID buffer.
-    EXPECT_EQ(swmm_hotstart_get_node(hs, ctx.n_nodes(), nullptr, 0, nullptr, nullptr, nullptr,
-                                     nullptr),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(
+        swmm_hotstart_get_node(hs, ctx.n_nodes(), nullptr, 0, nullptr, nullptr, nullptr, nullptr),
+        SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_hotstart_get_link(hs, -1, nullptr, 0, nullptr, nullptr, nullptr, nullptr),
               SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_hotstart_get_node(hs, 0, nullptr, 0, nullptr, nullptr, nullptr, nullptr),

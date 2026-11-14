@@ -34,7 +34,7 @@ struct MeshRichardsTrial {
     bool consumed = false;
 };
 MeshRichardsTrial trialMeshRichardsStep(SimulationContext&, twoD::SubsurfaceSolver&,
-                                       twoD::SurfaceStateData&, double dt, double evaporation);
+                                        twoD::SurfaceStateData&, double dt, double evaporation);
 void acceptMeshRichardsTrial(SimulationContext&, twoD::SubsurfaceSolver&, MeshRichardsTrial&);
 #endif
 // Production column preparation at the single global hydraulic cadence.

@@ -587,7 +587,8 @@ TEST(HeatTransportReview, UniformTemperatureSurvivesDryStartupAcrossSolvers) {
     write_file("_ht_review_uniform.heat", heat_cfg(18, 18, 18));
     for (const char* solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
         SCOPED_TRACE(solver);
-        write_deck("_ht_review_uniform.inp", std::string("HEAT_TRANSPORT ON\nQUALITY_SOLVER ") + solver + "\n",
+        write_deck("_ht_review_uniform.inp",
+                   std::string("HEAT_TRANSPORT ON\nQUALITY_SOLVER ") + solver + "\n",
                    "org.hydrocouple.openswmm.heat config=\"_ht_review_uniform.heat\"", false, 1, 0);
         std::ifstream input("_ht_review_uniform.inp");
         std::string text((std::istreambuf_iterator<char>(input)), {});
@@ -599,7 +600,9 @@ TEST(HeatTransportReview, UniformTemperatureSurvivesDryStartupAcrossSolvers) {
         }
         write_file("_ht_review_uniform.inp", text);
         auto e = swmm_engine_create();
-        ASSERT_EQ(swmm_engine_open(e, "_ht_review_uniform.inp", "_ht_review_uniform.rpt", "_ht_review_uniform.out", nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(e, "_ht_review_uniform.inp", "_ht_review_uniform.rpt",
+                                   "_ht_review_uniform.out", nullptr),
+                  SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
         ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
         auto& ctx = as_cpp_engine(e).context();

@@ -458,7 +458,6 @@ TEST(MsxBuildupWashoff, RoundTripThroughWriterAndCApi) {
         const std::string t = ss.str();
         EXPECT_NE(t.find("LU1              X                POW"), std::string::npos) << t;
         EXPECT_NE(t.find("LU1              X                EMC"), std::string::npos) << t;
-
     }
     // Reopen: same values back, and the initial loading seeds the store.
     SWMM_Engine e2 = swmm_engine_create();

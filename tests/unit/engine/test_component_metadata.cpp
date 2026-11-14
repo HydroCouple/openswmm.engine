@@ -156,7 +156,8 @@ void runToEnd(SWMM_Engine e, const fs::path& inp, const fs::path& rpt, const fs:
 // previous parse filled may carry over -- here [PROCESS_COMPONENTS], [PLUGINS],
 // embedded [REACTION_*] sections, [DWF] and [FILES] (mesh open plan R1).
 TEST(ComponentMetadata, ReopeningOneHandleReadsTheModelAfresh) {
-    const char* reactions = "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n[REACTION_PIPES]\nFORMULA X 2*A\n";
+    const char* reactions =
+        "[REACTION_SPECIES]\nBULK X MG\nWALL W MG\n[REACTION_PIPES]\nFORMULA X 2*A\n";
     const auto external = fixture("reopen-external");
     std::ofstream(external / "model.rxn") << reactions;
     std::ofstream(external / "model.inp", std::ios::app)
@@ -168,7 +169,8 @@ TEST(ComponentMetadata, ReopeningOneHandleReadsTheModelAfresh) {
         Engine e;
         std::string written[2];
         for (int pass = 0; pass < 2; ++pass) {
-            ASSERT_EQ(swmm_engine_open_metadata(e.value, (directory / "model.inp").string().c_str()), 0)
+            ASSERT_EQ(
+                swmm_engine_open_metadata(e.value, (directory / "model.inp").string().c_str()), 0)
                 << "open " << pass + 1 << ": " << swmm_get_last_error_msg(e.value);
             EXPECT_EQ(swmm_reaction_species_count(e.value), 2);
             const auto out = directory / ("written_" + std::to_string(pass + 1) + ".inp");
@@ -194,9 +196,12 @@ TEST(ComponentMetadata, ReopenedHandleReportsTheNewModelsSections) {
     ASSERT_NE(text.find(narrow), std::string::npos);
     std::ofstream(directory / "wide.inp") << text.replace(text.find(narrow), narrow.size(), wide);
     Engine reused, fresh;
-    runToEnd(reused.value, directory / "narrow.inp", directory / "narrow.rpt", directory / "narrow.out");
-    runToEnd(reused.value, directory / "wide.inp", directory / "wide_reused.rpt", directory / "wide_reused.out");
-    runToEnd(fresh.value, directory / "wide.inp", directory / "wide_fresh.rpt", directory / "wide_fresh.out");
+    runToEnd(reused.value, directory / "narrow.inp", directory / "narrow.rpt",
+             directory / "narrow.out");
+    runToEnd(reused.value, directory / "wide.inp", directory / "wide_reused.rpt",
+             directory / "wide_reused.out");
+    runToEnd(fresh.value, directory / "wide.inp", directory / "wide_fresh.rpt",
+             directory / "wide_fresh.out");
     EXPECT_NE(slurp(directory / "narrow.out"), slurp(directory / "wide_fresh.out"));
     EXPECT_EQ(slurp(directory / "wide_reused.out"), slurp(directory / "wide_fresh.out"));
     EXPECT_EQ(reportBody(directory / "wide_reused.rpt"), reportBody(directory / "wide_fresh.rpt"));

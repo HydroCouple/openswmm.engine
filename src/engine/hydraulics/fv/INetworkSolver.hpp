@@ -129,7 +129,6 @@ struct FvStepForcing {
     /// refuses the unavailable share instead of accumulating negative water.
     /// Null preserves callers without an external-withdrawal contract.
     const double* node_withdrawal = nullptr;
-
 };
 
 /**

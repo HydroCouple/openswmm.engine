@@ -23,8 +23,8 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
                                    const std::vector<double>& h, const std::vector<double>& eta,
                                    const std::vector<double>& qx, const std::vector<double>& qy,
                                    double dry, double cs, std::vector<double>& rx,
-                                   std::vector<double>& ry, double fixed_viscosity, double background,
-                                   double depth_coefficient) {
+                                   std::vector<double>& ry, double fixed_viscosity,
+                                   double background, double depth_coefficient) {
     const int n = m.n_cells();
     rx.assign(n, 0);
     ry.assign(n, 0);
@@ -88,11 +88,13 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
         }
         strain[i] = std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
         vorticity[i] = std::abs(vx - uy);
-        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity
-                     : depth_coefficient > 0
-                         ? background + std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
-                                            vorticity[i]
-                         : background + cs * cs * m.tri_area[i] * strain[i];
+        viscosity[i] =
+            fixed_viscosity >= 0 ? fixed_viscosity
+            : depth_coefficient > 0
+                ? background +
+                      std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
+                          vorticity[i]
+                : background + cs * cs * m.tri_area[i] * strain[i];
         if (!std::isfinite(viscosity[i]))
             throw std::runtime_error("Nonfinite Smagorinsky viscosity.");
     }
@@ -124,11 +126,13 @@ double MomentumPhysics2D::evaluate(const MeshData& m, const InertialEdges& edges
         }
         strain[i] = std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
         vorticity[i] = std::abs(vx - uy);
-        viscosity[i] = fixed_viscosity >= 0 ? fixed_viscosity
-                     : depth_coefficient > 0
-                         ? background + std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
-                                            vorticity[i]
-                         : background + cs * cs * m.tri_area[i] * strain[i];
+        viscosity[i] =
+            fixed_viscosity >= 0 ? fixed_viscosity
+            : depth_coefficient > 0
+                ? background +
+                      std::pow(std::min(depth_coefficient * h[i], kappa * wall_distance[i]), 2) *
+                          vorticity[i]
+                : background + cs * cs * m.tri_area[i] * strain[i];
     }
     for (int e = 0; e < edges.ne; ++e) {
         if (!connected_[e])
@@ -226,8 +230,8 @@ void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
     } rollback{qx, qy, qx, qy};
     double elapsed = 0;
     while (elapsed < seconds) {
-        const double bound =
-            evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_, -1, background, depth_coefficient);
+        const double bound = evaluate(m, edges, h, eta, qx, qy, dry, cs, rx_, ry_, -1, background,
+                                      depth_coefficient);
         double dt = std::min(seconds - elapsed, bound);
         const double e0 = energy(m, h, qx, qy, dry);
         bool accepted = false;
@@ -238,8 +242,8 @@ void MomentumPhysics2D::advance(const MeshData& m, const InertialEdges& edges,
                 tx_[j] += dt * rx_[j];
                 ty_[j] += dt * ry_[j];
             }
-            const double stage_bound =
-                evaluate(m, edges, h, eta, tx_, ty_, dry, cs, sx_, sy_, -1, background, depth_coefficient);
+            const double stage_bound = evaluate(m, edges, h, eta, tx_, ty_, dry, cs, sx_, sy_, -1,
+                                                background, depth_coefficient);
             if (dt <= stage_bound) {
                 for (std::size_t j = 0; j < tx_.size(); ++j) {
                     tx_[j] = .5 * (qx[j] + tx_[j] + dt * sx_[j]);
@@ -280,7 +284,8 @@ void MomentumPhysics2D::computeWallDistance(const MeshData& m) {
         double best = std::numeric_limits<double>::infinity();
         for (const auto& s : segments) {
             const double dx = s[2] - s[0], dy = s[3] - s[1], len2 = dx * dx + dy * dy;
-            const double t = len2 > 0 ? std::clamp(((px - s[0]) * dx + (py - s[1]) * dy) / len2, 0.0, 1.0) : 0.0;
+            const double t =
+                len2 > 0 ? std::clamp(((px - s[0]) * dx + (py - s[1]) * dy) / len2, 0.0, 1.0) : 0.0;
             best = std::min(best, std::hypot(px - s[0] - t * dx, py - s[1] - t * dy));
         }
         wall_distance[c] = best;
@@ -300,13 +305,14 @@ double MomentumPhysics2D::energy(const MeshData& m, const std::vector<double>& h
 
 namespace openswmm::twoD {
 double MomentumPhysics2D::wallDrag(const MeshData& m, const BoundaryData& b,
-    const std::vector<int>& slots, const std::vector<double>& h,
-    const std::vector<double>& eta, std::vector<double>& qx, std::vector<double>& qy,
-    double dry, double seconds, bool vfr) {
+                                   const std::vector<int>& slots, const std::vector<double>& h,
+                                   const std::vector<double>& eta, std::vector<double>& qx,
+                                   std::vector<double>& qy, double dry, double seconds, bool vfr) {
     double removed = 0;
     const auto apply = [&](int slot) {
         const int i = MeshData::slot_cell(slot);
-        if (h[i] <= dry) return;
+        if (h[i] <= dry)
+            return;
         double hw = h[i];
         if (vfr) {
             int a, z;
@@ -314,20 +320,23 @@ double MomentumPhysics2D::wallDrag(const MeshData& m, const BoundaryData& b,
             hw = inertial::faceDepthFromEta(eta[i], std::min(m.vz[a], m.vz[z]),
                                             std::max(m.vz[a], m.vz[z]));
         }
-        const double k = b.edge_wall_drag[slot] * m.edge_length[slot] * hw /
-                         (m.tri_area[i] * h[i]);
-        if (k == 0) return;
+        const double k = b.edge_wall_drag[slot] * m.edge_length[slot] * hw / (m.tri_area[i] * h[i]);
+        if (k == 0)
+            return;
         const double tx = -m.edge_ny[slot], ty = m.edge_nx[slot];
         const double ut = (qx[i] * tx + qy[i] * ty) / h[i];
-        if (ut == 0) return;
+        if (ut == 0)
+            return;
         const double next = std::copysign(1.0 / (1.0 / std::abs(ut) + .5 * seconds * k), ut);
         const double dq = h[i] * (next - ut);
         qx[i] += dq * tx;
         qy[i] += dq * ty;
         removed += .5 * m.tri_area[i] * h[i] * (ut - next) * (ut + next);
     };
-    for (int slot : slots) apply(slot);
-    for (auto it = slots.rbegin(); it != slots.rend(); ++it) apply(*it);
+    for (int slot : slots)
+        apply(slot);
+    for (auto it = slots.rbegin(); it != slots.rend(); ++it)
+        apply(*it);
     return removed;
 }
 } // namespace openswmm::twoD

@@ -647,7 +647,7 @@ TEST_F(OutputPluginRptFlagTest, NoneFlaggedWritesZeroCounts) {
 
 TEST(ReportPluginScalingTest, NonUnitGageFactorsAreVisibleWithoutInputSummary) {
     const auto directory = fs::path(__FILE__).parent_path().parent_path().parent_path() /
-        "verification/reported_compatibility_2026-10-28/unit";
+                           "verification/reported_compatibility_2026-10-28/unit";
     fs::create_directories(directory);
     for (double factor : {1.0, 2.5}) {
         SCOPED_TRACE(factor);

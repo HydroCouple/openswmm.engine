@@ -2705,16 +2705,20 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
                nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs));
     if (o.coriolis != twoD::Coriolis2D::OFF)
         insert("2D_CORIOLIS", o.coriolis == twoD::Coriolis2D::LATITUDE ? "LATITUDE" : "CONSTANT_F");
-    if (o.coriolis_latitude_set) insert("2D_CORIOLIS_LATITUDE", fmt_g17(o.coriolis_latitude));
-    if (o.coriolis_f_set) insert("2D_CORIOLIS_F", fmt_g17(o.coriolis_f));
-    if (o.turbulence != twoD::Turbulence2D::NONE) insert("2D_TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
+    if (o.coriolis_latitude_set)
+        insert("2D_CORIOLIS_LATITUDE", fmt_g17(o.coriolis_latitude));
+    if (o.coriolis_f_set)
+        insert("2D_CORIOLIS_F", fmt_g17(o.coriolis_f));
+    if (o.turbulence != twoD::Turbulence2D::NONE)
+        insert("2D_TURBULENCE_MODEL", twoD::turbulenceName(o.turbulence));
     if (o.turbulence != twoD::Turbulence2D::NONE || o.smagorinsky_cs != .10)
         insert("2D_SMAGORINSKY_CS", fmt_g17(o.smagorinsky_cs));
     if (o.eddy_viscosity_background != 0.0)
         insert("2D_EDDY_VISCOSITY_BACKGROUND", fmt_g17(o.eddy_viscosity_background));
     if (o.turbulence == twoD::Turbulence2D::MIXING_LENGTH || o.mixing_length_coefficient != 0.5)
         insert("2D_MIXING_LENGTH_COEFFICIENT", fmt_g17(o.mixing_length_coefficient));
-    if (o.reconstruction_order != 1) insert("2D_RECONSTRUCTION_ORDER", std::to_string(o.reconstruction_order));
+    if (o.reconstruction_order != 1)
+        insert("2D_RECONSTRUCTION_ORDER", std::to_string(o.reconstruction_order));
     insert("2D_MOMENTUM_EQUATION", o.momentum == twoD::Momentum2D::FULL_SWE ? "FULL_SWE"
                                    : o.momentum == twoD::Momentum2D::DIFFUSIVE_WAVE
                                        ? "DIFFUSIVE_WAVE"
@@ -3157,12 +3161,73 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
     // observations and saved states remain in the container. Deferred FK checks
     // permit replacement of cross-referenced registries without partial updates.
     exec(db, "PRAGMA defer_foreign_keys=ON");
-    for (const char* table : {"options", "nodes", "storages", "outfalls", "dividers", "links", "conduits", "pumps", "orifices", "weirs", "outlets", "subcatchments", "rain_gages", "node_links", "subcatch_routing", "curves", "input_timeseries", "patterns", "inflows", "dwf_inflows", "control_rules", "evaporation", "climate_settings", "snowpacks", "adjustments", "subcatch_adjustments", "pollutants", "landuses", "buildup", "washoff", "subcatch_coverages", "subcatch_loadings", "lid_controls", "lid_node_layers", "lid_layer_treatment", "lid_nodes", "lid_richards_options", "lid_richards_materials", "lid_node_outlets", "lid_usage", "rdii_assignments", "unit_hydrographs", "rdii_decay", "treatment", "transects", "streets", "inlets", "inlet_usage", "raingage_data", "climate_data", "routing_interface_node", "routing_interface_subcatch", "routing_interface_gage", "routing_interface_node_pollutants", "mesh_2d_vertices", "mesh_2d_triangles", "mesh_2d_quads", "mesh_2d_boundary_conditions", "mesh_2d_edge_conveyance", "mesh_2d_vertex_coupling", "node_2d_coupling", "mesh_2d_triangle_coupling", "surface_ownership_2d_input"}) {
+    for (const char* table : {"options",
+                              "nodes",
+                              "storages",
+                              "outfalls",
+                              "dividers",
+                              "links",
+                              "conduits",
+                              "pumps",
+                              "orifices",
+                              "weirs",
+                              "outlets",
+                              "subcatchments",
+                              "rain_gages",
+                              "node_links",
+                              "subcatch_routing",
+                              "curves",
+                              "input_timeseries",
+                              "patterns",
+                              "inflows",
+                              "dwf_inflows",
+                              "control_rules",
+                              "evaporation",
+                              "climate_settings",
+                              "snowpacks",
+                              "adjustments",
+                              "subcatch_adjustments",
+                              "pollutants",
+                              "landuses",
+                              "buildup",
+                              "washoff",
+                              "subcatch_coverages",
+                              "subcatch_loadings",
+                              "lid_controls",
+                              "lid_node_layers",
+                              "lid_layer_treatment",
+                              "lid_nodes",
+                              "lid_richards_options",
+                              "lid_richards_materials",
+                              "lid_node_outlets",
+                              "lid_usage",
+                              "rdii_assignments",
+                              "unit_hydrographs",
+                              "rdii_decay",
+                              "treatment",
+                              "transects",
+                              "streets",
+                              "inlets",
+                              "inlet_usage",
+                              "raingage_data",
+                              "climate_data",
+                              "routing_interface_node",
+                              "routing_interface_subcatch",
+                              "routing_interface_gage",
+                              "routing_interface_node_pollutants",
+                              "mesh_2d_vertices",
+                              "mesh_2d_triangles",
+                              "mesh_2d_quads",
+                              "mesh_2d_boundary_conditions",
+                              "mesh_2d_edge_conveyance",
+                              "mesh_2d_vertex_coupling",
+                              "node_2d_coupling",
+                              "mesh_2d_triangle_coupling",
+                              "surface_ownership_2d_input"}) {
         auto remove = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
         bind_text(remove.get(), 1, simulation_id);
         checked_model_step(db, remove.get());
     }
-
 
     // Register CRS and feature tables
     const auto& sp = ctx.spatial;

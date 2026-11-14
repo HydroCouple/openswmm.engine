@@ -2714,8 +2714,9 @@ struct Fixture {
             geometry.push_back({"snow_trial_vegetation_region_" + std::to_string(i % 5),
                                 50. + 7 * (i % 13), double(i % 4) * 3, double(i % 6) * 45});
             if (model == 2)
-                context.snowpacks.mesh_config.cells[i].pack = i % 3 == 1 ? "UEB" :
-                                                               i % 3 == 2 ? "NONE" : "DD";
+                context.snowpacks.mesh_config.cells[i].pack = i % 3 == 1   ? "UEB"
+                                                              : i % 3 == 2 ? "NONE"
+                                                                           : "DD";
         }
         auto error = snow.initialize(context, geometry);
         if (!error.empty())
@@ -2770,7 +2771,6 @@ static_assert(std::is_nothrow_move_assignable_v<openswmm::surface::MeshSnow>);
 static_assert(std::is_nothrow_move_assignable_v<openswmm::snow::DegreeDaySnow>);
 }
 
-
 TEST(MeshSnow, RuntimeTrialPreservesConfigurationAndCompleteRefusalRecoveryHistory) {
     using namespace openswmm;
     detail::CompletedSourceArchive history;
@@ -2816,12 +2816,13 @@ TEST(MeshSnow, RuntimeTrialPreservesConfigurationAndCompleteRefusalRecoveryHisto
                     f.context.forcing.climate_temperature_mode = ForcingMode::NONE;
                     error = f.step(300);
                 } else if (stage == 8) {
-                    error = f.snow.advance(f.context, start,
-                                          std::nextafter(start, std::numeric_limits<double>::infinity()),
-                                          rain, catch_factor);
+                    error = f.snow.advance(
+                        f.context, start,
+                        std::nextafter(start, std::numeric_limits<double>::infinity()), rain,
+                        catch_factor);
                 } else if (stage == 9)
-                    error = f.snow.restoreCheckpoint(before.empty() ? "invalid" :
-                                                     before.substr(0, before.size() - 1));
+                    error = f.snow.restoreCheckpoint(
+                        before.empty() ? "invalid" : before.substr(0, before.size() - 1));
                 else if (stage == 10)
                     error = f.snow.restoreCheckpoint(anchor);
                 else if (stage == 11) {
@@ -2830,7 +2831,8 @@ TEST(MeshSnow, RuntimeTrialPreservesConfigurationAndCompleteRefusalRecoveryHisto
                         error = f.step(300);
                 }
                 auto after = f.snow.saveCheckpoint();
-                bool refusal = stage == 9 || (last >= 0 && (stage == 2 || stage == 3 || stage == 5));
+                bool refusal =
+                    stage == 9 || (last >= 0 && (stage == 2 || stage == 3 || stage == 5));
                 if (refusal) {
                     EXPECT_FALSE(error.empty());
                     EXPECT_EQ(after, before);
@@ -2859,46 +2861,46 @@ TEST(MeshSnow, RuntimeTrialPreservesConfigurationAndCompleteRefusalRecoveryHisto
 #include "SnowHeldFixture.hpp"
 #include <future>
 namespace {
-void saveHeldRegression(const char* name,const std::string& bytes) {
-    if (const char* directory=std::getenv("OPENSWMM_SNOW_HELD_TEST_OUT")) {
+void saveHeldRegression(const char* name, const std::string& bytes) {
+    if (const char* directory = std::getenv("OPENSWMM_SNOW_HELD_TEST_OUT")) {
         std::filesystem::create_directories(directory);
-        snow_held_test::write(std::filesystem::path(directory)/name,bytes);
+        snow_held_test::write(std::filesystem::path(directory) / name, bytes);
     }
 }
 }
 TEST(MeshSnow, PreparedUebConsumptionMatchesAllScalarGuardsAndTinyTail) {
     openswmm::detail::CompletedSourceArchive a;
-    for(int kind:{0,1,2,3,4,5,8,9}) {
-        snow_held_test::Case serial(512,1,0,kind),parallel(512,4,0,kind);
-        auto expected=serial.history(),actual=parallel.history();
-        ASSERT_EQ(expected,actual)<<kind;
-        a(kind,actual);
+    for (int kind : {0, 1, 2, 3, 4, 5, 8, 9}) {
+        snow_held_test::Case serial(512, 1, 0, kind), parallel(512, 4, 0, kind);
+        auto expected = serial.history(), actual = parallel.history();
+        ASSERT_EQ(expected, actual) << kind;
+        a(kind, actual);
     }
-    saveHeldRegression("held-guards.bin",a.bytes());
+    saveHeldRegression("held-guards.bin", a.bytes());
 }
 TEST(MeshSnow, PreparedUebRefusalRetainsOwnerAndChoosesFirstCell) {
     openswmm::detail::CompletedSourceArchive a;
-    for(int kind:{6,7}) {
-        snow_held_test::Case serial(513,1,0,kind),parallel(513,4,0,kind);
-        auto expected=serial.history(),actual=parallel.history();
-        ASSERT_EQ(expected,actual)<<kind;
-        a(kind,actual);
+    for (int kind : {6, 7}) {
+        snow_held_test::Case serial(513, 1, 0, kind), parallel(513, 4, 0, kind);
+        auto expected = serial.history(), actual = parallel.history();
+        ASSERT_EQ(expected, actual) << kind;
+        a(kind, actual);
     }
-    saveHeldRegression("held-refusals.bin",a.bytes());
+    saveHeldRegression("held-refusals.bin", a.bytes());
 }
 TEST(MeshSnow, PreparedUebOwnersAdvanceIndependentlyOnHostThreads) {
-    auto run=[](int threads) {
-        snow_held_test::Case f(512,threads,0,0);
+    auto run = [](int threads) {
+        snow_held_test::Case f(512, threads, 0, 0);
         return f.history();
     };
-    auto expected=run(1);
-    auto first=std::async(std::launch::async,run,4);
-    auto second=std::async(std::launch::async,run,4);
-    auto a=first.get(),b=second.get();
-    ASSERT_EQ(expected,a);ASSERT_EQ(expected,b);
-    saveHeldRegression("held-independent.bin",a);
+    auto expected = run(1);
+    auto first = std::async(std::launch::async, run, 4);
+    auto second = std::async(std::launch::async, run, 4);
+    auto a = first.get(), b = second.get();
+    ASSERT_EQ(expected, a);
+    ASSERT_EQ(expected, b);
+    saveHeldRegression("held-independent.bin", a);
 }
-
 
 TEST(SnowSourceOwnership, SnapshotsStayIndependentAcrossAdvanceAndCheckpointReads) {
     for (const std::string model : {"DEGREE_DAY", "UEB"}) {
@@ -2984,75 +2986,92 @@ TEST(SnowSourceOwnership, SnapshotsStayIndependentAcrossAdvanceAndCheckpointRead
 #include <bit>
 #include <cstdint>
 TEST(SnowDegreeDayMelt, ThinNativePacksPreserveMasksThresholdAndOptionalAge) {
-    for (int count : {1,33})
-        for (bool track_age : {false,true}) {
+    for (int count : {1, 33})
+        for (bool track_age : {false, true}) {
             DegreeDaySnow solver;
             solver.init(count);
-            auto& s=solver.state();
-            s.track_age=track_age;
-            const double threshold=.001/12.;
-            for (int j=0;j<count;++j) {
-                const auto first=std::size_t(3*j);
-                s.wsnow[first]=-0.;s.fw[first]=-0.;s.imelt[first]=-0.;
-                s.wsnow[first+1]=threshold;
-                s.fw[first+2]=.00004;
-                for(int k=0;k<3;++k) {
-                    s.coldc[first+k]=.125;
-                    s.asc[first+k]=.75;
-                    s.age[first+k]=17.+k;
-                    s.out_age[first+k]=99.;
+            auto& s = solver.state();
+            s.track_age = track_age;
+            const double threshold = .001 / 12.;
+            for (int j = 0; j < count; ++j) {
+                const auto first = std::size_t(3 * j);
+                s.wsnow[first] = -0.;
+                s.fw[first] = -0.;
+                s.imelt[first] = -0.;
+                s.wsnow[first + 1] = threshold;
+                s.fw[first + 2] = .00004;
+                for (int k = 0; k < 3; ++k) {
+                    s.coldc[first + k] = .125;
+                    s.asc[first + k] = .75;
+                    s.age[first + k] = 17. + k;
+                    s.out_age[first + k] = 99.;
                 }
             }
-            if(count>1) {
-                s.enabled[1]=0;
-                s.external[2]=true;
+            if (count > 1) {
+                s.enabled[1] = 0;
+                s.external[2] = true;
                 s.external.resize(3);
-                s.wsnow[9]=std::nextafter(threshold,std::numeric_limits<double>::infinity());
+                s.wsnow[9] = std::nextafter(threshold, std::numeric_limits<double>::infinity());
             }
-            if(!track_age) {s.age.clear();s.out_age.clear();}
-            const auto before=s;
+            if (!track_age) {
+                s.age.clear();
+                s.out_age.clear();
+            }
+            const auto before = s;
             SimulationContext context;
-            std::vector<double> zero(count,0.);
-            solver.execute(context,8.,45.,0.,zero.data(),zero.data());
-            for(int j=0;j<count;++j) {
-                const bool masked=j==1||j==2;
-                for(int k=0;k<3;++k) {
-                    const auto i=std::size_t(3*j+k);
-                    if(masked) {
-                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),std::bit_cast<uint64_t>(before.wsnow[i]));
-                        EXPECT_EQ(std::bit_cast<uint64_t>(s.fw[i]),std::bit_cast<uint64_t>(before.fw[i]));
-                        EXPECT_DOUBLE_EQ(s.coldc[i],before.coldc[i]);
-                        EXPECT_DOUBLE_EQ(s.asc[i],before.asc[i]);
-                        if(track_age) {EXPECT_DOUBLE_EQ(s.age[i],before.age[i]);EXPECT_DOUBLE_EQ(s.out_age[i],before.out_age[i]);}
+            std::vector<double> zero(count, 0.);
+            solver.execute(context, 8., 45., 0., zero.data(), zero.data());
+            for (int j = 0; j < count; ++j) {
+                const bool masked = j == 1 || j == 2;
+                for (int k = 0; k < 3; ++k) {
+                    const auto i = std::size_t(3 * j + k);
+                    if (masked) {
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),
+                                  std::bit_cast<uint64_t>(before.wsnow[i]));
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.fw[i]),
+                                  std::bit_cast<uint64_t>(before.fw[i]));
+                        EXPECT_DOUBLE_EQ(s.coldc[i], before.coldc[i]);
+                        EXPECT_DOUBLE_EQ(s.asc[i], before.asc[i]);
+                        if (track_age) {
+                            EXPECT_DOUBLE_EQ(s.age[i], before.age[i]);
+                            EXPECT_DOUBLE_EQ(s.out_age[i], before.out_age[i]);
+                        }
                         continue;
                     }
-                    if(j==3&&k==0) {
-                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),std::bit_cast<uint64_t>(before.wsnow[i]));
+                    if (j == 3 && k == 0) {
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.wsnow[i]),
+                                  std::bit_cast<uint64_t>(before.wsnow[i]));
                         continue;
                     }
-                    EXPECT_DOUBLE_EQ(s.wsnow[i],0.);
-                    EXPECT_DOUBLE_EQ(s.fw[i],0.);
-                    EXPECT_DOUBLE_EQ(s.coldc[i],0.);
-                    EXPECT_DOUBLE_EQ(s.asc[i],0.);
-                    EXPECT_NEAR(8.*s.imelt[i],before.wsnow[i]+before.fw[i],1.e-20);
-                    if(k==0) EXPECT_EQ(std::bit_cast<uint64_t>(s.imelt[i]),uint64_t{0});
-                    if(track_age) {
-                        EXPECT_DOUBLE_EQ(s.age[i],0.);
-                        EXPECT_DOUBLE_EQ(s.out_age[i],k==0?0.:before.age[i]);
+                    EXPECT_DOUBLE_EQ(s.wsnow[i], 0.);
+                    EXPECT_DOUBLE_EQ(s.fw[i], 0.);
+                    EXPECT_DOUBLE_EQ(s.coldc[i], 0.);
+                    EXPECT_DOUBLE_EQ(s.asc[i], 0.);
+                    EXPECT_NEAR(8. * s.imelt[i], before.wsnow[i] + before.fw[i], 1.e-20);
+                    if (k == 0)
+                        EXPECT_EQ(std::bit_cast<uint64_t>(s.imelt[i]), uint64_t{0});
+                    if (track_age) {
+                        EXPECT_DOUBLE_EQ(s.age[i], 0.);
+                        EXPECT_DOUBLE_EQ(s.out_age[i], k == 0 ? 0. : before.age[i]);
                     }
                 }
             }
-            if(!track_age) {EXPECT_TRUE(s.age.empty());EXPECT_TRUE(s.out_age.empty());}
+            if (!track_age) {
+                EXPECT_TRUE(s.age.empty());
+                EXPECT_TRUE(s.out_age.empty());
+            }
         }
 }
 
 TEST(SnowRemovalReview, InputAndApiRejectInvalidFractionsWithoutChangingValidState) {
     for (const char* fractions : {"0 0.6 0.6 0 0 0", "0 -0.1 0 0 0 0", "0 0.2 0.3 0 0 0"}) {
-        std::ofstream("_snow_review_validation.inp") <<
-            "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING NONE\nSTART_DATE 01/01/2026\n"
-            "END_DATE 01/01/2026\nEND_TIME 01:00:00\n[SNOWPACKS]\nSP REMOVAL " << fractions << "\n";
+        std::ofstream("_snow_review_validation.inp")
+            << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING NONE\nSTART_DATE 01/01/2026\n"
+               "END_DATE 01/01/2026\nEND_TIME 01:00:00\n[SNOWPACKS]\nSP REMOVAL "
+            << fractions << "\n";
         auto e = swmm_engine_create();
-        const int result = swmm_engine_open(e, "_snow_review_validation.inp", "_snow_review_validation.rpt", nullptr, nullptr);
+        const int result = swmm_engine_open(e, "_snow_review_validation.inp",
+                                            "_snow_review_validation.rpt", nullptr, nullptr);
         if (std::string(fractions) == "0 0.2 0.3 0 0 0") {
             ASSERT_EQ(result, SWMM_OK);
             auto& ctx = static_cast<openswmm::SWMMEngine*>(e)->context();

@@ -162,7 +162,8 @@ struct NodeData {
      * @see Legacy: Node[i].pondedArea
      */
     std::vector<double> ponded_area;
-    std::vector<double> storage_area; ///< Physical junction area (ft2); zero retains legacy behavior.
+    std::vector<double>
+        storage_area; ///< Physical junction area (ft2); zero retains legacy behavior.
 
     /**
      * @brief Virtual-junction flag (0 = regular node, 1 = virtual junction).
@@ -1059,8 +1060,7 @@ struct NodeData {
      * lid_drain_qual_load_old is run-time state sized per node in some paths and per node and
      * pollutant in others, so it is left out, as erase_at always did.
      */
-    template <class F>
-    static void for_each_column(F&& f) {
+    template <class F> static void for_each_column(F&& f) {
         f(&NodeData::type);
         f(&NodeData::invert_elev);
         f(&NodeData::full_depth);
@@ -1427,9 +1427,16 @@ struct NodeData {
 private:
     /// The [node * conc_n_pollutants + p] columns, in one fixed order for take_row/put_row.
     std::vector<std::vector<double>*> quality_chunks_() {
-        return {&conc,           &conc_old,           &qual_mass_in,     &iface_qual_mass,
-                &coupling_qual_queue, &coupling_qual_inflow, &ext_qual_mass, &dwf_qual_mass,
-                &lid_drain_qual_load, &user_conc_mass_flux};
+        return {&conc,
+                &conc_old,
+                &qual_mass_in,
+                &iface_qual_mass,
+                &coupling_qual_queue,
+                &coupling_qual_inflow,
+                &ext_qual_mass,
+                &dwf_qual_mass,
+                &lid_drain_qual_load,
+                &user_conc_mass_flux};
     }
 };
 

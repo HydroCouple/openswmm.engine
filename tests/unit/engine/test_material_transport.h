@@ -20,8 +20,8 @@ typedef struct MaterialTestTransport {
     SWMM_SplitFrame last_request;
     int last_phase;
 } MaterialTestTransport;
-int material_test_transport(SWMM_Engine,int,const char*,size_t,const char**,size_t*,void*);
-int material_test_exchange(SWMM_Engine,int,SWMM_SplitFrame,SWMM_SplitFrame*,void*);
+int material_test_transport(SWMM_Engine, int, const char*, size_t, const char**, size_t*, void*);
+int material_test_exchange(SWMM_Engine, int, SWMM_SplitFrame, SWMM_SplitFrame*, void*);
 void material_test_transport_close(MaterialTestTransport*);
 #ifdef __cplusplus
 }

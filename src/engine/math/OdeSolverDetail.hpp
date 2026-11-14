@@ -136,7 +136,7 @@ template <typename F> void rkck(OdeWorkspace& ws_, double x, int n, double h, F&
  */
 template <typename F>
 int rkqs(OdeWorkspace& ws_, double* x, int n, double htry, double eps, double* hdid, double* hnext,
-                F&& derivs) {
+         F&& derivs) {
     double err, errmax, h, htemp, xnew, xold = *x;
 
     h = htry;
@@ -182,8 +182,7 @@ int rkqs(OdeWorkspace& ws_, double* x, int n, double htry, double eps, double* h
 }
 
 template <typename F>
-int integrate(double* ystart, int n, double x1, double x2, double eps, double h1,
-              F&& derivs) {
+int integrate(double* ystart, int n, double x1, double x2, double eps, double h1, F&& derivs) {
     auto& ws_ = workspace(n);
     if (ws_.nmax < n)
         return ODE_TOO_MANY;

@@ -329,7 +329,8 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
         if (!(power > 0) || !std::isfinite(power))
             return refused("Unrepresentable atmospheric response power.");
         probe_boundaries[a.atmosphere].power = power;
-        const auto& probe = solveThermalContacts(homogeneous, contacts, probe_boundaries, half, scratch);
+        const auto& probe =
+            solveThermalContacts(homogeneous, contacts, probe_boundaries, half, scratch);
         if (!probe.error.empty())
             return probe;
         const double response = probe.temperature[a.water] / power;

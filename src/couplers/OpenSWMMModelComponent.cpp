@@ -440,10 +440,9 @@ public:
                     throw std::invalid_argument(
                         "Use unique kg-based species; count concentrations need a separate physical conversion");
                 nativeTargets_.push_back(target);
-                auto item = std::make_unique<Output>("exported_species_" + target + "_kg", this,
-                                                     HC::DataKind::Float64, "kg", 0, 1, 0,
-                                                     HC::ValueKind::Extensive, 1,
-                                                     qudtQuantityKind("Mass"));
+                auto item = std::make_unique<Output>(
+                    "exported_species_" + target + "_kg", this, HC::DataKind::Float64, "kg", 0, 1,
+                    0, HC::ValueKind::Extensive, 1, qudtQuantityKind("Mass"));
                 item->setCaption("Cumulative exported " + target);
                 massOutputs_.push_back(std::move(item));
             }

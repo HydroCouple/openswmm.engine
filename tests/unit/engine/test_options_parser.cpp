@@ -111,9 +111,12 @@ TEST(OptionsParserTest, MinimumStep) {
 }
 
 TEST(OptionsParserTest, MinimumStepAcceptsClockAndFractionalSeconds) {
-    for (const auto& [value, seconds] : std::vector<std::pair<std::string, double>>{
-            {"2", 2.0}, {"0:00:02", 2.0}, {"0:00:00.125", 0.125},
-            {"0:02", 120.0}, {"1:02:03.5", 3723.5}}) {
+    for (const auto& [value, seconds] :
+         std::vector<std::pair<std::string, double>>{{"2", 2.0},
+                                                     {"0:00:02", 2.0},
+                                                     {"0:00:00.125", 0.125},
+                                                     {"0:02", 120.0},
+                                                     {"1:02:03.5", 3723.5}}) {
         SCOPED_TRACE(value);
         SimulationContext ctx;
         parse(ctx, {"MINIMUM_STEP " + value});
@@ -123,8 +126,8 @@ TEST(OptionsParserTest, MinimumStepAcceptsClockAndFractionalSeconds) {
 }
 
 TEST(OptionsParserTest, MinimumStepRejectsMalformedClockWithoutChangingValue) {
-    for (const std::string value : {"0:00:02junk", "0::02", "-1:00:00", "0:60:00",
-                                    "0:00:60", "0:00:nan", "0:00:-1"}) {
+    for (const std::string value :
+         {"0:00:02junk", "0::02", "-1:00:00", "0:60:00", "0:00:60", "0:00:nan", "0:00:-1"}) {
         SCOPED_TRACE(value);
         SimulationContext ctx;
         const double before = ctx.options.min_routing_step;
@@ -356,11 +359,11 @@ TEST(OptionsParserTest, FlowUnitsUnknownValueRefusesTheDeck) {
 
 TEST(OptionsParserTest, UnknownKeywordValuesRefuseTheDeck) {
     const char* const rows[] = {
-        "INFILTRATION  BOGUS",       "FLOW_ROUTING  BOGUS",        "LINK_OFFSETS  BOGUS",
-        "FORCE_MAIN_EQUATION  BOGUS", "INERTIAL_DAMPING  BOGUS",   "NORMAL_FLOW_LIMITED  BOGUS",
-        "SURCHARGE_METHOD  BOGUS",   "ALLOW_PONDING  BOGUS",       "SKIP_STEADY_STATE  BOGUS",
-        "IGNORE_RAINFALL  BOGUS",    "IGNORE_SNOWMELT  BOGUS",     "IGNORE_GROUNDWATER  BOGUS",
-        "IGNORE_RDII  BOGUS",        "IGNORE_ROUTING  BOGUS",      "IGNORE_QUALITY  BOGUS"};
+        "INFILTRATION  BOGUS",        "FLOW_ROUTING  BOGUS",     "LINK_OFFSETS  BOGUS",
+        "FORCE_MAIN_EQUATION  BOGUS", "INERTIAL_DAMPING  BOGUS", "NORMAL_FLOW_LIMITED  BOGUS",
+        "SURCHARGE_METHOD  BOGUS",    "ALLOW_PONDING  BOGUS",    "SKIP_STEADY_STATE  BOGUS",
+        "IGNORE_RAINFALL  BOGUS",     "IGNORE_SNOWMELT  BOGUS",  "IGNORE_GROUNDWATER  BOGUS",
+        "IGNORE_RDII  BOGUS",         "IGNORE_ROUTING  BOGUS",   "IGNORE_QUALITY  BOGUS"};
     for (const char* row : rows) {
         SimulationContext ctx;
         parse(ctx, {row});
@@ -381,24 +384,62 @@ TEST(OptionsParserTest, RefusedValueKeepsThePriorSetting) {
 
 // Every legacy word, and this engine's own spellings, still parse cleanly.
 TEST(OptionsParserTest, EveryAcceptedSpellingStillParses) {
-    const char* const rows[] = {
-        "FLOW_UNITS CFS", "FLOW_UNITS gpm", "FLOW_UNITS MGD", "FLOW_UNITS CMS", "FLOW_UNITS LPS",
-        "FLOW_UNITS MLD", "INFILTRATION HORTON", "INFILTRATION MODIFIED_HORTON",
-        "INFILTRATION MOD_HORTON", "INFILTRATION GREEN_AMPT", "INFILTRATION MODIFIED_GREEN_AMPT",
-        "INFILTRATION MOD_GREEN_AMPT", "INFILTRATION CURVE_NUMBER", "FLOW_ROUTING NONE",
-        "FLOW_ROUTING STEADY", "FLOW_ROUTING KINWAVE", "FLOW_ROUTING XKINWAVE",
-        "FLOW_ROUTING DYNWAVE", "FLOW_ROUTING NF", "FLOW_ROUTING KW", "FLOW_ROUTING EKW",
-        "FLOW_ROUTING DW", "FLOW_ROUTING STEADYFLOW", "FLOW_ROUTING KINEMATIC_WAVE",
-        "FLOW_ROUTING DYNAMIC_WAVE", "FLOW_ROUTING FV", "FLOW_ROUTING FINITE_VOLUME",
-        "FLOW_ROUTING NO_ROUTING", "LINK_OFFSETS DEPTH", "LINK_OFFSETS ELEVATION",
-        "FORCE_MAIN_EQUATION H-W", "FORCE_MAIN_EQUATION HW", "FORCE_MAIN_EQUATION HAZEN-WILLIAMS",
-        "FORCE_MAIN_EQUATION D-W", "FORCE_MAIN_EQUATION DW", "FORCE_MAIN_EQUATION DARCY-WEISBACH",
-        "INERTIAL_DAMPING NONE", "INERTIAL_DAMPING PARTIAL", "INERTIAL_DAMPING FULL",
-        "NORMAL_FLOW_LIMITED SLOPE", "NORMAL_FLOW_LIMITED FROUDE", "NORMAL_FLOW_LIMITED BOTH",
-        "NORMAL_FLOW_LIMITED NONE", "NORMAL_FLOW_LIMITED NEITHER", "SURCHARGE_METHOD EXTRAN",
-        "SURCHARGE_METHOD SLOT", "SURCHARGE_METHOD DYNAMIC_SLOT", "SURCHARGE_METHOD TPA",
-        "ALLOW_PONDING YES", "ALLOW_PONDING NO", "ALLOW_PONDING TRUE", "ALLOW_PONDING FALSE",
-        "ALLOW_PONDING 1", "ALLOW_PONDING 0", "SKIP_STEADY_STATE no", "IGNORE_QUALITY yes"};
+    const char* const rows[] = {"FLOW_UNITS CFS",
+                                "FLOW_UNITS gpm",
+                                "FLOW_UNITS MGD",
+                                "FLOW_UNITS CMS",
+                                "FLOW_UNITS LPS",
+                                "FLOW_UNITS MLD",
+                                "INFILTRATION HORTON",
+                                "INFILTRATION MODIFIED_HORTON",
+                                "INFILTRATION MOD_HORTON",
+                                "INFILTRATION GREEN_AMPT",
+                                "INFILTRATION MODIFIED_GREEN_AMPT",
+                                "INFILTRATION MOD_GREEN_AMPT",
+                                "INFILTRATION CURVE_NUMBER",
+                                "FLOW_ROUTING NONE",
+                                "FLOW_ROUTING STEADY",
+                                "FLOW_ROUTING KINWAVE",
+                                "FLOW_ROUTING XKINWAVE",
+                                "FLOW_ROUTING DYNWAVE",
+                                "FLOW_ROUTING NF",
+                                "FLOW_ROUTING KW",
+                                "FLOW_ROUTING EKW",
+                                "FLOW_ROUTING DW",
+                                "FLOW_ROUTING STEADYFLOW",
+                                "FLOW_ROUTING KINEMATIC_WAVE",
+                                "FLOW_ROUTING DYNAMIC_WAVE",
+                                "FLOW_ROUTING FV",
+                                "FLOW_ROUTING FINITE_VOLUME",
+                                "FLOW_ROUTING NO_ROUTING",
+                                "LINK_OFFSETS DEPTH",
+                                "LINK_OFFSETS ELEVATION",
+                                "FORCE_MAIN_EQUATION H-W",
+                                "FORCE_MAIN_EQUATION HW",
+                                "FORCE_MAIN_EQUATION HAZEN-WILLIAMS",
+                                "FORCE_MAIN_EQUATION D-W",
+                                "FORCE_MAIN_EQUATION DW",
+                                "FORCE_MAIN_EQUATION DARCY-WEISBACH",
+                                "INERTIAL_DAMPING NONE",
+                                "INERTIAL_DAMPING PARTIAL",
+                                "INERTIAL_DAMPING FULL",
+                                "NORMAL_FLOW_LIMITED SLOPE",
+                                "NORMAL_FLOW_LIMITED FROUDE",
+                                "NORMAL_FLOW_LIMITED BOTH",
+                                "NORMAL_FLOW_LIMITED NONE",
+                                "NORMAL_FLOW_LIMITED NEITHER",
+                                "SURCHARGE_METHOD EXTRAN",
+                                "SURCHARGE_METHOD SLOT",
+                                "SURCHARGE_METHOD DYNAMIC_SLOT",
+                                "SURCHARGE_METHOD TPA",
+                                "ALLOW_PONDING YES",
+                                "ALLOW_PONDING NO",
+                                "ALLOW_PONDING TRUE",
+                                "ALLOW_PONDING FALSE",
+                                "ALLOW_PONDING 1",
+                                "ALLOW_PONDING 0",
+                                "SKIP_STEADY_STATE no",
+                                "IGNORE_QUALITY yes"};
     for (const char* row : rows) {
         SimulationContext ctx;
         parse(ctx, {row});
@@ -436,52 +477,97 @@ TEST(OptionsParserTest, EngineOwnKeyBadValueIsNotAnError) {
     EXPECT_TRUE(ctx.errors.empty());
 }
 
-
 // Each row is also opened by the real legacy engine. This protects its distinct
 // getDouble / atoi / atof / datetime rules, including permissive accepted text.
 TEST(OptionsParserTest, NumericAndDateErrorsMatchLegacy) {
-    struct Case { const char* row; int error; };
+    struct Case {
+        const char* row;
+        int error;
+    };
     const Case cases[] = {
-        {"SLOPE_WEIGHTING BOGUS", 205}, {"SLOPE_WEIGHTING YES", 0},
-        {"COMPATIBILITY 7", 205}, {"COMPATIBILITY 5junk", 205}, {"COMPATIBILITY 5", 0},
-        {"OUTFALL_BACKFLOW_QUALITY BOGUS", 205}, {"OUTFALL_BACKFLOW_QUALITY LASTX", 0},
-        {"MINIMUM_STEP abc", 211}, {"MINIMUM_STEP 1junk", 211},
+        {"SLOPE_WEIGHTING BOGUS", 205},
+        {"SLOPE_WEIGHTING YES", 0},
+        {"COMPATIBILITY 7", 205},
+        {"COMPATIBILITY 5junk", 205},
+        {"COMPATIBILITY 5", 0},
+        {"OUTFALL_BACKFLOW_QUALITY BOGUS", 205},
+        {"OUTFALL_BACKFLOW_QUALITY LASTX", 0},
+        {"MINIMUM_STEP abc", 211},
+        {"MINIMUM_STEP 1junk", 211},
         {"MINIMUM_STEP -1", 211},
-        {"MINIMUM_STEP 0", 0}, {"MINIMUM_STEP +0.5", 0},
-        {"VARIABLE_STEP abc", 211}, {"VARIABLE_STEP -0.1", 211},
-        {"VARIABLE_STEP 2.01", 211}, {"VARIABLE_STEP 0", 0}, {"VARIABLE_STEP 2", 0},
-        {"MIN_SURFAREA abc", 211}, {"MIN_SURFAREA -1", 211}, {"MIN_SURFAREA 0", 0},
-        {"MIN_SLOPE abc", 211}, {"MIN_SLOPE -1", 211},
-        {"MIN_SLOPE 100", 211}, {"MIN_SLOPE 99.99", 0},
-        {"HEAD_TOLERANCE abc", 211}, {"HEAD_TOLERANCE 1junk", 211},
-        {"HEAD_TOLERANCE -1", 0}, {"HEAD_TOLERANCE +0.01", 0},
-        {"SYS_FLOW_TOL abc", 211}, {"LAT_FLOW_TOL abc", 211},
-        {"SYS_FLOW_TOL -1", 0}, {"LAT_FLOW_TOL -1", 0},
-        {"THREADS -1", 211}, {"MAX_TRIALS -1", 211},
-        {"THREADS abc", 0}, {"THREADS 1junk", 0},
-        {"MAX_TRIALS abc", 0}, {"MAX_TRIALS 2.5", 0},
-        {"DRY_DAYS -1", 211}, {"DRY_DAYS abc", 0}, {"DRY_DAYS 2junk", 0},
-        {"ROUTING_STEP abc", 211}, {"ROUTING_STEP 0", 211},
-        {"ROUTING_STEP -1", 211}, {"ROUTING_STEP 0:00:05", 0},
-        {"ROUTING_STEP 1junk", 0}, {"ROUTING_STEP 1:", 0},
-        {"LENGTHENING_STEP abc", 211}, {"LENGTHENING_STEP -1", 0},
+        {"MINIMUM_STEP 0", 0},
+        {"MINIMUM_STEP +0.5", 0},
+        {"VARIABLE_STEP abc", 211},
+        {"VARIABLE_STEP -0.1", 211},
+        {"VARIABLE_STEP 2.01", 211},
+        {"VARIABLE_STEP 0", 0},
+        {"VARIABLE_STEP 2", 0},
+        {"MIN_SURFAREA abc", 211},
+        {"MIN_SURFAREA -1", 211},
+        {"MIN_SURFAREA 0", 0},
+        {"MIN_SLOPE abc", 211},
+        {"MIN_SLOPE -1", 211},
+        {"MIN_SLOPE 100", 211},
+        {"MIN_SLOPE 99.99", 0},
+        {"HEAD_TOLERANCE abc", 211},
+        {"HEAD_TOLERANCE 1junk", 211},
+        {"HEAD_TOLERANCE -1", 0},
+        {"HEAD_TOLERANCE +0.01", 0},
+        {"SYS_FLOW_TOL abc", 211},
+        {"LAT_FLOW_TOL abc", 211},
+        {"SYS_FLOW_TOL -1", 0},
+        {"LAT_FLOW_TOL -1", 0},
+        {"THREADS -1", 211},
+        {"MAX_TRIALS -1", 211},
+        {"THREADS abc", 0},
+        {"THREADS 1junk", 0},
+        {"MAX_TRIALS abc", 0},
+        {"MAX_TRIALS 2.5", 0},
+        {"DRY_DAYS -1", 211},
+        {"DRY_DAYS abc", 0},
+        {"DRY_DAYS 2junk", 0},
+        {"ROUTING_STEP abc", 211},
+        {"ROUTING_STEP 0", 211},
+        {"ROUTING_STEP -1", 211},
+        {"ROUTING_STEP 0:00:05", 0},
+        {"ROUTING_STEP 1junk", 0},
+        {"ROUTING_STEP 1:", 0},
+        {"LENGTHENING_STEP abc", 211},
+        {"LENGTHENING_STEP -1", 0},
         {"LENGTHENING_STEP 0:00:05", 0},
-        {"WET_STEP abc", 213}, {"DRY_STEP abc", 213},
-        {"REPORT_STEP abc", 213}, {"RULE_STEP abc", 213},
-        {"WET_STEP 0", 211}, {"DRY_STEP 0", 211},
-        {"REPORT_STEP 0", 211}, {"RULE_STEP 0", 0},
-        {"RULE_STEP -1", 0}, {"RULE_STEP -24", 211}, {"RULE_STEP 0:00:00.4", 0},
-        {"REPORT_STEP 0.5", 0}, {"REPORT_STEP 0:00:30junk", 0},
-        {"REPORT_STEP 0:61:00", 0}, {"REPORT_STEP 25:00:00", 0},
-        {"START_DATE abc", 213}, {"END_DATE 02/30/2020", 213},
-        {"REPORT_START_DATE 02/29/2021", 213}, {"START_DATE 01012020", 213},
-        {"START_DATE 01/01/2020junk", 0}, {"START_DATE JAN-01-2020", 0},
-        {"START_DATE 1-1-2020", 0}, {"REPORT_START_DATE 02/29/2020", 0},
-        {"START_TIME abc", 213}, {"END_TIME abc", 213},
-        {"REPORT_START_TIME abc", 213}, {"START_TIME -1:00", 213},
-        {"START_TIME 0.5", 0}, {"START_TIME 0:61:00", 0},
-        {"SWEEP_START abc", 213}, {"SWEEP_END 13/01", 213},
-        {"SWEEP_START 02/29", 213}, {"SWEEP_END 12/31", 0},
+        {"WET_STEP abc", 213},
+        {"DRY_STEP abc", 213},
+        {"REPORT_STEP abc", 213},
+        {"RULE_STEP abc", 213},
+        {"WET_STEP 0", 211},
+        {"DRY_STEP 0", 211},
+        {"REPORT_STEP 0", 211},
+        {"RULE_STEP 0", 0},
+        {"RULE_STEP -1", 0},
+        {"RULE_STEP -24", 211},
+        {"RULE_STEP 0:00:00.4", 0},
+        {"REPORT_STEP 0.5", 0},
+        {"REPORT_STEP 0:00:30junk", 0},
+        {"REPORT_STEP 0:61:00", 0},
+        {"REPORT_STEP 25:00:00", 0},
+        {"START_DATE abc", 213},
+        {"END_DATE 02/30/2020", 213},
+        {"REPORT_START_DATE 02/29/2021", 213},
+        {"START_DATE 01012020", 213},
+        {"START_DATE 01/01/2020junk", 0},
+        {"START_DATE JAN-01-2020", 0},
+        {"START_DATE 1-1-2020", 0},
+        {"REPORT_START_DATE 02/29/2020", 0},
+        {"START_TIME abc", 213},
+        {"END_TIME abc", 213},
+        {"REPORT_START_TIME abc", 213},
+        {"START_TIME -1:00", 213},
+        {"START_TIME 0.5", 0},
+        {"START_TIME 0:61:00", 0},
+        {"SWEEP_START abc", 213},
+        {"SWEEP_END 13/01", 213},
+        {"SWEEP_START 02/29", 213},
+        {"SWEEP_END 12/31", 0},
         {"SWEEP_START FEB-28", 0},
     };
     const std::filesystem::path dir = "_options_legacy_parity";
@@ -496,7 +582,10 @@ TEST(OptionsParserTest, NumericAndDateErrorsMatchLegacy) {
         const std::string inp = stem.string() + ".inp";
         const std::string rpt = stem.string() + ".rpt";
         const std::string out = stem.string() + ".out";
-        { std::ofstream f(inp); f << base << "\n[OPTIONS]\n" << c.row << "\n"; }
+        {
+            std::ofstream f(inp);
+            f << base << "\n[OPTIONS]\n" << c.row << "\n";
+        }
         const int legacy_rc = swmm_open(inp.c_str(), rpt.c_str(), out.c_str());
         swmm_close();
         std::ifstream report_file(rpt);
@@ -524,10 +613,10 @@ TEST(OptionsParserTest, NumericAndDateErrorsMatchLegacy) {
 
 TEST(OptionsParserTest, LegacyPermissiveConversionsAndUnitsArePreserved) {
     SimulationContext ctx;
-    parse(ctx, {"THREADS 2junk", "MAX_TRIALS 3.5", "DRY_DAYS 4junk",
-                "REPORT_STEP 0.5", "WET_STEP 0:61:00", "DRY_STEP 25:00:00",
-                "START_DATE JAN-01-2020", "START_TIME 0.5", "RULE_STEP 0",
-                "LENGTHENING_STEP -10", "MIN_SLOPE 2", "SYS_FLOW_TOL 5", "LAT_FLOW_TOL 3"});
+    parse(ctx, {"THREADS 2junk", "MAX_TRIALS 3.5", "DRY_DAYS 4junk", "REPORT_STEP 0.5",
+                "WET_STEP 0:61:00", "DRY_STEP 25:00:00", "START_DATE JAN-01-2020", "START_TIME 0.5",
+                "RULE_STEP 0", "LENGTHENING_STEP -10", "MIN_SLOPE 2", "SYS_FLOW_TOL 5",
+                "LAT_FLOW_TOL 3"});
     ASSERT_TRUE(ctx.errors.empty());
     EXPECT_EQ(ctx.options.num_threads, 2);
     EXPECT_EQ(ctx.options.max_trials, 3);
@@ -552,20 +641,19 @@ TEST(OptionsParserTest, RefusedNumericAndDateValuesPreservePriorSettings) {
     EXPECT_DOUBLE_EQ(ctx.options.variable_step, 0.8);
 }
 
-
 TEST(OptionsParserTest, ExplicitFractionalStepClocksPreserveLegacyHoursAndRuleBehavior) {
     SimulationContext ctx;
     parse(ctx, {"REPORT_STEP 0:00:00.1", "WET_STEP 0:00:00.25", "DRY_STEP 0:01:30.125"});
     EXPECT_TRUE(ctx.errors.empty());
-    EXPECT_DOUBLE_EQ(ctx.options.report_step,.1);
-    EXPECT_DOUBLE_EQ(ctx.options.wet_step,.25);
-    EXPECT_DOUBLE_EQ(ctx.options.dry_step,90.125);
+    EXPECT_DOUBLE_EQ(ctx.options.report_step, .1);
+    EXPECT_DOUBLE_EQ(ctx.options.wet_step, .25);
+    EXPECT_DOUBLE_EQ(ctx.options.dry_step, 90.125);
     parse(ctx, {"REPORT_STEP 0.5", "RULE_STEP 0:00:00.4"});
-    EXPECT_DOUBLE_EQ(ctx.options.report_step,1800);
-    EXPECT_DOUBLE_EQ(ctx.options.rule_step,0);
-    for(const char* value : {"0:00:-0.1", "0:00:0.0", "0:00:0.1junk", "0:00:1.1e309"}) {
+    EXPECT_DOUBLE_EQ(ctx.options.report_step, 1800);
+    EXPECT_DOUBLE_EQ(ctx.options.rule_step, 0);
+    for (const char* value : {"0:00:-0.1", "0:00:0.0", "0:00:0.1junk", "0:00:1.1e309"}) {
         SimulationContext bad;
-        parse(bad,{std::string("REPORT_STEP ")+value});
+        parse(bad, {std::string("REPORT_STEP ") + value});
         EXPECT_FALSE(bad.errors.empty());
     }
 }

@@ -164,8 +164,8 @@ void SurfaceRouter2D::drainPendingRows() {
     {
         const int n_edges = boundary_.size();
         for (const auto& r : pending_bc_rows_) {
-            if (r.tri < 0 || r.tri >= mesh_.n_triangles() ||
-                r.edge < 0 || r.edge >= mesh_.cell_vertex_count(r.tri)) {
+            if (r.tri < 0 || r.tri >= mesh_.n_triangles() || r.edge < 0 ||
+                r.edge >= mesh_.cell_vertex_count(r.tri)) {
                 if (r.bc_type == 0 && r.param1 > 0)
                     throw std::invalid_argument("WALL_DRAG names an invalid cell/edge.");
                 continue;
@@ -1296,7 +1296,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         }
         // S4: the node row-value publisher the marcher and the outfall
         // injector read (spill / discharge arrive at the NODE's values).
-        material_publisher_ms_=-1;
+        material_publisher_ms_ = -1;
         node_row_conc_.assign(
             static_cast<std::size_t>(ns) * static_cast<std::size_t>(ctx.n_nodes()), 0.0);
         state_.node_row_conc = &node_row_conc_;
@@ -1363,12 +1363,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                             "LOCAL_INERTIAL models only");
         thread_warnings_.emplace_back(buf);
         if (options_.momentumPhysics()) {
-            std::snprintf(buf, sizeof buf,
+            std::snprintf(
+                buf, sizeof buf,
                 "2D optional momentum: f=%.17g s^-1; turbulence=%s; Cs=%.17g; mixing-length c=%.17g; "
                 "background nu=%.17g m2/s; interior eddy-viscosity stress; selected quadratic wall traction; "
                 "accepted cell velocities.",
-                options_.coriolisParameter(), turbulenceName(options_.turbulence), options_.smagorinsky_cs,
-                options_.mixing_length_coefficient, options_.eddy_viscosity_background);
+                options_.coriolisParameter(), turbulenceName(options_.turbulence),
+                options_.smagorinsky_cs, options_.mixing_length_coefficient,
+                options_.eddy_viscosity_background);
             thread_warnings_.emplace_back(buf);
         }
     }
@@ -2370,10 +2372,12 @@ std::string SurfaceRouter2D::livePassiveProfile() const {
         options_.reconstruction_order != 1 || options_.num_threads != 1)
         return "Live passive exchange requires the first-order serial CPU marcher.";
     if (common_stage_ || subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() ||
-        surface_quality_.active() || state_.transport.n_species != 1 || state_.transport.n_pollut != 1 ||
-        node_coupling_points_.empty() ||
-        std::any_of(coupling_points_.begin(), coupling_points_.end(), [](const auto& p) { return p.is_outfall; }) ||
-        std::any_of(state_.coupling_native.begin(), state_.coupling_native.end(), [](double v) { return v != 0; }))
+        surface_quality_.active() || state_.transport.n_species != 1 ||
+        state_.transport.n_pollut != 1 || node_coupling_points_.empty() ||
+        std::any_of(coupling_points_.begin(), coupling_points_.end(),
+                    [](const auto& p) { return p.is_outfall; }) ||
+        std::any_of(state_.coupling_native.begin(), state_.coupling_native.end(),
+                    [](double v) { return v != 0; }))
         return "Live passive exchange excludes other source, outfall, groundwater and checkpoint owners.";
     return {};
 }
@@ -2381,15 +2385,18 @@ std::string SurfaceRouter2D::livePassiveProfile() const {
 void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase) {
     if (dt <= 0.0)
         return;
-    if(peer_passive_exchange_) {
-        if(peer_passive_exchange_->failed())throw std::runtime_error(peer_passive_exchange_->error());
-        if(auto error=changingVolumeProfile(ctx,state_);!error.empty()) {
-            peer_passive_exchange_->fail("Material surface profile changed before producer effects.");
+    if (peer_passive_exchange_) {
+        if (peer_passive_exchange_->failed())
+            throw std::runtime_error(peer_passive_exchange_->error());
+        if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) {
+            peer_passive_exchange_->fail(
+                "Material surface profile changed before producer effects.");
             throw std::invalid_argument(error);
         }
     }
     if (live_passive_exchange_) {
-        if (live_passive_exchange_->failed()) throw std::runtime_error(live_passive_exchange_->error());
+        if (live_passive_exchange_->failed())
+            throw std::runtime_error(live_passive_exchange_->error());
         if (auto error = livePassiveProfile(); !error.empty()) {
             live_passive_exchange_->fail("Live passive exchange profile changed.");
             throw std::runtime_error(error);
@@ -2640,38 +2647,52 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             using Phase = quality::PassiveStorageExchange::Phase;
             if (live_passive_exchange_->receipts().changingVolume())
                 if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) {
-                    live_passive_exchange_->fail("Changing-volume physical profile changed before producer effects.");
+                    live_passive_exchange_->fail(
+                        "Changing-volume physical profile changed before producer effects.");
                     throw std::runtime_error(error);
                 }
-            const auto publication = phase == BatchPhase::ADVANCE ? Phase::ADVANCE
-                : phase == BatchPhase::REPORT ? Phase::REPORT : Phase::FINAL;
-            live_passive_exchange_->beginWindow(ctx, state_, batch_start_ms, report_window_new_ms_, publication);
+            const auto publication = phase == BatchPhase::ADVANCE  ? Phase::ADVANCE
+                                     : phase == BatchPhase::REPORT ? Phase::REPORT
+                                                                   : Phase::FINAL;
+            live_passive_exchange_->beginWindow(ctx, state_, batch_start_ms, report_window_new_ms_,
+                                                publication);
             struct Borrow {
                 SurfaceStateData& state;
                 quality::LivePassiveStorageExchange& owner;
                 bool complete = false;
                 ~Borrow() {
                     state.live_passive_exchange = nullptr;
-                    if (!complete) owner.fail("Live passive exchange advance failed; journal retained.");
+                    if (!complete)
+                        owner.fail("Live passive exchange advance failed; journal retained.");
                 }
             } borrow{state_, *live_passive_exchange_};
             state_.live_passive_exchange = live_passive_exchange_;
             solver_->advance(sim_time_, sim_time_ + dt);
             live_passive_exchange_->seal(ctx, solver_->last_coupling_exchange());
             borrow.complete = true;
-        } else if(peer_passive_exchange_) {
-            using Phase=quality::PassiveStorageExchange::Phase;
-            if(!peer_window_)throw std::invalid_argument("Material surface has no funding channel");
-            const auto publication=phase==BatchPhase::ADVANCE?Phase::ADVANCE:phase==BatchPhase::REPORT?Phase::REPORT:Phase::FINAL;
-            peer_passive_exchange_->begin(peer_window_->ready(publication,batch_start_ms,report_window_new_ms_));
+        } else if (peer_passive_exchange_) {
+            using Phase = quality::PassiveStorageExchange::Phase;
+            if (!peer_window_)
+                throw std::invalid_argument("Material surface has no funding channel");
+            const auto publication = phase == BatchPhase::ADVANCE  ? Phase::ADVANCE
+                                     : phase == BatchPhase::REPORT ? Phase::REPORT
+                                                                   : Phase::FINAL;
+            peer_passive_exchange_->begin(
+                peer_window_->ready(publication, batch_start_ms, report_window_new_ms_));
             struct BorrowPeer {
-                SurfaceStateData& state;quality::PeerPassiveStorageProducer& producer;bool complete=false;
-                ~BorrowPeer(){state.live_passive_exchange=nullptr;if(!complete)producer.fail("Material surface advance failed; journal retained.");}
-            } borrow{state_,*peer_passive_exchange_};
-            state_.live_passive_exchange=peer_passive_exchange_;
-            solver_->advance(sim_time_,sim_time_+dt);
+                SurfaceStateData& state;
+                quality::PeerPassiveStorageProducer& producer;
+                bool complete = false;
+                ~BorrowPeer() {
+                    state.live_passive_exchange = nullptr;
+                    if (!complete)
+                        producer.fail("Material surface advance failed; journal retained.");
+                }
+            } borrow{state_, *peer_passive_exchange_};
+            state_.live_passive_exchange = peer_passive_exchange_;
+            solver_->advance(sim_time_, sim_time_ + dt);
             peer_window_->returned(peer_passive_exchange_->seal(solver_->last_coupling_exchange()));
-            borrow.complete=true;
+            borrow.complete = true;
         } else {
             solver_->advance(sim_time_, sim_time_ + dt); // always reaches target
         }
@@ -2747,7 +2768,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             const auto& tr = state_.transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             auto& q = ctx.nodes.coupling_qual_queue;
-            if (!live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 && !tr.exch_mass.empty()) {
+            if (!live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 &&
+                !tr.exch_mass.empty()) {
                 for (std::size_t k = 0; k < n; ++k) {
                     const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
                     if ((ni + 1) * ns > q.size() || (k + 1) * ns > tr.exch_mass.size())
@@ -2885,7 +2907,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         if (queued)
             ctx.coupling_delivery_remaining = std::max(ctx.coupling_delivery_remaining, dt);
     }
-    if (live_passive_exchange_) live_passive_exchange_->observeWaterBooking(ctx);
+    if (live_passive_exchange_)
+        live_passive_exchange_->observeWaterBooking(ctx);
     state_.clear_reset_forcings();
     resetWindowAccumulators();
 
@@ -3599,7 +3622,8 @@ void SurfaceRouter2D::publishNodeRows(const SimulationContext& ctx) {
     const auto ns = static_cast<std::size_t>(tr.n_species);
     if (!tr.active() || node_row_conc_.size() != ns * static_cast<std::size_t>(ctx.n_nodes()))
         return;
-    if(peer_passive_exchange_)material_publisher_ms_=ctx.elapsed_ms;
+    if (peer_passive_exchange_)
+        material_publisher_ms_ = ctx.elapsed_ms;
     const auto np = static_cast<std::size_t>(tr.n_pollut);
     const auto nm = static_cast<std::size_t>(tr.n_msx);
     const auto& conc = ctx.nodes.conc;             // [node * np + p]
@@ -3730,7 +3754,8 @@ void SurfaceRouter2D::finalize(SimulationContext& ctx) {
     // Flush the partial sync batch so the 2D clock (and the exchange booking)
     // ends at the simulation end instead of up to one batch short. The
     // marcher always integrates the whole span — no failure/backlog handling.
-    if (active_ && pending_dt_ > 0.0 && (!live_passive_exchange_ || !live_passive_exchange_->failed()) &&
+    if (active_ && pending_dt_ > 0.0 &&
+        (!live_passive_exchange_ || !live_passive_exchange_->failed()) &&
         (!peer_passive_exchange_ || !peer_passive_exchange_->failed())) {
         if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() &&
             !live_passive_exchange_->preflightHistory(ctx, false))
@@ -4342,11 +4367,9 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     mb.final_storage = storage;
 }
 
-
 namespace {
 bool sameName(const std::string& a, const std::string& b) {
-    return a.size() == b.size() &&
-           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) {
                return std::toupper(static_cast<unsigned char>(x)) ==
                       std::toupper(static_cast<unsigned char>(y));
            });

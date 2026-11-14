@@ -505,8 +505,8 @@ SWMM_ENGINE_API int swmm_hotstart_set_node_state(SWMM_HotStart hs, const char* n
  * @param[in] depth Finite, nonnegative depth in internal feet (ft).
  * @return As swmm_hotstart_set_node_state().
  */
-SWMM_ENGINE_API int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id,
-                                                 double flow, double depth);
+SWMM_ENGINE_API int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id, double flow,
+                                                 double depth);
 
 /* =========================================================================
  * Query hot start metadata

@@ -714,7 +714,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 runon_perv += q_ret / perv_area; // ft/sec over pervious area
                 applied = q_ret;
             }
-            ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0; // consume
+            ctx.subcatches.lid_return_to_perv_cfs[ui] = 0.0;     // consume
             ctx.subcatches.lid_return_applied_cfs[ui] = applied; // ponded-quality inflow
         }
 
@@ -912,10 +912,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Weather preparation precedes this loop; downstream publication follows its join.
     const bool ordinary = !source_forcing && !boundary && !spatial_fractions &&
                           (ctx.options.ignore_snow_melt || ctx.snowpacks.plowable.empty());
-    const int threads = ordinary && count >= 512 && !omp_in_parallel()
-                            ? (ctx.options.num_threads > 0 ? ctx.options.num_threads
-                                                          : threadinfo::ompMaxThreads())
-                            : 1;
+    const int threads =
+        ordinary && count >= 512 && !omp_in_parallel()
+            ? (ctx.options.num_threads > 0 ? ctx.options.num_threads : threadinfo::ompMaxThreads())
+            : 1;
     if (threads > 1) {
         std::exception_ptr failure;
         int failed_slot = count;

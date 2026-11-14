@@ -516,69 +516,70 @@ void unsupported() {
  */
 void marcher() {
     for (double reference_step : {0.0, 0.37})
-    for (bool vfr : {false, true})
-        for (int tiers : {1, 4})
-            for (int scenario = 0; scenario < 5; ++scenario) {
-                auto m = mesh(12, 0, false, vfr);
-                auto s = state(m, .1);
-                auto o = options(tiers);
-                o.theta_reference_step = reference_step;
-                if (vfr)
-                    o.cell_closure = CellClosure2D::VFR;
-                for (int i = 0; i < m.n_cells(); ++i) {
-                    if (scenario == 0)
-                        s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
-                    if (scenario == 1) {
-                        s.infil_rate[i] = .15;
-                        s.evap_rate[i] = .1;
-                        s.coupling_flux[i] = -.2;
+        for (bool vfr : {false, true})
+            for (int tiers : {1, 4})
+                for (int scenario = 0; scenario < 5; ++scenario) {
+                    auto m = mesh(12, 0, false, vfr);
+                    auto s = state(m, .1);
+                    auto o = options(tiers);
+                    o.theta_reference_step = reference_step;
+                    if (vfr)
+                        o.cell_closure = CellClosure2D::VFR;
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (scenario == 0)
+                            s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
+                        if (scenario == 1) {
+                            s.infil_rate[i] = .15;
+                            s.evap_rate[i] = .1;
+                            s.coupling_flux[i] = -.2;
+                        }
+                        if (scenario == 2) {
+                            s.volume[i] = 0;
+                            s.rainfall[i] = .02;
+                        }
+                        if (scenario == 3) {
+                            s.rainfall[i] = .1;
+                            s.infil_rate[i] = .1;
+                        }
+                        if (scenario == 4) {
+                            s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
+                            s.infil_rate[i] = .2;
+                        }
                     }
-                    if (scenario == 2) {
-                        s.volume[i] = 0;
-                        s.rainfall[i] = .02;
+                    auto ref = s;
+                    auto ro = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, ref, ro);
+                    kk.initialize(m, s, o);
+                    double t = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.0}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        std::cout << "step smoothing_ref=" << reference_step << " tiers=" << tiers
+                                  << " case=" << scenario << " end=" << end
+                                  << " cpu=" << cpu.last_num_steps()
+                                  << " kk=" << kk.last_num_steps() << std::endl;
+                        compare(s.volume, ref.volume, "marcher volume", 2e-9);
+                        compare(s.infil_applied, ref.infil_applied, "infiltration", 2e-9);
+                        compare(s.coupling_applied, ref.coupling_applied, "coupling", 2e-9);
+                        near(s.evap_loss_total, ref.evap_loss_total, "evaporation", 2e-9);
+                        if (scenario == 0)
+                            near(sum(s.volume), .2 * 72, "closed volume");
+                        if (scenario == 1) {
+                            double infiltrated = 0;
+                            for (int i = 0; i < m.n_cells(); ++i)
+                                infiltrated += s.infil_applied[i] * m.tri_area[i];
+                            near(sum(s.volume) + infiltrated + s.evap_loss_total -
+                                     sum(s.coupling_applied),
+                                 14.4, "source budget conservation");
+                        }
+                        if (scenario == 2)
+                            near(sum(s.volume), .02 * 144 * end, "rain storage");
+                        t = end;
                     }
-                    if (scenario == 3) {
-                        s.rainfall[i] = .1;
-                        s.infil_rate[i] = .1;
-                    }
-                    if (scenario == 4) {
-                        s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
-                        s.infil_rate[i] = .2;
-                    }
+                    std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
                 }
-                auto ref = s;
-                auto ro = o;
-                ExplicitInertialSolver cpu;
-                gpu::ExplicitKokkosSurfaceSolver kk;
-                cpu.initialize(m, ref, ro);
-                kk.initialize(m, s, o);
-                double t = 0;
-                for (double end : {.93282250995272253, 1.8656450199054451, 2.0}) {
-                    cpu.advance(t, end);
-                    kk.advance(t, end);
-                    std::cout << "step smoothing_ref=" << reference_step << " tiers=" << tiers << " case=" << scenario << " end=" << end
-                              << " cpu=" << cpu.last_num_steps() << " kk=" << kk.last_num_steps()
-                              << std::endl;
-                    compare(s.volume, ref.volume, "marcher volume", 2e-9);
-                    compare(s.infil_applied, ref.infil_applied, "infiltration", 2e-9);
-                    compare(s.coupling_applied, ref.coupling_applied, "coupling", 2e-9);
-                    near(s.evap_loss_total, ref.evap_loss_total, "evaporation", 2e-9);
-                    if (scenario == 0)
-                        near(sum(s.volume), .2 * 72, "closed volume");
-                    if (scenario == 1) {
-                        double infiltrated = 0;
-                        for (int i = 0; i < m.n_cells(); ++i)
-                            infiltrated += s.infil_applied[i] * m.tri_area[i];
-                        near(sum(s.volume) + infiltrated + s.evap_loss_total -
-                                 sum(s.coupling_applied),
-                             14.4, "source budget conservation");
-                    }
-                    if (scenario == 2)
-                        near(sum(s.volume), .02 * 144 * end, "rain storage");
-                    t = end;
-                }
-                std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
-            }
 }
 // All non-wall laws, in both directions and closures. Boundary values are
 // resolved by the router before advance; rating curves arrive as held flows.

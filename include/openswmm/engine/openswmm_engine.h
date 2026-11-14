@@ -208,7 +208,7 @@ SWMM_ENGINE_API SWMM_Engine swmm_engine_create(void);
  * with OPENSWMM_ENGINE_ABI_TAG from the installed openswmm_abi_tag.h before passing native
  * engine handles across a GUI/plugin/Python boundary. Public-header, optional-module or build-ABI changes
  * automatically change the tag. Comment-only header changes may conservatively change it too. */
-SWMM_ENGINE_API const char *swmm_engine_abi_tag(void);
+SWMM_ENGINE_API const char* swmm_engine_abi_tag(void);
 
 /**
  * @brief Load a model and prepare its plugin configuration in SWMM_STATE_OPENED.
@@ -556,7 +556,7 @@ SWMM_ENGINE_API int swmm_set_step_end_callback(SWMM_Engine engine, SWMM_StepEndC
  * Requires exclusive access between steps. Does not advance or open outputs.
  * Returns BADHANDLE for NULL and LIFECYCLE when called during a native step. */
 SWMM_ENGINE_API int swmm_set_phase_callback(SWMM_Engine engine, SWMM_PhaseCallback callback,
-                                           void* user_data);
+                                            void* user_data);
 
 /* =========================================================================
  * Error reporting

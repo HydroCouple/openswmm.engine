@@ -9,7 +9,7 @@ extern "C" {
 #define OPENSWMM_COMPONENT_RECOVERY_SYMBOL "openswmm_component_material_recovery"
 #define OPENSWMM_COMPONENT_RECOVERY_VERSION 1u
 #define OPENSWMM_COMPONENT_RECOVERY_STATE_VERSION 2u
-#define OPENSWMM_COMPONENT_RECOVERY_MAX_BYTES (65u*1024u*1024u)
+#define OPENSWMM_COMPONENT_RECOVERY_MAX_BYTES (65u * 1024u * 1024u)
 typedef struct OpenSWMM_MaterialGroupOpaque* OpenSWMM_MaterialGroup;
 typedef struct OpenSWMM_MaterialStateOpaque* OpenSWMM_MaterialState;
 
@@ -59,13 +59,13 @@ typedef struct OpenSWMM_MaterialStateOpaque* OpenSWMM_MaterialState;
 typedef struct OpenSWMM_MaterialRecoveryV1 {
     size_t struct_size;
     uint32_t version;
-    int (*enroll)(void* network,void* surface,int outputs,OpenSWMM_MaterialGroup* group);
-    int (*describe)(OpenSWMM_MaterialGroup group,const char** json,size_t* size);
+    int (*enroll)(void* network, void* surface, int outputs, OpenSWMM_MaterialGroup* group);
+    int (*describe)(OpenSWMM_MaterialGroup group, const char** json, size_t* size);
     int (*prepare)(OpenSWMM_MaterialGroup group);
-    int (*capture)(OpenSWMM_MaterialGroup group,OpenSWMM_MaterialState* state);
-    int (*restore)(OpenSWMM_MaterialGroup group,OpenSWMM_MaterialState state);
-    int (*import_state)(const void* bytes,size_t size,OpenSWMM_MaterialState* state);
-    int (*data)(OpenSWMM_MaterialState state,const void** bytes,size_t* size);
+    int (*capture)(OpenSWMM_MaterialGroup group, OpenSWMM_MaterialState* state);
+    int (*restore)(OpenSWMM_MaterialGroup group, OpenSWMM_MaterialState state);
+    int (*import_state)(const void* bytes, size_t size, OpenSWMM_MaterialState* state);
+    int (*data)(OpenSWMM_MaterialState state, const void** bytes, size_t* size);
     void (*destroy_group)(OpenSWMM_MaterialGroup group);
     void (*destroy_state)(OpenSWMM_MaterialState state);
     const char* (*last_error)(void);
@@ -84,10 +84,11 @@ typedef struct OpenSWMM_MaterialRecoveryV1 {
  */
 typedef struct OpenSWMM_MaterialRecoveryV2 {
     OpenSWMM_MaterialRecoveryV1 base;
-    int (*describe_state)(OpenSWMM_MaterialState state,const char** json,size_t* size);
+    int (*describe_state)(OpenSWMM_MaterialState state, const char** json, size_t* size);
 } OpenSWMM_MaterialRecoveryV2;
 /* Returns NULL for unsupported version or caller table size, without mutation. */
-typedef const OpenSWMM_MaterialRecoveryV1* (*OpenSWMM_MaterialRecoveryFn)(uint32_t version,size_t caller_size);
+typedef const OpenSWMM_MaterialRecoveryV1* (*OpenSWMM_MaterialRecoveryFn)(uint32_t version,
+                                                                          size_t caller_size);
 #ifdef __cplusplus
 }
 #endif

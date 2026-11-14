@@ -2513,73 +2513,80 @@ uint32_t restartCrc(const std::string& bytes) {
 }
 }
 TEST(CommonSourceStage, CompensatedWaterRestartPreservesRemaindersAndReadsLegacyProfiles) {
-    const auto configure=[](Model& m) {
-        m.setup(true,2,false,true);
+    const auto configure = [](Model& m) {
+        m.setup(true, 2, false, true);
         m.attach();
     };
-    const auto save=[](Model& m,const std::string& tag) {
-        const auto path=restartPath("roundoff-"+tag);
-        EXPECT_EQ(m.stage.saveCheckpoint(path.string()),"");
+    const auto save = [](Model& m, const std::string& tag) {
+        const auto path = restartPath("roundoff-" + tag);
+        EXPECT_EQ(m.stage.saveCheckpoint(path.string()), "");
         return restartBytes(path);
     };
-    const auto load=[](Model& m,const std::string& bytes,const std::string& tag) {
-        const auto path=restartPath("roundoff-"+tag);
-        std::ofstream out(path,std::ios::binary); out.write(bytes.data(),bytes.size()); out.close();
+    const auto load = [](Model& m, const std::string& bytes, const std::string& tag) {
+        const auto path = restartPath("roundoff-" + tag);
+        std::ofstream out(path, std::ios::binary);
+        out.write(bytes.data(), bytes.size());
+        out.close();
         return m.stage.loadCheckpoint(path.string());
     };
-    Model continuous,resumed;
-    configure(continuous); configure(resumed);
-    for (int i=0; i<100; ++i)
-        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous,i*.0001,(i+1)*.0001));
-    const auto bytes=save(continuous,"initial");
+    Model continuous, resumed;
+    configure(continuous);
+    configure(resumed);
+    for (int i = 0; i < 100; ++i)
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous, i * .0001, (i + 1) * .0001));
+    const auto bytes = save(continuous, "initial");
     ASSERT_FALSE(bytes.empty());
-    ASSERT_EQ(load(resumed,bytes,"resume"),"");
-    for (int i=100; i<200; ++i) {
-        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous,i*.0001,(i+1)*.0001));
-        ASSERT_NO_FATAL_FAILURE(advanceRestart(resumed,i*.0001,(i+1)*.0001));
+    ASSERT_EQ(load(resumed, bytes, "resume"), "");
+    for (int i = 100; i < 200; ++i) {
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(continuous, i * .0001, (i + 1) * .0001));
+        ASSERT_NO_FATAL_FAILURE(advanceRestart(resumed, i * .0001, (i + 1) * .0001));
     }
-    checkpointEqual(continuous,resumed,"compensated-water");
+    checkpointEqual(continuous, resumed, "compensated-water");
     detail::CompletedSourceArchive file(bytes);
-    std::string magic,model,payload;
-    uint32_t version=0,endian=0,long_bytes=0,double_bytes=0,crc=0;
-    file(magic,version,endian,long_bytes,double_bytes,model,payload,crc); file.finish();
-    ASSERT_EQ(version,11u);
-    const auto extra=sizeof(uint64_t)+(continuous.mesh.n_cells()+3)*sizeof(double);
-    ASSERT_GT(payload.size(),extra);
-    const auto offset=payload.size()-extra;
-    bool nonzero=false;
-    for (size_t at=offset+sizeof(uint64_t); at<payload.size(); at+=sizeof(double)) {
-        double v=0; std::memcpy(&v,payload.data()+at,sizeof(v));
-        nonzero |= v!=0;
+    std::string magic, model, payload;
+    uint32_t version = 0, endian = 0, long_bytes = 0, double_bytes = 0, crc = 0;
+    file(magic, version, endian, long_bytes, double_bytes, model, payload, crc);
+    file.finish();
+    ASSERT_EQ(version, 11u);
+    const auto extra = sizeof(uint64_t) + (continuous.mesh.n_cells() + 3) * sizeof(double);
+    ASSERT_GT(payload.size(), extra);
+    const auto offset = payload.size() - extra;
+    bool nonzero = false;
+    for (size_t at = offset + sizeof(uint64_t); at < payload.size(); at += sizeof(double)) {
+        double v = 0;
+        std::memcpy(&v, payload.data() + at, sizeof(v));
+        nonzero |= v != 0;
     }
     ASSERT_TRUE(nonzero);
-    for (int change=0; change<3; ++change) {
-        auto bad=payload;
-        if (change<2) {
-            const double value=change==0 ? std::numeric_limits<double>::quiet_NaN() : .001;
-            std::memcpy(bad.data()+offset+sizeof(uint64_t),&value,sizeof(value));
+    for (int change = 0; change < 3; ++change) {
+        auto bad = payload;
+        if (change < 2) {
+            const double value = change == 0 ? std::numeric_limits<double>::quiet_NaN() : .001;
+            std::memcpy(bad.data() + offset + sizeof(uint64_t), &value, sizeof(value));
         } else {
-            uint64_t size=continuous.mesh.n_cells()+1;
-            std::memcpy(bad.data()+offset,&size,sizeof(size));
+            uint64_t size = continuous.mesh.n_cells() + 1;
+            std::memcpy(bad.data() + offset, &size, sizeof(size));
         }
-        auto checksum=restartCrc(bad);
+        auto checksum = restartCrc(bad);
         detail::CompletedSourceArchive encoded;
-        encoded(magic,version,endian,long_bytes,double_bytes,model,bad,checksum);
-        Model target; configure(target);
-        const auto before=save(target,"before");
-        EXPECT_FALSE(load(target,encoded.bytes(),"invalid").empty());
-        EXPECT_EQ(before,save(target,"after"));
-        ASSERT_EQ(load(target,bytes,"valid"),"");
+        encoded(magic, version, endian, long_bytes, double_bytes, model, bad, checksum);
+        Model target;
+        configure(target);
+        const auto before = save(target, "before");
+        EXPECT_FALSE(load(target, encoded.bytes(), "invalid").empty());
+        EXPECT_EQ(before, save(target, "after"));
+        ASSERT_EQ(load(target, bytes, "valid"), "");
     }
     payload.resize(offset);
-    version-=10;
-    crc=restartCrc(payload);
+    version -= 10;
+    crc = restartCrc(payload);
     detail::CompletedSourceArchive legacy;
-    legacy(magic,version,endian,long_bytes,double_bytes,model,payload,crc);
-    Model migrated; configure(migrated);
-    ASSERT_EQ(load(migrated,legacy.bytes(),"legacy"),"");
-    EXPECT_EQ(migrated.stage.completedEnd(),.01);
-    ASSERT_NO_FATAL_FAILURE(advanceRestart(migrated,.01,.0101));
+    legacy(magic, version, endian, long_bytes, double_bytes, model, payload, crc);
+    Model migrated;
+    configure(migrated);
+    ASSERT_EQ(load(migrated, legacy.bytes(), "legacy"), "");
+    EXPECT_EQ(migrated.stage.completedEnd(), .01);
+    ASSERT_NO_FATAL_FAILURE(advanceRestart(migrated, .01, .0101));
 }
 
 TEST(CommonSourceStage, SemanticallyInvalidCheckpointWithValidChecksumIsRejectedAtomically) {
@@ -5334,54 +5341,56 @@ TEST(CommonSourcePerf, EngineProfilingRegistrationHandlesFailureReopenAndDestruc
 }
 
 namespace {
-bool cellScratchPaired(int mode) { return mode>=1 && mode<=3; }
+bool cellScratchPaired(int mode) {
+    return mode >= 1 && mode <= 3;
+}
 
-void cellScratchSetup(Model& m,int mode,int cells) {
+void cellScratchSetup(Model& m, int mode, int cells) {
     AtmosphericInput a;
-    a.ks=1e-6; // Keep the controlled fixed-cadence surface mixture wet.
-    if (mode>=3)
-        a.closure=GwClosure::SIGMA;
-    if (mode==2 || mode==3 || mode==4)
-        mixedPollutants(m,cells,a);
+    a.ks = 1e-6; // Keep the controlled fixed-cadence surface mixture wet.
+    if (mode >= 3)
+        a.closure = GwClosure::SIGMA;
+    if (mode == 2 || mode == 3 || mode == 4)
+        mixedPollutants(m, cells, a);
     else
-        m.setup(false,cells,false,false,false,a);
+        m.setup(false, cells, false, false, false, a);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
-    if (mode==3 || mode==4) {
+    if (mode == 3 || mode == 4) {
         RowLayoutLite rows;
-        rows.n_species=rows.n_pollut=2;
-        rows.names={"Dissolved","Counts"};
+        rows.n_species = rows.n_pollut = 2;
+        rows.names = {"Dissolved", "Counts"};
         GwTransportData data;
-        data.options.unsat_transport="LAYERED";
+        data.options.unsat_transport = "LAYERED";
         std::vector<std::string> warnings;
-        m.gw.initTransport(rows,&data,{},warnings);
-        ASSERT_GT(m.gw.transport().n_layers,0);
+        m.gw.initTransport(rows, &data, {}, warnings);
+        ASSERT_GT(m.gw.transport().n_layers, 0);
     }
     if (cellScratchPaired(mode))
         m.attach();
 }
 
-std::string cellScratchBytes(SubsurfaceSolver& gw,SurfaceStateData& surface) {
+std::string cellScratchBytes(SubsurfaceSolver& gw, SurfaceStateData& surface) {
     detail::CompletedSourceArchive a;
-    gw.checkpoint(a,false);
-    a(surface.volume,surface.head,surface.depth,surface.infil_rate,
-      surface.infil_applied,surface.coupling_applied,surface.transport.cell_mass);
+    gw.checkpoint(a, false);
+    a(surface.volume, surface.head, surface.depth, surface.infil_rate, surface.infil_applied,
+      surface.coupling_applied, surface.transport.cell_mass);
     return a.bytes();
 }
 
-void cellScratchLoad(SubsurfaceSolver& gw,SurfaceStateData& surface,std::string bytes) {
+void cellScratchLoad(SubsurfaceSolver& gw, SurfaceStateData& surface, std::string bytes) {
     detail::CompletedSourceArchive a(std::move(bytes));
-    gw.checkpoint(a,false);
-    a(surface.volume,surface.head,surface.depth,surface.infil_rate,
-      surface.infil_applied,surface.coupling_applied,surface.transport.cell_mass);
+    gw.checkpoint(a, false);
+    a(surface.volume, surface.head, surface.depth, surface.infil_rate, surface.infil_applied,
+      surface.coupling_applied, surface.transport.cell_mass);
     a.finish();
 }
 
-void cellScratchStep(Model& m,int mode,double& time) {
-    const double end=time+.5;
+void cellScratchStep(Model& m, int mode, double& time) {
+    const double end = time + .5;
     if (cellScratchPaired(mode))
-        ASSERT_EQ(m.stage.advance(time,end),"");
-    m.gw.fireGwCells(0,.5,m.surface,time);
-    time=end;
+        ASSERT_EQ(m.stage.advance(time, end), "");
+    m.gw.fireGwCells(0, .5, m.surface, time);
+    time = end;
 }
 }
 
@@ -5395,8 +5404,7 @@ TEST(CommonSourceStage, IndependentClockSnapshotsDeepCopyAndMoveWithoutRelocatio
     state.pending_slots = 1;
     state.rung_batches[2] = 3;
     const std::vector<double> bounds{2.};
-    state.schedule.emplace(GwClock::Options{0., 1., 4., 1.}, bounds,
-                           std::vector<GwClock::Face>{});
+    state.schedule.emplace(GwClock::Options{0., 1., 4., 1.}, bounds, std::vector<GwClock::Face>{});
     GwClockStateOwner original;
     EXPECT_FALSE(original);
     original.emplace(std::move(state));
@@ -5438,63 +5446,73 @@ TEST(CommonSourceStage, IndependentClockSnapshotsDeepCopyAndMoveWithoutRelocatio
 TEST(CommonSourceStage, GroundwaterCopiesMovesAndZeroLayerReusePreserveAcceptedState) {
     static_assert(std::is_nothrow_move_assignable_v<SubsurfaceSolver>);
     detail::CompletedSourceArchive history;
-    std::string magic="C9 cell scratch ownership history v1";
+    std::string magic = "C9 cell scratch ownership history v1";
     history(magic);
-    for (int mode : {0,1,2,3,4})
-        for (int cells : {1,17}) {
-            SCOPED_TRACE(std::to_string(mode)+":"+std::to_string(cells));
+    for (int mode : {0, 1, 2, 3, 4})
+        for (int cells : {1, 17}) {
+            SCOPED_TRACE(std::to_string(mode) + ":" + std::to_string(cells));
             Model m;
-            cellScratchSetup(m,mode,cells);
+            cellScratchSetup(m, mode, cells);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
-            double time=0;
-            for (int warm=0; warm<3; ++warm)
-                cellScratchStep(m,mode,time);
+            double time = 0;
+            for (int warm = 0; warm < 3; ++warm)
+                cellScratchStep(m, mode, time);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
             if (cellScratchPaired(mode))
-                ASSERT_EQ(m.stage.advance(time,time+.5),"");
-            auto before=cellScratchBytes(m.gw,m.surface);
-            std::string tag="accepted_before";
-            history(mode,cells,tag,before);
-            auto copied=m.gw, assigned=m.gw;
-            auto copied_surface=m.surface, assigned_surface=m.surface;
-            EXPECT_EQ(cellScratchBytes(copied,copied_surface),before);
-            assigned.fireGwCells(0,.5,assigned_surface,time);
-            assigned=m.gw; // overwrite a solver that already holds warmed work storage
-            assigned_surface=m.surface;
-            auto moved=std::move(copied);
-            m.gw.fireGwCells(0,.5,m.surface,time);
-            moved.fireGwCells(0,.5,copied_surface,time);
-            assigned.fireGwCells(0,.5,assigned_surface,time);
-            auto expected=cellScratchBytes(m.gw,m.surface);
-            tag="original";history(mode,cells,tag,expected);
-            auto bytes=cellScratchBytes(moved,copied_surface);
-            EXPECT_EQ(bytes,expected);tag="move_constructed";history(mode,cells,tag,bytes);
-            bytes=cellScratchBytes(assigned,assigned_surface);
-            EXPECT_EQ(bytes,expected);tag="copy_assigned";history(mode,cells,tag,bytes);
-            auto move_assigned=m.gw;
-            move_assigned=std::move(assigned);
-            bytes=cellScratchBytes(move_assigned,assigned_surface);
-            EXPECT_EQ(bytes,expected);tag="move_assigned";history(mode,cells,tag,bytes);
+                ASSERT_EQ(m.stage.advance(time, time + .5), "");
+            auto before = cellScratchBytes(m.gw, m.surface);
+            std::string tag = "accepted_before";
+            history(mode, cells, tag, before);
+            auto copied = m.gw, assigned = m.gw;
+            auto copied_surface = m.surface, assigned_surface = m.surface;
+            EXPECT_EQ(cellScratchBytes(copied, copied_surface), before);
+            assigned.fireGwCells(0, .5, assigned_surface, time);
+            assigned = m.gw; // overwrite a solver that already holds warmed work storage
+            assigned_surface = m.surface;
+            auto moved = std::move(copied);
+            m.gw.fireGwCells(0, .5, m.surface, time);
+            moved.fireGwCells(0, .5, copied_surface, time);
+            assigned.fireGwCells(0, .5, assigned_surface, time);
+            auto expected = cellScratchBytes(m.gw, m.surface);
+            tag = "original";
+            history(mode, cells, tag, expected);
+            auto bytes = cellScratchBytes(moved, copied_surface);
+            EXPECT_EQ(bytes, expected);
+            tag = "move_constructed";
+            history(mode, cells, tag, bytes);
+            bytes = cellScratchBytes(assigned, assigned_surface);
+            EXPECT_EQ(bytes, expected);
+            tag = "copy_assigned";
+            history(mode, cells, tag, bytes);
+            auto move_assigned = m.gw;
+            move_assigned = std::move(assigned);
+            bytes = cellScratchBytes(move_assigned, assigned_surface);
+            EXPECT_EQ(bytes, expected);
+            tag = "move_assigned";
+            history(mode, cells, tag, bytes);
             // Exercise the ordinary zero-transport-layer SIGMA path after
             // assigning over a previously warmed, possibly layered owner.
             Model water;
-            cellScratchSetup(water,5,cells);
+            cellScratchSetup(water, 5, cells);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
-            ASSERT_EQ(water.gw.transport().n_layers,0);
-            auto water_surface=water.surface;
-            move_assigned=water.gw;
-            water.gw.fireGwCells(0,.5,water.surface,0);
-            move_assigned.fireGwCells(0,.5,water_surface,0);
-            expected=cellScratchBytes(water.gw,water.surface);
-            tag="zero_layer_reference";history(mode,cells,tag,expected);
-            bytes=cellScratchBytes(move_assigned,water_surface);
-            EXPECT_EQ(bytes,expected);tag="zero_layer_reused";history(mode,cells,tag,bytes);
+            ASSERT_EQ(water.gw.transport().n_layers, 0);
+            auto water_surface = water.surface;
+            move_assigned = water.gw;
+            water.gw.fireGwCells(0, .5, water.surface, 0);
+            move_assigned.fireGwCells(0, .5, water_surface, 0);
+            expected = cellScratchBytes(water.gw, water.surface);
+            tag = "zero_layer_reference";
+            history(mode, cells, tag, expected);
+            bytes = cellScratchBytes(move_assigned, water_surface);
+            EXPECT_EQ(bytes, expected);
+            tag = "zero_layer_reused";
+            history(mode, cells, tag, bytes);
         }
-    if (const char* output=std::getenv("OPENSWMM_CELL_SCRATCH_HISTORY")) {
+    if (const char* output = std::getenv("OPENSWMM_CELL_SCRATCH_HISTORY")) {
         std::filesystem::create_directories(output);
-        auto bytes=history.bytes();
-        std::ofstream file(std::filesystem::path(output)/"ownership.bin",std::ios::binary);
-        file.write(bytes.data(),bytes.size());
+        auto bytes = history.bytes();
+        std::ofstream file(std::filesystem::path(output) / "ownership.bin", std::ios::binary);
+        file.write(bytes.data(), bytes.size());
         ASSERT_TRUE(file.good());
     }
 }
@@ -5507,24 +5525,37 @@ struct Rig {
     Model m;
     SimulationContext weather;
     explicit Rig(bool local) {
-        const auto ok = [](const std::string& e) { if (!e.empty()) throw std::runtime_error(e); };
+        const auto ok = [](const std::string& e) {
+            if (!e.empty())
+                throw std::runtime_error(e);
+        };
         m.setup(true, 3);
         if (local) {
             m.context = SimulationContext{};
             m.context.options.heat_transport = true;
             auto& sediment = m.context.heat_config.sediment;
-            sediment.bed_thickness = 1; sediment.mesh_porosity = .3;
-            sediment.sed_density = 2650; sediment.sed_specific_heat = 850;
-            sediment.has_initial_temp = true; sediment.initial_temp = 10;
-            m.options.coupled_heat = true; m.options.bed_heat_model = 1;
+            sediment.bed_thickness = 1;
+            sediment.mesh_porosity = .3;
+            sediment.sed_density = 2650;
+            sediment.sed_specific_heat = 850;
+            sediment.has_initial_temp = true;
+            sediment.initial_temp = 10;
+            m.options.coupled_heat = true;
+            m.options.bed_heat_model = 1;
             m.options.heat_surface = m.options.heat_radiative = 0;
-            auto& t = m.surface.transport; t.resize(1, 3, 0); t.n_pollut = 0;
-            t.temp_row = 0; t.row_names = {"__TEMPERATURE__"};
-            for (int i = 0; i < 3; ++i) t.cell_mass[i] = 10 * m.surface.volume[i];
+            auto& t = m.surface.transport;
+            t.resize(1, 3, 0);
+            t.n_pollut = 0;
+            t.temp_row = 0;
+            t.row_names = {"__TEMPERATURE__"};
+            for (int i = 0; i < 3; ++i)
+                t.cell_mass[i] = 10 * m.surface.volume[i];
             ok(initializeMeshHeat(m.context, m.mesh, m.surface, m.options));
-            m.gw = SubsurfaceSolver{}; m.sources = runoff::SourceWaterDriver{};
+            m.gw = SubsurfaceSolver{};
+            m.sources = runoff::SourceWaterDriver{};
             ok(m.sources.initialize(m.context, {}, {}));
-            m.preview.objects.clear(); m.preview.shares.clear();
+            m.preview.objects.clear();
+            m.preview.shares.clear();
             m.preview.mesh_weather_area = m.mesh.tri_area;
         }
         weather.options.ignore_snow_melt = false;
@@ -5532,12 +5563,16 @@ struct Rig {
         weather.options.end_date = weather.options.start_date + 14;
         weather.options.total_duration_ms = 14 * 86400000.;
         weather.climate_state.temperature = weather.climate_state.temperature_src = 22;
-        weather.climate_state.snow_divt = 32; weather.climate_state.humidity = 75;
+        weather.climate_state.snow_divt = 32;
+        weather.climate_state.humidity = 75;
         for (int month = 0; month < 12; ++month) {
-            weather.options.humidity[month] = 75; weather.options.wind_speed[month] = 2;
+            weather.options.humidity[month] = 75;
+            weather.options.wind_speed[month] = 2;
         }
-        weather.heat_config.cloud.configured = true; weather.heat_config.cloud.fraction = .5;
-        weather.snowpack_names.add("DD"); weather.snowpack_names.add("UEB");
+        weather.heat_config.cloud.configured = true;
+        weather.heat_config.cloud.fraction = .5;
+        weather.snowpack_names.add("DD");
+        weather.snowpack_names.add("UEB");
         weather.snowpacks.names = {"DD", "UEB"};
         weather.snowpacks.pervious.assign(2, std::array<double, 7>{.02, .06, 32, .1, 6, .6, 0});
         weather.snowpacks.config.model = surface::SnowKind::DegreeDay;
@@ -5547,16 +5582,23 @@ struct Rig {
         weather.snowpacks.mesh_config.defaults["*"].pack = "UEB";
         std::vector<surface::MeshSnowGeometry> geometry;
         for (int i = 0; i < 3; ++i) {
-            geometry.push_back({"trial-" + std::to_string(i), m.preview.mesh_weather_area[i], 0, 0});
+            geometry.push_back(
+                {"trial-" + std::to_string(i), m.preview.mesh_weather_area[i], 0, 0});
             // Local cells are DD, UEB, unassigned: cell 0 changes before cell 1 refuses.
-            if (local) weather.snowpacks.mesh_config.cells[i].pack = i == 0 ? "DD" : i == 1 ? "UEB" : "NONE";
+            if (local)
+                weather.snowpacks.mesh_config.cells[i].pack = i == 0   ? "DD"
+                                                              : i == 1 ? "UEB"
+                                                                       : "NONE";
         }
         m.surface.snow_context = &weather;
         ok(m.surface.snow.initialize(weather, geometry));
-        m.surface.rainfall.assign(3, 1e-7); m.surface.snow_catch.assign(3, 1.2);
+        m.surface.rainfall.assign(3, 1e-7);
+        m.surface.snow_catch.assign(3, 1.2);
         ok(m.stage.initialize(m.mesh, m.surface, m.options, m.gw, m.sources, m.preview, local));
     }
-    std::string step() { return m.stage.advance(m.stage.completedEnd(), m.stage.completedEnd() + .1); }
+    std::string step() {
+        return m.stage.advance(m.stage.completedEnd(), m.stage.completedEnd() + .1);
+    }
     std::string save(const std::string& name) {
         const auto path = restartPath(name);
         return m.stage.saveCheckpoint(path.string()).empty() ? restartBytes(path) : std::string{};
@@ -5569,12 +5611,14 @@ TEST(CommonSourceStage, MeshSnowTrialLateRefusalKeepsPublishedOwnersAndContinues
         stage_snow_trial::Rig r(local);
         ASSERT_TRUE(r.m.surface.snow.active());
         ASSERT_EQ(r.m.gw.active(), !local);
-        for (int i = 0; i < 3; ++i) ASSERT_EQ(r.step(), "");
+        for (int i = 0; i < 3; ++i)
+            ASSERT_EQ(r.step(), "");
         const auto before = r.save(tag + "-before");
         const auto snow = r.m.surface.snow.saveCheckpoint();
         ASSERT_FALSE(before.empty());
         if (local) {
-            ASSERT_TRUE(r.m.surface.snow.owns(0) && r.m.surface.snow.owns(1) && !r.m.surface.snow.owns(2));
+            ASSERT_TRUE(r.m.surface.snow.owns(0) && r.m.surface.snow.owns(1) &&
+                        !r.m.surface.snow.owns(2));
             r.m.surface.snow_catch[1] = -1;
             EXPECT_EQ(r.step(), "Invalid mesh snow precipitation.");
             r.m.surface.snow_catch[1] = 1.2;

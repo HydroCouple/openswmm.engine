@@ -55,9 +55,9 @@ bool close(double a, double b) {
 // Ordinary groundwater beds and conduit budgets are carried by the paired
 // hydraulic/GW archives. Their new common-source scope is strictly water-only.
 bool groundwaterWater(const SimulationContext& ctx, const SurfaceStateData& surface) {
-    return ctx.options.ignore_quality && ctx.n_pollutants() == 0 &&
-           !ctx.options.water_age && !ctx.options.heat_transport &&
-           ctx.reactions.n_species() == 0 && !surface.transport.active() && !surface.heat.enabled;
+    return ctx.options.ignore_quality && ctx.n_pollutants() == 0 && !ctx.options.water_age &&
+           !ctx.options.heat_transport && ctx.reactions.n_species() == 0 &&
+           !surface.transport.active() && !surface.heat.enabled;
 }
 /**
  * @brief Compute reflected CRC-32 of an encoded checkpoint payload.
@@ -326,7 +326,8 @@ struct SurfaceRouter2D::RestartState {
      * tolerance-based SI water balance comparisons. No physical update, canonical mutation or
      * repair; checked access may throw.
      */
-    void validate(const SurfaceRouter2D& r, const SimulationContext& c, bool material = false) const {
+    void validate(const SurfaceRouter2D& r, const SimulationContext& c,
+                  bool material = false) const {
         const auto n = static_cast<std::size_t>(r.mesh_.n_cells()),
                    ng = static_cast<std::size_t>(c.n_gages());
         for (const auto* row :
@@ -530,36 +531,43 @@ struct SurfaceRouter2D::RestartState {
  * change.
  */
 namespace {
-void validatePassiveWater(const SurfaceStateData& surface, const SimulationContext::MassBalance2D& mb,
-                          bool coupled_water = false) {
+void validatePassiveWater(const SurfaceStateData& surface,
+                          const SimulationContext::MassBalance2D& mb, bool coupled_water = false) {
     double water = 0;
-    for (double volume : surface.volume) water += volume;
-    const double expected = coupled_water
-        ? mb.init_storage + mb.coupling_1d_to_2d_in - mb.coupling_2d_to_1d_out : mb.init_storage;
+    for (double volume : surface.volume)
+        water += volume;
+    const double expected =
+        coupled_water ? mb.init_storage + mb.coupling_1d_to_2d_in - mb.coupling_2d_to_1d_out
+                      : mb.init_storage;
     if (coupled_water && (!std::isfinite(water) || !std::isfinite(expected) ||
-        !std::isfinite(mb.coupling_1d_to_2d_in) || mb.coupling_1d_to_2d_in < 0 ||
-        !std::isfinite(mb.coupling_2d_to_1d_out) || mb.coupling_2d_to_1d_out < 0))
+                          !std::isfinite(mb.coupling_1d_to_2d_in) || mb.coupling_1d_to_2d_in < 0 ||
+                          !std::isfinite(mb.coupling_2d_to_1d_out) || mb.coupling_2d_to_1d_out < 0))
         throw std::invalid_argument("Coupled water checkpoint has invalid surface water totals.");
     if (!close(water, expected) || !close(water, mb.final_storage) ||
         (!coupled_water && (mb.coupling_1d_to_2d_in != 0 || mb.coupling_2d_to_1d_out != 0)))
-        throw std::invalid_argument("Live checkpoint closed water inventory differs from the initial model.");
+        throw std::invalid_argument(
+            "Live checkpoint closed water inventory differs from the initial model.");
     for (double value : {mb.rainfall_in, mb.evap_out, mb.infil_out, mb.aquifer_in, mb.external_in,
-                         mb.external_out, mb.boundary_in, mb.boundary_out, mb.outfall_in, mb.outfall_out,
-                         mb.infil_to_aquifer, mb.infil_aquifer_pending})
-        if (value != 0) throw std::invalid_argument("Live checkpoint contains an unsupported cumulative water owner.");
+                         mb.external_out, mb.boundary_in, mb.boundary_out, mb.outfall_in,
+                         mb.outfall_out, mb.infil_to_aquifer, mb.infil_aquifer_pending})
+        if (value != 0)
+            throw std::invalid_argument(
+                "Live checkpoint contains an unsupported cumulative water owner.");
 }
 }
 std::string SurfaceRouter2D::coupledWaterProfile(const SimulationContext& ctx,
-                                               const SurfaceStateData& surface) const {
+                                                 const SurfaceStateData& surface) const {
     if (!active_ || !dynamic_cast<const ExplicitInertialSolver*>(solver_.get()) ||
         options_.reconstruction_order != 1 || options_.num_threads != 1 ||
         !groundwaterWater(ctx, surface) || live_passive_exchange_ || common_stage_ ||
-        subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() || surface_quality_.active() ||
-        node_coupling_points_.empty() ||
-        std::any_of(coupling_points_.begin(), coupling_points_.end(), [](const auto& p) { return p.is_outfall; }))
+        subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() ||
+        surface_quality_.active() || node_coupling_points_.empty() ||
+        std::any_of(coupling_points_.begin(), coupling_points_.end(),
+                    [](const auto& p) { return p.is_outfall; }))
         return "Coupled water checkpoint requires isolated first-order serial CPU water exchange.";
     if (ctx.n_links() || ctx.n_subcatches() || ctx.n_gages() || !ctx.events.empty() ||
-        ctx.ext_inflows.count() || ctx.dwf_inflows.count() || ctx.control_rules.count() || ctx.runtime_coupling_used)
+        ctx.ext_inflows.count() || ctx.dwf_inflows.count() || ctx.control_rules.count() ||
+        ctx.runtime_coupling_used)
         return "Coupled water checkpoint excludes network links, sources, events and controls.";
     const auto& n = ctx.nodes;
     for (int i = 0; i < ctx.n_nodes(); ++i) {
@@ -570,73 +578,94 @@ std::string SurfaceRouter2D::coupledWaterProfile(const SimulationContext& ctx,
         // Native snapshots retain the preceding lateral rate even after the
         // queue empties; DW still integrates that rate on the following step.
         // Ponded overflow is a volume-change diagnostic, not another outflow.
-        if (n.losses.at(i) != 0 ||
-            n.inflow.at(i) != std::max(0.0, n.coupling_inflow.at(i)) ||
+        if (n.losses.at(i) != 0 || n.inflow.at(i) != std::max(0.0, n.coupling_inflow.at(i)) ||
             n.outflow.at(i) != std::max(0.0, -n.coupling_inflow.at(i)) ||
             n.old_net_inflow.at(i) != n.old_lat_flow.at(i) ||
             n.old_inflow.at(i) != std::max(0.0, n.old_lat_flow.at(i)))
             return "Coupled water checkpoint contains inconsistent native flow history.";
     }
-    for (const auto* values : {&n.user_lat_flow, &n.runoff_inflow, &n.gw_inflow, &n.ext_inflow,
-                              &n.dwf_inflow, &n.rdii_inflow, &n.iface_inflow, &n.lid_drain_inflow,
-                              &n.coupling_qual_queue, &n.coupling_qual_inflow,
-                              &n.coupling_age_vol_queue, &n.coupling_age_vol_inflow,
-                              &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow})
+    for (const auto* values :
+         {&n.user_lat_flow, &n.runoff_inflow, &n.gw_inflow, &n.ext_inflow, &n.dwf_inflow,
+          &n.rdii_inflow, &n.iface_inflow, &n.lid_drain_inflow, &n.coupling_qual_queue,
+          &n.coupling_qual_inflow, &n.coupling_age_vol_queue, &n.coupling_age_vol_inflow,
+          &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow})
         for (double value : *values)
-            if (value != 0) return "Coupled water checkpoint contains another node water source.";
+            if (value != 0)
+                return "Coupled water checkpoint contains another node water source.";
     for (auto bed : n.aquifer2d_bed)
-        if (bed) return "Coupled water checkpoint excludes aquifer beds.";
+        if (bed)
+            return "Coupled water checkpoint excludes aquifer beds.";
     const auto& storages = ctx.node_subtypes.storages;
     for (const auto& lid : storages.lid_state)
-        if (!lid.cells.empty()) return "Coupled water checkpoint excludes LID storage.";
+        if (!lid.cells.empty())
+            return "Coupled water checkpoint excludes LID storage.";
     for (const auto* values : {&storages.evap_frac, &storages.evap_loss, &storages.exfil_loss,
-                              &storages.exfil_rate, &storages.exfil_ksat})
+                               &storages.exfil_rate, &storages.exfil_ksat})
         for (double value : *values)
-            if (value != 0) return "Coupled water checkpoint excludes storage evaporation and exfiltration.";
+            if (value != 0)
+                return "Coupled water checkpoint excludes storage evaporation and exfiltration.";
     return {};
 }
-std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx, const SurfaceStateData& surface) const {
-    if (auto error = livePassiveProfile(); !error.empty()) return error;
+std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx,
+                                                   const SurfaceStateData& surface) const {
+    if (auto error = livePassiveProfile(); !error.empty())
+        return error;
     if (ctx.n_links() || ctx.n_subcatches() || ctx.n_gages() || !ctx.events.empty() ||
-        ctx.ext_inflows.count() || ctx.dwf_inflows.count() || ctx.control_rules.count() || ctx.runtime_coupling_used ||
-        options_.momentum != Momentum2D::LOCAL_INERTIAL || options_.momentumPhysics() ||
-        options_.cell_closure != CellClosure2D::FLAT || surface.snow.active() || surface.heat.enabled || channel_ground_.active() ||
+        ctx.ext_inflows.count() || ctx.dwf_inflows.count() || ctx.control_rules.count() ||
+        ctx.runtime_coupling_used || options_.momentum != Momentum2D::LOCAL_INERTIAL ||
+        options_.momentumPhysics() || options_.cell_closure != CellClosure2D::FLAT ||
+        surface.snow.active() || surface.heat.enabled || channel_ground_.active() ||
         !pond_track_ptr_.empty() || !ramp_prev_head_.empty() || !aquifer_link_shares_.empty() ||
         !subcatch_recharge_.empty() || !cell_subcatch_.empty())
         return "Changing-volume exchange requires isolated flat local-inertial storage without other physical owners.";
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_) {
-        if (point.equalize) return "Changing-volume exchange excludes equalization caps.";
+        if (point.equalize)
+            return "Changing-volume exchange excludes equalization caps.";
         mapped.insert(point.node_idx);
     }
-    if (mapped.size() != std::size_t(ctx.n_nodes())) return "Changing-volume exchange requires exclusive mapped storage.";
+    if (mapped.size() != std::size_t(ctx.n_nodes()))
+        return "Changing-volume exchange requires exclusive mapped storage.";
     for (const auto& row : infil_.resolvedRows())
-        if (row.has_method) return "Changing-volume exchange excludes infiltration.";
+        if (row.has_method)
+            return "Changing-volume exchange excludes infiltration.";
     if (!boundary_.receipts.empty() || !boundary_.runtime_original.empty())
         return "Changing-volume exchange excludes external boundary owners.";
     for (auto type : boundary_.edge_bc_type)
-        if (type != int8_t(BoundaryType::WALL)) return "Changing-volume exchange requires closed boundaries.";
-    for (const auto* values : {&surface.rainfall, &surface.evap_rate, &surface.infil_rate, &surface.infil_applied,
-                              &surface.coupling_flux, &surface.coupling_native, &surface.coupling_applied})
+        if (type != int8_t(BoundaryType::WALL))
+            return "Changing-volume exchange requires closed boundaries.";
+    for (const auto* values :
+         {&surface.rainfall, &surface.evap_rate, &surface.infil_rate, &surface.infil_applied,
+          &surface.coupling_flux, &surface.coupling_native, &surface.coupling_applied})
         for (double v : *values)
-            if (v != 0) return "Changing-volume exchange excludes surface sources and forcing.";
-    for (const auto* values : {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
+            if (v != 0)
+                return "Changing-volume exchange excludes surface sources and forcing.";
+    for (const auto* values :
+         {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
         for (std::size_t i = 0; values->allocated() && i < values->size(); ++i)
-            if ((*values)[i] != 0) return "Changing-volume exchange excludes surface forcing modes.";
-    if (surface.forcing_ever_set) return "Changing-volume exchange excludes surface forcing history.";
-    for (const auto* values : {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
-              &surface.transport.lost_external, &surface.transport.gained_external, &surface.transport.gained_rainfall,
-              &surface.transport.gained_boundary, &surface.transport.gained_washoff, &surface.transport.gained_exfiltration,
-              &surface.transport.coupling_src, &surface.transport.gained_bed, &surface.transport.generated_age})
+            if ((*values)[i] != 0)
+                return "Changing-volume exchange excludes surface forcing modes.";
+    if (surface.forcing_ever_set)
+        return "Changing-volume exchange excludes surface forcing history.";
+    for (const auto* values :
+         {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
+          &surface.transport.lost_external, &surface.transport.gained_external,
+          &surface.transport.gained_rainfall, &surface.transport.gained_boundary,
+          &surface.transport.gained_washoff, &surface.transport.gained_exfiltration,
+          &surface.transport.coupling_src, &surface.transport.gained_bed,
+          &surface.transport.generated_age})
         for (double v : *values)
-            if (v != 0) return "Changing-volume exchange excludes other material sources and receipts.";
+            if (v != 0)
+                return "Changing-volume exchange excludes other material sources and receipts.";
     return {};
 }
 std::string SurfaceRouter2D::liveCheckpointModel(const SimulationContext& ctx) const {
     Archive a;
-    std::string profile = paired_water_checkpoint_ ? "first-order CPU coupled water state v1" :
-        live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() ?
-        "first-order CPU changing-volume passive transfer state v1" : "first-order CPU passive transfer state v1";
+    std::string profile =
+        paired_water_checkpoint_ ? "first-order CPU coupled water state v1"
+        : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()
+            ? "first-order CPU changing-volume passive transfer state v1"
+            : "first-order CPU passive transfer state v1";
     auto router = sourceRouterModel(ctx, true);
     a(profile, router);
     checkpoint::meshModel(a, mesh_, options_, state_.transport);
@@ -644,34 +673,45 @@ std::string SurfaceRouter2D::liveCheckpointModel(const SimulationContext& ctx) c
     a.sequence(points, [&](auto& p) {
         a(p.cell_idx, p.vertex_idx, p.node_idx, p.cd, p.area, p.is_outfall, p.has_flap_gate,
           p.area_authored, p.cd_authored, p.law, p.geo.z_crest, p.geo.l_weir, p.geo.a_orif,
-          p.coef.c_w, p.coef.c_sw, p.coef.c_oi, p.coef.c_oo, p.coef.h_eps,
-          p.chamber_area, p.equalize, p.head_begin, p.head_end, p.spread, p.tw_relax);
+          p.coef.c_w, p.coef.c_sw, p.coef.c_oi, p.coef.c_oo, p.coef.h_eps, p.chamber_area,
+          p.equalize, p.head_begin, p.head_end, p.spread, p.tw_relax);
     });
     auto head_cells = coupling_head_cells_;
     a(head_cells);
     return a.bytes();
 }
 std::string SurfaceRouter2D::validateLivePhysical(const ExplicitInertialSolver& cpu,
-        const SurfaceStateData& surface, double completed, double total, double pending) const {
-    if (!cpu.initialized_ || !cpu.checkpoint_ready_ || cpu.second_order_ || cpu.gw_ || cpu.common_stage_ ||
-        cpu.source_history_ || cpu.engine_source_history_ || cpu.engine_source_stream_ ||
-        cpu.t_last_sync_ != completed || cpu.source_phase_end_ != completed || cpu.accumulators_pending_ ||
+                                                  const SurfaceStateData& surface, double completed,
+                                                  double total, double pending) const {
+    if (!cpu.initialized_ || !cpu.checkpoint_ready_ || cpu.second_order_ || cpu.gw_ ||
+        cpu.common_stage_ || cpu.source_history_ || cpu.engine_source_history_ ||
+        cpu.engine_source_stream_ || cpu.t_last_sync_ != completed ||
+        cpu.source_phase_end_ != completed || cpu.accumulators_pending_ ||
         surface.live_passive_exchange || pending < 0 || !close(total, completed + pending))
         return "Live checkpoint numerical owner/clock is incomplete.";
-    for (const auto* values : {&surface.rainfall, &surface.evap_rate, &surface.infil_rate, &surface.infil_applied,
-                              &surface.coupling_flux, &surface.coupling_native, &surface.coupling_applied})
+    for (const auto* values :
+         {&surface.rainfall, &surface.evap_rate, &surface.infil_rate, &surface.infil_applied,
+          &surface.coupling_flux, &surface.coupling_native, &surface.coupling_applied})
         for (double value : *values)
-            if (value != 0) return "Live checkpoint decoded an unsupported source or undrained transfer.";
-    for (const auto* flags : {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
+            if (value != 0)
+                return "Live checkpoint decoded an unsupported source or undrained transfer.";
+    for (const auto* flags :
+         {&surface.rainfall_forced, &surface.evap_forced, &surface.coupling_forced})
         for (std::size_t i = 0; flags->allocated() && i < flags->size(); ++i)
-            if ((*flags)[i] != 0) return "Live checkpoint decoded an external forcing mode.";
-    if (surface.forcing_ever_set) return "Live checkpoint cannot recover external forcing history.";
-    for (const auto* values : {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
-              &surface.transport.lost_external, &surface.transport.gained_external, &surface.transport.gained_rainfall,
-              &surface.transport.gained_boundary, &surface.transport.gained_washoff, &surface.transport.gained_exfiltration,
-              &surface.transport.coupling_src, &surface.transport.gained_bed, &surface.transport.generated_age})
+            if ((*flags)[i] != 0)
+                return "Live checkpoint decoded an external forcing mode.";
+    if (surface.forcing_ever_set)
+        return "Live checkpoint cannot recover external forcing history.";
+    for (const auto* values :
+         {&surface.transport.lost_infiltration, &surface.transport.lost_boundary,
+          &surface.transport.lost_external, &surface.transport.gained_external,
+          &surface.transport.gained_rainfall, &surface.transport.gained_boundary,
+          &surface.transport.gained_washoff, &surface.transport.gained_exfiltration,
+          &surface.transport.coupling_src, &surface.transport.gained_bed,
+          &surface.transport.generated_age})
         for (double value : *values)
-            if (value != 0) return "Live checkpoint decoded an unsupported material owner.";
+            if (value != 0)
+                return "Live checkpoint decoded an unsupported material owner.";
     for (int i = 0; i < mesh_.n_cells(); ++i) {
         double head, depth;
         inertial::cellEtaDepth(mesh_, options_, i, surface.volume.at(i), head, depth);
@@ -681,89 +721,128 @@ std::string SurfaceRouter2D::validateLivePhysical(const ExplicitInertialSolver& 
     return {};
 }
 std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx) const {
-    if ((!live_passive_exchange_ && !paired_water_checkpoint_) || !joint_hydraulic_ || &ctx != source_context_ ||
-        joint_hydraulic_->checkpoint_context_ != &ctx || !joint_hydraulic_->checkpoint_owned_session_)
+    if ((!live_passive_exchange_ && !paired_water_checkpoint_) || !joint_hydraulic_ ||
+        &ctx != source_context_ || joint_hydraulic_->checkpoint_context_ != &ctx ||
+        !joint_hydraulic_->checkpoint_owned_session_)
         return "Live checkpoint requires its paired engine hydraulic owner.";
-    if (auto error = paired_water_checkpoint_ ? coupledWaterProfile(ctx, state_) : livePassiveProfile();
-        !error.empty()) return error;
+    if (auto error =
+            paired_water_checkpoint_ ? coupledWaterProfile(ctx, state_) : livePassiveProfile();
+        !error.empty())
+        return error;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) return error;
+        if (auto error = changingVolumeProfile(ctx, state_); !error.empty())
+            return error;
     std::set<int> mapped;
-    for (const auto& point : node_coupling_points_) mapped.insert(point.node_idx);
+    for (const auto& point : node_coupling_points_)
+        mapped.insert(point.node_idx);
     if (mapped.size() != std::size_t(ctx.n_nodes()))
         return "Live checkpoint requires exclusive mapped storage pools.";
     const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (!cpu || !cpu->initialized_ || !cpu->checkpoint_ready_ || cpu->second_order_ || cpu->gw_ || cpu->common_stage_ ||
-        cpu->state_ != &state_ || cpu->mesh_ != &mesh_ || cpu->opts_ != &options_ ||
-        cpu->source_history_ || cpu->engine_source_history_ || cpu->engine_source_stream_ ||
-        cpu->t_last_sync_ != sim_time_ || cpu->source_phase_end_ != sim_time_ || cpu->accumulators_pending_ ||
+    if (!cpu || !cpu->initialized_ || !cpu->checkpoint_ready_ || cpu->second_order_ || cpu->gw_ ||
+        cpu->common_stage_ || cpu->state_ != &state_ || cpu->mesh_ != &mesh_ ||
+        cpu->opts_ != &options_ || cpu->source_history_ || cpu->engine_source_history_ ||
+        cpu->engine_source_stream_ || cpu->t_last_sync_ != sim_time_ ||
+        cpu->source_phase_end_ != sim_time_ || cpu->accumulators_pending_ ||
         state_.live_passive_exchange || ctx.n_subcatches() || ctx.n_links() || ctx.n_gages() ||
         options_.momentum != Momentum2D::LOCAL_INERTIAL || options_.momentumPhysics() ||
-        options_.cell_closure != CellClosure2D::FLAT || state_.snow.active() || channel_ground_.active() ||
-        !pond_track_ptr_.empty() || !ramp_prev_head_.empty() || !aquifer_link_shares_.empty() ||
-        !subcatch_recharge_.empty() || !cell_subcatch_.empty() ||
+        options_.cell_closure != CellClosure2D::FLAT || state_.snow.active() ||
+        channel_ground_.active() || !pond_track_ptr_.empty() || !ramp_prev_head_.empty() ||
+        !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() || !cell_subcatch_.empty() ||
         !close(ctx.current_time, sim_time_ + pending_dt_) || pending_dt_ < 0)
         return "Live checkpoint requires a completed isolated first-order CPU surface without source/forcing owners.";
     if (state_.node_row_conc != &node_row_conc_ ||
         node_row_conc_.size() != (paired_water_checkpoint_ ? 0 : std::size_t(ctx.n_nodes())) ||
         state_.nodes_1d != &ctx.nodes || state_.node_coupling != &node_coupling_points_ ||
-        cpu->exch_.size() != node_coupling_points_.size() || cpu->node_drawn_.size() != std::size_t(ctx.n_nodes()))
+        cpu->exch_.size() != node_coupling_points_.size() ||
+        cpu->node_drawn_.size() != std::size_t(ctx.n_nodes()))
         return "Live checkpoint native point/sample publisher differs.";
     for (const auto& row : infil_.resolvedRows())
-        if (row.has_method) return "Live checkpoint cannot recover an infiltration owner.";
-    for (const auto* values : {&state_.rainfall, &state_.evap_rate, &state_.infil_rate, &state_.infil_applied,
-                              &state_.coupling_flux, &state_.coupling_native, &state_.coupling_applied})
+        if (row.has_method)
+            return "Live checkpoint cannot recover an infiltration owner.";
+    for (const auto* values :
+         {&state_.rainfall, &state_.evap_rate, &state_.infil_rate, &state_.infil_applied,
+          &state_.coupling_flux, &state_.coupling_native, &state_.coupling_applied})
         for (double value : *values)
-            if (value != 0) return "Live checkpoint has another surface source or undrained transfer.";
+            if (value != 0)
+                return "Live checkpoint has another surface source or undrained transfer.";
     if (!boundary_.receipts.empty() || !boundary_.runtime_original.empty())
         return "Live checkpoint has an external boundary receipt owner.";
     for (auto type : boundary_.edge_bc_type)
-        if (type != int8_t(BoundaryType::WALL)) return "Live checkpoint requires closed surface boundaries.";
-    if (auto error = validateLivePhysical(*cpu, state_, sim_time_, ctx.current_time, pending_dt_); !error.empty()) return error;
-    if (source_router_model_ != liveCheckpointModel(ctx)) return "Live checkpoint model changed after attachment.";
-    try { if (live_passive_exchange_) live_passive_exchange_->checkpoint(ctx, state_); }
-    catch (const std::exception& error) { return error.what(); }
+        if (type != int8_t(BoundaryType::WALL))
+            return "Live checkpoint requires closed surface boundaries.";
+    if (auto error = validateLivePhysical(*cpu, state_, sim_time_, ctx.current_time, pending_dt_);
+        !error.empty())
+        return error;
+    if (source_router_model_ != liveCheckpointModel(ctx))
+        return "Live checkpoint model changed after attachment.";
+    try {
+        if (live_passive_exchange_)
+            live_passive_exchange_->checkpoint(ctx, state_);
+    } catch (const std::exception& error) {
+        return error.what();
+    }
     return {};
 }
 void SurfaceRouter2D::attachLiveCheckpoint(SimulationContext& ctx, Router& hydraulic) {
-    if ((!live_passive_exchange_ && !paired_water_checkpoint_) || source_context_ || common_stage_ || joint_hydraulic_ ||
-        ctx.current_time != 0 || sim_time_ != 0 || pending_dt_ != 0)
-        throw std::invalid_argument("Attach live checkpoint ownership at the initial native boundary.");
+    if ((!live_passive_exchange_ && !paired_water_checkpoint_) || source_context_ ||
+        common_stage_ || joint_hydraulic_ || ctx.current_time != 0 || sim_time_ != 0 ||
+        pending_dt_ != 0)
+        throw std::invalid_argument(
+            "Attach live checkpoint ownership at the initial native boundary.");
     auto model = liveCheckpointModel(ctx);
-    source_context_ = &ctx; joint_hydraulic_ = &hydraulic; source_router_model_ = std::move(model);
+    source_context_ = &ctx;
+    joint_hydraulic_ = &hydraulic;
+    source_router_model_ = std::move(model);
     if (auto error = liveCheckpointBoundary(ctx); !error.empty()) {
-        source_context_ = nullptr; joint_hydraulic_ = nullptr; source_router_model_.clear();
+        source_context_ = nullptr;
+        joint_hydraulic_ = nullptr;
+        source_router_model_.clear();
         throw std::invalid_argument(error);
     }
     source_boundary_ready_ = true;
 }
-std::string SurfaceRouter2D::liveCheckpointBytes(const SimulationContext& ctx, std::string& result) const {
-    if (auto error = liveCheckpointBoundary(ctx); !error.empty()) return error;
-    RestartState snapshot(*this, ctx); snapshot.validate(*this, ctx);
-    validatePassiveWater(state_, snapshot.mb, paired_water_checkpoint_ ||
-        (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()));
+std::string SurfaceRouter2D::liveCheckpointBytes(const SimulationContext& ctx,
+                                                 std::string& result) const {
+    if (auto error = liveCheckpointBoundary(ctx); !error.empty())
+        return error;
+    RestartState snapshot(*this, ctx);
+    snapshot.validate(*this, ctx);
+    validatePassiveWater(
+        state_, snapshot.mb,
+        paired_water_checkpoint_ ||
+            (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()));
     auto cpu = *static_cast<const ExplicitInertialSolver*>(solver_.get());
     auto surface = state_;
     Archive state;
     snapshot.archive(state);
     cpu.checkpointState(state, true);
     std::string physical = paired_water_checkpoint_ ? "native coupled water mesh state v1"
-                                                  : "native passive mesh state v1";
+                                                    : "native passive mesh state v1";
     state(physical);
     checkpoint::meshState(state, surface);
     std::string hydraulic;
-    if (auto error = joint_hydraulic_->checkpointBytes(ctx, hydraulic); !error.empty()) return error;
+    if (auto error = joint_hydraulic_->checkpointBytes(ctx, hydraulic); !error.empty())
+        return error;
     Router::validateJointDelivery(ctx.nodes, ctx.coupled_node, snapshot.delivery);
-    state(hydraulic, snapshot.delivery); snapshot.archiveJoint(state);
-    if (live_passive_exchange_) { auto receipt = live_passive_exchange_->checkpoint(ctx, state_); state(receipt); }
+    state(hydraulic, snapshot.delivery);
+    snapshot.archiveJoint(state);
+    if (live_passive_exchange_) {
+        auto receipt = live_passive_exchange_->checkpoint(ctx, state_);
+        state(receipt);
+    }
     auto payload = state.bytes(), model = source_router_model_;
-    std::string magic = paired_water_checkpoint_ ? "OpenSWMM paired water surface boundary"
-                                               : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() ?
-        "OpenSWMM paired changing-volume surface boundary" : "OpenSWMM paired passive surface boundary";
+    std::string magic =
+        paired_water_checkpoint_ ? "OpenSWMM paired water surface boundary"
+        : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()
+            ? "OpenSWMM paired changing-volume surface boundary"
+            : "OpenSWMM paired passive surface boundary";
     uint32_t version = 1, endian = 0x01020304, long_bytes = sizeof(long), crc = checksum(payload);
-    Archive file; file(magic, version, endian, long_bytes, model, payload, crc);
-    if (file.bytes().size() > maxBytes) return "Live surface checkpoint exceeds its byte limit.";
-    result = file.bytes(); return {};
+    Archive file;
+    file(magic, version, endian, long_bytes, model, payload, crc);
+    if (file.bytes().size() > maxBytes)
+        return "Live surface checkpoint exceeds its byte limit.";
+    result = file.bytes();
+    return {};
 }
 // Detached material role; no joint hydraulic router or integrated publisher.
 struct SurfaceRouter2D::MaterialRestart {
@@ -772,142 +851,221 @@ struct SurfaceRouter2D::MaterialRestart {
     ExplicitInertialSolver cpu;
     std::vector<double> published;
     double published_ms;
-    MaterialRestart(const SurfaceRouter2D& r,const SimulationContext& ctx)
-        :snapshot(r,ctx),surface(r.state_),cpu(*static_cast<const ExplicitInertialSolver*>(r.solver_.get())),published(r.node_row_conc_),published_ms(r.material_publisher_ms_){}
+    MaterialRestart(const SurfaceRouter2D& r, const SimulationContext& ctx)
+        : snapshot(r, ctx), surface(r.state_),
+          cpu(*static_cast<const ExplicitInertialSolver*>(r.solver_.get())),
+          published(r.node_row_conc_), published_ms(r.material_publisher_ms_) {}
 };
-void SurfaceRouter2D::checkpointMaterialBalance(Archive& a,SimulationContext& ctx) { massBalance(a,ctx.mass_balance_2d); }
-std::string SurfaceRouter2D::materialCheckpointBytes(const SimulationContext& ctx,bool outputs) const {
-    MaterialRestart saved(*this,ctx);saved.snapshot.validate(*this,ctx,true);
-    Archive out;std::string marker="OpenSWMM split material surface state";out(marker);
-    saved.snapshot.archive(out);saved.cpu.checkpointState(out,true);
-    marker="native material pair mesh v1";out(marker);checkpoint::meshState(out,saved.surface);out.fixed(saved.published);
-    if(outputs)out(saved.published_ms);
+void SurfaceRouter2D::checkpointMaterialBalance(Archive& a, SimulationContext& ctx) {
+    massBalance(a, ctx.mass_balance_2d);
+}
+std::string SurfaceRouter2D::materialCheckpointBytes(const SimulationContext& ctx,
+                                                     bool outputs) const {
+    MaterialRestart saved(*this, ctx);
+    saved.snapshot.validate(*this, ctx, true);
+    Archive out;
+    std::string marker = "OpenSWMM split material surface state";
+    out(marker);
+    saved.snapshot.archive(out);
+    saved.cpu.checkpointState(out, true);
+    marker = "native material pair mesh v1";
+    out(marker);
+    checkpoint::meshState(out, saved.surface);
+    out.fixed(saved.published);
+    if (outputs)
+        out(saved.published_ms);
     return out.bytes();
 }
-std::shared_ptr<SurfaceRouter2D::MaterialRestart> SurfaceRouter2D::prepareMaterialCheckpoint(
-        const SimulationContext& ctx,std::string bytes,bool outputs) const {
-    auto p=std::make_shared<MaterialRestart>(*this,ctx);
-    Archive in(std::move(bytes));std::string marker;in(marker);
-    if(marker!="OpenSWMM split material surface state")throw std::invalid_argument("Material surface role/schema differs.");
-    p->snapshot.archive(in);p->cpu.checkpointState(in,true);in(marker);
-    if(marker!="native material pair mesh v1")throw std::invalid_argument("Material mesh schema differs.");
-    checkpoint::meshState(in,p->surface);in.fixed(p->published);if(outputs)in(p->published_ms);in.finish();
-    const auto& s=p->snapshot;
-    auto expected=ctx.mass_balance_2d,actual=s.mb;Archive before,after;
-    massBalance(before,expected);massBalance(after,actual);
-    if(before.bytes()!=after.bytes())throw std::invalid_argument("Material surface/role balance differs.");
-    if (std::array<double,6>{s.current_time,s.current_date,s.elapsed_ms,s.old_elapsed_ms,s.next_report_ms,s.evap_rate} !=
-        std::array<double,6>{ctx.current_time,ctx.current_date,ctx.elapsed_ms,ctx.old_elapsed_ms,ctx.next_report_ms,ctx.climate_state.evap_rate})
+std::shared_ptr<SurfaceRouter2D::MaterialRestart>
+SurfaceRouter2D::prepareMaterialCheckpoint(const SimulationContext& ctx, std::string bytes,
+                                           bool outputs) const {
+    auto p = std::make_shared<MaterialRestart>(*this, ctx);
+    Archive in(std::move(bytes));
+    std::string marker;
+    in(marker);
+    if (marker != "OpenSWMM split material surface state")
+        throw std::invalid_argument("Material surface role/schema differs.");
+    p->snapshot.archive(in);
+    p->cpu.checkpointState(in, true);
+    in(marker);
+    if (marker != "native material pair mesh v1")
+        throw std::invalid_argument("Material mesh schema differs.");
+    checkpoint::meshState(in, p->surface);
+    in.fixed(p->published);
+    if (outputs)
+        in(p->published_ms);
+    in.finish();
+    const auto& s = p->snapshot;
+    auto expected = ctx.mass_balance_2d, actual = s.mb;
+    Archive before, after;
+    massBalance(before, expected);
+    massBalance(after, actual);
+    if (before.bytes() != after.bytes())
+        throw std::invalid_argument("Material surface/role balance differs.");
+    if (std::array<double, 6>{s.current_time, s.current_date, s.elapsed_ms, s.old_elapsed_ms,
+                              s.next_report_ms, s.evap_rate} !=
+        std::array<double, 6>{ctx.current_time, ctx.current_date, ctx.elapsed_ms,
+                              ctx.old_elapsed_ms, ctx.next_report_ms, ctx.climate_state.evap_rate})
         throw std::invalid_argument("Material surface/engine checkpoint clocks differ.");
-    p->surface.nodes_1d=&ctx.nodes;p->surface.node_row_conc=&p->published;
+    p->surface.nodes_1d = &ctx.nodes;
+    p->surface.node_row_conc = &p->published;
     return p;
 }
-const SurfaceStateData& SurfaceRouter2D::materialCheckpointState(const std::shared_ptr<MaterialRestart>& p) const { return p->surface; }
-void SurfaceRouter2D::validateMaterialCheckpoint(const SimulationContext& ctx,
-        const quality::PeerPassiveStorageProducer& producer,double initial,double initial_loss,double initial_gain,
-        const std::array<double,2>& window,bool outputs,bool reported_now,const std::shared_ptr<MaterialRestart>& prepared) const {
-    const auto* canonical=dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (!canonical || joint_hydraulic_ || source_context_ || common_stage_ || live_passive_exchange_ ||
-        paired_water_checkpoint_ || node_coupling_points_.empty())
-        throw std::invalid_argument("Material surface checkpoint requires its distinct CPU owner.");
-    RestartState current(*this,ctx);
-    const auto& snapshot=prepared?prepared->snapshot:current;
-    const auto& surface=prepared?prepared->surface:state_;
-    const auto& cpu=prepared?prepared->cpu:*canonical;
-    const auto& published=prepared?prepared->published:node_row_conc_;
-    snapshot.validate(*this,ctx,true);
-    if (auto error=changingVolumeProfile(ctx,surface);!error.empty())throw std::invalid_argument(error);
-    if (auto error=validateLivePhysical(cpu,surface,snapshot.sim_time_,ctx.current_time,snapshot.pending_dt_);!error.empty())throw std::invalid_argument(error);
-    validatePassiveWater(surface,snapshot.mb,true);
-    if (published.size()!=std::size_t(ctx.n_nodes()))throw std::invalid_argument("Material publisher shape differs.");
-    for(double c:published)if(!std::isfinite(c)||c<0)throw std::invalid_argument("Invalid material published concentration.");
-    const auto stamp=prepared?prepared->published_ms:material_publisher_ms_;
-    if(outputs && (ctx.current_time>0 ? stamp!=(reported_now?ctx.elapsed_ms:ctx.old_elapsed_ms) : stamp!=-1))
-        throw std::invalid_argument("Material publisher sample generation differs from native publication history.");
-    if(published!=(ctx.current_time>0?(outputs && reported_now?ctx.nodes.conc:ctx.nodes.conc_old):node_row_conc_))
-        throw std::invalid_argument("Material publisher differs from its latest native sample.");
-    if(window[1]!=snapshot.report_window_new_ms_ ||
-        (producer.last_ordinal_ && window[0]+1000*cpu.last_coupling_interval()!=window[1]))
-        throw std::invalid_argument("Material latest publication/numerical interval differs.");
-    if(!cpu.telemetry_path_.empty())throw std::invalid_argument("Material checkpoint excludes telemetry output.");
-    const auto& tr=surface.transport;
-    const double total=tr.totalIncludingLedgers(0);
-    if (!std::isfinite(total) || !std::isfinite(initial) ||
-        std::abs(total-initial)>1e-12*std::max({1.,std::abs(total),std::abs(initial)}) ||
-        tr.lost_coupling.size()!=1 || tr.gained_coupling.size()!=1 ||
-        tr.exch_mass.size()!=node_coupling_points_.size() || tr.exch_spill.size()!=node_coupling_points_.size())
-        throw std::invalid_argument("Material surface initial inventory/ledger differs.");
-    double loss=initial_loss,gain=initial_gain,group=0;
-    std::vector<double> drain(node_coupling_points_.size(),0),spill(drain.size(),0),exchange(drain.size(),0),drawn(ctx.n_nodes(),0);
-    const quality::PassiveStorageExchange::AppliedLeg* previous=nullptr;
-    for(std::size_t i=0;i<producer.count_;++i) {
-        const auto& l=producer.legs_[i];
-        if(previous && (l.batch_start_ms!=previous->batch_start_ms || l.batch_end_ms!=previous->batch_end_ms ||
-            l.phase!=previous->phase || l.offset_s!=previous->offset_s)){loss+=group;group=0;}
-        if(l.drain)group+=l.mass_si;else gain+=l.mass_si;
-        if(i>=producer.first_) {
-            if(l.batch_start_ms!=window[0] || l.batch_end_ms!=window[1])
-                throw std::invalid_argument("Material last firing window differs.");
-            if(l.drain)drain.at(l.point)+=l.mass_si;else spill.at(l.point)+=l.water_si;
-            exchange.at(l.point)+=l.drain?l.water_si:-l.water_si;drawn.at(l.node)+=l.withdrawal_si;
-        }
-        previous=&l;
-    }
-    loss+=group;
-    if (loss!=tr.lost_coupling[0] || gain!=tr.gained_coupling[0] || drain!=tr.exch_mass || spill!=tr.exch_spill ||
-        exchange!=cpu.exch_ || drawn!=cpu.node_drawn_ ||
-        (!producer.last_ordinal_ && snapshot.sim_time_!=0))
-        throw std::invalid_argument("Material numerical exchange/donor ledger differs from acknowledged proof.");
+const SurfaceStateData&
+SurfaceRouter2D::materialCheckpointState(const std::shared_ptr<MaterialRestart>& p) const {
+    return p->surface;
 }
-void SurfaceRouter2D::installMaterialCheckpoint(SimulationContext& ctx,std::shared_ptr<MaterialRestart> p) noexcept {
-    static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData> && std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);
-    p->surface.nodes_1d=&ctx.nodes;p->surface.node_row_conc=&node_row_conc_;p->cpu.state_=&state_;
-    node_row_conc_=std::move(p->published);state_=std::move(p->surface);
-    material_publisher_ms_=p->published_ms;
-    *static_cast<ExplicitInertialSolver*>(solver_.get())=std::move(p->cpu);p->snapshot.install(*this,ctx);
+void SurfaceRouter2D::validateMaterialCheckpoint(
+    const SimulationContext& ctx, const quality::PeerPassiveStorageProducer& producer,
+    double initial, double initial_loss, double initial_gain, const std::array<double, 2>& window,
+    bool outputs, bool reported_now, const std::shared_ptr<MaterialRestart>& prepared) const {
+    const auto* canonical = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
+    if (!canonical || joint_hydraulic_ || source_context_ || common_stage_ ||
+        live_passive_exchange_ || paired_water_checkpoint_ || node_coupling_points_.empty())
+        throw std::invalid_argument("Material surface checkpoint requires its distinct CPU owner.");
+    RestartState current(*this, ctx);
+    const auto& snapshot = prepared ? prepared->snapshot : current;
+    const auto& surface = prepared ? prepared->surface : state_;
+    const auto& cpu = prepared ? prepared->cpu : *canonical;
+    const auto& published = prepared ? prepared->published : node_row_conc_;
+    snapshot.validate(*this, ctx, true);
+    if (auto error = changingVolumeProfile(ctx, surface); !error.empty())
+        throw std::invalid_argument(error);
+    if (auto error = validateLivePhysical(cpu, surface, snapshot.sim_time_, ctx.current_time,
+                                          snapshot.pending_dt_);
+        !error.empty())
+        throw std::invalid_argument(error);
+    validatePassiveWater(surface, snapshot.mb, true);
+    if (published.size() != std::size_t(ctx.n_nodes()))
+        throw std::invalid_argument("Material publisher shape differs.");
+    for (double c : published)
+        if (!std::isfinite(c) || c < 0)
+            throw std::invalid_argument("Invalid material published concentration.");
+    const auto stamp = prepared ? prepared->published_ms : material_publisher_ms_;
+    if (outputs &&
+        (ctx.current_time > 0 ? stamp != (reported_now ? ctx.elapsed_ms : ctx.old_elapsed_ms)
+                              : stamp != -1))
+        throw std::invalid_argument(
+            "Material publisher sample generation differs from native publication history.");
+    if (published != (ctx.current_time > 0
+                          ? (outputs && reported_now ? ctx.nodes.conc : ctx.nodes.conc_old)
+                          : node_row_conc_))
+        throw std::invalid_argument("Material publisher differs from its latest native sample.");
+    if (window[1] != snapshot.report_window_new_ms_ ||
+        (producer.last_ordinal_ && window[0] + 1000 * cpu.last_coupling_interval() != window[1]))
+        throw std::invalid_argument("Material latest publication/numerical interval differs.");
+    if (!cpu.telemetry_path_.empty())
+        throw std::invalid_argument("Material checkpoint excludes telemetry output.");
+    const auto& tr = surface.transport;
+    const double total = tr.totalIncludingLedgers(0);
+    if (!std::isfinite(total) || !std::isfinite(initial) ||
+        std::abs(total - initial) > 1e-12 * std::max({1., std::abs(total), std::abs(initial)}) ||
+        tr.lost_coupling.size() != 1 || tr.gained_coupling.size() != 1 ||
+        tr.exch_mass.size() != node_coupling_points_.size() ||
+        tr.exch_spill.size() != node_coupling_points_.size())
+        throw std::invalid_argument("Material surface initial inventory/ledger differs.");
+    double loss = initial_loss, gain = initial_gain, group = 0;
+    std::vector<double> drain(node_coupling_points_.size(), 0), spill(drain.size(), 0),
+        exchange(drain.size(), 0), drawn(ctx.n_nodes(), 0);
+    const quality::PassiveStorageExchange::AppliedLeg* previous = nullptr;
+    for (std::size_t i = 0; i < producer.count_; ++i) {
+        const auto& l = producer.legs_[i];
+        if (previous && (l.batch_start_ms != previous->batch_start_ms ||
+                         l.batch_end_ms != previous->batch_end_ms || l.phase != previous->phase ||
+                         l.offset_s != previous->offset_s)) {
+            loss += group;
+            group = 0;
+        }
+        if (l.drain)
+            group += l.mass_si;
+        else
+            gain += l.mass_si;
+        if (i >= producer.first_) {
+            if (l.batch_start_ms != window[0] || l.batch_end_ms != window[1])
+                throw std::invalid_argument("Material last firing window differs.");
+            if (l.drain)
+                drain.at(l.point) += l.mass_si;
+            else
+                spill.at(l.point) += l.water_si;
+            exchange.at(l.point) += l.drain ? l.water_si : -l.water_si;
+            drawn.at(l.node) += l.withdrawal_si;
+        }
+        previous = &l;
+    }
+    loss += group;
+    if (loss != tr.lost_coupling[0] || gain != tr.gained_coupling[0] || drain != tr.exch_mass ||
+        spill != tr.exch_spill || exchange != cpu.exch_ || drawn != cpu.node_drawn_ ||
+        (!producer.last_ordinal_ && snapshot.sim_time_ != 0))
+        throw std::invalid_argument(
+            "Material numerical exchange/donor ledger differs from acknowledged proof.");
+}
+void SurfaceRouter2D::installMaterialCheckpoint(SimulationContext& ctx,
+                                                std::shared_ptr<MaterialRestart> p) noexcept {
+    static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData> &&
+                  std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);
+    p->surface.nodes_1d = &ctx.nodes;
+    p->surface.node_row_conc = &node_row_conc_;
+    p->cpu.state_ = &state_;
+    node_row_conc_ = std::move(p->published);
+    state_ = std::move(p->surface);
+    material_publisher_ms_ = p->published_ms;
+    *static_cast<ExplicitInertialSolver*>(solver_.get()) = std::move(p->cpu);
+    p->snapshot.install(*this, ctx);
 }
 
-std::string SurfaceRouter2D::loadLiveCheckpointBytes(SimulationContext& ctx, std::string bytes,
-    const std::array<double, 6>* engine_boundary, const std::vector<double>* engine_rainfall,
-    const double* engine_storage, bool engine_routed, const std::function<void()>* before_install,
-    double* inspect_source_end) {
-    if (auto error = liveCheckpointBoundary(ctx); !error.empty()) return error;
+std::string SurfaceRouter2D::loadLiveCheckpointBytes(
+    SimulationContext& ctx, std::string bytes, const std::array<double, 6>* engine_boundary,
+    const std::vector<double>* engine_rainfall, const double* engine_storage, bool engine_routed,
+    const std::function<void()>* before_install, double* inspect_source_end) {
+    if (auto error = liveCheckpointBoundary(ctx); !error.empty())
+        return error;
     if (ctx.current_time != 0 || sim_time_ != 0 || pending_dt_ != 0)
         return "Live checkpoint restore requires fresh paired owners.";
-    if (bytes.empty() || bytes.size() > maxBytes) return "Live surface checkpoint exceeds its byte limit.";
+    if (bytes.empty() || bytes.size() > maxBytes)
+        return "Live surface checkpoint exceeds its byte limit.";
     Archive file(std::move(bytes));
     std::string magic, model, payload;
     uint32_t version, endian, long_bytes, crc;
-    file(magic, version, endian, long_bytes, model, payload, crc); file.finish();
-    const char* expected_magic = paired_water_checkpoint_ ? "OpenSWMM paired water surface boundary"
-                                                        : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume() ?
-        "OpenSWMM paired changing-volume surface boundary" : "OpenSWMM paired passive surface boundary";
+    file(magic, version, endian, long_bytes, model, payload, crc);
+    file.finish();
+    const char* expected_magic =
+        paired_water_checkpoint_ ? "OpenSWMM paired water surface boundary"
+        : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()
+            ? "OpenSWMM paired changing-volume surface boundary"
+            : "OpenSWMM paired passive surface boundary";
     if (magic != expected_magic || version != 1 || endian != 0x01020304 ||
         long_bytes != sizeof(long) || model != source_router_model_ || crc != checksum(payload))
         return "Live surface checkpoint format/model/checksum differs.";
     RestartState snapshot(*this, ctx);
     auto* canonical = static_cast<ExplicitInertialSolver*>(solver_.get());
-    auto cpu = *canonical; auto surface = state_;
+    auto cpu = *canonical;
+    auto surface = state_;
     Archive state(std::move(payload));
-    snapshot.archive(state); cpu.checkpointState(state, true);
-    std::string physical; state(physical);
-    if (physical != (paired_water_checkpoint_ ? "native coupled water mesh state v1" : "native passive mesh state v1"))
+    snapshot.archive(state);
+    cpu.checkpointState(state, true);
+    std::string physical;
+    state(physical);
+    if (physical != (paired_water_checkpoint_ ? "native coupled water mesh state v1"
+                                              : "native passive mesh state v1"))
         return "Live checkpoint mesh profile differs.";
     checkpoint::meshState(state, surface);
     std::string hydraulic, receipt;
-    state(hydraulic, snapshot.delivery); snapshot.archiveJoint(state);
-    if (live_passive_exchange_) state(receipt);
+    state(hydraulic, snapshot.delivery);
+    snapshot.archiveJoint(state);
+    if (live_passive_exchange_)
+        state(receipt);
     state.finish();
     snapshot.validate(*this, ctx);
-    const std::array<double, 6> clock{snapshot.current_time, snapshot.current_date, snapshot.elapsed_ms,
-                                    snapshot.old_elapsed_ms, snapshot.next_report_ms, snapshot.evap_rate};
+    const std::array<double, 6> clock{snapshot.current_time,   snapshot.current_date,
+                                      snapshot.elapsed_ms,     snapshot.old_elapsed_ms,
+                                      snapshot.next_report_ms, snapshot.evap_rate};
     if ((engine_boundary && *engine_boundary != clock) ||
         (engine_rainfall && *engine_rainfall != snapshot.rainfall) ||
         cpu.t_last_sync_ != snapshot.sim_time_ || cpu.source_phase_end_ != snapshot.sim_time_ ||
         !close(clock[0], snapshot.sim_time_ + snapshot.pending_dt_))
         return "Live checkpoint incoming native clocks/weather differ.";
     auto routing = joint_hydraulic_->prepareCheckpointBytes(ctx, std::move(hydraulic), &clock,
-                                                           &snapshot.delivery, &snapshot.feedback);
+                                                            &snapshot.delivery, &snapshot.feedback);
     if (engine_storage && clock[0] > 0)
         Router::validateSessionStorage(routing, ctx, *engine_storage, engine_routed);
     auto incoming = ctx;
@@ -915,17 +1073,25 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(SimulationContext& ctx, std
     incoming.coupling_delivery_remaining = snapshot.delivery;
     surface.nodes_1d = &incoming.nodes;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(incoming, surface); !error.empty()) return error;
+        if (auto error = changingVolumeProfile(incoming, surface); !error.empty())
+            return error;
     if (paired_water_checkpoint_)
-        if (auto error = coupledWaterProfile(incoming, surface); !error.empty()) return error;
-    auto prepared = live_passive_exchange_ ? live_passive_exchange_->prepareRestore(incoming, surface, receipt) : nullptr;
-    if (auto error = validateLivePhysical(cpu, surface, snapshot.sim_time_, clock[0], snapshot.pending_dt_); !error.empty())
+        if (auto error = coupledWaterProfile(incoming, surface); !error.empty())
+            return error;
+    auto prepared = live_passive_exchange_
+                        ? live_passive_exchange_->prepareRestore(incoming, surface, receipt)
+                        : nullptr;
+    if (auto error =
+            validateLivePhysical(cpu, surface, snapshot.sim_time_, clock[0], snapshot.pending_dt_);
+        !error.empty())
         return error;
-    validatePassiveWater(surface, snapshot.mb, paired_water_checkpoint_ ||
-        (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()));
+    validatePassiveWater(
+        surface, snapshot.mb,
+        paired_water_checkpoint_ ||
+            (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()));
     if (prepared) {
         if (prepared->ever_opened_ ? prepared->end_ms_ != snapshot.report_window_new_ms_
-                                  : snapshot.sim_time_ != 0)
+                                   : snapshot.sim_time_ != 0)
             return "Live checkpoint last physical window differs from the numerical owner.";
         std::vector<double> exchange(node_coupling_points_.size(), 0), drawn(ctx.n_nodes(), 0);
         for (std::size_t i = prepared->first_; i < prepared->count_; ++i) {
@@ -936,14 +1102,20 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(SimulationContext& ctx, std
         if (exchange != cpu.exch_ || drawn != cpu.node_drawn_)
             return "Live checkpoint actual numerical exchange/donor ledger differs from proof.";
     }
-    if (inspect_source_end) { *inspect_source_end = snapshot.sim_time_; return {}; }
-    if (before_install) (*before_install)();
+    if (inspect_source_end) {
+        *inspect_source_end = snapshot.sim_time_;
+        return {};
+    }
+    if (before_install)
+        (*before_install)();
     // All incoming physical domains and proof have passed before any publication.
     static_assert(std::is_nothrow_move_assignable_v<SurfaceStateData>);
     static_assert(std::is_nothrow_move_assignable_v<ExplicitInertialSolver>);
-    surface.nodes_1d = &ctx.nodes; surface.node_row_conc = &node_row_conc_;
+    surface.nodes_1d = &ctx.nodes;
+    surface.node_row_conc = &node_row_conc_;
     cpu.state_ = &state_;
-    state_ = std::move(surface); *canonical = std::move(cpu);
+    state_ = std::move(surface);
+    *canonical = std::move(cpu);
     joint_hydraulic_->installCheckpoint(ctx, std::move(routing));
     snapshot.install(*this, ctx);
     if (prepared) {
@@ -953,7 +1125,8 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(SimulationContext& ctx, std
     return {};
 }
 
-std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx, bool passive_joint) const {
+std::string SurfaceRouter2D::sourceRouterModel(const SimulationContext& ctx,
+                                               bool passive_joint) const {
     Archive a;
     auto o = ctx.options;
     auto x = ctx.spatial.gage_x, y = ctx.spatial.gage_y;
@@ -1127,9 +1300,8 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
     if ((!joint_hydraulic_ &&
          (ctx.n_nodes() != 0 || ctx.n_links() != 0 || !coupling_points_.empty())) ||
         (!aquifer_link_shares_.empty() && (!joint_hydraulic_ || !groundwaterWater(ctx, state_))) ||
-        !subcatch_recharge_.empty() || !cell_subcatch_.empty() ||
-        surface_quality_.active() || (runtimeActive() && !runtimeWaterCheckpointing()) ||
-        !ramp_prev_head_.empty() ||
+        !subcatch_recharge_.empty() || !cell_subcatch_.empty() || surface_quality_.active() ||
+        (runtimeActive() && !runtimeWaterCheckpointing()) || !ramp_prev_head_.empty() ||
         (!joint_hydraulic_ && (outfall_state_changed_ || !window_outfall_accum_.empty())))
         return "Router checkpoint live 1D, land-use quality and external providers are not qualified.";
     if (joint_hydraulic_) {
@@ -1148,8 +1320,8 @@ std::string SurfaceRouter2D::sourceBoundary(const SimulationContext& ctx) const 
                                     : &ctx.nodes) ||
             state_.node_coupling !=
                 (node_coupling_points_.empty() ? nullptr : &node_coupling_points_) ||
-            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && aquifer_link_shares_.empty() &&
-              !channel_ground_.active()) &&
+            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() &&
+              aquifer_link_shares_.empty() && !channel_ground_.active()) &&
              (ctx.n_nodes() != 0 || ctx.n_links() != 0)) ||
             (ctx.n_pollutants() != 0 && !standalone_local_bed_quality &&
              !mesh_only_ground_quality && !network_quality))
@@ -1278,23 +1450,30 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx, CommonSour
     if (common_stage_ || !active_ || !cpu || sim_time_ != 0 || pending_dt_ != 0 ||
         ctx.current_time != 0 || !stage.matches(&mesh_, &state_, &subsurface_) ||
         int(stage.cells().size()) != mesh_.n_cells() ||
-        (!hydraulic && !external && (ctx.n_nodes() != 0 || ctx.n_links() != 0 || !coupling_points_.empty())) ||
+        (!hydraulic && !external &&
+         (ctx.n_nodes() != 0 || ctx.n_links() != 0 || !coupling_points_.empty())) ||
         !subcatch_recharge_.empty() ||
         (!infil_.resolvedRows().empty() && infil_.resolvedRows().size() != mesh_.tri_area.size()) ||
         !cell_subcatch_.empty() || surface_quality_.active() || runtimeActive())
         throw std::invalid_argument(
             "Router source attachment requires its initial CPU/all-cell profile and matching exchange scope.");
-    const bool ordinary_bed = std::any_of(subsurface_.nodeBeds().begin(), subsurface_.nodeBeds().end(),
-        [&ctx](const auto& bed) { return bed.exchange && bed.cell >= 0 &&
-            (!lidnode::active(ctx,bed.node) || lidnode::bottomMode(ctx,bed.node) != LidNodeBottom::MeshAquifer); });
+    const bool ordinary_bed = std::any_of(
+        subsurface_.nodeBeds().begin(), subsurface_.nodeBeds().end(), [&ctx](const auto& bed) {
+            return bed.exchange && bed.cell >= 0 &&
+                   (!lidnode::active(ctx, bed.node) ||
+                    lidnode::bottomMode(ctx, bed.node) != LidNodeBottom::MeshAquifer);
+        });
     if (external &&
         (!ctx.options.ignore_routing || ctx.options.routing_model != RoutingModel::DYNWAVE ||
          !ctx.options.ignore_quality || ctx.n_pollutants() || ctx.options.heat_transport ||
-         ctx.options.water_age || (coupling_points_.empty() && !ordinary_bed && aquifer_link_shares_.empty()) ||
+         ctx.options.water_age ||
+         (coupling_points_.empty() && !ordinary_bed && aquifer_link_shares_.empty()) ||
          !groundwaterWater(ctx, state_) ||
-         std::any_of(ctx.node_subtypes.storages.node_idx.begin(), ctx.node_subtypes.storages.node_idx.end(),
-                     [&ctx](int node) { return lidnode::active(ctx,node) &&
-                         lidnode::richardsMode(ctx,node) && lidnode::bottomMode(ctx,node) != LidNodeBottom::MeshAquifer; })))
+         std::any_of(ctx.node_subtypes.storages.node_idx.begin(),
+                     ctx.node_subtypes.storages.node_idx.end(), [&ctx](int node) {
+                         return lidnode::active(ctx, node) && lidnode::richardsMode(ctx, node) &&
+                                lidnode::bottomMode(ctx, node) != LidNodeBottom::MeshAquifer;
+                     })))
         throw std::invalid_argument(
             "External reviewed sources require water-only boundary hydraulics and Mesh ownership for Richards nodes.");
     if (hydraulic) {
@@ -1329,8 +1508,8 @@ void SurfaceRouter2D::attachCommonSourceStage(SimulationContext& ctx, CommonSour
             throw std::invalid_argument(
                 "Joint attachment requires the owned native pollutant row publisher.");
         if ((ramp && ramp[0] == '1') ||
-            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() && aquifer_link_shares_.empty() &&
-              !channel_ground_.active()) &&
+            ((coupling_points_.empty() && subsurface_.nodeBeds().empty() &&
+              aquifer_link_shares_.empty() && !channel_ground_.active()) &&
              (ctx.n_nodes() != 0 || ctx.n_links() != 0)) ||
             (ctx.n_pollutants() != 0 && !standalone_local_bed_quality &&
              !mesh_only_ground_quality && !network_quality) ||
@@ -1459,7 +1638,8 @@ std::string SurfaceRouter2D::saveCheckpoint(const SimulationContext& ctx,
 std::string SurfaceRouter2D::checkpointBytes(const SimulationContext& ctx,
                                              std::string& result) const {
     try {
-        if (live_passive_exchange_ || paired_water_checkpoint_) return liveCheckpointBytes(ctx, result);
+        if (live_passive_exchange_ || paired_water_checkpoint_)
+            return liveCheckpointBytes(ctx, result);
         const auto error = sourceBoundary(ctx);
         if (!error.empty())
             return error;
@@ -1582,9 +1762,11 @@ std::string SurfaceRouter2D::loadCheckpointBytes(
     const climate::ClimateState* prepared_climate, const HeatState* prepared_heat) {
     try {
         if (live_passive_exchange_ || paired_water_checkpoint_) {
-            if (validate_source) return "Live restart cannot restore a source stage.";
+            if (validate_source)
+                return "Live restart cannot restore a source stage.";
             return loadLiveCheckpointBytes(ctx, std::move(bytes), engine_boundary, engine_rainfall,
-                engine_storage, engine_routed, before_install, inspect_source_end);
+                                           engine_storage, engine_routed, before_install,
+                                           inspect_source_end);
         }
         const auto error = sourceBoundary(ctx);
         if (!error.empty())

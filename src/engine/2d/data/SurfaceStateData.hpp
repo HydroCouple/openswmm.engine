@@ -48,7 +48,10 @@
 
 namespace openswmm {
 struct NodeData;
-namespace quality { class LivePassiveStorageExchange; class PassiveStorageAdmission; }
+namespace quality {
+class LivePassiveStorageExchange;
+class PassiveStorageAdmission;
+}
 } // 1D node data (held during a 2D advance)
 
 namespace openswmm::twoD {

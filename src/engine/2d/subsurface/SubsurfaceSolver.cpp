@@ -631,8 +631,7 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
         const double diffusion = tr_.D_m[u] + std::max(tr_.alpha_L[u], tr_.alpha_T[u]) * speed;
         double sum = 0;
         for (int p = edges.cell_ptr[u]; p < edges.cell_ptr[u + 1]; ++p) {
-            const int e = edges.cell_edge[p],
-                      other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
+            const int e = edges.cell_edge[p], other = edges.cL[e] == i ? edges.cR[e] : edges.cL[e];
             if (!covered_[other] || state_.hg[other] <= kTiny)
                 continue;
             const double distance = 1 / edges.inv_dx_normal[e];
@@ -2052,8 +2051,7 @@ double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond,
     return std::isfinite(rate) ? std::max(0.0, rate) : 0.0;
 }
 
-double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested,
-                                                   bool prescribed) {
+double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, bool prescribed) {
     if (!(requested > 0.0) || !std::isfinite(requested) || !covers(cell) || !state_.active)
         return 0.0;
     const auto u = static_cast<std::size_t>(cell);
@@ -2357,7 +2355,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         }
     double lat_mx = 0.0, lat_my = 0.0;
     const double lat_vol = gatherLateral(i, &lat_mx, &lat_my); // m³, + in
-    const double node_vol = gatherNode(i);   // m³, + OUT
+    const double node_vol = gatherNode(i);                     // m³, + OUT
 
     const double infil_vol = dated_intake
                                  ? (later_intake ? eligible_water : state_.xacc_from_surface[u])
@@ -3019,9 +3017,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             if (dated_intake && pending.end > cutoff)
                 continue;
             auto consumed = pending;
-            consumed.volume = dated_intake ? std::exchange(pending.volume, 0.) : consumePending(pending.volume);
+            consumed.volume =
+                dated_intake ? std::exchange(pending.volume, 0.) : consumePending(pending.volume);
             for (int p = 0; p < tr_.n_species; ++p)
-                consumed.mass[p] = dated_intake ? std::exchange(pending.mass[p], 0.) : consumePending(pending.mass[p]);
+                consumed.mass[p] = dated_intake ? std::exchange(pending.mass[p], 0.)
+                                                : consumePending(pending.mass[p]);
             return_ready = std::max(return_ready, consumed.end);
             if (fraction > 0 && consumed.volume > 0) {
                 SurfaceReturnReceipt r;
@@ -3167,7 +3167,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             ++clock_state_->subcycles[k];
         clock_state_->elapsed[k] += dt;
         clock_state_->maximum[k] = std::max(clock_state_->maximum[k], dt);
-        clock_state_->max_return_depth[k] = std::max(clock_state_->max_return_depth[k], (physical_return + reject_vol - paired_refund) / A);
+        clock_state_->max_return_depth[k] = std::max(
+            clock_state_->max_return_depth[k], (physical_return + reject_vol - paired_refund) / A);
     }
     clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
 }
@@ -3398,7 +3399,8 @@ std::string SubsurfaceSolver::initHeat(SimulationContext& ctx, const GwTransport
  * native packet itself. Requires stable prepared matching arrays and serial producer access; no
  * allocation or exception reporting.
  */
-void SubsurfaceSolver::bookPresetHeatOut(int i, double volume, double temperature_volume, bool external) {
+void SubsurfaceSolver::bookPresetHeatOut(int i, double volume, double temperature_volume,
+                                         bool external) {
     if (!heat_.active() || !(volume > 0) || i < 0 || std::size_t(i) >= heat_.cells.size())
         return;
     auto& cell = heat_.cells[i];
@@ -4429,7 +4431,8 @@ void SubsurfaceSolver::fireGwCells(int tier, double dt, SurfaceStateData& surf, 
     source_firing_end_ = accepted_end >= 0 ? accepted_end : time + dt;
     if (!state_.active || !tierHasCells(tier))
         return;
-    fireGwCellList(cells_by_tier_[static_cast<std::size_t>(tier)], dt, surf, time, accepted_end, origin);
+    fireGwCellList(cells_by_tier_[static_cast<std::size_t>(tier)], dt, surf, time, accepted_end,
+                   origin);
     if (tier < static_cast<int>(tier_firings_.size()))
         ++tier_firings_[static_cast<std::size_t>(tier)];
     clock_telemetry_.batch(tier);

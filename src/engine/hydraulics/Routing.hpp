@@ -35,7 +35,9 @@
 
 #ifndef OPENSWMM_ROUTING_HPP
 #define OPENSWMM_ROUTING_HPP
-namespace openswmm::detail { class CompletedSourceArchive; }
+namespace openswmm::detail {
+class CompletedSourceArchive;
+}
 
 #include "XSectBatch.hpp"
 #include "../quality/FvTransportWater.hpp"
@@ -145,7 +147,8 @@ public:
      *     count; zero can indicate an absent FV solver.
      */
     /// Publish an accepted native CPU FV water graph for conservative quality.
-    void acceptedQualityWater(const SimulationContext& ctx, double dt, quality::FvTransportWater& out) const;
+    void acceptedQualityWater(const SimulationContext& ctx, double dt,
+                              quality::FvTransportWater& out) const;
 
     int step(SimulationContext& ctx, double dt, double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
@@ -535,7 +538,8 @@ private:
     static void copyCheckpointContext(const std::shared_ptr<RestartState>& s, SimulationContext& c);
     // Exact native node-column codec, also used by the distinct split surface
     // context which does not own or initialize a second hydraulic solver.
-    static void checkpointNodeColumns(detail::CompletedSourceArchive&, NodeData&, bool validate = false);
+    static void checkpointNodeColumns(detail::CompletedSourceArchive&, NodeData&,
+                                      bool validate = false);
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
     bool checkpoint_owned_session_ = false;           // engine owns structure/control memory
     bool checkpoint_aquifer_session_ =

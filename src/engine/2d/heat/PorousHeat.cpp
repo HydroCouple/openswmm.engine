@@ -67,10 +67,11 @@ inline __attribute__((always_inline))
 #else
 inline
 #endif
-ThermalSolution& solveThermalContactsImpl(const std::vector<ThermalStore>& stores,
-                                          const std::vector<ThermalContact>& contacts,
-                                          const std::vector<ThermalBoundary>& boundaries, double dt,
-                                          ThermalContactScratch& scratch) {
+    ThermalSolution&
+    solveThermalContactsImpl(const std::vector<ThermalStore>& stores,
+                             const std::vector<ThermalContact>& contacts,
+                             const std::vector<ThermalBoundary>& boundaries, double dt,
+                             ThermalContactScratch& scratch) {
     auto& out = scratch.result;
     if constexpr (Reset)
         clearThermalSolution(out);

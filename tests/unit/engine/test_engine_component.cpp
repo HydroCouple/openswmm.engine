@@ -130,45 +130,69 @@ struct NativeEngine {
 struct NativePhaseTrace {
     Json rows = Json::array();
     bool failed = false;
-    static void observe(SWMM_Engine engine, int phase, double start, double end, void* user) noexcept {
+    static void observe(SWMM_Engine engine, int phase, double start, double end,
+                        void* user) noexcept {
         auto& trace = *static_cast<NativePhaseTrace*>(user);
         try {
             double elapsed = 0;
-            if (swmm_engine_get_elapsed_seconds(engine, &elapsed)) { trace.failed = true; return; }
-            Json row{{"phase", phase}, {"start_s", start}, {"end_s", end}, {"native_time_s", elapsed}};
+            if (swmm_engine_get_elapsed_seconds(engine, &elapsed)) {
+                trace.failed = true;
+                return;
+            }
+            Json row{
+                {"phase", phase}, {"start_s", start}, {"end_s", end}, {"native_time_s", elapsed}};
 #ifdef OPENSWMM_HAS_2D
             int cells = 0, layers = 0;
-            if (swmm_gw2d_get_dimensions(engine, &cells, &layers)) { trace.failed = true; return; }
+            if (swmm_gw2d_get_dimensions(engine, &cells, &layers)) {
+                trace.failed = true;
+                return;
+            }
             row["groundwater"] = Json::array();
             for (int cell = 0; cell < cells; ++cell) {
                 double completed = 0, incoming = 0, outgoing = 0;
                 if (swmm_gw2d_get_cell(engine, cell, SWMM_GW2D_VAR_COMPLETED_TIME, &completed) ||
                     swmm_gw2d_get_cell(engine, cell, SWMM_GW2D_VAR_PENDING_IN, &incoming) ||
                     swmm_gw2d_get_cell(engine, cell, SWMM_GW2D_VAR_PENDING_OUT, &outgoing)) {
-                    trace.failed = true; return;
+                    trace.failed = true;
+                    return;
                 }
-                row["groundwater"].push_back({{"cell", cell}, {"completed_s", completed},
-                    {"pending_in_m3", incoming}, {"pending_out_m3", outgoing}});
+                row["groundwater"].push_back({{"cell", cell},
+                                              {"completed_s", completed},
+                                              {"pending_in_m3", incoming},
+                                              {"pending_out_m3", outgoing}});
             }
             double storage = 0;
-            if (swmm_gw2d_get_ledger(engine, SWMM_GW2D_LED_STORAGE, &storage)) { trace.failed = true; return; }
+            if (swmm_gw2d_get_ledger(engine, SWMM_GW2D_LED_STORAGE, &storage)) {
+                trace.failed = true;
+                return;
+            }
             row["groundwater_storage_including_pending_m3"] = storage;
             row["joint_lid"] = Json::array();
             for (int node = 0; node < swmm_node_count(engine); ++node) {
                 SWMM_LidBottomState state{};
-                if (swmm_lid_node_bottom_state_get(engine, node, &state) != SWMM_OK) continue;
+                if (swmm_lid_node_bottom_state_get(engine, node, &state) != SWMM_OK)
+                    continue;
                 row["joint_lid"].push_back({{"node", swmm_node_id(engine, node)},
-                    {"valid_sample", state.valid_sample}, {"aquifer_time_s", state.aquifer_time_s},
-                    {"sample_start_s", state.sample_start_s}, {"sample_end_s", state.sample_end_s},
-                    {"requested_down_m3", state.requested_down_m3}, {"requested_up_m3", state.requested_up_m3},
-                    {"reserved_down_m3", state.reserved_down_m3}, {"reserved_up_m3", state.reserved_up_m3},
-                    {"accepted_down_m3", state.accepted_down_m3}, {"accepted_up_m3", state.accepted_up_m3},
-                    {"cumulative_down_m3", state.down_cumulative_m3}, {"cumulative_up_m3", state.up_cumulative_m3},
-                    {"pending_down_m3", state.pending_down_m3}, {"pending_up_m3", state.pending_up_m3}});
+                                            {"valid_sample", state.valid_sample},
+                                            {"aquifer_time_s", state.aquifer_time_s},
+                                            {"sample_start_s", state.sample_start_s},
+                                            {"sample_end_s", state.sample_end_s},
+                                            {"requested_down_m3", state.requested_down_m3},
+                                            {"requested_up_m3", state.requested_up_m3},
+                                            {"reserved_down_m3", state.reserved_down_m3},
+                                            {"reserved_up_m3", state.reserved_up_m3},
+                                            {"accepted_down_m3", state.accepted_down_m3},
+                                            {"accepted_up_m3", state.accepted_up_m3},
+                                            {"cumulative_down_m3", state.down_cumulative_m3},
+                                            {"cumulative_up_m3", state.up_cumulative_m3},
+                                            {"pending_down_m3", state.pending_down_m3},
+                                            {"pending_up_m3", state.pending_up_m3}});
             }
 #endif
             trace.rows.push_back(std::move(row));
-        } catch (...) { trace.failed = true; }
+        } catch (...) {
+            trace.failed = true;
+        }
     }
 };
 /**
@@ -352,11 +376,13 @@ protected:
         ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(),
                                    (directory / "native/model.rpt").string().c_str(),
                                    (directory / "native/model.out").string().c_str(), nullptr),
-                  0) << swmm_get_last_error_msg(native.value);
+                  0)
+            << swmm_get_last_error_msg(native.value);
 #ifdef OPENSWMM_HAS_2D
         if (surface)
             ASSERT_EQ(swmm_2d_set_results_file(native.value,
-                        (directory / "native/model.2d.h5").string().c_str()), 0);
+                                               (directory / "native/model.2d.h5").string().c_str()),
+                      0);
 #endif
         if (managed) {
             char token[32]{}, diagnostic[4096]{};
@@ -364,21 +390,25 @@ protected:
 #ifdef OPENSWMM_HAS_2D
             ASSERT_EQ(swmm_surface_owner_get(native.value, nullptr, 0, &owners), 0);
             if (owners) {
-                ASSERT_EQ(swmm_surface_owner_preview(native.value, nullptr, -1, nullptr, 0,
-                    &objects, nullptr, 0, &shares, nullptr, 0, &cells, &valid, token,
-                    sizeof(token), diagnostic, sizeof(diagnostic), nullptr, nullptr), 0);
+                ASSERT_EQ(swmm_surface_owner_preview(
+                              native.value, nullptr, -1, nullptr, 0, &objects, nullptr, 0, &shares,
+                              nullptr, 0, &cells, &valid, token, sizeof(token), diagnostic,
+                              sizeof(diagnostic), nullptr, nullptr),
+                          0);
                 ASSERT_EQ(valid, 1) << diagnostic;
             }
 #endif
             SWMM_CheckpointSessionOptions options{};
             options.struct_size = sizeof(options);
             options.schema_version = 1;
-            options.output = surface ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_BINARY;
+            options.output =
+                surface ? SWMM_CHECKPOINT_OUTPUT_COMBINED : SWMM_CHECKPOINT_OUTPUT_BINARY;
             options.ownership_token = owners ? token : nullptr;
             ASSERT_EQ(swmm_checkpoint_start_session(native.value, &options), 0)
                 << swmm_checkpoint_last_error_msg();
         } else {
-            ASSERT_EQ(swmm_engine_initialize(native.value), 0) << swmm_get_last_error_msg(native.value);
+            ASSERT_EQ(swmm_engine_initialize(native.value), 0)
+                << swmm_get_last_error_msg(native.value);
             ASSERT_EQ(swmm_engine_start(native.value, 1), 0);
         }
     }
@@ -420,7 +450,7 @@ protected:
      * NativeEngine still destroys its handle.
      */
     void runUncoupledAndCompare(bool surface = false, bool coupled = false, bool managed = false,
-                               bool transport = false, bool jointLid = false) {
+                                bool transport = false, bool jointLid = false) {
         NativeEngine native;
         ASSERT_NO_FATAL_FAILURE(nativeStart(native, surface, managed));
         ASSERT_NO_FATAL_FAILURE(ready());
@@ -433,20 +463,26 @@ protected:
             for (int species = 0; species < count; ++species) {
                 char name[256]{};
                 EXPECT_EQ(swmm_gw2d_species_name(native.value, species, name, sizeof(name)), 0);
-                Json row{{"name", name}};
+                Json row{{ "name", name }};
                 std::vector<double> values(cells);
                 int written = 0;
-                EXPECT_EQ(swmm_2d_get_cell_conc(native.value, species, values.data(), cells, &written), 0);
+                EXPECT_EQ(
+                    swmm_2d_get_cell_conc(native.value, species, values.data(), cells, &written),
+                    0);
                 EXPECT_EQ(written, cells);
                 row["surface"] = values;
                 for (const auto& [zone, key] : std::vector<std::pair<int, const char*>>{
-                         {SWMM_GW2D_ZONE_SAT, "saturated"}, {SWMM_GW2D_ZONE_UNSAT, "unsaturated"}}) {
-                    EXPECT_EQ(swmm_gw2d_get_cell_conc(native.value, zone, species, values.data(), cells, &written), 0);
+                         {SWMM_GW2D_ZONE_SAT, "saturated"},
+                         {SWMM_GW2D_ZONE_UNSAT, "unsaturated"}}) {
+                    EXPECT_EQ(swmm_gw2d_get_cell_conc(native.value, zone, species, values.data(),
+                                                      cells, &written),
+                              0);
                     EXPECT_EQ(written, cells);
                     row[key] = values;
                 }
                 for (const auto& [term, key] : std::vector<std::pair<int, const char*>>{
-                         {SWMM_GW2D_SPL_INIT, "initial"}, {SWMM_GW2D_SPL_STORAGE, "storage"},
+                         {SWMM_GW2D_SPL_INIT, "initial"},
+                         {SWMM_GW2D_SPL_STORAGE, "storage"},
                          {SWMM_GW2D_SPL_INFIL_IN, "infiltration"},
                          {SWMM_GW2D_SPL_AGE_GENERATED, "age_generated"},
                          {SWMM_GW2D_SPL_RESIDUAL, "residual"}}) {
@@ -459,7 +495,8 @@ protected:
             return state;
         };
         Json initialTransport;
-        if (transport) initialTransport = transportState();
+        if (transport)
+            initialTransport = transportState();
 #endif
         NativePhaseTrace trace;
         if (surface && managed)
@@ -480,7 +517,8 @@ protected:
                 EXPECT_GT(phase, previous);
                 previous = phase == SWMM_PHASE_STEP_ACCEPTED ? 0 : phase;
                 if (phase == SWMM_PHASE_STEP_ACCEPTED)
-                    EXPECT_NEAR(row["native_time_s"].get<double>(), row["end_s"].get<double>(), 1e-12);
+                    EXPECT_NEAR(row["native_time_s"].get<double>(), row["end_s"].get<double>(),
+                                1e-12);
             }
             EXPECT_EQ(previous, 0);
             ASSERT_EQ(swmm_set_phase_callback(native.value, nullptr, nullptr), 0);
@@ -495,45 +533,60 @@ protected:
             EXPECT_GT(state.down_cumulative_m3 + state.up_cumulative_m3, 0);
             EXPECT_GE(state.pending_down_m3, 0);
             EXPECT_GE(state.pending_up_m3, 0);
-            EXPECT_DOUBLE_EQ(state.net_cumulative_m3, state.down_cumulative_m3 - state.up_cumulative_m3);
+            EXPECT_DOUBLE_EQ(state.net_cumulative_m3,
+                             state.down_cumulative_m3 - state.up_cumulative_m3);
             EXPECT_LE(state.accepted_down_m3, state.reserved_down_m3);
             EXPECT_LE(state.accepted_up_m3, state.reserved_up_m3);
             SWMM_LidRichardsStatistics statistics{};
             ASSERT_EQ(swmm_lid_richards_statistics_get(native.value, node, &statistics), 0);
             EXPECT_GT(statistics.accepted, 0);
-            const Json ledger{{"down_m3", state.down_cumulative_m3}, {"up_m3", state.up_cumulative_m3},
-                {"pending_down_m3", state.pending_down_m3}, {"pending_up_m3", state.pending_up_m3},
-                {"requested_down_m3", state.requested_down_m3}, {"requested_up_m3", state.requested_up_m3},
-                {"accepted_down_m3", state.accepted_down_m3}, {"accepted_up_m3", state.accepted_up_m3},
-                {"aquifer_time_s", state.aquifer_time_s}, {"sample_start_s", state.sample_start_s},
-                {"sample_end_s", state.sample_end_s}, {"richards_accepted", statistics.accepted},
-                {"richards_rejected", statistics.rejected}};
+            const Json ledger{{"down_m3", state.down_cumulative_m3},
+                              {"up_m3", state.up_cumulative_m3},
+                              {"pending_down_m3", state.pending_down_m3},
+                              {"pending_up_m3", state.pending_up_m3},
+                              {"requested_down_m3", state.requested_down_m3},
+                              {"requested_up_m3", state.requested_up_m3},
+                              {"accepted_down_m3", state.accepted_down_m3},
+                              {"accepted_up_m3", state.accepted_up_m3},
+                              {"aquifer_time_s", state.aquifer_time_s},
+                              {"sample_start_s", state.sample_start_s},
+                              {"sample_end_s", state.sample_end_s},
+                              {"richards_accepted", statistics.accepted},
+                              { "richards_rejected", statistics.rejected }};
             std::ofstream(directory / "native-joint-lid-ledger.json") << ledger.dump(2);
         }
         if (transport) {
             const auto finalTransport = transportState();
-            std::ofstream(directory / "native-transport-ledger.json")
-                << Json{{"initial", initialTransport}, {"final", finalTransport}}.dump(2);
+            std::ofstream(directory / "native-transport-ledger.json") << Json{
+                {"initial", initialTransport},
+                { "final",
+                  finalTransport }}.dump(2);
             ASSERT_EQ(finalTransport.size(), 3u);
             for (std::size_t species = 0; species < finalTransport.size(); ++species) {
                 const auto& row = finalTransport[species];
                 for (const auto* domain : {"surface", "saturated", "unsaturated"})
-                    for (const auto& value : row[domain]) EXPECT_TRUE(std::isfinite(value.get<double>()));
+                    for (const auto& value : row[domain])
+                        EXPECT_TRUE(std::isfinite(value.get<double>()));
                 if (row["name"] == "__TEMPERATURE__") {
                     // Porous heat also stores energy in soil: C*m3 is not an energy ledger.
-                    EXPECT_LT(row["surface"][0].get<double>(), initialTransport[species]["surface"][0].get<double>());
-                    EXPECT_GT(row["unsaturated"][0].get<double>(), initialTransport[species]["unsaturated"][0].get<double>());
+                    EXPECT_LT(row["surface"][0].get<double>(),
+                              initialTransport[species]["surface"][0].get<double>());
+                    EXPECT_GT(row["unsaturated"][0].get<double>(),
+                              initialTransport[species]["unsaturated"][0].get<double>());
                 } else {
                     EXPECT_GT(row["infiltration"].get<double>(), 0);
-                    EXPECT_LE(std::abs(row["residual"].get<double>()), 1e-10 *
-                        std::max({1.0, std::abs(row["initial"].get<double>()),
-                                  std::abs(row["storage"].get<double>())}) + 1e-12);
+                    EXPECT_LE(std::abs(row["residual"].get<double>()),
+                              1e-10 * std::max({1.0, std::abs(row["initial"].get<double>()),
+                                                std::abs(row["storage"].get<double>())}) +
+                                  1e-12);
                     if (row["name"] == "__WATER_AGE__") {
                         EXPECT_GT(row["age_generated"].get<double>(), 0);
-                        EXPECT_GT(row["surface"][0].get<double>(), initialTransport[species]["surface"][0].get<double>());
+                        EXPECT_GT(row["surface"][0].get<double>(),
+                                  initialTransport[species]["surface"][0].get<double>());
                     } else {
                         EXPECT_EQ(row["name"], "Dye");
-                        EXPECT_GT(row["unsaturated"][0].get<double>(), initialTransport[species]["unsaturated"][0].get<double>());
+                        EXPECT_GT(row["unsaturated"][0].get<double>(),
+                                  initialTransport[species]["unsaturated"][0].get<double>());
                     }
                 }
             }
@@ -544,16 +597,21 @@ protected:
             std::vector<double> volume(cells);
             ASSERT_EQ(swmm_2d_get_coupling_volume_bulk(native.value, volume.data()), 0);
             double moved = 0;
-            for (double value : volume) moved += std::abs(value);
-            EXPECT_GT(moved, 0); // exercise physical 1D/2D exchange, not only two independent models
+            for (double value : volume)
+                moved += std::abs(value);
+            EXPECT_GT(moved,
+                      0); // exercise physical 1D/2D exchange, not only two independent models
             std::ofstream(directory / "native-coupling.json") << Json(volume).dump(2);
         }
         if (surface && managed) {
             Json ledger;
-            for (const auto& [name, term] : std::vector<std::pair<const char*, int>>{
-                    {"initial", SWMM_GW2D_LED_INIT_STORAGE}, {"storage", SWMM_GW2D_LED_STORAGE},
-                    {"infiltration", SWMM_GW2D_LED_INFIL_IN}, {"node", SWMM_GW2D_LED_NODE},
-                    {"link", SWMM_GW2D_LED_LINK}}) {
+            for (const auto& [name, term] :
+                 std::vector<std::pair<const char*, int>>{{"initial", SWMM_GW2D_LED_INIT_STORAGE},
+                                                          {"storage", SWMM_GW2D_LED_STORAGE},
+                                                          {"infiltration", SWMM_GW2D_LED_INFIL_IN},
+                                                          {"node", SWMM_GW2D_LED_NODE},
+                                                          { "link",
+                                                            SWMM_GW2D_LED_LINK }}) {
                 double value = 0;
                 ASSERT_EQ(swmm_gw2d_get_ledger(native.value, term, &value), 0);
                 ledger[name] = value;
@@ -566,13 +624,16 @@ protected:
             ledger["closures"] = Json::array();
             for (int cell = 0; cell < cells; ++cell) {
                 double closure = -1;
-                ASSERT_EQ(swmm_gw2d_get_cell(native.value, cell, SWMM_GW2D_VAR_CLOSURE, &closure), 0);
+                ASSERT_EQ(swmm_gw2d_get_cell(native.value, cell, SWMM_GW2D_VAR_CLOSURE, &closure),
+                          0);
                 ledger["closures"].push_back(closure);
             }
             std::ofstream(directory / "native-managed-ledger.json") << ledger.dump(2);
             EXPECT_GT(ledger["infiltration"].get<double>(), 0);
-            EXPECT_LE(std::abs(residual), 1e-10 * std::max({1.0,
-                std::abs(ledger["initial"].get<double>()), std::abs(ledger["storage"].get<double>())}) + 1e-12);
+            EXPECT_LE(std::abs(residual),
+                      1e-10 * std::max({1.0, std::abs(ledger["initial"].get<double>()),
+                                        std::abs(ledger["storage"].get<double>())}) +
+                          1e-12);
         }
 #endif
         ASSERT_EQ(swmm_engine_end(native.value), 0);
@@ -655,21 +716,24 @@ TRANSPORT_TEMPERATURE NO
 TEST_F(EngineComponent, WaterPhasePacketsRefuseMalformedSpatialAndTemporalValues) {
     NativeEngine native;
     const auto deck = fs::path(SPLIT_WITNESS) / "DrainingSurface/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(), (directory / "phase.rpt").string().c_str(), nullptr, nullptr), 0);
-    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "phase.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
     SWMM_SplitFrame raw = nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> geometry(raw,swmm_split_frame_destroy);
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> geometry(raw,
+                                                                        swmm_split_frame_destroy);
     char* text = nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
     const auto original = Json::parse(text);
     auto refused = [&](const Json& packet) {
         const auto json = packet.dump();
         auto out = raw;
-        EXPECT_NE(swmm_split_packet_decode(native.value,json.data(),json.size(),&out),0);
-        EXPECT_EQ(out,raw);
+        EXPECT_NE(swmm_split_packet_decode(native.value, json.data(), json.size(), &out), 0);
+        EXPECT_EQ(out, raw);
     };
     auto changed = original;
     changed["node_ids"][0] = "different";
@@ -689,97 +753,105 @@ TEST_F(EngineComponent, WaterPhasePacketsRefuseMalformedSpatialAndTemporalValues
     changed["target"] = 1;
     changed["kind"] = "receipt";
     changed["duration_s"] = .31;
-    changed["conductance_ft2_per_s"] = {{original.at("node_count"),1.}};
+    changed["conductance_ft2_per_s"] = {{original.at("node_count"), 1.}};
     refused(changed);
-    changed["conductance_ft2_per_s"] = {{0,-.5}};
+    changed["conductance_ft2_per_s"] = {{0, -.5}};
     refused(changed);
 }
 
 TEST_F(EngineComponent, OutfallPacketsValidateReservationColumnsAndNodeKinds) {
     NativeEngine native;
     const auto deck = fs::path(SPLIT_WITNESS) / "OutfallWithdrawal/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value,deck.string().c_str(),(directory / "check.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(native.value,SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
-    SWMM_SplitFrame raw=nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> hold(raw,swmm_split_frame_destroy);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
-    const auto geometry=Json::parse(text);
-    ASSERT_EQ(geometry.at("schema"),"openswmm.node-surface-water/2");
-    auto refused=[&](Json packet) {
-        const auto text=packet.dump();
-        auto result=raw;
-        EXPECT_NE(swmm_split_packet_decode(native.value,text.data(),text.size(),&result),0);
-        EXPECT_EQ(result,raw);
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "check.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+    SWMM_SplitFrame raw = nullptr;
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> hold(raw, swmm_split_frame_destroy);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
+    const auto geometry = Json::parse(text);
+    ASSERT_EQ(geometry.at("schema"), "openswmm.node-surface-water/2");
+    auto refused = [&](Json packet) {
+        const auto text = packet.dump();
+        auto result = raw;
+        EXPECT_NE(swmm_split_packet_decode(native.value, text.data(), text.size(), &result), 0);
+        EXPECT_EQ(result, raw);
     };
-    auto packet=geometry;
-    packet["mapped_outfalls"]={0}; // J is a storage, not an outfall
+    auto packet = geometry;
+    packet["mapped_outfalls"] = {0}; // J is a storage, not an outfall
     refused(packet);
-    packet=geometry;
-    packet["phase"]=4;
-    packet["kind"]="receipt";
-    packet["duration_s"]=.31;
-    packet["sequence"]=1;
-    packet["target"]=1;
-    packet["outfall_boundaries"]={{0.,1.,-1.}};
+    packet = geometry;
+    packet["phase"] = 4;
+    packet["kind"] = "receipt";
+    packet["duration_s"] = .31;
+    packet["sequence"] = 1;
+    packet["target"] = 1;
+    packet["outfall_boundaries"] = {{0., 1., -1.}};
     refused(packet);
-    packet["outfall_boundaries"]={{0.,1.1,1.}};
+    packet["outfall_boundaries"] = {{0., 1.1, 1.}};
     refused(packet);
-    packet["outfall_boundaries"]={};
+    packet["outfall_boundaries"] = {};
     refused(packet);
-    packet["outfall_boundaries"]={{0.,1.,1.}};
-    packet["schema"]="openswmm.node-surface-water/1";
+    packet["outfall_boundaries"] = {{0., 1., 1.}};
+    packet["schema"] = "openswmm.node-surface-water/1";
     refused(packet);
 }
 TEST_F(EngineComponent, OutfallAdvanceRequiresThePreparedRoutingDuration) {
     NativeEngine native;
     const auto deck = fs::path(SPLIT_WITNESS) / "OutfallWithdrawal/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value,deck.string().c_str(),(directory / "clock.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(native.value,SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
-    SWMM_SplitFrame raw=nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> hold(raw,swmm_split_frame_destroy);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
-    auto request=Json::parse(text);
-    request["target"]=request["sender"];
-    request["sender"]=uint64_t(1000000);
-    request["sequence"]=1;
-    request["phase"]=4;
-    request["kind"]="request";
-    request["duration_s"]=.31;
-    request["remaining_s"]=0.;
-    request["flush_on_report"]=false;
-    const auto n=swmm_node_count(native.value);
-    for (const char* column : {"head_ft","depth_ft","volume_ft3","rim_volume_ft3",
-                              "queued_ft3","direct_ft3","node_inflow_cfs","node_outflow_cfs"})
-        request[column]=std::vector<double>(n,0);
-    ASSERT_EQ(swmm_engine_start(native.value,0),0);
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "clock.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+    SWMM_SplitFrame raw = nullptr;
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> hold(raw, swmm_split_frame_destroy);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
+    auto request = Json::parse(text);
+    request["target"] = request["sender"];
+    request["sender"] = uint64_t(1000000);
+    request["sequence"] = 1;
+    request["phase"] = 4;
+    request["kind"] = "request";
+    request["duration_s"] = .31;
+    request["remaining_s"] = 0.;
+    request["flush_on_report"] = false;
+    const auto n = swmm_node_count(native.value);
+    for (const char* column : {"head_ft", "depth_ft", "volume_ft3", "rim_volume_ft3", "queued_ft3",
+                               "direct_ft3", "node_inflow_cfs", "node_outflow_cfs"})
+        request[column] = std::vector<double>(n, 0);
+    ASSERT_EQ(swmm_engine_start(native.value, 0), 0);
     auto evaluate = [&](const Json& packet, int expected) {
-        const auto value=packet.dump();
-        SWMM_SplitFrame in=nullptr, out=nullptr;
-        ASSERT_EQ(swmm_split_packet_decode(native.value,value.data(),value.size(),&in),0);
-        std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> input(in,swmm_split_frame_destroy);
-        EXPECT_EQ(swmm_split_evaluate(native.value,packet.at("phase").get<int>(),in,&out),expected);
+        const auto value = packet.dump();
+        SWMM_SplitFrame in = nullptr, out = nullptr;
+        ASSERT_EQ(swmm_split_packet_decode(native.value, value.data(), value.size(), &in), 0);
+        std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> input(in,
+                                                                         swmm_split_frame_destroy);
+        EXPECT_EQ(swmm_split_evaluate(native.value, packet.at("phase").get<int>(), in, &out),
+                  expected);
         swmm_split_frame_destroy(out);
     };
-    ASSERT_NO_FATAL_FAILURE(evaluate(request,0)); // reserves water but leaves the clock fixed
-    request["sequence"]=2;
-    request["phase"]=2;
-    request["duration_s"]=.62;
-    ASSERT_NO_FATAL_FAILURE(evaluate(request,SWMM_ERR_BADPARAM));
-    double clock=-1;
-    ASSERT_EQ(swmm_engine_get_elapsed_seconds(native.value,&clock),0);
-    EXPECT_EQ(clock,0);
-    double stored=0, drained=0;
-    ASSERT_EQ(swmm_2d_get_mass_balance(native.value,nullptr,&stored,nullptr,nullptr,nullptr,nullptr,&drained,nullptr,nullptr,nullptr),0);
-    EXPECT_EQ(stored,1.1);
-    EXPECT_EQ(drained,0);
+    ASSERT_NO_FATAL_FAILURE(evaluate(request, 0)); // reserves water but leaves the clock fixed
+    request["sequence"] = 2;
+    request["phase"] = 2;
+    request["duration_s"] = .62;
+    ASSERT_NO_FATAL_FAILURE(evaluate(request, SWMM_ERR_BADPARAM));
+    double clock = -1;
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(native.value, &clock), 0);
+    EXPECT_EQ(clock, 0);
+    double stored = 0, drained = 0;
+    ASSERT_EQ(swmm_2d_get_mass_balance(native.value, nullptr, &stored, nullptr, nullptr, nullptr,
+                                       nullptr, &drained, nullptr, nullptr, nullptr),
+              0);
+    EXPECT_EQ(stored, 1.1);
+    EXPECT_EQ(drained, 0);
 }
 TEST_F(EngineComponent, SplitRolesRequireConnectedParticipantBeforePreparingOutput) {
     configuration["role"] = "split_network";
@@ -790,319 +862,566 @@ TEST_F(EngineComponent, SplitRolesRequireConnectedParticipantBeforePreparingOutp
 }
 TEST_F(EngineComponent, WatershedPacketsValidateWeatherOwnershipAndJournal) {
     NativeEngine native;
-    const auto deck=fs::path(SPLIT_WITNESS) / "WatershedRainfall/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value,deck.string().c_str(),(directory / "weather.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(native.value,SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
-    SWMM_SplitFrame raw=nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> hold(raw,swmm_split_frame_destroy);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
-    const auto geometry=Json::parse(text);
-    ASSERT_EQ(geometry.at("schema"),"openswmm.node-surface-water/3");
-    auto refused=[&](const Json& packet) {
-        const auto encoded=packet.dump();
-        auto result=raw;
-        EXPECT_NE(swmm_split_packet_decode(native.value,encoded.data(),encoded.size(),&result),0);
-        EXPECT_EQ(result,raw);
+    const auto deck = fs::path(SPLIT_WITNESS) / "WatershedRainfall/model.inp";
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "weather.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+    SWMM_SplitFrame raw = nullptr;
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> hold(raw, swmm_split_frame_destroy);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
+    const auto geometry = Json::parse(text);
+    ASSERT_EQ(geometry.at("schema"), "openswmm.node-surface-water/3");
+    auto refused = [&](const Json& packet) {
+        const auto encoded = packet.dump();
+        auto result = raw;
+        EXPECT_NE(swmm_split_packet_decode(native.value, encoded.data(), encoded.size(), &result),
+                  0);
+        EXPECT_EQ(result, raw);
     };
-    auto packet=geometry;
-    packet["schema"]="openswmm.node-surface-water/1";
+    auto packet = geometry;
+    packet["schema"] = "openswmm.node-surface-water/1";
     refused(packet);
-    packet=geometry; packet["source_count"]=2; refused(packet);
-    packet=geometry; packet["gage_ids"]={"G2","G"}; refused(packet);
-    packet=geometry;
-    packet["target"]=packet["sender"];
-    packet["sender"]=uint64_t(1000000);
-    packet["sequence"]=1;
-    packet["phase"]=2;
-    packet["kind"]="request";
-    packet["duration_s"]=.31;
-    packet["remaining_s"]=0.;
-    packet["flush_on_report"]=false;
-    for (const char* column : {"head_ft","depth_ft","volume_ft3","rim_volume_ft3","queued_ft3","direct_ft3"})
-        packet[column]=std::vector<double>(swmm_node_count(native.value),0);
-    const Json sample={{"start_s",0.},{"rates",{60.,0.}}};
-    packet["weather"]={{"gage_rates",{60.,0.}},{"gage_current",{0,0}},{"evap_ft_per_s",0.},{"samples",{sample}}};
-    auto changed=packet;
-    changed["weather"]["samples"][0]["rates"]={60.}; refused(changed);
-    changed=packet; changed["weather"]["samples"][0]["rates"][0]=-1.; refused(changed);
-    changed=packet; changed["weather"]["samples"][0]["start_s"]=1.; refused(changed);
-    changed=packet; changed["weather"]["samples"].push_back(sample); refused(changed);
-    changed=packet; changed.erase("weather"); refused(changed);
-    changed=packet; changed["weather"]["gage_current"]={1000000,0}; refused(changed);
-    ASSERT_EQ(swmm_engine_start(native.value,0),0);
-    auto evaluate=[&](const Json& request,int expected) {
-        const auto encoded=request.dump();
-        SWMM_SplitFrame in=nullptr,out=nullptr;
-        ASSERT_EQ(swmm_split_packet_decode(native.value,encoded.data(),encoded.size(),&in),0);
-        std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> input(in,swmm_split_frame_destroy);
-        EXPECT_EQ(swmm_split_evaluate(native.value,2,in,&out),expected) << swmm_get_last_error_msg(native.value);
+    packet = geometry;
+    packet["source_count"] = 2;
+    refused(packet);
+    packet = geometry;
+    packet["gage_ids"] = {"G2", "G"};
+    refused(packet);
+    packet = geometry;
+    packet["target"] = packet["sender"];
+    packet["sender"] = uint64_t(1000000);
+    packet["sequence"] = 1;
+    packet["phase"] = 2;
+    packet["kind"] = "request";
+    packet["duration_s"] = .31;
+    packet["remaining_s"] = 0.;
+    packet["flush_on_report"] = false;
+    for (const char* column :
+         {"head_ft", "depth_ft", "volume_ft3", "rim_volume_ft3", "queued_ft3", "direct_ft3"})
+        packet[column] = std::vector<double>(swmm_node_count(native.value), 0);
+    const Json sample = {{"start_s", 0.}, {"rates", {60., 0.}}};
+    packet["weather"] = {{"gage_rates", {60., 0.}},
+                         {"gage_current", {0, 0}},
+                         {"evap_ft_per_s", 0.},
+                         {"samples", {sample}}};
+    auto changed = packet;
+    changed["weather"]["samples"][0]["rates"] = {60.};
+    refused(changed);
+    changed = packet;
+    changed["weather"]["samples"][0]["rates"][0] = -1.;
+    refused(changed);
+    changed = packet;
+    changed["weather"]["samples"][0]["start_s"] = 1.;
+    refused(changed);
+    changed = packet;
+    changed["weather"]["samples"].push_back(sample);
+    refused(changed);
+    changed = packet;
+    changed.erase("weather");
+    refused(changed);
+    changed = packet;
+    changed["weather"]["gage_current"] = {1000000, 0};
+    refused(changed);
+    ASSERT_EQ(swmm_engine_start(native.value, 0), 0);
+    auto evaluate = [&](const Json& request, int expected) {
+        const auto encoded = request.dump();
+        SWMM_SplitFrame in = nullptr, out = nullptr;
+        ASSERT_EQ(swmm_split_packet_decode(native.value, encoded.data(), encoded.size(), &in), 0);
+        std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> input(in,
+                                                                         swmm_split_frame_destroy);
+        EXPECT_EQ(swmm_split_evaluate(native.value, 2, in, &out), expected)
+            << swmm_get_last_error_msg(native.value);
         swmm_split_frame_destroy(out);
     };
-    ASSERT_NO_FATAL_FAILURE(evaluate(packet,0));
-    packet["start_s"]=.31;
-    packet["sequence"]=2;
-    ASSERT_NO_FATAL_FAILURE(evaluate(packet,SWMM_ERR_BADPARAM)); // old journal in a fresh phase
-    double elapsed=0;
-    ASSERT_EQ(swmm_engine_get_elapsed_seconds(native.value,&elapsed),0);
-    EXPECT_EQ(elapsed,.31);
+    ASSERT_NO_FATAL_FAILURE(evaluate(packet, 0));
+    packet["start_s"] = .31;
+    packet["sequence"] = 2;
+    ASSERT_NO_FATAL_FAILURE(evaluate(packet, SWMM_ERR_BADPARAM)); // old journal in a fresh phase
+    double elapsed = 0;
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(native.value, &elapsed), 0);
+    EXPECT_EQ(elapsed, .31);
 }
 TEST_F(EngineComponent, GroundwaterPacketsValidateBudgetsAndConduitIdentity) {
     NativeEngine native;
-    const auto deck=fs::path(SPLIT_WITNESS) / "GroundwaterLinkGain/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value,deck.string().c_str(),(directory / "ground.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(native.value,SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
-    SWMM_SplitFrame raw=nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> hold(raw,swmm_split_frame_destroy);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
-    const auto geometry=Json::parse(text);
-    ASSERT_EQ(geometry.at("schema"),"openswmm.node-surface-water/4");
-    auto decode=[&](const Json& packet,bool accepted) {
-        const auto encoded=packet.dump();
-        auto result=raw;
-        const auto rc=swmm_split_packet_decode(native.value,encoded.data(),encoded.size(),&result);
+    const auto deck = fs::path(SPLIT_WITNESS) / "GroundwaterLinkGain/model.inp";
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "ground.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+    SWMM_SplitFrame raw = nullptr;
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> hold(raw, swmm_split_frame_destroy);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
+    const auto geometry = Json::parse(text);
+    ASSERT_EQ(geometry.at("schema"), "openswmm.node-surface-water/4");
+    auto decode = [&](const Json& packet, bool accepted) {
+        const auto encoded = packet.dump();
+        auto result = raw;
+        const auto rc =
+            swmm_split_packet_decode(native.value, encoded.data(), encoded.size(), &result);
         if (accepted) {
-            EXPECT_EQ(rc,0) << swmm_get_last_error_msg(native.value);
-            if (!rc) swmm_split_frame_destroy(result);
+            EXPECT_EQ(rc, 0) << swmm_get_last_error_msg(native.value);
+            if (!rc)
+                swmm_split_frame_destroy(result);
         } else {
-            EXPECT_NE(rc,0);
-            EXPECT_EQ(result,raw);
+            EXPECT_NE(rc, 0);
+            EXPECT_EQ(result, raw);
         }
     };
-    decode(geometry,true);
-    auto changed=geometry;
-    changed["schema"]="openswmm.node-surface-water/2"; decode(changed,false);
-    changed=geometry; changed["conduit_count"]=2; decode(changed,false);
-    changed=geometry; changed["conduit_links"]={1}; decode(changed,false);
-    changed=geometry; changed["link_ids"]={"other"}; decode(changed,false);
-    changed=geometry; changed["aquifer_bed"]={1}; decode(changed,false);
-    changed=geometry; changed["groundwater_conduits"]["gain_limit_cfs"]={-1.}; decode(changed,false);
-    changed=geometry; changed["groundwater_conduits"]["path_ft"]={0.}; decode(changed,false);
-    changed=geometry; changed["groundwater_conduits"]["coupled"]={2}; decode(changed,false);
-    changed=geometry; changed["groundwater_ledger_m3"]={0.}; decode(changed,false);
-    changed=geometry;
-    changed["phase"]=2; changed["kind"]="request"; changed["sequence"]=1;
-    changed["target"]=changed["sender"]; changed["sender"]=uint64_t(1000000);
-    changed["duration_s"]=.31; changed["remaining_s"]=0.; changed["flush_on_report"]=false;
-    for (const char* name : {"head_ft","depth_ft","volume_ft3","rim_volume_ft3","queued_ft3",
-                             "direct_ft3","node_inflow_cfs","node_outflow_cfs"})
-        changed[name]=std::vector<double>(swmm_node_count(native.value),0.);
-    changed["conduit_seepage_cfs"]={-.1};
-    decode(changed,true); // accepted signed native rate, one barrel
-    changed["conduit_seepage_cfs"]={}; decode(changed,false);
+    decode(geometry, true);
+    auto changed = geometry;
+    changed["schema"] = "openswmm.node-surface-water/2";
+    decode(changed, false);
+    changed = geometry;
+    changed["conduit_count"] = 2;
+    decode(changed, false);
+    changed = geometry;
+    changed["conduit_links"] = {1};
+    decode(changed, false);
+    changed = geometry;
+    changed["link_ids"] = {"other"};
+    decode(changed, false);
+    changed = geometry;
+    changed["aquifer_bed"] = {1};
+    decode(changed, false);
+    changed = geometry;
+    changed["groundwater_conduits"]["gain_limit_cfs"] = {-1.};
+    decode(changed, false);
+    changed = geometry;
+    changed["groundwater_conduits"]["path_ft"] = {0.};
+    decode(changed, false);
+    changed = geometry;
+    changed["groundwater_conduits"]["coupled"] = {2};
+    decode(changed, false);
+    changed = geometry;
+    changed["groundwater_ledger_m3"] = {0.};
+    decode(changed, false);
+    changed = geometry;
+    changed["phase"] = 2;
+    changed["kind"] = "request";
+    changed["sequence"] = 1;
+    changed["target"] = changed["sender"];
+    changed["sender"] = uint64_t(1000000);
+    changed["duration_s"] = .31;
+    changed["remaining_s"] = 0.;
+    changed["flush_on_report"] = false;
+    for (const char* name : {"head_ft", "depth_ft", "volume_ft3", "rim_volume_ft3", "queued_ft3",
+                             "direct_ft3", "node_inflow_cfs", "node_outflow_cfs"})
+        changed[name] = std::vector<double>(swmm_node_count(native.value), 0.);
+    changed["conduit_seepage_cfs"] = {-.1};
+    decode(changed, true); // accepted signed native rate, one barrel
+    changed["conduit_seepage_cfs"] = {};
+    decode(changed, false);
 }
 TEST_F(EngineComponent, ReviewedSourcePacketsValidateOwnersAndInventories) {
     NativeEngine native;
-    const auto deck=fs::path(SPLIT_WITNESS) / "ReviewedFootprintSources/model.inp";
-    ASSERT_EQ(swmm_engine_open(native.value,deck.string().c_str(),(directory/"sources.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(native.value,SWMM_SPLIT_SURFACE),0);
-    ASSERT_EQ(swmm_2d_set_results_file(native.value,(directory/"sources.h5").string().c_str()),0);
-    ASSERT_EQ(swmm_engine_initialize(native.value),0);
-    SWMM_SplitFrame raw=nullptr;
-    ASSERT_EQ(swmm_split_geometry(native.value,&raw),0);
-    std::unique_ptr<void,decltype(&swmm_split_frame_destroy)> hold(raw,swmm_split_frame_destroy);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(native.value,raw,&text),0);
-    std::unique_ptr<char,decltype(&swmm_split_packet_free)> storage(text,swmm_split_packet_free);
-    const auto geometry=Json::parse(text);
-    ASSERT_EQ(geometry.at("schema"),"openswmm.node-surface-water/5");
-    auto check=[&](const Json& packet,bool accept) {
-        const auto encoded=packet.dump();
-        auto decoded=raw;
-        const auto rc=swmm_split_packet_decode(native.value,encoded.data(),encoded.size(),&decoded);
-        if (accept) { EXPECT_EQ(rc,0) << swmm_get_last_error_msg(native.value); if (!rc) swmm_split_frame_destroy(decoded); }
-        else { EXPECT_NE(rc,0); EXPECT_EQ(decoded,raw); }
+    const auto deck = fs::path(SPLIT_WITNESS) / "ReviewedFootprintSources/model.inp";
+    ASSERT_EQ(swmm_engine_open(native.value, deck.string().c_str(),
+                               (directory / "sources.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(native.value, SWMM_SPLIT_SURFACE), 0);
+    ASSERT_EQ(swmm_2d_set_results_file(native.value, (directory / "sources.h5").string().c_str()),
+              0);
+    ASSERT_EQ(swmm_engine_initialize(native.value), 0);
+    SWMM_SplitFrame raw = nullptr;
+    ASSERT_EQ(swmm_split_geometry(native.value, &raw), 0);
+    std::unique_ptr<void, decltype(&swmm_split_frame_destroy)> hold(raw, swmm_split_frame_destroy);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(native.value, raw, &text), 0);
+    std::unique_ptr<char, decltype(&swmm_split_packet_free)> storage(text, swmm_split_packet_free);
+    const auto geometry = Json::parse(text);
+    ASSERT_EQ(geometry.at("schema"), "openswmm.node-surface-water/5");
+    auto check = [&](const Json& packet, bool accept) {
+        const auto encoded = packet.dump();
+        auto decoded = raw;
+        const auto rc =
+            swmm_split_packet_decode(native.value, encoded.data(), encoded.size(), &decoded);
+        if (accept) {
+            EXPECT_EQ(rc, 0) << swmm_get_last_error_msg(native.value);
+            if (!rc)
+                swmm_split_frame_destroy(decoded);
+        } else {
+            EXPECT_NE(rc, 0);
+            EXPECT_EQ(decoded, raw);
+        }
     };
-    check(geometry,true);
-    auto changed=geometry;
-    changed["schema"]="openswmm.node-surface-water/4"; check(changed,false);
-    changed=geometry; changed["source_groups"]={-1,-1}; check(changed,false);
-    changed=geometry; changed["source_groups"]={0}; check(changed,false);
-    changed=geometry; changed["source_groups"]={0,2}; check(changed,false);
-    changed=geometry; changed["subcatchment_ids"]={"B","A"}; check(changed,false);
-    changed=geometry; changed["reviewed_sources"]["pending_drain_ft3"]={-1.,0.}; check(changed,false);
-    changed=geometry; changed["reviewed_sources"]["held_rate_cfs"]={0.}; check(changed,false);
-    changed=geometry; changed["reviewed_sources"]["totals_ft3"]={0.}; check(changed,false);
-    changed=geometry; changed["reviewed_sources"]["storage_ft3"]=-1.; check(changed,false);
+    check(geometry, true);
+    auto changed = geometry;
+    changed["schema"] = "openswmm.node-surface-water/4";
+    check(changed, false);
+    changed = geometry;
+    changed["source_groups"] = {-1, -1};
+    check(changed, false);
+    changed = geometry;
+    changed["source_groups"] = {0};
+    check(changed, false);
+    changed = geometry;
+    changed["source_groups"] = {0, 2};
+    check(changed, false);
+    changed = geometry;
+    changed["subcatchment_ids"] = {"B", "A"};
+    check(changed, false);
+    changed = geometry;
+    changed["reviewed_sources"]["pending_drain_ft3"] = {-1., 0.};
+    check(changed, false);
+    changed = geometry;
+    changed["reviewed_sources"]["held_rate_cfs"] = {0.};
+    check(changed, false);
+    changed = geometry;
+    changed["reviewed_sources"]["totals_ft3"] = {0.};
+    check(changed, false);
+    changed = geometry;
+    changed["reviewed_sources"]["storage_ft3"] = -1.;
+    check(changed, false);
 }
 TEST_F(EngineComponent, ReviewedSourcesRefuseMissingMeshResultsBeforePreparingFiles) {
-    configuration["model"]=(fs::path(SPLIT_WITNESS)/"ReviewedFootprintSources/model.inp").string();
-    configuration["role"]="integrated2d"; configuration["surface_results"]=false;
+    configuration["model"] =
+        (fs::path(SPLIT_WITNESS) / "ReviewedFootprintSources/model.inp").string();
+    configuration["role"] = "integrated2d";
+    configuration["surface_results"] = false;
     initialize();
     EXPECT_FALSE(component->validate().empty());
     component->prepare();
-    EXPECT_EQ(component->status(),Status::Failed);
-    EXPECT_FALSE(fs::exists(directory/"wrapped"));
+    EXPECT_EQ(component->status(), Status::Failed);
+    EXPECT_FALSE(fs::exists(directory / "wrapped"));
 }
 TEST_F(EngineComponent, JointRichardsPacketsValidateTrialColumnsAndOwnerCohort) {
-    NativeEngine net,surface;
-    const auto deck=fs::path(SPLIT_WITNESS)/"JointRichardsCompeting/model.inp";
-    ASSERT_EQ(swmm_engine_open(net.value,deck.string().c_str(),(directory/"net.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_engine_open(surface.value,deck.string().c_str(),(directory/"surface.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(net.value,SWMM_SPLIT_NETWORK),0);
-    ASSERT_EQ(swmm_split_configure(surface.value,SWMM_SPLIT_SURFACE),0);
-    fs::remove(directory/"surface.h5"); // This test owns the writer destination across reruns.
-    ASSERT_EQ(swmm_2d_set_results_file(surface.value,(directory/"surface.h5").string().c_str()),0);
-    ASSERT_EQ(swmm_engine_initialize(surface.value),0);
-    ASSERT_EQ(swmm_engine_initialize(net.value),0);
-    SWMM_SplitFrame geometry=nullptr;
-    ASSERT_EQ(swmm_split_geometry(surface.value,&geometry),0);
-    ASSERT_EQ(swmm_split_apply_geometry(net.value,geometry),0);
+    NativeEngine net, surface;
+    const auto deck = fs::path(SPLIT_WITNESS) / "JointRichardsCompeting/model.inp";
+    ASSERT_EQ(swmm_engine_open(net.value, deck.string().c_str(),
+                               (directory / "net.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_engine_open(surface.value, deck.string().c_str(),
+                               (directory / "surface.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(net.value, SWMM_SPLIT_NETWORK), 0);
+    ASSERT_EQ(swmm_split_configure(surface.value, SWMM_SPLIT_SURFACE), 0);
+    fs::remove(directory / "surface.h5"); // This test owns the writer destination across reruns.
+    ASSERT_EQ(swmm_2d_set_results_file(surface.value, (directory / "surface.h5").string().c_str()),
+              0);
+    ASSERT_EQ(swmm_engine_initialize(surface.value), 0);
+    ASSERT_EQ(swmm_engine_initialize(net.value), 0);
+    SWMM_SplitFrame geometry = nullptr;
+    ASSERT_EQ(swmm_split_geometry(surface.value, &geometry), 0);
+    ASSERT_EQ(swmm_split_apply_geometry(net.value, geometry), 0);
     swmm_split_frame_destroy(geometry);
-    struct Check { SWMM_Engine surface; bool checked=false; } check{surface.value};
-    const auto callback=[](SWMM_Engine engine,int phase,SWMM_SplitFrame request,SWMM_SplitFrame* reply,void* user) -> int {
-        auto& check=*static_cast<Check*>(user);
-        const int rc=swmm_split_evaluate(check.surface,phase,request,reply);
-        if (rc || phase != SWMM_SPLIT_LID_TRIAL || check.checked) return rc;
-        check.checked=true;
-        char* text=nullptr;
-        EXPECT_EQ(swmm_split_packet_encode(engine,*reply,&text),0);
-        if (!text) return SWMM_ERR_BADPARAM;
-        const auto packet=Json::parse(text); swmm_split_packet_free(text);
-        EXPECT_EQ(packet.at("schema"),"openswmm.node-surface-water/6");
-        auto decode=[&](const Json& item,bool valid) {
-            const auto encoded=item.dump(); auto decoded=*reply;
-            const int result=swmm_split_packet_decode(engine,encoded.data(),encoded.size(),&decoded);
-            if (valid) { EXPECT_EQ(result,0) << swmm_get_last_error_msg(engine); if (!result) swmm_split_frame_destroy(decoded); }
-            else { EXPECT_NE(result,0); EXPECT_EQ(decoded,*reply); }
+    struct Check {
+        SWMM_Engine surface;
+        bool checked = false;
+    } check{surface.value};
+    const auto callback = [](SWMM_Engine engine, int phase, SWMM_SplitFrame request,
+                             SWMM_SplitFrame* reply, void* user) -> int {
+        auto& check = *static_cast<Check*>(user);
+        const int rc = swmm_split_evaluate(check.surface, phase, request, reply);
+        if (rc || phase != SWMM_SPLIT_LID_TRIAL || check.checked)
+            return rc;
+        check.checked = true;
+        char* text = nullptr;
+        EXPECT_EQ(swmm_split_packet_encode(engine, *reply, &text), 0);
+        if (!text)
+            return SWMM_ERR_BADPARAM;
+        const auto packet = Json::parse(text);
+        swmm_split_packet_free(text);
+        EXPECT_EQ(packet.at("schema"), "openswmm.node-surface-water/6");
+        auto decode = [&](const Json& item, bool valid) {
+            const auto encoded = item.dump();
+            auto decoded = *reply;
+            const int result =
+                swmm_split_packet_decode(engine, encoded.data(), encoded.size(), &decoded);
+            if (valid) {
+                EXPECT_EQ(result, 0) << swmm_get_last_error_msg(engine);
+                if (!result)
+                    swmm_split_frame_destroy(decoded);
+            } else {
+                EXPECT_NE(result, 0);
+                EXPECT_EQ(decoded, *reply);
+            }
         };
-        decode(packet,true);
-        auto changed=packet; changed["schema"]="openswmm.node-surface-water/5"; decode(changed,false);
-        changed=packet; changed["lid_nodes"]={0}; decode(changed,false);
-        changed=packet; changed["richards_nodes"].erase(0); decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["node"]=999; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_water"]={0.}; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_water"][1]=-1.; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_pressure"][1]=nullptr; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["theta"]={0.}; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["hydraulics"][2]=-1.; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_report"]["ok"]=false; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_mesh_pending_finish"]=false; decode(changed,false);
-        changed=packet; changed["richards_nodes"][0]["state"]["richards_mesh_routed"]=true; decode(changed,false);
+        decode(packet, true);
+        auto changed = packet;
+        changed["schema"] = "openswmm.node-surface-water/5";
+        decode(changed, false);
+        changed = packet;
+        changed["lid_nodes"] = {0};
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"].erase(0);
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["node"] = 999;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_water"] = {0.};
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_water"][1] = -1.;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_pressure"][1] = nullptr;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["theta"] = {0.};
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["hydraulics"][2] = -1.;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_report"]["ok"] = false;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_mesh_pending_finish"] = false;
+        decode(changed, false);
+        changed = packet;
+        changed["richards_nodes"][0]["state"]["richards_mesh_routed"] = true;
+        decode(changed, false);
         return SWMM_OK;
     };
-    ASSERT_EQ(swmm_split_set_callback(net.value,callback,&check),0);
-    ASSERT_EQ(swmm_engine_start(surface.value,0),0);
-    ASSERT_EQ(swmm_engine_start(net.value,0),0);
-    double elapsed=0;
-    ASSERT_EQ(swmm_engine_step(net.value,&elapsed),0) << swmm_get_last_error_msg(surface.value);
+    ASSERT_EQ(swmm_split_set_callback(net.value, callback, &check), 0);
+    ASSERT_EQ(swmm_engine_start(surface.value, 0), 0);
+    ASSERT_EQ(swmm_engine_start(net.value, 0), 0);
+    double elapsed = 0;
+    ASSERT_EQ(swmm_engine_step(net.value, &elapsed), 0) << swmm_get_last_error_msg(surface.value);
     EXPECT_TRUE(check.checked);
-    ASSERT_EQ(swmm_engine_end(net.value),0);
+    ASSERT_EQ(swmm_engine_end(net.value), 0);
 }
 TEST_F(EngineComponent, ReviewedReturnPacketsRefuseInvalidInventoryBeforeSurfaceAdvancement) {
-    NativeEngine net,surface;
-    const auto deck=fs::path(SPLIT_WITNESS)/"ReviewedReturnOrdinary/model.inp";
-    ASSERT_EQ(swmm_engine_open(net.value,deck.string().c_str(),(directory/"net.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_engine_open(surface.value,deck.string().c_str(),(directory/"surface.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(net.value,SWMM_SPLIT_NETWORK),0);
-    ASSERT_EQ(swmm_split_configure(surface.value,SWMM_SPLIT_SURFACE),0);
-    fs::remove(directory/"surface.h5");
-    ASSERT_EQ(swmm_2d_set_results_file(surface.value,(directory/"surface.h5").string().c_str()),0);
-    ASSERT_EQ(swmm_engine_initialize(surface.value),0);
-    ASSERT_EQ(swmm_engine_initialize(net.value),0);
-    SWMM_SplitFrame geometry=nullptr;
-    ASSERT_EQ(swmm_split_geometry(surface.value,&geometry),0);
-    char* text=nullptr;
-    ASSERT_EQ(swmm_split_packet_encode(surface.value,geometry,&text),0);
-    const auto original=Json::parse(text); swmm_split_packet_free(text);
-    ASSERT_EQ(original["schema"],"openswmm.node-surface-water/7");
-    auto decode=[&](const Json& packet) {
-        const auto encoded=packet.dump(); auto sentinel=geometry;
-        EXPECT_NE(swmm_split_packet_decode(net.value,encoded.data(),encoded.size(),&sentinel),0);
-        EXPECT_EQ(sentinel,geometry);
+    NativeEngine net, surface;
+    const auto deck = fs::path(SPLIT_WITNESS) / "ReviewedReturnOrdinary/model.inp";
+    ASSERT_EQ(swmm_engine_open(net.value, deck.string().c_str(),
+                               (directory / "net.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_engine_open(surface.value, deck.string().c_str(),
+                               (directory / "surface.rpt").string().c_str(), nullptr, nullptr),
+              0);
+    ASSERT_EQ(swmm_split_configure(net.value, SWMM_SPLIT_NETWORK), 0);
+    ASSERT_EQ(swmm_split_configure(surface.value, SWMM_SPLIT_SURFACE), 0);
+    fs::remove(directory / "surface.h5");
+    ASSERT_EQ(swmm_2d_set_results_file(surface.value, (directory / "surface.h5").string().c_str()),
+              0);
+    ASSERT_EQ(swmm_engine_initialize(surface.value), 0);
+    ASSERT_EQ(swmm_engine_initialize(net.value), 0);
+    SWMM_SplitFrame geometry = nullptr;
+    ASSERT_EQ(swmm_split_geometry(surface.value, &geometry), 0);
+    char* text = nullptr;
+    ASSERT_EQ(swmm_split_packet_encode(surface.value, geometry, &text), 0);
+    const auto original = Json::parse(text);
+    swmm_split_packet_free(text);
+    ASSERT_EQ(original["schema"], "openswmm.node-surface-water/7");
+    auto decode = [&](const Json& packet) {
+        const auto encoded = packet.dump();
+        auto sentinel = geometry;
+        EXPECT_NE(swmm_split_packet_decode(net.value, encoded.data(), encoded.size(), &sentinel),
+                  0);
+        EXPECT_EQ(sentinel, geometry);
     };
-    auto changed=original; changed["schema"]="openswmm.node-surface-water/5"; decode(changed);
-    changed=original; changed["outfall_return_targets"]={-1}; decode(changed);
-    ASSERT_EQ(swmm_split_apply_geometry(net.value,geometry),0); swmm_split_frame_destroy(geometry);
-    struct Check { SWMM_Engine surface; bool checked=false; } check{surface.value};
-    const auto callback=[](SWMM_Engine engine,int phase,SWMM_SplitFrame request,SWMM_SplitFrame* reply,void* user) -> int {
-        auto& check=*static_cast<Check*>(user);
-        if (phase != SWMM_SPLIT_ADVANCE) return swmm_split_evaluate(check.surface,phase,request,reply);
-        check.checked=true;
-        char* text=nullptr;
-        EXPECT_EQ(swmm_split_packet_encode(engine,request,&text),0);
-        if (!text) return SWMM_ERR_BADPARAM;
-        const auto packet=Json::parse(text); swmm_split_packet_free(text);
-        for (const auto& volumes : {Json::array({0.}),Json::array({-1.,0.,0.}),Json::array({nullptr,0.,0.})}) {
-            auto bad=packet; bad["outfall_returns_ft3"]=volumes;
-            const auto encoded=bad.dump(); auto sentinel=request;
-            EXPECT_NE(swmm_split_packet_decode(check.surface,encoded.data(),encoded.size(),&sentinel),0);
-            EXPECT_EQ(sentinel,request);
+    auto changed = original;
+    changed["schema"] = "openswmm.node-surface-water/5";
+    decode(changed);
+    changed = original;
+    changed["outfall_return_targets"] = {-1};
+    decode(changed);
+    ASSERT_EQ(swmm_split_apply_geometry(net.value, geometry), 0);
+    swmm_split_frame_destroy(geometry);
+    struct Check {
+        SWMM_Engine surface;
+        bool checked = false;
+    } check{surface.value};
+    const auto callback = [](SWMM_Engine engine, int phase, SWMM_SplitFrame request,
+                             SWMM_SplitFrame* reply, void* user) -> int {
+        auto& check = *static_cast<Check*>(user);
+        if (phase != SWMM_SPLIT_ADVANCE)
+            return swmm_split_evaluate(check.surface, phase, request, reply);
+        check.checked = true;
+        char* text = nullptr;
+        EXPECT_EQ(swmm_split_packet_encode(engine, request, &text), 0);
+        if (!text)
+            return SWMM_ERR_BADPARAM;
+        const auto packet = Json::parse(text);
+        swmm_split_packet_free(text);
+        for (const auto& volumes :
+             {Json::array({0.}), Json::array({-1., 0., 0.}), Json::array({nullptr, 0., 0.})}) {
+            auto bad = packet;
+            bad["outfall_returns_ft3"] = volumes;
+            const auto encoded = bad.dump();
+            auto sentinel = request;
+            EXPECT_NE(
+                swmm_split_packet_decode(check.surface, encoded.data(), encoded.size(), &sentinel),
+                0);
+            EXPECT_EQ(sentinel, request);
         }
-        auto bad=packet;
-        const int unowned=swmm_subcatch_index(engine,"CATCH");
-        EXPECT_GE(unowned,0); if (unowned < 0) return SWMM_ERR_BADPARAM;
-        bad["outfall_returns_ft3"][unowned]=1.;
-        const auto encoded=bad.dump(); SWMM_SplitFrame tampered=nullptr;
-        const auto rc=swmm_split_packet_decode(check.surface,encoded.data(),encoded.size(),&tampered);
-        EXPECT_EQ(rc,0); if (rc) return rc;
-        const auto refused=swmm_split_evaluate(check.surface,phase,tampered,reply);
-        swmm_split_frame_destroy(tampered); EXPECT_NE(refused,0);
+        auto bad = packet;
+        const int unowned = swmm_subcatch_index(engine, "CATCH");
+        EXPECT_GE(unowned, 0);
+        if (unowned < 0)
+            return SWMM_ERR_BADPARAM;
+        bad["outfall_returns_ft3"][unowned] = 1.;
+        const auto encoded = bad.dump();
+        SWMM_SplitFrame tampered = nullptr;
+        const auto rc =
+            swmm_split_packet_decode(check.surface, encoded.data(), encoded.size(), &tampered);
+        EXPECT_EQ(rc, 0);
+        if (rc)
+            return rc;
+        const auto refused = swmm_split_evaluate(check.surface, phase, tampered, reply);
+        swmm_split_frame_destroy(tampered);
+        EXPECT_NE(refused, 0);
         return refused;
     };
-    ASSERT_EQ(swmm_split_set_callback(net.value,callback,&check),0);
-    ASSERT_EQ(swmm_engine_start(surface.value,0),0);
-    ASSERT_EQ(swmm_engine_start(net.value,0),0);
-    double elapsed=0,time=-1;
-    EXPECT_NE(swmm_engine_step(net.value,&elapsed),0);
+    ASSERT_EQ(swmm_split_set_callback(net.value, callback, &check), 0);
+    ASSERT_EQ(swmm_engine_start(surface.value, 0), 0);
+    ASSERT_EQ(swmm_engine_start(net.value, 0), 0);
+    double elapsed = 0, time = -1;
+    EXPECT_NE(swmm_engine_step(net.value, &elapsed), 0);
     EXPECT_TRUE(check.checked);
-    ASSERT_EQ(swmm_engine_get_elapsed_seconds(surface.value,&time),0); EXPECT_EQ(time,0);
-    ASSERT_EQ(swmm_engine_get_elapsed_seconds(net.value,&time),0); EXPECT_EQ(time,0);
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(surface.value, &time), 0);
+    EXPECT_EQ(time, 0);
+    ASSERT_EQ(swmm_engine_get_elapsed_seconds(net.value, &time), 0);
+    EXPECT_EQ(time, 0);
 }
 TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
     const fs::path cases = SPLIT_WITNESS;
-    for (const char* name : {"DrainingSurface", "SpillingNetwork", "PerStepExchange",
-                             "VariableRouting", "DrySurface", "CompetingWithdrawals",
-                             "BinaryOnlyRetainsReportFlushes", "EarlyFinishFlushesPendingBatch",
-                             "OutfallDischarge", "OutfallWithdrawal", "OutfallFlapGate", "OutfallOverlap",
-                             "OutfallSpreadRelaxation", "OutfallMixedNodeExchange", "OutfallBinaryOnly", "OutfallEarlyFinish",
-                             "WatershedRainfall", "WatershedOutfall", "ConventionalLidOutlets", "ConventionalLidOverflow", "ConventionalLidCascade",
-                             "WatershedBinaryOnly", "WatershedEarlyFinish",
-                             "GroundwaterNodeGain", "GroundwaterNodeLoss", "GroundwaterIndependent", "GroundwaterEnslaved", "GroundwaterSigma", "GroundwaterLinkGain", "GroundwaterLinkLoss", "GroundwaterCompetingLinks", "GroundwaterOneWayLoss", "GroundwaterUSUnits", "GroundwaterBinaryOnly", "GroundwaterEarlyFinish", "GroundwaterWatershed",
-                             "ReviewedFootprintSources", "ReviewedFootprintIndependent", "ReviewedFootprintEnslaved", "ReviewedFootprintSigma", "ReviewedFootprintEvaporation", "ReviewedFootprintEarlyFinish",
-                             "JointRichardsClosedShared", "JointRichardsClosedIndependent", "JointRichardsEnslavedShared", "JointRichardsEnslavedIndependent", "JointRichardsSigmaShared", "JointRichardsSigmaIndependent", "JointRichardsCompeting", "JointRichardsAquiferGain", "JointRichardsEarlyFinish",
-                             "ReviewedMappedDischarge", "ReviewedMappedWithdrawal", "ReviewedMappedFlapGate", "ReviewedMappedRichards", "ReviewedReturnClosedShared", "ReviewedReturnIndependent", "ReviewedReturnEnslaved", "ReviewedReturnSigma", "ReviewedReturnRichards", "ReviewedReturnEarlyFinish", "ReviewedReturnMixedMapped", "ReviewedReturnOrdinary",
-                             "ClassicalMeshReviewedShared", "ClassicalMeshReviewedIndependent", "ClassicalMeshReviewedEnslaved", "ClassicalMeshReviewedSigma", "ClassicalMeshReviewedGain", "ClassicalMeshOrdinarySources", "ClassicalMeshConduit", "ClassicalSealedReviewed", "ClassicalCurrentReviewed", "ClassicalMixedRichards", "ClassicalMixedRichardsSigma", "ClassicalEarlyFinish", "ReviewedBedLossShared", "ReviewedBedLossIndependent", "ReviewedBedGainIndependent", "ReviewedBedEnslaved", "ReviewedBedSigma", "ReviewedConduitLoss", "ReviewedConduitGain", "ReviewedConduitOneWay", "ReviewedBedConduit", "ReviewedClassicalBedConduit", "ReviewedRichardsBedConduit", "ReviewedBedsEarlyFinish", "ReviewedBedWithoutSurfacePort", "ReviewedConduitWithoutSurfacePort"}) {
+    for (const char* name : {"DrainingSurface",
+                             "SpillingNetwork",
+                             "PerStepExchange",
+                             "VariableRouting",
+                             "DrySurface",
+                             "CompetingWithdrawals",
+                             "BinaryOnlyRetainsReportFlushes",
+                             "EarlyFinishFlushesPendingBatch",
+                             "OutfallDischarge",
+                             "OutfallWithdrawal",
+                             "OutfallFlapGate",
+                             "OutfallOverlap",
+                             "OutfallSpreadRelaxation",
+                             "OutfallMixedNodeExchange",
+                             "OutfallBinaryOnly",
+                             "OutfallEarlyFinish",
+                             "WatershedRainfall",
+                             "WatershedOutfall",
+                             "ConventionalLidOutlets",
+                             "ConventionalLidOverflow",
+                             "ConventionalLidCascade",
+                             "WatershedBinaryOnly",
+                             "WatershedEarlyFinish",
+                             "GroundwaterNodeGain",
+                             "GroundwaterNodeLoss",
+                             "GroundwaterIndependent",
+                             "GroundwaterEnslaved",
+                             "GroundwaterSigma",
+                             "GroundwaterLinkGain",
+                             "GroundwaterLinkLoss",
+                             "GroundwaterCompetingLinks",
+                             "GroundwaterOneWayLoss",
+                             "GroundwaterUSUnits",
+                             "GroundwaterBinaryOnly",
+                             "GroundwaterEarlyFinish",
+                             "GroundwaterWatershed",
+                             "ReviewedFootprintSources",
+                             "ReviewedFootprintIndependent",
+                             "ReviewedFootprintEnslaved",
+                             "ReviewedFootprintSigma",
+                             "ReviewedFootprintEvaporation",
+                             "ReviewedFootprintEarlyFinish",
+                             "JointRichardsClosedShared",
+                             "JointRichardsClosedIndependent",
+                             "JointRichardsEnslavedShared",
+                             "JointRichardsEnslavedIndependent",
+                             "JointRichardsSigmaShared",
+                             "JointRichardsSigmaIndependent",
+                             "JointRichardsCompeting",
+                             "JointRichardsAquiferGain",
+                             "JointRichardsEarlyFinish",
+                             "ReviewedMappedDischarge",
+                             "ReviewedMappedWithdrawal",
+                             "ReviewedMappedFlapGate",
+                             "ReviewedMappedRichards",
+                             "ReviewedReturnClosedShared",
+                             "ReviewedReturnIndependent",
+                             "ReviewedReturnEnslaved",
+                             "ReviewedReturnSigma",
+                             "ReviewedReturnRichards",
+                             "ReviewedReturnEarlyFinish",
+                             "ReviewedReturnMixedMapped",
+                             "ReviewedReturnOrdinary",
+                             "ClassicalMeshReviewedShared",
+                             "ClassicalMeshReviewedIndependent",
+                             "ClassicalMeshReviewedEnslaved",
+                             "ClassicalMeshReviewedSigma",
+                             "ClassicalMeshReviewedGain",
+                             "ClassicalMeshOrdinarySources",
+                             "ClassicalMeshConduit",
+                             "ClassicalSealedReviewed",
+                             "ClassicalCurrentReviewed",
+                             "ClassicalMixedRichards",
+                             "ClassicalMixedRichardsSigma",
+                             "ClassicalEarlyFinish",
+                             "ReviewedBedLossShared",
+                             "ReviewedBedLossIndependent",
+                             "ReviewedBedGainIndependent",
+                             "ReviewedBedEnslaved",
+                             "ReviewedBedSigma",
+                             "ReviewedConduitLoss",
+                             "ReviewedConduitGain",
+                             "ReviewedConduitOneWay",
+                             "ReviewedBedConduit",
+                             "ReviewedClassicalBedConduit",
+                             "ReviewedRichardsBedConduit",
+                             "ReviewedBedsEarlyFinish",
+                             "ReviewedBedWithoutSurfacePort",
+                             "ReviewedConduitWithoutSurfacePort"}) {
         SCOPED_TRACE(name);
         const auto work = directory / "wrapped" / name;
         const auto witness = cases / name;
         auto network = library.create();
         auto surface = library.create();
         ASSERT_TRUE(network && surface);
-        const bool mesh = std::string_view(name) != "BinaryOnlyRetainsReportFlushes" && std::string_view(name) != "OutfallBinaryOnly" && std::string_view(name) != "WatershedBinaryOnly" && std::string_view(name) != "GroundwaterBinaryOnly";
-        const bool early = std::string_view(name) == "EarlyFinishFlushesPendingBatch" || std::string_view(name) == "OutfallEarlyFinish" || std::string_view(name) == "WatershedEarlyFinish" || std::string_view(name) == "GroundwaterEarlyFinish" || std::string_view(name) == "ReviewedFootprintEarlyFinish" || std::string_view(name) == "JointRichardsEarlyFinish" || std::string_view(name) == "ReviewedReturnEarlyFinish" || std::string_view(name) == "ClassicalEarlyFinish" || std::string_view(name) == "ReviewedBedsEarlyFinish";
-        Json netConfig = {{"schema","openswmm.component/1"},{"role","split_network"},
-                          {"model",(witness / "model.inp").string()},
-                          {"output_directory",(work / "network").string()}};
+        const bool mesh = std::string_view(name) != "BinaryOnlyRetainsReportFlushes" &&
+                          std::string_view(name) != "OutfallBinaryOnly" &&
+                          std::string_view(name) != "WatershedBinaryOnly" &&
+                          std::string_view(name) != "GroundwaterBinaryOnly";
+        const bool early = std::string_view(name) == "EarlyFinishFlushesPendingBatch" ||
+                           std::string_view(name) == "OutfallEarlyFinish" ||
+                           std::string_view(name) == "WatershedEarlyFinish" ||
+                           std::string_view(name) == "GroundwaterEarlyFinish" ||
+                           std::string_view(name) == "ReviewedFootprintEarlyFinish" ||
+                           std::string_view(name) == "JointRichardsEarlyFinish" ||
+                           std::string_view(name) == "ReviewedReturnEarlyFinish" ||
+                           std::string_view(name) == "ClassicalEarlyFinish" ||
+                           std::string_view(name) == "ReviewedBedsEarlyFinish";
+        Json netConfig = {{"schema", "openswmm.component/1"},
+                          {"role", "split_network"},
+                          {"model", (witness / "model.inp").string()},
+                          {"output_directory", (work / "network").string()}};
         auto surfaceConfig = netConfig;
         surfaceConfig["role"] = "integrated2d";
         surfaceConfig["surface_results"] = mesh;
         surfaceConfig["output_directory"] = (work / "surface").string();
-        argument(*network,"hydrocouple.instance_id",{{"values",{"network"}}});
-        argument(*surface,"hydrocouple.instance_id",{{"values",{"surface"}}});
-        argument(*network,"configuration",netConfig);
-        argument(*surface,"configuration",surfaceConfig);
+        argument(*network, "hydrocouple.instance_id", {{"values", {"network"}}});
+        argument(*surface, "hydrocouple.instance_id", {{"values", {"surface"}}});
+        argument(*network, "configuration", netConfig);
+        argument(*surface, "configuration", surfaceConfig);
         network->initialize();
         surface->initialize();
-        ASSERT_EQ(network->status(),Status::Initialized) << diagnostics(*network);
-        ASSERT_EQ(surface->status(),Status::Initialized) << diagnostics(*surface);
-        ASSERT_EQ(network->inputs().size(),1u);
-        auto* provider = output(*surface,"openswmm.node-surface-water.v1");
-        ASSERT_NE(provider,nullptr);
+        ASSERT_EQ(network->status(), Status::Initialized) << diagnostics(*network);
+        ASSERT_EQ(surface->status(), Status::Initialized) << diagnostics(*surface);
+        ASSERT_EQ(network->inputs().size(), 1u);
+        auto* provider = output(*surface, "openswmm.node-surface-water.v1");
+        ASSERT_NE(provider, nullptr);
         provider->addConsumer(network->inputs().front());
         ASSERT_TRUE(network->validate().empty()) << diagnostics(*network);
         ASSERT_TRUE(surface->validate().empty()) << diagnostics(*surface);
         network->prepare();
         surface->prepare();
-        ASSERT_EQ(surface->status(),Status::Updated) << diagnostics(*surface);
-        ASSERT_EQ(network->status(),Status::Updated) << diagnostics(*network);
+        ASSERT_EQ(surface->status(), Status::Updated) << diagnostics(*surface);
+        ASSERT_EQ(network->status(), Status::Updated) << diagnostics(*network);
         std::ifstream ledger(witness / "native-ledger.txt");
         ASSERT_TRUE(ledger.is_open());
         std::ifstream ground(witness / "native-groundwater-ledger.txt");
@@ -1110,24 +1429,24 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
             const auto packet = Json::parse(read<std::string>(provider));
             int phase;
             ASSERT_TRUE(ledger >> phase);
-            ASSERT_EQ(packet.at("phase"),phase);
-            for (const char* key : {"init_storage", "final_storage", "rainfall_in", "coupling_1d_to_2d_in",
-                                    "coupling_2d_to_1d_out", "outfall_in", "outfall_out", "boundary_in",
-                                    "boundary_out", "evap_out"}) {
+            ASSERT_EQ(packet.at("phase"), phase);
+            for (const char* key : {"init_storage", "final_storage", "rainfall_in",
+                                    "coupling_1d_to_2d_in", "coupling_2d_to_1d_out", "outfall_in",
+                                    "outfall_out", "boundary_in", "boundary_out", "evap_out"}) {
                 double expected;
                 ASSERT_TRUE(ledger >> expected);
-                EXPECT_EQ(packet.at("balance").at(key).get<double>(),expected) << key;
+                EXPECT_EQ(packet.at("balance").at(key).get<double>(), expected) << key;
             }
             if (ground.is_open()) {
-                int gwPhase=-1;
+                int gwPhase = -1;
                 ASSERT_TRUE(ground >> gwPhase);
-                EXPECT_EQ(gwPhase,phase);
-                const auto values=packet.at("groundwater_ledger_m3").get<std::vector<double>>();
-                ASSERT_EQ(values.size(),16u);
+                EXPECT_EQ(gwPhase, phase);
+                const auto values = packet.at("groundwater_ledger_m3").get<std::vector<double>>();
+                ASSERT_EQ(values.size(), 16u);
                 for (double actual : values) {
-                    double expected=0;
+                    double expected = 0;
                     ASSERT_TRUE(ground >> expected);
-                    EXPECT_EQ(expected,actual);
+                    EXPECT_EQ(expected, actual);
                 }
             }
         };
@@ -1135,12 +1454,14 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
         while (network->status() == Status::Updated && ++sweeps < 10000) {
             surface->update();
             network->update();
-            ASSERT_NE(network->status(),Status::Failed) << diagnostics(*network);
+            ASSERT_NE(network->status(), Status::Failed) << diagnostics(*network);
             ASSERT_NO_FATAL_FAILURE(checkLedger());
-            if (early) break;
+            if (early)
+                break;
         }
-        ASSERT_LT(sweeps,10000);
-        if (!early) ASSERT_EQ(network->status(),Status::Done);
+        ASSERT_LT(sweeps, 10000);
+        if (!early)
+            ASSERT_EQ(network->status(), Status::Done);
         if (early) {
             surface->finish();
             ASSERT_NO_FATAL_FAILURE(checkLedger());
@@ -1151,76 +1472,125 @@ TEST_F(EngineComponent, SplitWaterComponentsMatchIndependentNativeRuns) {
         }
         std::string extra;
         EXPECT_FALSE(ledger >> extra);
-        ASSERT_EQ(network->status(),Status::Finished) << diagnostics(*network);
-        ASSERT_EQ(surface->status(),Status::Finished) << diagnostics(*surface);
+        ASSERT_EQ(network->status(), Status::Finished) << diagnostics(*network);
+        ASSERT_EQ(surface->status(), Status::Finished) << diagnostics(*surface);
         ASSERT_TRUE(fs::exists(witness / "native.out"));
-        EXPECT_EQ(bytes(work / "network/model.out"),bytes(witness / "native.out"));
-        EXPECT_EQ(fs::exists(work / "surface/model.2d.h5"),mesh);
+        EXPECT_EQ(bytes(work / "network/model.out"), bytes(witness / "native.out"));
+        EXPECT_EQ(fs::exists(work / "surface/model.2d.h5"), mesh);
         EXPECT_FALSE(fs::exists(work / "surface/model.out"));
         EXPECT_FALSE(fs::exists(work / "network/model.2d.h5"));
         EXPECT_TRUE(provider->removeConsumer(network->inputs().front()));
     }
 }
 TEST_F(EngineComponent, ClassicalPacketsValidateFormulationHistoryAndRichardsSubset) {
-  for (const auto* profile : {"ClassicalMixedRichards", "ReviewedRichardsBedConduit"}) {
-    NativeEngine net,surface;
-    const auto deck=fs::path(SPLIT_WITNESS)/profile/"model.inp";
-    ASSERT_EQ(swmm_engine_open(net.value,deck.string().c_str(),(directory/"net.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_engine_open(surface.value,deck.string().c_str(),(directory/"surface.rpt").string().c_str(),nullptr,nullptr),0);
-    ASSERT_EQ(swmm_split_configure(net.value,SWMM_SPLIT_NETWORK),0);
-    ASSERT_EQ(swmm_split_configure(surface.value,SWMM_SPLIT_SURFACE),0);
-    fs::remove(directory/"surface.h5");
-    ASSERT_EQ(swmm_2d_set_results_file(surface.value,(directory/"surface.h5").string().c_str()),0);
-    ASSERT_EQ(swmm_engine_initialize(surface.value),0);
-    ASSERT_EQ(swmm_engine_initialize(net.value),0);
-    SWMM_SplitFrame geometry=nullptr;
-    ASSERT_EQ(swmm_split_geometry(surface.value,&geometry),0);
-    ASSERT_EQ(swmm_split_apply_geometry(net.value,geometry),0); swmm_split_frame_destroy(geometry);
-    struct Check { SWMM_Engine surface; fs::path path; bool checked=false; } check{surface.value,directory};
-    const auto callback=[](SWMM_Engine engine,int phase,SWMM_SplitFrame request,SWMM_SplitFrame* reply,void* user) -> int {
-        auto& check=*static_cast<Check*>(user);
-        const int rc=swmm_split_evaluate(check.surface,phase,request,reply);
-        if (rc || phase != SWMM_SPLIT_LID_ACCEPT || check.checked) return rc;
-        check.checked=true;
-        char* text=nullptr;
-        EXPECT_EQ(swmm_split_packet_encode(engine,*reply,&text),0); if (!text) return SWMM_ERR_BADPARAM;
-        const auto packet=Json::parse(text); swmm_split_packet_free(text);
-        const bool paired=packet.at("schema") == "openswmm.node-surface-water/9";
-        EXPECT_TRUE(paired || packet.at("schema") == "openswmm.node-surface-water/8");
-        std::ofstream(check.path/"accepted-lid-packet.json") << packet.dump(2);
-        int classical=-1;
-        for (size_t i=0; i<packet.at("lid_states").size(); ++i)
-            if (!packet["lid_states"][i]["richards"].get<bool>()) classical=int(i);
-        EXPECT_GE(classical,0); if (classical < 0) return SWMM_ERR_BADPARAM;
-        EXPECT_GT(packet["lid_states"][classical]["state"]["captured_flow"].get<double>(),0);
-        auto decode=[&](const Json& item,bool valid) {
-            const auto encoded=item.dump(); auto decoded=*reply;
-            const int result=swmm_split_packet_decode(engine,encoded.data(),encoded.size(),&decoded);
-            if (valid) { EXPECT_EQ(result,0) << swmm_get_last_error_msg(engine); if (!result) swmm_split_frame_destroy(decoded); }
-            else { EXPECT_NE(result,0); EXPECT_EQ(decoded,*reply); }
+    for (const auto* profile : {"ClassicalMixedRichards", "ReviewedRichardsBedConduit"}) {
+        NativeEngine net, surface;
+        const auto deck = fs::path(SPLIT_WITNESS) / profile / "model.inp";
+        ASSERT_EQ(swmm_engine_open(net.value, deck.string().c_str(),
+                                   (directory / "net.rpt").string().c_str(), nullptr, nullptr),
+                  0);
+        ASSERT_EQ(swmm_engine_open(surface.value, deck.string().c_str(),
+                                   (directory / "surface.rpt").string().c_str(), nullptr, nullptr),
+                  0);
+        ASSERT_EQ(swmm_split_configure(net.value, SWMM_SPLIT_NETWORK), 0);
+        ASSERT_EQ(swmm_split_configure(surface.value, SWMM_SPLIT_SURFACE), 0);
+        fs::remove(directory / "surface.h5");
+        ASSERT_EQ(
+            swmm_2d_set_results_file(surface.value, (directory / "surface.h5").string().c_str()),
+            0);
+        ASSERT_EQ(swmm_engine_initialize(surface.value), 0);
+        ASSERT_EQ(swmm_engine_initialize(net.value), 0);
+        SWMM_SplitFrame geometry = nullptr;
+        ASSERT_EQ(swmm_split_geometry(surface.value, &geometry), 0);
+        ASSERT_EQ(swmm_split_apply_geometry(net.value, geometry), 0);
+        swmm_split_frame_destroy(geometry);
+        struct Check {
+            SWMM_Engine surface;
+            fs::path path;
+            bool checked = false;
+        } check{surface.value, directory};
+        const auto callback = [](SWMM_Engine engine, int phase, SWMM_SplitFrame request,
+                                 SWMM_SplitFrame* reply, void* user) -> int {
+            auto& check = *static_cast<Check*>(user);
+            const int rc = swmm_split_evaluate(check.surface, phase, request, reply);
+            if (rc || phase != SWMM_SPLIT_LID_ACCEPT || check.checked)
+                return rc;
+            check.checked = true;
+            char* text = nullptr;
+            EXPECT_EQ(swmm_split_packet_encode(engine, *reply, &text), 0);
+            if (!text)
+                return SWMM_ERR_BADPARAM;
+            const auto packet = Json::parse(text);
+            swmm_split_packet_free(text);
+            const bool paired = packet.at("schema") == "openswmm.node-surface-water/9";
+            EXPECT_TRUE(paired || packet.at("schema") == "openswmm.node-surface-water/8");
+            std::ofstream(check.path / "accepted-lid-packet.json") << packet.dump(2);
+            int classical = -1;
+            for (size_t i = 0; i < packet.at("lid_states").size(); ++i)
+                if (!packet["lid_states"][i]["richards"].get<bool>())
+                    classical = int(i);
+            EXPECT_GE(classical, 0);
+            if (classical < 0)
+                return SWMM_ERR_BADPARAM;
+            EXPECT_GT(packet["lid_states"][classical]["state"]["captured_flow"].get<double>(), 0);
+            auto decode = [&](const Json& item, bool valid) {
+                const auto encoded = item.dump();
+                auto decoded = *reply;
+                const int result =
+                    swmm_split_packet_decode(engine, encoded.data(), encoded.size(), &decoded);
+                if (valid) {
+                    EXPECT_EQ(result, 0) << swmm_get_last_error_msg(engine);
+                    if (!result)
+                        swmm_split_frame_destroy(decoded);
+                } else {
+                    EXPECT_NE(result, 0);
+                    EXPECT_EQ(decoded, *reply);
+                }
+            };
+            decode(packet, true);
+            auto changed = packet;
+            changed["schema"] = "openswmm.node-surface-water/7";
+            decode(changed, false);
+            changed = packet;
+            changed["mesh_richards_nodes"] = Json::array();
+            decode(changed, false);
+            changed = packet;
+            changed["lid_states"][classical]["richards"] = true;
+            decode(changed, false);
+            changed = packet;
+            changed["lid_states"][classical]["state"]["green_ampt"]["F"] = nullptr;
+            decode(changed, false);
+            changed = packet;
+            changed["lid_states"][classical]["state"]["infiltration_cell"] = 999;
+            decode(changed, false);
+            changed = packet;
+            changed["lid_states"][classical]["theta"] = {0.};
+            decode(changed, false);
+            changed = packet;
+            changed["lid_states"][classical]["state"]["richards_water"] = {1.};
+            decode(changed, false);
+            if (paired) {
+                changed = packet;
+                changed["schema"] = "openswmm.node-surface-water/8";
+                decode(changed, false);
+                changed = packet;
+                changed.erase("groundwater_conduits");
+                decode(changed, false);
+                changed = packet;
+                changed["groundwater_conduits"]["gain_limit_cfs"][0] = -1.;
+                decode(changed, false);
+            }
+            return SWMM_OK;
         };
-        decode(packet,true);
-        auto changed=packet; changed["schema"]="openswmm.node-surface-water/7"; decode(changed,false);
-        changed=packet; changed["mesh_richards_nodes"]=Json::array(); decode(changed,false);
-        changed=packet; changed["lid_states"][classical]["richards"]=true; decode(changed,false);
-        changed=packet; changed["lid_states"][classical]["state"]["green_ampt"]["F"]=nullptr; decode(changed,false);
-        changed=packet; changed["lid_states"][classical]["state"]["infiltration_cell"]=999; decode(changed,false);
-        changed=packet; changed["lid_states"][classical]["theta"]={0.}; decode(changed,false);
-        changed=packet; changed["lid_states"][classical]["state"]["richards_water"]={1.}; decode(changed,false);
-        if (paired) {
-            changed=packet; changed["schema"]="openswmm.node-surface-water/8"; decode(changed,false);
-            changed=packet; changed.erase("groundwater_conduits"); decode(changed,false);
-            changed=packet; changed["groundwater_conduits"]["gain_limit_cfs"][0]=-1.; decode(changed,false);
-        }
-        return SWMM_OK;
-    };
-    ASSERT_EQ(swmm_split_set_callback(net.value,callback,&check),0);
-    ASSERT_EQ(swmm_engine_start(surface.value,0),0); ASSERT_EQ(swmm_engine_start(net.value,0),0);
-    double elapsed=0;
-    ASSERT_EQ(swmm_engine_step(net.value,&elapsed),0) << swmm_get_last_error_msg(surface.value);
-    EXPECT_TRUE(check.checked);
-    ASSERT_EQ(swmm_engine_end(net.value),0);
-  }
+        ASSERT_EQ(swmm_split_set_callback(net.value, callback, &check), 0);
+        ASSERT_EQ(swmm_engine_start(surface.value, 0), 0);
+        ASSERT_EQ(swmm_engine_start(net.value, 0), 0);
+        double elapsed = 0;
+        ASSERT_EQ(swmm_engine_step(net.value, &elapsed), 0)
+            << swmm_get_last_error_msg(surface.value);
+        EXPECT_TRUE(check.checked);
+        ASSERT_EQ(swmm_engine_end(net.value), 0);
+    }
 }
 TEST_F(EngineComponent, CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination) {
     surfaceWaterModel(model);
@@ -1254,12 +1624,15 @@ TEST_F(EngineComponent, SurfaceInstancesKeepIndependentResultsWhenAdvancedTogeth
     int guard = 0;
     while ((component->status() == Status::Updated || peer->status() == Status::Updated) &&
            ++guard < 10000) {
-        if (component->status() == Status::Updated) component->update();
-        if (peer->status() == Status::Updated) peer->update();
+        if (component->status() == Status::Updated)
+            component->update();
+        if (peer->status() == Status::Updated)
+            peer->update();
     }
     ASSERT_EQ(component->status(), Status::Done) << diagnostics(*component);
     ASSERT_EQ(peer->status(), Status::Done) << diagnostics(*peer);
-    component->finish(); peer->finish();
+    component->finish();
+    peer->finish();
     ASSERT_EQ(component->status(), Status::Finished);
     ASSERT_EQ(peer->status(), Status::Finished);
     EXPECT_EQ(bytes(directory / "wrapped/model.out"), bytes(directory / "peer/model.out"));
@@ -1270,7 +1643,8 @@ TEST_F(EngineComponent, SurfaceInstancesKeepIndependentResultsWhenAdvancedTogeth
 
 TEST_F(EngineComponent, CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange) {
     surfaceWaterModel(model);
-    std::ofstream(model, std::ios::app) << "\n[STORAGE]\nLake -10 5 2 FUNCTIONAL 0 0 100 0 0\n[2D_TRIANGLE_NODE_MAP]\n0 Lake .6 .01\n";
+    std::ofstream(model, std::ios::app)
+        << "\n[STORAGE]\nLake -10 5 2 FUNCTIONAL 0 0 100 0 0\n[2D_TRIANGLE_NODE_MAP]\n0 Lake .6 .01\n";
     runUncoupledAndCompare(true, true);
 }
 
@@ -1323,7 +1697,8 @@ BED_HEAT_MODEL NONE
 EVAPORATION NO
 [2D_VERTICES]
 )";
-        if (meshSi) f << ";; UNITS: SI (m)\n";
+        if (meshSi)
+            f << ";; UNITS: SI (m)\n";
         f << R"(0 0 0
 10 0 0
 10 10 0
@@ -1343,9 +1718,11 @@ SOIL_CHAR GARDNER
 CLOSURE CLOSED_FORM
 NODE_ENROLMENT ROWS
 GW_ET NONE
-GW_CLOCK )" << (independent ? "INDEPENDENT" : "SHARED") << "\nGW_BASE_STEP .125\nGW_MAX_STEP 8\nLINK_SEEPAGE "
-          << (link ? "TWO_WAY" : "NONE") << "\n[2D_AQUIFER]\n* 36 8 .45 .1 2 HG0 "
-          << (exchange == Exchange::LinkOut ? 6 : 2) << R"(
+GW_CLOCK )"
+          << (independent ? "INDEPENDENT" : "SHARED")
+          << "\nGW_BASE_STEP .125\nGW_MAX_STEP 8\nLINK_SEEPAGE " << (link ? "TWO_WAY" : "NONE")
+          << "\n[2D_AQUIFER]\n* 36 8 .45 .1 2 HG0 " << (exchange == Exchange::LinkOut ? 6 : 2)
+          << R"(
 [GW_TRANSPORT_OPTIONS]
 TRANSPORT_POLLUTANTS NO
 TRANSPORT_MSX NO
@@ -1382,21 +1759,25 @@ THERMAL_MODEL WATER_ONLY
         ASSERT_NO_FATAL_FAILURE(ready());
         const auto meta = Json::parse(read<std::string>(output(*component, "model_metadata")));
         EXPECT_EQ(meta["execution_profile"], "native_cpu_integrated_water/1");
-        EXPECT_EQ(meta["explicit_groundwater"]["options"]["GW_CLOCK"], independent ? "INDEPENDENT" : "SHARED");
+        EXPECT_EQ(meta["explicit_groundwater"]["options"]["GW_CLOCK"],
+                  independent ? "INDEPENDENT" : "SHARED");
         double elapsed = 0;
         int guard = 0;
         do {
-            ASSERT_EQ(swmm_engine_step(native.value, &elapsed), 0) << swmm_get_last_error_msg(native.value);
+            ASSERT_EQ(swmm_engine_step(native.value, &elapsed), 0)
+                << swmm_get_last_error_msg(native.value);
             component->update();
             ASSERT_NE(component->status(), Status::Failed) << diagnostics(*component);
             ASSERT_EQ(component->status() == Status::Done, elapsed == 0);
         } while (elapsed > 0 && ++guard < 10000);
         ASSERT_LT(guard, 10000);
         Json ledger;
-        for (const auto& term : std::vector<std::pair<const char*, int>>{
-                 {"initial", SWMM_GW2D_LED_INIT_STORAGE}, {"storage", SWMM_GW2D_LED_STORAGE},
-                 {"infiltration", SWMM_GW2D_LED_INFIL_IN}, {"node", SWMM_GW2D_LED_NODE},
-                 {"link", SWMM_GW2D_LED_LINK}}) {
+        for (const auto& term :
+             std::vector<std::pair<const char*, int>>{{"initial", SWMM_GW2D_LED_INIT_STORAGE},
+                                                      {"storage", SWMM_GW2D_LED_STORAGE},
+                                                      {"infiltration", SWMM_GW2D_LED_INFIL_IN},
+                                                      {"node", SWMM_GW2D_LED_NODE},
+                                                      {"link", SWMM_GW2D_LED_LINK}}) {
             double value = 0;
             ASSERT_EQ(swmm_gw2d_get_ledger(native.value, term.second, &value), 0);
             ledger[term.first] = value;
@@ -1406,11 +1787,16 @@ THERMAL_MODEL WATER_ONLY
         ledger["residual_m3"] = residual;
         const double storage = ledger["storage"], initial = ledger["initial"];
         EXPECT_GT(ledger["infiltration"].get<double>(), 0);
-        EXPECT_LE(std::abs(residual), 1e-10 * std::max({1.0, std::abs(storage), std::abs(initial)}) + 1e-12);
-        if (exchange == Exchange::NodeIn) EXPECT_LT(ledger["node"].get<double>(), 0);
-        if (exchange == Exchange::NodeOut) EXPECT_GT(ledger["node"].get<double>(), 0);
-        if (exchange == Exchange::LinkIn) EXPECT_GT(ledger["link"].get<double>(), 0);
-        if (exchange == Exchange::LinkOut) EXPECT_LT(ledger["link"].get<double>(), 0);
+        EXPECT_LE(std::abs(residual),
+                  1e-10 * std::max({1.0, std::abs(storage), std::abs(initial)}) + 1e-12);
+        if (exchange == Exchange::NodeIn)
+            EXPECT_LT(ledger["node"].get<double>(), 0);
+        if (exchange == Exchange::NodeOut)
+            EXPECT_GT(ledger["node"].get<double>(), 0);
+        if (exchange == Exchange::LinkIn)
+            EXPECT_GT(ledger["link"].get<double>(), 0);
+        if (exchange == Exchange::LinkOut)
+            EXPECT_LT(ledger["link"].get<double>(), 0);
         std::ofstream(directory / "native-groundwater-ledger.json") << ledger.dump(2);
         ASSERT_EQ(swmm_engine_end(native.value), 0);
         ASSERT_EQ(swmm_engine_report(native.value), 0);
@@ -1420,29 +1806,55 @@ THERMAL_MODEL WATER_ONLY
         EXPECT_EQ(bytes(directory / "native/model.out"), bytes(directory / "wrapped/model.out"));
         EXPECT_EQ(bytes(sentinel), "preserve authored output");
         SWMM_Output2D result = nullptr;
-        ASSERT_EQ(swmm_output2d_open((directory / "wrapped/model.2d.h5").string().c_str(), &result), 0);
+        ASSERT_EQ(swmm_output2d_open((directory / "wrapped/model.2d.h5").string().c_str(), &result),
+                  0);
         std::unique_ptr<void, decltype(&swmm_output2d_close)> handle(result, swmm_output2d_close);
         int rank = 0, integer = 0;
         uint64_t shape[8]{}, unlimited = 0;
-        ASSERT_EQ(swmm_output2d_shape(result, "Mesh2_face_gw_hg", &rank, shape, &integer, &unlimited), 0);
+        ASSERT_EQ(
+            swmm_output2d_shape(result, "Mesh2_face_gw_hg", &rank, shape, &integer, &unlimited), 0);
         ASSERT_EQ(rank, 2);
         ASSERT_GT(shape[0], 1u);
         ASSERT_EQ(shape[1], 3u);
     }
 };
 }
-TEST_F(GroundwaterComponent, GroundwaterSharedRecharge) { runGroundwater(false); }
-TEST_F(GroundwaterComponent, GroundwaterIndependentRecharge) { runGroundwater(true); }
-TEST_F(GroundwaterComponent, GroundwaterSharedNodeIn) { runGroundwater(false, Exchange::NodeIn); }
-TEST_F(GroundwaterComponent, GroundwaterIndependentNodeIn) { runGroundwater(true, Exchange::NodeIn); }
-TEST_F(GroundwaterComponent, GroundwaterSharedNodeOut) { runGroundwater(false, Exchange::NodeOut); }
-TEST_F(GroundwaterComponent, GroundwaterIndependentNodeOut) { runGroundwater(true, Exchange::NodeOut); }
-TEST_F(GroundwaterComponent, GroundwaterSharedLinkIn) { runGroundwater(false, Exchange::LinkIn); }
-TEST_F(GroundwaterComponent, GroundwaterIndependentLinkIn) { runGroundwater(true, Exchange::LinkIn); }
-TEST_F(GroundwaterComponent, GroundwaterSharedLinkOut) { runGroundwater(false, Exchange::LinkOut); }
-TEST_F(GroundwaterComponent, GroundwaterIndependentLinkOut) { runGroundwater(true, Exchange::LinkOut); }
-TEST_F(GroundwaterComponent, GroundwaterUsProject) { runGroundwater(false, Exchange::Recharge, "CFS"); }
-TEST_F(GroundwaterComponent, GroundwaterUsProjectSiMesh) { runGroundwater(true, Exchange::Recharge, "CFS", true); }
+TEST_F(GroundwaterComponent, GroundwaterSharedRecharge) {
+    runGroundwater(false);
+}
+TEST_F(GroundwaterComponent, GroundwaterIndependentRecharge) {
+    runGroundwater(true);
+}
+TEST_F(GroundwaterComponent, GroundwaterSharedNodeIn) {
+    runGroundwater(false, Exchange::NodeIn);
+}
+TEST_F(GroundwaterComponent, GroundwaterIndependentNodeIn) {
+    runGroundwater(true, Exchange::NodeIn);
+}
+TEST_F(GroundwaterComponent, GroundwaterSharedNodeOut) {
+    runGroundwater(false, Exchange::NodeOut);
+}
+TEST_F(GroundwaterComponent, GroundwaterIndependentNodeOut) {
+    runGroundwater(true, Exchange::NodeOut);
+}
+TEST_F(GroundwaterComponent, GroundwaterSharedLinkIn) {
+    runGroundwater(false, Exchange::LinkIn);
+}
+TEST_F(GroundwaterComponent, GroundwaterIndependentLinkIn) {
+    runGroundwater(true, Exchange::LinkIn);
+}
+TEST_F(GroundwaterComponent, GroundwaterSharedLinkOut) {
+    runGroundwater(false, Exchange::LinkOut);
+}
+TEST_F(GroundwaterComponent, GroundwaterIndependentLinkOut) {
+    runGroundwater(true, Exchange::LinkOut);
+}
+TEST_F(GroundwaterComponent, GroundwaterUsProject) {
+    runGroundwater(false, Exchange::Recharge, "CFS");
+}
+TEST_F(GroundwaterComponent, GroundwaterUsProjectSiMesh) {
+    runGroundwater(true, Exchange::Recharge, "CFS", true);
+}
 TEST_F(GroundwaterComponent, GroundwaterRowClosureIsNotSilentlyChanged) {
     modelGroundwater(false);
     std::ofstream(model, std::ios::app) << "[2D_AQUIFER]\nCELL 1 36 8 .45 .1 2 CLOSURE SIGMA\n";
@@ -1480,7 +1892,9 @@ protected:
                         "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n";
         }
         text += std::string("[2D_AQUIFER_OPTIONS]\nCLOSURE ") +
-                (closure == 0 ? "CLOSED_FORM" : closure == 1 ? "ENSLAVED" : "SIGMA") +
+                (closure == 0   ? "CLOSED_FORM"
+                 : closure == 1 ? "ENSLAVED"
+                                : "SIGMA") +
                 "\nM_LAYERS 4\nGW_CLOCK " + (independent ? "INDEPENDENT" : "SHARED") + "\n";
         std::ofstream(model) << text;
         std::ofstream(directory / "authored-managed.h5") << "preserve managed authoring";
@@ -1502,12 +1916,12 @@ TEST_P(ManagedComponent, NativeSourceOwners) {
     EXPECT_EQ(bytes(directory / "authored-managed.h5"), "preserve managed authoring");
 }
 INSTANTIATE_TEST_SUITE_P(Native, ManagedComponent,
-    ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Values(0, 1, 2),
-                       ::testing::Bool()));
+                         ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Values(0, 1, 2),
+                                            ::testing::Bool()));
 
 namespace {
 class JointLidComponent : public EngineComponent,
-    public ::testing::WithParamInterface<std::tuple<int, bool>> {};
+                          public ::testing::WithParamInterface<std::tuple<int, bool>> {};
 }
 TEST_P(JointLidComponent, NativeRichardsAquiferAcceptance) {
     const auto [closure, independent] = GetParam();
@@ -1521,8 +1935,10 @@ TEST_P(JointLidComponent, NativeRichardsAquiferAcceptance) {
             "Stack 2 .03 2 1.6 .5 .0001\nStack 3 .03 2 1.6 .5 .0001\n"
             "[COORDINATES]\nSINK .2 .5\n[2D_AQUIFER_NODE]\nSINK 1 KC 3600 DC .1 AREA 1\n";
     text += std::string("[2D_AQUIFER_OPTIONS]\nCLOSURE ") +
-        (closure == 0 ? "CLOSED_FORM" : closure == 1 ? "ENSLAVED" : "SIGMA") +
-        "\nM_LAYERS 4\nGW_CLOCK " + (independent ? "INDEPENDENT" : "SHARED") + "\n";
+            (closure == 0   ? "CLOSED_FORM"
+             : closure == 1 ? "ENSLAVED"
+                            : "SIGMA") +
+            "\nM_LAYERS 4\nGW_CLOCK " + (independent ? "INDEPENDENT" : "SHARED") + "\n";
     std::ofstream(model) << text;
     std::ofstream(directory / "authored-managed.h5") << "preserve joint authoring";
     configuration["managed_session"] = true;
@@ -1530,11 +1946,11 @@ TEST_P(JointLidComponent, NativeRichardsAquiferAcceptance) {
     EXPECT_EQ(bytes(directory / "authored-managed.h5"), "preserve joint authoring");
 }
 INSTANTIATE_TEST_SUITE_P(Native, JointLidComponent,
-    ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Bool()));
+                         ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Bool()));
 
 namespace {
 class MeshTransportComponent : public EngineComponent,
-    public ::testing::WithParamInterface<std::tuple<int, int, bool>> {};
+                               public ::testing::WithParamInterface<std::tuple<int, int, bool>> {};
 }
 TEST_P(MeshTransportComponent, MatchedMeshGroundTransport) {
     const auto [closure, order, independent] = GetParam();
@@ -1568,7 +1984,8 @@ HEAT_MODEL COUPLED
 BED_HEAT_MODEL GROUND_COLUMN
 HEAT_SURFACE_EXCHANGE NO
 HEAT_RADIATIVE_EXCHANGE NO
-RECONSTRUCTION_ORDER )" << order << R"(
+RECONSTRUCTION_ORDER )"
+      << order << R"(
 [2D_VERTICES]
 0 0 0
 2 0 0
@@ -1590,7 +2007,10 @@ NODE_ENROLMENT ROWS
 LINK_SEEPAGE NONE
 GW_ET NONE
 M_LAYERS 4
-CLOSURE )" << (closure == 0 ? "CLOSED_FORM" : closure == 1 ? "ENSLAVED" : "SIGMA")
+CLOSURE )"
+      << (closure == 0   ? "CLOSED_FORM"
+          : closure == 1 ? "ENSLAVED"
+                         : "SIGMA")
       << "\nGW_CLOCK " << (independent ? "INDEPENDENT" : "SHARED") << R"(
 GW_BASE_STEP .125
 GW_MAX_STEP 8
@@ -1629,16 +2049,20 @@ DEEP_THERMAL_BC ADIABATIC
         fs::remove(directory / "native/model.2d.h5");
         fs::remove(directory / "native/refused.rpt");
         ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(),
-            (directory / "native/refused.rpt").string().c_str(), nullptr, nullptr), 0);
+                                   (directory / "native/refused.rpt").string().c_str(), nullptr,
+                                   nullptr),
+                  0);
         ASSERT_EQ(swmm_2d_set_results_file(native.value,
-            (directory / "native/model.2d.h5").string().c_str()), 0);
+                                           (directory / "native/model.2d.h5").string().c_str()),
+                  0);
         SWMM_CheckpointSessionOptions options{};
         options.struct_size = sizeof(options);
         options.schema_version = 1;
         options.output = SWMM_CHECKPOINT_OUTPUT_MESH;
         EXPECT_NE(swmm_checkpoint_start_session(native.value, &options), 0);
-        EXPECT_NE(std::string(swmm_checkpoint_last_error_msg()).find(
-            independent ? "GW_CLOCK INDEPENDENT" : "Coupled groundwater RK2"), std::string::npos);
+        EXPECT_NE(std::string(swmm_checkpoint_last_error_msg())
+                      .find(independent ? "GW_CLOCK INDEPENDENT" : "Coupled groundwater RK2"),
+                  std::string::npos);
         return;
     }
     ASSERT_NO_FATAL_FAILURE(runUncoupledAndCompare(true, false, true, true));
@@ -1647,7 +2071,8 @@ DEEP_THERMAL_BC ADIABATIC
     EXPECT_EQ(bytes(directory / "authored-managed.h5"), "preserve managed transport authoring");
 }
 INSTANTIATE_TEST_SUITE_P(Native, MeshTransportComponent,
-    ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Values(1, 2), ::testing::Bool()));
+                         ::testing::Combine(::testing::Values(0, 1, 2), ::testing::Values(1, 2),
+                                            ::testing::Bool()));
 
 TEST_F(EngineComponent, UnknownConfigurationKeysAreRefused) {
     configuration["mis_spelled_output"] = "somewhere";
@@ -1685,9 +2110,11 @@ TEST_F(EngineComponent, NativeSurfaceResultsBindingRefusesLifecycleAndExistingFi
     const auto destination = directory / "fresh.h5";
     fs::remove(destination);
     EXPECT_EQ(swmm_2d_set_results_file(nullptr, destination.string().c_str()), SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()),
+              SWMM_ERR_LIFECYCLE);
     ASSERT_EQ(swmm_engine_open_metadata(native.value, model.string().c_str()), 0);
-    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()),
+              SWMM_ERR_LIFECYCLE);
     ASSERT_EQ(swmm_engine_close(native.value), 0);
     ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(), nullptr, nullptr, nullptr), 0);
     EXPECT_EQ(swmm_2d_set_results_file(native.value, nullptr), SWMM_ERR_BADPARAM);
@@ -1697,7 +2124,8 @@ TEST_F(EngineComponent, NativeSurfaceResultsBindingRefusesLifecycleAndExistingFi
     EXPECT_FALSE(fs::exists(destination));
     std::ofstream(destination) << "existing result";
     ASSERT_EQ(swmm_engine_initialize(native.value), 0) << swmm_get_last_error_msg(native.value);
-    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()), SWMM_ERR_LIFECYCLE);
+    EXPECT_EQ(swmm_2d_set_results_file(native.value, destination.string().c_str()),
+              SWMM_ERR_LIFECYCLE);
     EXPECT_NE(swmm_engine_start(native.value, 1), 0);
     EXPECT_EQ(bytes(destination), "existing result");
     EXPECT_FALSE(fs::exists(directory / "authored-shared.h5"));
@@ -1917,7 +2345,8 @@ TEST_F(EngineReceiver, PortableReferenceIdentitiesHaveIndependentValidatedArgume
     ASSERT_TRUE(second);
     auto identity = [](HC::IModelComponent& model) -> HC::IArgument* {
         for (auto* item : model.arguments())
-            if (item->id() == "hydrocouple.instance_id") return item;
+            if (item->id() == "hydrocouple.instance_id")
+                return item;
         return nullptr;
     };
     auto* a = identity(*first);
@@ -1932,7 +2361,7 @@ TEST_F(EngineReceiver, PortableReferenceIdentitiesHaveIndependentValidatedArgume
     ASSERT_TRUE(a->serialize(HC::IArgument::ArgumentInputType::JSON, saved, message));
     EXPECT_EQ(Json::parse(saved)["values"][0], first->id());
     ASSERT_TRUE(a->initialize(Json{{"values", {"river_a"}}}.dump(),
-        HC::IArgument::ArgumentInputType::JSON, message));
+                              HC::IArgument::ArgumentInputType::JSON, message));
     ASSERT_TRUE(a->initialize("river_a", HC::IArgument::ArgumentInputType::String, message));
     EXPECT_TRUE(a->isReadOnly());
     const int64_t one = 1, zero = 0;
@@ -1945,11 +2374,14 @@ TEST_F(EngineReceiver, PortableReferenceIdentitiesHaveIndependentValidatedArgume
     EXPECT_EQ(read<std::string>(b), "river_λ");
     EXPECT_FALSE(a->initialize(*b, message));
     EXPECT_FALSE(a->initialize(Json{{"values", {"other"}}}.dump(),
-        HC::IArgument::ArgumentInputType::JSON, message));
+                               HC::IArgument::ArgumentInputType::JSON, message));
     EXPECT_EQ(first->id(), "river_a");
-    argument(*first, "config", {{"schema", "hydrocouple.interval-transfer/1"},
-        {"epoch_julian_day", 2461041.5}, {"expected_transfers", 1}, {"species", Json::array()},
-        {"receipt_file", (directory / "identity-receipts.csv").string()}});
+    argument(*first, "config",
+             {{"schema", "hydrocouple.interval-transfer/1"},
+              {"epoch_julian_day", 2461041.5},
+              {"expected_transfers", 1},
+              {"species", Json::array()},
+              {"receipt_file", (directory / "identity-receipts.csv").string()}});
     first->initialize();
     ASSERT_EQ(first->status(), Status::Initialized) << diagnostics(*first);
     EXPECT_TRUE(a->isReadOnly());
@@ -2010,21 +2442,28 @@ protected:
         const auto destination = directory / "hosted";
         fs::remove_all(destination);
         Json config{{"schema", "hydrocouple.interval-transfer/1"},
-            {"epoch_julian_day", 2461041.5}, {"expected_transfers", 3},
-            {"receipt_file", "receipts.csv"},
-            {"species", Json::array({{{"id", "B"}, {"basis", "kg"}}, {{"id", "A"}, {"basis", "kg"}}})}};
-        if (capacity >= 0) config["max_water_m3"] = capacity;
+                    {"epoch_julian_day", 2461041.5},
+                    {"expected_transfers", 3},
+                    {"receipt_file", "receipts.csv"},
+                    {"species", Json::array({{{"id", "B"}, {"basis", "kg"}},
+                                             {{"id", "A"}, {"basis", "kg"}}})}};
+        if (capacity >= 0)
+            config["max_water_m3"] = capacity;
         Json connections = Json::array();
-        for (const auto* name : {"transfer_id", "epoch_julian_day", "interval_start_s", "interval_end_s",
-                                 "water_m3", "enthalpy_j", "species.A", "species.B"})
+        for (const auto* name :
+             {"transfer_id", "epoch_julian_day", "interval_start_s", "interval_end_s", "water_m3",
+              "enthalpy_j", "species.A", "species.B"})
             connections.push_back({{"output", name}, {"input", name}});
         Json document{{"schema", "openswmm.hosted-component/1"},
-            {"profile", "hydrocouple.interval-transfer/1"}, {"output_directory", "hosted"},
-            {"arguments", {{"config", config}}}, {"connections", connections},
-            {"exports", {{"outfalls", {"O"}}, {"exchange_times_s", {60, 120, 600}}}}};
+                      {"profile", "hydrocouple.interval-transfer/1"},
+                      {"output_directory", "hosted"},
+                      {"arguments", {{"config", config}}},
+                      {"connections", connections},
+                      {"exports", {{"outfalls", {"O"}}, {"exchange_times_s", {60, 120, 600}}}}};
         std::ofstream(directory / "host.json") << document.dump(2);
-        std::ofstream(model, std::ios::app) << "\n[PROCESS_COMPONENTS]\nReceivingReach library=\""
-            << library << "\" component=org.hydrocouple.openswmm.test.sink config=host.json\n";
+        std::ofstream(model, std::ios::app)
+            << "\n[PROCESS_COMPONENTS]\nReceivingReach library=\"" << library
+            << "\" component=org.hydrocouple.openswmm.test.sink config=host.json\n";
         return document;
     }
 };
@@ -2048,7 +2487,8 @@ TEST_F(NativeHosting, SameRealReceiverMatchesComposerContractAndNativeInventory)
     double elapsed = 0;
     int guard = 0;
     do {
-        ASSERT_EQ(swmm_engine_step(native.value, &elapsed), 0) << swmm_get_last_error_msg(native.value);
+        ASSERT_EQ(swmm_engine_step(native.value, &elapsed), 0)
+            << swmm_get_last_error_msg(native.value);
     } while (elapsed > 0 && ++guard < 10000);
     ASSERT_LT(guard, 10000);
     ASSERT_EQ(swmm_engine_end(native.value), 0) << swmm_get_last_error_msg(native.value);
@@ -2057,14 +2497,16 @@ TEST_F(NativeHosting, SameRealReceiverMatchesComposerContractAndNativeInventory)
     EXPECT_EQ(bytes(directory / "native/model.out"), bytes(directory / "wrapped/model.out"));
     std::map<std::string, double> accepted;
     for (int interval = 0; interval < 3; ++interval) {
-        const auto ledger = Json::parse(bytes(directory / "hosted" / ("transfer_" + std::to_string(interval) + ".json")));
+        const auto ledger = Json::parse(
+            bytes(directory / "hosted" / ("transfer_" + std::to_string(interval) + ".json")));
         EXPECT_EQ(ledger["receiver"], "ReceivingReach");
         for (size_t k = 0; k < ledger["fields"].size(); ++k) {
             accepted[ledger["fields"][k].get<std::string>()] += ledger["accepted"][k].get<double>();
             EXPECT_EQ(ledger["pending"][k], 0);
         }
     }
-    for (const auto& [field, value] : expected) EXPECT_DOUBLE_EQ(accepted.at(field), value) << field;
+    for (const auto& [field, value] : expected)
+        EXPECT_DOUBLE_EQ(accepted.at(field), value) << field;
     std::ofstream(directory / "native-host-totals.json") << Json(accepted).dump(2);
 }
 TEST_F(NativeHosting, MissingLibraryIsInspectedWithoutLoadingAndFailsBeforeAdvance) {
@@ -2074,8 +2516,11 @@ TEST_F(NativeHosting, MissingLibraryIsInspectedWithoutLoadingAndFailsBeforeAdvan
     EXPECT_FALSE(fs::exists(directory / "hosted"));
     NativeEngine native;
     EXPECT_NE(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("failed to load"), std::string::npos);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("failed to load"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 TEST_F(NativeHosting, PartialAcceptanceStopsWithExplicitPendingInventory) {
@@ -2084,8 +2529,9 @@ TEST_F(NativeHosting, PartialAcceptanceStopsWithExplicitPendingInventory) {
     ASSERT_NO_FATAL_FAILURE(nativeStart(native));
     double elapsed = 0;
     int code = 0, guard = 0;
-    do { code = swmm_engine_step(native.value, &elapsed); }
-    while (!code && elapsed > 0 && ++guard < 10000);
+    do {
+        code = swmm_engine_step(native.value, &elapsed);
+    } while (!code && elapsed > 0 && ++guard < 10000);
     ASSERT_NE(code, 0);
     double seconds = 0;
     ASSERT_EQ(swmm_engine_get_elapsed_seconds(native.value, &seconds), 0);
@@ -2122,7 +2568,9 @@ TEST_F(NativeHosting, AuthoredArgumentsAndHostConfigurationRoundTripWithoutLoadi
     ASSERT_EQ(swmm_engine_open_metadata(metadata.value, model.string().c_str()), 0);
     ASSERT_EQ(swmm_process_component_argument_count(metadata.value, 0), 2);
     char key[128]{}, value[4096]{};
-    ASSERT_EQ(swmm_process_component_argument_get(metadata.value, 0, 0, key, sizeof(key), value, sizeof(value)), 0);
+    ASSERT_EQ(swmm_process_component_argument_get(metadata.value, 0, 0, key, sizeof(key), value,
+                                                  sizeof(value)),
+              0);
     EXPECT_EQ(std::string(key), "library");
     EXPECT_EQ(std::string(value), (directory / "unavailable.so").string());
     ASSERT_EQ(swmm_process_component_argument_set(metadata.value, 0, "test", "roundtrip"), 0);
@@ -2136,32 +2584,41 @@ TEST_F(NativeHosting, AuthoredArgumentsAndHostConfigurationRoundTripWithoutLoadi
         << swmm_get_last_error_msg(metadata.value);
     EXPECT_EQ(bytes(destination / "host.json"), bytes(directory / "host.json"));
     NativeEngine reopened;
-    ASSERT_EQ(swmm_engine_open_metadata(reopened.value, (destination / "model.inp").string().c_str()), 0);
+    ASSERT_EQ(
+        swmm_engine_open_metadata(reopened.value, (destination / "model.inp").string().c_str()), 0);
     ASSERT_EQ(swmm_process_component_argument_count(reopened.value, 0), 2);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
     EXPECT_FALSE(fs::exists(destination / "hosted"));
 }
 TEST_F(NativeHosting, ASecondReceivingOwnerCannotClaimTheSameNativeExport) {
     hosting();
-    std::ofstream(model, std::ios::app) << "OtherReach library=\"" << ENGINE_RECEIVER_LIBRARY
+    std::ofstream(model, std::ios::app)
+        << "OtherReach library=\"" << ENGINE_RECEIVER_LIBRARY
         << "\" component=org.hydrocouple.openswmm.test.sink config=host.json\n";
     NativeEngine native;
     EXPECT_NE(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("multiply owned"), std::string::npos);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("multiply owned"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 TEST_F(NativeHosting, ReceivingInstancesNeedSeparateOutputDirectories) {
     auto config = hosting();
     config["exports"]["outfalls"] = {"Other"};
     std::ofstream(directory / "other.json") << config.dump(2);
-    std::ofstream(model, std::ios::app) << "\n[OUTFALLS]\nOther 0 FREE NO\n"
+    std::ofstream(model, std::ios::app)
+        << "\n[OUTFALLS]\nOther 0 FREE NO\n"
         << "[PROCESS_COMPONENTS]\nOtherReach library=\"" << ENGINE_RECEIVER_LIBRARY
         << "\" component=org.hydrocouple.openswmm.test.sink config=other.json\n";
     NativeEngine native;
     EXPECT_NE(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("separate output"), std::string::npos);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("separate output"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 TEST_F(NativeHosting, IncompleteTupleIsRefusedBeforePreparingReceiver) {
@@ -2170,8 +2627,11 @@ TEST_F(NativeHosting, IncompleteTupleIsRefusedBeforePreparingReceiver) {
     std::ofstream(directory / "host.json") << config.dump(2);
     NativeEngine native;
     EXPECT_NE(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("entire interval tuple"), std::string::npos);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("entire interval tuple"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 TEST_F(NativeHosting, UnknownArgumentIsRefusedBeforePreparingReceiver) {
@@ -2180,20 +2640,26 @@ TEST_F(NativeHosting, UnknownArgumentIsRefusedBeforePreparingReceiver) {
     std::ofstream(directory / "host.json") << config.dump(2);
     NativeEngine native;
     EXPECT_NE(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("unknown argument typo"), std::string::npos);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("unknown argument typo"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 TEST_F(NativeHosting, ConfigurationChangesAfterOpenAreRefusedBeforeAdvance) {
     auto config = hosting();
     NativeEngine native;
     ASSERT_EQ(swmm_engine_open(native.value, model.string().c_str(),
-        (directory / "native.rpt").string().c_str(), (directory / "native.out").string().c_str(), nullptr), 0);
+                               (directory / "native.rpt").string().c_str(),
+                               (directory / "native.out").string().c_str(), nullptr),
+              0);
     config["arguments"]["scale"] = {{"values", {2}}};
     std::ofstream(directory / "host.json") << config.dump(2);
     ASSERT_EQ(swmm_engine_initialize(native.value), 0);
     EXPECT_NE(swmm_engine_start(native.value, 1), 0);
-    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("configuration changed"), std::string::npos);
+    EXPECT_NE(std::string(swmm_get_last_error_msg(native.value)).find("configuration changed"),
+              std::string::npos);
     EXPECT_FALSE(fs::exists(directory / "hosted"));
 }
 #ifdef OPENSWMM_HAS_GEOPACKAGE
@@ -2211,11 +2677,14 @@ TEST_F(NativeHosting, ForeignArgumentsSurviveGeoPackageAndBackToInp) {
     NativeEngine reopened;
     // The existing metadata-only entry point reads native INP. The supported
     // GeoPackage plugin route opens a configured binding without preparing it.
-    ASSERT_EQ(swmm_engine_open(reopened.value, package.string().c_str(), nullptr, nullptr, plugin), 0)
+    ASSERT_EQ(swmm_engine_open(reopened.value, package.string().c_str(), nullptr, nullptr, plugin),
+              0)
         << swmm_get_last_error_msg(reopened.value);
     ASSERT_EQ(swmm_process_component_argument_count(reopened.value, 0), 2);
     char key[64]{}, value[4096]{};
-    ASSERT_EQ(swmm_process_component_argument_get(reopened.value, 0, 0, key, sizeof(key), value, sizeof(value)), 0);
+    ASSERT_EQ(swmm_process_component_argument_get(reopened.value, 0, 0, key, sizeof(key), value,
+                                                  sizeof(value)),
+              0);
     EXPECT_EQ(std::string(key), "library");
     EXPECT_EQ(std::string(value), ENGINE_RECEIVER_LIBRARY);
     const auto back = destination / "model.inp";
@@ -2224,7 +2693,9 @@ TEST_F(NativeHosting, ForeignArgumentsSurviveGeoPackageAndBackToInp) {
     ASSERT_EQ(swmm_engine_open_metadata(inspection.value, back.string().c_str()), 0)
         << swmm_get_last_error_msg(inspection.value);
     ASSERT_EQ(swmm_process_component_argument_count(inspection.value, 0), 2);
-    ASSERT_EQ(swmm_process_component_argument_get(inspection.value, 0, 1, key, sizeof(key), value, sizeof(value)), 0);
+    ASSERT_EQ(swmm_process_component_argument_get(inspection.value, 0, 1, key, sizeof(key), value,
+                                                  sizeof(value)),
+              0);
     EXPECT_EQ(std::string(key), "component");
     EXPECT_EQ(std::string(value), "org.hydrocouple.openswmm.test.sink");
     EXPECT_FALSE(fs::exists(directory / "hosted"));
@@ -2378,8 +2849,7 @@ Rating 1 2
     EXPECT_EQ(rows[3]["rating_curve"], "Rating");
     EXPECT_EQ(rows[4]["type"], "WALL");
     EXPECT_EQ(m["surface"]["boundary_quality"][0],
-              Json({{"cell", 0}, {"edge", 1}, {"species", "A"},
-                    {"concentration_native", 7}}));
+              Json({{"cell", 0}, {"edge", 1}, {"species", "A"}, {"concentration_native", 7}}));
     EXPECT_FALSE(m["runnable"]);
     EXPECT_FALSE(fs::exists(directory / "wrapped"));
 }
@@ -2489,9 +2959,12 @@ Pump 0:10 -.001
     EXPECT_EQ(gw["options"]["GW_CLOCK"], "INDEPENDENT");
     EXPECT_DOUBLE_EQ(std::stod(gw["options"]["GW_BASE_STEP"].get<std::string>()), .125);
     ASSERT_EQ(gw.at("boundaries").size(), 2u);
-    EXPECT_EQ(gw["boundaries"][0],
-              Json({{"cell", 0}, {"edge", 0}, {"type", "HEAD"},
-                    {"value", 8}, {"units", "ft"}, {"timeseries", ""}}));
+    EXPECT_EQ(gw["boundaries"][0], Json({{"cell", 0},
+                                         {"edge", 0},
+                                         {"type", "HEAD"},
+                                         {"value", 8},
+                                         {"units", "ft"},
+                                         {"timeseries", ""}}));
     EXPECT_EQ(gw["boundaries"][1]["type"], "FLOW");
     EXPECT_EQ(gw["boundaries"][1]["units"], "m3/s");
     EXPECT_EQ(gw["boundaries"][1]["timeseries"], longSeries);

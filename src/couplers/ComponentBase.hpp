@@ -252,8 +252,10 @@ private:
      */
     std::string code(bool ucum) const {
         const std::string& label = caption();
-        if (label == "m3" || label == "J" || label == "kg" || label == "s") return label;
-        if (label == "day") return ucum ? "d" : "day";
+        if (label == "m3" || label == "J" || label == "kg" || label == "s")
+            return label;
+        if (label == "day")
+            return ucum ? "d" : "day";
         return {};
     }
     UnitDimensions dimensions_;
@@ -833,16 +835,22 @@ protected:
         std::shared_ptr<HC::IComponentStatusChangeEventArgs> first, second;
         CS target;
         void publish(ComponentBase& a, ComponentBase& b) const noexcept {
-            a.status_=b.status_=target;
-            try { a.Signal<StatusEvent>::emit(first); } catch(...) {}
-            try { b.Signal<StatusEvent>::emit(second); } catch(...) {}
+            a.status_ = b.status_ = target;
+            try {
+                a.Signal<StatusEvent>::emit(first);
+            } catch (...) {
+            }
+            try {
+                b.Signal<StatusEvent>::emit(second);
+            } catch (...) {
+            }
         }
     };
-    static PairedStatus pairedStatus(ComponentBase& a,ComponentBase& b,CS from,CS to) {
-        if(!HC::Helpers::isValidComponentStatusTransition(from,to))
+    static PairedStatus pairedStatus(ComponentBase& a, ComponentBase& b, CS from, CS to) {
+        if (!HC::Helpers::isValidComponentStatusTransition(from, to))
             throw std::logic_error("Invalid collective lifecycle transition");
-        return {std::make_shared<StatusChange>(&a,from,to,std::string()),
-                std::make_shared<StatusChange>(&b,from,to,std::string()),to};
+        return {std::make_shared<StatusChange>(&a, from, to, std::string()),
+                std::make_shared<StatusChange>(&b, from, to, std::string()), to};
     }
 
 private:

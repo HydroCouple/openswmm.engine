@@ -9,8 +9,8 @@ namespace openswmm::twoD {
 // checkpoint anchor until validation succeeds; rollback never allocates.
 class ResultHistoryAppend {
 public:
-    ResultHistoryAppend(std::map<std::string, SourceResultTable>& tables,
-                        std::string& boundary) : boundary_(boundary) {
+    ResultHistoryAppend(std::map<std::string, SourceResultTable>& tables, std::string& boundary)
+        : boundary_(boundary) {
         std::size_t count = 0;
         for (const auto& [name, table] : tables)
             count += table.columns.size();

@@ -452,7 +452,8 @@ void handle_rdii_decay(SimulationContext& ctx, const std::vector<std::string>& l
             continue;
 
         // Optional degree-day snow model: SNOW snow_T snow_ddf. NOSNOW retains inactive parameters.
-        if (tok.size() > 8 && (Tokenizer::to_upper(tok[8]) == "SNOW" || Tokenizer::to_upper(tok[8]) == "NOSNOW")) {
+        if (tok.size() > 8 &&
+            (Tokenizer::to_upper(tok[8]) == "SNOW" || Tokenizer::to_upper(tok[8]) == "NOSNOW")) {
             if (tok.size() < 11)
                 continue; // malformed snow clause
             e.snow_on = Tokenizer::to_upper(tok[8]) == "SNOW";

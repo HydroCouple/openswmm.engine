@@ -208,7 +208,8 @@ SWMM_ENGINE_API int swmm_pollutant_rename(SWMM_Engine engine, int idx, const cha
     // else (co-pollutant, LID removals, buildup/washoff, treatment) is
     // index/positional and unaffected.
     for (int row = 0; row < ctx.initial_quality.count(); ++row)
-        if (ctx.initial_quality.kind[row] == idx) ctx.initial_quality.constituent[row] = ctx.pollutant_names.name_of(idx);
+        if (ctx.initial_quality.kind[row] == idx)
+            ctx.initial_quality.constituent[row] = ctx.pollutant_names.name_of(idx);
     const std::string next = new_id;
     auto upper = [](std::string value) {
         for (auto& ch : value)
@@ -418,7 +419,8 @@ SWMM_ENGINE_API int swmm_pollutant_get_mwt(SWMM_Engine engine, int idx, double* 
     CHECK_INDEX(idx >= 0 && idx < ctx.n_pollutants());
     if (mwt)
         *mwt = static_cast<std::size_t>(idx) < ctx.pollutants.mwt.size()
-                   ? ctx.pollutants.mwt[static_cast<std::size_t>(idx)] : 1.0;
+                   ? ctx.pollutants.mwt[static_cast<std::size_t>(idx)]
+                   : 1.0;
     return SWMM_OK;
 }
 

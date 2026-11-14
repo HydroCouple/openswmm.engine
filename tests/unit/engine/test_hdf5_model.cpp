@@ -341,6 +341,7 @@ TEST(Hdf5Model, RefusesMissingNativeConfiguration) {
     ASSERT_EQ(plugin.initialize({}, nullptr), 0);
     SimulationContext ctx;
     EXPECT_NE(plugin.read(data("missing_model_file.h5"), ctx), 0);
-    EXPECT_NE(std::string(plugin.last_error_message()).find("no complete native model"), std::string::npos);
+    EXPECT_NE(std::string(plugin.last_error_message()).find("no complete native model"),
+              std::string::npos);
     EXPECT_EQ(ctx.n_nodes(), 0);
 }

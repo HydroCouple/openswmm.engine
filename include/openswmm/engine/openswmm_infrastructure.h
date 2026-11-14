@@ -762,8 +762,7 @@ SWMM_ENGINE_API int swmm_inlet_get_design(SWMM_Engine engine, int idx, SWMM_Inle
  * receives exactly the active record the setter/getter retain, including derived curve kind.
  * On failure normalized is untouched. Requires BUILDING/OPENED and a valid engine/design.
  */
-SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine,
-                                               const SWMM_InletDesign* design,
+SWMM_ENGINE_API int swmm_inlet_validate_design(SWMM_Engine engine, const SWMM_InletDesign* design,
                                                SWMM_InletDesign* normalized);
 
 /**
@@ -1124,10 +1123,11 @@ SWMM_ENGINE_API int swmm_lid_node_configure_flow(SWMM_Engine engine, int control
  * Requires BUILDING/OPENED. Does not change layers, treatment, flow, nodes or anchored outlets.
  * Input arrays and expressions are borrowed only for this call. */
 SWMM_ENGINE_API int swmm_lid_node_validate_flow(SWMM_Engine engine, int control,
-                                               const SWMM_LidNodeLayer* layers, int count,
-                                               const SWMM_LidLayerTreatment* treatment, int treatment_count,
-                                               const SWMM_LidRichardsOptions* options,
-                                               const SWMM_LidRichardsMaterial* material);
+                                                const SWMM_LidNodeLayer* layers, int count,
+                                                const SWMM_LidLayerTreatment* treatment,
+                                                int treatment_count,
+                                                const SWMM_LidRichardsOptions* options,
+                                                const SWMM_LidRichardsMaterial* material);
 /**
  * @brief Count authored or derived stack layers, including a BOTTOM row when present.
  *
@@ -1887,14 +1887,16 @@ typedef struct SWMM_LidUsageRecord {
 } SWMM_LidUsageRecord;
 
 /** @brief Read all authored members of a placement; out must be non-null. No lifecycle guard. */
-SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row, SWMM_LidUsageRecord* out);
+SWMM_ENGINE_API int swmm_lid_usage_get_record(SWMM_Engine engine, int row,
+                                              SWMM_LidUsageRecord* out);
 
 /** @brief Preflight a complete placement without mutation, in BUILDING/OPENED.
  * @details Requires valid subcatchment/control, a non-NODE control and finite numbers. It preserves
  * native authored values outside UI entry ranges for exact replay. Optional strings may be null;
  * no file is opened and no drain-name resolution is performed by this configuration API.
  */
-SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine, const SWMM_LidUsageRecord* row);
+SWMM_ENGINE_API int swmm_lid_usage_validate_record(SWMM_Engine engine,
+                                                   const SWMM_LidUsageRecord* row);
 
 /** @brief Atomically replace one subcatchment's ordered authored placements in BUILDING/OPENED.
  * @details Every row must belong to subcatch_idx and pass validate_record before any mutation.

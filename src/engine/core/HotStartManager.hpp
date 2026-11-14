@@ -178,7 +178,7 @@ struct HotStartFile {
     std::string snow_state; ///< V14: native degree-day and UEB accepted/held states
     std::string
         engine_checkpoint; ///< V15: complete accepted engine/2D state for qualified native restarts (may be empty from V16)
-    std::string fv_dry_state; ///< V18: named disconnected FV scalar inventories
+    std::string fv_dry_state;       ///< V18: named disconnected FV scalar inventories
     std::string gw_transport_state; ///< V17: canonical SIGMA chemistry, edge receipts and clocks
     std::string
         surface_state; ///< V16: subcatchment ponded water, groundwater flow and surface quality (StateAccessors::get_surface_state)

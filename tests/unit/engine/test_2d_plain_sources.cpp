@@ -53,8 +53,8 @@ struct PlainSourceRig {
         openswmm::detail::CompletedSourceArchive archive;
         auto count = solver.last_num_steps();
         auto dt = solver.last_step_size();
-        archive(state.volume, state.depth, state.head, state.edge_flux,
-                state.infil_applied, state.coupling_applied, state.evap_loss_total, count, dt);
+        archive(state.volume, state.depth, state.head, state.edge_flux, state.infil_applied,
+                state.coupling_applied, state.evap_loss_total, count, dt);
         for (auto& row : state.runtime_sources.rows)
             archive(row.receipt.requested, row.receipt.applied, row.receipt.water_in,
                     row.receipt.water_out, row.receipt.last_flow, row.receipt.last_dt);
@@ -64,8 +64,7 @@ struct PlainSourceRig {
 }
 
 TEST(PlainSources, HeldSinksAndLiveRatesMatchFullPathAcrossAdvanceBoundaries) {
-    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE,
-                      Momentum2D::DIFFUSIVE_WAVE})
+    for (auto mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE, Momentum2D::DIFFUSIVE_WAVE})
         for (int threads : {1, 4})
             for (double depth : {0., 1e-5, .1}) {
                 PlainSourceRig plain(mode, threads, depth), full(mode, threads, depth);
@@ -99,15 +98,14 @@ TEST(PlainSources, HeldSinksAndLiveRatesMatchFullPathAcrossAdvanceBoundaries) {
                     }
                     auto expected = full.physicalBytes();
                     auto actual = plain.physicalBytes();
-                    EXPECT_EQ(actual, expected) << int(mode) << '/' << threads << '/' << depth
-                                                << '/' << step;
+                    EXPECT_EQ(actual, expected)
+                        << int(mode) << '/' << threads << '/' << depth << '/' << step;
                     history(actual);
                 }
                 if (const char* output = std::getenv("OPENSWMM_PLAIN_SOURCE_TEST_OUT")) {
                     std::filesystem::create_directories(output);
-                    const auto file = std::to_string(int(mode)) + "-" +
-                                      std::to_string(threads) + "-" +
-                                      std::to_string(depth) + ".bin";
+                    const auto file = std::to_string(int(mode)) + "-" + std::to_string(threads) +
+                                      "-" + std::to_string(depth) + ".bin";
                     const auto bytes = history.bytes();
                     std::ofstream(std::filesystem::path(output) / file, std::ios::binary)
                         .write(bytes.data(), bytes.size());

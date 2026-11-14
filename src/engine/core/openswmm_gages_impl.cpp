@@ -425,7 +425,8 @@ SWMM_ENGINE_API int swmm_gage_rename(SWMM_Engine engine, int idx, const char* ne
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(idx >= 0 && idx < ctx.n_gages());
     const std::string previous = ctx.gage_names.name_of(idx);
-    if (!ctx.gage_names.rename(idx, newId)) return SWMM_ERR_BADPARAM;
+    if (!ctx.gage_names.rename(idx, newId))
+        return SWMM_ERR_BADPARAM;
     openswmm::moveNamedOverrides(ctx, "GAGE", idx, previous, ctx.gage_names.name_of(idx));
     return SWMM_OK;
 }
