@@ -156,6 +156,7 @@ SECTION_API: dict[str, list[str]] = {
     "2D_TRIANGLES": [r"^swmm_2d_.*(triangle|cell)"],
     "2D_QUADS": [r"^swmm_2d_.*(quad|cell|triangle)"],  # quads are cells; setters are triangle-named
     "2D_INITIAL_VELOCITY": [r"^swmm_2d_.*(initial_vel|velocity)"],
+    "2D_INITIAL_HGL": [r"^swmm_2d_.*init_hgl"],
     "2D_VERTEX_NODE_MAP": [r"^swmm_2d_.*vertex_coupl"],
     "2D_TRIANGLE_NODE_MAP": [r"^swmm_2d_.*(triangle|cell)_coupl"],
     "2D_NODE_COUPLING": [r"^swmm_node_.*2d_coupling"],
@@ -233,7 +234,7 @@ def parsed_sections() -> dict[str, str]:
     """Section tag -> file that registers or dispatches it."""
     out: dict[str, str] = {}
     for p in sorted(SRC.rglob("*.cpp")):
-        for m in re.finditer(r'register_(?:builtin|custom)\(\s*"([A-Z0-9_]+)"', _text(p)):
+        for m in re.finditer(r'register_(?:builtin|custom)(?:_views)?\(\s*"([A-Z0-9_]+)"', _text(p)):
             if m.group(1) != "MY_CUSTOM":  # doc example in SectionRegistry
                 out.setdefault(m.group(1), str(p.relative_to(REPO)))
     for p in sorted((SRC / "transport" / "components").rglob("*Component*.cpp")) + sorted(

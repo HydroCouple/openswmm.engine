@@ -121,6 +121,58 @@ class ConversionResult:
 
 
 # =============================================================================
+# DeleteRecord
+# =============================================================================
+
+class DeleteRecord:
+    """How to undo one recorded delete exactly.
+
+    Returned by the C{*_recorded} delete methods of L{ModelEditor}. It holds
+    every row the delete removed, with its original index, and every
+    reference the delete cleared or renumbered. L{restore} puts all of it
+    back, at most once, on the engine that made the delete.
+
+    The native record is released when this object is garbage-collected, or
+    earlier by L{close}. It cannot be constructed directly.
+    """
+
+    @property
+    def restorable(self) -> bool:
+        """C{True} until L{restore} succeeds or L{close} is called.
+
+        @rtype: bool
+        """
+        ...
+
+    def restore(self) -> None:
+        """Undo the delete: reinsert every removed row at its original index
+        and restore every reference the delete cleared or renumbered.
+
+        The engine refuses, changing nothing, when the model no longer matches
+        the state the delete left (object counts, the name being free,
+        cleared references still clear); the record then stays restorable.
+        A successful restore spends the record and invalidates existing
+        element wrappers, as a delete does.
+
+        @raise ValueError: If the record was already restored or closed.
+        @raise BadHandleError: If the engine that made the record has been
+            destroyed.
+        @raise BadParamError: If the model no longer matches the state the
+            delete left.
+        @raise EngineError: On another C API failure, such as an engine that
+            is not in C{BUILDING} or C{OPENED} state.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release the native record; it can no longer be restored.
+
+        Safe to call more than once, and after the engine is destroyed.
+        """
+        ...
+
+
+# =============================================================================
 # ModelEditor
 # =============================================================================
 
@@ -162,6 +214,75 @@ class ModelEditor:
     def delete_links(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
     def delete_subcatchments(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
     def delete_gages(self, keys: Iterable[int | str]) -> list[ImpactEntry]: ...
+
+    # Recorded (undoable) deletion: each returns (impacts, DeleteRecord).
+    def delete_node_recorded(self, id_or_idx: int | str) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a node as L{delete_node} does, and record how to undo it.
+
+        The record covers the node's row, subtype and 2D coupling rows, name
+        and coordinates, every link it cascade-deletes, its inlet usages,
+        inflow, DWF and RDII rows, treatment, reaction rows, initial quality,
+        user flags and heat overrides, and every reference the delete cleared
+        or renumbered.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}: the cascade report, as from
+            L{delete_node}, and the L{DeleteRecord} that undoes the delete.
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On C API failure, such as an engine that is not
+            in C{BUILDING} or C{OPENED} state.
+        """
+        ...
+    def delete_link_recorded(self, id_or_idx: int | str) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a link as L{delete_link} does, and record how to undo it.
+
+        @param id_or_idx: Link name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        """
+        ...
+    def delete_subcatch_recorded(
+            self, id_or_idx: int | str) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a subcatchment as L{delete_subcatch} does, and record how to
+        undo it.
+
+        @param id_or_idx: Subcatchment name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        """
+        ...
+    def delete_gage_recorded(self, id_or_idx: int | str) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a rain gage as L{delete_gage} does, and record how to undo it,
+        including the subcatchment references the delete cleared.
+
+        @param id_or_idx: Gage name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        """
+        ...
+    def delete_nodes_recorded(
+            self, keys: Iterable[int | str]) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a batch as L{delete_nodes} does, and record how to undo the
+        whole batch: one L{DeleteRecord} restores every node at its original
+        index. An empty batch returns a record whose restore does nothing.
+
+        @param keys: Pre-batch node names or zero-based indices.
+        @return: C{(impacts, record)}: the aggregate cascade report and the
+            record.
+        """
+        ...
+    def delete_links_recorded(
+            self, keys: Iterable[int | str]) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a batch as L{delete_links} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}."""
+        ...
+    def delete_subcatchments_recorded(
+            self, keys: Iterable[int | str]) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a batch as L{delete_subcatchments} does, and record how to
+        undo the whole batch. See L{delete_nodes_recorded}."""
+        ...
+    def delete_gages_recorded(
+            self, keys: Iterable[int | str]) -> tuple[list[ImpactEntry], DeleteRecord]:
+        """Delete a batch as L{delete_gages} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}."""
+        ...
 
 
     def __init__(self, engine: object) -> None: ...

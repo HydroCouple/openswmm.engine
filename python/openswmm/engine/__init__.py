@@ -200,7 +200,7 @@ from ._exceptions import (
 # Programmatic model building & editing
 # =============================================================================
 from ._model import ModelBuilder
-from ._edit import ModelEditor, ImpactEntry, ConversionResult
+from ._edit import ModelEditor, ImpactEntry, ConversionResult, DeleteRecord
 from ._geometry import CrossSection
 from ._xsect import XSectionGeometry, shape_name
 from ._report import (
@@ -350,7 +350,7 @@ __all__ = [
     "FileError", "ParseError", "NumericalError",
     "CRSError", "DependencyError", "GeoPackageError", "StaleObjectError",
     # --- Programmatic model building & editing ---
-    "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
+    "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult", "DeleteRecord",
     # --- Geometry helpers ---
     "CrossSection",
     "XSectionGeometry",

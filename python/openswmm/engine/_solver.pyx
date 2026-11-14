@@ -346,6 +346,33 @@ cdef class Solver:
         self._access.raise_callback_error()
         _check_engine(rc, self._handle)
 
+    def open_simulation_period(self) -> None:
+        """Open the configured model only as far as its simulation period.
+
+        A metadata open (see :meth:`open_metadata`) that leaves out the 2D
+        mesh and every row that addresses its cells: the built-in reader
+        skips the mesh sections and the per-cell ones, and a
+        ``[2D_MESH_FILE]`` is not read, so a large 2D model opens in a
+        fraction of the time and memory. The start and end times are the
+        ones :meth:`open_metadata` gives. Other answers can differ: there is
+        no 2D mesh, the ``[GW_*]`` rows are not checked, heat overrides
+        scoped ``CELL2D`` or ``MESH_TAG`` are dropped, and a mesh or cell row
+        a full open would refuse is not detected. Close and open normally
+        before initializing a simulation.
+
+        :raises EngineError: On C API failure (specific subclass per code).
+        """
+        self._access.require_idle()
+        if self._handle == NULL:
+            self.create()
+        cdef bytes b_inp = self._inp.encode('utf-8')
+        with self._operation():
+            rc = swmm_engine_open_simulation_period(<SWMM_Engine><size_t>self.handle, b_inp)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check_engine(rc, self._handle)
+
     def open_results(self, *, surface=None, bint live=False):
         """Open independent result readers for this solver's configured files.
 

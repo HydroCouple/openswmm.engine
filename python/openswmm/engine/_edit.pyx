@@ -222,6 +222,101 @@ cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
 
 
 # =============================================================================
+# DeleteRecord
+# =============================================================================
+
+cdef class DeleteRecord:
+    """How to undo one recorded delete exactly.
+
+    Returned by the C{*_recorded} delete methods of L{ModelEditor}. It holds
+    every row the delete removed, with its original index, and every
+    reference the delete cleared or renumbered. L{restore} puts all of it
+    back, at most once, on the engine that made the delete.
+
+    The native record is released when this object is garbage-collected, or
+    earlier by L{close}. It cannot be constructed directly.
+    """
+
+    cdef SWMM_DeleteRecord _record
+    cdef object _owner
+    cdef bint _restored
+
+    def __cinit__(self):
+        self._record = NULL
+        self._owner = None
+        self._restored = False
+
+    def __init__(self):
+        raise TypeError("DeleteRecord is returned by ModelEditor's *_recorded delete methods.")
+
+    def __dealloc__(self):
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    @property
+    def restorable(self) -> bool:
+        """C{True} until L{restore} succeeds or L{close} is called.
+
+        @rtype: bool
+        """
+        return self._record != NULL and not self._restored
+
+    def restore(self) -> None:
+        """Undo the delete: reinsert every removed row at its original index
+        and restore every reference the delete cleared or renumbered.
+
+        The engine refuses, changing nothing, when the model no longer matches
+        the state the delete left (object counts, the name being free,
+        cleared references still clear); the record then stays restorable.
+        A successful restore spends the record and invalidates existing
+        element wrappers, as a delete does.
+
+        @raise ValueError: If the record was already restored or closed.
+        @raise BadHandleError: If the engine that made the record has been
+            destroyed.
+        @raise BadParamError: If the model no longer matches the state the
+            delete left.
+        @raise EngineError: On another C API failure, such as an engine that
+            is not in C{BUILDING} or C{OPENED} state.
+        """
+        if self._restored:
+            raise ValueError("This delete record was already restored.")
+        if self._record == NULL:
+            raise ValueError("This delete record was closed.")
+        cdef size_t address = self._owner.handle
+        if not address:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "Engine has been destroyed")
+        _check(swmm_delete_record_restore(<SWMM_Engine>address, self._record))
+        self._restored = True
+        self._owner._bump_generation()
+
+    def close(self) -> None:
+        """Release the native record; it can no longer be restored.
+
+        Safe to call more than once, and after the engine is destroyed.
+        """
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    def __repr__(self) -> str:
+        state = ("restored" if self._restored
+                 else "restorable" if self._record != NULL else "closed")
+        return f"DeleteRecord({state})"
+
+
+cdef DeleteRecord _delete_record(object owner, SWMM_DeleteRecord record):
+    """Wrap a record a recorded delete just created; the wrapper owns it."""
+    cdef DeleteRecord wrapped = DeleteRecord.__new__(DeleteRecord)
+    wrapped._record = record
+    wrapped._owner = owner
+    return wrapped
+
+
+# =============================================================================
 # ModelEditor
 # =============================================================================
 
@@ -357,6 +452,190 @@ cdef class ModelEditor:
         if indices.size():
             self._owner._bump_generation()
         return _impact_report_to_list(&report)
+
+    # =========================================================================
+    # Recorded deletion (undoable)
+    # =========================================================================
+
+    cdef tuple _recorded(self, int rc, SWMM_ImpactReport* report, SWMM_DeleteRecord record,
+                         bint changed):
+        """Raise on failure; otherwise return C{(impacts, DeleteRecord)}."""
+        if rc != 0:
+            swmm_impact_report_free(report)
+            _check(rc)
+        if changed:
+            self._owner._bump_generation()
+        return _impact_report_to_list(report), _delete_record(self._owner, record)
+
+    def delete_node_recorded(self, id_or_idx) -> tuple:
+        """Delete a node as L{delete_node} does, and record how to undo it.
+
+        The record covers the node's row, subtype and 2D coupling rows, name
+        and coordinates, every link it cascade-deletes, its inlet usages,
+        inflow, DWF and RDII rows, treatment, reaction rows, initial quality,
+        user flags and heat overrides, and every reference the delete cleared
+        or renumbered.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}: the cascade report, as from
+            L{delete_node}, and the L{DeleteRecord} that undoes the delete.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On C API failure, such as an engine that is not
+            in C{BUILDING} or C{OPENED} state.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_link_recorded(self, id_or_idx) -> tuple:
+        """Delete a link as L{delete_link} does, and record how to undo it.
+
+        The record covers the link's row, subtype row, name and geometry, its
+        inlet usages, LID node outlets, reaction rows, initial quality, user
+        flags and heat overrides, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Link name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_subcatch_recorded(self, id_or_idx) -> tuple:
+        """Delete a subcatchment as L{delete_subcatch} does, and record how to
+        undo it.
+
+        The record covers the subcatchment's row, name, polygon and patterns,
+        its LID usage rows, surface loadings, reaction laws, groundwater flow
+        expressions and user flags, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Subcatchment name (C{str}) or zero-based index
+            (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the subcatchment is not
+            found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._subcatch_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_gage_recorded(self, id_or_idx) -> tuple:
+        """Delete a rain gage as L{delete_gage} does, and record how to undo it,
+        including the subcatchment references the delete cleared.
+
+        @param id_or_idx: Gage name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the gage is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._gage_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_nodes_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_nodes} does, and record how to undo the
+        whole batch: one L{DeleteRecord} restores every node at its original
+        index.
+
+        An empty batch deletes nothing and returns a record whose restore does
+        nothing.
+
+        @param keys: Pre-batch node names or zero-based indices.
+        @return: C{(impacts, record)}: the aggregate cascade report and the
+            record.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If a name is not found; nothing is deleted.
+        @raise EngineError: On C API failure; nothing is deleted.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._node_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_links_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_links} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch link names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._link_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_subcatchments_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_subcatchments} does, and record how to
+        undo the whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch subcatchment names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._subcatch_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_gages_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_gages} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch gage names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._gage_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
 
     # =========================================================================
     # Internal index resolution helpers

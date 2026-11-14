@@ -55,6 +55,7 @@ cdef extern from "openswmm_engine.h":
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)
+    cdef int  swmm_engine_open_simulation_period(SWMM_Engine e, const char* inp)
     cdef int  swmm_engine_initialize(SWMM_Engine e)
     cdef int  swmm_engine_start(SWMM_Engine e, int save_results)
     # NOTE: step/stride may invoke registered step_begin/step_end callbacks.
@@ -1241,6 +1242,31 @@ cdef extern from "openswmm_edit.h":
     cdef int swmm_inlet_delete    (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_landuse_delete  (SWMM_Engine e, int idx, SWMM_ImpactReport* out)
     cdef int swmm_hydrograph_delete(SWMM_Engine e, const char* uh_name, SWMM_ImpactReport* out)
+
+    # Recorded deletes: delete as above and record how to undo the delete exactly
+    ctypedef void* SWMM_DeleteRecord
+    cdef int swmm_node_delete_recorded    (SWMM_Engine e, int idx, SWMM_ImpactReport* out,
+                                           SWMM_DeleteRecord* record_out)
+    cdef int swmm_link_delete_recorded    (SWMM_Engine e, int idx, SWMM_ImpactReport* out,
+                                           SWMM_DeleteRecord* record_out)
+    cdef int swmm_subcatch_delete_recorded(SWMM_Engine e, int idx, SWMM_ImpactReport* out,
+                                           SWMM_DeleteRecord* record_out)
+    cdef int swmm_gage_delete_recorded    (SWMM_Engine e, int idx, SWMM_ImpactReport* out,
+                                           SWMM_DeleteRecord* record_out)
+    cdef int swmm_node_delete_many_recorded    (SWMM_Engine e, const int* indices, int n,
+                                                SWMM_ImpactReport* out,
+                                                SWMM_DeleteRecord* record_out)
+    cdef int swmm_link_delete_many_recorded    (SWMM_Engine e, const int* indices, int n,
+                                                SWMM_ImpactReport* out,
+                                                SWMM_DeleteRecord* record_out)
+    cdef int swmm_subcatch_delete_many_recorded(SWMM_Engine e, const int* indices, int n,
+                                                SWMM_ImpactReport* out,
+                                                SWMM_DeleteRecord* record_out)
+    cdef int swmm_gage_delete_many_recorded    (SWMM_Engine e, const int* indices, int n,
+                                                SWMM_ImpactReport* out,
+                                                SWMM_DeleteRecord* record_out)
+    cdef int  swmm_delete_record_restore(SWMM_Engine e, SWMM_DeleteRecord record)
+    cdef void swmm_delete_record_destroy(SWMM_DeleteRecord record)
 
     # In-place type conversion
     cdef int swmm_node_convert(SWMM_Engine e, int idx, int new_type,

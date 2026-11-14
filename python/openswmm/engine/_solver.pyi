@@ -284,6 +284,23 @@ class Solver:
     def set_lenient_open(self, on: bool = ...) -> None: ...
     def open(self, plugin_lib: Optional[_PathLike] = None) -> None: ...
     def open_metadata(self) -> None: ...
+    def open_simulation_period(self) -> None:
+        """Open the configured model only as far as its simulation period.
+
+        A metadata open (see :meth:`open_metadata`) that leaves out the 2D
+        mesh and every row that addresses its cells: the built-in reader
+        skips the mesh sections and the per-cell ones, and a
+        ``[2D_MESH_FILE]`` is not read, so a large 2D model opens in a
+        fraction of the time and memory. The start and end times are the
+        ones :meth:`open_metadata` gives. Other answers can differ: there is
+        no 2D mesh, the ``[GW_*]`` rows are not checked, heat overrides
+        scoped ``CELL2D`` or ``MESH_TAG`` are dropped, and a mesh or cell row
+        a full open would refuse is not detected. Close and open normally
+        before initializing a simulation.
+
+        :raises EngineError: On C API failure (specific subclass per code).
+        """
+        ...
     def initialize(self) -> None: ...
     def start(self, save_results: bool = True) -> None: ...
     def open_results(self, *, surface: Optional[_PathLike] = ..., live: bool = ...) -> "Results":

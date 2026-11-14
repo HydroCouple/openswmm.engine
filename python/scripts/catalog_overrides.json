@@ -127,7 +127,8 @@
  ],
  "record_classes": [
   "ImpactEntry",
-  "ConversionResult"
+  "ConversionResult",
+  "DeleteRecord"
  ],
  "exclude_members": [
   "Solver.handle",
