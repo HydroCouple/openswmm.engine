@@ -1127,8 +1127,9 @@ private:
     void checkLivePassiveExchange(bool preflight_history = false) const;
     twoD::SurfaceRouter2D surface_router_; ///< Optional 2D surface routing solver
     /// S4b: per-row unit labels for the 2D species snapshot (pollutant units,
-    /// MSX units, "hours", "degC"), rebuilt by fillSurfaceSnapshot() and
-    /// pointed to by SimulationSnapshot::surface_species_units.
+    /// MSX units, "hours", "degC"), set by fillSurfaceSnapshot() and pointed to
+    /// by SimulationSnapshot::surface_species_units. The IO thread reads them
+    /// through that pointer, so they change only when the labels do.
     mutable std::vector<std::string> surface_species_units_;
     /// Non-owning pointer to the 2D HDF5 output plugin (lifetime owned by
     /// PluginFactory's output_plugins_). Set in open() when [2D_OPTIONS]

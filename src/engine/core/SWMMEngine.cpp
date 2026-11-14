@@ -8530,9 +8530,9 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
             // S4b: per-row unit labels so the file is self-describing —
             // pollutant units from [POLLUTANTS], MSX units from the reactions
             // component, hours for age, degC for temperature.
-            surface_species_units_.assign(static_cast<std::size_t>(tr.n_species), std::string{});
+            std::vector<std::string> units(static_cast<std::size_t>(tr.n_species));
             for (int sp = 0; sp < tr.n_species; ++sp) {
-                std::string& u = surface_species_units_[static_cast<std::size_t>(sp)];
+                std::string& u = units[static_cast<std::size_t>(sp)];
                 if (sp == tr.age_row)
                     u = "hours";
                 else if (sp == tr.temp_row)
@@ -8553,6 +8553,12 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                             : std::string{"1"};
                 }
             }
+            // The snapshot only points at these labels, and the IO thread reads
+            // them while this thread fills the next snapshot. They are fixed for
+            // a run, so replace them only when they change (at the first report),
+            // never in place under a queued snapshot.
+            if (surface_species_units_ != units)
+                surface_species_units_ = std::move(units);
             snap.surface_species_units = &surface_species_units_;
         } else {
             snap.surface_species_conc.clear();
