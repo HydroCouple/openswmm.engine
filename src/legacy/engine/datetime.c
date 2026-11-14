@@ -27,6 +27,7 @@
 
 #define _CRT_SECURE_NO_DEPRECATE
 
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -527,8 +528,8 @@ DateTime datetime_addDays(DateTime date1, DateTime date2)
  * - date1 (in): Finite minuend in SWMM calendar days.
  * - date2 (in): Finite subtrahend in SWMM calendar days.
  * @return Signed difference in seconds; negative when date1 is earlier.
- * @pre The whole-day difference times 86400 fits in int, because the legacy
- * implementation casts that intermediate to int, and the final result fits in long.
+ * @note A whole-day difference outside the int range (in seconds) saturates to
+ * INT_MIN or INT_MAX before the time-of-day correction is added.
  */
 long datetime_timeDiff(DateTime date1, DateTime date2)
 
@@ -542,11 +543,20 @@ long datetime_timeDiff(DateTime date1, DateTime date2)
     double d2 = floor(date2);
     int h, m, s;
     long s1, s2, secs;
+    double diff;
     datetime_decodeTime(date1, &h, &m, &s);
     s1 = 3600 * h + 60 * m + s;
     datetime_decodeTime(date2, &h, &m, &s);
     s2 = 3600 * h + 60 * m + s;
-    secs = (int)(floor((d1 - d2) * SecsPerDay + 0.5));
+    // Converting an out-of-range double to int is undefined behavior. runoff_getTimeStep()
+    // passes a gage's unset next-rain date (about -6e10 s away) and ignores results <= 0.
+    // Clamping keeps INT_MIN, the value x86-64 and arm64 produced for it.
+    diff = floor((d1 - d2) * SecsPerDay + 0.5);
+    if (diff > INT_MAX)
+        diff = INT_MAX;
+    else if (diff < INT_MIN)
+        diff = INT_MIN;
+    secs = (int)diff;
     secs += (s1 - s2);
     return secs;
 }

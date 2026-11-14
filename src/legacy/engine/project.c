@@ -867,6 +867,9 @@ void initPointers() {
     Snowmelt = NULL;
     Event = NULL;
     MemPoolAllocated = FALSE;
+    // A failed swmm_open() never reaches project_close(), so the previous array can still be
+    // allocated here. Free it instead of overwriting (and leaking) the pointer.
+    FREE(FhotstartOutputs);
     FhotstartOutputs = (TFile*)calloc(MAXHOTSTARTFILES,
                                       sizeof(TFile)); //allow users to save up to 10 hotstart files
 }
