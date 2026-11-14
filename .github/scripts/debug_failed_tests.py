@@ -10,7 +10,7 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path)
-    parser.add_argument("debugger", choices=("gdb", "lldb"))
+    parser.add_argument("debugger", choices=("gdb", "lldb", "cdb"))
     args = parser.parse_args()
     build = args.build.resolve()
     logs = list((build / "Testing/Temporary").glob("LastTestsFailed*.log"))
@@ -61,6 +61,14 @@ def main():
                 "quit",
                 "--args",
             ]
+        elif args.debugger == "cdb":
+            # cdb ships with the Windows SDK's debugging tools. -g/-G skip the
+            # start and exit breaks, so the commands run at the first fault.
+            cdb = Path("C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe")
+            if not cdb.exists():
+                print(f"cdb not found at {cdb}")
+                return
+            debugger = [str(cdb), "-g", "-G", "-lines", "-c", ".ecxr; kP 60; ~*k 30; q"]
         else:
             debugger = [
                 "lldb",
@@ -92,7 +100,9 @@ def main():
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
             output += "\nDebugger rerun exceeded 300 seconds."
-        print("\n".join(output.splitlines()[:400]))
+        lines = output.splitlines()
+        # cdb lists every module it loads first; its stack is at the end.
+        print("\n".join(lines[-300:] if args.debugger == "cdb" else lines[:400]))
 
 
 if __name__ == "__main__":

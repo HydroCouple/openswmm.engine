@@ -188,6 +188,12 @@ jobs:
         timeout-minutes: 10
         run: python3 .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" lldb
 
+      - name: Diagnose Windows unit-test crashes (cdb)
+        if: failure() && runner.os == 'Windows'
+        timeout-minutes: 30
+        continue-on-error: true
+        run: python .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" cdb
+
       - name: Dump failed vcpkg build logs (Windows)
         if: failure() && runner.os == 'Windows'
         shell: bash
