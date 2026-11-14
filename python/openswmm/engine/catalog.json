@@ -9465,6 +9465,19 @@
    "params": []
   },
   {
+   "path": "hotstart.contents",
+   "target": "hotstart",
+   "name": "contents",
+   "form": "property",
+   "python": "HotStart.contents",
+   "doc": "State blocks the file holds, drawn from \"SPECIES\", \"GROUNDWATER\", \"GW_TRANSPORT\", \"SNOW\", \"LID\", \"SURFACE\", \"ENGINE_CHECKPOINT\" (a full checkpoint, which a restart restores instead of the records) and \"LEGACY\" (opened with open_legacy).",
+   "c": [
+    "swmm_hotstart_get_contents"
+   ],
+   "type": "tuple[str, ...]",
+   "access": "r"
+  },
+  {
    "path": "hotstart.crs",
    "target": "hotstart",
    "name": "crs",
@@ -9475,6 +9488,19 @@
     "swmm_hotstart_get_crs"
    ],
    "type": "Optional[str]",
+   "access": "r"
+  },
+  {
+   "path": "hotstart.end_datetime",
+   "target": "hotstart",
+   "name": "end_datetime",
+   "form": "property",
+   "python": "HotStart.end_datetime",
+   "doc": "End date and time of the run that saved the state, or None for a legacy file.",
+   "c": [
+    "swmm_hotstart_get_end_date"
+   ],
+   "type": "Optional[datetime]",
    "access": "r"
   },
   {
@@ -9491,6 +9517,22 @@
    "access": "r"
   },
   {
+   "path": "hotstart.link_records",
+   "target": "hotstart",
+   "name": "link_records",
+   "form": "method",
+   "python": "HotStart.link_records",
+   "doc": "Every stored link record, in file order (see HotStartLinkRecord).",
+   "c": [
+    "swmm_hotstart_get_link",
+    "swmm_hotstart_get_link_species",
+    "swmm_hotstart_link_count",
+    "swmm_hotstart_species_count"
+   ],
+   "returns": "List[HotStartLinkRecord]",
+   "params": []
+  },
+  {
    "path": "hotstart.node_count",
    "target": "hotstart",
    "name": "node_count",
@@ -9502,6 +9544,22 @@
    ],
    "type": "int",
    "access": "r"
+  },
+  {
+   "path": "hotstart.node_records",
+   "target": "hotstart",
+   "name": "node_records",
+   "form": "method",
+   "python": "HotStart.node_records",
+   "doc": "Every stored node record, in file order (see HotStartNodeRecord).",
+   "c": [
+    "swmm_hotstart_get_node",
+    "swmm_hotstart_get_node_species",
+    "swmm_hotstart_node_count",
+    "swmm_hotstart_species_count"
+   ],
+   "returns": "List[HotStartNodeRecord]",
+   "params": []
   },
   {
    "path": "hotstart.open",
@@ -9516,6 +9574,32 @@
    ],
    "returns": "HotStart",
    "params": [
+    {
+     "name": "path",
+     "type": "Union[str, PathLike[str]]",
+     "required": true
+    }
+   ],
+   "static": true
+  },
+  {
+   "path": "hotstart.open_legacy",
+   "target": "hotstart",
+   "name": "open_legacy",
+   "form": "method",
+   "python": "HotStart.open_legacy",
+   "doc": "Open a legacy EPA SWMM 5 hot-start file for inspection.",
+   "c": [
+    "swmm_hotstart_last_io_error",
+    "swmm_hotstart_open_legacy"
+   ],
+   "returns": "HotStart",
+   "params": [
+    {
+     "name": "model",
+     "type": "Solver",
+     "required": true
+    },
     {
      "name": "path",
      "type": "Union[str, PathLike[str]]",
@@ -9549,6 +9633,19 @@
     }
    ],
    "static": true
+  },
+  {
+   "path": "hotstart.saved_at",
+   "target": "hotstart",
+   "name": "saved_at",
+   "form": "property",
+   "python": "HotStart.saved_at",
+   "doc": "When a native file was saved (UTC), or None for a legacy file.",
+   "c": [
+    "swmm_hotstart_get_saved_at"
+   ],
+   "type": "Optional[datetime]",
+   "access": "r"
   },
   {
    "path": "hotstart.set_link_depth",
@@ -9593,6 +9690,35 @@
     },
     {
      "name": "flow",
+     "type": "float",
+     "required": true
+    }
+   ]
+  },
+  {
+   "path": "hotstart.set_link_state",
+   "target": "hotstart",
+   "name": "set_link_state",
+   "form": "method",
+   "python": "HotStart.set_link_state",
+   "doc": "Set *link_id*'s flow (ft3/s, signed in link orientation) and depth (ft) so that a restart derives a consistent volume. The edit is written to the file on close. Raises as set_node_state; the flow must be finite.",
+   "c": [
+    "swmm_hotstart_set_link_state"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "link_id",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "flow",
+     "type": "float",
+     "required": true
+    },
+    {
+     "name": "depth",
      "type": "float",
      "required": true
     }
@@ -9647,6 +9773,30 @@
    ]
   },
   {
+   "path": "hotstart.set_node_state",
+   "target": "hotstart",
+   "name": "set_node_state",
+   "form": "method",
+   "python": "HotStart.set_node_state",
+   "doc": "Set *node_id*'s depth (ft) so that a restart derives a consistent head (invert + depth) and volume from the restarting model. The edit is written to the file on close. Raises BadParamError for an unknown ID or a negative or non-finite depth, and HotStartError for a legacy file or one holding a full engine checkpoint (a restart would not read the records).",
+   "c": [
+    "swmm_hotstart_set_node_state"
+   ],
+   "returns": "None",
+   "params": [
+    {
+     "name": "node_id",
+     "type": "str",
+     "required": true
+    },
+    {
+     "name": "depth",
+     "type": "float",
+     "required": true
+    }
+   ]
+  },
+  {
    "path": "hotstart.set_subcatchment_runoff",
    "target": "hotstart",
    "name": "set_subcatchment_runoff",
@@ -9684,6 +9834,20 @@
    "access": "r"
   },
   {
+   "path": "hotstart.species",
+   "target": "hotstart",
+   "name": "species",
+   "form": "property",
+   "python": "HotStart.species",
+   "doc": "Names of the species (pollutants or reaction species, as saved) whose node and link concentrations the file holds.",
+   "c": [
+    "swmm_hotstart_get_species",
+    "swmm_hotstart_species_count"
+   ],
+   "type": "List[str]",
+   "access": "r"
+  },
+  {
    "path": "hotstart.start_datetime",
    "target": "hotstart",
    "name": "start_datetime",
@@ -9694,6 +9858,46 @@
     "swmm_hotstart_get_start_date"
    ],
    "type": "datetime",
+   "access": "r"
+  },
+  {
+   "path": "hotstart.subcatchment_count",
+   "target": "hotstart",
+   "name": "subcatchment_count",
+   "form": "property",
+   "python": "HotStart.subcatchment_count",
+   "doc": "Number of subcatchments stored in the hot-start blob.",
+   "c": [
+    "swmm_hotstart_subcatch_count"
+   ],
+   "type": "int",
+   "access": "r"
+  },
+  {
+   "path": "hotstart.subcatchment_records",
+   "target": "hotstart",
+   "name": "subcatchment_records",
+   "form": "method",
+   "python": "HotStart.subcatchment_records",
+   "doc": "Every stored subcatchment record, in file order (see HotStartSubcatchmentRecord).",
+   "c": [
+    "swmm_hotstart_get_subcatch",
+    "swmm_hotstart_subcatch_count"
+   ],
+   "returns": "List[HotStartSubcatchmentRecord]",
+   "params": []
+  },
+  {
+   "path": "hotstart.version",
+   "target": "hotstart",
+   "name": "version",
+   "form": "property",
+   "python": "HotStart.version",
+   "doc": "File format version: the native record version, or 1-4 for a legacy SWMM 5 file.",
+   "c": [
+    "swmm_hotstart_get_version"
+   ],
+   "type": "int",
    "access": "r"
   },
   {
@@ -29265,6 +29469,38 @@
     "temp_c": "float"
    },
    "doc": ""
+  },
+  "HotStartLinkRecord": {
+   "fields": {
+    "id": "str",
+    "flow": "float",
+    "depth": "float",
+    "volume": "float",
+    "age": "float",
+    "concentrations": "tuple[float, ...]"
+   },
+   "doc": "One link record stored in a hot-start file, in internal units."
+  },
+  "HotStartNodeRecord": {
+   "fields": {
+    "id": "str",
+    "depth": "float",
+    "head": "float",
+    "volume": "float",
+    "age": "float",
+    "concentrations": "tuple[float, ...]"
+   },
+   "doc": "One node record stored in a hot-start file, in internal units."
+  },
+  "HotStartSubcatchmentRecord": {
+   "fields": {
+    "id": "str",
+    "runoff": "float",
+    "gw_flow": "float",
+    "gw_upper_moisture": "float",
+    "gw_lower_depth": "float"
+   },
+   "doc": "One subcatchment record stored in a hot-start file, in internal units."
   },
   "HydrographEntry": {
    "fields": {

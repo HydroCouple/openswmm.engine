@@ -55,6 +55,9 @@ Save and apply
      - What it does
    * - ``HotStart.open(path)``
      - Classmethod. Opens an existing hot start file.
+   * - ``HotStart.open_legacy(solver, path)``
+     - Classmethod. Opens a legacy EPA SWMM 5 file, read-only, against the
+       model in an opened ``solver`` (see `Inspecting a file`_).
    * - ``HotStart.save_from(solver, path)``
      - Static method. Save current solver state to ``path``.
    * - ``hs.close()`` / ``with HotStart.open(p) as hs:``
@@ -83,9 +86,60 @@ Save and apply
    * - ``warnings``
      - ``list[str]``
      - Warnings emitted during open / apply.
-   * - ``node_count`` / ``link_count``
+   * - ``node_count`` / ``link_count`` / ``subcatchment_count``
      - ``int``
      - Counts inside the hot-start blob.
+   * - ``contents``
+     - ``tuple[str, ...]``
+     - State blocks the file holds: ``"SPECIES"``, ``"GROUNDWATER"``,
+       ``"GW_TRANSPORT"``, ``"SNOW"``, ``"LID"``, ``"SURFACE"``,
+       ``"ENGINE_CHECKPOINT"``, ``"LEGACY"``.
+   * - ``version``
+     - ``int``
+     - File format version (1-4 for a legacy file).
+   * - ``saved_at``
+     - :class:`~datetime.datetime` ``| None``
+     - When a native file was saved (UTC); ``None`` for a legacy file.
+   * - ``end_datetime``
+     - :class:`~datetime.datetime` ``| None``
+     - End of the saving run; ``None`` for a legacy file.
+   * - ``species``
+     - ``list[str]``
+     - Species whose node and link concentrations the file holds.
+
+----
+
+Inspecting a file
+=================
+
+``node_records()``, ``link_records()`` and ``subcatchment_records()``
+return every stored record, in file order and internal units (ft, ft3,
+ft3/s), as named tuples. Node and link records carry one concentration
+per entry of ``species``:
+
+.. code-block:: python
+
+    with HotStart.open("warmup.hs") as hs:
+        for r in hs.node_records():
+            print(r.id, r.depth, r.head, r.volume, r.concentrations)
+        for r in hs.link_records():
+            print(r.id, r.flow, r.depth)
+
+A value the file does not hold is NaN. A legacy SWMM 5 file stores values
+in object order without names, so it is read against the model it was
+written for; its counts must match, and records take the model's names.
+It holds no node head or volume and no link volume:
+
+.. code-block:: python
+
+    s = Solver("model.inp", "model.rpt", "model.out")
+    s.open()
+    with HotStart.open_legacy(s, "model.hsf") as hs:
+        print(hs.version, hs.contents)   # e.g. 4 ("SPECIES", "LEGACY")
+        depths = {r.id: r.depth for r in hs.node_records()}
+
+A legacy handle is read-only: the setters and :meth:`HotStart.apply`
+refuse it, and closing it writes nothing.
 
 ----
 
@@ -104,8 +158,16 @@ methods are id-keyed:
         hs.set_link_depth("C1", 0.6)
         hs.set_subcatchment_runoff("S1", 0.0)
 
-Edits made on a :class:`HotStart` are applied when :meth:`apply` runs;
-they do not affect the on-disk file.
+Edits made on a :class:`HotStart` are applied when :meth:`apply` runs,
+and written back to the file when the handle is closed.
+
+``set_node_state(node_id, depth)`` and ``set_link_state(link_id, flow,
+depth)`` keep a restart consistent: they store the depth (and flow) and
+leave the head and volume to be derived from the restarting model's
+geometry, so a depth edit cannot leave a stale head or volume behind.
+They refuse a negative or non-finite value (:class:`BadParamError`) and a
+file holding a full engine checkpoint, whose restart would not read the
+records (:class:`HotStartError`).
 
 ----
 

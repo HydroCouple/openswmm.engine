@@ -662,18 +662,40 @@ cdef extern from "openswmm_hotstart.h":
     cdef int swmm_hotstart_open(const char* path, SWMM_HotStart* hs) nogil
     cdef int swmm_hotstart_apply(SWMM_Engine e, SWMM_HotStart hs) nogil
     cdef int swmm_hotstart_close(SWMM_HotStart hs) nogil
+    cdef int swmm_hotstart_open_legacy(SWMM_Engine model, const char* path, SWMM_HotStart* hs) nogil
     # Modify
     cdef int swmm_hotstart_set_node_depth(SWMM_HotStart hs, const char* node_id, double depth)
     cdef int swmm_hotstart_set_node_head(SWMM_HotStart hs, const char* node_id, double head)
     cdef int swmm_hotstart_set_link_flow(SWMM_HotStart hs, const char* link_id, double flow)
     cdef int swmm_hotstart_set_link_depth(SWMM_HotStart hs, const char* link_id, double depth)
     cdef int swmm_hotstart_set_subcatch_runoff(SWMM_HotStart hs, const char* subcatch_id, double runoff)
+    cdef int swmm_hotstart_set_node_state(SWMM_HotStart hs, const char* node_id, double depth)
+    cdef int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id, double flow, double depth)
     # Metadata
     cdef int swmm_hotstart_get_sim_time(SWMM_HotStart hs, double* sim_time)
     cdef int swmm_hotstart_get_start_date(SWMM_HotStart hs, double* start_date)
     cdef int swmm_hotstart_get_crs(SWMM_HotStart hs, char* buf, int buflen)
     cdef int swmm_hotstart_node_count(SWMM_HotStart hs)
     cdef int swmm_hotstart_link_count(SWMM_HotStart hs)
+    # Contents and per-object records
+    cdef int swmm_hotstart_get_contents(SWMM_HotStart hs, int* flags)
+    cdef int swmm_hotstart_get_version(SWMM_HotStart hs, int* version)
+    cdef int swmm_hotstart_get_saved_at(SWMM_HotStart hs, long long* seconds)
+    cdef int swmm_hotstart_get_end_date(SWMM_HotStart hs, double* end_date)
+    cdef int swmm_hotstart_subcatch_count(SWMM_HotStart hs)
+    cdef int swmm_hotstart_get_node(SWMM_HotStart hs, int index, char* id, int id_len,
+                                    double* depth, double* head, double* volume, double* age)
+    cdef int swmm_hotstart_get_link(SWMM_HotStart hs, int index, char* id, int id_len,
+                                    double* flow, double* depth, double* volume, double* age)
+    cdef int swmm_hotstart_get_subcatch(SWMM_HotStart hs, int index, char* id, int id_len,
+                                        double* runoff, double* gw_flow,
+                                        double* gw_upper_moisture, double* gw_lower_depth)
+    cdef int swmm_hotstart_species_count(SWMM_HotStart hs)
+    cdef int swmm_hotstart_get_species(SWMM_HotStart hs, int index, char* name, int name_len)
+    cdef int swmm_hotstart_get_node_species(SWMM_HotStart hs, int node_index, int species_index,
+                                            double* value)
+    cdef int swmm_hotstart_get_link_species(SWMM_HotStart hs, int link_index, int species_index,
+                                            double* value)
     # Warnings
     cdef int swmm_hotstart_warning_count(SWMM_HotStart hs)
     cdef const char* swmm_hotstart_warning(SWMM_HotStart hs, int index)

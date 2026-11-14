@@ -53,7 +53,7 @@ is exposed via :attr:`Solver.save_schedule`.
 
 import os
 from collections.abc import MutableSequence
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, NamedTuple, Optional
 
 from ._common cimport *
@@ -75,6 +75,58 @@ cdef void _check_io(int rc) except *:
     _check(rc)
 
 
+# SWMM_HOTSTART_* content bits, by name.
+_CONTENTS = ((0x01, "SPECIES"), (0x02, "GROUNDWATER"), (0x04, "GW_TRANSPORT"),
+             (0x08, "SNOW"), (0x10, "LID"), (0x20, "SURFACE"),
+             (0x40, "ENGINE_CHECKPOINT"), (0x80, "LEGACY"))
+
+
+class HotStartNodeRecord(NamedTuple):
+    """One node record stored in a hot-start file, in internal units.
+
+    ``depth`` and ``head`` in ft, ``volume`` in ft3, ``age`` in seconds
+    (negative when water age is not tracked). ``head`` and ``volume`` are NaN
+    when the file does not store them (a legacy file) or when
+    :meth:`HotStart.set_node_state` marked them to be derived at restart.
+    ``concentrations`` holds one value per :attr:`HotStart.species`.
+    """
+    id: str
+    depth: float
+    head: float
+    volume: float
+    age: float
+    concentrations: tuple
+
+
+class HotStartLinkRecord(NamedTuple):
+    """One link record stored in a hot-start file, in internal units.
+
+    ``flow`` in ft3/s (signed in link orientation), ``depth`` in ft,
+    ``volume`` in ft3 (NaN when not stored or marked to be derived by
+    :meth:`HotStart.set_link_state`), ``age`` in seconds (negative when not
+    tracked). ``concentrations`` holds one value per :attr:`HotStart.species`.
+    """
+    id: str
+    flow: float
+    depth: float
+    volume: float
+    age: float
+    concentrations: tuple
+
+
+class HotStartSubcatchmentRecord(NamedTuple):
+    """One subcatchment record stored in a hot-start file, in internal units.
+
+    ``runoff`` and ``gw_flow`` in ft3/s, ``gw_upper_moisture`` as a fraction,
+    ``gw_lower_depth`` in ft. A value the file does not hold is NaN.
+    """
+    id: str
+    runoff: float
+    gw_flow: float
+    gw_upper_moisture: float
+    gw_lower_depth: float
+
+
 cdef class HotStart:
     """Handle to a hot start file. See module docstring."""
 
@@ -82,6 +134,13 @@ cdef class HotStart:
 
     def __init__(self):
         self._handle = NULL
+
+    cdef SWMM_HotStart _live(self) except NULL:
+        if self._handle == NULL:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "HotStart is closed")
+        return self._handle
 
     # ------------------------------------------------------------------
     # Lifecycle classmethods
@@ -110,6 +169,32 @@ cdef class HotStart:
         with nogil:
             rc = swmm_hotstart_open(p, &hs)
         _check_io(rc)
+        obj._handle = hs
+        return obj
+
+    @classmethod
+    def open_legacy(cls, Solver model, path) -> "HotStart":
+        """Open a legacy EPA SWMM 5 hot-start file for inspection.
+
+        The legacy format stores values in object order without names, so the
+        file is read against ``model`` (a Solver that is OPENED or later): its
+        subcatchment, node, link and pollutant counts must match the model's,
+        and records take the model's names. Node head and volume and link
+        volume are not stored (NaN). The handle is read-only: the setters and
+        :meth:`apply` refuse it, and :meth:`close` writes nothing. The model is
+        not changed. Raises :class:`HotStartError` when the file cannot be
+        read, is not a legacy file or was written for another model.
+        """
+        cdef HotStart obj = HotStart()
+        cdef bytes b = os.fspath(path).encode('utf-8')
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>model.handle
+        cdef SWMM_HotStart hs = NULL
+        cdef const char* p = b
+        cdef int rc
+        with model._operation(<size_t>h):
+            with nogil:
+                rc = swmm_hotstart_open_legacy(h, p, &hs)
+            _check_io(rc)
         obj._handle = hs
         return obj
 
@@ -191,6 +276,144 @@ cdef class HotStart:
         return swmm_hotstart_link_count(self._handle)
 
     @property
+    def subcatchment_count(self) -> int:
+        return swmm_hotstart_subcatch_count(self._handle)
+
+    @property
+    def contents(self) -> tuple:
+        """State blocks the file holds, drawn from ``"SPECIES"``,
+        ``"GROUNDWATER"``, ``"GW_TRANSPORT"``, ``"SNOW"``, ``"LID"``,
+        ``"SURFACE"``, ``"ENGINE_CHECKPOINT"`` (a full checkpoint, which a
+        restart restores instead of the records) and ``"LEGACY"`` (opened with
+        :meth:`open_legacy`)."""
+        cdef int flags = 0
+        _check(swmm_hotstart_get_contents(self._handle, &flags))
+        return tuple(name for bit, name in _CONTENTS if flags & bit)
+
+    @property
+    def version(self) -> int:
+        """File format version: the native record version, or 1-4 for a
+        legacy SWMM 5 file."""
+        cdef int v = 0
+        _check(swmm_hotstart_get_version(self._handle, &v))
+        return v
+
+    @property
+    def saved_at(self) -> Optional[datetime]:
+        """When a native file was saved (UTC), or ``None`` for a legacy file."""
+        cdef long long seconds = 0
+        _check(swmm_hotstart_get_saved_at(self._handle, &seconds))
+        return datetime.fromtimestamp(seconds, tz=timezone.utc) if seconds else None
+
+    @property
+    def end_datetime(self) -> Optional[datetime]:
+        """End date and time of the run that saved the state, or ``None`` for
+        a legacy file."""
+        cdef double v = 0.0
+        _check(swmm_hotstart_get_end_date(self._handle, &v))
+        return oadate_to_datetime(v) if v else None
+
+    @property
+    def species(self) -> List[str]:
+        """Names of the species (pollutants or reaction species, as saved)
+        whose node and link concentrations the file holds."""
+        cdef SWMM_HotStart hs = self._live()
+        cdef int n = swmm_hotstart_species_count(hs)
+        cdef int i
+        cdef _TextBufs t
+        out = []
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_hotstart_get_species(hs, i, t.p[0], t.size))
+                    if not _tb_retry(&t):
+                        break
+                out.append(_tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
+        return out
+
+    def node_records(self) -> List[HotStartNodeRecord]:
+        """Every stored node record, in file order (see
+        :class:`HotStartNodeRecord`)."""
+        cdef SWMM_HotStart hs = self._live()
+        cdef int n = swmm_hotstart_node_count(hs)
+        cdef int ns = swmm_hotstart_species_count(hs)
+        cdef int i, k
+        cdef double depth = 0.0, head = 0.0, volume = 0.0, age = 0.0, c = 0.0
+        cdef _TextBufs t
+        out = []
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_hotstart_get_node(hs, i, t.p[0], t.size,
+                                                  &depth, &head, &volume, &age))
+                    if not _tb_retry(&t):
+                        break
+                conc = []
+                for k in range(ns):
+                    _check(swmm_hotstart_get_node_species(hs, i, k, &c))
+                    conc.append(c)
+                out.append(HotStartNodeRecord(_tb_str(&t, 0), depth, head, volume, age,
+                                              tuple(conc)))
+        finally:
+            _tb_close(&t)
+        return out
+
+    def link_records(self) -> List[HotStartLinkRecord]:
+        """Every stored link record, in file order (see
+        :class:`HotStartLinkRecord`)."""
+        cdef SWMM_HotStart hs = self._live()
+        cdef int n = swmm_hotstart_link_count(hs)
+        cdef int ns = swmm_hotstart_species_count(hs)
+        cdef int i, k
+        cdef double flow = 0.0, depth = 0.0, volume = 0.0, age = 0.0, c = 0.0
+        cdef _TextBufs t
+        out = []
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_hotstart_get_link(hs, i, t.p[0], t.size,
+                                                  &flow, &depth, &volume, &age))
+                    if not _tb_retry(&t):
+                        break
+                conc = []
+                for k in range(ns):
+                    _check(swmm_hotstart_get_link_species(hs, i, k, &c))
+                    conc.append(c)
+                out.append(HotStartLinkRecord(_tb_str(&t, 0), flow, depth, volume, age,
+                                              tuple(conc)))
+        finally:
+            _tb_close(&t)
+        return out
+
+    def subcatchment_records(self) -> List[HotStartSubcatchmentRecord]:
+        """Every stored subcatchment record, in file order (see
+        :class:`HotStartSubcatchmentRecord`)."""
+        cdef SWMM_HotStart hs = self._live()
+        cdef int n = swmm_hotstart_subcatch_count(hs)
+        cdef int i
+        cdef double runoff = 0.0, gw_flow = 0.0, upper = 0.0, lower = 0.0
+        cdef _TextBufs t
+        out = []
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_hotstart_get_subcatch(hs, i, t.p[0], t.size,
+                                                      &runoff, &gw_flow, &upper, &lower))
+                    if not _tb_retry(&t):
+                        break
+                out.append(HotStartSubcatchmentRecord(_tb_str(&t, 0), runoff, gw_flow,
+                                                      upper, lower))
+        finally:
+            _tb_close(&t)
+        return out
+
+    @property
     def warnings(self) -> List[str]:
         """All warnings emitted during open/apply, in order."""
         cdef int n = swmm_hotstart_warning_count(self._handle)
@@ -229,6 +452,24 @@ cdef class HotStart:
         """Seed the initial runoff at *sub_id* in the hot-start state."""
         cdef bytes b = sub_id.encode('utf-8')
         _check(swmm_hotstart_set_subcatch_runoff(self._handle, b, runoff))
+
+    def set_node_state(self, str node_id, double depth) -> None:
+        """Set *node_id*'s depth (ft) so that a restart derives a consistent
+        head (invert + depth) and volume from the restarting model. The edit
+        is written to the file on :meth:`close`. Raises
+        :class:`BadParamError` for an unknown ID or a negative or non-finite
+        depth, and :class:`HotStartError` for a legacy file or one holding a
+        full engine checkpoint (a restart would not read the records)."""
+        cdef bytes b = node_id.encode('utf-8')
+        _check(swmm_hotstart_set_node_state(self._handle, b, depth))
+
+    def set_link_state(self, str link_id, double flow, double depth) -> None:
+        """Set *link_id*'s flow (ft3/s, signed in link orientation) and depth
+        (ft) so that a restart derives a consistent volume. The edit is
+        written to the file on :meth:`close`. Raises as
+        :meth:`set_node_state`; the flow must be finite."""
+        cdef bytes b = link_id.encode('utf-8')
+        _check(swmm_hotstart_set_link_state(self._handle, b, flow, depth))
 
     def __repr__(self) -> str:
         try:
