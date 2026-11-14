@@ -116,7 +116,11 @@ inline void write_model_supplement(sqlite3* db, const SimulationContext& ctx,
             continue;
         }
         auto words = input::Tokenizer::tokenize(line);
-        if (words.empty() || relational.contains(section)) continue;
+        // [LABELS], [BACKDROP] and [PROFILE(S)] are replayed verbatim, comment lines included,
+        // as the .inp writer does; the other sections are parsed, so their blank and comment
+        // lines carry nothing.
+        const bool verbatim = ctx.passthrough_sections.contains(section);
+        if (relational.contains(section) || (words.empty() && !verbatim)) continue;
         if (section == "OPTIONS") {
             const std::string key = words[0];
             // Dates are represented together in the relational option values.
@@ -162,6 +166,9 @@ inline void read_model_supplement(sqlite3* db, SimulationContext& ctx,
     std::vector<std::string> body;
     auto flush = [&] {
         if (section.empty()) return;
+        // The blank line written before the next header is not part of this section.
+        while (!body.empty() && body.back().find_first_not_of(" \t\r") == std::string::npos)
+            body.pop_back();
         if (section.starts_with("REACTION_")) ctx.embedded_component_sections.emplace_back(section, body);
         else if (parser.registry().has(section)) {
             const double reportStart = ctx.options.report_start;

@@ -2448,6 +2448,7 @@ TEST_F(GeoPackageTest, SpeciesCollidingWithHydraulicVariableFailsPrepare) {
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_spatial.h>
 
 namespace {
 
@@ -2536,6 +2537,48 @@ TEST(GeoPackageElevationOffsets, ElevationOffsetsSurviveAGpkgRoundTrip) {
     const Offsets c2 = conduit_offsets(back, "C2");
     EXPECT_NEAR(c2.up, 98.5, 1e-6);
     EXPECT_NEAR(c2.dn, 90.0, 1e-6);
+}
+
+// The GUI shows [LABELS], [BACKDROP] and [PROFILES] as map layers and saves its edits back with
+// swmm_spatial_set_annotation, so a GeoPackage model must return the same text as the .inp did,
+// including an edit made through the API before the save.
+TEST(GeoPackageMapAnnotations, LabelsBackdropAndProfilesSurviveAGpkgRoundTrip) {
+    const std::string src = "inp_roundtrip/passthrough_sections.inp";
+    const std::string gpkg = "inp_roundtrip/_passthrough_sections.gpkg";
+    std::remove(gpkg.c_str());
+    const auto annotation = [](SWMM_Engine engine, const char* tag) {
+        int required = 0;
+        EXPECT_EQ(swmm_spatial_get_annotation(engine, tag, nullptr, 0, &required), SWMM_OK);
+        std::string text(static_cast<std::size_t>(std::max(required, 1)), '\0');
+        EXPECT_EQ(swmm_spatial_get_annotation(engine, tag, text.data(),
+                                              static_cast<int>(text.size()), nullptr),
+                  SWMM_OK);
+        text.resize(std::strlen(text.c_str()));
+        return text;
+    };
+    const char* const tags[] = {"LABELS", "BACKDROP", "PROFILES"};
+    std::map<std::string, std::string> before;
+
+    SWMM_Engine a = swmm_engine_create();
+    ASSERT_NE(a, nullptr);
+    ASSERT_EQ(swmm_engine_open(a, src.c_str(), nullptr, nullptr, nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_spatial_set_annotation(a, "PROFILES", "\"Main line\" C1 C2\n\"Branch\" C2\n"),
+              SWMM_OK);
+    for (const char* tag : tags) {
+        before[tag] = annotation(a, tag);
+        EXPECT_FALSE(before[tag].empty()) << tag;
+    }
+    ASSERT_EQ(swmm_model_write_with_plugin(a, gpkg.c_str(), kGpkgPluginId), SWMM_OK);
+    swmm_engine_close(a);
+    swmm_engine_destroy(a);
+
+    SWMM_Engine b = swmm_engine_create();
+    ASSERT_NE(b, nullptr);
+    ASSERT_EQ(swmm_engine_open(b, gpkg.c_str(), nullptr, nullptr, kGpkgPluginId), SWMM_OK);
+    for (const char* tag : tags)
+        EXPECT_EQ(annotation(b, tag), before[tag]) << tag;
+    swmm_engine_close(b);
+    swmm_engine_destroy(b);
 }
 
 TEST(GeoPackagePollutantBasis, RawUnitCodesRetainDeclarationValidity) {
