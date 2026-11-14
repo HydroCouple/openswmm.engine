@@ -62,6 +62,7 @@ TEST(StreetXsect, RunsAndCarriesFlow) {
 
     EXPECT_EQ(swmm_engine_end(e), SWMM_OK);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 } // namespace

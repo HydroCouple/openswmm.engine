@@ -66,6 +66,7 @@ int open_model(const std::string& inp, const std::string& rpt, std::string& rpt_
         }
     }
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 
     std::ifstream f(rpt);
     std::stringstream ss;

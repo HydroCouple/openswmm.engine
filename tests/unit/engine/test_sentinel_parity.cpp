@@ -109,6 +109,7 @@ int run_model(const std::string& stem, std::string& rpt_text) {
         swmm_engine_report(e);
     }
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
     rpt_text = read_file(rpt);
     return rc;
 }
@@ -179,6 +180,7 @@ double runoff_volume(const std::string& stem) {
         swmm_engine_end(e);
     }
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return vol;
 }
 
@@ -210,6 +212,7 @@ double temperature_at(const std::string& stem, double days) {
         swmm_engine_end(e);
     }
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return temp;
 }
 
@@ -228,6 +231,7 @@ int rain_series_count(const std::string& stem) {
     int n = -1;
     EXPECT_EQ(swmm_gage_get_rainfall_series_count(e, swmm_gage_index(e, "G1"), &n), SWMM_OK);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return n;
 }
 
@@ -248,6 +252,7 @@ std::string rewritten(const std::string& stem) {
     const std::string path = stem + "_rewritten.inp";
     EXPECT_EQ(swmm_model_write(e, path.c_str()), SWMM_OK);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
     return read_file(path);
 }
 
@@ -261,6 +266,7 @@ TEST(SentinelParityGroundwater, EgwtStarIsMissing) {
     SWMM_Engine e = open_only("sentinel_gw_egwt_star");
     EXPECT_EQ(egwt_of(e, "S1"), kMissing);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // legacy gwater.c:240 tests only the first character: `*tok[m] != '*'`.
@@ -268,6 +274,7 @@ TEST(SentinelParityGroundwater, EgwtStarPrefixIsMissing) {
     SWMM_Engine e = open_only("sentinel_gw_egwt_star_prefix");
     EXPECT_EQ(egwt_of(e, "S1"), kMissing);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // -99 is not a sentinel in either engine: it is an elevation of -99.
@@ -275,6 +282,7 @@ TEST(SentinelParityGroundwater, EgwtMinus99IsLiteralElevation) {
     SWMM_Engine e = open_only("sentinel_gw_egwt_minus99");
     EXPECT_EQ(egwt_of(e, "S1"), -99.0);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // [GROUNDWATER] ahead of [SUBCATCHMENTS], [AQUIFERS] and [JUNCTIONS]: legacy
@@ -302,6 +310,7 @@ TEST(SentinelParityGroundwater, RowBeforeReferencedSectionsResolves) {
         }(),
         0.1);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 TEST(SentinelParityGroundwater, UndefinedAquiferIs209) {
@@ -371,6 +380,7 @@ TEST(SentinelParityLid, NumberZeroAddsNoUnit) {
     SWMM_Engine e = open_only("sentinel_lid_number0");
     EXPECT_EQ(swmm_lid_usage_count(e), 0);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +414,7 @@ TEST(SentinelParityOutlet, NegativeCrestClampedUnderDepthOffsets) {
     EXPECT_EQ(swmm_link_get_crest_height(e, l, &crest), SWMM_OK);
     EXPECT_EQ(crest, 0.0);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +429,7 @@ TEST(SentinelParityClimate, FileStartDateIsParsedAsADate) {
     EXPECT_EQ(swmm_climate_get_temp_file_start(e, &start), SWMM_OK);
     EXPECT_EQ(start, 43800.0);
     swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // The file holds 20 F every December day and 80 F every January day. A

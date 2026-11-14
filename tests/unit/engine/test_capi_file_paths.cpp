@@ -238,7 +238,9 @@ TEST_F(CapiFilePathsTest, HotstartSaveVectorSlotByIndex) {
 
 TEST_F(CapiFilePathsTest, UnknownRoleReturnsBadParam) {
     char abs_buf[16] = {}, orig_buf[16] = {};
-    auto bogus = static_cast<SWMM_FilePathRole>(9999);
+    // 0 names no role. A value outside the enum's range, such as 9999, would be undefined
+    // behavior in C++, because SWMM_FilePathRole has no fixed underlying type.
+    auto bogus = static_cast<SWMM_FilePathRole>(0);
     EXPECT_EQ(swmm_file_path_get(engine, bogus, nullptr, abs_buf, sizeof(abs_buf), orig_buf,
                                  sizeof(orig_buf)),
               SWMM_ERR_BADPARAM);

@@ -20,6 +20,14 @@ void operator delete(void* p) noexcept {
 void operator delete[](void* p) noexcept {
     std::free(p);
 }
+// Sized deallocation calls these. Without them the library versions release the blocks
+// that operator new above took from malloc, an ASan alloc-dealloc mismatch.
+void operator delete(void* p, std::size_t) noexcept {
+    std::free(p);
+}
+void operator delete[](void* p, std::size_t) noexcept {
+    std::free(p);
+}
 TEST(ConservativeMixingWorkspace, WarmPrepareAndSolveAllocateNothing) {
     using namespace openswmm::quality;
     MixingWater w{
