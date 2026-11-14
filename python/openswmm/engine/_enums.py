@@ -1864,3 +1864,29 @@ class LidExtraField(IntEnum):
     DRAIN_OPEN = 5
     DRAIN_CLOSE = 6
     STORAGE_COVERED = 7
+
+
+class SummaryTable(IntEnum):
+    """Report summary tables, matching native SWMM_SummaryTable (the ``.rpt`` sections)."""
+    NODE_DEPTH = 0
+    NODE_INFLOW = 1
+    NODE_SURCHARGE = 2
+    NODE_FLOODING = 3
+    STORAGE_VOLUME = 4
+    OUTFALL_LOADING = 5
+    LINK_FLOW = 6
+    FLOW_CLASSIFICATION = 7
+    CONDUIT_SURCHARGE = 8
+    PUMPING = 9
+    LID_PERFORMANCE = 10
+
+
+class SummaryObject(IntEnum):
+    """Object kind of a summary-table row (native SWMM_SUMMARY_OBJECT_*).
+
+    ``SYSTEM`` is a total row (Outfall Loading); ``SUBCATCHMENT`` rows are LID units.
+    """
+    SYSTEM = -1
+    NODE = 0
+    LINK = 1
+    SUBCATCHMENT = 2

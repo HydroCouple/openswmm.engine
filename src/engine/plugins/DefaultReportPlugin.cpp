@@ -40,6 +40,7 @@
 #include "../quality/MsxLidReactions.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
+#include "../output/ReportTables.hpp" // G-08: summary tables shared with swmm_summary_*
 #include "../hydraulics/Node.hpp"       // node::getVolume — storage volume from its depth-relation
 #include "../hydraulics/Link.hpp"       // link::buildXSectParams — street spread at max depth
 #include "../hydraulics/XSectBatch.hpp" // xsect::getWofY
@@ -2439,10 +2440,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // legacy statsrpt_writeReport writes the runoff tables (this one, LID
     // performance, groundwater, washoff) only when rainfall, snowmelt or
     // groundwater is analyzed (statsrpt.c:103-113).
-    const bool runoff_rpt =
-        ctx.n_subcatches() > 0 &&
-        (!opt.ignore_rainfall || (ctx.snowpack_names.size() > 0 && !opt.ignore_snow_melt) ||
-         (ctx.aquifer_names.size() > 0 && !opt.ignore_groundwater));
+    const bool runoff_rpt = report_tables::runoffReported(ctx);
     if (runoff_rpt) {
         WRITE(f, "***************************");
         WRITE(f, "Subcatchment Runoff Summary");
@@ -2748,25 +2746,14 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // wb_* fields are in ft depth; convert to inches (× 12).
     // Data is copied from LIDGroupSoA to ctx.lid_usage.wb_* in SWMMEngine::report().
     // =====================================================================
-    if (runoff_rpt && ctx.lid_usage.count() > 0) {
-        int n_usage = ctx.lid_usage.count();
-        bool has_lids = false;
-        for (int j = 0; j < n_usage; ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (uj < ctx.lid_usage.wb_inflow.size() &&
-                (ctx.lid_usage.wb_inflow[uj] > 0.0 || ctx.lid_usage.wb_drain_flow[uj] > 0.0 ||
-                 ctx.lid_usage.wb_surf_flow[uj] > 0.0)) {
-                has_lids = true;
-                break;
-            }
-        }
-
+    const ReportTable lid_perf = report_tables::lidPerformance(ctx, ctx.lid_usage);
+    if (lid_perf.reported) {
         WRITE(f, "********************");
         WRITE(f, "LID Performance Summary");
         WRITE(f, "********************");
         std::fprintf(f, "\n");
 
-        if (!has_lids) {
+        if (lid_perf.rows.empty()) {
             WRITE(f, "");
             WRITE(f, "No LID performance data.");
         } else {
@@ -2780,21 +2767,11 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             std::fprintf(f,
                          "\n  -----------------------------------------------------------------");
 
-            for (int j = 0; j < n_usage; ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                int li = ctx.lid_usage.lid_index[uj];
-                int si = ctx.lid_usage.subcatch_index[uj];
-
-                // Water-balance depths: ft → in | mm (legacy UCF(RAINDEPTH)).
-                auto safe = [&](const std::vector<double>& v) -> double {
-                    return (uj < v.size()) ? v[uj] * depth_vcf : 0.0;
-                };
-
-                std::fprintf(f, "\n  %-16s %-12s", ctx.lid_names.name_of(li).c_str(),
-                             ctx.subcatch_names.name_of(si).c_str());
-                std::fprintf(f, " %7.2f %7.2f %7.2f %8.2f %7.2f", safe(ctx.lid_usage.wb_inflow),
-                             safe(ctx.lid_usage.wb_evap), safe(ctx.lid_usage.wb_infil),
-                             safe(ctx.lid_usage.wb_surf_flow), safe(ctx.lid_usage.wb_drain_flow));
+            for (const ReportRow& r : lid_perf.rows) {
+                std::fprintf(f, "\n  %-16s %-12s", r.label.c_str(),
+                             ctx.subcatch_names.name_of(r.object_index).c_str());
+                std::fprintf(f, " %7.2f %7.2f %7.2f %8.2f %7.2f", r.values[0], r.values[1],
+                             r.values[2], r.values[3], r.values[4]);
             }
         }
 
@@ -2807,8 +2784,9 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // legacy statsrpt_writeReport writes the flow-routing tables only when
     // there are links and routing is not ignored (statsrpt.c:117).
-    const bool route_rpt = ctx.n_links() > 0 && !opt.ignore_routing;
-    if (route_rpt) {
+    const bool route_rpt = report_tables::routingReported(ctx);
+    const ReportTable node_depth = report_tables::nodeDepth(ctx);
+    if (node_depth.reported) {
         WRITE(f, "******************");
         WRITE(f, "Node Depth Summary");
         WRITE(f, "******************");
@@ -2827,26 +2805,14 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             f,
             "\n  ---------------------------------------------------------------------------------");
 
-        long report_steps = ctx.routing_stats.report_steps;
-        report_steps = std::max(report_steps, 1L);
-
-        for (int j = 0; j < ctx.n_nodes(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            int nt = static_cast<int>(ctx.nodes.type[uj]);
-            double max_d_int = ctx.nodes.stat_max_depth[uj];
-            double avg_d =
-                ctx.nodes.stat_sum_depth[uj] / static_cast<double>(report_steps) * len_ucf;
-            double max_d = max_d_int * len_ucf;
-            double max_hgl = (ctx.nodes.invert_elev[uj] + max_d_int) * len_ucf;
-            double rpt_max = ctx.nodes.stat_max_rpt_depth[uj]; // already display units
+        for (const ReportRow& r : node_depth.rows) {
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_depth_date[uj], ctx.options.report_start, days, hrs,
-                           mins);
+            elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
-            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-            std::fprintf(f, " %-9s", nt_str(nt));
-            std::fprintf(f, " %7.2f  %7.2f  %7.2f  %4d  %02d:%02d  %10.2f", avg_d, max_d, max_hgl,
-                         days, hrs, mins, rpt_max);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+            std::fprintf(f, " %-9s", r.label.c_str());
+            std::fprintf(f, " %7.2f  %7.2f  %7.2f  %4d  %02d:%02d  %10.2f", r.values[0],
+                         r.values[1], r.values[2], days, hrs, mins, r.values[4]);
         }
     }
 
@@ -2856,7 +2822,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Node Inflow Summary — matches legacy writeNodeFlows()
     // =====================================================================
-    if (route_rpt) {
+    const ReportTable node_inflow = report_tables::nodeInflow(ctx);
+    if (node_inflow.reported) {
         WRITE(f, "*******************");
         WRITE(f, "Node Inflow Summary");
         WRITE(f, "*******************");
@@ -2871,35 +2838,23 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             "\n  -------------------------------------------------------------------------------------------------",
             FlowUnitWords[fu], FlowUnitWords[fu], vol_word, vol_word);
 
-        for (int j = 0; j < ctx.n_nodes(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            int nt = static_cast<int>(ctx.nodes.type[uj]);
-
-            double max_lat = ctx.nodes.stat_max_lat_inflow[uj] * Qcf;
-            double max_tot = ctx.nodes.stat_max_total_inflow[uj] * Qcf;
-            double vol_lat = ctx.nodes.stat_lat_inflow_vol[uj] * Vcf;
-            double vol_tot = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
+        for (const ReportRow& r : node_inflow.rows) {
             int days, hrs, mins;
-            elapsedToParts(ctx.nodes.stat_max_inflow_date[uj], ctx.options.report_start, days, hrs,
-                           mins);
+            elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
-            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-            std::fprintf(f, " %-9s", nt_str(nt));
-            std::fprintf(f, ff, max_lat);
-            std::fprintf(f, ff, max_tot);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+            std::fprintf(f, " %-9s", r.label.c_str());
+            std::fprintf(f, ff, r.values[0]);
+            std::fprintf(f, ff, r.values[1]);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
-            std::fprintf(f, "%12.3g", vol_lat);
-            std::fprintf(f, "%12.3g", vol_tot);
-            // Flow balance error, legacy writeNodeFlows: outflow includes the
-            // final stored volume (massbal_getStorage(TRUE) runs first); below
-            // 1 ft3 of outflow the volume difference is printed instead.
-            const double in_v = ctx.nodes.stat_total_inflow_vol[uj];
-            const double out_v = ctx.nodes.stat_total_outflow_vol[uj] + ctx.nodes.volume[uj];
-            if (std::fabs(out_v) < 1.0)
-                std::fprintf(f, "%12.3f %s", (in_v - out_v) * Vcf * 1.0e6,
-                             si_report ? "ltr" : "gal");
+            std::fprintf(f, "%12.3g", r.values[3]);
+            std::fprintf(f, "%12.3g", r.values[4]);
+            // Flow balance error: a percent, or below 1 ft3 of outflow the
+            // volume difference.
+            if (r.shows(5))
+                std::fprintf(f, "%12.3f", r.values[5]);
             else
-                std::fprintf(f, "%12.3f", (in_v - out_v) / out_v * 100.0);
+                std::fprintf(f, "%12.3f %s", r.values[6], si_report ? "ltr" : "gal");
         }
     }
 
@@ -2909,22 +2864,14 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Node Surcharge Summary — matches legacy writeNodeSurcharge()
     // =====================================================================
-    if (route_rpt && static_cast<int>(opt.routing_model) == 2) { // DYNWAVE only
+    const ReportTable node_surcharge = report_tables::nodeSurcharge(ctx);
+    if (node_surcharge.reported) { // DYNWAVE only
         WRITE(f, "**********************");
         WRITE(f, "Node Surcharge Summary");
         WRITE(f, "**********************");
 
-        // legacy writeNodeSurcharge: outfalls skipped; hours floored at 0.01;
-        // height above the highest conduit crown and depth below the rim,
-        // both from the node's maximum depth.
         int n_written = 0;
-        for (int j = 0; j < ctx.n_nodes(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.nodes.type[uj] == NodeType::OUTFALL)
-                continue;
-            if (ctx.nodes.stat_time_surcharged[uj] == 0.0)
-                continue;
-            const double t = std::max(0.01, ctx.nodes.stat_time_surcharged[uj] / 3600.0);
+        for (const ReportRow& r : node_surcharge.rows) {
             if (n_written == 0) {
                 WRITE(f, "");
                 WRITE(f,
@@ -2942,13 +2889,9 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                     f, "\n  ---------------------------------------------------------------------");
                 n_written = 1;
             }
-            const double maxd = ctx.nodes.stat_max_depth[uj];
-            const double d1 =
-                std::max(0.0, maxd + ctx.nodes.invert_elev[uj] - ctx.nodes.crown_elev[uj]);
-            const double d2 = std::max(0.0, ctx.nodes.full_depth[uj] - maxd);
-            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-            std::fprintf(f, " %-9s", nt_str(static_cast<int>(ctx.nodes.type[uj])));
-            std::fprintf(f, "  %9.2f      %9.3f    %9.3f", t, d1 * len_ucf, d2 * len_ucf);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+            std::fprintf(f, " %-9s", r.label.c_str());
+            std::fprintf(f, "  %9.2f      %9.3f    %9.3f", r.values[0], r.values[1], r.values[2]);
         }
         if (n_written == 0) {
             WRITE(f, "");
@@ -2962,19 +2905,13 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Node Flooding Summary — matches legacy writeNodeFlooding()
     // =====================================================================
-    if (route_rpt) {
-        bool any_flooding = false;
-        for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.stat_time_flooded[static_cast<std::size_t>(j)] > 0.0) {
-                any_flooding = true;
-                break;
-            }
-
+    const ReportTable node_flooding = report_tables::nodeFlooding(ctx);
+    if (node_flooding.reported) {
         WRITE(f, "*********************");
         WRITE(f, "Node Flooding Summary");
         WRITE(f, "*********************");
 
-        if (!any_flooding) {
+        if (node_flooding.rows.empty()) {
             WRITE(f, "");
             WRITE(f, "No nodes were flooded.");
         } else {
@@ -2992,30 +2929,16 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 "\n  --------------------------------------------------------------------------",
                 FlowUnitWords[fu], vol_word, len_word);
 
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.stat_time_flooded[uj] <= 0.0)
-                    continue;
-
-                double hours = std::max(0.01, ctx.nodes.stat_time_flooded[uj] / 3600.0);
-                double max_rate = ctx.nodes.stat_max_overflow[uj] * Qcf;
-                double vol_mgal = ctx.nodes.stat_vol_flooded[uj] * Vcf;
+            for (const ReportRow& r : node_flooding.rows) {
                 int days, hrs, mins;
-                elapsedToParts(ctx.nodes.stat_max_overflow_date[uj], ctx.options.report_start, days,
-                               hrs, mins);
-                // Ponded depth = max depth - full depth (for DW only)
-                double ponded = 0.0;
-                if (static_cast<int>(opt.routing_model) == 2) {
-                    ponded = (ctx.nodes.stat_max_depth[uj] - ctx.nodes.full_depth[uj]);
-                    ponded = std::max(ponded, 0.0);
-                }
+                elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
-                std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-                std::fprintf(f, " %7.2f ", hours);
-                std::fprintf(f, ff, max_rate);
+                std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+                std::fprintf(f, " %7.2f ", r.values[0]);
+                std::fprintf(f, ff, r.values[1]);
                 std::fprintf(f, "   %4d  %02d:%02d", days, hrs, mins);
-                std::fprintf(f, "%12.3f", vol_mgal);
-                std::fprintf(f, " %9.3f", ponded * len_ucf);
+                std::fprintf(f, "%12.3f", r.values[3]);
+                std::fprintf(f, " %9.3f", r.values[4]);
             }
         }
     }
@@ -3044,83 +2967,48 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
 
     // Storage Volume Summary — matches legacy writeStorageVolumes()
     // =====================================================================
-    if (route_rpt) {
-        bool any_storage = false;
-        for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::STORAGE) {
-                any_storage = true;
-                break;
-            }
+    const ReportTable storage_volume = report_tables::storageVolume(ctx);
+    if (storage_volume.reported) {
+        WRITE(f, "**********************");
+        WRITE(f, "Storage Volume Summary");
+        WRITE(f, "**********************");
+        std::fprintf(f, "\n");
+        std::fprintf(
+            f,
+            "\n  ------------------------------------------------------------------------------------------------"
+            "\n                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum"
+            "\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow");
+        std::fprintf(
+            f,
+            si_report
+                // legacy writes the ANSI superscript byte (statsrpt.c:535-537)
+                ? "\n  Storage Unit           1000 m\xB3   Full   Loss   Loss     1000 m\xB3   Full    days hr:min        %3s"
+                : "\n  Storage Unit          1000 ft\xB3   Full   Loss   Loss    1000 ft\xB3   Full    days hr:min        %3s",
+            FlowUnitWords[fu]);
+        std::fprintf(
+            f,
+            "\n  ------------------------------------------------------------------------------------------------");
 
-        if (any_storage) {
-            WRITE(f, "**********************");
-            WRITE(f, "Storage Volume Summary");
-            WRITE(f, "**********************");
-            std::fprintf(f, "\n");
-            std::fprintf(
-                f,
-                "\n  ------------------------------------------------------------------------------------------------"
-                "\n                         Average    Avg   Evap  Exfil     Maximum    Max    Time of Max    Maximum"
-                "\n                          Volume   Pcnt   Pcnt   Pcnt      Volume   Pcnt     Occurrence    Outflow");
-            std::fprintf(
-                f,
-                si_report
-                    // legacy writes the ANSI superscript byte (statsrpt.c:535-537)
-                    ? "\n  Storage Unit           1000 m\xB3   Full   Loss   Loss     1000 m\xB3   Full    days hr:min        %3s"
-                    : "\n  Storage Unit          1000 ft\xB3   Full   Loss   Loss    1000 ft\xB3   Full    days hr:min        %3s",
-                FlowUnitWords[fu]);
-            std::fprintf(
-                f,
-                "\n  ------------------------------------------------------------------------------------------------");
+        for (const ReportRow& r : storage_volume.rows) {
+            int days, hrs, mins;
+            elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
-            long report_steps = ctx.routing_stats.report_steps;
-            report_steps = std::max(report_steps, 1L);
-
-            for (int j = 0; j < ctx.n_nodes(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.nodes.type[uj] != NodeType::STORAGE)
-                    continue;
-
-                const double full_vol = ctx.nodes.full_volume[uj];
-                // Volume peaks can occur before depth peaks once full storage
-                // has been reached, so use the dedicated volume statistics.
-                const double avg_vol_ft3 =
-                    ctx.nodes.stat_sum_volume[uj] / static_cast<double>(report_steps);
-                const double max_vol_ft3 = ctx.nodes.stat_storage_max_volume[uj];
-
-                // Percent full is by VOLUME (legacy semantics), not by depth.
-                double pct_avg = (full_vol > 0.0) ? avg_vol_ft3 / full_vol * 100.0 : 0.0;
-                double pct_max = (full_vol > 0.0) ? max_vol_ft3 / full_vol * 100.0 : 0.0;
-
-                // ft³ → 1000 ft³|m³
-                const double avg_vol = avg_vol_ft3 * svol_ucf / 1000.0;
-                const double max_vol = max_vol_ft3 * svol_ucf / 1000.0;
-
-                int days, hrs, mins;
-                elapsedToParts(ctx.nodes.stat_storage_max_volume_date[uj], ctx.options.report_start,
-                               days, hrs, mins);
-
-                double max_outflow = ctx.nodes.stat_storage_max_outflow[uj] * Qcf;
-
-                std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-                std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f", avg_vol, pct_avg, 0.0,
-                             0.0, max_vol, pct_max);
-                std::fprintf(f, "    %4d  %02d:%02d  ", days, hrs, mins);
-                std::fprintf(f, ff, max_outflow);
-            }
-            WRITE(f, "");
-            WRITE(f, "");
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+            std::fprintf(f, "%10.3f  %5.1f  %5.1f  %5.1f  %10.3f  %5.1f", r.values[0],
+                         r.values[1], r.values[2], r.values[3], r.values[4], r.values[5]);
+            std::fprintf(f, "    %4d  %02d:%02d  ", days, hrs, mins);
+            std::fprintf(f, ff, r.values[7]);
         }
+        WRITE(f, "");
+        WRITE(f, "");
     }
 
     // =====================================================================
     // Outfall Loading Summary — matches legacy writeOutfallLoads()
     // =====================================================================
     // legacy writeOutfallLoads: only when there are outfalls
-    bool any_outfall = false;
-    for (int j = 0; j < ctx.n_nodes() && !any_outfall; ++j)
-        any_outfall = ctx.nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL;
-    if (route_rpt && any_outfall) {
+    const ReportTable outfall_loading = report_tables::outfallLoading(ctx);
+    if (outfall_loading.reported) {
         int np = ctx.n_pollutants();
 
         WRITE(f, "***********************");
@@ -3159,81 +3047,33 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (int p = 0; p < np; ++p)
             std::fprintf(f, "--------------");
 
-        double sys_vol = 0.0;
-        double sys_flow_sum = 0.0;
-        double sys_max_flow = 0.0;
-        double sys_freq_sum = 0.0;
-        int outfall_count = 0;
-        std::vector<double> pol_totals(static_cast<std::size_t>(np), 0.0);
-        long total_steps = ctx.routing_stats.report_steps;
-        total_steps = std::max(total_steps, 1L);
+        for (const ReportRow& r : outfall_loading.rows) {
+            if (r.object_index < 0) {
+                // System totals
+                std::fprintf(f, " \n  -----------------------------------------------------------");
+                for (int p = 0; p < np; ++p)
+                    std::fprintf(f, "--------------");
 
-        for (int j = 0; j < ctx.n_nodes(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.nodes.type[uj] != NodeType::OUTFALL)
+                std::fprintf(f, "\n  System              ");
+                std::fprintf(f, "%7.2f ", r.values[0]);
+                std::fprintf(f, ff, r.values[1]);
+                std::fprintf(f, " ");
+                std::fprintf(f, ff, r.values[2]);
+                std::fprintf(f, "%12.3f", r.values[3]);
+                for (int p = 0; p < np; ++p)
+                    std::fprintf(f, "%14.3f", r.values[static_cast<std::size_t>(4 + p)]);
                 continue;
-            outfall_count++;
-
-            long periods = ctx.nodes.stat_outfall_periods[uj];
-            double avg_flow = (periods > 0) ? ctx.nodes.stat_outfall_avg_flow[uj] * Qcf /
-                                                  static_cast<double>(periods)
-                                            : 0.0;
-            double max_flow = ctx.nodes.stat_outfall_max_flow[uj] * Qcf;
-            double freq = 100.0 * static_cast<double>(periods) / static_cast<double>(total_steps);
-            double vol = ctx.nodes.stat_total_inflow_vol[uj] * Vcf;
-
-            sys_freq_sum += freq;
-            sys_flow_sum += avg_flow;
-            sys_max_flow += max_flow;
-            sys_vol += vol;
-
-            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(j).c_str());
-            std::fprintf(f, "%7.2f", freq);
-            std::fprintf(f, " ");
-            std::fprintf(f, ff, avg_flow);
-            std::fprintf(f, " ");
-            std::fprintf(f, ff, max_flow);
-            std::fprintf(f, "%12.3f", vol);
-
-            auto base = uj * static_cast<std::size_t>(np);
-            for (int p = 0; p < np; ++p) {
-                auto idx = base + static_cast<std::size_t>(p);
-                // legacy: totalLoad * LperFT3 * Pollut.mcf, LOG10 for counts
-                const auto mu = ctx.pollutants.units[static_cast<std::size_t>(p)];
-                const double mcf = (mu == MassUnits::MG_PER_L)   ? cont_mass
-                                   : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
-                                                                 : 1.0;
-                double load =
-                    ((idx < ctx.nodes.stat_total_load.size()) ? ctx.nodes.stat_total_load[idx]
-                                                              : 0.0) *
-                    28.317 * mcf;
-                pol_totals[static_cast<std::size_t>(p)] += load;
-                if (mu == MassUnits::COUNTS_PER_L && load > 0.0)
-                    load = std::log10(load);
-                std::fprintf(f, "%14.3f", load);
             }
-        }
 
-        // System totals
-        std::fprintf(f, " \n  -----------------------------------------------------------");
-        for (int p = 0; p < np; ++p)
-            std::fprintf(f, "--------------");
-
-        std::fprintf(f, "\n  System              ");
-        double sys_freq = (outfall_count > 0) ? sys_freq_sum / outfall_count : 0.0;
-        std::fprintf(f, "%7.2f ", sys_freq);
-        std::fprintf(f, ff, sys_flow_sum);
-        std::fprintf(f, " ");
-        // legacy MaxOutfallFlow: the peak of the summed outfall inflow
-        (void)sys_max_flow;
-        std::fprintf(f, ff, ctx.routing_stats.max_outfall_flow * Qcf);
-        std::fprintf(f, "%12.3f", sys_vol);
-        for (int p = 0; p < np; ++p) {
-            double x = pol_totals[static_cast<std::size_t>(p)];
-            if (ctx.pollutants.units[static_cast<std::size_t>(p)] == MassUnits::COUNTS_PER_L &&
-                x > 0.0)
-                x = std::log10(x);
-            std::fprintf(f, "%14.3f", x);
+            std::fprintf(f, "\n  %-20s", ctx.node_names.name_of(r.object_index).c_str());
+            std::fprintf(f, "%7.2f", r.values[0]);
+            std::fprintf(f, " ");
+            std::fprintf(f, ff, r.values[1]);
+            std::fprintf(f, " ");
+            std::fprintf(f, ff, r.values[2]);
+            std::fprintf(f, "%12.3f", r.values[3]);
+            for (int p = 0; p < np; ++p)
+                std::fprintf(f, "%14.3f", r.values[static_cast<std::size_t>(4 + p)]);
         }
     }
 
@@ -3243,7 +3083,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Link Flow Summary — matches legacy writeLinkFlows()
     // =====================================================================
-    if (route_rpt) {
+    const ReportTable link_flow = report_tables::linkFlow(ctx);
+    if (link_flow.reported) {
         WRITE(f, "********************");
         WRITE(f, "Link Flow Summary");
         WRITE(f, "********************");
@@ -3257,90 +3098,42 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             "\n  -----------------------------------------------------------------------------",
             FlowUnitWords[fu], si_report ? "m/sec" : "ft/sec");
 
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            int lt = static_cast<int>(ctx.links.type[uj]);
-
-            double mf = ctx.links.stat_max_flow[uj] * Qcf;      // CFS → display
-            double mv = ctx.links.stat_max_veloc[uj] * len_ucf; // ft/s → display
-            double fill = ctx.links.stat_max_filling[uj];
-
-            // Flow ratio (using CFS values, not display)
-            double flow_ratio = 0.0;
-            if (lt == static_cast<int>(LinkType::CONDUIT)) {
-                const int cr = ctx.link_subtypes.conduit_row(j);
-                const auto& CD = ctx.link_subtypes.conduits;
-                double mf_cfs = ctx.links.stat_max_flow[uj];
-                double qf = (cr >= 0) ? CD.q_full[static_cast<size_t>(cr)] : 0.0;
-                int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<size_t>(cr)] : 1, 1);
-                flow_ratio = (qf > 0.0) ? mf_cfs / qf / static_cast<double>(barrels) : 0.0;
-            }
-
+        for (const ReportRow& r : link_flow.rows) {
             int days, hrs, mins;
-            elapsedToParts(ctx.links.stat_max_flow_date[uj], ctx.options.report_start, days, hrs,
-                           mins);
+            elapsedToParts(r.date, ctx.options.report_start, days, hrs, mins);
 
-            // Row layout of legacy writeLinkFlows (statsrpt.c). A link with no
-            // [XSECTIONS] row keeps xsect.type DUMMY (0) there — pumps and
-            // outlets — and an IRREGULAR section prints CHANNEL.
-            const auto shape = ctx.links.xsect_shape[uj];
-            const bool pump = lt == static_cast<int>(LinkType::PUMP);
-            const bool dummy =
-                !pump && (shape == XsectShape::DUMMY || lt == static_cast<int>(LinkType::OUTLET));
-            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            if (dummy)
-                std::fprintf(f, " DUMMY   ");
-            else if (shape == XsectShape::IRREGULAR)
-                std::fprintf(f, " CHANNEL ");
-            else
-                std::fprintf(f, " %-7s ", lt_str(lt));
-            std::fprintf(f, ff, mf);
+            // Row layout of legacy writeLinkFlows (statsrpt.c): DUMMY for a
+            // link without a cross section, CHANNEL for an IRREGULAR one.
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(r.object_index).c_str());
+            std::fprintf(f, " %-7s ", r.label.c_str());
+            std::fprintf(f, ff, r.values[0]);
             std::fprintf(f, "  %4d  %02d:%02d", days, hrs, mins);
 
-            // Pumps: max flow over the pump curve's largest flow (legacy
-            // Link.qFull, link.c:1505-1516; 0 for an ideal pump).
-            if (lt == static_cast<int>(LinkType::PUMP)) {
-                double q_full = 0.0;
-                const int pr = ctx.link_subtypes.pump_row(j);
-                if (pr >= 0) {
-                    const int ci = ctx.link_subtypes.pumps.curve[static_cast<std::size_t>(pr)];
-                    if (ci >= 0 && ci < static_cast<int>(ctx.tables.tables.size())) {
-                        const auto& ty = ctx.tables.tables[static_cast<std::size_t>(ci)].y;
-                        if (!ty.empty())
-                            q_full = *std::max_element(ty.begin(), ty.end()) / Qcf;
-                    }
-                }
-                if (q_full > 0.0) {
+            // Pumps with a curve print max flow over its largest flow; other
+            // pumps and dummy links stop after the time.
+            if (r.truncated) {
+                if (r.shows(3)) {
                     std::fprintf(f, "          ");
-                    std::fprintf(f, "  %6.2f", ctx.links.stat_max_flow[uj] / q_full);
-                    continue;
+                    std::fprintf(f, "  %6.2f", r.values[3]);
                 }
-            }
-            if (dummy || pump)
                 continue;
+            }
 
-            if (lt == static_cast<int>(LinkType::CONDUIT)) {
-                if (mv > 50.0)
+            if (r.shows(2)) { // conduits
+                if (r.values[2] > 50.0)
                     std::fprintf(f, "    >50.00");
                 else
-                    std::fprintf(f, "   %7.2f", mv);
-                std::fprintf(f, "  %6.2f", flow_ratio);
+                    std::fprintf(f, "   %7.2f", r.values[2]);
+                std::fprintf(f, "  %6.2f", r.values[3]);
             } else {
                 std::fprintf(f, "                  ");
             }
 
             // Max/full depth; a bottom orifice has no full depth.
-            bool no_full_depth = ctx.links.xsect_y_full[uj] <= 0.0;
-            if (lt == static_cast<int>(LinkType::ORIFICE)) {
-                const int orow = ctx.link_subtypes.orifice_row(j);
-                if (orow >= 0 &&
-                    ctx.link_subtypes.orifices.orifice_type[static_cast<std::size_t>(orow)] == 0.0)
-                    no_full_depth = true;
-            }
-            if (no_full_depth)
-                std::fprintf(f, "        ");
+            if (r.shows(4))
+                std::fprintf(f, "  %6.2f", r.values[4]);
             else
-                std::fprintf(f, "  %6.2f", fill);
+                std::fprintf(f, "        ");
         }
     }
 
@@ -3352,8 +3145,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Dynamic wave only in legacy (FV, a v6 router, keeps the table);
     // fractions of the routed time after the report start.
-    if (route_rpt &&
-        (opt.routing_model == RoutingModel::DYNWAVE || opt.routing_model == RoutingModel::FV)) {
+    const ReportTable flow_class = report_tables::flowClassification(ctx);
+    if (flow_class.reported) {
         WRITE(f, "***************************");
         WRITE(f, "Flow Classification Summary");
         WRITE(f, "***************************");
@@ -3365,34 +3158,12 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             "\n  Conduit               Length    Dry  Dry   Dry   Crit  Crit  Crit  Crit  Ltd   Ctrl  "
             "\n  -------------------------------------------------------------------------------------");
 
-        const double total_secs = ctx.routing_stats.report_time;
-
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] != LinkType::CONDUIT)
-                continue;
-            if (ctx.links.xsect_shape[uj] == XsectShape::DUMMY)
-                continue;
-
-            // Adjusted/actual length ratio
-            double len_ratio = 1.0;
-            const int cr = ctx.link_subtypes.conduit_row(j);
-            const auto& CD = ctx.link_subtypes.conduits;
-            const double L = (cr >= 0) ? CD.length[static_cast<size_t>(cr)] : 0.0;
-            if (L > 0.0)
-                len_ratio = ((cr >= 0) ? CD.mod_length[static_cast<size_t>(cr)] : 0.0) / L;
-
-            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            std::fprintf(f, "  %6.2f ", len_ratio);
-
-            for (int c = 0; c < LinkData::N_FLOW_CLASSES; ++c) {
-                auto idx = uj * LinkData::N_FLOW_CLASSES + static_cast<std::size_t>(c);
-                const double t =
-                    (idx < ctx.links.stat_flow_class.size()) ? ctx.links.stat_flow_class[idx] : 0.0;
-                std::fprintf(f, "  %4.2f", t / total_secs);
-            }
-            std::fprintf(f, "  %4.2f", ctx.links.stat_norm_ltd[uj] / total_secs);
-            std::fprintf(f, "  %4.2f", ctx.links.stat_inlet_ctrl[uj] / total_secs);
+        for (const ReportRow& r : flow_class.rows) {
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(r.object_index).c_str());
+            std::fprintf(f, "  %6.2f ", r.values[0]);
+            // the flow-class fractions, then normal-flow limited and inlet control
+            for (std::size_t c = 1; c < r.values.size(); ++c)
+                std::fprintf(f, "  %4.2f", r.values[c]);
         }
     }
     WRITE(f, "");
@@ -3400,27 +3171,13 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Conduit Surcharge Summary — matches legacy writeLinkSurcharge()
     // =====================================================================
-    if (route_rpt) {
-        // legacy writeLinkSurcharge: true conduits whose four hour totals are
-        // not all zero; each value floored at 0.01 h.
+    const ReportTable conduit_surcharge = report_tables::conduitSurcharge(ctx);
+    if (conduit_surcharge.reported) {
         WRITE(f, "*************************");
         WRITE(f, "Conduit Surcharge Summary");
         WRITE(f, "*************************");
         int n_written = 0;
-        for (int j = 0; j < ctx.n_links(); ++j) {
-            auto uj = static_cast<std::size_t>(j);
-            if (ctx.links.type[uj] != LinkType::CONDUIT ||
-                ctx.links.xsect_shape[uj] == XsectShape::DUMMY)
-                continue;
-            double t[5] = {ctx.links.stat_time_surcharged[uj] / 3600.0,
-                           ctx.links.stat_time_full_upstream[uj] / 3600.0,
-                           ctx.links.stat_time_full_dnstream[uj] / 3600.0,
-                           ctx.links.stat_time_full_both[uj] / 3600.0, 0.0};
-            if (t[0] + t[1] + t[2] + t[3] == 0.0)
-                continue;
-            t[4] = ctx.links.stat_time_capacity_limited[uj] / 3600.0;
-            for (double& x : t)
-                x = std::max(0.01, x);
+        for (const ReportRow& r : conduit_surcharge.rows) {
             if (n_written == 0) {
                 WRITE(f, "");
                 std::fprintf(
@@ -3432,9 +3189,9 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                     "\n  ----------------------------------------------------------------------------");
                 n_written = 1;
             }
-            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(j).c_str());
-            std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f", t[0], t[1], t[2], t[3],
-                         t[4]);
+            std::fprintf(f, "\n  %-20s", ctx.link_names.name_of(r.object_index).c_str());
+            std::fprintf(f, "    %8.2f  %8.2f  %8.2f  %8.2f     %8.2f", r.values[0], r.values[1],
+                         r.values[2], r.values[3], r.values[4]);
         }
         if (n_written == 0) {
             WRITE(f, "");
@@ -3448,56 +3205,29 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // =====================================================================
     // Pumping Summary — matches legacy writePumpFlows()
     // =====================================================================
-    if (route_rpt) {
-        bool any_pump = false;
-        for (int j = 0; j < ctx.n_links(); ++j)
-            if (ctx.links.type[static_cast<std::size_t>(j)] == LinkType::PUMP) {
-                any_pump = true;
-                break;
-            }
+    const ReportTable pumping = report_tables::pumping(ctx);
+    if (pumping.reported) {
+        WRITE(f, "***************");
+        WRITE(f, "Pumping Summary");
+        WRITE(f, "***************");
+        std::fprintf(
+            f,
+            "\n\n  ---------------------------------------------------------------------------------------------------------"
+            "\n                                                  Min       Avg       Max     Total     Power    %% Time Off"
+            "\n                        Percent   Number of      Flow      Flow      Flow    Volume     Usage    Pump Curve"
+            "\n  Pump                 Utilized   Start-Ups       %3s       %3s       %3s  %8s     Kw-hr    Low   High"
+            "\n  ---------------------------------------------------------------------------------------------------------",
+            FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
 
-        if (any_pump) {
-            WRITE(f, "***************");
-            WRITE(f, "Pumping Summary");
-            WRITE(f, "***************");
-            std::fprintf(
-                f,
-                "\n\n  ---------------------------------------------------------------------------------------------------------"
-                "\n                                                  Min       Avg       Max     Total     Power    %% Time Off"
-                "\n                        Percent   Number of      Flow      Flow      Flow    Volume     Usage    Pump Curve"
-                "\n  Pump                 Utilized   Start-Ups       %3s       %3s       %3s  %8s     Kw-hr    Low   High"
-                "\n  ---------------------------------------------------------------------------------------------------------",
-                FlowUnitWords[fu], FlowUnitWords[fu], FlowUnitWords[fu], vol_word);
-
-            double totalSeconds = ctx.routing_stats.report_time;
-
-            for (int j = 0; j < ctx.n_links(); ++j) {
-                auto uj = static_cast<std::size_t>(j);
-                if (ctx.links.type[uj] != LinkType::PUMP)
-                    continue;
-
-                double max_flow = ctx.links.stat_max_flow[uj] * Qcf;
-                double vol = ctx.links.stat_pump_volume[uj] * Vcf;
-                double on_time = ctx.links.stat_pump_on_time[uj];
-                double pctUtilized = (totalSeconds > 0.0) ? on_time / totalSeconds * 100.0 : 0.0;
-                int startUps = ctx.links.stat_pump_cycles[uj];
-                double avgFlow =
-                    (ctx.links.stat_pump_periods[uj] > 0)
-                        ? ctx.links.stat_pump_sum_flow[uj] / ctx.links.stat_pump_periods[uj] * Qcf
-                        : 0.0;
-                double energyKwh = ctx.links.stat_pump_energy[uj];
-
-                std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
-                             ctx.link_names.name_of(j).c_str(), pctUtilized, startUps, 0.0, avgFlow,
-                             max_flow, vol, energyKwh);
-                std::fprintf(
-                    f, " %6.1f %6.1f",
-                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_low[uj] / on_time * 100.0 : 0.0,
-                    on_time > 0.0 ? ctx.links.stat_pump_off_curve_high[uj] / on_time * 100.0 : 0.0);
-            }
-            WRITE(f, "");
-            WRITE(f, "");
+        for (const ReportRow& r : pumping.rows) {
+            std::fprintf(f, "\n  %-20s %8.2f  %10d %9.2f %9.2f %9.2f %9.3f %9.2f",
+                         ctx.link_names.name_of(r.object_index).c_str(), r.values[0],
+                         static_cast<int>(r.values[1]), r.values[2], r.values[3], r.values[4],
+                         r.values[5], r.values[6]);
+            std::fprintf(f, " %6.1f %6.1f", r.values[7], r.values[8]);
         }
+        WRITE(f, "");
+        WRITE(f, "");
     }
 
     // =====================================================================

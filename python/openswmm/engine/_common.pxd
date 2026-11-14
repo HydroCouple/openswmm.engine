@@ -1087,6 +1087,21 @@ cdef extern from "openswmm_statistics.h":
     cdef int swmm_stat_link_max_filling_bulk(SWMM_Engine e, double* buf, int count) nogil
     cdef int swmm_stat_link_vol_flow_bulk(SWMM_Engine e, double* buf, int count) nogil
     cdef int swmm_stat_link_surcharge_time_bulk(SWMM_Engine e, double* buf, int count) nogil
+    # Report summary tables (the .rpt sections), readable in ENDED.
+    cdef int swmm_summary_table_title(SWMM_Engine e, int table, char* buf, int buflen)
+    cdef int swmm_summary_column_count(SWMM_Engine e, int table, int* count)
+    cdef int swmm_summary_column(SWMM_Engine e, int table, int column, char* name,
+                                 int name_len, char* units, int units_len)
+    cdef int swmm_summary_row_count(SWMM_Engine e, int table, int* count)
+    cdef int swmm_summary_row(SWMM_Engine e, int table, int row, int* object_type,
+                              int* object_index, char* label, int label_len)
+    cdef int swmm_summary_value(SWMM_Engine e, int table, int row, int column, double* value)
+    cdef int swmm_summary_rows_read(SWMM_Engine e, int table, int* object_types,
+                                    int* object_indices, int capacity)
+    cdef int swmm_summary_values_read(SWMM_Engine e, int table, double* values,
+                                      int capacity)
+    cdef int swmm_summary_labels_read(SWMM_Engine e, int table, char* buf, int buflen,
+                                      int* needed)
 
 cdef extern from "openswmm_spatial.h":
     # CRS

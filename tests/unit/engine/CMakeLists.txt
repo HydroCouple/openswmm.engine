@@ -520,6 +520,9 @@ add_gtest_unit(test_engine_subcatch_editor_api test_subcatch_editor_api.cpp)
 add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
 add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
 add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+# G-08: the end-of-run summary tables as data (swmm_summary_*), checked against the .rpt
+# of the same run. Inputs and outputs go to data/report_tables/.
+add_gtest_unit(test_engine_report_tables   test_report_tables.cpp)
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
 add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
 add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)

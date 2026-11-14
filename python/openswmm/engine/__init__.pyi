@@ -281,3 +281,7 @@ from ._passive_exchange import (
     PassiveReceipt as PassiveReceipt, PassiveRow as PassiveRow, PassiveLeg as PassiveLeg,
 )
 from ._enums import SplitRole as SplitRole, SplitPhase as SplitPhase
+from ._statistics import (
+    ReportTable as ReportTable, SummaryColumn as SummaryColumn, SummaryRow as SummaryRow,
+)
+from ._enums import SummaryTable as SummaryTable, SummaryObject as SummaryObject

@@ -493,3 +493,7 @@ from ._enums import SplitRole, SplitPhase
 __all__ += ["SplitParticipant", "SplitFrame", "SplitRole", "SplitPhase"]
 
 __all__ += ["MaterialSplitParticipant", "PassiveExchange", "PassiveAmount", "PassiveStatus", "PassivePool", "PassiveReceipt", "PassiveRow", "PassiveLeg"]
+
+from ._statistics import ReportTable, SummaryColumn, SummaryRow
+from ._enums import SummaryTable, SummaryObject
+__all__ += ["ReportTable", "SummaryColumn", "SummaryRow", "SummaryTable", "SummaryObject"]
