@@ -198,5 +198,4 @@ const LayerTransportResult& advanceLayerTransportEuler(const std::vector<double>
         }
     return r;
 }
-
 }
