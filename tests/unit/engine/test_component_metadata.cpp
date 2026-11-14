@@ -16,6 +16,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #endif
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -123,7 +124,10 @@ TEST(ComponentMetadata, ReactionMetadataUsesTheExistingRegistry) {
 namespace {
 std::string slurp(const fs::path& path) {
     std::ifstream f(path, std::ios::binary);
-    return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    std::string text{std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
+    // A Windows checkout or a text-mode write ends lines with CRLF.
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    return text;
 }
 /// A report without the lines that carry the wall clock.
 std::string reportBody(const fs::path& path) {

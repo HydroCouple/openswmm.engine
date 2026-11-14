@@ -344,7 +344,8 @@ TEST(BoundaryData, SlotValuesStoreOnlyWhatDiffersFromTheDefault) {
     back.assign(dense);
     EXPECT_EQ(back.size(), 8u);
     EXPECT_EQ(back.stored(), 3u);
-    EXPECT_TRUE(std::signbit(back[1]));
+    // A non-const SlotValues hands back a proxy, which std::signbit does not accept.
+    EXPECT_TRUE(std::signbit(static_cast<double>(back[1])));
     // The stored slots, in slot order whatever order they were written in.
     const auto entries = v.entries();
     ASSERT_EQ(entries.size(), 3u);
@@ -444,7 +445,8 @@ TEST(SurfaceState, ForcingOverridesAreAllocatedOnFirstUse) {
     EXPECT_FALSE(back.allocated());
     back.assign(std::vector<double>{0.0, -0.0, 0.0});
     EXPECT_TRUE(back.allocated()); // bit for bit: a negative zero is kept
-    EXPECT_TRUE(std::signbit(back[1]));
+    // A non-const SlotValues hands back a proxy, which std::signbit does not accept.
+    EXPECT_TRUE(std::signbit(static_cast<double>(back[1])));
     state.resize(6, 8); // a resize starts again from nothing
     EXPECT_FALSE(state.rainfall_force_val.allocated());
     EXPECT_EQ(state.rainfall_forced[2], 0);

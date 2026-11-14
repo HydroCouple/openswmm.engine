@@ -565,6 +565,8 @@ DeckRun runDeck(const std::string& inp, const std::string& name) {
     swmm_engine_destroy(e);
     std::ifstream in(run.rpt_path, std::ios::binary);
     run.rpt.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    // On Windows the report's lines end with CRLF.
+    run.rpt.erase(std::remove(run.rpt.begin(), run.rpt.end(), '\r'), run.rpt.end());
     run.ok = !run.rpt.empty();
     return run;
 }

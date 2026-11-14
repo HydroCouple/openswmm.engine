@@ -235,8 +235,20 @@ void check(const fs::path& input, std::string actual) {
     fs::create_directories(out_dir);
     const fs::path out = out_dir / (input.stem().string() + ".actual.txt");
     std::ofstream(out, std::ios::binary) << actual;
+    std::istringstream want(expected.str()), got(actual);
+    std::string want_line, got_line;
+    int line = 0;
+    bool more_want = true, more_got = true;
+    do {
+        ++line;
+        more_want = static_cast<bool>(std::getline(want, want_line));
+        more_got = static_cast<bool>(std::getline(got, got_line));
+    } while (more_want && more_got && want_line == got_line);
     ADD_FAILURE() << input.generic_string()
-                  << " differs from its snapshot; actual dump: " << out.generic_string();
+                  << " differs from its snapshot; actual dump: " << out.generic_string()
+                  << "\nfirst difference at line " << line
+                  << "\n  expected: " << (more_want ? want_line : "<end of file>")
+                  << "\n  actual:   " << (more_got ? got_line : "<end of file>");
 }
 
 } // namespace
