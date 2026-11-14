@@ -219,7 +219,8 @@ def check_section_coverage():
     for f in src.rglob("*.cpp"):
         text = f.read_text(errors="replace")
         registered |= set(re.findall(r'register_builtin\(\s*"([A-Z0-9_]+)"', text))
-        registered |= set(re.findall(r'register_custom\(\s*"([A-Z0-9_]+)"', text))
+        # register_custom_views() registers a handler that reads line views.
+        registered |= set(re.findall(r'register_custom(?:_views)?\(\s*"([A-Z0-9_]+)"', text))
     if not registered:
         print("ERROR section coverage: parsed no registered sections — "
               "the registration call's shape changed")

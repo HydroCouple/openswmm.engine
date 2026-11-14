@@ -2587,7 +2587,7 @@ InitDepth    initial water depth in the mesh's length units (ft or m); must be >
 Tag    optional classification name of the cell, matched by [2D_INFILTRATION_DEFAULTS] and by the TAG scope of the aquifer, quality and groundwater sections, and usable instead of the index in [2D_TRIANGLE_NODE_MAP].
 
 Remarks:
-Cells are numbered 0, 1, 2, ... in file order, triangles first and then every [2D_QUADS] row; that unified 0-based index is the TRI column of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY], and the CELL column (1-based) of the other cell-addressed sections. A triangle row that follows a quad row is a parse error.
+Cells are numbered 0, 1, 2, ... in file order, triangles first and then every [2D_QUADS] row; that unified 0-based index is the TRI column of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] and the Cell column of [2D_INITIAL_HGL], and the CELL column (1-based) of the other cell-addressed sections. A triangle row that follows a quad row is a parse error.
 
 The fifth column is ambiguous by design: when it parses as a number it is InitDepth and the sixth column is Tag; otherwise it is Tag. The engine's writer emits InitDepth on every row whenever any cell carries a depth or a tag, so files it wrote are unambiguous.
 
@@ -2640,7 +2640,7 @@ Parameters:
 Path    absolute path, or a path relative to the directory of the input file. Surrounding double quotes are stripped; an unquoted path containing spaces is rejoined from its tokens.
 
 Remarks:
-Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
+Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_INITIAL_HGL], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
 
 The external file is parsed after the main file. Per section, the external file wins: a section present in both replaces the inline rows rather than adding to them, and its [2D_OPTIONS] values override inline ones. Its own `;; UNITS:` header is honoured (see [2D_VERTICES]). A missing or unreadable file is fatal when the model is opened for a run.
 
@@ -2847,6 +2847,29 @@ This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:702-725 (registration 1257-1260) -->
 
+### Section: [2D_INITIAL_HGL] {#engine_manual_sect_2D_INITIAL_HGL}
+
+Purpose:
+Sets the initial water-surface elevation of selected cells, as an alternative to the InitDepth column of [2D_TRIANGLES] and [2D_QUADS].
+
+Format:
+```
+Cell  HGL
+```
+
+Parameters:
+Cell    0-based unified cell index (the TRI column of files the engine writes), or `*` for every cell.
+HGL    initial water-surface elevation, in the mesh's length units (ft or m), on the datum of the [2D_VERTICES] Z column.
+
+Remarks:
+Rows apply in file order and a later row overrides an earlier one, so a `*` row followed by cell rows gives a level pool with local overrides. A cell with an HGL ignores its InitDepth; unlisted cells keep theirs. HGL must be a finite number, and a cell index outside the mesh is a parse error. Rows refer to cells already read, so the section must follow [2D_TRIANGLES] and [2D_QUADS] in the same file; when the mesh is in a [2D_MESH_FILE], put the section in that file. Extra tokens are ignored.
+
+HGL is scaled like the vertex elevations, so the `;; UNITS: SI (m)` header of [2D_VERTICES] applies to it too. When the model initializes, each HGL is converted to a cell volume and clamped at the cell invert, so an HGL at or below the bed starts the cell dry. If the HGL leaves every cell it is given for dry, the engine issues a warning, which usually means a datum or unit mismatch. A coupled 1D node does not take its initial depth from the 2D level; give it a matching initial depth to avoid an exchange in the first step. See @ref hydraulics_ref_ch9_two_dimensional, section 9.3.
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/input/SectionHandlers2D.cpp:1392-1431 (registration 2320-2324) -->
+
 ### Section: [2D_INFILTRATION_OPTIONS] {#engine_manual_sect_2D_INFILTRATION_OPTIONS}
 
 Purpose:
@@ -2925,7 +2948,7 @@ P1 .. P5    the method's positional parameters, laid out exactly as in [2D_INFIL
 Dest    LOST (default), SUBCATCH_AQUIFER or AQUIFER_2D.
 
 Remarks:
-The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
+The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY], and the Cell column of [2D_INITIAL_HGL], are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
 
 The section may also be placed in the external mesh file, where it replaces the inline rows.
 
