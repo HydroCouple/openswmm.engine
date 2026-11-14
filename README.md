@@ -3,7 +3,7 @@
 **The Open-Source Storm Water Management Model (SWMM2D) — Next-Generation Computational Engine**
 
 [![Unit Testing](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing.yml)
-[![Unit Testing Python](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/unit_testing_python.yml)
+[![Python wheels](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/deployment.yml)
 [![Documentation](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/documentation.yml)
 [![CodeQL](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/HydroCouple/openswmm.engine/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/HydroCouple/openswmm.engine/badge)](https://securityscorecards.dev/viewer/?uri=github.com/HydroCouple/openswmm.engine)

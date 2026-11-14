@@ -3,13 +3,10 @@ name: Python API contracts
 permissions:
   contents: read
 
+# Called by deployment.yml, which runs on every pull request and on main.
 on:
   workflow_call:
   workflow_dispatch:
-  push:
-    branches: [main, develop, swmm6_rel]
-  pull_request:
-    branches: [main, develop, swmm6_rel]
 
 jobs:
   contracts:

@@ -5,10 +5,16 @@ permissions:
 
 on:
   push:
-    branches: [main, develop, swmm6_rel]
+    # swmm6_rel is tested through its pull request; a push trigger too would run everything twice.
+    branches: [main, develop]
   pull_request:
     branches: [main, develop, swmm6_rel]
   workflow_dispatch:
+
+# One run per branch or pull request: a newer commit cancels the older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg

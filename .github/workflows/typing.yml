@@ -5,7 +5,8 @@ permissions:
 
 on:
   push:
-    branches: [main, develop, swmm6_rel]
+    # swmm6_rel is tested through its pull request.
+    branches: [main, develop]
     paths:
       - 'python/openswmm/**/*.py'
       - 'python/openswmm/**/*.pyi'
