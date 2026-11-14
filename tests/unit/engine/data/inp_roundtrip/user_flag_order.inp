@@ -1,0 +1,60 @@
+[TITLE]
+InpWriter round-trip fixture: [USER_FLAG_VALUES] row order
+The rows are listed out of order. The writer must save them sorted by object
+type, object name and flag name, not in the order of its hash map.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+ROUTING_STEP         0:00:30
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J3       12.0  5.0       0          0         0
+J30      11.5  5.0       0          0         0
+J4       11.0  5.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       9.0   FREE  *          NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J3        J30     300.0   0.013      0         0
+C2       J30       J4      300.0   0.013      0         0
+C3       J4        O1      300.0   0.013      0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.0    0      0      0      1
+C2       CIRCULAR  1.0    0      0      0      1
+C3       CIRCULAR  1.0    0      0      0      1
+
+[USER_FLAGS]
+Owner    STRING
+Zone     INTEGER
+
+[USER_FLAG_VALUES]
+NODE     J4    Zone   4
+NODE     J4    Owner  county
+NODE     J30   Owner  state
+NODE     J3    Zone   3
+NODE     J3    Owner  city
+LINK     C3    Zone   2
+LINK     C2    Owner  city
+LINK     C1    Zone   1
+
+[REPORT]
+INPUT       NO
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J3       0.0      0.0
+J30      150.0    0.0
+J4       300.0    0.0
+O1       600.0    0.0

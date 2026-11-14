@@ -1,11 +1,27 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Landuse.cpp
- * @brief Pollutant buildup/washoff — batch SoA, numerically identical to legacy.
+ * @file      Landuse.cpp
+ * @brief     Simplified analytic buildup/washoff helpers and surface-quality storage.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "Landuse.hpp"
@@ -16,6 +32,17 @@
 namespace openswmm {
 namespace landuse {
 
+/**
+ * @brief Reset surface quality storage to requested subcatchment/landuse/pollutant dimensions.
+ * @param[in] n_sc Nonnegative subcatchment count.
+ * @param[in] n_lu Nonnegative landuse count.
+ * @param[in] n_poll Nonnegative pollutant count; all products must fit signed int before size_t
+ * cast.
+ * @note Replaces dimension fields, zero-assigns buildup n_sc*n_lu*n_poll and concentration
+ * n_sc*n_poll. Invalidates prior views/discards evolved stores. Allocation can throw after
+ * dimensions/earlier array changed; exclusive setup access, no conservation ledger/physical
+ * clock update.
+ */
 void SurfaceQualitySoA::resize(int n_sc, int n_lu, int n_poll) {
     n_subcatch = n_sc;
     n_landuses = n_lu;
@@ -24,6 +51,14 @@ void SurfaceQualitySoA::resize(int n_sc, int n_lu, int n_poll) {
     washoff_conc.assign(static_cast<size_t>(n_sc * n_poll), 0.0);
 }
 
+/**
+ * @brief Set solver counts and resize landuse/pollutant parameter tables.
+ * @param[in] n_landuses Nonnegative count, product with pollutants fits int.
+ * @param[in] n_pollutants Nonnegative native pollutant count.
+ * @note resize retains overlapping old parameters, default-initializes added entries; this is
+ * not a full parameter reset. Dimension fields change before allocation, so failure can leave
+ * partial setup. No physical/native inventory/clock advance; exclusive setup ownership required.
+ */
 void LanduseSolver::init(int n_landuses, int n_pollutants) {
     n_landuses_ = n_landuses;
     n_pollutants_ = n_pollutants;
@@ -36,54 +71,91 @@ void LanduseSolver::init(int n_landuses, int n_pollutants) {
 // Buildup mass from days — VECTORISABLE (pow/exp per element)
 // ============================================================================
 
+/**
+ * @brief Evaluate a prepared analytic buildup curve at equivalent elapsed dry days.
+ * @param[in] bp Qualified curve kind/coefficient/max-days in consistent declared mass/normalizer
+ * units.
+ * @param[in] days Nonnegative equivalent dry days.
+ * @return 0 for days<=0 or unsupported/NONE/EXTERNAL kind; otherwise POWER/EXPON/SATUR curve,
+ * with positive max_days saturation shortcut to c0. No general finite/sign/coefficient clamp.
+ * @note Pure/no allocation or owner/clock mutation; external-series buildup handled elsewhere.
+ */
 static double getBuildupMass(const BuildupParams& bp, double days) {
-    if (days <= 0.0) return 0.0;
+    if (days <= 0.0)
+        return 0.0;
     double c0 = bp.coeff[0], c1 = bp.coeff[1], c2 = bp.coeff[2];
-    if (days >= bp.max_days && bp.max_days > 0.0) return c0;
+    if (days >= bp.max_days && bp.max_days > 0.0)
+        return c0;
 
     switch (bp.type) {
-        case BuildupType::POWER: {
-            double b = c1 * std::pow(days, c2);
-            return std::min(b, c0);
-        }
-        case BuildupType::EXPON:
-            return c0 * (1.0 - std::exp(-c1 * days));
-        case BuildupType::SATUR:
-            return (c2 + days > 0.0) ? c0 * days / (c2 + days) : 0.0;
-        default:
-            return 0.0;
+    case BuildupType::POWER: {
+        double b = c1 * std::pow(days, c2);
+        return std::min(b, c0);
+    }
+    case BuildupType::EXPON:
+        return c0 * (1.0 - std::exp(-c1 * days));
+    case BuildupType::SATUR:
+        return (c2 + days > 0.0) ? c0 * days / (c2 + days) : 0.0;
+    default:
+        return 0.0;
     }
 }
 
 // Inverse: mass → equivalent days — VECTORISABLE
+/**
+ * @brief Invert an analytic buildup curve into equivalent dry days.
+ * @param[in] bp Qualified curve parameters consistent with supplied normalized mass.
+ * @param[in] mass Nonnegative buildup per normalizer unit.
+ * @return 0 for nonpositive mass/unsupported curve, configured max_days at/above positive c0,
+ * else POWER/EXPON/SATUR inverse with branch-specific coefficient guards. No general
+ * finite/domain repair.
+ * @note Pure/no allocation/physical state or clock change.
+ */
 static double getBuildupDays(const BuildupParams& bp, double mass) {
-    if (mass <= 0.0) return 0.0;
+    if (mass <= 0.0)
+        return 0.0;
     double c0 = bp.coeff[0], c1 = bp.coeff[1], c2 = bp.coeff[2];
-    if (mass >= c0 && c0 > 0.0) return bp.max_days;
+    if (mass >= c0 && c0 > 0.0)
+        return bp.max_days;
 
     switch (bp.type) {
-        case BuildupType::POWER:
-            return (c1 * c2 > 0.0) ? std::pow(mass / c1, 1.0 / c2) : 0.0;
-        case BuildupType::EXPON:
-            return (c0 * c1 > 0.0) ? -std::log(1.0 - mass / c0) / c1 : 0.0;
-        case BuildupType::SATUR:
-            return (c0 > mass) ? mass * c2 / (c0 - mass) : bp.max_days;
-        default:
-            return 0.0;
+    case BuildupType::POWER:
+        return (c1 * c2 > 0.0) ? std::pow(mass / c1, 1.0 / c2) : 0.0;
+    case BuildupType::EXPON:
+        return (c0 * c1 > 0.0) ? -std::log(1.0 - mass / c0) / c1 : 0.0;
+    case BuildupType::SATUR:
+        return (c0 > mass) ? mass * c2 / (c0 - mass) : bp.max_days;
+    default:
+        return 0.0;
     }
 }
 
-void LanduseSolver::computeBuildup(SurfaceQualitySoA& sq,
-                                    const double* /*area*/,
-                                    const double* /*curb_length*/,
-                                    double dt, int n_subcatch) {
+/**
+ * @brief Advance the simplified analytic buildup table using landuse-zero parameters.
+ * @param[in,out] sq Writable buildup covering n_subcatch*n_pollutants_ in this helper's flat
+ * [subcatch*n_pollutants_+pollutant] indexing, regardless of sq.n_landuses. Caller must account
+ * for this simplified layout rather than treating it as full landuse-weighted runtime kernel.
+ * @param[in] dt Positive finite duration s, converted to days before inverse/forward curve
+ * update.
+ * @param[in] n_subcatch Nonnegative number of flat subcatchment rows to update, covered by
+ * sq.buildup.
+ * @note The two unnamed area/curb pointers in definition are intentionally unused and may be
+ * null. Requires buildup_params at least n_pollutants_ (normally n_landuses_>=1), qualified
+ * nonnegative counts/ int products and curve parameters. Skips NONE rows; EXTERNAL lacks a
+ * series operator here and analytic helpers return0. Updates progressively without
+ * dry/snow/coverage/sweeping or mass-ledger booking, no engine clock change. No
+ * allocation/general shape/finite validation or rollback.
+ */
+void LanduseSolver::computeBuildup(SurfaceQualitySoA& sq, const double* /*area*/,
+                                   const double* /*curb_length*/, double dt, int n_subcatch) {
     double dt_days = dt / ucf::SEC_PER_DAY;
 
     // Batch: for each (subcatch, pollutant) — vectorisable inner loop
     for (int p = 0; p < n_pollutants_; ++p) {
         // Use land use 0 parameters for now (simplified; full: weight by land use fraction)
         const auto& bp = buildup_params[static_cast<size_t>(p)];
-        if (bp.type == BuildupType::NONE) continue;
+        if (bp.type == BuildupType::NONE)
+            continue;
 
         for (int i = 0; i < n_subcatch; ++i) {
             auto idx = static_cast<size_t>(i * n_pollutants_ + p);
@@ -95,13 +167,29 @@ void LanduseSolver::computeBuildup(SurfaceQualitySoA& sq,
     }
 }
 
-void LanduseSolver::computeWashoff(SurfaceQualitySoA& sq,
-                                    const double* runoff,
-                                    const double* area,
-                                    int n_subcatch) {
+/**
+ * @brief Apply simplified landuse-zero washoff to flat subcatchment/pollutant arrays.
+ * @param[in,out] sq Writable concentration/buildup covering n_subcatch*n_pollutants_, flat
+ * indexing independent of landuse dimension. Only selected row-zero parameters are read.
+ * @param[in] runoff Readable n_subcatch runoff samples; treated as rate q in caller's
+ * coefficient convention (EXPON divides by q*area, RATING uses q*area). No internal/project unit
+ * conversion.
+ * @param[in] area Readable n_subcatch positive area samples in compatible coefficient
+ * convention.
+ * @param[in] n_subcatch Nonnegative count covered by both inputs and state arrays.
+ * @note Requires washoff_params>=n_pollutants_. NONE retains old concentration. Nonpositive
+ * q/area sets concentration0. EMC gives coefficient, EXPON uses stored buildup, RATING power
+ * law, result floored0. EXPON debits conc*q*area directly without multiplying a timestep; no
+ * duration argument or full runoff-step mass/ledger contract is provided by this helper. No
+ * coverage/BMP/physical clock advance, allocation or general finite/shape validation; exclusive
+ * simplified state access.
+ */
+void LanduseSolver::computeWashoff(SurfaceQualitySoA& sq, const double* runoff, const double* area,
+                                   int n_subcatch) {
     for (int p = 0; p < n_pollutants_; ++p) {
         const auto& wp = washoff_params[static_cast<size_t>(p)];
-        if (wp.type == WashoffType::NONE) continue;
+        if (wp.type == WashoffType::NONE)
+            continue;
 
         // Inner loop over subcatchments — VECTORISABLE
         for (int i = 0; i < n_subcatch; ++i) {
@@ -116,27 +204,27 @@ void LanduseSolver::computeWashoff(SurfaceQualitySoA& sq,
 
             double conc = 0.0;
             switch (wp.type) {
-                case WashoffType::EMC:
-                    conc = wp.coeff;
-                    break;
-                case WashoffType::EXPON: {
-                    double b = sq.buildup[idx];
-                    if (b > 0.0) {
-                        conc = wp.coeff * std::pow(q, wp.expon) * b / (q * a);
-                    }
-                    break;
+            case WashoffType::EMC:
+                conc = wp.coeff;
+                break;
+            case WashoffType::EXPON: {
+                double b = sq.buildup[idx];
+                if (b > 0.0) {
+                    conc = wp.coeff * std::pow(q, wp.expon) * b / (q * a);
                 }
-                case WashoffType::RATING:
-                    conc = wp.coeff * std::pow(q * a, wp.expon - 1.0);
-                    break;
-                default:
-                    break;
+                break;
+            }
+            case WashoffType::RATING:
+                conc = wp.coeff * std::pow(q * a, wp.expon - 1.0);
+                break;
+            default:
+                break;
             }
             sq.washoff_conc[idx] = std::max(conc, 0.0);
 
             // Reduce buildup by washoff
             if (wp.type == WashoffType::EXPON && sq.buildup[idx] > 0.0) {
-                double washed = conc * q * a;  // mass/sec
+                double washed = conc * q * a; // mass/sec
                 sq.buildup[idx] = std::max(sq.buildup[idx] - washed, 0.0);
             }
         }
@@ -147,20 +235,32 @@ void LanduseSolver::computeWashoff(SurfaceQualitySoA& sq,
 // Co-pollutant washoff — matches legacy landuse_getCoPollutLoad()
 // ============================================================================
 
-void LanduseSolver::applyCoPollutant(SurfaceQualitySoA& sq,
-                                      const double* runoff, const double* area,
-                                      const int* co_pollut, const double* co_frac,
-                                      int n_subcatch) {
-    if (!co_pollut || !co_frac) return;
+/**
+ * @details runoff and area are unused in this concentration-only implementation and may be null.
+ * co_pollut/co_frac each cover n_pollutants_ when nonnull; either null returns. sq.washoff_conc
+ * covers n_subcatch*n_pollutants_ with nonnegative representable dimensions; indices outside
+ * pollutant range are skipped, nonpositive fractions skipped. Single forward pollutant pass sees
+ * earlier additions, including dependent/self references; it is not a simultaneous or
+ * cycle-checked solve. No unit conversion/generated-mass ledger, physical clock mutation or
+ * allocation. Exclusive state required; no general finite/sign validation of existing
+ * concentrations/fractions.
+ */
+void LanduseSolver::applyCoPollutant(SurfaceQualitySoA& sq, const double* runoff,
+                                     const double* area, const int* co_pollut,
+                                     const double* co_frac, int n_subcatch) {
+    if (!co_pollut || !co_frac)
+        return;
 
     // For each pollutant p that has a co-pollutant k:
     //   washoff_conc[p] += co_frac[p] * washoff_conc[k]
     // (legacy: w = Pollut[p].coFraction * washoff[k])
     for (int p = 0; p < n_pollutants_; ++p) {
         int k = co_pollut[p];
-        if (k < 0 || k >= n_pollutants_) continue;
+        if (k < 0 || k >= n_pollutants_)
+            continue;
         double frac = co_frac[p];
-        if (frac <= 0.0) continue;
+        if (frac <= 0.0)
+            continue;
 
         for (int i = 0; i < n_subcatch; ++i) {
             auto idx_p = static_cast<size_t>(i * n_pollutants_ + p);

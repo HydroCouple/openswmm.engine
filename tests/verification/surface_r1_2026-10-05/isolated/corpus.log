@@ -1,0 +1,42 @@
+
+deck                             result
+-------------------------------- ------
+agree_pass                       identical
+agree_vj                         identical
+steep_pass                       identical
+slot_capped                      identical
+slot_uncapped                    identical
+vj_fv_invert_collision           identical
+vj_fv_steep_datum                identical
+sdm_fv_o1                        identical
+sdm_fv_o2                        identical
+sdm_fv_o2_superbee               identical
+storage_bucket_fv                identical
+force_legacy                     identical
+force_ard                        identical
+orif_legacy                      identical
+sdm_struct_dw_ard                identical
+snow_parity                      identical
+age_legacy                       identical
+age_ard                          identical
+age_lard                         identical
+heat_parity                      identical
+heat_lard                        identical
+si_dw_quality                    identical
+steady_quality                   identical
+twod_coupled_quality             identical
+twod_mixed_quality               identical
+
+25/25 identical, 0 moved, 0 missing
+provenance: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/corpus/PROVENANCE.txt
+
+---- 2D surface decks (trackI_bitwise_regression.sh) ----
+G1 bitwise regression: 10 2D models
+  baseline : /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/baseline/bin/openswmm
+  candidate: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/build/src/cli/openswmm
+
+SKIP  /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/source/tests/regression_testing/partA_parity/2d_complete_example.inp  (no .out produced; exit 5)
+SKIP  /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/source/tests/regression_testing/phase0_parity/2d_complete_example.inp  (no .out produced; exit 5)
+SKIP  /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r1_2026-10-05/isolated/source/tests/unit/engine/data/warnerr_missing_mesh_file.inp  (no .out produced; exit 5)
+
+G1: 7 identical, 0 differing, 3 skipped (of 10)

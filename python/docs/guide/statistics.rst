@@ -107,6 +107,58 @@ All of these values are cumulative aggregates finalised at
 
 ----
 
+Report summary tables
+=====================
+
+The summary tables of the ``.rpt`` file (Node Depth, Node Inflow, Node
+Surcharge, Node Flooding, Storage Volume, Outfall Loading, Link Flow, Flow
+Classification, Conduit Surcharge, Pumping and LID Performance) can be read
+after :meth:`Solver.end` and until the solver closes. The engine computes
+them with the code that writes the report, so the values are the report's,
+unrounded.
+
+.. code-block:: python
+
+    from openswmm.engine import Solver, SummaryObject, SummaryTable
+
+    with Solver("model.inp") as s:
+        for _ in s.steps():
+            pass
+        s.end()
+        table = s.statistics.summary_table(SummaryTable.OUTFALL_LOADING)
+        print(table.title, [f"{c.name} ({c.units})" for c in table.columns])
+        for row, values in zip(table.rows, table.values):
+            name = ("System" if row.object_type == SummaryObject.SYSTEM
+                    else s.nodes.get_id(row.object_index))
+            print(name, values)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Method
+     - Returns
+   * - ``summary_table(table)``
+     - A :class:`ReportTable`: ``title``, ``columns`` (each a heading and the
+       report's unit word for this run, such as ``"CMS"``, ``"%"`` or
+       ``"days"``), ``rows`` (each the object it describes and the report's
+       text column, such as the node type or LID control) and ``values``, a
+       ``(rows, columns)`` array with NaN where the report prints nothing.
+   * - ``summary_tables()``
+     - Every table, in report order, including tables without rows.
+   * - ``summary_row_at(table, row)``
+     - One :class:`SummaryRow`.
+   * - ``summary_value_at(table, row, column)``
+     - One value. Each call rebuilds the table, so read whole tables with
+       ``summary_table``.
+
+Rows are in report order. A ``SYSTEM`` row (the last row of Outfall Loading)
+has ``object_index`` -1, and LID Performance rows point at the subcatchment
+that holds the unit. Times of maxima are in days from the report start.
+Reading a table before the run ends raises :class:`LifecycleError`.
+
+----
+
 See also
 ========
 

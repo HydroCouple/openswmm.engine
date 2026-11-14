@@ -1,0 +1,180 @@
+--- a/src/engine/hydrology/surface/InfilBank.hpp
++++ b/src/engine/hydrology/surface/InfilBank.hpp
+@@ -5,6 +5,7 @@
+ #include "../Infiltration.hpp"
+ #include <vector>
+ 
++namespace openswmm { struct SimulationContext; }
+ namespace openswmm::surface {
+ 
+ /// One state owner and one dispatch for subcatchments and mesh cells. Kernels
+@@ -34,4 +35,7 @@
+     std::vector<double> constant_, cumulative_;
+     double evaluate(int e, double precip, double runon, double depth, double dt, Factors factors);
+ };
++/// Global monthly factors at the mesh evaluation time. The runoff climate
++/// cache may already describe a later runoff interval.
++InfilBank::Factors infiltrationFactors(const SimulationContext& ctx, double elapsed_s);
+ } // namespace openswmm::surface
+--- a/src/engine/hydrology/surface/InfilBank.cpp
++++ b/src/engine/hydrology/surface/InfilBank.cpp
+@@ -3,10 +3,23 @@
+ 
+ #include "InfilBank.hpp"
+ #include "../../core/SimulationOptions.hpp"
++#include "../../core/SimulationContext.hpp"
++#include "../../core/DateTime.hpp"
+ #include "../../core/UnitConversion.hpp"
+ #include <algorithm>
+ 
+ namespace openswmm::surface {
++InfilBank::Factors infiltrationFactors(const SimulationContext& ctx, double elapsed_s) {
++    const int month = datetime::monthOfYear(datetime::addSeconds(ctx.options.start_date, elapsed_s)) - 1;
++    InfilBank::Factors result{ctx.adjust_hydcon[month], 1.0};
++    const int pattern = ctx.climate_state.recovery_pat_index;
++    if (pattern >= 0 && static_cast<std::size_t>(pattern) < ctx.patterns.factors.size()) {
++        const auto& values = ctx.patterns.factors[pattern];
++        if (static_cast<std::size_t>(month) < values.size()) result.recovery = values[month];
++    }
++    return result;
++}
++
+ void InfilBank::init(int n) {
+     clear();
+     methods_.assign(n, InfilModel::HORTON);
+--- a/src/engine/2d/infil/Infil2D.hpp
++++ b/src/engine/2d/infil/Infil2D.hpp
+@@ -231,7 +231,8 @@
+      * @param state  Surface state — reads `rainfall`/`depth`, writes `infil_rate`.
+      * @param dt     Elapsed seconds since the previous call (the INFIL_STEP).
+      */
+-    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt);
++    void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
++                     surface::InfilBank::Factors factors = {1.0, 1.0});
+ 
+     surface::InfilBank& bank() noexcept { return bank_; }
+ 
+--- a/src/engine/2d/infil/Infil2D.cpp
++++ b/src/engine/2d/infil/Infil2D.cpp
+@@ -288,7 +288,7 @@
+     return true;
+ }
+ 
+-void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt) {
++void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt, surface::InfilBank::Factors factors) {
+     (void)mesh;
+     if (!active_ || dt <= 0.0) return;
+ 
+@@ -301,7 +301,7 @@
+ 
+         if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL) continue;
+         state.infil_rate[i] = bank_.rate(static_cast<int>(i), state.rainfall[i], 0.0,
+-                                         state.depth[i], dt, {1.0, 1.0});
++                                         state.depth[i], dt, factors);
+     }
+ }
+ 
+--- a/src/engine/2d/SurfaceRouter2D.cpp
++++ b/src/engine/2d/SurfaceRouter2D.cpp
+@@ -1292,7 +1292,7 @@
+         // instead of running a whole INFIL_STEP dry. The kernels are advanced
+         // by one cadence step here, matching how the runoff module evaluates
+         // at the start of a wet step.
+-        infil_.updateRates(mesh_, state_, infil_.stepSeconds());
++        infil_.updateRates(mesh_, state_, infil_.stepSeconds(), surface::infiltrationFactors(ctx, 0.0));
+         infil_cum_applied_.assign(
+             static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+     } else {
+@@ -1567,7 +1567,7 @@
+     if (infil_.active()) {
+         infil_elapsed_ += dt;
+         if (infil_elapsed_ >= infil_.stepSeconds()) {
+-            infil_.updateRates(mesh_, state_, infil_elapsed_);
++            infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t));
+             infil_elapsed_ = 0.0;
+         }
+     }
+--- a/tests/unit/engine/test_surface_processes.cpp
++++ b/tests/unit/engine/test_surface_processes.cpp
+@@ -6,6 +6,7 @@
+ #include "hydrology/Runoff.hpp"
+ #include "core/SimulationContext.hpp"
+ #include "core/UnitConversion.hpp"
++#include "core/DateTime.hpp"
+ #include "2d/infil/Infil2D.hpp"
+ #include "2d/data/MeshData.hpp"
+ #include "2d/data/SurfaceStateData.hpp"
+@@ -35,6 +36,7 @@
+ // Exercise the actual runoff and cell drivers on the same ponded-water/rain
+ // history, rather than comparing two direct calls to the common dispatch.
+ TEST(SurfaceProcesses, SubcatchmentAndCellAgreeThroughWetDryWetEventsBothUnitSystems) {
++    for (auto factors : {surface::InfilBank::Factors{1,1}, surface::InfilBank::Factors{.4,.2}})
+     for (bool si : {false, true}) for (int m=0; m<5; ++m) {
+         SCOPED_TRACE(::testing::Message() << "SI=" << si << " method=" << m);
+         SimulationContext ctx;
+@@ -60,8 +62,8 @@
+             const double rain = k<40 || k>=120 ? 5.0/43200.0 : 0.0;
+             ctx.gages.rainfall[0]=rain*ucf::UCF(ucf::RAINFALL,ctx.options);
+             state.rainfall[0]=rain*.3048; state.depth[0]=runoff.soa().depth_perv[0]*.3048;
+-            infil.updateRates(mesh,state,60);
+-            runoff.execute(ctx,60);
++            infil.updateRates(mesh,state,60,factors);
++            runoff.execute(ctx,60,0,factors.infiltration,factors.recovery);
+             const double depth1 = runoff.soa().infil_vol[0]/runoff.soa().area[0]*.3048;
+             const double depth2 = state.infil_rate[0]*60;
+             EXPECT_NEAR(depth1,depth2,1e-12) << "step=" << k;
+@@ -157,3 +159,54 @@
+         swmm_engine_destroy(e);
+     }
+ }
++
++TEST(SurfaceProcesses, MeshMonthlyFactorsUseEvaluationClockAcrossYearAndMonthBoundary) {
++    SimulationContext ctx;
++    ctx.options.start_date = datetime::encodeDate(2025,12,31) + datetime::encodeTime(23,59,0);
++    ctx.adjust_hydcon[11]=.3;ctx.adjust_hydcon[0]=.7;
++    ctx.patterns.factors.push_back(std::vector<double>(12,1));
++    ctx.patterns.factors[0][11]=.2;ctx.patterns.factors[0][0]=1.4;
++    ctx.climate_state.recovery_pat_index=0;
++    // The runoff cache deliberately describes the later interval.
++    ctx.climate_state.infil_factor=9;ctx.climate_state.recovery_factor=9;
++    auto old=surface::infiltrationFactors(ctx,0);
++    auto next=surface::infiltrationFactors(ctx,60);
++    EXPECT_DOUBLE_EQ(old.infiltration,.3);EXPECT_DOUBLE_EQ(old.recovery,.2);
++    EXPECT_DOUBLE_EQ(next.infiltration,.7);EXPECT_DOUBLE_EQ(next.recovery,1.4);
++    ctx.climate_state.recovery_pat_index=-1;
++    EXPECT_DOUBLE_EQ(surface::infiltrationFactors(ctx,60).recovery,1);
++}
++
++TEST(SurfaceProcesses, ConstantConductivityFactorScalesCapacityOnceInBothUnitSystems) {
++    for (bool si : {false,true}) {
++        SimulationOptions opts;opts.flow_units=si?FlowUnits::CMS:FlowUnits::CFS;
++        auto p=parameters(InfilModel::CONSTANT,si);
++        twoD::MeshData mesh;mesh.resize_triangles(1);twoD::SurfaceStateData state;state.resize(1,0);state.depth[0]=1;
++        twoD::Infil2D infil;twoD::Infil2DDefault d;d.tag="*";d.row.has_method=true;d.row.method=InfilModel::CONSTANT;
++        std::copy(p.begin(),p.end(),d.row.p);infil.defaults().push_back(d);
++        std::string error;ASSERT_TRUE(infil.resolve(mesh,opts,error));
++        const double base=.5*.0254/3600;
++        for (double factor : {.4,.4,1.0,1.0}) {
++            infil.updateRates(mesh,state,60,{factor,7});
++            EXPECT_NEAR(state.infil_rate[0],base*factor,1e-15);
++        }
++    }
++}
++
++TEST(SurfaceProcesses, SoilRecoveryFactorChangesDryStateAndNextStormCapacityForAllFiveMethods) {
++    SimulationOptions opts;
++    for (int m=0;m<5;++m) {
++        SCOPED_TRACE(m);const auto method=static_cast<InfilModel>(m);auto p=parameters(method,false);
++        surface::InfilBank fast,slow;fast.init(1);slow.init(1);fast.setMethod(0,method,p.data(),opts);slow.setMethod(0,method,p.data(),opts);
++        for (int k=0;k<10;++k) {
++            fast.rate(0,1e-4,0,.01,60,{1,1});slow.rate(0,1e-4,0,.01,60,{1,1});
++        }
++        // Drain the last available surface film before the dry interval.
++        fast.rate(0,0,0,1e-7,60,{1,1});slow.rate(0,0,0,1e-7,60,{1,1});
++        for (int k=0;k<60;++k) {fast.rate(0,0,0,0,60,{1,1});slow.rate(0,0,0,0,60,{1,.2});}
++        int model;double a[6],b[6];fast.pack(0,model,a);slow.pack(0,model,b);
++        EXPECT_NE(std::memcmp(a,b,sizeof a),0);
++        const double f=fast.rate(0,1e-4,0,.01,60,{1,1});const double s=slow.rate(0,1e-4,0,.01,60,{1,.2});
++        EXPECT_GT(f,s);
++    }
++}

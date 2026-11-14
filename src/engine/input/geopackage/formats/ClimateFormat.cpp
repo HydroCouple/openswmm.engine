@@ -1,13 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ClimateFormat.cpp
- * @brief User-CSV climate file — parser + materialiser.
+ * @file      ClimateFormat.cpp
+ * @brief     User-CSV climate file — parser + materialiser.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "ClimateFormat.hpp"
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
 #include <algorithm>
 #include <cctype>
@@ -21,12 +38,29 @@ namespace openswmm::gpkg::formats {
 namespace {
 
 // Trim ASCII whitespace and CR/LF in place.
+/**
+ * @brief Remove leading and trailing C-locale whitespace in place.
+ *
+ * Removes spaces/tabs/CR/LF and other locale whitespace, without Unicode-aware trimming. Borrowed
+ * views may invalidate.
+ *
+ * @param[in,out] s Owned mutable string; byte whitespace classification uses unsigned char.
+ */
 void trim(std::string& s) {
     auto not_space = [](unsigned char c) { return !std::isspace(c); };
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), not_space));
     s.erase(std::find_if(s.rbegin(), s.rend(), not_space).base(), s.end());
 }
 
+/**
+ * @brief Split an unquoted comma-delimited climate line and trim each field.
+ *
+ * No quoting/escape support; commas inside quotes still split. Allocation may throw.
+ *
+ * @param[in] line Borrowed text; CR/LF bytes are discarded wherever encountered.
+ * @return Owned fields including empty leading/interior/trailing fields; an empty line yields one
+ *     empty field.
+ */
 std::vector<std::string> splitCsv(const std::string& line) {
     std::vector<std::string> out;
     std::string cur;
@@ -44,22 +78,42 @@ std::vector<std::string> splitCsv(const std::string& line) {
     return out;
 }
 
+/**
+ * @brief Lowercase an owned/copied climate header token using C-locale byte rules.
+ *
+ * @param[in] s Owned/copied string, all bytes visited including embedded NUL.
+ * @return Owned lowercase byte string; no Unicode case folding.
+ */
 std::string lower(std::string s) {
-    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    for (auto& c : s)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
 }
 
+/**
+ * @brief Parse a climate numeric prefix with zero fallback.
+ *
+ * Trailing text and nonfinite tokens are accepted; no complete-consumption, range or unit checks.
+ *
+ * @param[in] s Borrowed text; empty string returns0, otherwise std::stod grammar.
+ * @return Parsed double or0 on any conversion exception.
+ */
 double parseOrZero(const std::string& s) {
-    if (s.empty()) return 0.0;
-    try { return std::stod(s); } catch (...) { return 0.0; }
+    if (s.empty())
+        return 0.0;
+    try {
+        return std::stod(s);
+    } catch (...) {
+        return 0.0;
+    }
 }
 
 } // namespace
 
-FormatResult parseClimateCsv(const std::string&        path,
-                              std::vector<ClimateRow>&  rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "r");
-    if (!fp) return fail("could not open '" + path + "' for reading");
+FormatResult parseClimateCsv(const std::string& path, std::vector<ClimateRow>& rows) {
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "r");
+    if (!fp)
+        return fail("could not open '" + path + "' for reading");
 
     char buf[2048];
     bool got_header = false;
@@ -68,7 +122,8 @@ FormatResult parseClimateCsv(const std::string&        path,
     while (std::fgets(buf, sizeof(buf), fp)) {
         std::string line(buf);
         trim(line);
-        if (line.empty() || line[0] == '#') continue;
+        if (line.empty() || line[0] == '#')
+            continue;
 
         auto cells = splitCsv(line);
         if (!got_header) {
@@ -90,30 +145,29 @@ FormatResult parseClimateCsv(const std::string&        path,
                 return {};
             return cells[static_cast<std::size_t>(it->second)];
         };
-        r.record_date  = get("date");
-        r.tmin         = parseOrZero(get("tmin"));
-        r.tmax         = parseOrZero(get("tmax"));
-        r.evaporation  = parseOrZero(get("evap"));
-        r.wind_speed   = parseOrZero(get("wind"));
-        r.sky_cover    = parseOrZero(get("sky"));
-        r.humidity     = parseOrZero(get("humidity"));
-        if (r.record_date.empty()) continue;
+        r.record_date = get("date");
+        r.tmin = parseOrZero(get("tmin"));
+        r.tmax = parseOrZero(get("tmax"));
+        r.evaporation = parseOrZero(get("evap"));
+        r.wind_speed = parseOrZero(get("wind"));
+        r.sky_cover = parseOrZero(get("sky"));
+        r.humidity = parseOrZero(get("humidity"));
+        if (r.record_date.empty())
+            continue;
         rows.push_back(std::move(r));
     }
     std::fclose(fp);
     return ok();
 }
 
-FormatResult writeClimateCsv(const std::string&             path,
-                              const std::vector<ClimateRow>& rows) {
-    std::FILE* fp = std::fopen(path.c_str(), "w");
-    if (!fp) return fail("could not open '" + path + "' for writing");
+FormatResult writeClimateCsv(const std::string& path, const std::vector<ClimateRow>& rows) {
+    std::FILE* fp = openswmm::io::fopen_utf8(path, "w");
+    if (!fp)
+        return fail("could not open '" + path + "' for writing");
     std::fprintf(fp, "date,tmin,tmax,evap,wind,sky,humidity\n");
     for (const auto& r : rows) {
-        std::fprintf(fp, "%s,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n",
-                      r.record_date.c_str(),
-                      r.tmin, r.tmax, r.evaporation,
-                      r.wind_speed, r.sky_cover, r.humidity);
+        std::fprintf(fp, "%s,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f\n", r.record_date.c_str(), r.tmin,
+                     r.tmax, r.evaporation, r.wind_speed, r.sky_cover, r.humidity);
     }
     std::fclose(fp);
     return ok();

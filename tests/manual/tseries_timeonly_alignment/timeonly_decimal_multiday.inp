@@ -1,0 +1,53 @@
+[TITLE]
+Time-only decimal-hours multi-day series probe (START_TIME 18:00, hours > 24)
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2007
+START_TIME           18:00:00
+REPORT_START_DATE    01/01/2007
+REPORT_START_TIME    18:00:00
+END_DATE             01/03/2007
+END_TIME             18:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:15:00
+DRY_STEP             00:15:00
+ROUTING_STEP         0:00:30
+
+[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+J1               10.0       10.0       0          0          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated
+O1               0.0        FREE                        NO
+
+[CONDUITS]
+;;Name           FromNode         ToNode           Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow
+C1               J1               O1               400        0.01       0          0          0          0
+
+[XSECTIONS]
+;;Link           Shape        Geom1            Geom2      Geom3      Geom4      Barrels
+C1               CIRCULAR     2.0              0          0          0          1
+
+[INFLOWS]
+;;Node           Constituent      Time Series      Type     Mfactor  Sfactor
+J1               FLOW             TS1              FLOW     1.0      1.0
+
+[TIMESERIES]
+;;Name           Date       Time       Value
+TS1                         0          0
+TS1                         6.5        4
+TS1                         12         8
+TS1                         24         2
+TS1                         30.25      6
+TS1                         48         0
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+SUBCATCHMENTS ALL
+NODES ALL
+LINKS ALL

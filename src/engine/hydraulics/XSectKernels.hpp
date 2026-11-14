@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file XSectKernels.hpp
- * @brief Portable cross-section geometry kernels — one implementation, three
+ * @file      XSectKernels.hpp
+ * @brief     Portable cross-section geometry kernels — one implementation, three
  *        consumers (host dynamic wave, host finite volume, device finite volume).
  *
  * @details The cross-section machinery was host-only: the geometry tables are
@@ -34,9 +50,9 @@
  * @note INTERNAL HEADER — not installed.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_XSECT_KERNELS_HPP
@@ -60,13 +76,13 @@ namespace openswmm::xsect {
 // Constants matching legacy consts.h / xsect.c exactly (for bit-faithful
 // parity). They moved here with the bodies that use them; setParams() in
 // XSection.cpp reads the same definitions rather than a second copy.
-inline constexpr double TINY    = 1.0e-6;
-inline constexpr double PI      = 3.141592654;
+inline constexpr double TINY = 1.0e-6;
+inline constexpr double PI = 3.141592654;
 inline constexpr double GRAVITY = 32.2;
 
-inline constexpr double RECT_ALFMAX        = 0.97;
+inline constexpr double RECT_ALFMAX = 0.97;
 inline constexpr double RECT_TRIANG_ALFMAX = 0.98;
-inline constexpr double RECT_ROUND_ALFMAX  = 0.98;
+inline constexpr double RECT_ROUND_ALFMAX = 0.98;
 
 /**
  * @brief The analytic shape formulas — the single definition of each.
@@ -96,76 +112,205 @@ namespace shape {
 
 // ---- Area from depth ----
 
+/**
+ * @brief Compute rectangular area as depth times width.
+ *
+ * No clamp to full depth.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] w_max Positive section width in ft.
+ * @return Wetted area ft2.
+ */
 OPENSWMM_KERNEL_FN double rectAofY(double y, double w_max) {
     return y * w_max;
 }
 
+/**
+ * @brief Compute trapezoid area as (bottom width+side slope*depth)*depth.
+ *
+ * No full-depth clamp.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] y_bot Nonnegative bottom width ft, with valid positive section dimensions.
+ * @param[in] s_bot Average horizontal/vertical side slope, dimensionless.
+ * @return Area ft2.
+ */
 OPENSWMM_KERNEL_FN double trapezAofY(double y, double y_bot, double s_bot) {
     return (y_bot + s_bot * y) * y;
 }
 
+/**
+ * @brief Compute triangular area from depth and side slope.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] s_bot Positive horizontal/vertical side slope, dimensionless.
+ * @return y*y*s_bot in ft2.
+ */
 OPENSWMM_KERNEL_FN double triangAofY(double y, double s_bot) {
     return y * y * s_bot;
 }
 
+/**
+ * @brief Compute parabolic area using its square-root depth relation.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] r_bot Positive inverse sqrt(parabola coefficient), units sqrt(ft).
+ * @return (4/3)*r_bot*y*sqrt(y), ft2.
+ */
 OPENSWMM_KERNEL_FN double parabAofY(double y, double r_bot) {
     return (4.0 / 3.0) * r_bot * y * std::sqrt(y);
 }
 
+/**
+ * @brief Compute power-function section area.
+ *
+ * No finite/power-domain checks.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] s_bot Positive depth exponent (inverse authoring exponent), dimensionless.
+ * @param[in] r_bot Positive area coefficient, units ft^(1-s_bot).
+ * @return r_bot*y^(s_bot+1), ft2.
+ */
 OPENSWMM_KERNEL_FN double powerfuncAofY(double y, double s_bot, double r_bot) {
     return r_bot * std::pow(y, s_bot + 1.0);
 }
 
 // ---- Hydraulic radius ----
 
-/// Legacy rect_closed_getRofA — including the near-full correction that grows
-/// the wetted perimeter by the crown width past RECT_ALFMAX.
+/**
+ * @brief Compute closed rectangular hydraulic radius with near-crown perimeter correction.
+ *
+ * Above RECT_ALFMAX full-area fraction, adds a linearly increasing crown width to wetted perimeter.
+ *
+ * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+ * @param[in] w_max Positive section width in ft.
+ * @param[in] a_full Positive full section area ft2.
+ * @return Radius ft,0 when a<=0.
+ */
 OPENSWMM_KERNEL_FN double rectClosedRofA(double a, double w_max, double a_full) {
-    if (a <= 0.0) return 0.0;
+    if (a <= 0.0)
+        return 0.0;
     double p = w_max + 2.0 * a / w_max;
     if (a / a_full > RECT_ALFMAX)
         p += (a / a_full - RECT_ALFMAX) / (1.0 - RECT_ALFMAX) * w_max;
     return a / p;
 }
 
-/// Legacy xsect_getRofA's RECT_OPEN arm; s_bot is the count of banks excluded
-/// from the perimeter (0, 1 or 2).
+/**
+ * @brief Compute open rectangular radius excluding selected side banks.
+ *
+ * Perimeter is width+(2-s_bot)*depth.
+ *
+ * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+ * @param[in] w_max Positive section width in ft.
+ * @param[in] s_bot Number of excluded wetted banks, convention0,1 or2; caller validates.
+ * @return Radius ft,0 when a<=0.
+ */
 OPENSWMM_KERNEL_FN double rectOpenRofA(double a, double w_max, double s_bot) {
-    if (a <= 0.0) return 0.0;
+    if (a <= 0.0)
+        return 0.0;
     return a / (w_max + (2.0 - s_bot) * a / w_max);
 }
 
-OPENSWMM_KERNEL_FN double trapezRofY(double y, double y_bot, double s_bot,
-                                     double r_bot) {
-    if (y == 0.0) return 0.0;
+/**
+ * @brief Compute trapezoid hydraulic radius from depth.
+ *
+ * No nonzero-denominator validation.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] y_bot Bottom width ft.
+ * @param[in] s_bot Average horizontal/vertical side slope.
+ * @param[in] r_bot Positive sum of sloped side lengths per unit depth, dimensionless.
+ * @return Area/(y_bot+y*r_bot), ft;0 exactly at y=0.
+ */
+OPENSWMM_KERNEL_FN double trapezRofY(double y, double y_bot, double s_bot, double r_bot) {
+    if (y == 0.0)
+        return 0.0;
     return trapezAofY(y, y_bot, s_bot) / (y_bot + y * r_bot);
 }
 
+/**
+ * @brief Compute triangular hydraulic radius from its side geometry.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] s_bot Positive horizontal/vertical side slope.
+ * @param[in] r_bot Positive side-length/depth factor sqrt(1+s_bot*s_bot).
+ * @return y*s_bot/(2*r_bot), ft.
+ */
 OPENSWMM_KERNEL_FN double triangRofY(double y, double s_bot, double r_bot) {
     return (y * s_bot) / (2.0 * r_bot);
 }
 
 // ---- Top width ----
 
-/// Legacy getWofY RECT_CLOSED: the tabulated crown width is 0 exactly at
-/// y == y_full, so the caller passes the normalized depth, not the depth.
+/**
+ * @brief Apply the closed rectangular crown top-width convention.
+ *
+ * Does not clamp negative/overfull normalized depths.
+ *
+ * @param[in] y_norm Normalized depth y/y_full; exact1 denotes crown.
+ * @param[in] w_max Positive section width in ft.
+ * @return 0 exactly at y_norm=1, otherwise w_max ft.
+ */
 OPENSWMM_KERNEL_FN double rectClosedWofY(double y_norm, double w_max) {
-    if (y_norm == 1.0) return 0.0;
+    if (y_norm == 1.0)
+        return 0.0;
     return w_max;
 }
 
+/**
+ * @brief Compute trapezoid top width from depth.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] y_bot Nonnegative bottom width ft.
+ * @param[in] s_bot Average horizontal/vertical side slope.
+ * @return y_bot+2*y*s_bot, ft.
+ */
 OPENSWMM_KERNEL_FN double trapezWofY(double y, double y_bot, double s_bot) {
     return y_bot + 2.0 * y * s_bot;
 }
 
+/**
+ * @brief Compute triangular top width from depth.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] s_bot Positive horizontal/vertical side slope.
+ * @return 2*s_bot*y, ft.
+ */
 OPENSWMM_KERNEL_FN double triangWofY(double y, double s_bot) {
     return 2.0 * s_bot * y;
 }
 
+/**
+ * @brief Compute parabolic top width from depth.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] r_bot Positive inverse sqrt(parabola coefficient), sqrt(ft).
+ * @return 2*r_bot*sqrt(y), ft.
+ */
 OPENSWMM_KERNEL_FN double parabWofY(double y, double r_bot) {
     return 2.0 * r_bot * std::sqrt(y);
 }
 
+/**
+ * @brief Compute power-function top width as the area-depth derivative.
+ *
+ * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+ *     geometric branch.
+ * @param[in] s_bot Positive depth exponent, dimensionless.
+ * @param[in] r_bot Positive coefficient with units ft^(1-s_bot).
+ * @return (s_bot+1)*r_bot*y^s_bot, ft.
+ */
 OPENSWMM_KERNEL_FN double powerfuncWofY(double y, double s_bot, double r_bot) {
     return (s_bot + 1.0) * r_bot * std::pow(y, s_bot);
 }
@@ -180,6 +325,35 @@ OPENSWMM_KERNEL_FN double powerfuncWofY(double y, double s_bot, double r_bot) {
  * are deliberately identical to the `xsect_tables::` symbols they bind to, so
  * the moved bodies differ from the originals by exactly one token.
  */
+/**
+ * @brief The tables `invLookup()` inverts, and so the ones that carry a
+ *        `LocateLut` (plan XSECT_LOOKUP_ACCEL §4 item A1).
+ *
+ * Every other shared table is only ever read forward, where the index is a
+ * divide-and-truncate and there is no search to accelerate. Keeping the maps in
+ * one array indexed by this enum costs XsectTables a single pointer instead of
+ * fifteen, and keeps the host binding (XSection.cpp hostTables) and any device
+ * binding to one block to copy.
+ */
+enum class LutId : int {
+    Y_Gothic = 0,
+    Y_Catenary,
+    Y_SemiEllip,
+    Y_SemiCirc,
+    A_HorizEllipse,
+    A_VertEllipse,
+    A_Arch,
+    S_Circ,
+    S_Egg,
+    S_Horseshoe,
+    S_Gothic,
+    S_Catenary,
+    S_SemiEllip,
+    S_BasketHandle,
+    S_SemiCirc,
+    COUNT
+};
+
 struct XsectTables {
     const double* A_Arch = nullptr;
     const double* A_Baskethandle = nullptr;
@@ -223,6 +397,8 @@ struct XsectTables {
     const double* Y_SemiCirc = nullptr;
     const double* Y_SemiEllip = nullptr;
     const double* Amax = nullptr;
+    /// Bucket maps for the inverted tables, indexed by LutId; null == bisect.
+    const LocateLut* luts = nullptr;
     int N_A_Arch = 0;
     int N_A_Baskethandle = 0;
     int N_A_Circ = 0;
@@ -264,6 +440,19 @@ struct XsectTables {
     int N_Y_Horseshoe = 0;
     int N_Y_SemiCirc = 0;
     int N_Y_SemiEllip = 0;
+
+    /**
+     * @brief Borrow the optional bucket map selected by a geometry-table enum.
+     *
+     * Map array remains externally owned and must live in the same accessible memory space as this
+     * evaluator.
+     *
+     * @param[in] id Valid LutId0..COUNT-1 when luts is non-NULL; unchecked ordinal.
+     * @return Borrowed map pointer or NULL when luts is NULL.
+     */
+    OPENSWMM_KERNEL_FN const LocateLut* lut(LutId id) const {
+        return luts ? (luts + static_cast<int>(id)) : nullptr;
+    }
 };
 
 /**
@@ -282,7 +471,25 @@ struct XsectEval {
 
     // Newton-Raphson + bisection. func(x, &f, &df). Root bracketed in [x1, x2].
     template <class Func>
-    OPENSWMM_KERNEL_FN int findroot_Newton(double x1, double x2, double* rts, double xacc, Func func) const {
+    /**
+     * @brief Find a bracketed scalar root with safeguarded Newton/bisection iterations.
+     *
+     * Uses up to60 iterations and can stop on floating-point stagnation. Does not verify endpoint
+     * signs, finite values or residual tolerance; callback exceptions propagate in host builds. No
+     * allocation by the root routine.
+     *
+     * @param[in] x1 Lower sign-bracket endpoint with negative residual, in independent-variable units.
+     * @param[in] x2 Upper sign-bracket endpoint with positive residual; caller establishes bracket
+     *     orientation.
+     * @param[in,out] rts Non-NULL initial guess in bracket, replaced by final candidate even on
+     *     exhaustion.
+     * @param[in] xacc Positive absolute step tolerance in independent-variable units.
+     * @param[in] func Copied synchronous callable func(x,double* residual,double* derivative); must
+     *     fill both outputs and remain callable from the selected execution space.
+     * @return Function evaluation count when<=60, otherwise0 after exhaustion.
+     */
+    OPENSWMM_KERNEL_FN int findroot_Newton(double x1, double x2, double* rts, double xacc,
+                                           Func func) const {
         constexpr int MAXIT = 60;
         int n = 0;
         double df, dx, dxold, f, x, temp, xhi, xlo;
@@ -300,19 +507,24 @@ struct XsectEval {
                 dxold = dx;
                 dx = 0.5 * (xhi - xlo);
                 x = xlo + dx;
-                if (xlo == x) break;
+                if (xlo == x)
+                    break;
             } else {
                 dxold = dx;
                 dx = f / df;
                 temp = x;
                 x -= dx;
-                if (temp == x) break;
+                if (temp == x)
+                    break;
             }
-            if (std::fabs(dx) < xacc) break;
+            if (std::fabs(dx) < xacc)
+                break;
             func(x, &f, &df);
             n++;
-            if (f < 0.0) xlo = x;
-            else         xhi = x;
+            if (f < 0.0)
+                xlo = x;
+            else
+                xhi = x;
         }
         *rts = x;
         return (n <= MAXIT) ? n : 0;
@@ -320,6 +532,20 @@ struct XsectEval {
 
     // Ridder's method. func(x) -> double. Root bracketed in [x1, x2].
     template <class Func>
+    /**
+     * @brief Find a sign-bracketed scalar root using Ridder iterations.
+     *
+     * Uses at most60 iterations; may return the last candidate on exhaustion/degenerate update without
+     * a separate convergence flag. Does not validate finiteness/bracket width; no allocation.
+     *
+     * @param[in] x1 First finite bracket endpoint, in independent-variable units.
+     * @param[in] x2 Second finite endpoint; residuals must have opposite signs unless an endpoint is a
+     *     root.
+     * @param[in] xacc Positive absolute independent-variable tolerance.
+     * @param[in] func Copied synchronous residual callable double(x), valid in selected execution
+     *     space.
+     * @return Root endpoint/candidate, or -1e20 when endpoint residuals do not bracket a root.
+     */
     OPENSWMM_KERNEL_FN double findroot_Ridder(double x1, double x2, double xacc, Func func) const {
         constexpr int MAXIT = 60;
         auto SIGN = [](double a, double b) { return (b >= 0.0) ? std::fabs(a) : -std::fabs(a); };
@@ -327,8 +553,10 @@ struct XsectEval {
         double ans, fhi, flo, fm, fnew, s, xhi, xlo, xm, xnew;
         flo = func(x1);
         fhi = func(x2);
-        if (flo == 0.0) return x1;
-        if (fhi == 0.0) return x2;
+        if (flo == 0.0)
+            return x1;
+        if (fhi == 0.0)
+            return x2;
         ans = 0.5 * (x1 + x2);
         if ((flo > 0.0 && fhi < 0.0) || (flo < 0.0 && fhi > 0.0)) {
             xlo = x1;
@@ -337,16 +565,28 @@ struct XsectEval {
                 xm = 0.5 * (xlo + xhi);
                 fm = func(xm);
                 s = std::sqrt(fm * fm - flo * fhi);
-                if (s == 0.0) return ans;
+                if (s == 0.0)
+                    return ans;
                 xnew = xm + (xm - xlo) * ((flo >= fhi ? 1.0 : -1.0) * fm / s);
-                if (std::fabs(xnew - ans) <= xacc) break;
+                if (std::fabs(xnew - ans) <= xacc)
+                    break;
                 ans = xnew;
                 fnew = func(ans);
-                if (SIGN(fm, fnew) != fm)      { xlo = xm; flo = fm; xhi = ans; fhi = fnew; }
-                else if (SIGN(flo, fnew) != flo) { xhi = ans; fhi = fnew; }
-                else if (SIGN(fhi, fnew) != fhi) { xlo = ans; flo = fnew; }
-                else return ans;
-                if (std::fabs(xhi - xlo) <= xacc) return ans;
+                if (SIGN(fm, fnew) != fm) {
+                    xlo = xm;
+                    flo = fm;
+                    xhi = ans;
+                    fhi = fnew;
+                } else if (SIGN(flo, fnew) != flo) {
+                    xhi = ans;
+                    fhi = fnew;
+                } else if (SIGN(fhi, fnew) != fhi) {
+                    xlo = ans;
+                    flo = fnew;
+                } else
+                    return ans;
+                if (std::fabs(xhi - xlo) <= xacc)
+                    return ans;
             }
             return ans;
         }
@@ -357,20 +597,35 @@ struct XsectEval {
     // Lookup helpers — identical to legacy lookup()/invLookup()/locate()
     // ============================================================================
 
+    /**
+     * @brief Find a lower interpolation bracket through shared legacy bisection.
+     *
+     * No interpolation, mutation or map allocation.
+     *
+     * @param[in] y Query in table units; endpoint holding and NaN-to0 index follow locate_bisect.
+     * @param[in] table Borrowed readable nondecreasing indices0..jLast.
+     * @param[in] jLast Nonnegative inclusive final index, caller-validated.
+     * @return Lower bracketing index, clamped to endpoint indices.
+     */
     OPENSWMM_KERNEL_FN int locate(double y, const double* table, int jLast) const {
         // Bisection: highest index j with table[j] <= y (legacy locate()).
-        int j1 = 0;
-        int j2 = jLast;
-        if (y <= table[0])     return 0;
-        if (y >= table[jLast]) return jLast;
-        while (j2 - j1 > 1) {
-            int j = (j1 + j2) >> 1;
-            if (y >= table[j]) j1 = j;
-            else               j2 = j;
-        }
-        return j1;
+        return locate_bisect(y, table, jLast);
     }
 
+    /**
+     * @brief Interpolate normalized geometry with guarded endpoints and exact legacy arithmetic.
+     *
+     * x==1 deliberately uses legacy division/interpolation rather than unconditional endpoint return.
+     * Does not validate pointer/table values.
+     *
+     * @param[in] x Normalized coordinate; NaN/nonpositive selects table[0], >1 (including +inf) selects
+     *     final entry.
+     * @param[in] table Borrowed readable equally spaced n_items entries on0..1; at least4 for low-end
+     *     quadratic refinement.
+     * @param[in] n_items Logical table size>=4; unchecked.
+     * @return Interpolated table-unit value; interior calls lookup_exact, which floors negative
+     *     interpolants0.
+     */
     OPENSWMM_KERNEL_FN double lookup(double x, const double* table, int n_items) const {
         // The tables are defined on the normalized domain x in [0, 1]. Guard the
         // bounds BEFORE converting x to an int index: x can arrive non-finite when
@@ -390,35 +645,62 @@ struct XsectEval {
         //     the last segment. Deferring x == 1.0 to lookup_exact reproduces that;
         //     no representable double lies in (1.0, n-1 * delta), so the strict
         //     guard is exact.
-        if (!(x > 0.0)) return table[0];             // x <= 0 or NaN
-        if (x > 1.0)    return table[n_items - 1];    // x > 1 or +inf
+        if (!(x > 0.0))
+            return table[0]; // x <= 0 or NaN
+        if (x > 1.0)
+            return table[n_items - 1]; // x > 1 or +inf
         return lookup_exact(x, table, n_items);
     }
 
-    OPENSWMM_KERNEL_FN double invLookup(double y, const double* table, int n_items) const {
+    /**
+     * @brief Invert normalized geometry with legacy upper-branch handling.
+     *
+     * Flat interpolation segment returns its lower coordinate. Map affects only bracketing, not
+     * arithmetic. No pointer/count/finite validation or allocation.
+     *
+     * @param[in] y Dependent table-unit value; finite values expected; result clamps normalized
+     *     coordinate0..1.
+     * @param[in] table Borrowed readable n_items entries, nondecreasing except optional two declining
+     *     final section-factor rows.
+     * @param[in] n_items Logical table count>=4.
+     * @param[in] lut Optional borrowed map built for this table's actual truncated search extent;
+     *     stale/mismatched content is invalid.
+     * @return Normalized inverse coordinate, choosing legacy declining-top branch when applicable.
+     */
+    OPENSWMM_KERNEL_FN double invLookup(double y, const double* table, int n_items,
+                                        const LocateLut* lut = nullptr) const {
         double dx = 1.0 / static_cast<double>(n_items - 1);
         int n = n_items;
 
         // Truncate item count if last 2 entries are decreasing (section-factor tables)
-        if (table[n - 3] > table[n - 1]) n = n - 2;
+        if (table[n - 3] > table[n - 1])
+            n = n - 2;
 
         int i;
         if (n < n_items && y > table[n_items - 1]) {
-            if (y >= table[n_items - 3]) return static_cast<double>(n - 1) * dx;
-            if (y <= table[n_items - 2]) i = n_items - 2;
-            else                         i = n_items - 3;
+            if (y >= table[n_items - 3])
+                return static_cast<double>(n - 1) * dx;
+            if (y <= table[n_items - 2])
+                i = n_items - 2;
+            else
+                i = n_items - 3;
         } else {
-            i = locate(y, table, n - 1);
+            i = locate_maybe_lut(y, table, n - 1, lut);
         }
-        if (i >= n - 1) return static_cast<double>(n - 1) * dx;
+        if (i >= n - 1)
+            return static_cast<double>(n - 1) * dx;
 
         double x0 = i * dx;
         double dy = table[i + 1] - table[i];
         double x;
-        if (dy == 0.0) x = x0;
-        else           x = x0 + (y - table[i]) * dx / dy;
-        if (x < 0.0) x = 0.0;
-        if (x > 1.0) x = 1.0;
+        if (dy == 0.0)
+            x = x0;
+        else
+            x = x0 + (y - table[i]) * dx / dy;
+        if (x < 0.0)
+            x = 0.0;
+        if (x > 1.0)
+            x = 1.0;
         return x;
     }
 
@@ -426,27 +708,55 @@ struct XsectEval {
     // Circular small-area special functions (legacy getYcircular/getScircular/...)
     // ============================================================================
 
+    /**
+     * @brief Compute the circular angle from normalized area.
+     *
+     * Solves theta-sin(theta)=2*pi*alpha with up to40 Newton updates; when |d|<=0.0001 returns iterate,
+     * otherwise original empirical guess. Positive Newton correction alone caps at1. No general
+     * finite/domain validation.
+     *
+     * @param[in] alpha Finite positive area/full-area ratio on the intended circular branch,
+     *     normally<=1.
+     * @return Circular wetted central angle in radians.
+     */
     OPENSWMM_KERNEL_FN double getThetaOfAlpha(double alpha) const {
         double theta, theta1, ap, d;
-        if (alpha > 0.04) theta = 1.2 + 5.08 * (alpha - 0.04) / 0.96;
-        else              theta = 0.031715 - 12.79384 * alpha + 8.28479 * std::sqrt(alpha);
+        if (alpha > 0.04)
+            theta = 1.2 + 5.08 * (alpha - 0.04) / 0.96;
+        else
+            theta = 0.031715 - 12.79384 * alpha + 8.28479 * std::sqrt(alpha);
         theta1 = theta;
         ap = (2.0 * PI) * alpha;
         for (int k = 1; k <= 40; ++k) {
             d = -(ap - theta + std::sin(theta)) / (1.0 - std::cos(theta));
-            if (d > 1.0) d = std::copysign(1.0, d);
+            if (d > 1.0)
+                d = std::copysign(1.0, d);
             theta = theta - d;
-            if (std::fabs(d) <= 0.0001) return theta;
+            if (std::fabs(d) <= 0.0001)
+                return theta;
         }
         return theta1;
     }
 
+    /**
+     * @brief Compute the circular angle from normalized section factor.
+     *
+     * Uses piecewise initial guess and up to40 Newton updates for normalized section factor;
+     * nonconvergence returns original guess, with no status flag. No general finite/domain validation.
+     *
+     * @param[in] psi Finite positive section-factor/full-factor ratio on the intended circular branch.
+     * @return Circular wetted central angle radians.
+     */
     OPENSWMM_KERNEL_FN double getThetaOfPsi(double psi) const {
         double theta, theta1, ap, tt, tt23, t3, d;
-        if      (psi > 0.90)  theta = 4.17 + 1.12 * (psi - 0.90) / 0.176;
-        else if (psi > 0.5)   theta = 3.14 + 1.03 * (psi - 0.5) / 0.4;
-        else if (psi > 0.015) theta = 1.2 + 1.94 * (psi - 0.015) / 0.485;
-        else                  theta = 0.12103 - 55.5075 * psi + 15.62254 * std::sqrt(psi);
+        if (psi > 0.90)
+            theta = 4.17 + 1.12 * (psi - 0.90) / 0.176;
+        else if (psi > 0.5)
+            theta = 3.14 + 1.03 * (psi - 0.5) / 0.4;
+        else if (psi > 0.015)
+            theta = 1.2 + 1.94 * (psi - 0.015) / 0.485;
+        else
+            theta = 0.12103 - 55.5075 * psi + 15.62254 * std::sqrt(psi);
         theta1 = theta;
         ap = (2.0 * PI) * psi;
         for (int k = 1; k <= 40; ++k) {
@@ -457,15 +767,28 @@ struct XsectEval {
             d = ap * theta / t3 - tt * tt23;
             d = d / (ap * (2.0 / 3.0) / t3 - (5.0 / 3.0) * tt23 * (1.0 - std::cos(theta)));
             theta = theta - d;
-            if (std::fabs(d) <= 0.0001) return theta;
+            if (std::fabs(d) <= 0.0001)
+                return theta;
         }
         return theta1;
     }
 
+    /**
+     * @brief Compute the circular normalized depth from area.
+     *
+     * Nonpositive area ratio returns0, >=1 returns1; <=1e-5 uses cubic small-area approximation,
+     * otherwise angle inversion. No general finite/domain validation.
+     *
+     * @param[in] alpha Finite positive area/full-area ratio on the intended circular branch,
+     *     normally<=1.
+     * @return Depth/full-depth ratio.
+     */
     OPENSWMM_KERNEL_FN double getYcircular(double alpha) const {
         double theta;
-        if (alpha >= 1.0) return 1.0;
-        if (alpha <= 0.0) return 0.0;
+        if (alpha >= 1.0)
+            return 1.0;
+        if (alpha <= 0.0)
+            return 0.0;
         if (alpha <= 1.0e-5) {
             theta = std::pow(37.6911 * alpha, 1.0 / 3.0);
             return theta * theta / 16.0;
@@ -474,10 +797,22 @@ struct XsectEval {
         return (1.0 - std::cos(theta / 2.0)) / 2.0;
     }
 
+    /**
+     * @brief Compute the circular normalized section factor from area.
+     *
+     * Nonpositive area returns0, >=1 returns1; <=1e-5 uses a small-angle power approximation, otherwise
+     * theta expression. No general finite/domain validation.
+     *
+     * @param[in] alpha Finite positive area/full-area ratio on the intended circular branch,
+     *     normally<=1.
+     * @return Section-factor/full-section-factor ratio.
+     */
     OPENSWMM_KERNEL_FN double getScircular(double alpha) const {
         double theta;
-        if (alpha >= 1.0) return 1.0;
-        if (alpha <= 0.0) return 0.0;
+        if (alpha >= 1.0)
+            return 1.0;
+        if (alpha <= 0.0)
+            return 0.0;
         if (alpha <= 1.0e-5) {
             theta = std::pow(37.6911 * alpha, 1.0 / 3.0);
             return std::pow(theta, 13.0 / 3.0) / 124.4797;
@@ -487,10 +822,21 @@ struct XsectEval {
                std::pow(theta, 2.0 / 3.0);
     }
 
+    /**
+     * @brief Compute the circular normalized area from section factor.
+     *
+     * Nonpositive section-factor ratio returns0, >=1 returns1; <=1e-6 uses a small-flow approximation,
+     * otherwise angle inversion. No general finite/domain validation.
+     *
+     * @param[in] psi Finite positive section-factor/full-factor ratio on the intended circular branch.
+     * @return Area/full-area ratio.
+     */
     OPENSWMM_KERNEL_FN double getAcircular(double psi) const {
         double theta;
-        if (psi >= 1.0) return 1.0;
-        if (psi <= 0.0) return 0.0;
+        if (psi >= 1.0)
+            return 1.0;
+        if (psi <= 0.0)
+            return 0.0;
         if (psi <= 1.0e-6) {
             theta = std::pow(124.4797 * psi, 3.0 / 13.0);
             return theta * theta * theta / 37.6911;
@@ -503,22 +849,48 @@ struct XsectEval {
     // Generic / tabular section-factor derivatives (legacy)
     // ============================================================================
 
+    /**
+     * @brief Estimate section-factor derivative with a centered normalized-area difference.
+     *
+     * Samples alpha+-0.001, flooring only lower alpha0; upper sample can exceed full area. No
+     * allocation or finite/denominator validation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return d(A*R^(2/3))/dA in ft^(2/3).
+     */
     OPENSWMM_KERNEL_FN double generic_getdSdA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
         double alpha1 = alpha - 0.001;
         double alpha2 = alpha + 0.001;
-        if (alpha1 < 0.0) alpha1 = 0.0;
+        if (alpha1 < 0.0)
+            alpha1 = 0.0;
         double a1 = alpha1 * xs.a_full;
         double a2 = alpha2 * xs.a_full;
         return (getSofA(xs, a2) - getSofA(xs, a1)) / (a2 - a1);
     }
 
-    OPENSWMM_KERNEL_FN double tabular_getdSdA(const XSectParams& xs, double a,
-                                  const double* table, int n_items) const {
+    /**
+     * @brief Differentiate the local normalized section-factor table segment.
+     *
+     * Upper index clamps to last segment; negative/NaN indices are not guarded. No smoothing, finite or
+     * pointer validation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @param[in] table Borrowed n_items-entry normalized S table.
+     * @param[in] n_items Count>=2; alpha/delta must be nonnegative finite and int-representable.
+     * @return Local table slope*s_full/a_full in ft^(2/3).
+     */
+    OPENSWMM_KERNEL_FN double tabular_getdSdA(const XSectParams& xs, double a, const double* table,
+                                              int n_items) const {
         double alpha = a / xs.a_full;
         double delta = 1.0 / static_cast<double>(n_items - 1);
         int i = static_cast<int>(alpha / delta);
-        if (i >= n_items - 1) i = n_items - 2;
+        if (i >= n_items - 1)
+            i = n_items - 2;
         double dSdA = (table[i + 1] - table[i]) / delta;
         return dSdA * xs.s_full / xs.a_full;
     }
@@ -527,34 +899,106 @@ struct XsectEval {
     // Circular
     // ============================================================================
 
+    /**
+     * @brief Compute circular wetted area from depth.
+     *
+     * Uses normalized built-in circular tables and small-area angle formulas (alpha<0.04).
+     * Section-factor inverse returns full area for psi>=1; derivative returns1e-30 at alpha<=1e-30.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double circ_getAofY(const XSectParams& xs, double y) const {
         double y_norm = y / xs.y_full;
         return xs.a_full * lookup(y_norm, tbl.A_Circ, tbl.N_A_Circ);
     }
 
+    /**
+     * @brief Compute circular water depth from wetted area.
+     *
+     * Uses normalized built-in circular tables and small-area angle formulas (alpha<0.04).
+     * Section-factor inverse returns full area for psi>=1; derivative returns1e-30 at alpha<=1e-30.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double circ_getYofA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
-        if (alpha < 0.04) return xs.y_full * getYcircular(alpha);
+        if (alpha < 0.04)
+            return xs.y_full * getYcircular(alpha);
         return xs.y_full * lookup(alpha, tbl.Y_Circ, tbl.N_Y_Circ);
     }
 
+    /**
+     * @brief Compute circular section factor from area.
+     *
+     * Uses normalized built-in circular tables and small-area angle formulas (alpha<0.04).
+     * Section-factor inverse returns full area for psi>=1; derivative returns1e-30 at alpha<=1e-30.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor A*R^(2/3) from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double circ_getSofA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
-        if (alpha < 0.04) return xs.s_full * getScircular(alpha);
+        if (alpha < 0.04)
+            return xs.s_full * getScircular(alpha);
         return xs.s_full * lookup(alpha, tbl.S_Circ, tbl.N_S_Circ);
     }
 
+    /**
+     * @brief Compute circular area from section factor.
+     *
+     * Uses normalized built-in circular tables and small-area angle formulas (alpha<0.04).
+     * Section-factor inverse returns full area for psi>=1; derivative returns1e-30 at alpha<=1e-30.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] s Finite nonnegative section factor ft^(8/3), within the intended inverse branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double circ_getAofS(const XSectParams& xs, double s) const {
         double psi = s / xs.s_full;
-        if (psi == 0.0) return 0.0;
-        if (psi >= 1.0) return xs.a_full;
-        if (psi <= 0.015) return xs.a_full * getAcircular(psi);
-        return xs.a_full * invLookup(psi, tbl.S_Circ, tbl.N_S_Circ);
+        if (psi == 0.0)
+            return 0.0;
+        if (psi >= 1.0)
+            return xs.a_full;
+        if (psi <= 0.015)
+            return xs.a_full * getAcircular(psi);
+        return xs.a_full * invLookup(psi, tbl.S_Circ, tbl.N_S_Circ, tbl.lut(LutId::S_Circ));
     }
 
+    /**
+     * @brief Compute circular section-factor derivative with respect to area.
+     *
+     * Uses normalized built-in circular tables and small-area angle formulas (alpha<0.04).
+     * Section-factor inverse returns full area for psi>=1; derivative returns1e-30 at alpha<=1e-30.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double circ_getdSdA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
-        if (alpha <= 1.0e-30) return 1.0e-30;
+        if (alpha <= 1.0e-30)
+            return 1.0e-30;
         if (alpha < 0.04) {
             double theta = getThetaOfAlpha(alpha);
             double p = theta * xs.y_full / 2.0;
@@ -569,6 +1013,20 @@ struct XsectEval {
     // Filled circular (yBot/aBot/sBot/rBot = filled bottom: depth/area/width/perim)
     // ============================================================================
 
+    /**
+     * @brief Compute sediment-filled circular wetted area from depth.
+     *
+     * Temporarily expands a local section copy to the original full circle, then removes stored
+     * sediment area/depth/perimeter contributions. xs.y_bot/a_bot/s_bot/r_bot are sediment
+     * depth/area/width/perimeter; original xs is unchanged. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double filled_circ_getAofY(const XSectParams& xs, double y) const {
         // Temporarily restore the unfilled full circle (legacy expands yFull/aFull).
         XSectParams t = xs;
@@ -578,6 +1036,19 @@ struct XsectEval {
         return a - xs.a_bot;
     }
 
+    /**
+     * @brief Compute sediment-filled circular water depth from wetted area.
+     *
+     * Temporarily expands a local section copy to the original full circle, then removes stored
+     * sediment area/depth/perimeter contributions. xs.y_bot/a_bot/s_bot/r_bot are sediment
+     * depth/area/width/perimeter; original xs is unchanged. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double filled_circ_getYofA(const XSectParams& xs, double a) const {
         XSectParams t = xs;
         t.y_full += xs.y_bot;
@@ -586,17 +1057,30 @@ struct XsectEval {
         return y - xs.y_bot;
     }
 
+    /**
+     * @brief Compute sediment-filled circular hydraulic radius from depth.
+     *
+     * Temporarily expands a local section copy to the original full circle, then removes stored
+     * sediment area/depth/perimeter contributions. xs.y_bot/a_bot/s_bot/r_bot are sediment
+     * depth/area/width/perimeter; original xs is unchanged. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double filled_circ_getRofY(const XSectParams& xs, double y) const {
         XSectParams t = xs;
         t.y_full += xs.y_bot;
         t.a_full += xs.a_bot;
         double yy = y + xs.y_bot;
         double a = circ_getAofY(t, yy);
-        double r = 0.25 * t.y_full *
-                   lookup(yy / t.y_full, tbl.R_Circ, tbl.N_R_Circ);
+        double r = 0.25 * t.y_full * lookup(yy / t.y_full, tbl.R_Circ, tbl.N_R_Circ);
         double p = (a / r);
         a = a - xs.a_bot;
-        p = p - xs.r_bot + xs.s_bot;   // rBot = filled perimeter, sBot = filled width
+        p = p - xs.r_bot + xs.s_bot; // rBot = filled perimeter, sBot = filled width
         return a / p;
     }
 
@@ -604,34 +1088,101 @@ struct XsectEval {
     // Rectangular closed / open
     // ============================================================================
 
+    /**
+     * @brief Compute closed rectangular hydraulic radius from area.
+     *
+     * Width must be positive. Radius perimeter and section factor apply the RECT_ALFMAX crown
+     * transition; derivative follows its linear high-area branch and small-area numerical fallback.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_closed_getRofA(const XSectParams& xs, double a) const {
         return shape::rectClosedRofA(a, xs.w_max, xs.a_full);
     }
 
+    /**
+     * @brief Compute closed rectangular section factor from area.
+     *
+     * Width must be positive. Radius perimeter and section factor apply the RECT_ALFMAX crown
+     * transition; derivative follows its linear high-area branch and small-area numerical fallback.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor A*R^(2/3) from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_closed_getSofA(const XSectParams& xs, double a) const {
         if (a / xs.a_full > RECT_ALFMAX)
-            return xs.s_max + (xs.s_full - xs.s_max) *
-                   (a / xs.a_full - RECT_ALFMAX) / (1.0 - RECT_ALFMAX);
+            return xs.s_max +
+                   (xs.s_full - xs.s_max) * (a / xs.a_full - RECT_ALFMAX) / (1.0 - RECT_ALFMAX);
         return a * std::pow(rect_closed_getRofA(xs, a), 2.0 / 3.0);
     }
 
+    /**
+     * @brief Compute closed rectangular section-factor derivative with respect to area.
+     *
+     * Width must be positive. Radius perimeter and section factor apply the RECT_ALFMAX crown
+     * transition; derivative follows its linear high-area branch and small-area numerical fallback.
+     * This low-level helper does not perform general section/type/input validation; no ownership
+     * transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_closed_getdSdA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
         if (alpha > RECT_ALFMAX)
             return (xs.s_full - xs.s_max) / ((1.0 - RECT_ALFMAX) * xs.a_full);
-        if (alpha <= 1.0e-30) return generic_getdSdA(xs, a);
+        if (alpha <= 1.0e-30)
+            return generic_getdSdA(xs, a);
         double r = rect_closed_getRofA(xs, a);
         return (5.0 / 3.0 - (2.0 / 3.0) * (2.0 / xs.w_max) * r) * std::pow(r, 2.0 / 3.0);
     }
 
+    /**
+     * @brief Compute open rectangular section factor from area.
+     *
+     * xs.s_bot is0..2 excluded wetted banks, xs.w_max positive width. Section factor uses perimeter
+     * width+(2-s_bot)*depth; derivative uses analytic tangent or small-area generic fallback. This
+     * low-level helper does not perform general section/type/input validation; no ownership transfer or
+     * table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor A*R^(2/3) from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_open_getSofA(const XSectParams& xs, double a) const {
         double y = a / xs.w_max;
         double r = a / ((2.0 - xs.s_bot) * y + xs.w_max);
         return a * std::pow(r, 2.0 / 3.0);
     }
 
+    /**
+     * @brief Compute open rectangular section-factor derivative with respect to area.
+     *
+     * xs.s_bot is0..2 excluded wetted banks, xs.w_max positive width. Section factor uses perimeter
+     * width+(2-s_bot)*depth; derivative uses analytic tangent or small-area generic fallback. This
+     * low-level helper does not perform general section/type/input validation; no ownership transfer or
+     * table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_open_getdSdA(const XSectParams& xs, double a) const {
-        if (a / xs.a_full <= 1.0e-30) return generic_getdSdA(xs, a);
+        if (a / xs.a_full <= 1.0e-30)
+            return generic_getdSdA(xs, a);
         double r = getRofA(xs, a);
         double dPdA = (2.0 - xs.s_bot) / xs.w_max;
         return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
@@ -641,57 +1192,161 @@ struct XsectEval {
     // Rect-triangular (triangular bottom + rectangular top)
     // ============================================================================
 
+    /**
+     * @brief Compute triangular-invert rectangular wetted area from depth.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getAofY(const XSectParams& xs, double y) const {
-        if (y <= xs.y_bot) return y * y * xs.s_bot;
+        if (y <= xs.y_bot)
+            return y * y * xs.s_bot;
         return xs.a_bot + (y - xs.y_bot) * xs.w_max;
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular top width from depth.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getWofY(const XSectParams& xs, double y) const {
-        if (y <= xs.y_bot) return 2.0 * xs.s_bot * y;
+        if (y <= xs.y_bot)
+            return 2.0 * xs.s_bot * y;
         return xs.w_max;
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular water depth from wetted area.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getYofA(const XSectParams& xs, double a) const {
-        if (a <= xs.a_bot) return std::sqrt(a / xs.s_bot);
+        if (a <= xs.a_bot)
+            return std::sqrt(a / xs.s_bot);
         return xs.y_bot + (a - xs.a_bot) / xs.w_max;
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular hydraulic radius from area.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         double y = rect_triang_getYofA(xs, a);
-        if (y <= xs.y_bot) return a / (2.0 * y * xs.r_bot);
+        if (y <= xs.y_bot)
+            return a / (2.0 * y * xs.r_bot);
         double p = 2.0 * xs.y_bot * xs.r_bot + 2.0 * (y - xs.y_bot);
         double alf = (a / xs.a_full) - RECT_TRIANG_ALFMAX;
-        if (alf > 0.0) p += alf / (1.0 - RECT_TRIANG_ALFMAX) * xs.w_max;
+        if (alf > 0.0)
+            p += alf / (1.0 - RECT_TRIANG_ALFMAX) * xs.w_max;
         return a / p;
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular hydraulic radius from depth.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getRofY(const XSectParams& xs, double y) const {
-        if (y <= xs.y_bot) return y * xs.s_bot / (2.0 * xs.r_bot);
+        if (y <= xs.y_bot)
+            return y * xs.s_bot / (2.0 * xs.r_bot);
         double a = xs.a_bot + (y - xs.y_bot) * xs.w_max;
         double p = 2.0 * xs.y_bot * xs.r_bot + 2.0 * (y - xs.y_bot);
         double alf = (a / xs.a_full) - RECT_TRIANG_ALFMAX;
-        if (alf > 0.0) p += alf / (1.0 - RECT_TRIANG_ALFMAX) * xs.w_max;
+        if (alf > 0.0)
+            p += alf / (1.0 - RECT_TRIANG_ALFMAX) * xs.w_max;
         return a / p;
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular section factor from area.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor A*R^(2/3) from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getSofA(const XSectParams& xs, double a) const {
         double alfMax = RECT_TRIANG_ALFMAX;
         if (a / xs.a_full > alfMax)
-            return xs.s_max + (xs.s_full - xs.s_max) *
-                   (a / xs.a_full - alfMax) / (1.0 - alfMax);
+            return xs.s_max + (xs.s_full - xs.s_max) * (a / xs.a_full - alfMax) / (1.0 - alfMax);
         return a * std::pow(rect_triang_getRofA(xs, a), 2.0 / 3.0);
     }
 
+    /**
+     * @brief Compute triangular-invert rectangular section-factor derivative with respect to area.
+     *
+     * xs.y_bot/a_bot define the triangle/rectangle transition, s_bot triangle side slope and r_bot its
+     * side-length/depth factor. Near-full radius/factor apply RECT_TRIANG_ALFMAX crown correction;
+     * derivative selects matching branch. This low-level helper does not perform general
+     * section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_triang_getdSdA(const XSectParams& xs, double a) const {
         double alfMax = RECT_TRIANG_ALFMAX;
         double alpha = a / xs.a_full;
         if (alpha > alfMax)
             return (xs.s_full - xs.s_max) / ((1.0 - alfMax) * xs.a_full);
-        if (alpha <= 1.0e-30) return generic_getdSdA(xs, a);
+        if (alpha <= 1.0e-30)
+            return generic_getdSdA(xs, a);
         double dPdA;
-        if (a > xs.a_bot) dPdA = 2.0 / xs.w_max;
-        else              dPdA = xs.r_bot / std::sqrt(a * xs.s_bot);
+        if (a > xs.a_bot)
+            dPdA = 2.0 / xs.w_max;
+        else
+            dPdA = xs.r_bot / std::sqrt(a * xs.s_bot);
         double r = rect_triang_getRofA(xs, a);
         return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
     }
@@ -700,32 +1355,92 @@ struct XsectEval {
     // Rect-round (circular invert + rectangular top)
     // ============================================================================
 
+    /**
+     * @brief Compute circular-invert rectangular water depth from wetted area.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getYofA(const XSectParams& xs, double a) const {
-        if (a > xs.a_bot) return xs.y_bot + (a - xs.a_bot) / xs.w_max;
+        if (a > xs.a_bot)
+            return xs.y_bot + (a - xs.a_bot) / xs.w_max;
         double alpha = a / (PI * xs.r_bot * xs.r_bot);
-        if (alpha < 0.04) return (2.0 * xs.r_bot) * getYcircular(alpha);
+        if (alpha < 0.04)
+            return (2.0 * xs.r_bot) * getYcircular(alpha);
         return (2.0 * xs.r_bot) * lookup(alpha, tbl.Y_Circ, tbl.N_Y_Circ);
     }
 
+    /**
+     * @brief Compute circular-invert rectangular wetted area from depth.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getAofY(const XSectParams& xs, double y) const {
-        if (y > xs.y_bot) return xs.a_bot + (y - xs.y_bot) * xs.w_max;
+        if (y > xs.y_bot)
+            return xs.a_bot + (y - xs.y_bot) * xs.w_max;
         double theta1 = 2.0 * std::acos(1.0 - y / xs.r_bot);
         return 0.5 * xs.r_bot * xs.r_bot * (theta1 - std::sin(theta1));
     }
 
+    /**
+     * @brief Compute circular-invert rectangular top width from depth.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getWofY(const XSectParams& xs, double y) const {
-        if (y > xs.y_bot) return xs.w_max;
+        if (y > xs.y_bot)
+            return xs.w_max;
         return 2.0 * std::sqrt(y * (2.0 * xs.r_bot - y));
     }
 
+    /**
+     * @brief Compute circular-invert rectangular hydraulic radius from area.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         if (a > xs.a_bot) {
             double y1 = (a - xs.a_bot) / xs.w_max;
             double theta1 = 2.0 * std::asin(xs.w_max / 2.0 / xs.r_bot);
             double p = xs.r_bot * theta1 + 2.0 * y1;
             double arg = (a / xs.a_full) - RECT_ROUND_ALFMAX;
-            if (arg > 0.0) p += arg / (1.0 - RECT_ROUND_ALFMAX) * xs.w_max;
+            if (arg > 0.0)
+                p += arg / (1.0 - RECT_ROUND_ALFMAX) * xs.w_max;
             return a / p;
         }
         double y1 = rect_round_getYofA(xs, a);
@@ -734,27 +1449,69 @@ struct XsectEval {
         return a / p;
     }
 
+    /**
+     * @brief Compute circular-invert rectangular hydraulic radius from depth.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getRofY(const XSectParams& xs, double y) const {
-        if (y <= 0.0) return 0.0;
-        if (y > xs.y_bot) return rect_round_getRofA(xs, rect_round_getAofY(xs, y));
+        if (y <= 0.0)
+            return 0.0;
+        if (y > xs.y_bot)
+            return rect_round_getRofA(xs, rect_round_getAofY(xs, y));
         double theta1 = 2.0 * std::acos(1.0 - y / xs.r_bot);
         return 0.5 * xs.r_bot * (1.0 - std::sin(theta1)) / theta1;
     }
 
+    /**
+     * @brief Compute circular-invert rectangular section factor from area.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor A*R^(2/3) from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getSofA(const XSectParams& xs, double a) const {
         double alfMax = RECT_ROUND_ALFMAX;
         if (a / xs.a_full > alfMax)
-            return xs.s_max + (xs.s_full - xs.s_max) *
-                   (a / xs.a_full - alfMax) / (1.0 - alfMax);
+            return xs.s_max + (xs.s_full - xs.s_max) * (a / xs.a_full - alfMax) / (1.0 - alfMax);
         if (a > xs.a_bot)
             return a * std::pow(rect_round_getRofA(xs, a), 2.0 / 3.0);
         double aFull = PI * xs.r_bot * xs.r_bot;
         double alpha = a / aFull;
         double sFull = xs.s_bot;
-        if (alpha < 0.04) return sFull * getScircular(alpha);
+        if (alpha < 0.04)
+            return sFull * getScircular(alpha);
         return sFull * lookup(alpha, tbl.S_Circ, tbl.N_S_Circ);
     }
 
+    /**
+     * @brief Compute circular-invert rectangular section-factor derivative with respect to area.
+     *
+     * xs.r_bot is invert-circle radius, y_bot/a_bot transition, w_max rectangle width and s_bot
+     * circular full section factor. Circular branch requires valid sqrt/acos/asin domains; near-crown
+     * correction uses RECT_ROUND_ALFMAX. Preserves legacy radius arithmetic. This low-level helper does
+     * not perform general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double rect_round_getdSdA(const XSectParams& xs, double a) const {
         double alfMax = RECT_ROUND_ALFMAX;
         if (a / xs.a_full > alfMax)
@@ -772,42 +1529,115 @@ struct XsectEval {
     // Note: rBot/yBot/aBot/sBot refer to the CIRCULAR TOP portion.
     // ============================================================================
 
+    /**
+     * @brief Compute modified baskethandle water depth from wetted area.
+     *
+     * xs.r_bot/y_bot/a_bot/s_bot describe the circular TOP radius/depth/area/opening angle, with
+     * rectangular lower portion. Circular void geometry is subtracted above the transition; derivative
+     * uses analytic lower or generic finite-difference branch. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double mod_basket_getYofA(const XSectParams& xs, double a) const {
-        if (a <= xs.a_full - xs.a_bot) return a / xs.w_max;
+        if (a <= xs.a_full - xs.a_bot)
+            return a / xs.w_max;
         double alpha = (xs.a_full - a) / (PI * xs.r_bot * xs.r_bot);
         double y1;
-        if (alpha < 0.04) y1 = getYcircular(alpha);
-        else              y1 = lookup(alpha, tbl.Y_Circ, tbl.N_Y_Circ);
+        if (alpha < 0.04)
+            y1 = getYcircular(alpha);
+        else
+            y1 = lookup(alpha, tbl.Y_Circ, tbl.N_Y_Circ);
         y1 = 2.0 * xs.r_bot * y1;
         return xs.y_full - y1;
     }
 
+    /**
+     * @brief Compute modified baskethandle wetted area from depth.
+     *
+     * xs.r_bot/y_bot/a_bot/s_bot describe the circular TOP radius/depth/area/opening angle, with
+     * rectangular lower portion. Circular void geometry is subtracted above the transition; derivative
+     * uses analytic lower or generic finite-difference branch. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double mod_basket_getAofY(const XSectParams& xs, double y) const {
-        if (y <= xs.y_full - xs.y_bot) return y * xs.w_max;
+        if (y <= xs.y_full - xs.y_bot)
+            return y * xs.w_max;
         double y1 = xs.y_full - y;
         double theta1 = 2.0 * std::acos(1.0 - y1 / xs.r_bot);
         double a1 = 0.5 * xs.r_bot * xs.r_bot * (theta1 - std::sin(theta1));
         return xs.a_full - a1;
     }
 
+    /**
+     * @brief Compute modified baskethandle top width from depth.
+     *
+     * xs.r_bot/y_bot/a_bot/s_bot describe the circular TOP radius/depth/area/opening angle, with
+     * rectangular lower portion. Circular void geometry is subtracted above the transition; derivative
+     * uses analytic lower or generic finite-difference branch. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double mod_basket_getWofY(const XSectParams& xs, double y) const {
-        if (y <= 0.0) return 0.0;
-        if (y <= xs.y_full - xs.y_bot) return xs.w_max;
+        if (y <= 0.0)
+            return 0.0;
+        if (y <= xs.y_full - xs.y_bot)
+            return xs.w_max;
         double y1 = xs.y_full - y;
         return 2.0 * std::sqrt(y1 * (2.0 * xs.r_bot - y1));
     }
 
+    /**
+     * @brief Compute modified baskethandle hydraulic radius from area.
+     *
+     * xs.r_bot/y_bot/a_bot/s_bot describe the circular TOP radius/depth/area/opening angle, with
+     * rectangular lower portion. Circular void geometry is subtracted above the transition; derivative
+     * uses analytic lower or generic finite-difference branch. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double mod_basket_getRofA(const XSectParams& xs, double a) const {
         if (a <= xs.a_full - xs.a_bot)
             return a / (xs.w_max + 2.0 * a / xs.w_max);
         double y1 = xs.y_full - mod_basket_getYofA(xs, a);
         double theta1 = 2.0 * std::acos(1.0 - y1 / xs.r_bot);
-        double p = (xs.s_bot - theta1) * xs.r_bot;   // sBot = full circular opening angle
+        double p = (xs.s_bot - theta1) * xs.r_bot; // sBot = full circular opening angle
         y1 = xs.y_full - xs.y_bot;
         p = p + 2.0 * y1 + xs.w_max;
         return a / p;
     }
 
+    /**
+     * @brief Compute modified baskethandle section-factor derivative with respect to area.
+     *
+     * xs.r_bot/y_bot/a_bot/s_bot describe the circular TOP radius/depth/area/opening angle, with
+     * rectangular lower portion. Circular void geometry is subtracted above the transition; derivative
+     * uses analytic lower or generic finite-difference branch. This low-level helper does not perform
+     * general section/type/input validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double mod_basket_getdSdA(const XSectParams& xs, double a) const {
         if (a <= xs.a_full - xs.a_bot && a / xs.a_full > 1.0e-30) {
             double r = a / (xs.w_max + 2.0 * a / xs.w_max);
@@ -821,30 +1651,112 @@ struct XsectEval {
     // Trapezoidal (yBot = bottom width, sBot = avg side slope, rBot = side length/depth)
     // ============================================================================
 
+    /**
+     * @brief Compute trapezoidal wetted area from depth.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getAofY(const XSectParams& xs, double y) const {
         return shape::trapezAofY(y, xs.y_bot, xs.s_bot);
     }
 
+    /**
+     * @brief Compute trapezoidal top width from depth.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getWofY(const XSectParams& xs, double y) const {
         return shape::trapezWofY(y, xs.y_bot, xs.s_bot);
     }
 
+    /**
+     * @brief Compute trapezoidal water depth from wetted area.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getYofA(const XSectParams& xs, double a) const {
-        if (xs.s_bot == 0.0) return a / xs.y_bot;
-        return (std::sqrt(xs.y_bot * xs.y_bot + 4.0 * xs.s_bot * a) - xs.y_bot) /
-               (2.0 * xs.s_bot);
+        if (xs.s_bot == 0.0)
+            return a / xs.y_bot;
+        return (std::sqrt(xs.y_bot * xs.y_bot + 4.0 * xs.s_bot * a) - xs.y_bot) / (2.0 * xs.s_bot);
     }
 
+    /**
+     * @brief Compute trapezoidal hydraulic radius from area.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getRofA(const XSectParams& xs, double a) const {
         return a / (xs.y_bot + trapez_getYofA(xs, a) * xs.r_bot);
     }
 
+    /**
+     * @brief Compute trapezoidal hydraulic radius from depth.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getRofY(const XSectParams& xs, double y) const {
         return shape::trapezRofY(y, xs.y_bot, xs.s_bot, xs.r_bot);
     }
 
+    /**
+     * @brief Compute trapezoidal section-factor derivative with respect to area.
+     *
+     * xs.y_bot is bottom width ft, s_bot average side slope, r_bot summed side-length/depth factor.
+     * Zero slope uses rectangular area inversion. Caller ensures nonzero width or positive side slope
+     * and valid radius denominator. This low-level helper does not perform general section/type/input
+     * validation; no ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double trapez_getdSdA(const XSectParams& xs, double a) const {
-        if (a / xs.a_full <= 1.0e-30) return generic_getdSdA(xs, a);
+        if (a / xs.a_full <= 1.0e-30)
+            return generic_getdSdA(xs, a);
         double r = trapez_getRofA(xs, a);
         double dPdA = xs.r_bot / std::sqrt(xs.y_bot * xs.y_bot + 4.0 * xs.s_bot * a);
         return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
@@ -854,28 +1766,110 @@ struct XsectEval {
     // Triangular
     // ============================================================================
 
+    /**
+     * @brief Compute triangular wetted area from depth.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getAofY(const XSectParams& xs, double y) const {
         return shape::triangAofY(y, xs.s_bot);
     }
 
+    /**
+     * @brief Compute triangular top width from depth.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getWofY(const XSectParams& xs, double y) const {
         return shape::triangWofY(y, xs.s_bot);
     }
 
+    /**
+     * @brief Compute triangular water depth from wetted area.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getYofA(const XSectParams& xs, double a) const {
         return std::sqrt(a / xs.s_bot);
     }
 
+    /**
+     * @brief Compute triangular hydraulic radius from area.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getRofA(const XSectParams& xs, double a) const {
         return a / (2.0 * triang_getYofA(xs, a) * xs.r_bot);
     }
 
+    /**
+     * @brief Compute triangular hydraulic radius from depth.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getRofY(const XSectParams& xs, double y) const {
         return shape::triangRofY(y, xs.s_bot, xs.r_bot);
     }
 
+    /**
+     * @brief Compute triangular section-factor derivative with respect to area.
+     *
+     * xs.s_bot is positive horizontal/vertical side slope and r_bot positive sloped-side/depth factor.
+     * Area inversion takes sqrt(a/s_bot); direct area-radius formula requires a positive area to
+     * avoid0/0. This low-level helper does not perform general section/type/input validation; no
+     * ownership transfer or table mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double triang_getdSdA(const XSectParams& xs, double a) const {
-        if (a / xs.a_full <= 1.0e-30) return generic_getdSdA(xs, a);
+        if (a / xs.a_full <= 1.0e-30)
+            return generic_getdSdA(xs, a);
         double r = triang_getRofA(xs, a);
         double dPdA = xs.r_bot / std::sqrt(a * xs.s_bot);
         return (5.0 / 3.0 - (2.0 / 3.0) * dPdA * r) * std::pow(r, 2.0 / 3.0);
@@ -885,32 +1879,116 @@ struct XsectEval {
     // Parabolic (rBot = 1/sqrt(c) where y = c*x^2)
     // ============================================================================
 
+    /**
+     * @brief Compute parabolic wetted area from depth.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getAofY(const XSectParams& xs, double y) const {
         return shape::parabAofY(y, xs.r_bot);
     }
 
+    /**
+     * @brief Compute parabolic top width from depth.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getWofY(const XSectParams& xs, double y) const {
         return shape::parabWofY(y, xs.r_bot);
     }
 
+    /**
+     * @brief Compute parabolic water depth from wetted area.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getYofA(const XSectParams& xs, double a) const {
         return std::pow((3.0 / 4.0) * a / xs.r_bot, 2.0 / 3.0);
     }
 
     // Analytical wetted perimeter (legacy parab_getPofY).
+    /**
+     * @brief Compute parabolic wetted perimeter from depth.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft wetted perimeter from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getPofY(const XSectParams& xs, double y) const {
         double x = 2.0 * std::sqrt(y) / xs.r_bot;
         double t = std::sqrt(1.0 + x * x);
         return 0.5 * xs.r_bot * xs.r_bot * (x * t + std::log(x + t));
     }
 
+    /**
+     * @brief Compute parabolic hydraulic radius from depth.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getRofY(const XSectParams& xs, double y) const {
-        if (y <= 0.0) return 0.0;
+        if (y <= 0.0)
+            return 0.0;
         return parab_getAofY(xs, y) / parab_getPofY(xs, y);
     }
 
+    /**
+     * @brief Compute parabolic hydraulic radius from area.
+     *
+     * xs.r_bot is positive inverse sqrt(parabola coefficient), units sqrt(ft). Perimeter is analytic
+     * logarithmic arc length; radius methods explicitly return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double parab_getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         return a / parab_getPofY(xs, parab_getYofA(xs, a));
     }
 
@@ -918,19 +1996,78 @@ struct XsectEval {
     // Power function (sBot = 1/exponent, rBot = coefficient)
     // ============================================================================
 
+    /**
+     * @brief Compute power-function wetted area from depth.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getAofY(const XSectParams& xs, double y) const {
         return shape::powerfuncAofY(y, xs.s_bot, xs.r_bot);
     }
 
+    /**
+     * @brief Compute power-function top width from depth.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft width from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getWofY(const XSectParams& xs, double y) const {
         return shape::powerfuncWofY(y, xs.s_bot, xs.r_bot);
     }
 
+    /**
+     * @brief Compute power-function water depth from wetted area.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getYofA(const XSectParams& xs, double a) const {
         return std::pow(a / xs.r_bot, 1.0 / (xs.s_bot + 1.0));
     }
 
     // Numerical wetted perimeter (legacy powerfunc_getPofY — stepwise integration).
+    /**
+     * @brief Compute power-function wetted perimeter from depth.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft wetted perimeter from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getPofY(const XSectParams& xs, double y) const {
         double dy1 = 0.02 * xs.y_full;
         double h = (xs.s_bot + 1.0) * xs.r_bot / 2.0;
@@ -939,7 +2076,8 @@ struct XsectEval {
         double x2, y2, dx, dy;
         do {
             y2 = y1 + dy1;
-            if (y2 > y) y2 = y;
+            if (y2 > y)
+                y2 = y;
             x2 = h * std::pow(y2, m);
             dx = x2 - x1;
             dy = y2 - y1;
@@ -950,13 +2088,44 @@ struct XsectEval {
         return 2.0 * p;
     }
 
+    /**
+     * @brief Compute power-function hydraulic radius from depth.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getRofY(const XSectParams& xs, double y) const {
-        if (y <= 0.0) return 0.0;
+        if (y <= 0.0)
+            return 0.0;
         return powerfunc_getAofY(xs, y) / powerfunc_getPofY(xs, y);
     }
 
+    /**
+     * @brief Compute power-function hydraulic radius from area.
+     *
+     * xs.s_bot is positive depth exponent and r_bot positive coefficient; area inverse uses
+     * exponent1/(s_bot+1). Perimeter integrates side chords in depth increments0.02*y_full, so y_full
+     * must be positive to terminate; radius methods return0 for nonpositive input. This low-level
+     * helper does not perform general section/type/input validation; no ownership transfer or table
+     * mutation.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius from the shape-specific native geometry relation.
+     */
     OPENSWMM_KERNEL_FN double powerfunc_getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         return a / powerfunc_getPofY(xs, powerfunc_getYofA(xs, a));
     }
 
@@ -964,56 +2133,86 @@ struct XsectEval {
     // Main dispatch: getAofY
     // ============================================================================
 
+    /**
+     * @brief Dispatch native wetted area from depth.
+     *
+     * Returns0 for y<=0, nonpositive full depth, missing optional area table or unsupported type.
+     * Tabulated branches hold endpoints; analytic open shapes can extend beyond full depth. Referenced
+     * built-in/section tables are borrowed and must remain accessible for this evaluator's execution
+     * space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft2 area.
+     */
     OPENSWMM_KERNEL_FN double getAofY(const XSectParams& xs, double y) const {
-        if (y <= 0.0) return 0.0;
+        if (y <= 0.0)
+            return 0.0;
         // A section with no (or not-yet-set) full depth has no area. Guard the
         // division so a degenerate cross-section — e.g. a conduit finalized before
         // its geometry is assigned — yields 0 instead of normalizing to inf/NaN.
-        if (xs.y_full <= 0.0) return 0.0;
+        if (xs.y_full <= 0.0)
+            return 0.0;
         double y_norm = y / xs.y_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:
-                return xs.a_full * lookup(y_norm, tbl.A_Circ, tbl.N_A_Circ);
-            case XSectShape::FILLED_CIRCULAR: return filled_circ_getAofY(xs, y);
-            case XSectShape::EGGSHAPED:
-                return xs.a_full * lookup(y_norm, tbl.A_Egg, tbl.N_A_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.a_full * lookup(y_norm, tbl.A_Horseshoe, tbl.N_A_Horseshoe);
-            case XSectShape::GOTHIC:
-                return xs.a_full * invLookup(y_norm, tbl.Y_Gothic, tbl.N_Y_Gothic);
-            case XSectShape::CATENARY:
-                return xs.a_full * invLookup(y_norm, tbl.Y_Catenary, tbl.N_Y_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return xs.a_full * invLookup(y_norm, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return xs.a_full * lookup(y_norm, tbl.A_Baskethandle, tbl.N_A_Baskethandle);
-            case XSectShape::SEMICIRCULAR:
-                return xs.a_full * invLookup(y_norm, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc);
-            case XSectShape::HORIZ_ELLIPSE:
-                return xs.a_full * lookup(y_norm, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse);
-            case XSectShape::VERT_ELLIPSE:
-                return xs.a_full * lookup(y_norm, tbl.A_VertEllipse, tbl.N_A_VertEllipse);
-            case XSectShape::ARCH:
-                return xs.a_full * lookup(y_norm, tbl.A_Arch, tbl.N_A_Arch);
-            case XSectShape::RECT_CLOSED:
-            case XSectShape::RECT_OPEN:    return shape::rectAofY(y, xs.w_max);
-            case XSectShape::RECT_TRIANG:  return rect_triang_getAofY(xs, y);
-            case XSectShape::RECT_ROUND:   return rect_round_getAofY(xs, y);
-            case XSectShape::MOD_BASKET:   return mod_basket_getAofY(xs, y);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getAofY(xs, y);
-            case XSectShape::TRIANGULAR:   return triang_getAofY(xs, y);
-            case XSectShape::PARABOLIC:    return parab_getAofY(xs, y);
-            case XSectShape::POWERFUNC:    return powerfunc_getAofY(xs, y);
-            case XSectShape::IRREGULAR:
-            case XSectShape::CUSTOM:
-            case XSectShape::STREET_XSECT:
-                // Tabulated transect (legacy xsect_getAofY IRREGULAR case).
-                if (xs.area_tbl)
-                    return xs.a_full * lookup(y_norm, xs.area_tbl, xs.transect_tbl_size);
-                return 0.0;
-            default: return 0.0;
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return xs.a_full * lookup(y_norm, tbl.A_Circ, tbl.N_A_Circ);
+        case XSectShape::FILLED_CIRCULAR:
+            return filled_circ_getAofY(xs, y);
+        case XSectShape::EGGSHAPED:
+            return xs.a_full * lookup(y_norm, tbl.A_Egg, tbl.N_A_Egg);
+        case XSectShape::HORSESHOE:
+            return xs.a_full * lookup(y_norm, tbl.A_Horseshoe, tbl.N_A_Horseshoe);
+        case XSectShape::GOTHIC:
+            return xs.a_full *
+                   invLookup(y_norm, tbl.Y_Gothic, tbl.N_Y_Gothic, tbl.lut(LutId::Y_Gothic));
+        case XSectShape::CATENARY:
+            return xs.a_full *
+                   invLookup(y_norm, tbl.Y_Catenary, tbl.N_Y_Catenary, tbl.lut(LutId::Y_Catenary));
+        case XSectShape::SEMIELLIPTICAL:
+            return xs.a_full * invLookup(y_norm, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip,
+                                         tbl.lut(LutId::Y_SemiEllip));
+        case XSectShape::BASKETHANDLE:
+            return xs.a_full * lookup(y_norm, tbl.A_Baskethandle, tbl.N_A_Baskethandle);
+        case XSectShape::SEMICIRCULAR:
+            return xs.a_full *
+                   invLookup(y_norm, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc, tbl.lut(LutId::Y_SemiCirc));
+        case XSectShape::HORIZ_ELLIPSE:
+            return xs.a_full * lookup(y_norm, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse);
+        case XSectShape::VERT_ELLIPSE:
+            return xs.a_full * lookup(y_norm, tbl.A_VertEllipse, tbl.N_A_VertEllipse);
+        case XSectShape::ARCH:
+            return xs.a_full * lookup(y_norm, tbl.A_Arch, tbl.N_A_Arch);
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN:
+            return shape::rectAofY(y, xs.w_max);
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getAofY(xs, y);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getAofY(xs, y);
+        case XSectShape::MOD_BASKET:
+            return mod_basket_getAofY(xs, y);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getAofY(xs, y);
+        case XSectShape::TRIANGULAR:
+            return triang_getAofY(xs, y);
+        case XSectShape::PARABOLIC:
+            return parab_getAofY(xs, y);
+        case XSectShape::POWERFUNC:
+            return powerfunc_getAofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getAofY IRREGULAR case).
+            if (xs.area_tbl)
+                return xs.a_full * lookup(y_norm, xs.area_tbl, xs.transect_tbl_size);
+            return 0.0;
+        default:
+            return 0.0;
         }
     }
 
@@ -1021,55 +2220,78 @@ struct XsectEval {
     // Main dispatch: getWofY
     // ============================================================================
 
+    /**
+     * @brief Dispatch native top width from depth.
+     *
+     * No universal nonpositive-depth guard: each shape supplies its branch behavior. Closed rectangle
+     * returns0 only at exact normalized crown1; optional missing width table/unsupported type returns0.
+     * Referenced built-in/section tables are borrowed and must remain accessible for this evaluator's
+     * execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft top width.
+     */
     OPENSWMM_KERNEL_FN double getWofY(const XSectParams& xs, double y) const {
         double y_norm = y / xs.y_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:
-                return xs.w_max * lookup(y_norm, tbl.W_Circ, tbl.N_W_Circ);
-            case XSectShape::FILLED_CIRCULAR: {
-                double yn = (y + xs.y_bot) / (xs.y_full + xs.y_bot);
-                return xs.w_max * lookup(yn, tbl.W_Circ, tbl.N_W_Circ);
-            }
-            case XSectShape::EGGSHAPED:
-                return xs.w_max * lookup(y_norm, tbl.W_Egg, tbl.N_W_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.w_max * lookup(y_norm, tbl.W_Horseshoe, tbl.N_W_Horseshoe);
-            case XSectShape::GOTHIC:
-                return xs.w_max * lookup(y_norm, tbl.W_Gothic, tbl.N_W_Gothic);
-            case XSectShape::CATENARY:
-                return xs.w_max * lookup(y_norm, tbl.W_Catenary, tbl.N_W_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return xs.w_max * lookup(y_norm, tbl.W_SemiEllip, tbl.N_W_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return xs.w_max * lookup(y_norm, tbl.W_BasketHandle, tbl.N_W_BasketHandle);
-            case XSectShape::SEMICIRCULAR:
-                return xs.w_max * lookup(y_norm, tbl.W_SemiCirc, tbl.N_W_SemiCirc);
-            case XSectShape::HORIZ_ELLIPSE:
-                return xs.w_max * lookup(y_norm, tbl.W_HorizEllipse, tbl.N_W_HorizEllipse);
-            case XSectShape::VERT_ELLIPSE:
-                return xs.w_max * lookup(y_norm, tbl.W_VertEllipse, tbl.N_W_VertEllipse);
-            case XSectShape::ARCH:
-                return xs.w_max * lookup(y_norm, tbl.W_Arch, tbl.N_W_Arch);
-            case XSectShape::RECT_CLOSED:
-                return shape::rectClosedWofY(y_norm, xs.w_max);
-            case XSectShape::RECT_OPEN:    return xs.w_max;
-            case XSectShape::RECT_TRIANG:  return rect_triang_getWofY(xs, y);
-            case XSectShape::RECT_ROUND:   return rect_round_getWofY(xs, y);
-            case XSectShape::MOD_BASKET:   return mod_basket_getWofY(xs, y);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getWofY(xs, y);
-            case XSectShape::TRIANGULAR:   return triang_getWofY(xs, y);
-            case XSectShape::PARABOLIC:    return parab_getWofY(xs, y);
-            case XSectShape::POWERFUNC:    return powerfunc_getWofY(xs, y);
-            case XSectShape::IRREGULAR:
-            case XSectShape::CUSTOM:
-            case XSectShape::STREET_XSECT:
-                // Tabulated transect (legacy xsect_getWofY IRREGULAR case).
-                if (xs.width_tbl)
-                    return xs.w_max * lookup(y_norm, xs.width_tbl, xs.transect_tbl_size);
-                return 0.0;
-            default: return 0.0;
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return xs.w_max * lookup(y_norm, tbl.W_Circ, tbl.N_W_Circ);
+        case XSectShape::FILLED_CIRCULAR: {
+            double yn = (y + xs.y_bot) / (xs.y_full + xs.y_bot);
+            return xs.w_max * lookup(yn, tbl.W_Circ, tbl.N_W_Circ);
+        }
+        case XSectShape::EGGSHAPED:
+            return xs.w_max * lookup(y_norm, tbl.W_Egg, tbl.N_W_Egg);
+        case XSectShape::HORSESHOE:
+            return xs.w_max * lookup(y_norm, tbl.W_Horseshoe, tbl.N_W_Horseshoe);
+        case XSectShape::GOTHIC:
+            return xs.w_max * lookup(y_norm, tbl.W_Gothic, tbl.N_W_Gothic);
+        case XSectShape::CATENARY:
+            return xs.w_max * lookup(y_norm, tbl.W_Catenary, tbl.N_W_Catenary);
+        case XSectShape::SEMIELLIPTICAL:
+            return xs.w_max * lookup(y_norm, tbl.W_SemiEllip, tbl.N_W_SemiEllip);
+        case XSectShape::BASKETHANDLE:
+            return xs.w_max * lookup(y_norm, tbl.W_BasketHandle, tbl.N_W_BasketHandle);
+        case XSectShape::SEMICIRCULAR:
+            return xs.w_max * lookup(y_norm, tbl.W_SemiCirc, tbl.N_W_SemiCirc);
+        case XSectShape::HORIZ_ELLIPSE:
+            return xs.w_max * lookup(y_norm, tbl.W_HorizEllipse, tbl.N_W_HorizEllipse);
+        case XSectShape::VERT_ELLIPSE:
+            return xs.w_max * lookup(y_norm, tbl.W_VertEllipse, tbl.N_W_VertEllipse);
+        case XSectShape::ARCH:
+            return xs.w_max * lookup(y_norm, tbl.W_Arch, tbl.N_W_Arch);
+        case XSectShape::RECT_CLOSED:
+            return shape::rectClosedWofY(y_norm, xs.w_max);
+        case XSectShape::RECT_OPEN:
+            return xs.w_max;
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getWofY(xs, y);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getWofY(xs, y);
+        case XSectShape::MOD_BASKET:
+            return mod_basket_getWofY(xs, y);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getWofY(xs, y);
+        case XSectShape::TRIANGULAR:
+            return triang_getWofY(xs, y);
+        case XSectShape::PARABOLIC:
+            return parab_getWofY(xs, y);
+        case XSectShape::POWERFUNC:
+            return powerfunc_getWofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getWofY IRREGULAR case).
+            if (xs.width_tbl)
+                return xs.w_max * lookup(y_norm, xs.width_tbl, xs.transect_tbl_size);
+            return 0.0;
+        default:
+            return 0.0;
         }
     }
 
@@ -1077,46 +2299,66 @@ struct XsectEval {
     // Main dispatch: getRofY
     // ============================================================================
 
+    /**
+     * @brief Dispatch native hydraulic radius from depth.
+     *
+     * Uses direct radius tables/formulas or area-derived radius. Missing optional radius table
+     * returns0. Positive full depth is required; unsupported/DUMMY positive-area radius routes are not
+     * a valid query domain. Referenced built-in/section tables are borrowed and must remain accessible
+     * for this evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] y Finite nonnegative water depth in ft; caller keeps input within the intended
+     *     geometric branch.
+     * @return ft hydraulic radius.
+     */
     OPENSWMM_KERNEL_FN double getRofY(const XSectParams& xs, double y) const {
         double y_norm = y / xs.y_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return xs.r_full * lookup(y_norm, tbl.R_Circ, tbl.N_R_Circ);
+        case XSectShape::FILLED_CIRCULAR:
+            if (xs.y_bot == 0.0)
                 return xs.r_full * lookup(y_norm, tbl.R_Circ, tbl.N_R_Circ);
-            case XSectShape::FILLED_CIRCULAR:
-                if (xs.y_bot == 0.0)
-                    return xs.r_full * lookup(y_norm, tbl.R_Circ, tbl.N_R_Circ);
-                return filled_circ_getRofY(xs, y);
-            case XSectShape::EGGSHAPED:
-                return xs.r_full * lookup(y_norm, tbl.R_Egg, tbl.N_R_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.r_full * lookup(y_norm, tbl.R_Horseshoe, tbl.N_R_Horseshoe);
-            case XSectShape::BASKETHANDLE:
-                return xs.r_full * lookup(y_norm, tbl.R_Baskethandle, tbl.N_R_Baskethandle);
-            case XSectShape::HORIZ_ELLIPSE:
-                return xs.r_full * lookup(y_norm, tbl.R_HorizEllipse, tbl.N_R_HorizEllipse);
-            case XSectShape::VERT_ELLIPSE:
-                return xs.r_full * lookup(y_norm, tbl.R_VertEllipse, tbl.N_R_VertEllipse);
-            case XSectShape::ARCH:
-                return xs.r_full * lookup(y_norm, tbl.R_Arch, tbl.N_R_Arch);
-            case XSectShape::RECT_TRIANG:  return rect_triang_getRofY(xs, y);
-            case XSectShape::RECT_ROUND:   return rect_round_getRofY(xs, y);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getRofY(xs, y);
-            case XSectShape::TRIANGULAR:   return triang_getRofY(xs, y);
-            case XSectShape::PARABOLIC:    return parab_getRofY(xs, y);
-            case XSectShape::POWERFUNC:    return powerfunc_getRofY(xs, y);
-            case XSectShape::IRREGULAR:
-            case XSectShape::CUSTOM:
-            case XSectShape::STREET_XSECT:
-                // Tabulated transect (legacy xsect_getRofY IRREGULAR case). Must be
-                // explicit: the generic default below would call getRofA→getRofY
-                // and recurse forever for these shapes.
-                if (xs.hrad_tbl)
-                    return xs.r_full * lookup(y_norm, xs.hrad_tbl, xs.transect_tbl_size);
-                return 0.0;
-            default:  // RECT_CLOSED, RECT_OPEN, MOD_BASKET, tabulated S-only shapes
-                return getRofA(xs, getAofY(xs, y));
+            return filled_circ_getRofY(xs, y);
+        case XSectShape::EGGSHAPED:
+            return xs.r_full * lookup(y_norm, tbl.R_Egg, tbl.N_R_Egg);
+        case XSectShape::HORSESHOE:
+            return xs.r_full * lookup(y_norm, tbl.R_Horseshoe, tbl.N_R_Horseshoe);
+        case XSectShape::BASKETHANDLE:
+            return xs.r_full * lookup(y_norm, tbl.R_Baskethandle, tbl.N_R_Baskethandle);
+        case XSectShape::HORIZ_ELLIPSE:
+            return xs.r_full * lookup(y_norm, tbl.R_HorizEllipse, tbl.N_R_HorizEllipse);
+        case XSectShape::VERT_ELLIPSE:
+            return xs.r_full * lookup(y_norm, tbl.R_VertEllipse, tbl.N_R_VertEllipse);
+        case XSectShape::ARCH:
+            return xs.r_full * lookup(y_norm, tbl.R_Arch, tbl.N_R_Arch);
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getRofY(xs, y);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getRofY(xs, y);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getRofY(xs, y);
+        case XSectShape::TRIANGULAR:
+            return triang_getRofY(xs, y);
+        case XSectShape::PARABOLIC:
+            return parab_getRofY(xs, y);
+        case XSectShape::POWERFUNC:
+            return powerfunc_getRofY(xs, y);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Tabulated transect (legacy xsect_getRofY IRREGULAR case). Must be
+            // explicit: the generic default below would call getRofA→getRofY
+            // and recurse forever for these shapes.
+            if (xs.hrad_tbl)
+                return xs.r_full * lookup(y_norm, xs.hrad_tbl, xs.transect_tbl_size);
+            return 0.0;
+        default: // RECT_CLOSED, RECT_OPEN, MOD_BASKET, tabulated S-only shapes
+            return getRofA(xs, getAofY(xs, y));
         }
     }
 
@@ -1124,51 +2366,78 @@ struct XsectEval {
     // Main dispatch: getYofA
     // ============================================================================
 
+    /**
+     * @brief Dispatch native water depth from wetted area.
+     *
+     * Returns0 for a<=0, missing optional area table or unsupported shape. Tabulated depth may use
+     * direct Y tables or inverse A tables; rectangular open area is divided by width without full-depth
+     * clamp. Referenced built-in/section tables are borrowed and must remain accessible for this
+     * evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft depth.
+     */
     OPENSWMM_KERNEL_FN double getYofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         double alpha = a / xs.a_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:        return circ_getYofA(xs, a);
-            case XSectShape::FILLED_CIRCULAR: return filled_circ_getYofA(xs, a);
-            case XSectShape::EGGSHAPED:
-                return xs.y_full * lookup(alpha, tbl.Y_Egg, tbl.N_Y_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.y_full * lookup(alpha, tbl.Y_Horseshoe, tbl.N_Y_Horseshoe);
-            case XSectShape::GOTHIC:
-                return xs.y_full * lookup(alpha, tbl.Y_Gothic, tbl.N_Y_Gothic);
-            case XSectShape::CATENARY:
-                return xs.y_full * lookup(alpha, tbl.Y_Catenary, tbl.N_Y_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return xs.y_full * lookup(alpha, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return xs.y_full * lookup(alpha, tbl.Y_BasketHandle, tbl.N_Y_BasketHandle);
-            case XSectShape::SEMICIRCULAR:
-                return xs.y_full * lookup(alpha, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc);
-            case XSectShape::HORIZ_ELLIPSE:
-                return xs.y_full * invLookup(alpha, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse);
-            case XSectShape::VERT_ELLIPSE:
-                return xs.y_full * invLookup(alpha, tbl.A_VertEllipse, tbl.N_A_VertEllipse);
-            case XSectShape::ARCH:
-                return xs.y_full * invLookup(alpha, tbl.A_Arch, tbl.N_A_Arch);
-            case XSectShape::RECT_CLOSED:
-            case XSectShape::RECT_OPEN:    return a / xs.w_max;
-            case XSectShape::RECT_TRIANG:  return rect_triang_getYofA(xs, a);
-            case XSectShape::RECT_ROUND:   return rect_round_getYofA(xs, a);
-            case XSectShape::MOD_BASKET:   return mod_basket_getYofA(xs, a);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getYofA(xs, a);
-            case XSectShape::TRIANGULAR:   return triang_getYofA(xs, a);
-            case XSectShape::PARABOLIC:    return parab_getYofA(xs, a);
-            case XSectShape::POWERFUNC:    return powerfunc_getYofA(xs, a);
-            case XSectShape::IRREGULAR:
-            case XSectShape::CUSTOM:
-            case XSectShape::STREET_XSECT:
-                // Invert the normalized area table (legacy xsect_getYofA IRREGULAR).
-                if (xs.area_tbl)
-                    return xs.y_full * invLookup(alpha, xs.area_tbl, xs.transect_tbl_size);
-                return 0.0;
-            default: return 0.0;
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return circ_getYofA(xs, a);
+        case XSectShape::FILLED_CIRCULAR:
+            return filled_circ_getYofA(xs, a);
+        case XSectShape::EGGSHAPED:
+            return xs.y_full * lookup(alpha, tbl.Y_Egg, tbl.N_Y_Egg);
+        case XSectShape::HORSESHOE:
+            return xs.y_full * lookup(alpha, tbl.Y_Horseshoe, tbl.N_Y_Horseshoe);
+        case XSectShape::GOTHIC:
+            return xs.y_full * lookup(alpha, tbl.Y_Gothic, tbl.N_Y_Gothic);
+        case XSectShape::CATENARY:
+            return xs.y_full * lookup(alpha, tbl.Y_Catenary, tbl.N_Y_Catenary);
+        case XSectShape::SEMIELLIPTICAL:
+            return xs.y_full * lookup(alpha, tbl.Y_SemiEllip, tbl.N_Y_SemiEllip);
+        case XSectShape::BASKETHANDLE:
+            return xs.y_full * lookup(alpha, tbl.Y_BasketHandle, tbl.N_Y_BasketHandle);
+        case XSectShape::SEMICIRCULAR:
+            return xs.y_full * lookup(alpha, tbl.Y_SemiCirc, tbl.N_Y_SemiCirc);
+        case XSectShape::HORIZ_ELLIPSE:
+            return xs.y_full * invLookup(alpha, tbl.A_HorizEllipse, tbl.N_A_HorizEllipse,
+                                         tbl.lut(LutId::A_HorizEllipse));
+        case XSectShape::VERT_ELLIPSE:
+            return xs.y_full * invLookup(alpha, tbl.A_VertEllipse, tbl.N_A_VertEllipse,
+                                         tbl.lut(LutId::A_VertEllipse));
+        case XSectShape::ARCH:
+            return xs.y_full * invLookup(alpha, tbl.A_Arch, tbl.N_A_Arch, tbl.lut(LutId::A_Arch));
+        case XSectShape::RECT_CLOSED:
+        case XSectShape::RECT_OPEN:
+            return a / xs.w_max;
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getYofA(xs, a);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getYofA(xs, a);
+        case XSectShape::MOD_BASKET:
+            return mod_basket_getYofA(xs, a);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getYofA(xs, a);
+        case XSectShape::TRIANGULAR:
+            return triang_getYofA(xs, a);
+        case XSectShape::PARABOLIC:
+            return parab_getYofA(xs, a);
+        case XSectShape::POWERFUNC:
+            return powerfunc_getYofA(xs, a);
+        case XSectShape::IRREGULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            // Invert the normalized area table (legacy xsect_getYofA IRREGULAR).
+            if (xs.area_tbl)
+                return xs.y_full * invLookup(alpha, xs.area_tbl, xs.transect_tbl_size, xs.area_lut);
+            return 0.0;
+        default:
+            return 0.0;
         }
     }
 
@@ -1176,36 +2445,56 @@ struct XsectEval {
     // Main dispatch: getSofA
     // ============================================================================
 
+    /**
+     * @brief Dispatch native section factor from area.
+     *
+     * Uses direct normalized S tables, special crown corrections or A*R^(2/3). Generic branch returns0
+     * for a==0 or radius<TINY. Valid initialized non-DUMMY supported shape is required for generic
+     * radius recursion. Referenced built-in/section tables are borrowed and must remain accessible for
+     * this evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(8/3) section factor.
+     */
     OPENSWMM_KERNEL_FN double getSofA(const XSectParams& xs, double a) const {
         double alpha = a / xs.a_full;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:     return circ_getSofA(xs, a);
-            case XSectShape::EGGSHAPED:
-                return xs.s_full * lookup(alpha, tbl.S_Egg, tbl.N_S_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.s_full * lookup(alpha, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
-            case XSectShape::GOTHIC:
-                return xs.s_full * lookup(alpha, tbl.S_Gothic, tbl.N_S_Gothic);
-            case XSectShape::CATENARY:
-                return xs.s_full * lookup(alpha, tbl.S_Catenary, tbl.N_S_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return xs.s_full * lookup(alpha, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return xs.s_full * lookup(alpha, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
-            case XSectShape::SEMICIRCULAR:
-                return xs.s_full * lookup(alpha, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
-            case XSectShape::RECT_CLOSED:  return rect_closed_getSofA(xs, a);
-            case XSectShape::RECT_OPEN:    return rect_open_getSofA(xs, a);
-            case XSectShape::RECT_TRIANG:  return rect_triang_getSofA(xs, a);
-            case XSectShape::RECT_ROUND:   return rect_round_getSofA(xs, a);
-            default: {
-                if (a == 0.0) return 0.0;
-                double r = getRofA(xs, a);
-                if (r < TINY) return 0.0;
-                return a * std::pow(r, 2.0 / 3.0);
-            }
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return circ_getSofA(xs, a);
+        case XSectShape::EGGSHAPED:
+            return xs.s_full * lookup(alpha, tbl.S_Egg, tbl.N_S_Egg);
+        case XSectShape::HORSESHOE:
+            return xs.s_full * lookup(alpha, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
+        case XSectShape::GOTHIC:
+            return xs.s_full * lookup(alpha, tbl.S_Gothic, tbl.N_S_Gothic);
+        case XSectShape::CATENARY:
+            return xs.s_full * lookup(alpha, tbl.S_Catenary, tbl.N_S_Catenary);
+        case XSectShape::SEMIELLIPTICAL:
+            return xs.s_full * lookup(alpha, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
+        case XSectShape::BASKETHANDLE:
+            return xs.s_full * lookup(alpha, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
+        case XSectShape::SEMICIRCULAR:
+            return xs.s_full * lookup(alpha, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
+        case XSectShape::RECT_CLOSED:
+            return rect_closed_getSofA(xs, a);
+        case XSectShape::RECT_OPEN:
+            return rect_open_getSofA(xs, a);
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getSofA(xs, a);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getSofA(xs, a);
+        default: {
+            if (a == 0.0)
+                return 0.0;
+            double r = getRofA(xs, a);
+            if (r < TINY)
+                return 0.0;
+            return a * std::pow(r, 2.0 / 3.0);
+        }
         }
     }
 
@@ -1213,32 +2502,55 @@ struct XsectEval {
     // getRofA — hydraulic radius from area
     // ============================================================================
 
+    /**
+     * @brief Dispatch native hydraulic radius from area.
+     *
+     * a<=0 returns0. Shape-specific formulas or depth lookup are preferred; generic table-S shapes
+     * invert (S/A)^(3/2), with tiny-value guards. Unsupported/DUMMY positive area can recurse and is
+     * outside the valid domain. Referenced built-in/section tables are borrowed and must remain
+     * accessible for this evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft hydraulic radius.
+     */
     OPENSWMM_KERNEL_FN double getRofA(const XSectParams& xs, double a) const {
-        if (a <= 0.0) return 0.0;
+        if (a <= 0.0)
+            return 0.0;
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::HORIZ_ELLIPSE:
-            case XSectShape::VERT_ELLIPSE:
-            case XSectShape::ARCH:
-            case XSectShape::IRREGULAR:
-            case XSectShape::FILLED_CIRCULAR:
-            case XSectShape::CUSTOM:
-            case XSectShape::STREET_XSECT:
-                return getRofY(xs, getYofA(xs, a));
-            case XSectShape::RECT_CLOSED:  return rect_closed_getRofA(xs, a);
-            case XSectShape::RECT_OPEN:
-                return shape::rectOpenRofA(a, xs.w_max, xs.s_bot);
-            case XSectShape::RECT_TRIANG:  return rect_triang_getRofA(xs, a);
-            case XSectShape::RECT_ROUND:   return rect_round_getRofA(xs, a);
-            case XSectShape::MOD_BASKET:   return mod_basket_getRofA(xs, a);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getRofA(xs, a);
-            case XSectShape::TRIANGULAR:   return triang_getRofA(xs, a);
-            case XSectShape::PARABOLIC:    return parab_getRofA(xs, a);
-            case XSectShape::POWERFUNC:    return powerfunc_getRofA(xs, a);
-            default: {
-                double s = getSofA(xs, a);
-                if (s < TINY || a < TINY) return 0.0;
-                return std::pow(s / a, 3.0 / 2.0);
-            }
+        case XSectShape::HORIZ_ELLIPSE:
+        case XSectShape::VERT_ELLIPSE:
+        case XSectShape::ARCH:
+        case XSectShape::IRREGULAR:
+        case XSectShape::FILLED_CIRCULAR:
+        case XSectShape::CUSTOM:
+        case XSectShape::STREET_XSECT:
+            return getRofY(xs, getYofA(xs, a));
+        case XSectShape::RECT_CLOSED:
+            return rect_closed_getRofA(xs, a);
+        case XSectShape::RECT_OPEN:
+            return shape::rectOpenRofA(a, xs.w_max, xs.s_bot);
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getRofA(xs, a);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getRofA(xs, a);
+        case XSectShape::MOD_BASKET:
+            return mod_basket_getRofA(xs, a);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getRofA(xs, a);
+        case XSectShape::TRIANGULAR:
+            return triang_getRofA(xs, a);
+        case XSectShape::PARABOLIC:
+            return parab_getRofA(xs, a);
+        case XSectShape::POWERFUNC:
+            return powerfunc_getRofA(xs, a);
+        default: {
+            double s = getSofA(xs, a);
+            if (s < TINY || a < TINY)
+                return 0.0;
+            return std::pow(s / a, 3.0 / 2.0);
+        }
         }
     }
 
@@ -1246,32 +2558,54 @@ struct XsectEval {
     // getdSdA — derivative of section factor w.r.t. area
     // ============================================================================
 
+    /**
+     * @brief Dispatch the native section-factor derivative by shape.
+     *
+     * Selects circular/table-segment/analytic crown derivative, otherwise finite difference.
+     * Nonnegative finite area and valid material/table scalings are caller preconditions; no global
+     * small/invalid-input guard. Referenced built-in/section tables are borrowed and must remain
+     * accessible for this evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] a Finite nonnegative wetted area in ft2; caller supplies valid initialized geometry.
+     * @return ft^(2/3) derivative.
+     */
     OPENSWMM_KERNEL_FN double getdSdA(const XSectParams& xs, double a) const {
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:     return circ_getdSdA(xs, a);
-            case XSectShape::EGGSHAPED:
-                return tabular_getdSdA(xs, a, tbl.S_Egg, tbl.N_S_Egg);
-            case XSectShape::HORSESHOE:
-                return tabular_getdSdA(xs, a, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
-            case XSectShape::GOTHIC:
-                return tabular_getdSdA(xs, a, tbl.S_Gothic, tbl.N_S_Gothic);
-            case XSectShape::CATENARY:
-                return tabular_getdSdA(xs, a, tbl.S_Catenary, tbl.N_S_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return tabular_getdSdA(xs, a, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return tabular_getdSdA(xs, a, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
-            case XSectShape::SEMICIRCULAR:
-                return tabular_getdSdA(xs, a, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
-            case XSectShape::RECT_CLOSED:  return rect_closed_getdSdA(xs, a);
-            case XSectShape::RECT_OPEN:    return rect_open_getdSdA(xs, a);
-            case XSectShape::RECT_TRIANG:  return rect_triang_getdSdA(xs, a);
-            case XSectShape::RECT_ROUND:   return rect_round_getdSdA(xs, a);
-            case XSectShape::MOD_BASKET:   return mod_basket_getdSdA(xs, a);
-            case XSectShape::TRAPEZOIDAL:  return trapez_getdSdA(xs, a);
-            case XSectShape::TRIANGULAR:   return triang_getdSdA(xs, a);
-            default: return generic_getdSdA(xs, a);
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return circ_getdSdA(xs, a);
+        case XSectShape::EGGSHAPED:
+            return tabular_getdSdA(xs, a, tbl.S_Egg, tbl.N_S_Egg);
+        case XSectShape::HORSESHOE:
+            return tabular_getdSdA(xs, a, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
+        case XSectShape::GOTHIC:
+            return tabular_getdSdA(xs, a, tbl.S_Gothic, tbl.N_S_Gothic);
+        case XSectShape::CATENARY:
+            return tabular_getdSdA(xs, a, tbl.S_Catenary, tbl.N_S_Catenary);
+        case XSectShape::SEMIELLIPTICAL:
+            return tabular_getdSdA(xs, a, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
+        case XSectShape::BASKETHANDLE:
+            return tabular_getdSdA(xs, a, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
+        case XSectShape::SEMICIRCULAR:
+            return tabular_getdSdA(xs, a, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
+        case XSectShape::RECT_CLOSED:
+            return rect_closed_getdSdA(xs, a);
+        case XSectShape::RECT_OPEN:
+            return rect_open_getdSdA(xs, a);
+        case XSectShape::RECT_TRIANG:
+            return rect_triang_getdSdA(xs, a);
+        case XSectShape::RECT_ROUND:
+            return rect_round_getdSdA(xs, a);
+        case XSectShape::MOD_BASKET:
+            return mod_basket_getdSdA(xs, a);
+        case XSectShape::TRAPEZOIDAL:
+            return trapez_getdSdA(xs, a);
+        case XSectShape::TRIANGULAR:
+            return triang_getdSdA(xs, a);
+        default:
+            return generic_getdSdA(xs, a);
         }
     }
 
@@ -1279,56 +2613,79 @@ struct XsectEval {
     // getAofS — area from section factor
     // ============================================================================
 
+    /**
+     * @brief Invert native section factor to wetted area.
+     *
+     * s<=0 and DUMMY return0. Local s caps at s_max, but normalized psi is computed BEFORE that cap for
+     * direct S-table branches. Other shapes use bracketed Newton with0.0001*a_full tolerance and ignore
+     * its convergence return. Caller supplies finite supported geometry. Referenced built-in/section
+     * tables are borrowed and must remain accessible for this evaluator's execution space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] s Finite native section factor ft^(8/3).
+     * @return ft2 area candidate.
+     */
     OPENSWMM_KERNEL_FN double getAofS(const XSectParams& xs, double s) const {
         double psi = s / xs.s_full;
-        if (s <= 0.0) return 0.0;
-        if (s > xs.s_max) s = xs.s_max;
+        if (s <= 0.0)
+            return 0.0;
+        if (s > xs.s_max)
+            s = xs.s_max;
 
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::DUMMY: return 0.0;
-            case XSectShape::FORCE_MAIN:
-            case XSectShape::CIRCULAR:     return circ_getAofS(xs, s);
-            case XSectShape::EGGSHAPED:
-                return xs.a_full * invLookup(psi, tbl.S_Egg, tbl.N_S_Egg);
-            case XSectShape::HORSESHOE:
-                return xs.a_full * invLookup(psi, tbl.S_Horseshoe, tbl.N_S_Horseshoe);
-            case XSectShape::GOTHIC:
-                return xs.a_full * invLookup(psi, tbl.S_Gothic, tbl.N_S_Gothic);
-            case XSectShape::CATENARY:
-                return xs.a_full * invLookup(psi, tbl.S_Catenary, tbl.N_S_Catenary);
-            case XSectShape::SEMIELLIPTICAL:
-                return xs.a_full * invLookup(psi, tbl.S_SemiEllip, tbl.N_S_SemiEllip);
-            case XSectShape::BASKETHANDLE:
-                return xs.a_full * invLookup(psi, tbl.S_BasketHandle, tbl.N_S_BasketHandle);
-            case XSectShape::SEMICIRCULAR:
-                return xs.a_full * invLookup(psi, tbl.S_SemiCirc, tbl.N_S_SemiCirc);
-            default: {
-                // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
-                // a2 = absolute area at max flow = xsect_getAmax.
-                // PARITY: legacy xsect_getAmax (xsect.c:711-713) returns aBot for
-                // BOTH IRREGULAR and CUSTOM (the physical area at the max section
-                // factor, set from the transect/shape tables); every other shape
-                // uses aFull * Amax-ratio.
-                double a1, a2;
-                const XSectShape sh = static_cast<XSectShape>(xs.type);
-                double a_max = (sh == XSectShape::CUSTOM || sh == XSectShape::IRREGULAR)
-                                   ? xs.a_bot
-                                   : xs.a_full * getAmax(xs);
-                if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {
-                    a1 = xs.a_full;   // sFull < sMax: root lies between aFull and aMax
-                    a2 = a_max;
-                } else {
-                    a1 = 0.0;
-                    a2 = a_max;
-                }
-                double a = 0.5 * (a1 + a2);
-                double tol = 0.0001 * xs.a_full;
-                findroot_Newton(a1, a2, &a, tol, [&](double aa, double* f, double* df) {
-                    *f = getSofA(xs, aa) - s;
-                    *df = getdSdA(xs, aa);
-                });
-                return a;
+        case XSectShape::DUMMY:
+            return 0.0;
+        case XSectShape::FORCE_MAIN:
+        case XSectShape::CIRCULAR:
+            return circ_getAofS(xs, s);
+        case XSectShape::EGGSHAPED:
+            return xs.a_full * invLookup(psi, tbl.S_Egg, tbl.N_S_Egg, tbl.lut(LutId::S_Egg));
+        case XSectShape::HORSESHOE:
+            return xs.a_full *
+                   invLookup(psi, tbl.S_Horseshoe, tbl.N_S_Horseshoe, tbl.lut(LutId::S_Horseshoe));
+        case XSectShape::GOTHIC:
+            return xs.a_full *
+                   invLookup(psi, tbl.S_Gothic, tbl.N_S_Gothic, tbl.lut(LutId::S_Gothic));
+        case XSectShape::CATENARY:
+            return xs.a_full *
+                   invLookup(psi, tbl.S_Catenary, tbl.N_S_Catenary, tbl.lut(LutId::S_Catenary));
+        case XSectShape::SEMIELLIPTICAL:
+            return xs.a_full *
+                   invLookup(psi, tbl.S_SemiEllip, tbl.N_S_SemiEllip, tbl.lut(LutId::S_SemiEllip));
+        case XSectShape::BASKETHANDLE:
+            return xs.a_full * invLookup(psi, tbl.S_BasketHandle, tbl.N_S_BasketHandle,
+                                         tbl.lut(LutId::S_BasketHandle));
+        case XSectShape::SEMICIRCULAR:
+            return xs.a_full *
+                   invLookup(psi, tbl.S_SemiCirc, tbl.N_S_SemiCirc, tbl.lut(LutId::S_SemiCirc));
+        default: {
+            // Newton-Raphson on S(a) = s, bracketed in [a1, a2] (legacy generic_getAofS).
+            // a2 = absolute area at max flow = xsect_getAmax.
+            // PARITY: legacy xsect_getAmax (xsect.c:711-713) returns aBot for
+            // BOTH IRREGULAR and CUSTOM (the physical area at the max section
+            // factor, set from the transect/shape tables); every other shape
+            // uses aFull * Amax-ratio.
+            double a1, a2;
+            const XSectShape sh = static_cast<XSectShape>(xs.type);
+            double a_max = (sh == XSectShape::CUSTOM || sh == XSectShape::IRREGULAR)
+                               ? xs.a_bot
+                               : xs.a_full * getAmax(xs);
+            if ((s <= xs.s_max && s >= xs.s_full) && xs.s_max != xs.s_full) {
+                a1 = xs.a_full; // sFull < sMax: root lies between aFull and aMax
+                a2 = a_max;
+            } else {
+                a1 = 0.0;
+                a2 = a_max;
             }
+            double a = 0.5 * (a1 + a2);
+            double tol = 0.0001 * xs.a_full;
+            findroot_Newton(a1, a2, &a, tol, [&](double aa, double* f, double* df) {
+                *f = getSofA(xs, aa) - s;
+                *df = getdSdA(xs, aa);
+            });
+            return a;
+        }
         }
     }
 
@@ -1336,6 +2693,16 @@ struct XsectEval {
     // getAmax — ratio of area at max flow to full area
     // ============================================================================
 
+    /**
+     * @brief Read the built-in ratio of area at maximum conveyance to full area.
+     *
+     * Requires a live26-entry Amax array for recognized code. This is a ratio, not the physical
+     * xs.a_bot maximum-area value used for custom/irregular inversion.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @return Dimensionless tbl.Amax[type] for kernel codes0..25, otherwise1.
+     */
     OPENSWMM_KERNEL_FN double getAmax(const XSectParams& xs) const {
         if (xs.type >= 0 && xs.type <= 25)
             return tbl.Amax[xs.type];
@@ -1346,91 +2713,114 @@ struct XsectEval {
     // getYcrit — critical depth for a given flow rate (legacy xsect_getYcrit)
     // ============================================================================
 
+    /**
+     * @brief Compute critical depth for a nonnegative native discharge.
+     *
+     * q<=0, underflowed q2/g or DUMMY returns0. Rectangular/triangle/parabola/power shapes use analytic
+     * expressions; others enumerate25 depth intervals or use Ridder tolerance0.001ft. Root failures are
+     * not separately status-coded; valid positive full geometry and finite q2 are required. Referenced
+     * built-in/section tables are borrowed and must remain accessible for this evaluator's execution
+     * space.
+     *
+     * @param[in] xs Borrowed initialized native-unit XSectParams with kernel XSectShape numbering (not
+     *     storage XsectShape); positive full dimensions and live applicable tables required.
+     * @param[in] q Finite native cfs discharge; negative treated as zero, not absolute flow.
+     * @return Critical depth ft, capped above by y_full.
+     */
     OPENSWMM_KERNEL_FN double getYcrit(const XSectParams& xs, double q) const {
-        if (q <= 0.0) return 0.0;
+        if (q <= 0.0)
+            return 0.0;
         double q2g = q * q / GRAVITY;
-        if (q2g == 0.0) return 0.0;
+        if (q2g == 0.0)
+            return 0.0;
 
         double y;
         switch (static_cast<XSectShape>(xs.type)) {
-            case XSectShape::DUMMY: return 0.0;
-            case XSectShape::RECT_OPEN:
-            case XSectShape::RECT_CLOSED:
-                y = std::pow(q2g / (xs.w_max * xs.w_max), 1.0 / 3.0);
-                break;
-            case XSectShape::TRIANGULAR:
-                y = std::pow(2.0 * q2g / (xs.s_bot * xs.s_bot), 1.0 / 5.0);
-                break;
-            case XSectShape::PARABOLIC:
-                y = std::pow(27.0 / 32.0 * q2g / (xs.r_bot * xs.r_bot), 1.0 / 4.0);
-                break;
-            case XSectShape::POWERFUNC:
-                y = 1.0 / (2.0 * xs.s_bot + 3.0);
-                y = std::pow(q2g * (xs.s_bot + 1.0) / (xs.r_bot * xs.r_bot), y);
-                break;
-            default: {
-                // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
-                auto qCritical = [&](double yc, double qTarget) -> double {
-                    double a = getAofY(xs, yc);
-                    double w = getWofY(xs, yc);
-                    if (w > 0.0) return a * std::sqrt(GRAVITY * a / w) - qTarget;
-                    return -qTarget;
-                };
+        case XSectShape::DUMMY:
+            return 0.0;
+        case XSectShape::RECT_OPEN:
+        case XSectShape::RECT_CLOSED:
+            y = std::pow(q2g / (xs.w_max * xs.w_max), 1.0 / 3.0);
+            break;
+        case XSectShape::TRIANGULAR:
+            y = std::pow(2.0 * q2g / (xs.s_bot * xs.s_bot), 1.0 / 5.0);
+            break;
+        case XSectShape::PARABOLIC:
+            y = std::pow(27.0 / 32.0 * q2g / (xs.r_bot * xs.r_bot), 1.0 / 4.0);
+            break;
+        case XSectShape::POWERFUNC:
+            y = 1.0 / (2.0 * xs.s_bot + 3.0);
+            y = std::pow(q2g * (xs.s_bot + 1.0) / (xs.r_bot * xs.r_bot), y);
+            break;
+        default: {
+            // Critical flow function Q_c(yc) - qTarget (legacy getQcritical).
+            auto qCritical = [&](double yc, double qTarget) -> double {
+                double a = getAofY(xs, yc);
+                double w = getWofY(xs, yc);
+                if (w > 0.0)
+                    return a * std::sqrt(GRAVITY * a / w) - qTarget;
+                return -qTarget;
+            };
 
-                // Initial estimate from equivalent circular conduit.
-                double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
-                if (y0 >= xs.y_full) y0 = 0.97 * xs.y_full;
+            // Initial estimate from equivalent circular conduit.
+            double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
+            if (y0 >= xs.y_full)
+                y0 = 0.97 * xs.y_full;
 
-                // Ratio of conduit area to equivalent circular area.
-                double r = xs.a_full / (PI / 4.0 * xs.y_full * xs.y_full);
+            // Ratio of conduit area to equivalent circular area.
+            double r = xs.a_full / (PI / 4.0 * xs.y_full * xs.y_full);
 
-                if (r >= 0.5 && r <= 2.0) {
-                    // --- interval enumeration (legacy getYcritEnum), 25 increments
-                    constexpr int N_INC = 25;
-                    double dy = xs.y_full / N_INC;
-                    int i1 = static_cast<int>(y0 / dy);
-                    double q0 = qCritical(i1 * dy, 0.0);
-                    if (q0 < q) {
-                        y = xs.y_full;
-                        for (int i = i1 + 1; i <= N_INC; ++i) {
-                            double qc = qCritical(i * dy, 0.0);
-                            if (qc >= q) {
-                                y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
-                                break;
-                            }
-                            q0 = qc;
+            if (r >= 0.5 && r <= 2.0) {
+                // --- interval enumeration (legacy getYcritEnum), 25 increments
+                constexpr int N_INC = 25;
+                double dy = xs.y_full / N_INC;
+                int i1 = static_cast<int>(y0 / dy);
+                double q0 = qCritical(i1 * dy, 0.0);
+                if (q0 < q) {
+                    y = xs.y_full;
+                    for (int i = i1 + 1; i <= N_INC; ++i) {
+                        double qc = qCritical(i * dy, 0.0);
+                        if (qc >= q) {
+                            y = ((q - q0) / (qc - q0) + static_cast<double>(i - 1)) * dy;
+                            break;
                         }
-                    } else {
-                        y = 0.0;
-                        for (int i = i1 - 1; i >= 0; --i) {
-                            double qc = qCritical(i * dy, 0.0);
-                            if (qc < q) {
-                                y = ((q - qc) / (q0 - qc) + static_cast<double>(i)) * dy;
-                                break;
-                            }
-                            q0 = qc;
-                        }
+                        q0 = qc;
                     }
                 } else {
-                    // --- Ridder's method (legacy getYcritRidder)
-                    double y1 = 0.0;
-                    double y2 = 0.99 * xs.y_full;
-                    double q2 = qCritical(y2, 0.0);
-                    if (q2 < q) { y = xs.y_full; break; }
-                    double q0 = qCritical(y0, 0.0);
-                    double q1 = qCritical(0.5 * xs.y_full, 0.0);
-                    if (q0 > q) {
-                        y2 = y0;
-                        if (q1 < q) y1 = 0.5 * xs.y_full;
-                    } else {
-                        y1 = y0;
-                        if (q1 > q) y2 = 0.5 * xs.y_full;
+                    y = 0.0;
+                    for (int i = i1 - 1; i >= 0; --i) {
+                        double qc = qCritical(i * dy, 0.0);
+                        if (qc < q) {
+                            y = ((q - qc) / (q0 - qc) + static_cast<double>(i)) * dy;
+                            break;
+                        }
+                        q0 = qc;
                     }
-                    y = findroot_Ridder(y1, y2, 0.001,
-                                        [&](double yc) { return qCritical(yc, q); });
                 }
-                break;
+            } else {
+                // --- Ridder's method (legacy getYcritRidder)
+                double y1 = 0.0;
+                double y2 = 0.99 * xs.y_full;
+                double q2 = qCritical(y2, 0.0);
+                if (q2 < q) {
+                    y = xs.y_full;
+                    break;
+                }
+                double q0 = qCritical(y0, 0.0);
+                double q1 = qCritical(0.5 * xs.y_full, 0.0);
+                if (q0 > q) {
+                    y2 = y0;
+                    if (q1 < q)
+                        y1 = 0.5 * xs.y_full;
+                } else {
+                    y1 = y0;
+                    if (q1 > q)
+                        y2 = 0.5 * xs.y_full;
+                }
+                y = findroot_Ridder(y1, y2, 0.001, [&](double yc) { return qCritical(yc, q); });
             }
+            break;
+        }
         }
         return std::min(y, xs.y_full);
     }
@@ -1439,20 +2829,34 @@ struct XsectEval {
     // isOpen — returns true for open shapes
     // ============================================================================
 
+    /**
+     * @brief Classify kernel section types using the legacy open-shape set.
+     *
+     * Unknown codes and CUSTOM classify closed here; no table access.
+     *
+     * @param[in] type Kernel XSectShape code; storage XsectShape uses a different numbering.
+     * @return True for
+     *     DUMMY/RECT_OPEN/TRAPEZOIDAL/TRIANGULAR/PARABOLIC/POWERFUNC/IRREGULAR/STREET_XSECT, false
+     *     otherwise.
+     */
     OPENSWMM_KERNEL_FN bool isOpen(int type) const {
+        // PARITY xsect.c:215 xsect_isOpen() = (Amax[type] >= 1.0): the shapes
+        // whose Amax entry is 1.0 (xsect.c:59-85) are DUMMY, RECT_OPEN,
+        // TRAPEZOIDAL, TRIANGULAR, PARABOLIC, POWERFUNC, IRREGULAR and STREET.
         switch (static_cast<XSectShape>(type)) {
-            case XSectShape::RECT_OPEN:
-            case XSectShape::TRAPEZOIDAL:
-            case XSectShape::TRIANGULAR:
-            case XSectShape::PARABOLIC:
-            case XSectShape::POWERFUNC:
-            case XSectShape::IRREGULAR:
-                return true;
-            default:
-                return false;
+        case XSectShape::DUMMY:
+        case XSectShape::RECT_OPEN:
+        case XSectShape::TRAPEZOIDAL:
+        case XSectShape::TRIANGULAR:
+        case XSectShape::PARABOLIC:
+        case XSectShape::POWERFUNC:
+        case XSectShape::IRREGULAR:
+        case XSectShape::STREET_XSECT:
+            return true;
+        default:
+            return false;
         }
     }
-
 };
 
 /// The host-bound table set and evaluator: `hostTables()` binds every pointer
@@ -1460,7 +2864,7 @@ struct XsectEval {
 /// pre-extraction code exactly. A device consumer builds its own pair over
 /// device copies of the same arrays.
 const XsectTables& hostTables();
-const XsectEval&   hostEval();
+const XsectEval& hostEval();
 
 } // namespace openswmm::xsect
 

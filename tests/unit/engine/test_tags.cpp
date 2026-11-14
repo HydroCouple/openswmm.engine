@@ -1,6 +1,6 @@
 /**
- * @file test_tags.cpp
- * @brief Unit tests for the per-object [TAGS] attribute (Slice DB.3).
+ * @file      test_tags.cpp
+ * @brief     Unit tests for the per-object [TAGS] attribute (Slice DB.3).
  *
  * @details Covers:
  *  - swmm_node/link/subcatch_get/set_tag round-trip
@@ -10,6 +10,10 @@
  *    SpatialHandler::handle_tags
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -27,16 +31,29 @@ class TagsTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create editable node/link/subcatchment objects for tag API tests.
+     *
+     * Uses a BUILDING engine, adds J1/J2 junctions, C1 conduit and S1 subcatchment. Adds names/types
+     * only; no complete hydraulic model or simulation is implied. Fatal GoogleTest assertions return
+     * from this hook on failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
         // One of each kind so we exercise node + link + subcatch tag accessors.
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
         ASSERT_EQ(swmm_node_add(engine, "J2", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "C1", 0), SWMM_OK);  // CONDUIT
+        ASSERT_EQ(swmm_link_add(engine, "C1", 0), SWMM_OK); // CONDUIT
         ASSERT_EQ(swmm_subcatch_add(engine, "S1"), SWMM_OK);
     }
 
+    /**
+     * @brief Destroy the fixture-owned engine and its model resources.
+     *
+     * The destroy API accepts a null handle after failed setup. The member slot is not reset and must
+     * not be used afterward.
+     */
     void TearDown() override { swmm_engine_destroy(engine); }
 };
 
@@ -101,7 +118,7 @@ TEST_F(TagsTest, BadIndexAndBufRejected) {
     EXPECT_EQ(swmm_node_get_tag(engine, 99, nullptr, 0), SWMM_ERR_BADPARAM);
     char buf[8] = {0};
     EXPECT_EQ(swmm_node_get_tag(engine, 99, buf, sizeof(buf)), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_node_set_tag(engine, 99, "x"),             SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_node_set_tag(engine, 99, "x"), SWMM_ERR_BADINDEX);
 }
 
 TEST_F(TagsTest, InpWriterEmitsTagsSection) {
@@ -125,17 +142,16 @@ TEST_F(TagsTest, InpWriterEmitsTagsSection) {
     {
         std::ifstream in(tmp);
         ASSERT_TRUE(in.good());
-        body.assign((std::istreambuf_iterator<char>(in)),
-                     std::istreambuf_iterator<char>());
+        body.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
 
-    EXPECT_NE(body.find("[TAGS]"),    std::string::npos);
-    EXPECT_NE(body.find("tagN1"),     std::string::npos);
-    EXPECT_NE(body.find("tagL1"),     std::string::npos);
-    EXPECT_NE(body.find("tagS1"),     std::string::npos);
-    EXPECT_NE(body.find("J1"),        std::string::npos);
-    EXPECT_NE(body.find("C1"),        std::string::npos);
-    EXPECT_NE(body.find("S1"),        std::string::npos);
+    EXPECT_NE(body.find("[TAGS]"), std::string::npos);
+    EXPECT_NE(body.find("tagN1"), std::string::npos);
+    EXPECT_NE(body.find("tagL1"), std::string::npos);
+    EXPECT_NE(body.find("tagS1"), std::string::npos);
+    EXPECT_NE(body.find("J1"), std::string::npos);
+    EXPECT_NE(body.find("C1"), std::string::npos);
+    EXPECT_NE(body.find("S1"), std::string::npos);
 
     fs::remove(tmp);
 }
@@ -153,8 +169,7 @@ TEST_F(TagsTest, NoTagsSectionWhenAllEmpty) {
     {
         std::ifstream in(tmp);
         ASSERT_TRUE(in.good());
-        body.assign((std::istreambuf_iterator<char>(in)),
-                     std::istreambuf_iterator<char>());
+        body.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
 
     EXPECT_EQ(body.find("[TAGS]"), std::string::npos);

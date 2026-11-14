@@ -1,6 +1,6 @@
 /**
- * @file test_concurrent_engines.cpp
- * @brief Thread-safety verification: two SWMM_Engine instances on separate threads.
+ * @file      test_concurrent_engines.cpp
+ * @brief     Thread-safety verification: two SWMM_Engine instances on separate threads.
  *
  * @details Creates two independent engine instances, runs them concurrently
  *          on separate std::threads with the same input model, and verifies
@@ -9,6 +9,10 @@
  *
  * @see docs/thread_safety_verification.md
  * @ingroup engine_unit_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -30,7 +34,7 @@ namespace {
 // ============================================================================
 
 constexpr double ABS_TOL = 0.001;
-constexpr double REL_TOL = 0.001;  // 0.1%
+constexpr double REL_TOL = 0.001; // 0.1%
 
 // ============================================================================
 // Captured time series for one run
@@ -51,9 +55,21 @@ struct RunResult {
 // Run one engine to completion and capture per-step results
 // ============================================================================
 
-RunResult RunEngine(const std::string& inp,
-                    const std::string& rpt,
-                    const std::string& out) {
+/**
+ * @brief Run one independently owned engine and capture node/link trajectories.
+ *
+ * Returns -1 on allocation failure and BADHANDLE for invalid object counts. Steps without a guard,
+ * samples only positive elapsed calls and ignores individual getters/end/close statuses. Destroys
+ * its handle on normal failure/success paths. Caller must avoid shared output filenames or mutable
+ * input artifacts; no global legacy engine is used.
+ *
+ * @param[in] inp Existing model filename.
+ * @param[in] rpt Distinct report destination for concurrent calls.
+ * @param[in] out Distinct binary destination for concurrent calls.
+ * @return Owned samples with elapsed days, node depths/project length units and link flows/project
+ *     flow units, plus first lifecycle/step error.
+ */
+RunResult RunEngine(const std::string& inp, const std::string& rpt, const std::string& out) {
     RunResult result;
 
     SWMM_Engine engine = swmm_engine_create();
@@ -62,8 +78,7 @@ RunResult RunEngine(const std::string& inp,
         return result;
     }
 
-    result.error_code = swmm_engine_open(engine, inp.c_str(), rpt.c_str(),
-                                          out.c_str(), nullptr);
+    result.error_code = swmm_engine_open(engine, inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
     if (result.error_code != SWMM_OK) {
         swmm_engine_destroy(engine);
         return result;
@@ -102,7 +117,8 @@ RunResult RunEngine(const std::string& inp,
             result.error_code = err;
             break;
         }
-        if (elapsed <= 0.0) break;
+        if (elapsed <= 0.0)
+            break;
 
         TimeStep ts;
         ts.elapsed = elapsed;
@@ -137,12 +153,21 @@ RunResult RunEngine(const std::string& inp,
 // Compare two run results within tolerance
 // ============================================================================
 
-void CompareResults(const RunResult& a, const RunResult& b,
-                    const std::string& label) {
+/**
+ * @brief Assert two independently collected engine trajectories agree.
+ *
+ * Fatally checks statuses, step/vector sizes and elapsed days within 1e-12, then compares
+ * depth/flow values with max(ABS_TOL,abs(reference)*REL_TOL). Does not mutate records, compare IDs
+ * or run engines; empty successful runs can pass.
+ *
+ * @param[in] a Reference run with successful error_code expected.
+ * @param[in] b Comparison run in matching project units/object ordering.
+ * @param[in] label Diagnostic label copied only into assertion output.
+ */
+void CompareResults(const RunResult& a, const RunResult& b, const std::string& label) {
     ASSERT_EQ(a.error_code, SWMM_OK) << label << ": run A failed";
     ASSERT_EQ(b.error_code, SWMM_OK) << label << ": run B failed";
-    ASSERT_EQ(a.steps.size(), b.steps.size())
-        << label << ": step count mismatch";
+    ASSERT_EQ(a.steps.size(), b.steps.size()) << label << ": step count mismatch";
 
     for (size_t s = 0; s < a.steps.size(); ++s) {
         const auto& sa = a.steps[s];
@@ -169,7 +194,7 @@ void CompareResults(const RunResult& a, const RunResult& b,
     }
 }
 
-}  // namespace
+} // namespace
 
 // ============================================================================
 // Test: concurrent engines produce same results as sequential baselines
@@ -183,15 +208,11 @@ TEST(ConcurrentEngines, TwoInstancesDeterministic) {
     }
 
     // --- Phase 1: Sequential baselines ---
-    RunResult baseline_a = RunEngine(inp,
-                                      "baseline_a.rpt",
-                                      "baseline_a.out");
+    RunResult baseline_a = RunEngine(inp, "baseline_a.rpt", "baseline_a.out");
     ASSERT_EQ(baseline_a.error_code, SWMM_OK) << "Baseline A failed";
     ASSERT_GT(baseline_a.steps.size(), 0u) << "Baseline A produced no steps";
 
-    RunResult baseline_b = RunEngine(inp,
-                                      "baseline_b.rpt",
-                                      "baseline_b.out");
+    RunResult baseline_b = RunEngine(inp, "baseline_b.rpt", "baseline_b.out");
     ASSERT_EQ(baseline_b.error_code, SWMM_OK) << "Baseline B failed";
 
     // Sanity: sequential runs should be identical
@@ -200,17 +221,11 @@ TEST(ConcurrentEngines, TwoInstancesDeterministic) {
     // --- Phase 2: Concurrent runs ---
     RunResult concurrent_a, concurrent_b;
 
-    std::thread thread_a([&]() {
-        concurrent_a = RunEngine(inp,
-                                  "concurrent_a.rpt",
-                                  "concurrent_a.out");
-    });
+    std::thread thread_a(
+        [&]() { concurrent_a = RunEngine(inp, "concurrent_a.rpt", "concurrent_a.out"); });
 
-    std::thread thread_b([&]() {
-        concurrent_b = RunEngine(inp,
-                                  "concurrent_b.rpt",
-                                  "concurrent_b.out");
-    });
+    std::thread thread_b(
+        [&]() { concurrent_b = RunEngine(inp, "concurrent_b.rpt", "concurrent_b.out"); });
 
     thread_a.join();
     thread_b.join();
@@ -220,10 +235,9 @@ TEST(ConcurrentEngines, TwoInstancesDeterministic) {
     CompareResults(baseline_a, concurrent_b, "baseline-vs-concurrent-B");
 
     // Cleanup temp files
-    for (const char* f : {"baseline_a.rpt", "baseline_a.out",
-                           "baseline_b.rpt", "baseline_b.out",
-                           "concurrent_a.rpt", "concurrent_a.out",
-                           "concurrent_b.rpt", "concurrent_b.out"}) {
+    for (const char* f :
+         {"baseline_a.rpt", "baseline_a.out", "baseline_b.rpt", "baseline_b.out",
+          "concurrent_a.rpt", "concurrent_a.out", "concurrent_b.rpt", "concurrent_b.out"}) {
         std::remove(f);
     }
 }

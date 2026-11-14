@@ -1,0 +1,137 @@
+[TITLE]
+Legacy SAVE HOTSTART parity fixture
+Every part of a legacy SWMM5 hot-start subcatchment record: ponded depths,
+runoff, infiltration (the INFILTRATION option is set per run), groundwater,
+snowpack, runoff and ponded quality, buildup per area and per curb length,
+and street sweeping. Synthetic; parameters are not calibrated values.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             12:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             2
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             00:15:00
+ROUTING_STEP         0:00:20
+ALLOW_PONDING        NO
+THREADS              1
+
+[EVAPORATION]
+CONSTANT   0.1
+DRY_ONLY   NO
+
+[TEMPERATURE]
+TIMESERIES           air_ts
+SNOWMELT             34.0  0.5    0.6   500.0  42.0  0.0     0.0   0.0
+
+[RAINGAGES]
+RG1     INTENSITY  0:15      1.0   TIMESERIES rain_ts
+
+[SUBCATCHMENTS]
+;;Name  Rgage  Outlet  Area  %Imperv  Width  Slope  CurbLen  SnowPack
+S1      RG1    J1      4.0   50       400    0.5    1200     SP1
+S2      RG1    J1      6.0   25       500    1.0    800      *
+S3      RG1    J2      3.0   70       300    0.8    600      SP1
+
+[SUBAREAS]
+;;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo
+S1          0.015     0.15    0.06      0.20    25       OUTLET
+S2          0.015     0.15    0.06      0.20    25       OUTLET
+S3          0.015     0.15    0.06      0.20    25       OUTLET
+
+[INFILTRATION]
+;;Subcatch  Horton: MaxRate MinRate Decay DryTime MaxInfil
+S1          3.0  0.5  4  7  0
+S2          3.0  0.5  4  7  0
+S3          3.0  0.5  4  7  0
+
+[SNOWPACKS]
+;;Name  Surface     Cmin   Cmax   Tbase  FWF   SD0  FW0  SNN0/SD100
+SP1     PLOWABLE    0.002  0.006  32.0   0.10  2.0  0.0  0.25
+SP1     IMPERVIOUS  0.002  0.006  32.0   0.10  2.0  0.0  0.0
+SP1     PERVIOUS    0.001  0.003  32.0   0.05  2.0  0.0  0.0
+SP1     REMOVAL     1.0    0.20   0.10   0.10  0.10 0.0
+
+[AQUIFERS]
+;;Name  Por  WP    FC    Ksat  Kslope  Tslope  ETu   ETs   Seep   Ebot  Egw  Umc
+AQ1     0.5  0.15  0.30  5.0   10.0    15.0    0.35  14.0  0.002  0.0   3.5  0.25
+
+[GROUNDWATER]
+;;Subcatch  Aquifer  Node  Esurf  A1   B1   A2  B2  A3  Dsw  Egwt
+S2          AQ1      J1    6.0    0.1  1.0  0   0   0   0    *
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1      2.0   6.0       0          0         0
+J2      1.5   6.0       0          0         0
+
+[OUTFALLS]
+O1      0.5   FREE      NO
+
+[CONDUITS]
+;;Name  From  To  Length  N      InOffset  OutOffset  InitFlow  MaxFlow
+C1      J1    J2  300     0.013  0         0          0         0
+C2      J2    O1  300     0.013  0         0          0         0
+
+[XSECTIONS]
+C1      CIRCULAR  1.5  0  0  0  1
+C2      CIRCULAR  1.5  0  0  0  1
+
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit
+TSS     MG/L   0      0    0      0       NO        *         0       0     0
+LEAD    UG/L   0      0    0      0       NO        *         0       0     0
+
+[LANDUSES]
+;;Name  SweepInterval  Availability  LastSweep
+RES     3              0.5           2
+COM     1              0.7           0.9
+
+[COVERAGES]
+;; Several pairs on a line (legacy reads them all), and COM, swept daily,
+;; on the snow subcatchment S1 (no sweeping while its plowable pack holds snow).
+S1      RES  60   COM  40
+S2      RES  40   COM  60
+S3      RES  100
+
+[BUILDUP]
+;;LandUse  Pollutant  Function  C1    C2   C3   PerUnit
+RES        TSS        POW       50    2    0.5  AREA
+RES        LEAD       EXP       1     0.3  0    CURB
+COM        TSS        SAT       80    0    2    AREA
+COM        LEAD       POW       0.5   1    0.5  CURB
+
+[WASHOFF]
+;;LandUse  Pollutant  Function  C1    C2   SweepRmvl  BmpRmvl
+RES        TSS        EXP       0.1   1.5  50         0
+RES        LEAD       EMC       20    0    30         0
+COM        TSS        EXP       0.2   1.2  60         0
+COM        LEAD       RC        0.5   1.2  40         0
+
+[TIMESERIES]
+rain_ts  0:00   0.0
+rain_ts  1:00   0.4
+rain_ts  2:00   0.6
+rain_ts  3:00   0.2
+rain_ts  4:00   0.0
+rain_ts  12:00  0.0
+air_ts   0:00   25
+air_ts   3:00   28
+air_ts   6:00   40
+air_ts   12:00  45
+
+[REPORT]
+INPUT          NO
+SUBCATCHMENTS  ALL
+NODES          ALL
+LINKS          ALL

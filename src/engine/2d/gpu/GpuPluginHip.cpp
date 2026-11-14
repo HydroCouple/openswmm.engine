@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file GpuPluginHip.cpp
- * @brief Plugin entry points for the Phase 5 Kokkos/HIP surface solver (AMD).
+ * @file      GpuPluginHip.cpp
+ * @brief     Plugin entry points for the Phase 5 Kokkos/HIP surface solver (AMD).
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_hip
  *          plugin. Identical in shape to GpuPluginCuda.cpp — the probe advertises
@@ -23,14 +39,16 @@
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
 #include "../solver/ISurfaceSolver.hpp"
-#include "ExplicitKokkosSurfaceSolver.hpp"
+#include "GpuPluginSupport.hpp"
+#include <mutex>
+#include <stdexcept>
 
 #include <Kokkos_Core.hpp>
 #include <hip/hip_runtime.h>
@@ -38,25 +56,35 @@
 #include <cstring>
 
 namespace {
+std::mutex initialization_mutex;
+/**
+ * @brief Initialize the plugin execution runtime once under a process-level mutex.
+ * @throws std::runtime_error If Kokkos has already been finalized.
+ * @note Existing initialized Kokkos state is reused; this helper does not finalize it.
+ * Initialization exceptions propagate to the enclosing factory/operation handler. Caller uses
+ * the execution-owner thread.
+ */
 void ensureKokkosInitialized() {
+    std::lock_guard<std::mutex> lock(initialization_mutex);
+    if (Kokkos::is_finalized())
+        throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::initialize();
     }
 }
 } // namespace
 
-extern "C" OPENSWMM_GPU_ABI int
-openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
-    if (out == nullptr) return 1;
+extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
+    if (out == nullptr)
+        return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
-    out->vendor      = OPENSWMM_GPU_VENDOR_HIP;
+    out->vendor = OPENSWMM_GPU_VENDOR_HIP;
 
     int device_count = 0;
     if (hipGetDeviceCount(&device_count) != hipSuccess || device_count <= 0) {
         // No usable HIP device — tell the core to fall back to the CPU solver.
-        std::strncpy(out->device_name, "no HIP device",
-                     sizeof(out->device_name) - 1);
+        std::strncpy(out->device_name, "no HIP device", sizeof(out->device_name) - 1);
         return 1;
     }
     out->device_count = device_count;
@@ -68,13 +96,10 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     } else {
         std::strncpy(out->device_name, "HIP device", sizeof(out->device_name) - 1);
     }
-    return 0;  // usable device present
+    return 0; // usable device present
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
+    return openswmm::twoD::gpu::plugin::make([] { ensureKokkosInitialized(); });
 }

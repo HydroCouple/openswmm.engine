@@ -5,7 +5,10 @@
   <navindex>
     <tab type="mainpage" visible="yes" title="OpenSWMM"/>
     <tab type="usergroup" visible="yes" title="Manuals" url="@ref manuals">
-      <tab type="user" title="User Manual" visible="yes" url="@ref user_manual"/>
+      <tab type="user" title="Engine Manual" visible="yes" url="@ref engine_manual"/>
+      <!-- The graphical application is documented in its own repository and its own
+           Pages site; an absolute URL is correct here, a tagfile \ref is not. -->
+      <tab type="user" title="GUI Manual (SWMMVis)" visible="yes" url="https://www.hydrocouple.org/openswmm.gui/"/>
       <tab type="user" title="Application Manual" visible="yes" url="@ref application_manual"/>
       <tab type="user" title="Hydrology Reference Manual" visible="yes" url="@ref hydrology_reference_manual"/>
       <tab type="user" title="Hydraulics Reference Manual" visible="yes" url="@ref hydraulics_reference_manual"/>
@@ -62,7 +65,7 @@
       <tab type="globals" visible="yes" title="" intro=""/>
     </tab>
     <tab type="examples" visible="yes" title="" intro=""/>
-    <tab type="user" title="GitHub" intro="" url="https://github.com/HydroCouple/OpenSWMMCore"/>
+    <tab type="user" title="GitHub" intro="" url="https://github.com/HydroCouple/openswmm.engine"/>
   </navindex>
 
   <!-- Layout definition for a class page -->

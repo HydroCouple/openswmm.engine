@@ -1,0 +1,403 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file      ReactionData.hpp
+ * @brief     Multispecies reaction system data (EPANET-MSX conventions) — SoA,
+ *        hot/cold split per LARD plan §16 D-L3 / reactions plan D-R3.
+ *
+ * @details Phase R1 populates this from the reactions component's config
+ *          file (`model.rxn`, sections [REACTION_*]). Expression SOURCES
+ *          are stored here (cold); the compiled flat RPN token pool arrives
+ *          with phase R2 and lives in separate hot arrays so no
+ *          std::string enters an integrator loop. Layout notes:
+ *          per-species expression slots are dense (size n_species,
+ *          form == NONE ⇒ no expression for that species in that scope).
+ *
+ * @see plans/transport/MULTISPECIES_REACTIONS_MSX_PLAN.md §2–§3
+ * @ingroup engine_data
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+#ifndef OPENSWMM_ENGINE_DATA_REACTION_DATA_HPP
+#define OPENSWMM_ENGINE_DATA_REACTION_DATA_HPP
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "ReactionTokens.hpp"
+#include "MsxSurfaceData.hpp"
+
+namespace openswmm {
+
+enum class ReactionSolverKind : int { EUL = 0, RK5 = 1, ROS2 = 2, BDF2 = 3 };
+enum class ReactionCoupling : int { NONE = 0, FULL = 1 };
+enum class ReactionRateUnits : int { SEC = 0, MIN = 1, HR = 2, DAY = 3 };
+enum class ReactionAreaUnits : int { FT2 = 0, M2 = 1, CM2 = 2 };
+enum class ReactionExprForm : int { NONE = 0, RATE = 1, EQUIL = 2, FORMULA = 3 };
+
+struct ReactionData {
+    // ---- [REACTION_OPTIONS] ------------------------------------------------
+    /**
+     * @brief Default integrator.
+     *
+     * @details RK5, not an implicit solver. Measured substeps for one
+     *          routing step, at the shipping tolerances below and at
+     *          1e-10/1e-8:
+     *
+     *          | case                        | RK5   | ROS2   | BDF2   |
+     *          |-----------------------------|-------|--------|--------|
+     *          | first-order decay, default  |     5 |    134 |    197 |
+     *          | stiff (λ ratio 1e6), default|  2682 |    281 |    408 |
+     *          | stiff, atol 1e-10           |  2744 |  26938 |  39693 |
+     *
+     *          RK5 wins the common case by ~27x. It loses the stiff case at
+     *          loose tolerance by ~10x but still COMPLETES, with the slow
+     *          mode exact. At tight tolerance it beats both implicit solvers
+     *          on the stiff problem, because RK5's step is STABILITY-limited
+     *          (nearly flat in tolerance) while the Rosenbrock/BDF pairs are
+     *          ACCURACY-limited and scale as sqrt(tol).
+     *
+     *          The cliff: RK5 costs about lambda_fast*dt/3.3 substeps, so
+     *          past lambda_fast*dt ~ 3e5 it hits kMaxSubsteps and fails.
+     *          That failure is loud and names ROS2/BDF2 as the remedy
+     *          (ReactionIntegrator's substep-cap message) — a slow default
+     *          that fails legibly beats an implicit default that is slower
+     *          everywhere except the stiff-and-loose corner.
+     */
+    ReactionSolverKind solver = ReactionSolverKind::RK5;
+    ReactionCoupling coupling = ReactionCoupling::NONE;
+    ReactionRateUnits rate_units = ReactionRateUnits::HR;
+    ReactionAreaUnits area_units = ReactionAreaUnits::FT2;
+    bool wall_geometry = false; ///< WALL densities use a fixed reference contact area
+    double timestep = 0.0;      ///< 0 ⇒ follow QUALITY_STEP
+    double atol = 1.0e-6;
+    double rtol = 1.0e-4;
+    /// TEMP's value when no heat-transport temperature exists for the
+    /// element (HEAT_TRANSPORT off, or state not yet seeded). 20 degC is
+    /// the standard water-quality reference temperature.
+    double default_temp_c = 20.0;
+
+    // ---- [REACTION_SPECIES] — index-aligned with the SpeciesRegistry MSX
+    //      block (registry index = registry_base + i). ------------------------
+    int registry_base = -1;                 ///< first MSX index in the registry
+    std::vector<std::string> species_name;  ///< cold
+    std::vector<uint8_t> species_is_wall;   ///< 0 = BULK, 1 = WALL
+    std::vector<std::string> species_units; ///< cold
+    std::vector<double> species_atol;       ///< hot (0 ⇒ global)
+    std::vector<double> species_rtol;       ///< hot (0 ⇒ global)
+
+    // ---- [REACTION_COEFFICIENTS] -------------------------------------------
+    std::vector<std::string> coef_name; ///< cold
+    std::vector<uint8_t> coef_is_param; ///< 1 = PARAMETER (overridable), 0 = CONSTANT
+    std::vector<double> coef_value;     ///< hot (global values; per-element
+                                        ///< overrides use parameter_overrides below)
+
+    /// Sparse authored per-element PARAMETER overrides. Values are gathered
+    /// against the current globals per reactor; no shared coefficient mutation.
+    struct ParameterOverride {
+        bool link;
+        int element, coefficient;
+        double value;
+    };
+    std::vector<ParameterOverride> parameter_overrides;
+    struct WallArea {
+        bool link;
+        int element;
+        double area;
+    }; // declared AREA_UNITS
+    std::vector<WallArea> wall_areas;
+    struct LidLaw {
+        int control = -1, layer = 0, species = -1;
+        ReactionExprForm form = ReactionExprForm::NONE;
+        std::string expression;
+        RxExprSpan compiled;
+    };
+    std::vector<int> lid_controls;
+    std::vector<LidLaw> lid_laws;
+    struct LidState {
+        std::vector<std::vector<double>> node_mass, node_outlet;
+        std::vector<double> node_mobile_old;
+        std::vector<int> group_offsets;
+        std::vector<double> mass, old_water, surface_conc,
+            drain_conc;                                    // conventional units, conc*ft3
+        std::vector<double> surface_export, surface_carry; // [subcatchment*species], conc*ft3
+        std::vector<uint8_t> subcatchments;
+    } lid;
+    /**
+     * @brief Test whether a LID control key occurs in the configured reaction list.
+     *
+     * @param[in] control Stored LID-control index; no bounds or control-type validation.
+     * @return True on the first equal key, false otherwise; linear scan.
+     */
+    bool lid_enabled(int control) const {
+        for (int c : lid_controls)
+            if (c == control)
+                return true;
+        return false;
+    }
+    /**
+     * @brief Borrow global coefficients or gather element-specific parameter overrides.
+     *
+     * Every matching override is applied in row order, so later duplicates win. Caller validates
+     * coefficient indices; this helper does not enforce PARAMETER kind. Pointer remains valid until its
+     * owning vector changes/dies; scratch copy can allocate/throw.
+     *
+     * @param[in] link True selects link overrides, false node overrides.
+     * @param[in] element Element key; negative values return global coefficients directly.
+     * @param[out] scratch Caller-owned vector overwritten with global coefficients only when overrides
+     *     exist and element>=0; otherwise preserved.
+     * @return Pointer to coef_value or scratch data; length coef_value.size(), and an empty vector may
+     *     return NULL.
+     */
+    const double* coefficients(bool link, int element, std::vector<double>& scratch) const {
+        if (parameter_overrides.empty() || element < 0)
+            return coef_value.data();
+        scratch = coef_value;
+        for (const auto& row : parameter_overrides)
+            if (row.link == link && row.element == element)
+                scratch[static_cast<std::size_t>(row.coefficient)] = row.value;
+        return scratch.data();
+    }
+
+    struct SourcePattern {
+        std::string name;
+        std::vector<double> factors;
+    };
+    struct Source {
+        bool mass;
+        int node, species, pattern;
+        double value;
+        int booster = 0;
+    }; // 1 FLOWPACED, 2 SETPOINT
+    std::vector<double> booster_mass; // actual cumulative injection, concentration*ft3
+    double pattern_timestep = 3600.0; ///< seconds, independent of RATE_UNITS
+    std::vector<SourcePattern> source_patterns;
+    std::vector<Source> sources;
+
+    /// Native result selection. Empty means all species (legacy default).
+    /// Selection is retained through species edits and canonical serialization.
+    std::vector<uint8_t> report_enabled;
+    std::vector<int> reported_species;
+
+    // ---- [REACTION_TERMS] --------------------------------------------------
+    std::vector<std::string> term_name;     ///< cold
+    std::vector<std::string> term_expr_src; ///< cold (compiled in R2)
+
+    struct SubsurfaceLaw {
+        int scope = 0, cell = -1, zone = 0, layer = -1,
+            species = -1; // scope: global/tag/cell; zone: sat/unsat/layer
+        std::string tag, expression;
+        ReactionExprForm form = ReactionExprForm::NONE;
+        RxExprSpan compiled;
+    };
+    std::vector<SubsurfaceLaw> subsurface_laws;
+
+    // ---- [REACTION_PIPES] / [REACTION_TANKS] — dense per species -----------
+    std::vector<ReactionExprForm> pipe_form; ///< size n_species
+    std::vector<std::string> pipe_expr_src;  ///< size n_species (cold)
+    std::vector<ReactionExprForm> tank_form;
+    std::vector<std::string> tank_expr_src;
+
+    struct SurfaceLaw {
+        int subcatchment = -1, landuse = -1, species = -1;
+        ReactionExprForm form = ReactionExprForm::NONE;
+        std::string expression;
+        RxExprSpan compiled;
+    };
+    std::vector<SurfaceLaw> wet_laws, buildup_laws;
+    /**
+     * @brief Test whether wet surface reactions can apply to one subcatchment.
+     *
+     * Sparse form is not checked here; presence of even a NONE law returns true.
+     *
+     * @param[in] sc Subcatchment key compared to sparse wet_laws; no model-range validation.
+     * @return True if any global subcatch_form is non-NONE or any sparse wet law names sc.
+     */
+    bool wet_enabled(int sc) const noexcept {
+        for (auto f : subcatch_form)
+            if (f != ReactionExprForm::NONE)
+                return true;
+        for (const auto& l : wet_laws)
+            if (l.subcatchment == sc)
+                return true;
+        return false;
+    }
+    // Wet, non-LID subcatchment pools have their own reactor context.
+    std::vector<ReactionExprForm> subcatch_form;
+    std::vector<std::string> subcatch_expr_src;
+    std::vector<RxExprSpan> subcatch_expr;
+    /**
+     * @brief Test whether any global or sparse wet subcatchment reaction is configured.
+     * @return True for a non-NONE global form or any wet_laws row; does not inspect sparse row forms or
+     *     compiled status.
+     */
+    bool has_subcatch_reactions() const noexcept {
+        for (const auto form : subcatch_form)
+            if (form != ReactionExprForm::NONE)
+                return true;
+        return !wet_laws.empty();
+    }
+
+    // ---- [REACTION_QUALITY] GLOBAL initial values (R1) ---------------------
+    std::vector<double> init_global; ///< size n_species
+    /// [REACTION_RAINFALL]: concentration of each species in rainfall, in its
+    /// own units (0 = rain falls clean). Size n_species. Multispecies Phase 2.
+    std::vector<double> rain_conc;
+
+    // ---- [REACTION_QUALITY] NODE/LINK per-element overrides (E-B) ----------
+    // Sparse row table over the GLOBAL seed; covered by clear() via the
+    // *this = ReactionData{} reset.
+    std::vector<uint8_t> init_elem_is_link; ///< 0 = NODE row, 1 = LINK row
+    std::vector<int> init_elem_idx;         ///< resolved node/link index
+    std::vector<int> init_elem_species;     ///< 0..n_species()-1
+    std::vector<double> init_elem_value;
+
+    // ---- Compiled bytecode (R2 — D-L3 flat pool; spans index token_pool) ----
+    std::vector<RxToken> token_pool;   ///< hot: one contiguous pool
+    std::vector<RxExprSpan> term_expr; ///< per term, in-order evaluation
+    std::vector<RxExprSpan> pipe_expr; ///< per species (len 0 ⇒ none)
+    std::vector<RxExprSpan> tank_expr; ///< per species
+    bool compiled = false;             ///< R2 compile pass succeeded
+    bool warned_react_failure = false;
+    bool warned_negative_clamp = false; ///< review A2: once-per-run note
+
+    // ---- R4: MSX species element state under QUALITY_SOLVER LEGACY --------
+    // [element * n_species + s]; sized lazily by the legacy binding. R4b
+    // (2026-09-01): species react per element AND advect between elements
+    // (routeLegacyMsx, the CSTR mirror family) — the not-transported
+    // warning and its once-per-run flag are gone with the limitation.
+    std::vector<double> msx_node_conc;
+    std::vector<double> msx_link_conc;
+
+    // ---- U2 (2026-09-07): external MSX loads at the node seam ------------
+    // [node * n_species + m], a mass RATE in the species' internal unit
+    // convention (conc-units × ft3/s — the qual_mass_in shape), assembled
+    // every routing step by InflowSolver::computeAll from [INFLOWS] rows
+    // that name a species (CONCEN × node external flow, or MASS ÷ LperFT3).
+    // Empty until a species inflow row exists. Consumed by every quality
+    // engine's node mixing: routeLegacyMsx (LEGACY), ArdEngine stage 1b /
+    // 1a' (EULERIAN_ARD) and the LARD node stage.
+    std::vector<double> msx_ext_mass_in;
+
+    /// Review D1/F21 (2026-10-15): species MASS (conc-units × ft³) handed to
+    /// a node by the 2D surface drain and the aquifer bed, [node * ns + m].
+    /// Drained into `msx_ext_mass_in` every routing step by the same
+    /// remaining-span rule as `NodeData::coupling_qual_queue`
+    /// (transport::drainMsxCouplingQueue). Empty until a seam books into it.
+    std::vector<double> msx_coupling_queue;
+
+    /// Review B14 (2026-10-15): the reaction-species routing ledger under
+    /// QUALITY_SOLVER LEGACY, per species, in conc-units × ft³ (the
+    /// pollutant ledger's convention). Armed by the first routeLegacyMsx
+    /// call; ARD keeps its own ledger and LARD is not yet booked here.
+    ///   init + inflow + clamped = outflow + flooding + seepage + reacted
+    ///                             + final storage (+ final_dry) + residual
+    struct MsxRoutingLedger {
+        bool armed = false;
+        std::vector<double> init, inflow, outflow, flooding, seepage, reacted, clamped, final_dry;
+        /**
+         * @brief Zero and activate the legacy MSX routing ledger.
+         *
+         * Sets armed before independent zero-filled vector assignments; allocation failure can leave
+         * partially resized columns. Ledger quantities are concentration-units*ft3.
+         *
+         * @param[in] ns Reaction species count used for every ledger column.
+         */
+        void arm(std::size_t ns) {
+            armed = true;
+            for (auto* v :
+                 {&init, &inflow, &outflow, &flooding, &seepage, &reacted, &clamped, &final_dry})
+                v->assign(ns, 0.0);
+        }
+    };
+    MsxRoutingLedger msx_ledger;
+
+    /// BW-MSX (2026-09-19): surface buildup / washoff / sweeping of MSX
+    /// species — rows parked by name at parse, resolved after this component
+    /// is applied, stepped beside the pollutant surface-quality step, and
+    /// delivered into `msx_ext_mass_in` each routing step. See
+    /// `quality/MsxSurfaceQuality.hpp`.
+    MsxSurfaceData surface;
+
+    bool configured = false; ///< a reactions component applied
+
+    /**
+     * @brief Count authored reaction species.
+     * @return species_name.size() converted to int; alignment and registry_base are not checked.
+     */
+    int n_species() const noexcept { return static_cast<int>(species_name.size()); }
+    /**
+     * @brief Find the first exact-case species name.
+     *
+     * @param[in] n Borrowed untrimmed name; comparison is byte-exact, including embedded NULs.
+     * @return First matching zero-based index, or -1; linear scan.
+     */
+    int find_species(std::string_view n) const {
+        for (std::size_t i = 0; i < species_name.size(); ++i)
+            if (species_name[i] == n)
+                return static_cast<int>(i);
+        return -1;
+    }
+    /**
+     * @brief Find the first exact-case coefficient name.
+     *
+     * @param[in] n Borrowed untrimmed name; comparison is byte-exact, including embedded NULs.
+     * @return First matching zero-based index, or -1; linear scan.
+     */
+    int find_coef(std::string_view n) const {
+        for (std::size_t i = 0; i < coef_name.size(); ++i)
+            if (coef_name[i] == n)
+                return static_cast<int>(i);
+        return -1;
+    }
+    /**
+     * @brief Find the first exact-case term name.
+     *
+     * @param[in] n Borrowed untrimmed name; comparison is byte-exact, including embedded NULs.
+     * @return First matching zero-based index, or -1; linear scan.
+     */
+    int find_term(std::string_view n) const {
+        for (std::size_t i = 0; i < term_name.size(); ++i)
+            if (term_name[i] == n)
+                return static_cast<int>(i);
+        return -1;
+    }
+
+    /**
+     * @brief Reset reaction configuration/runtime state while preserving authored surface rows.
+     *
+     * Moves surface aside, restores default ReactionData fields and moves surface back. Releases
+     * compiled pools, species/coefficient/expression lists and runtime concentrations/ledgers. The
+     * preserved .inp-authored surface rows require later msxsurf resolution when reapplying a
+     * component. Invalidates borrowed references to all replaced storage.
+     */
+    void clear() {
+        MsxSurfaceData keep = std::move(surface);
+        *this = ReactionData{};
+        surface = std::move(keep);
+    }
+};
+
+} // namespace openswmm
+
+#endif // OPENSWMM_ENGINE_DATA_REACTION_DATA_HPP

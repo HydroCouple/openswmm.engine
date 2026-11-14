@@ -117,7 +117,7 @@ user supplies values for 1/γ, the full depth *Y*<sub>full</sub> and the top wid
 when full *b* (see Figure 5-1). Note that the parabolic shape is a
 special case of this power function shape where 1/γ equals 2.
 
-![](hydraulics/media/media/image22.png "image22")
+![Figure 5-1 Power law cross section shape](figures/png/hydraulics_ch5_power_law.png)
 
 **Figure 5-1 Power law cross section shape**
 
@@ -224,11 +224,11 @@ are listed in Table 5-4.
 | Hydraulic Radius | \f[R_{full} = 0.25Y_{full}\f] |
 | Section Factor | \f[\Psi_{full} = A_{full}R_{full}^{2/3}\f] |
 
-![](hydraulics/media/media/image23.png "image23")
+![](hydraulics/media/media/hydraulics-image23.png "image23")
 
 **Figure 5-2 Geometric properties of a partly filled circular shape based on depth**
 
-![](hydraulics/media/media/image24.png "image24")
+![](hydraulics/media/media/hydraulics-image24.png "image24")
 
 **Figure 5-3 Geometric properties of a partly filled circular shape based on area**
 
@@ -250,7 +250,7 @@ accuracy, analytical functions are used to compute *Y,* *Ψ,* and *Ψ'*
 for areas below 4% of *A*<sub>full</sub>. They are described in the side bar
 entitled "*Analytical Functions for Circular Cross Sections*".
 
-![](hydraulics/media/media/figure-theta.png "figure-theta")
+![Definition sketch of the circular section: central angle θ](figures/png/hydraulics_ch5_circular_theta.png)
 
 > **Analytical Functions for Circular Cross Sections**
 > 
@@ -287,7 +287,7 @@ entitled "*Analytical Functions for Circular Cross Sections*".
 
 ### 5.1.4 Ellipsoid and Arch Shapes
 
-![](hydraulics/media/media/image25.png "image25")
+![Figure 5-4 Elliptical and arch pipe cross sectional shapes](figures/png/hydraulics_ch5_shapes_elliptical_arch.png)
 
 **Figure 5-4 Ellipsoid and arch pipe cross sectional shapes**
 
@@ -352,7 +352,7 @@ table using the following expression with *N* = 26:
 
 ### 5.1.5 Older Masonry Sewer Shapes
 
-![OldShapes.png](hydraulics/media/media/image27.png)
+![Figure 5-5 Masonry sewer shapes](figures/png/hydraulics_ch5_shapes_masonry.png)
 
 **Figure 5-5 Masonry sewer shapes**
 
@@ -410,12 +410,9 @@ circular, rectangular, and triangular sections. The formulas for
 computing their geometrical properties are presented in the following
 paragraphs.
 
-![](hydraulics/media/media/image28.png "image28")
+![Figure 5-6 Composite cross section shapes](figures/png/hydraulics_ch5_shapes_composite.png)
 
-Figure 5-6 shows four cross section shapes that are combinations of
-circular, rectangular, and triangular sections. The formulas for
-computing their geometrical properties are presented in the following
-paragraphs.
+**Figure 5-6 Composite cross section shapes**
 
 <u>Sediment Filled Circular Shape</u>
 
@@ -632,7 +629,7 @@ table of width versus height is shown in Figure 5-7.
 
 | | |
 |---|---|
-| ![ShapeCurve2.png](hydraulics/media/media/image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
+| ![ShapeCurve2.png](hydraulics/media/media/hydraulics-image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
 
 **Figure 5-7 A Shape Curve with a depth segment shown**
 
@@ -676,7 +673,7 @@ to evaluate *A(Ψ).*
 
 ## 5.3 Irregular Natural Channels
 
-![](hydraulics/media/media/image30.png "image30")
+![](hydraulics/media/media/hydraulics-image30.png "image30")
 
 **Figure 5-8 A natural channel transect**
 
@@ -731,7 +728,7 @@ After the end of the transect is reached the sum of the compound
 conductances is used along with the main channel roughness to find the
 hydraulic radius for the current depth increment.
 
-![](hydraulics/media/media/image31.png "image31")
+![](hydraulics/media/media/hydraulics-image31.png "image31")
 
 **Figure 5-9 A transect depth increment with three compound segments**
 
@@ -819,7 +816,7 @@ A two sided street cross-section adds a mirror image of the one-sided
 street to the right of the street crown with the same roadway, gutter,
 curb, and backing dimensions.
 
-![Street.png](hydraulics/media/media/image32.png)
+![Figure 5-10 A one-sided street cross-section](figures/png/hydraulics_ch5_street_section.png)
 
 **Figure 5-10 A one-sided street cross-section (not to scale)**
 
@@ -859,10 +856,10 @@ as shown in Table 5-14.
 
 | Shape | | Coefficients | Dimensions |
 |---|---|---|---|
-| Elliptical Cylinder | ![cylindrical.png](hydraulics/media/media/image33.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
-| Elliptical Paraboloid | ![paraboloid.png](hydraulics/media/media/image34.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
-| Elliptical Cone | ![ConicStorageShape.bmp](hydraulics/media/media/image35.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
-| Rectangular Pyramid | ![PrismaticStorageShape.bmp](hydraulics/media/media/image36.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
+| Elliptical Cylinder | ![Elliptical cylinder](figures/png/hydraulics_ch5_storage_cylinder.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
+| Elliptical Paraboloid | ![Elliptical paraboloid](figures/png/hydraulics_ch5_storage_paraboloid.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
+| Elliptical Cone | ![Elliptical cone](figures/png/hydraulics_ch5_storage_cone.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
+| Rectangular Pyramid | ![Rectangular pyramid](figures/png/hydraulics_ch5_storage_pyramid.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
 
 Dynamic wave analysis needs to know how volume *V* varies with depth
 *Y*. Integrating Equation 5-23 over depth yields:
@@ -983,9 +980,9 @@ be assumed that the unit has zero surface area at its base. The curve
 will be extrapolated outwards to meet the unit\'s maximum depth if need
 be.
 
-![StorageCurve2.png](hydraulics/media/media/image37.png)
+![StorageCurve2.png](hydraulics/media/media/hydraulics-image37.png)
 
-![](hydraulics/media/media/image38.png "image38")
+![](hydraulics/media/media/hydraulics-image38.png "image38")
 
 **Figure 5-11 Example of a storage curve and its section view**
 
@@ -1009,7 +1006,7 @@ first interpolated from the storage curve rather than converting the
 original area curve to a volume curve and interpolating directly from
 it.
 
-![](hydraulics/media/media/image39.png "image39")
+![](hydraulics/media/media/hydraulics-image39.png "image39")
 
 **Figure 5-12 Finding the volume at a given depth for a storage curve**
 

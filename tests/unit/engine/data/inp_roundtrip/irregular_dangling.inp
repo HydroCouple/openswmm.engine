@@ -1,0 +1,49 @@
+[TITLE]
+InpWriter round-trip fixture: IRREGULAR conduit referencing a MISSING transect
+TRX is never defined, so xsect_curve stays -1 while the parser's retained name
+is all the writer has. Mirrors dangling_refs.inp: a strict open should reject
+this model (undefined transect), the GUI's lenient open keeps it editable, and
+Save must preserve the name "TRX" rather than emitting derived numerics.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10.0  8.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       8.0   FREE  *          NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J1        O1      400.0   0.013      0         0
+
+[XSECTIONS]
+;;Link  Shape      Geom1  Geom2  Geom3  Geom4  Barrels
+C1       IRREGULAR  TRX
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1       0.0      0.0
+O1       1000.0   0.0

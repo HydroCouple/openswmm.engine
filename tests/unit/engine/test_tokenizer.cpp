@@ -1,6 +1,6 @@
 /**
- * @file test_tokenizer.cpp
- * @brief Unit tests for the multi-delimiter Tokenizer.
+ * @file      test_tokenizer.cpp
+ * @brief     Unit tests for the multi-delimiter Tokenizer.
  *
  * @details Tests the openswmm::input::Tokenizer class which splits SWMM input
  *          lines on comma, horizontal tab, and one-or-more spaces. This class
@@ -9,6 +9,10 @@
  * @see src/engine/input/Tokenizer.hpp
  * @see Legacy reference: src/solver/input.c — getToken() function
  * @ingroup engine_input
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -133,6 +137,19 @@ TEST(TokenizerTest, QuotedPathWithColon) {
     EXPECT_THAT(tokens, ElementsAre("FILE", "path/to/rain.csv:EAST_STATION"));
 }
 
+TEST(TokenizerTest, QuotedKeyValuePreservesSpacesAndComments) {
+    auto tokens = Tokenizer::tokenize(
+        R"(component config="Config  Folder/model; v1.rxn" version="1.0" ; comment)");
+    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config  Folder/model; v1.rxn")",
+                                    R"(version="1.0")"));
+}
+
+TEST(TokenizerTest, QuotedKeyValueInCsvPreservesCommaAndSpaces) {
+    auto tokens = Tokenizer::tokenize(R"(component,config="Config Folder/a, b.rxn",version=1)");
+    EXPECT_THAT(tokens,
+                ElementsAre("component", R"(config="Config Folder/a, b.rxn")", "version=1"));
+}
+
 // ============================================================================
 // tokenize_views
 // ============================================================================
@@ -233,3 +250,58 @@ TEST(TokenizerTest, ParseBooleanFalse) {
 }
 
 } /* anonymous namespace */
+
+// ============================================================================
+// tokenize — a comma inside a name
+//
+// Legacy SWMM splits on " \t\n\r" only (input.c SEPSTR), so a comma is an
+// ordinary name character there, and real decks rely on it. Treating every
+// comma as a delimiter split one subcatchment outlet into two tokens, which
+// truncated the reference, read the fragment after the comma as the
+// subcatchment's AREA, and left a stray token the legacy reader rejected as an
+// undefined object. Found by running legacy over the round-tripped corpus.
+//
+// The rule is positional: a comma separates at a token boundary (against
+// whitespace, or a line edge) or in a line that is pure CSV; flanked by
+// non-whitespace in an otherwise space-delimited line, it belongs to its name.
+// ============================================================================
+
+TEST(TokenizerTest, CommaInsideANameIsNotADelimiter) {
+    // The row that exposed this, from semi-real-models/3005-h-h-elements.
+    auto tokens =
+        Tokenizer::tokenize("Land-4425 return2yr S-2-M20-L109/link2,6-201-9(u) 0.00 100 3 1.000 0");
+    ASSERT_EQ(tokens.size(), 8u);
+    EXPECT_EQ(tokens[2], "S-2-M20-L109/link2,6-201-9(u)");
+    EXPECT_EQ(tokens[3], "0.00") << "the area must not be a fragment of the name";
+}
+
+TEST(TokenizerTest, CommaAgainstWhitespaceStillSeparates) {
+    EXPECT_THAT(Tokenizer::tokenize("A,B C"), ElementsAre("A,B", "C"));
+    EXPECT_THAT(Tokenizer::tokenize("A, B C"), ElementsAre("A", "B", "C"));
+    EXPECT_THAT(Tokenizer::tokenize("A ,B C"), ElementsAre("A", "B", "C"));
+}
+
+TEST(TokenizerTest, LeadingAndTrailingCommasSeparate) {
+    // Nothing can be interior to a name at a line edge.
+    EXPECT_THAT(Tokenizer::tokenize("A,B, C"), ElementsAre("A,B", "C"));
+    EXPECT_THAT(Tokenizer::tokenize("A B,"), ElementsAre("A", "B"));
+}
+
+// A quoted value is the CSV convention for a field that itself contains a
+// comma, and quoting also supplies the structure a bare CSV line gets from
+// having no whitespace at all.
+TEST(TokenizerTest, QuotedFieldKeepsItsCommaInACsvRow) {
+    EXPECT_THAT(Tokenizer::tokenize(R"("Smith, John",42,OK)"),
+                ElementsAre("Smith, John", "42", "OK"));
+}
+
+TEST(TokenizerTest, ConsecutiveCommasKeepCsvColumnAlignment) {
+    // A pure-CSV row: the empty field must survive or every later column
+    // shifts left by one.
+    EXPECT_THAT(Tokenizer::tokenize("J1,,0.5"), ElementsAre("J1", "", "0.5"));
+}
+
+TEST(TokenizerTest, PureCsvRowSplitsEvenWithCommasInsideRuns) {
+    // No whitespace outside quotes, so commas are the only structure there is.
+    EXPECT_THAT(Tokenizer::tokenize("a,b,c"), ElementsAre("a", "b", "c"));
+}

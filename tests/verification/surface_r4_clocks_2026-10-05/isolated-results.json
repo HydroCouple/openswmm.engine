@@ -1,0 +1,182 @@
+{
+  "tests": 16,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-05T14:24:52Z",
+  "time": "0.003s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "SourceClockGroups",
+      "tests": 16,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-05T14:24:52Z",
+      "time": "0.003s",
+      "testsuite": [
+        {
+          "name": "WholeRunoffAndLidDrainGraphsIncludeUpstreamCyclesAndReturns",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 55,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "DrainNodePrecedenceAndInvalidTopologyAreExplicit",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 68,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "IndependentCompletedClocksCancelRetryAndNoReplay",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 80,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "SubsecondRainCannotBorrowFutureGlobalCursorOrRecord",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 94,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "RainIntensityVolumeCumulativeResetAndDryGapsInUsAndSi",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 109,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "RainFileUnitsScaleMonthlyFactorsAndPersistentPrescriptions",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 122,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "StepPetIsPastOnlyAndOverridesRespectDryOnly",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 137,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "MonthBoundaryChangesPetRainInfiltrationAndRecoveryTogether",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 158,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "UnsupportedHistoriesHaveNamedRefusalsAndNoPartialInitialization",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 173,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "SelectedRunoffMatchesNativeBatchAndLeavesPeerStatesUntouched",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 188,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "BadSelectedBatchesCannotPartiallyAdvanceSources",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 202,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "RealRunoffTrialsConserveRainStorageAndActualSurfaceEvaporation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 215,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "RealEngineFutureRunoffCursorCannotAdvanceCompletedSourceForcing",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 234,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0.002s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "TimingRefinementConvergesWithoutAdvancingAnUnselectedControl",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 262,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "StorageLidUsesItsGroupsCompletedRainProfile",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 301,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        },
+        {
+          "name": "CompletedRunoffVolumeClosesForMixedSubareasAndInstantDrainage",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_source_clock_groups.cpp",
+          "line": 322,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T14:24:52Z",
+          "time": "0s",
+          "classname": "SourceClockGroups"
+        }
+      ]
+    }
+  ]
+}

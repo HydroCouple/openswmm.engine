@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_2d_vfr_closure.cpp
- * @brief Unit tests for the VFR (volume–free-surface) closure and the
+ * @file      test_2d_vfr_closure.cpp
+ * @brief     Unit tests for the VFR (volume–free-surface) closure and the
  *        VFR_FACE edge reconstruction (Begnudelli & Sanders 2006/2007).
  *
  * @details Verifies:
@@ -20,9 +36,9 @@
  * @see plans/2d/2D_VFR_SOLVER_CLOSURE_PLAN.md
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -42,7 +58,7 @@
 using namespace openswmm::twoD;
 
 namespace {
-constexpr double kEps = 0.01;   // default VFR_MIN_WET_FRAC
+constexpr double kEps = 0.01; // default VFR_MIN_WET_FRAC
 
 } // namespace
 
@@ -69,10 +85,9 @@ TEST(VfrClosure, MonotoneWithBoundedSlope) {
         const double e = vfrEtaFromMeanDepth(z1, z2, z3, h, kEps);
         EXPECT_GT(e, prev);
         prev = e;
-        const double slope =
-            (vfrEtaFromMeanDepth(z1, z2, z3, h + 1e-7, kEps) - e) / 1e-7;
+        const double slope = (vfrEtaFromMeanDepth(z1, z2, z3, h + 1e-7, kEps) - e) / 1e-7;
         EXPECT_GT(slope, 0.0);
-        EXPECT_LE(slope, 1.0 / kEps + 1.0);   // dη/dh̄ ≤ 1/ε (the CVODE bound)
+        EXPECT_LE(slope, 1.0 / kEps + 1.0); // dη/dh̄ ≤ 1/ε (the CVODE bound)
     }
 }
 
@@ -81,16 +96,18 @@ TEST(VfrClosure, C1AtBranchJoins) {
     const double zbar = (z1 + z2 + z3) / 3.0;
     const double eta_s = vfrStageAtWetFraction(z1, z2, z3, kEps);
     const double joins[3] = {
-        vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s),   // ε-tail switch
-        vfrMeanDepthFromEtaExact(z1, z2, z3, z2),      // lower→upper branch
-        z3 - zbar                                       // upper→fully-wet
+        vfrMeanDepthFromEtaExact(z1, z2, z3, eta_s), // ε-tail switch
+        vfrMeanDepthFromEtaExact(z1, z2, z3, z2),    // lower→upper branch
+        z3 - zbar                                    // upper→fully-wet
     };
     for (const double hj : joins) {
-        const double d  = 1e-9;
-        const double sl = (vfrEtaFromMeanDepth(z1, z2, z3, hj, kEps)
-                           - vfrEtaFromMeanDepth(z1, z2, z3, hj - d, kEps)) / d;
-        const double sr = (vfrEtaFromMeanDepth(z1, z2, z3, hj + d, kEps)
-                           - vfrEtaFromMeanDepth(z1, z2, z3, hj, kEps)) / d;
+        const double d = 1e-9;
+        const double sl = (vfrEtaFromMeanDepth(z1, z2, z3, hj, kEps) -
+                           vfrEtaFromMeanDepth(z1, z2, z3, hj - d, kEps)) /
+                          d;
+        const double sr = (vfrEtaFromMeanDepth(z1, z2, z3, hj + d, kEps) -
+                           vfrEtaFromMeanDepth(z1, z2, z3, hj, kEps)) /
+                          d;
         EXPECT_NEAR(sl, sr, 1e-3 * std::max(sl, sr));
     }
 }
@@ -98,10 +115,10 @@ TEST(VfrClosure, C1AtBranchJoins) {
 TEST(VfrClosure, AnalyticDerivativeMatchesFiniteDifference) {
     const double z1 = 0.0, z2 = 0.4, z3 = 1.0;
     for (double h = 1e-5; h <= 0.8; h += 3e-4) {
-        const double e  = vfrEtaFromMeanDepth(z1, z2, z3, h, kEps);
-        const double fd = (vfrEtaFromMeanDepth(z1, z2, z3, h + 1e-8, kEps)
-                           - vfrEtaFromMeanDepth(z1, z2, z3, h - 1e-8, kEps))
-                          / 2e-8;
+        const double e = vfrEtaFromMeanDepth(z1, z2, z3, h, kEps);
+        const double fd = (vfrEtaFromMeanDepth(z1, z2, z3, h + 1e-8, kEps) -
+                           vfrEtaFromMeanDepth(z1, z2, z3, h - 1e-8, kEps)) /
+                          2e-8;
         const double an = vfrDEtaDMeanDepth(z1, z2, z3, e, kEps);
         EXPECT_NEAR(fd, an, 0.02 * an + 1e-6);
     }
@@ -115,7 +132,8 @@ TEST(VfrClosure, FlatClosureOverestimatesEta) {
     for (double h = 1e-4; h < 1.2; h += 1e-3) {
         const double e = vfrEtaFromMeanDepth(z1, z2, z3, h, 0.0);
         EXPECT_LE(e, zbar + h + 1e-12);
-        if (h >= z3 - zbar) EXPECT_NEAR(e, zbar + h, 1e-12);
+        if (h >= z3 - zbar)
+            EXPECT_NEAR(e, zbar + h, 1e-12);
     }
 }
 
@@ -140,8 +158,7 @@ TEST(VfrClosure, DegenerateCells) {
         EXPECT_NEAR(vfrMeanDepthFromEta(0.0, 1.0, 1.0, eb, kEps), h, 1e-9);
     }
     // 1-ulp z2≈z3 sliver must not divide by zero.
-    EXPECT_TRUE(std::isfinite(
-        vfrEtaFromMeanDepth(0.0, 1.0, 1.0 + 1e-13, 0.2, 0.0)));
+    EXPECT_TRUE(std::isfinite(vfrEtaFromMeanDepth(0.0, 1.0, 1.0 + 1e-13, 0.2, 0.0)));
 }
 
 TEST(VfrClosure, RenderClosureDelegates) {
@@ -151,7 +168,7 @@ TEST(VfrClosure, RenderClosureDelegates) {
                 vfrEtaFromMeanDepth(0.0, 1.0, 3.0, 0.02, 0.0), 1e-12);
     EXPECT_NEAR(cellFreeSurfaceElevation(0.9, 1.0, 0.0, 3.0),
                 vfrEtaFromMeanDepth(0.0, 1.0, 3.0, 0.9, 0.0), 1e-12);
-    EXPECT_EQ(cellFreeSurfaceElevation(0.0, 1.0, 0.0, 3.0), 0.0);   // dry → z1
+    EXPECT_EQ(cellFreeSurfaceElevation(0.0, 1.0, 0.0, 3.0), 0.0); // dry → z1
     EXPECT_NEAR(cellFreeSurfaceElevation(0.5, 2.0, 2.0, 2.0), 2.5, 1e-12);
 }
 
@@ -169,8 +186,8 @@ TEST(VfrClosure, RenderClosureDelegates) {
 
 TEST(VfrOptions, ParseAndFormatRoundTrip) {
     SolverOptions2D opts;
-    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);          // default (opt-in VFR)
-    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN);     // default (opt-in VFR)
+    EXPECT_EQ(opts.cell_closure, CellClosure2D::FLAT);      // default (opt-in VFR)
+    EXPECT_EQ(opts.face_reconstruction, FaceDepth2D::MEAN); // default (opt-in VFR)
 
     EXPECT_TRUE(parse2DOptionsLine({"CELL_CLOSURE", "VFR"}, opts).empty());
     EXPECT_EQ(opts.cell_closure, CellClosure2D::VFR);

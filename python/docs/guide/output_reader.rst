@@ -14,6 +14,9 @@ and supports the context-manager protocol.
 
 Reference: ``openswmm_output.h``.
 
+For named fields, object collections and saved 2D HDF5 results, see
+:doc:`results`. ``OutputReader`` remains the direct binary-file interface.
+
 ----
 
 Quickstart
@@ -99,6 +102,10 @@ Metadata properties
    * - ``node_ids`` / ``link_ids`` / ``subcatchment_ids``
      - ``list[str]``
      - Ordered by integer index.
+   * - ``pollutant_ids`` / ``pollutant_units``
+     - ``list[str]`` / ``list[str | None]``
+     - Species-column names and unit labels. Reserved age/temperature columns
+       use hours/degrees C; unknown concentration codes have no unit label.
    * - ``error_code``
      - ``int``
      - SWMM error code in the footer; ``0`` is a clean run.
@@ -209,8 +216,8 @@ understands without further conversion:
 See also
 ========
 
-* :doc:`solver` — :attr:`Solver.out` is the runtime equivalent for the
-  same data while the engine is still open.
+* :doc:`solver` — runtime state and ``solver.open_results()`` after ``end()``.
+* :doc:`results` — named result fields and independent 2D HDF5 reading.
 * :doc:`nodes`, :doc:`links` — engine-side wrappers cover the same
   variables for the active run.
 * :doc:`datetime` — SWMM DateTime ↔ Python ``datetime`` rules.

@@ -1,6 +1,6 @@
 /**
- * @file test_user_flags_capi.cpp
- * @brief Unit tests for the user-flags C API surface added for the GUI
+ * @file      test_user_flags_capi.cpp
+ * @brief     Unit tests for the user-flags C API surface added for the GUI
  *        (Phase 0 of openswmm.gui/docs/USER_FLAGS_UI_PLAN_2026-06-03.md):
  *
  *          swmm_userflag_def_count / swmm_userflag_def_get
@@ -16,10 +16,18 @@
  * @see include/openswmm/engine/openswmm_model.h
  * @see src/engine/core/UserFlags.hpp
  * @see tests/unit/engine/test_user_flags.cpp (INP handler / core container)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 
+#include <clocale>
+#include <cmath>
+#include <cstdlib>
+#include <locale>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -27,27 +35,55 @@
 
 namespace {
 
-constexpr int kBool   = 0;
-constexpr int kInt    = 1;
-constexpr int kReal   = 2;
+constexpr int kBool = 0;
+constexpr int kInt = 1;
+constexpr int kReal = 2;
 constexpr int kString = 3;
 
 class UserFlagsCapiTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable empty model for each API test.
+     *
+     * Stores the owned handle in engine and asserts allocation succeeded. Tests populate the model and
+     * fixture teardown destroys it.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
     }
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 
     // Convenience: read a per-object value; returns "" when unset.
-    std::string getValue(const char* objType, const char* objName,
-                         const char* flagName, int* found) {
+    /**
+     * @brief Read one object user-flag value into owned fixture text.
+     *
+     * Requires live fixture engine. Records an EXPECT status, retains no argument buffers and adds no
+     * independent presence validation or model mutation.
+     *
+     * @param[in] objType Non-null recognized object-type name.
+     * @param[in] objName Non-null existing object ID.
+     * @param[in] flagName Non-null flag definition name.
+     * @param[out] found Writable presence flag passed through to swmm_userflag_value_get.
+     * @return Copied 256-byte-buffer text, possibly empty/partial after nonfatal getter failure.
+     */
+    std::string getValue(const char* objType, const char* objName, const char* flagName,
+                         int* found) {
         char buf[256] = {};
-        EXPECT_EQ(swmm_userflag_value_get(engine, objType, objName, flagName,
-                                          buf, sizeof(buf), found), SWMM_OK);
+        EXPECT_EQ(
+            swmm_userflag_value_get(engine, objType, objName, flagName, buf, sizeof(buf), found),
+            SWMM_OK);
         return std::string(buf);
     }
 };
@@ -57,12 +93,9 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(UserFlagsCapiTest, DefineAndEnumerate) {
-    EXPECT_EQ(swmm_userflag_define(engine, "INSPECTED", kBool,
-                                   "Field inspected?"), SWMM_OK);
-    EXPECT_EQ(swmm_userflag_define(engine, "PRIORITY", kInt,
-                                   "Maintenance priority"), SWMM_OK);
-    EXPECT_EQ(swmm_userflag_define(engine, "ROUGHNESS_ADJ", kReal, nullptr),
-              SWMM_OK);
+    EXPECT_EQ(swmm_userflag_define(engine, "INSPECTED", kBool, "Field inspected?"), SWMM_OK);
+    EXPECT_EQ(swmm_userflag_define(engine, "PRIORITY", kInt, "Maintenance priority"), SWMM_OK);
+    EXPECT_EQ(swmm_userflag_define(engine, "ROUGHNESS_ADJ", kReal, nullptr), SWMM_OK);
     EXPECT_EQ(swmm_userflag_define(engine, "ASSET_ID", kString, ""), SWMM_OK);
 
     int count = -1;
@@ -71,26 +104,25 @@ TEST_F(UserFlagsCapiTest, DefineAndEnumerate) {
 
     char name[64] = {};
     char desc[128] = {};
-    int  type = -1;
+    int type = -1;
 
-    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), &type,
-                                    desc, sizeof(desc)), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), &type, desc, sizeof(desc)),
+              SWMM_OK);
     EXPECT_STREQ(name, "INSPECTED");
     EXPECT_EQ(type, kBool);
     EXPECT_STREQ(desc, "Field inspected?");
 
-    ASSERT_EQ(swmm_userflag_def_get(engine, 2, name, sizeof(name), &type,
-                                    desc, sizeof(desc)), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_def_get(engine, 2, name, sizeof(name), &type, desc, sizeof(desc)),
+              SWMM_OK);
     EXPECT_STREQ(name, "ROUGHNESS_ADJ");
     EXPECT_EQ(type, kReal);
-    EXPECT_STREQ(desc, "");  // NULL description stored as empty
+    EXPECT_STREQ(desc, ""); // NULL description stored as empty
 }
 
 TEST_F(UserFlagsCapiTest, DefineNormalizesNameToUppercase) {
     EXPECT_EQ(swmm_userflag_define(engine, "inspected", kBool, ""), SWMM_OK);
     char name[64] = {};
-    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), nullptr,
-                                    nullptr, 0), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), nullptr, nullptr, 0), SWMM_OK);
     EXPECT_STREQ(name, "INSPECTED");
 }
 
@@ -104,8 +136,7 @@ TEST_F(UserFlagsCapiTest, RedefineOverwrites) {
 
     int type = -1;
     char desc[64] = {};
-    ASSERT_EQ(swmm_userflag_def_get(engine, 0, nullptr, 0, &type,
-                                    desc, sizeof(desc)), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_def_get(engine, 0, nullptr, 0, &type, desc, sizeof(desc)), SWMM_OK);
     EXPECT_EQ(type, kString);
     EXPECT_STREQ(desc, "new");
 }
@@ -118,22 +149,18 @@ TEST_F(UserFlagsCapiTest, DefineRejectsBadParams) {
 }
 
 TEST_F(UserFlagsCapiTest, DefGetBadIndex) {
-    EXPECT_EQ(swmm_userflag_def_get(engine, 0, nullptr, 0, nullptr, nullptr, 0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_userflag_def_get(engine, 0, nullptr, 0, nullptr, nullptr, 0), SWMM_ERR_BADINDEX);
     ASSERT_EQ(swmm_userflag_define(engine, "X", kBool, ""), SWMM_OK);
     EXPECT_EQ(swmm_userflag_def_get(engine, -1, nullptr, 0, nullptr, nullptr, 0),
               SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_userflag_def_get(engine, 1, nullptr, 0, nullptr, nullptr, 0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_userflag_def_get(engine, 1, nullptr, 0, nullptr, nullptr, 0), SWMM_ERR_BADINDEX);
 }
 
 TEST_F(UserFlagsCapiTest, UndefineRemovesDefinitionAndValues) {
     ASSERT_EQ(swmm_userflag_define(engine, "INSPECTED", kBool, ""), SWMM_OK);
     ASSERT_EQ(swmm_userflag_define(engine, "PRIORITY", kInt, ""), SWMM_OK);
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"),
-              SWMM_OK);
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "PRIORITY", "2"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "PRIORITY", "2"), SWMM_OK);
 
     EXPECT_EQ(swmm_userflag_undefine(engine, "INSPECTED"), SWMM_OK);
 
@@ -150,8 +177,7 @@ TEST_F(UserFlagsCapiTest, UndefineRemovesDefinitionAndValues) {
 
     // Remaining definition still retrievable at its new index.
     char name[64] = {};
-    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), nullptr,
-                                    nullptr, 0), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_def_get(engine, 0, name, sizeof(name), nullptr, nullptr, 0), SWMM_OK);
     EXPECT_STREQ(name, "PRIORITY");
 
     EXPECT_EQ(swmm_userflag_undefine(engine, "NOPE"), SWMM_ERR_BADPARAM);
@@ -165,17 +191,14 @@ TEST_F(UserFlagsCapiTest, BooleanValueRoundTrip) {
     ASSERT_EQ(swmm_userflag_define(engine, "INSPECTED", kBool, ""), SWMM_OK);
 
     int found = -1;
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"), SWMM_OK);
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "YES");
     EXPECT_EQ(found, 1);
 
     // TRUE/1 parse as true; NO/FALSE/0 as false.
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "true"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "true"), SWMM_OK);
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "YES");
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "NO"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "NO"), SWMM_OK);
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "NO");
 }
 
@@ -183,44 +206,81 @@ TEST_F(UserFlagsCapiTest, IntegerValueRoundTrip) {
     ASSERT_EQ(swmm_userflag_define(engine, "PRIORITY", kInt, ""), SWMM_OK);
 
     int found = -1;
-    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY", "-5"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY", "-5"), SWMM_OK);
     EXPECT_EQ(getValue("LINK", "C_MAIN", "PRIORITY", &found), "-5");
     EXPECT_EQ(found, 1);
 
-    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY",
-                                      "abc"), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY",
-                                      "1.5"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY", "abc"),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "PRIORITY", "1.5"),
+              SWMM_ERR_BADPARAM);
 }
 
 TEST_F(UserFlagsCapiTest, RealValueRoundTrip) {
     ASSERT_EQ(swmm_userflag_define(engine, "ROUGHNESS_ADJ", kReal, ""), SWMM_OK);
 
     int found = -1;
-    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN",
-                                      "ROUGHNESS_ADJ", "1.05"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "ROUGHNESS_ADJ", "1.05"), SWMM_OK);
     EXPECT_EQ(getValue("LINK", "C_MAIN", "ROUGHNESS_ADJ", &found), "1.05");
     EXPECT_EQ(found, 1);
 
-    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN",
-                                      "ROUGHNESS_ADJ", "1e-6"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "ROUGHNESS_ADJ", "1e-6"), SWMM_OK);
     EXPECT_EQ(getValue("LINK", "C_MAIN", "ROUGHNESS_ADJ", &found), "1e-06");
 
-    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN",
-                                      "ROUGHNESS_ADJ", "abc"),
+    EXPECT_EQ(swmm_userflag_value_set(engine, "LINK", "C_MAIN", "ROUGHNESS_ADJ", "abc"),
               SWMM_ERR_BADPARAM);
+}
+
+TEST_F(UserFlagsCapiTest, RealValuesPreservePrecisionAndIgnoreGlobalLocale) {
+    /** @cond */
+    struct Comma : std::numpunct<char> {
+        char do_decimal_point() const override { return ','; }
+        char do_thousands_sep() const override { return '.'; }
+        std::string do_grouping() const override { return "\3"; }
+    };
+    struct Restore {
+        std::locale previous_cpp = std::locale();
+        std::string previous_c = std::setlocale(LC_NUMERIC, nullptr);
+        ~Restore() {
+            std::locale::global(previous_cpp);
+            std::setlocale(LC_NUMERIC, previous_c.c_str());
+        }
+    } restore;
+    /** @endcond */
+    ASSERT_NE(std::setlocale(LC_NUMERIC, "C"), nullptr);
+    std::locale::global(std::locale(std::locale::classic(), new Comma));
+    ASSERT_EQ(swmm_userflag_define(engine, "REAL", kReal, ""), SWMM_OK);
+    for (const char* input : {"0", "-0", "0.1", "0.10000000000000002",
+                              "1.0000000000000002", "998.2", "1e-6",
+                              "1.7976931348623157e308", "-1.7976931348623157e308",
+                              "2.2250738585072014e-308", "4.9406564584124654e-324"}) {
+        SCOPED_TRACE(input);
+        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", input), SWMM_OK);
+        int found = 0;
+        const std::string output = getValue("NODE", "J1", "REAL", &found);
+        ASSERT_EQ(found, 1);
+        EXPECT_EQ(output.find(','), std::string::npos);
+        char* end = nullptr;
+        const double actual = std::strtod(output.c_str(), &end);
+        const double expected = std::strtod(input, nullptr);
+        ASSERT_NE(end, output.c_str());
+        EXPECT_EQ(*end, '\0');
+        EXPECT_EQ(actual, expected);
+        EXPECT_EQ(std::signbit(actual), std::signbit(expected));
+        ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "REAL", output.c_str()),
+                  SWMM_OK);
+        EXPECT_EQ(getValue("NODE", "J1", "REAL", &found), output);
+    }
 }
 
 TEST_F(UserFlagsCapiTest, StringValueRoundTrip) {
     ASSERT_EQ(swmm_userflag_define(engine, "ASSET_ID", kString, ""), SWMM_OK);
 
     int found = -1;
-    ASSERT_EQ(swmm_userflag_value_set(engine, "SUBCATCHMENT", "S_WEST",
-                                      "ASSET_ID", "AM 00341"), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "SUBCATCHMENT", "S_WEST", "ASSET_ID", "AM 00341"),
+              SWMM_OK);
     // Stored verbatim — no quoting at the API boundary.
-    EXPECT_EQ(getValue("SUBCATCHMENT", "S_WEST", "ASSET_ID", &found),
-              "AM 00341");
+    EXPECT_EQ(getValue("SUBCATCHMENT", "S_WEST", "ASSET_ID", &found), "AM 00341");
     EXPECT_EQ(found, 1);
 }
 
@@ -235,24 +295,20 @@ TEST_F(UserFlagsCapiTest, UnsetAndClear) {
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "");
     EXPECT_EQ(found, 0);
 
-    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "INSPECTED", "YES"), SWMM_OK);
     getValue("NODE", "J1", "INSPECTED", &found);
     EXPECT_EQ(found, 1);
 
-    EXPECT_EQ(swmm_userflag_value_clear(engine, "NODE", "J1", "INSPECTED"),
-              SWMM_OK);
+    EXPECT_EQ(swmm_userflag_value_clear(engine, "NODE", "J1", "INSPECTED"), SWMM_OK);
     getValue("NODE", "J1", "INSPECTED", &found);
     EXPECT_EQ(found, 0);
 
     // Clearing an unassigned value is idempotent.
-    EXPECT_EQ(swmm_userflag_value_clear(engine, "NODE", "J1", "INSPECTED"),
-              SWMM_OK);
+    EXPECT_EQ(swmm_userflag_value_clear(engine, "NODE", "J1", "INSPECTED"), SWMM_OK);
 }
 
 TEST_F(UserFlagsCapiTest, SetRequiresDefinedFlag) {
-    EXPECT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "UNDEFINED", "1"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_userflag_value_set(engine, "NODE", "J1", "UNDEFINED", "1"), SWMM_ERR_BADPARAM);
 }
 
 TEST_F(UserFlagsCapiTest, ModelLevelFlagsAreCaseInsensitive) {
@@ -285,8 +341,7 @@ TEST_F(UserFlagsCapiTest, ModelLevelFlagsAreCaseInsensitive) {
 TEST_F(UserFlagsCapiTest, CaseHandling) {
     ASSERT_EQ(swmm_userflag_define(engine, "INSPECTED", kBool, ""), SWMM_OK);
     // Object type and flag name are case-insensitive.
-    ASSERT_EQ(swmm_userflag_value_set(engine, "node", "J1", "inspected", "YES"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "node", "J1", "inspected", "YES"), SWMM_OK);
     int found = -1;
     EXPECT_EQ(getValue("NODE", "J1", "INSPECTED", &found), "YES");
     EXPECT_EQ(found, 1);
@@ -297,3 +352,14 @@ TEST_F(UserFlagsCapiTest, CaseHandling) {
 }
 
 } // namespace
+
+TEST_F(UserFlagsCapiTest, RealValuesReadBackWithoutPrecisionLoss) {
+    ASSERT_EQ(swmm_userflag_define(engine, "EXACT", kReal, ""), SWMM_OK);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "0.12345678901234566"), SWMM_OK);
+    int found = 0;
+    const auto text = getValue("NODE", "A", "EXACT", &found);
+    ASSERT_EQ(found, 1);
+    EXPECT_DOUBLE_EQ(std::stod(text), 0.12345678901234566);
+    ASSERT_EQ(swmm_userflag_value_set(engine, "NODE", "A", "EXACT", "3.14"), SWMM_OK);
+    EXPECT_EQ(getValue("NODE", "A", "EXACT", &found), "3.14");
+}

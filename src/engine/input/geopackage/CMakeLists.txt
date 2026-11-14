@@ -101,6 +101,14 @@ target_compile_definitions(openswmm_geopackage
     PRIVATE openswmm_engine_EXPORTS
 )
 
+# The GeoPackage reader/writer preserves reviewed aquifer sections through
+# the 2D section registry. Keep the ordinary 1D GeoPackage plugin linkable in
+# builds that omit the optional 2D module, while compiling those adapters only
+# when their implementation is present in openswmm_engine.
+if(OPENSWMM_BUILD_2D)
+    target_compile_definitions(openswmm_geopackage PRIVATE OPENSWMM_HAS_2D=1)
+endif()
+
 # Install
 install(
     TARGETS openswmm_geopackage

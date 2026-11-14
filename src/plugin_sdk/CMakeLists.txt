@@ -9,8 +9,8 @@
 # SimulationSnapshot interfaces without needing to link against the engine.
 #
 # Usage in plugin CMakeLists.txt:
-#   find_package(openswmm CONFIG REQUIRED)
-#   target_link_libraries(my_plugin PRIVATE openswmm::plugin_sdk)
+#   find_package(OpenSWMMEngine CONFIG REQUIRED)
+#   target_link_libraries(my_plugin PRIVATE OpenSWMMEngine::openswmm_plugin_sdk)
 #
 # See: include/openswmm/plugin_sdk/
 # See: docs/MASTER_IMPLEMENTATION_PLAN.md Phase 4

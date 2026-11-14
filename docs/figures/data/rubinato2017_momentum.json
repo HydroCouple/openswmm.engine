@@ -1,0 +1,2722 @@
+{
+  "date": "2026-10-22",
+  "settings": {
+    "theta": 0.8,
+    "reference_step_s": 1,
+    "max_trials": 80,
+    "head_tolerance_m": 1e-05,
+    "duration_s": 300,
+    "averaging_window_s": [
+      240,
+      300
+    ],
+    "comparison_window_s": [
+      180,
+      240
+    ],
+    "mesh_triangles": 1600,
+    "coefficient_fit": false
+  },
+  "library": {
+    "path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/momentum_smoothing_2026-10-22/pinned-bin/libopenswmm.engine.6.0.0.dylib",
+    "sha256": "01ee3499529d1349186265621dc2d49a9e185a21b61a8eec8339c79d41ed2e01"
+  },
+  "source_manifest_sha256": "919e000a8d6f58be805a2d312bd569148a2b68a37e779a09a3252bb1a278830b",
+  "stats": {
+    "cases": 36,
+    "simulations": 108,
+    "within_one_pct": 36,
+    "max_fine_change_pct": 0.5155476675376599,
+    "measured_band_pass": 0,
+    "direction_pass": 36,
+    "drift_within_two_pct": 36,
+    "continuity_1d_within_two_pct": 36,
+    "max_abs_continuity_2d_pct": 2.2344216453099157e-10,
+    "max_fine_head_change_m": 1.64767852065123e-05,
+    "max_fine_probe_change_m": 4.49493129014468e-05
+  },
+  "regimes": {
+    "S1": {
+      "rows": 15,
+      "max_fine_change_pct": 0.09249385143828757,
+      "mae_lps": 0.08662275757634512,
+      "bias_min_pct": 6.219467358429055,
+      "bias_max_pct": 11.15737447585266,
+      "measured_band_pass": 0,
+      "max_drift_pct": 0.00017622788388372328,
+      "continuity_1d_min_pct": -0.8570894088459384,
+      "continuity_1d_max_pct": -0.6776507508095507
+    },
+    "S2": {
+      "rows": 5,
+      "max_fine_change_pct": 0.5155476675376599,
+      "mae_lps": 0.20434117533535018,
+      "bias_min_pct": -47.8199759815392,
+      "bias_max_pct": 212.80708573918872,
+      "measured_band_pass": 0,
+      "max_drift_pct": 0.00022378622854195748,
+      "continuity_1d_min_pct": 1.4200530219430545,
+      "continuity_1d_max_pct": 1.5089711799951844
+    },
+    "S3": {
+      "rows": 8,
+      "max_fine_change_pct": 0.40646420684728546,
+      "mae_lps": 2.382642158666816,
+      "bias_min_pct": 54.95905215367168,
+      "bias_max_pct": 134.49473801213597,
+      "measured_band_pass": 0,
+      "max_drift_pct": 0.0001483533279309808,
+      "continuity_1d_min_pct": 1.566878550475495,
+      "continuity_1d_max_pct": 1.9428327228582387
+    },
+    "S4": {
+      "rows": 8,
+      "max_fine_change_pct": 0.3207839078317436,
+      "mae_lps": 2.7489959815572327,
+      "bias_min_pct": 64.33753646146313,
+      "bias_max_pct": 151.10876038435114,
+      "measured_band_pass": 0,
+      "max_drift_pct": 0.0003804490561397544,
+      "continuity_1d_min_pct": 1.568074523738266,
+      "continuity_1d_max_pct": 1.9302476222485474
+    }
+  },
+  "verification": {
+    "inertial": {
+      "tests": 20,
+      "failures": 0,
+      "errors": 0
+    },
+    "writer": {
+      "tests": 14,
+      "failures": 0,
+      "errors": 0
+    },
+    "rubinato": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0
+    },
+    "kokkos1": {
+      "returncode": 0
+    },
+    "kokkos4": {
+      "returncode": 0
+    }
+  },
+  "rows": [
+    {
+      "case": "S1_1",
+      "regime": "S1",
+      "observed_lps": 0.69,
+      "xi_f_lps": 0.0056,
+      "signed_observed_lps": -0.69,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.751311235926883,
+        -0.7497128420179929,
+        -0.7490200445307617
+      ],
+      "changes_pct": [
+        0.21320081760740187,
+        0.09249385143828757
+      ],
+      "legacy_magnitude_lps": 0.753204965833,
+      "magnitude_residual_lps": 0.059020044530761706,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00017622788388372328,
+      "continuity_1d_pct": -0.8570894088459384,
+      "continuity_2d_pct": -2.441903022024386e-12,
+      "head_m": 0.03734182997337722,
+      "probe_depth_m": 0.008578158809157176,
+      "measured_hs_m": 0.0077,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.03739630912780266,
+        0.03735830675858373,
+        0.03734182997337722
+      ],
+      "probe_series_m": [
+        0.008557521195111684,
+        0.008571231820365703,
+        0.008578158809157176
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.20014267222994161,
+        0.0,
+        0.19636195501678505,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.005496618721678774,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.27493228355879906,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.20014501291761305,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 1.6913160000030247,
+        "boundary_out": 1.216238703526654,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_2",
+      "regime": "S1",
+      "observed_lps": 0.77,
+      "xi_f_lps": 0.0152,
+      "signed_observed_lps": -0.77,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.841451752264874,
+        -0.8397496194226043,
+        -0.8390304336605643
+      ],
+      "changes_pct": [
+        0.20269527998596476,
+        0.0857162902783273
+      ],
+      "legacy_magnitude_lps": 0.828459702787,
+      "magnitude_residual_lps": 0.06903043366056427,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 8.696766575934163e-05,
+      "continuity_1d_pct": -0.822547570956392,
+      "continuity_2d_pct": 2.1849796443505382e-10,
+      "head_m": 0.03939141664988259,
+      "probe_depth_m": 0.009110017802864792,
+      "measured_hs_m": 0.0082,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.03944521266319805,
+        0.03940739867366113,
+        0.03939141664988259
+      ],
+      "probe_series_m": [
+        0.00908511929323822,
+        0.009101656390503253,
+        0.009110017802864792
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.22517134236043398,
+        0.0,
+        0.22114864408012566,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.0058753393784478315,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.2920869110348433,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.22517396433058307,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 1.8754560000074918,
+        "boundary_out": 1.3581951246379678,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_3",
+      "regime": "S1",
+      "observed_lps": 0.83,
+      "xi_f_lps": 0.0216,
+      "signed_observed_lps": -0.83,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.8851749247405167,
+        -0.8834319510160227,
+        -0.8827055266503301
+      ],
+      "changes_pct": [
+        0.19729575350874362,
+        0.0822952098701827
+      ],
+      "legacy_magnitude_lps": 0.871893980281,
+      "magnitude_residual_lps": 0.052705526650330126,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 7.796717271803792e-05,
+      "continuity_1d_pct": -0.8074558382809528,
+      "continuity_2d_pct": 2.0417777784336814e-10,
+      "head_m": 0.04036005045235179,
+      "probe_depth_m": 0.009359714065137057,
+      "measured_hs_m": 0.0085,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.040414847096209836,
+        0.040376173201236557,
+        0.04036005045235179
+      ],
+      "probe_series_m": [
+        0.009332660407960843,
+        0.009350626924773118,
+        0.009359714065137057
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.2373524059144645,
+        0.0,
+        0.23321541611347654,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.006054005276111661,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.30013855271403894,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.23735516436931287,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 1.9645800000075664,
+        "boundary_out": 1.4270862829202033,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_4",
+      "regime": "S1",
+      "observed_lps": 0.88,
+      "xi_f_lps": 0.0235,
+      "signed_observed_lps": -0.88,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.947371947459794,
+        -0.9455815258139307,
+        -0.9448510222841577
+      ],
+      "changes_pct": [
+        0.18934608989131294,
+        0.07731414927265672
+      ],
+      "legacy_magnitude_lps": 0.927722692589,
+      "magnitude_residual_lps": 0.06485102228415773,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 8.079723364708851e-05,
+      "continuity_1d_pct": -0.7876910166925569,
+      "continuity_2d_pct": 2.050541603686879e-10,
+      "head_m": 0.041718213169186794,
+      "probe_depth_m": 0.009706680321055674,
+      "measured_hs_m": 0.0088,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.041770924442743065,
+        0.0417334363894639,
+        0.041718213169186794
+      ],
+      "probe_series_m": [
+        0.009676467263254523,
+        0.009696529049043874,
+        0.009706680321055674
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.2547039565936013,
+        0.0,
+        0.25040681161247363,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.006303924684685779,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3113245517912562,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.25470690925295913,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.0912160000080684,
+        "boundary_out": 1.5251845389595649,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_5",
+      "regime": "S1",
+      "observed_lps": 0.9,
+      "xi_f_lps": 0.0251,
+      "signed_observed_lps": -0.9,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.9841874361496519,
+        -0.9823748150278708,
+        -0.9816453153815583
+      ],
+      "changes_pct": [
+        0.18451420924605222,
+        0.07431397419025779
+      ],
+      "legacy_magnitude_lps": 0.964027915569,
+      "magnitude_residual_lps": 0.08164531538155828,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 8.161841441163587e-05,
+      "continuity_1d_pct": -0.7760212082897362,
+      "continuity_2d_pct": -4.899881869609141e-12,
+      "head_m": 0.04248660525338559,
+      "probe_depth_m": 0.009907874185129265,
+      "measured_hs_m": 0.009,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.042539515007141364,
+        0.04250179128662562,
+        0.04248660525338559
+      ],
+      "probe_series_m": [
+        0.009875741272365247,
+        0.009897076172205387,
+        0.009907874185129265
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.2650009289290842,
+        0.0,
+        0.26061333286573435,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.006444558934476905,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3178097645515923,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.2650039965706555,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.166120000003825,
+        "boundary_out": 1.5833062388816836,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_6",
+      "regime": "S1",
+      "observed_lps": 0.93,
+      "xi_f_lps": 0.0255,
+      "signed_observed_lps": -0.93,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.0149901739854186,
+        -1.0131623295026195,
+        -1.0124356108175951
+      ],
+      "changes_pct": [
+        0.1804098345914982,
+        0.07177924968853298
+      ],
+      "legacy_magnitude_lps": 0.994410371172,
+      "magnitude_residual_lps": 0.0824356108175951,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 7.204976193456934e-05,
+      "continuity_1d_pct": -0.7668657751207055,
+      "continuity_2d_pct": -2.2344216453099157e-10,
+      "head_m": 0.04312565059413752,
+      "probe_depth_m": 0.010073991640243703,
+      "measured_hs_m": 0.0092,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04317848753383049,
+        0.04314068684731039,
+        0.04312565059413752
+      ],
+      "probe_series_m": [
+        0.010040225046801493,
+        0.010062643246944595,
+        0.010073991640243703
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.2736195319308577,
+        0.0,
+        0.2691567748310245,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.0065615510593532754,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3231637077037349,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.27362269579196546,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.228771999999074,
+        "boundary_out": 1.6319855965083534,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_7",
+      "regime": "S1",
+      "observed_lps": 0.97,
+      "xi_f_lps": 0.033,
+      "signed_observed_lps": -0.97,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.054294623476754,
+        -1.0524517781416096,
+        -1.051731169133655
+      ],
+      "changes_pct": [
+        0.17510021584062457,
+        0.06851646400744722
+      ],
+      "legacy_magnitude_lps": 1.03318742523,
+      "magnitude_residual_lps": 0.08173116913365508,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 5.958528940690438e-05,
+      "continuity_1d_pct": -0.7560033235469011,
+      "continuity_2d_pct": -1.2762709759906832e-10,
+      "head_m": 0.04394216555117748,
+      "probe_depth_m": 0.010283194180996017,
+      "measured_hs_m": 0.0094,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.043995505125362454,
+        0.0439571622135127,
+        0.04394216555117748
+      ],
+      "probe_series_m": [
+        0.010247307515778141,
+        0.010271131432581992,
+        0.010283194180996017
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.28464573866181775,
+        0.0,
+        0.2800870780957497,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.006711091171947036,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.32990545931329873,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.2846490253217116,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.308704000001231,
+        "boundary_out": 1.6941495153691675,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_8",
+      "regime": "S1",
+      "observed_lps": 1.06,
+      "xi_f_lps": 0.04,
+      "signed_observed_lps": -1.06,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.1284853373562906,
+        -1.1266276648825575,
+        -1.125926353999348
+      ],
+      "changes_pct": [
+        0.16488788014332925,
+        0.06228745607724417
+      ],
+      "legacy_magnitude_lps": 1.10640999793,
+      "magnitude_residual_lps": 0.06592635399934799,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 1.85496418696437e-06,
+      "continuity_1d_pct": -0.7367354892581164,
+      "continuity_2d_pct": 1.805359591865137e-10,
+      "head_m": 0.045454867126629654,
+      "probe_depth_m": 0.01067025927913742,
+      "measured_hs_m": 0.0097,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.045505527307418435,
+        0.04546875307942164,
+        0.045454867126629654
+      ],
+      "probe_series_m": [
+        0.010630266342794532,
+        0.010656812729690575,
+        0.01067025927913742
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.3054993747707415,
+        0.0,
+        0.3007634129159858,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.006987183433920295,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3423766294504448,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.30550289329079844,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.4595920000088736,
+        "boundary_out": 1.8117124772631898,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_9",
+      "regime": "S1",
+      "observed_lps": 1.09,
+      "xi_f_lps": 0.0425,
+      "signed_observed_lps": -1.09,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.1624303594452554,
+        -1.1605717594224827,
+        -1.1598826436727034
+      ],
+      "changes_pct": [
+        0.16014520495463222,
+        0.05941254087544669
+      ],
+      "legacy_magnitude_lps": 1.13992400507,
+      "magnitude_residual_lps": 0.06988264367270336,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 3.068831196213406e-06,
+      "continuity_1d_pct": -0.7281086425511054,
+      "continuity_2d_pct": -1.0063192453682038e-10,
+      "head_m": 0.04612541603259844,
+      "probe_depth_m": 0.010844195425437662,
+      "measured_hs_m": 0.0099,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04617558232735883,
+        0.0461389871974019,
+        0.04612541603259844
+      ],
+      "probe_series_m": [
+        0.010802279613024367,
+        0.010830100749456917,
+        0.010844195425437662
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.31505111383873136,
+        0.0,
+        0.31023682305106814,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.00710870439898746,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3479798359618093,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.3150547384723613,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.5286520000020465,
+        "boundary_out": 1.8656174255704205,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_10",
+      "regime": "S1",
+      "observed_lps": 1.11,
+      "xi_f_lps": 0.0401,
+      "signed_observed_lps": -1.11,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.1831512995360087,
+        -1.1812939481875246,
+        -1.180613307282391
+      ],
+      "changes_pct": [
+        0.15723024327127397,
+        0.05765146817634864
+      ],
+      "legacy_magnitude_lps": 1.16038552676,
+      "magnitude_residual_lps": 0.0706133072823909,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 2.6111900884086287e-06,
+      "continuity_1d_pct": -0.7230970167294336,
+      "continuity_2d_pct": -9.516370096163461e-11,
+      "head_m": 0.04653305523858046,
+      "probe_depth_m": 0.010949457000308709,
+      "measured_hs_m": 0.01,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04658288665172359,
+        0.04654642094513827,
+        0.04653305523858046
+      ],
+      "probe_series_m": [
+        0.010906354072102753,
+        0.010934962194001734,
+        0.010949457000308709
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.32088512165925914,
+        0.0,
+        0.31602327433454397,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007182657264734478,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.35137044617926666,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.32088881107610556,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.570820000002207,
+        "boundary_out": 1.8985607427492814,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_11",
+      "regime": "S1",
+      "observed_lps": 1.14,
+      "xi_f_lps": 0.0413,
+      "signed_observed_lps": -1.14,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.2307274193270563,
+        -1.2288780805603712,
+        -1.2282198488670986
+      ],
+      "changes_pct": [
+        0.15049001165696074,
+        0.05359233478271528
+      ],
+      "legacy_magnitude_lps": 1.20737654981,
+      "magnitude_residual_lps": 0.08821984886709866,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 7.068531928224373e-06,
+      "continuity_1d_pct": -0.712054677657611,
+      "continuity_2d_pct": 1.476255475887484e-10,
+      "head_m": 0.047470975609766215,
+      "probe_depth_m": 0.011188647670080721,
+      "measured_hs_m": 0.0102,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04752022648443602,
+        0.04748390551130737,
+        0.047470975609766215
+      ],
+      "probe_series_m": [
+        0.011142781818491711,
+        0.011173221465584597,
+        0.011188647670080721
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.33428409878019627,
+        0.0,
+        0.3293129976682367,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007351885817434767,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3590742575050021,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.3342879369670028,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.667684000008758,
+        "boundary_out": 1.9743218055328147,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_12",
+      "regime": "S1",
+      "observed_lps": 1.15,
+      "xi_f_lps": 0.0507,
+      "signed_observed_lps": -1.15,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.2733382198861036,
+        -1.2715021296747713,
+        -1.2708674247850096
+      ],
+      "changes_pct": [
+        0.1444032352350046,
+        0.04994265156092632
+      ],
+      "legacy_magnitude_lps": 1.2494757588,
+      "magnitude_residual_lps": 0.12086742478500967,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 1.574948364334081e-05,
+      "continuity_1d_pct": -0.7028847771491705,
+      "continuity_2d_pct": -6.692363888691e-11,
+      "head_m": 0.048308398264999566,
+      "probe_depth_m": 0.011400076207640917,
+      "measured_hs_m": 0.0104,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04835737758397435,
+        0.048320981648648044,
+        0.048308398264999566
+      ],
+      "probe_series_m": [
+        0.01135169273182161,
+        0.011383801206549814,
+        0.011400076207640917
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.34631091055178165,
+        0.0,
+        0.34124259171971133,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007502984601943266,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3658829827102574,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.34631488201235067,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7545040000031653,
+        "boundary_out": 2.042306135282401,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_13",
+      "regime": "S1",
+      "observed_lps": 1.2,
+      "xi_f_lps": 0.0536,
+      "signed_observed_lps": -1.2,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.3240398448817137,
+        -1.3222270364169453,
+        -1.3216245965942341
+      ],
+      "changes_pct": [
+        0.13710266201187754,
+        0.04558327866049038
+      ],
+      "legacy_magnitude_lps": 1.29958382412,
+      "magnitude_residual_lps": 0.12162459659423419,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 8.817972314951296e-06,
+      "continuity_1d_pct": -0.6917763122413036,
+      "continuity_2d_pct": 9.253451282021307e-11,
+      "head_m": 0.04927392884487041,
+      "probe_depth_m": 0.0116484240319428,
+      "measured_hs_m": 0.0107,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.049319320735667325,
+        0.04928525230545542,
+        0.04927392884487041
+      ],
+      "probe_series_m": [
+        0.011596992538266064,
+        0.011631121313188147,
+        0.0116484240319428
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.3606262798830866,
+        0.0,
+        0.355446251103846,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007675255002131519,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3738795051774645,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.36063040995945794,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.8579080000078108,
+        "boundary_out": 2.123398084868244,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_14",
+      "regime": "S1",
+      "observed_lps": 1.21,
+      "xi_f_lps": 0.0528,
+      "signed_observed_lps": -1.21,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.3437111906316737,
+        -1.3419095914535986,
+        -1.3413208850376113
+      ],
+      "changes_pct": [
+        0.13425637535860732,
+        0.043890050662320594
+      ],
+      "legacy_magnitude_lps": 1.31902928693,
+      "magnitude_residual_lps": 0.1313208850376113,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 6.154660171737461e-06,
+      "continuity_1d_pct": -0.6875564139077905,
+      "continuity_2d_pct": -1.8633585197573523e-11,
+      "head_m": 0.04964413649370928,
+      "probe_depth_m": 0.011743881855969371,
+      "measured_hs_m": 0.0108,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.04968908602311882,
+        0.04965520819235153,
+        0.04964413649370928
+      ],
+      "probe_series_m": [
+        0.011691253014799473,
+        0.01172617538149401,
+        0.011743881855969371
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.36620487392217194,
+        0.0,
+        0.36098213492261066,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007741103120284382,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3769528264545683,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.3662090655498269,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.8980600000047056,
+        "boundary_out": 2.1548981080008502,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S1_15",
+      "regime": "S1",
+      "observed_lps": 1.25,
+      "xi_f_lps": 0.0557,
+      "signed_observed_lps": -1.25,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -1.391788483149948,
+        -1.390019387732014,
+        -1.3894671809481582
+      ],
+      "changes_pct": [
+        0.1272712764690732,
+        0.03974234090789261
+      ],
+      "legacy_magnitude_lps": 1.34554421795,
+      "magnitude_residual_lps": 0.13946718094815824,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 2.5944884424756295e-05,
+      "continuity_1d_pct": -0.6776507508095507,
+      "continuity_2d_pct": -1.4582728368888205e-10,
+      "head_m": 0.05055391706809007,
+      "probe_depth_m": 0.011975182414009767,
+      "measured_hs_m": 0.011,
+      "measured_hp_m": null,
+      "head_series_m": [
+        0.05059778308677159,
+        0.050564353285237014,
+        0.05055391706809007
+      ],
+      "probe_series_m": [
+        0.011919592351105915,
+        0.01195647734196447,
+        0.011975182414009767
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.3798426746110904,
+        0.0,
+        0.3745152396219173,
+        0.0,
+        0.0,
+        4.956143996404488e-07,
+        0.007901940698504592,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.38439895156941284,
+        "rain": 0.0,
+        "spill_in": 0.0,
+        "drain_out": 0.3798470166960366,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.99628000000105,
+        "boundary_out": 2.2320340317399703,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S2_1",
+      "regime": "S2",
+      "observed_lps": 0.24,
+      "xi_f_lps": 0.0061,
+      "signed_observed_lps": -0.24,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.7530282728942984,
+        -0.7514295122923874,
+        -0.7507370057740529
+      ],
+      "changes_pct": [
+        0.21276255134479027,
+        0.09224355706570102
+      ],
+      "legacy_magnitude_lps": 0.754253349892,
+      "magnitude_residual_lps": 0.5107370057740529,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00012201270865898455,
+      "continuity_1d_pct": 1.4200530219430545,
+      "continuity_2d_pct": 9.50509590383182e-11,
+      "head_m": 0.47801306608962724,
+      "probe_depth_m": 0.008591201188842924,
+      "measured_hs_m": 0.0099,
+      "measured_hp_m": 0.478,
+      "head_series_m": [
+        0.4780130719829451,
+        0.4780130678703885,
+        0.47801306608962724
+      ],
+      "probe_series_m": [
+        0.008570465502147304,
+        0.008584241127085503,
+        0.008591201188842924
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.2548132465090736,
+        0.0,
+        3.110753723160026,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07760096810494328,
+        0.0,
+        0.02720717579316594,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.27535241704312247,
+        "rain": 0.0,
+        "spill_in": 0.027207175793165884,
+        "drain_out": 0.20522831436976466,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 1.695636000004717,
+        "boundary_out": 1.242262444383358,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S2_2",
+      "regime": "S2",
+      "observed_lps": 0.25,
+      "xi_f_lps": 0.0067,
+      "signed_observed_lps": -0.25,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.14227573548256348,
+        -0.1429360389565382,
+        -0.14327595662089118
+      ],
+      "changes_pct": [
+        0.4619573053759357,
+        0.23724682938422675
+      ],
+      "legacy_magnitude_lps": 0.325693899495,
+      "magnitude_residual_lps": -0.10672404337910882,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00022378622854195748,
+      "continuity_1d_pct": 1.4953322011008878,
+      "continuity_2d_pct": 1.641559785162986e-10,
+      "head_m": 0.4800116043050432,
+      "probe_depth_m": 0.010281441986563637,
+      "measured_hs_m": 0.0114,
+      "measured_hp_m": 0.48,
+      "head_series_m": [
+        0.48001160188195235,
+        0.480011603482163,
+        0.4800116043050432
+      ],
+      "probe_series_m": [
+        0.010245112955584664,
+        0.010269136382814686,
+        0.010281441986563637
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.096720344319458,
+        0.0,
+        2.951702106133414,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07790624853148609,
+        0.0,
+        0.027769106037913674,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.32804004595465414,
+        "rain": 0.0,
+        "spill_in": 0.02776910603791364,
+        "drain_out": 0.040669887868873926,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.0815440000072307,
+        "boundary_out": 1.740603172218154,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S2_3",
+      "regime": "S2",
+      "observed_lps": 0.28,
+      "xi_f_lps": 0.0076,
+      "signed_observed_lps": -0.28,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.1572340566869332,
+        -0.1581831161311363,
+        -0.15867151503688415
+      ],
+      "changes_pct": [
+        0.5999751853518522,
+        0.3078050308111746
+      ],
+      "legacy_magnitude_lps": 0.143551481318,
+      "magnitude_residual_lps": -0.12132848496311588,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 5.5155149713236996e-05,
+      "continuity_1d_pct": 1.5089711799951844,
+      "continuity_2d_pct": -9.881525892104777e-11,
+      "head_m": 0.4810112507131869,
+      "probe_depth_m": 0.011324469524387272,
+      "measured_hs_m": 0.0126,
+      "measured_hp_m": 0.481,
+      "head_series_m": [
+        0.4810112472836773,
+        0.4810112495476384,
+        0.4810112507131869
+      ],
+      "probe_series_m": [
+        0.011275929410166339,
+        0.011308020150258495,
+        0.011324469524387272
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.053122027556246,
+        0.0,
+        2.9080043509042284,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.0777249140608704,
+        0.0,
+        0.028284439825041044,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.36140012348717304,
+        "rain": 0.0,
+        "spill_in": 0.028284439825041044,
+        "drain_out": 0.044848900571337835,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.4452880000019754,
+        "boundary_out": 2.0673234157709497,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S2_4",
+      "regime": "S2",
+      "observed_lps": 0.3,
+      "xi_f_lps": 0.0086,
+      "signed_observed_lps": -0.3,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.1682072456030139,
+        -0.1694619846357903,
+        -0.17010758058045225
+      ],
+      "changes_pct": [
+        0.7404250785054226,
+        0.3795221485480034
+      ],
+      "legacy_magnitude_lps": 0.150543984961,
+      "magnitude_residual_lps": -0.12989241941954774,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 9.427629865836589e-05,
+      "continuity_1d_pct": 1.4985229599426038,
+      "continuity_2d_pct": 1.826726988157082e-10,
+      "head_m": 0.48201159766236257,
+      "probe_depth_m": 0.012238691715240769,
+      "measured_hs_m": 0.0135,
+      "measured_hp_m": 0.482,
+      "head_series_m": [
+        0.4820115930613157,
+        0.48201159609953026,
+        0.48201159766236257
+      ],
+      "probe_series_m": [
+        0.012177921988085129,
+        0.012218091241060103,
+        0.012238691715240769
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.097885197777396,
+        0.0,
+        2.951186798873127,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07811321268551798,
+        0.0,
+        0.02912581257013394,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.3906341698912331,
+        "rain": 0.0,
+        "spill_in": 0.02912581257013396,
+        "drain_out": 0.04795638469596645,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7826440000101718,
+        "boundary_out": 2.37317925798797,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S2_5",
+      "regime": "S2",
+      "observed_lps": 0.32,
+      "xi_f_lps": 0.0074,
+      "signed_observed_lps": -0.32,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        -0.1644416760006973,
+        -0.1661152355894817,
+        -0.16697607685907456
+      ],
+      "changes_pct": [
+        1.0074690517372205,
+        0.5155476675376599
+      ],
+      "legacy_magnitude_lps": 0.145848022367,
+      "magnitude_residual_lps": -0.15302392314092544,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.0002018674242189676,
+      "continuity_1d_pct": 1.5017325663256749,
+      "continuity_2d_pct": 4.5414494892714776e-11,
+      "head_m": 0.48401160795257486,
+      "probe_depth_m": 0.013306229094939288,
+      "measured_hs_m": 0.0148,
+      "measured_hp_m": 0.484,
+      "head_series_m": [
+        0.4840116018096659,
+        0.48401160586541253,
+        0.48401160795257486
+      ],
+      "probe_series_m": [
+        0.01322935089247926,
+        0.01328016011379762,
+        0.013306229094939288
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.100367128656896,
+        0.0,
+        2.9515193642315203,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07838822547845195,
+        0.0,
+        0.030863236523354296,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.42473670001246977,
+        "rain": 0.0,
+        "spill_in": 0.030863236523354303,
+        "drain_out": 0.04684923442184757,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 3.1941120000072476,
+        "boundary_out": 2.7533893020948197,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_1",
+      "regime": "S3",
+      "observed_lps": 1.73,
+      "xi_f_lps": 0.032,
+      "signed_observed_lps": 1.73,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        4.103502966969001,
+        4.073248240771354,
+        4.0567589676099525
+      ],
+      "changes_pct": [
+        0.7427665688236296,
+        0.40646420684728546
+      ],
+      "legacy_magnitude_lps": 1.44870616637,
+      "magnitude_residual_lps": 2.3267589676099525,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.0001483533279309808,
+      "continuity_1d_pct": 1.9428327228582387,
+      "continuity_2d_pct": -1.7133226243779016e-10,
+      "head_m": 0.5100010208627084,
+      "probe_depth_m": 0.015172731896414667,
+      "measured_hs_m": 0.016,
+      "measured_hp_m": 0.51,
+      "head_series_m": [
+        0.5100009875471229,
+        0.5100010090394328,
+        0.5100010208627084
+      ],
+      "probe_series_m": [
+        0.015084419480160758,
+        0.015143347302310525,
+        0.015172731896414667
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.320665938236771,
+        0.0,
+        0.9665777599512597,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07758216055811308,
+        0.0,
+        1.2383510991953228,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.4746715333957516,
+        "rain": 0.0,
+        "spill_in": 1.238363776556139,
+        "drain_out": 0.0007185732079486935,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7688319999981084,
+        "boundary_out": 3.5318056699574134,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_2",
+      "regime": "S3",
+      "observed_lps": 2.27,
+      "xi_f_lps": 0.046,
+      "signed_observed_lps": 2.27,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        4.68657382511336,
+        4.661714668975333,
+        4.6480700179381
+      ],
+      "changes_pct": [
+        0.5332620699304039,
+        0.2935551956957404
+      ],
+      "legacy_magnitude_lps": 1.53141674327,
+      "magnitude_residual_lps": 2.3780700179380996,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00011285981976862169,
+      "continuity_1d_pct": 1.8703049118201607,
+      "continuity_2d_pct": 6.782446773112374e-11,
+      "head_m": 0.515001033297192,
+      "probe_depth_m": 0.015542183290441164,
+      "measured_hs_m": 0.0167,
+      "measured_hp_m": 0.515,
+      "head_series_m": [
+        0.5150010056565604,
+        0.5150010234618324,
+        0.515001033297192
+      ],
+      "probe_series_m": [
+        0.015440140303855689,
+        0.01550807483742302,
+        0.015542183290441164
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.5052047887609663,
+        0.0,
+        0.9757834553168513,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07913940598012484,
+        0.0,
+        1.4103638250011752,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.48544964120294515,
+        "rain": 0.0,
+        "spill_in": 1.4103783502088878,
+        "drain_out": 0.0006437486823431598,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7578400000078047,
+        "boundary_out": 3.6821249603285775,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_3",
+      "regime": "S3",
+      "observed_lps": 2.77,
+      "xi_f_lps": 0.082,
+      "signed_observed_lps": 2.77,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        5.175141073779451,
+        5.150752482565731,
+        5.1372401390137465
+      ],
+      "changes_pct": [
+        0.47349569400335867,
+        0.26302729065296765
+      ],
+      "legacy_magnitude_lps": 2.57729491504,
+      "magnitude_residual_lps": 2.3672401390137465,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 6.405284948583305e-05,
+      "continuity_1d_pct": 1.7817027487844157,
+      "continuity_2d_pct": -5.0073697282913415e-11,
+      "head_m": 0.5200010919171938,
+      "probe_depth_m": 0.015855186712511463,
+      "measured_hs_m": 0.0173,
+      "measured_hp_m": 0.52,
+      "head_series_m": [
+        0.5200010639269879,
+        0.5200010818871035,
+        0.5200010919171938
+      ],
+      "probe_series_m": [
+        0.015745552788006816,
+        0.01581854221758172,
+        0.015855186712511463
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.678258088045092,
+        0.0,
+        1.00222263860108,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08071164907730032,
+        0.0,
+        1.5545483315019837,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.49468862598693253,
+        "rain": 0.0,
+        "spill_in": 1.554564385379329,
+        "drain_out": 0.000534253421305383,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7538560000028505,
+        "boundary_out": 3.813197505976099,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_4",
+      "regime": "S3",
+      "observed_lps": 3.13,
+      "xi_f_lps": 0.111,
+      "signed_observed_lps": 3.13,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        5.619548592024089,
+        5.595479622139087,
+        5.582038942180201
+      ],
+      "changes_pct": [
+        0.4301502553913511,
+        0.2407844176313857
+      ],
+      "legacy_magnitude_lps": 3.00771244279,
+      "magnitude_residual_lps": 2.4520389421802014,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 5.680558668609169e-06,
+      "continuity_1d_pct": 1.7272343267316075,
+      "continuity_2d_pct": -1.6311035826366538e-10,
+      "head_m": 0.5250010824352586,
+      "probe_depth_m": 0.01619343000573544,
+      "measured_hs_m": 0.0178,
+      "measured_hp_m": 0.525,
+      "head_series_m": [
+        0.5250010548366064,
+        0.5250010725050985,
+        0.5250010824352586
+      ],
+      "probe_series_m": [
+        0.016075686573449075,
+        0.01615406659887845,
+        0.01619343000573544
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.812261960163698,
+        0.0,
+        1.0026130167962661,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08210441493348004,
+        0.0,
+        1.6859171540257332,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.5049162400981264,
+        "rain": 0.0,
+        "spill_in": 1.6859345979102482,
+        "drain_out": 0.0005067752796238801,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.775911999997704,
+        "boundary_out": 3.9564235825374796,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_5",
+      "regime": "S3",
+      "observed_lps": 3.48,
+      "xi_f_lps": 0.105,
+      "signed_observed_lps": 3.48,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        5.956911724325642,
+        5.9331368001929805,
+        5.919775287857606
+      ],
+      "changes_pct": [
+        0.4007142416114216,
+        0.22570978940334643
+      ],
+      "legacy_magnitude_lps": 3.11217947848,
+      "magnitude_residual_lps": 2.439775287857606,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 3.373241404142746e-05,
+      "continuity_1d_pct": 1.6670581346256,
+      "continuity_2d_pct": 1.4634598480951092e-10,
+      "head_m": 0.5290011441646681,
+      "probe_depth_m": 0.016394235803455268,
+      "measured_hs_m": 0.0182,
+      "measured_hp_m": 0.529,
+      "head_series_m": [
+        0.5290011160462467,
+        0.5290011340194213,
+        0.5290011441646681
+      ],
+      "probe_series_m": [
+        0.01627144735565089,
+        0.0163531857311236,
+        0.016394235803455268
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.9409652372890998,
+        0.0,
+        1.0298224414063617,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08337954726984545,
+        0.0,
+        1.7856868818161082,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.5108673611404727,
+        "rain": 0.0,
+        "spill_in": 1.7857053811229324,
+        "drain_out": 0.0005008465491334264,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7684960000116408,
+        "boundary_out": 4.042833173438303,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_6",
+      "regime": "S3",
+      "observed_lps": 3.84,
+      "xi_f_lps": 0.126,
+      "signed_observed_lps": 3.84,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.277113523976278,
+        6.253603355580495,
+        6.240311166315878
+      ],
+      "changes_pct": [
+        0.3759459476240017,
+        0.2130052317962302
+      ],
+      "legacy_magnitude_lps": 3.6981543926,
+      "magnitude_residual_lps": 2.400311166315878,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 5.457312948177959e-05,
+      "continuity_1d_pct": 1.6291871871799548,
+      "continuity_2d_pct": 3.991076106531804e-11,
+      "head_m": 0.5330011683825959,
+      "probe_depth_m": 0.016583638282714037,
+      "measured_hs_m": 0.0185,
+      "measured_hp_m": 0.533,
+      "head_series_m": [
+        0.5330011402399618,
+        0.5330011581757792,
+        0.5330011683825959
+      ],
+      "probe_series_m": [
+        0.016456049551722335,
+        0.016540982112827205,
+        0.016583638282714037
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.0492133261247987,
+        0.0,
+        1.0412893785138742,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08458486719381987,
+        0.0,
+        1.8806155981532762,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.5165015979827684,
+        "rain": 0.0,
+        "spill_in": 1.880635099131817,
+        "drain_out": 0.0005413986991188599,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.7615720000068404,
+        "boundary_out": 4.125164102454917,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_7",
+      "regime": "S3",
+      "observed_lps": 4.12,
+      "xi_f_lps": 0.139,
+      "signed_observed_lps": 4.12,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.506780235657909,
+        6.483441738050706,
+        6.470191221457262
+      ],
+      "changes_pct": [
+        0.35997080794652425,
+        0.2047932764259077
+      ],
+      "legacy_magnitude_lps": 3.95357263457,
+      "magnitude_residual_lps": 2.350191221457262,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 6.113091401384251e-05,
+      "continuity_1d_pct": 1.5885514758355663,
+      "continuity_2d_pct": -7.301607586961949e-11,
+      "head_m": 0.5360012188782258,
+      "probe_depth_m": 0.016728581991959663,
+      "measured_hs_m": 0.0188,
+      "measured_hp_m": 0.536,
+      "head_series_m": [
+        0.5360011902810097,
+        0.5360012084875897,
+        0.5360012188782258
+      ],
+      "probe_series_m": [
+        0.016597322671973218,
+        0.016684695304744555,
+        0.016728581991959663
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.139332373502149,
+        0.0,
+        1.06213905099206,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08554195629413229,
+        0.0,
+        1.9487382385910574,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.5208577923554408,
+        "rain": 0.0,
+        "spill_in": 1.948758457941015,
+        "drain_out": 0.0006068203635765046,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.761200000001525,
+        "boundary_out": 4.1884938452269616,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S3_8",
+      "regime": "S3",
+      "observed_lps": 4.27,
+      "xi_f_lps": 0.617,
+      "signed_observed_lps": 4.27,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.653266186965671,
+        6.629994406452655,
+        6.61675152696178
+      ],
+      "changes_pct": [
+        0.35100754369214787,
+        0.20014170755714497
+      ],
+      "legacy_magnitude_lps": 4.11785048693,
+      "magnitude_residual_lps": 2.3467515269617802,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 6.320741776465535e-05,
+      "continuity_1d_pct": 1.566878550475495,
+      "continuity_2d_pct": -6.749514701952934e-11,
+      "head_m": 0.5380012908430621,
+      "probe_depth_m": 0.01685723886773404,
+      "measured_hs_m": 0.0191,
+      "measured_hp_m": 0.538,
+      "head_series_m": [
+        0.538001261455932,
+        0.5380012801512871,
+        0.5380012908430621
+      ],
+      "probe_series_m": [
+        0.016722819211282988,
+        0.016812289554832594,
+        0.01685723886773404
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.2123779986819163,
+        0.0,
+        1.090515533772431,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08626936927022798,
+        0.0,
+        1.992217349019703,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.5248382231333051,
+        "rain": 0.0,
+        "spill_in": 1.9922380263734996,
+        "drain_out": 0.0006443739799055468,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 2.777952000001829,
+        "boundary_out": 4.244707429265338,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_1",
+      "regime": "S4",
+      "observed_lps": 1.74,
+      "xi_f_lps": 0.09,
+      "signed_observed_lps": 1.74,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        4.407784464812255,
+        4.383308417691467,
+        4.36929243068771
+      ],
+      "changes_pct": [
+        0.5583920816979329,
+        0.3207839078317436
+      ],
+      "legacy_magnitude_lps": 2.0126910519,
+      "magnitude_residual_lps": 2.62929243068771,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00019068179144944998,
+      "continuity_1d_pct": 1.9302476222485474,
+      "continuity_2d_pct": -3.3736123883922464e-13,
+      "head_m": 0.5060008175247047,
+      "probe_depth_m": 0.007521480955676211,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.506,
+      "head_series_m": [
+        0.5060007927848889,
+        0.5060008085305787,
+        0.5060008175247047
+      ],
+      "probe_series_m": [
+        0.007544013119811669,
+        0.007530261441582639,
+        0.007521480955676211
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.3232552818022234,
+        0.0,
+        0.8919203338607248,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07707555521082998,
+        0.0,
+        1.3163474412498468,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.21722440515598926,
+        "rain": 0.0,
+        "spill_in": 1.3163610952404081,
+        "drain_out": 0.0008048215428198105,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.0983318685416035,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_2",
+      "regime": "S4",
+      "observed_lps": 2.31,
+      "xi_f_lps": 0.027,
+      "signed_observed_lps": 2.31,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        5.088745239231599,
+        5.065103326554162,
+        5.051573747105054
+      ],
+      "changes_pct": [
+        0.4667607184535172,
+        0.2678289999599012
+      ],
+      "legacy_magnitude_lps": 2.56564855342,
+      "magnitude_residual_lps": 2.7415737471050536,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 4.1825060104521126e-05,
+      "continuity_1d_pct": 1.8452384919762155,
+      "continuity_2d_pct": -1.9302969027145307e-12,
+      "head_m": 0.5130007962987948,
+      "probe_depth_m": 0.008232710176650754,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.513,
+      "head_series_m": [
+        0.5130007729454712,
+        0.5130007877780277,
+        0.5130007962987948
+      ],
+      "probe_series_m": [
+        0.008245856134853184,
+        0.008238213785544938,
+        0.008232710176650754
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.5214461109794932,
+        0.0,
+        0.8844895416006002,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.07897084618437314,
+        0.0,
+        1.518397666717867,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.2400226450723855,
+        "rain": 0.0,
+        "spill_in": 1.5184134528157993,
+        "drain_out": 0.0006853927937097706,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.2777054149497333,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_3",
+      "regime": "S4",
+      "observed_lps": 2.75,
+      "xi_f_lps": 0.015,
+      "signed_observed_lps": 2.75,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        5.61114935481157,
+        5.5871486916646935,
+        5.573339734287708
+      ],
+      "changes_pct": [
+        0.42956907845824827,
+        0.24776808942817055
+      ],
+      "legacy_magnitude_lps": 3.06626487262,
+      "magnitude_residual_lps": 2.823339734287708,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.0002263799134621098,
+      "continuity_1d_pct": 1.7812926070286492,
+      "continuity_2d_pct": 1.06134626230814e-12,
+      "head_m": 0.5190007822999514,
+      "probe_depth_m": 0.008750602030073669,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.519,
+      "head_series_m": [
+        0.5190007589112731,
+        0.519000773654971,
+        0.5190007822999514
+      ],
+      "probe_series_m": [
+        0.008757723703909136,
+        0.008754079037366936,
+        0.008750602030073669
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.6727883065716846,
+        0.0,
+        0.8778948596648509,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08056117753941434,
+        0.0,
+        1.673665246963689,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.25663322277079564,
+        "rain": 0.0,
+        "spill_in": 1.6736826636927675,
+        "drain_out": 0.0005538763136388897,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.4164955646083153,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_4",
+      "regime": "S4",
+      "observed_lps": 3.18,
+      "xi_f_lps": 0.004,
+      "signed_observed_lps": 3.18,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.01582928855711,
+        5.991519146351391,
+        5.977483726984437
+      ],
+      "changes_pct": [
+        0.4057425439510277,
+        0.2348048109874837
+      ],
+      "legacy_magnitude_lps": 3.46165785263,
+      "magnitude_residual_lps": 2.7974837269844373,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 8.319964217232304e-05,
+      "continuity_1d_pct": 1.7230000121535392,
+      "continuity_2d_pct": 1.48525469580541e-13,
+      "head_m": 0.5240008094886245,
+      "probe_depth_m": 0.009138398110112852,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.524,
+      "head_series_m": [
+        0.52400078514898,
+        0.5240008005172303,
+        0.5240008094886245
+      ],
+      "probe_series_m": [
+        0.009140932770953498,
+        0.009140351389641383,
+        0.009138398110112852
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.810997009662001,
+        0.0,
+        0.893563974900401,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.0819733683118212,
+        0.0,
+        1.7939734664840572,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.2690658960674791,
+        "rain": 0.0,
+        "spill_in": 1.7939921460106723,
+        "drain_out": 0.000518296891223768,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.5244079530519667,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_5",
+      "regime": "S4",
+      "observed_lps": 3.57,
+      "xi_f_lps": 0.023,
+      "signed_observed_lps": 3.57,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.322998284856974,
+        6.298479757293189,
+        6.284288015886242
+      ],
+      "changes_pct": [
+        0.38927691297877953,
+        0.22582894627158948
+      ],
+      "legacy_magnitude_lps": 3.78166907206,
+      "magnitude_residual_lps": 2.714288015886242,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00014539970246437526,
+      "continuity_1d_pct": 1.659226229240263,
+      "continuity_2d_pct": 1.0364043770569506e-12,
+      "head_m": 0.5280009040918953,
+      "probe_depth_m": 0.009425654790154732,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.528,
+      "head_series_m": [
+        0.5280008780991131,
+        0.5280008944521011,
+        0.5280009040918953
+      ],
+      "probe_series_m": [
+        0.009424625999265733,
+        0.009426413356300968,
+        0.009425654790154732
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.9497660433949777,
+        0.0,
+        0.9391094049121554,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08332750551070636,
+        0.0,
+        1.8853376281504248,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.2782875445945885,
+        "rain": 0.0,
+        "spill_in": 1.8853572665227207,
+        "drain_out": 0.00047449982982533564,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.6065952220982873,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_6",
+      "regime": "S4",
+      "observed_lps": 3.82,
+      "xi_f_lps": 0.037,
+      "signed_observed_lps": 3.82,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.617380589882416,
+        6.592681396792255,
+        6.5783511128620535
+      ],
+      "changes_pct": [
+        0.37464563511560645,
+        0.21784005876765378
+      ],
+      "legacy_magnitude_lps": 3.88864211709,
+      "magnitude_residual_lps": 2.7583511128620537,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.0002752522972670637,
+      "continuity_1d_pct": 1.6300586734476197,
+      "continuity_2d_pct": -6.75251060491095e-14,
+      "head_m": 0.5320009108152296,
+      "probe_depth_m": 0.009695682874655975,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.532,
+      "head_series_m": [
+        0.5320008844864311,
+        0.5320009010747611,
+        0.5320009108152296
+      ],
+      "probe_series_m": [
+        0.00969118209076623,
+        0.00969527428106608,
+        0.009695682874655975
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.043450422414978,
+        0.0,
+        0.9434120459426936,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08440677263744109,
+        0.0,
+        1.972975425201317,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.2869531059202689,
+        "rain": 0.0,
+        "spill_in": 1.9729959825331624,
+        "drain_out": 0.0005056295715603343,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.6855372470413343,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_7",
+      "regime": "S4",
+      "observed_lps": 4.1,
+      "xi_f_lps": 0.051,
+      "signed_observed_lps": 4.1,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        6.900437774296209,
+        6.87557972899715,
+        6.861125016801743
+      ],
+      "changes_pct": [
+        0.3615410813174366,
+        0.21067554023589602
+      ],
+      "legacy_magnitude_lps": 3.49803110161,
+      "magnitude_residual_lps": 2.761125016801743,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.0003804490561397544,
+      "continuity_1d_pct": 1.5857380237300904,
+      "continuity_2d_pct": -1.1656608577860857e-12,
+      "head_m": 0.5360009337507208,
+      "probe_depth_m": 0.00995066220774036,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.536,
+      "head_series_m": [
+        0.5360009069099729,
+        0.5360009238724,
+        0.5360009337507208
+      ],
+      "probe_series_m": [
+        0.009942752830093585,
+        0.009949107806839901,
+        0.00995066220774036
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.1412015332277714,
+        0.0,
+        0.9555425927849369,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08555388856842057,
+        0.0,
+        2.057250806770935,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.29513298076524563,
+        "rain": 0.0,
+        "spill_in": 2.057272247903187,
+        "drain_out": 0.0006044785985978745,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.7615347885393673,
+        "evap_out": 0.0
+      }
+    },
+    {
+      "case": "S4_8",
+      "regime": "S4",
+      "observed_lps": 4.3,
+      "xi_f_lps": 0.056,
+      "signed_observed_lps": 4.3,
+      "steps_s": [
+        0.0125,
+        0.00625,
+        0.003125
+      ],
+      "q_lps": [
+        7.106018088748515,
+        7.0810536606886,
+        7.066514067842914
+      ],
+      "changes_pct": [
+        0.35255244849376843,
+        0.20575339843799093
+      ],
+      "legacy_magnitude_lps": 4.67433566733,
+      "magnitude_residual_lps": 2.7665140678429143,
+      "measured_band_pass": false,
+      "direction_pass": true,
+      "drift_pct": 0.00010178011513387935,
+      "continuity_1d_pct": 1.568074523738266,
+      "continuity_2d_pct": 5.240497182511287e-13,
+      "head_m": 0.5390009572384515,
+      "probe_depth_m": 0.010133482147726329,
+      "measured_hs_m": 0.0,
+      "measured_hp_m": 0.539,
+      "head_series_m": [
+        0.5390009300512609,
+        0.539000947225448,
+        0.5390009572384515
+      ],
+      "probe_series_m": [
+        0.01012307685475391,
+        0.010131085771494215,
+        0.010133482147726329
+      ],
+      "nonconverging_pct": 0.0,
+      "avg_iterations": 2.0,
+      "routing_totals_m3": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.2149830944421196,
+        0.0,
+        0.966585089162381,
+        0.0,
+        0.0,
+        0.00706907908589964,
+        0.08641976993901453,
+        0.0,
+        2.118523135151976,
+        0.0
+      ],
+      "surface_balance_m3": {
+        "initial": 0.0,
+        "final": 0.30099227535609496,
+        "rain": 0.0,
+        "spill_in": 2.1185452180572093,
+        "drain_out": 0.0006519531109712045,
+        "outfall_in": 0.0,
+        "outfall_out": 0.0,
+        "boundary_in": 0.0,
+        "boundary_out": 1.8169009895901318,
+        "evap_out": 0.0
+      }
+    }
+  ],
+  "verification_context": {
+    "description": "The GUI persistence and no-edit checks passed against this candidate, including theta and reference values beyond displayed precision/range. Eight archived four-regime control runs at 0.5 and 0.05 s reproduce exactly when the new option is disabled. Subsequent unrelated precipitation-writer edits in the shared checkout are outside the pinned snapshot.",
+    "bridge_runs": 8,
+    "bridge_max_abs_difference_lps": 0.0,
+    "gui": {
+      "returncode": 0,
+      "args": [
+        "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/build/tests/gui/test_simulationoptions_roundtrip",
+        "twoD",
+        "momentumSmoothingReferencePersists",
+        "dynwave1D",
+        "editIsDetected"
+      ],
+      "sha256": {
+        "src/ui/dialogs/simoptions/twodpage.cpp": "f870722b586968aba96b204e2ac56d5a0680f64e8276b589e673dba176a6ad9c",
+        "include/ui/dialogs/simoptions/twodpage.h": "77bb76d5f2cc955b47fb35b5cde6f84e46eddacbec4fb85257dc8526c89802c5",
+        "tests/gui/test_simulationoptions_roundtrip.cpp": "7635887b3c1edee2573c4aae59d36364fb86af92750595eaaab381fccd48ea03"
+      }
+    },
+    "gui_log_sha256": "9e7175262a541e5582f5cc07f00d646cf55e646ea21d2457d6cacaf4529de926"
+  }
+}

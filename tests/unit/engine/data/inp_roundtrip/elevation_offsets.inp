@@ -1,0 +1,42 @@
+[TITLE]
+LINK_OFFSETS=ELEVATION probe for the GeoPackage round trip.
+
+Under ELEVATION the offsets in the file are ELEVATIONS, and the resolver
+rewrites each as a depth above its node invert. C1 leaves J1 (invert 100) at
+elevation 102, i.e. a depth of 2.
+
+If the .gpkg stores the resolved DEPTH while still declaring
+LINK_OFFSETS=ELEVATION, reopening subtracts the invert a second time
+(2 - 100 = -98, clamped to 0) and the offset is destroyed.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         ELEVATION
+START_DATE           01/01/2024
+END_DATE             01/02/2024
+REPORT_STEP          00:15:00
+ROUTING_STEP         00:00:30
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth
+J1      100.0  10.0
+J2       98.0  10.0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1       90.0 FREE         NO
+
+[CONDUITS]
+;;Name  From  To  Length  Rough  InOffset(elev)  OutOffset(elev)
+C1      J1    J2  100.0   0.013  102.0           99.5
+C2      J2    O1  100.0   0.013  98.5            90.0
+
+[XSECTIONS]
+C1  CIRCULAR  1.5  0  0  0  1
+C2  CIRCULAR  1.5  0  0  0  1
+
+[COORDINATES]
+J1  0    0
+J2  100  0
+O1  200  0

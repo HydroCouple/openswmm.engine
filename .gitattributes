@@ -1,0 +1,6 @@
+
+# Unified diagnostic patches require a space on blank context lines.
+/tests/benchmarks/generated/gw2d_clock/*.patch whitespace=-blank-at-eol
+# Mesh reader snapshots: line endings, BOMs and stray bytes are the test data,
+# so no end-of-line conversion on checkout.
+/tests/unit/engine/data/mesh_snapshots/** -text

@@ -1,0 +1,236 @@
+{
+  "tests": 17,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T09:58:42Z",
+  "time": "0s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "RunoffAlpha",
+      "tests": 5,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T09:58:42Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "BasicComputation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 29,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffAlpha"
+        },
+        {
+          "name": "ZeroAreaGivesZeroAlpha",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 56,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffAlpha"
+        },
+        {
+          "name": "ZeroManningsNGivesZeroAlpha",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 72,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffAlpha"
+        },
+        {
+          "name": "FullyImperviousNoPerviousAlpha",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 88,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffAlpha"
+        },
+        {
+          "name": "MultipleSubcatchments",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 104,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffAlpha"
+        }
+      ]
+    },
+    {
+      "name": "PondedDepth",
+      "tests": 5,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T09:58:42Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "FillsDepressionStorageFirst",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 171,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "PondedDepth"
+        },
+        {
+          "name": "OverflowsAfterDepressionStorage",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 184,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "PondedDepth"
+        },
+        {
+          "name": "NoInflowNoChange",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 196,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "PondedDepth"
+        },
+        {
+          "name": "SteadyStateBalance",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 208,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "PondedDepth"
+        },
+        {
+          "name": "NeverGoesNegative",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 224,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "PondedDepth"
+        }
+      ]
+    },
+    {
+      "name": "RunoffRate",
+      "tests": 4,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T09:58:42Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "ZeroExcessGivesZeroRunoff",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 240,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffRate"
+        },
+        {
+          "name": "PositiveExcessGivesPositiveRunoff",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 245,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffRate"
+        },
+        {
+          "name": "ManningsFormula",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 256,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffRate"
+        },
+        {
+          "name": "ZeroAlphaGivesZeroRunoff",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 269,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffRate"
+        }
+      ]
+    },
+    {
+      "name": "RunoffSoA",
+      "tests": 2,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T09:58:42Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "ResizeSetsCorrectSize",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 278,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffSoA"
+        },
+        {
+          "name": "ResizeInitializesToZero",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 287,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffSoA"
+        }
+      ]
+    },
+    {
+      "name": "RunoffMassBalance",
+      "tests": 1,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T09:58:42Z",
+      "time": "0s",
+      "testsuite": [
+        {
+          "name": "PondedDepthConservation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_runoff.cpp",
+          "line": 301,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T09:58:42Z",
+          "time": "0s",
+          "classname": "RunoffMassBalance"
+        }
+      ]
+    }
+  ]
+}

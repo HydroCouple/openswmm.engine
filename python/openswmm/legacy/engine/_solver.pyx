@@ -1,11 +1,27 @@
 # cython: language_level=3str
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 openswmm.solver._solver
 ========================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Cython module for the legacy SWMM 5.x solver bindings. Provides
 enumerations identifying SWMM objects, an exception class, free helper
@@ -25,6 +41,7 @@ from cpython.datetime cimport datetime as cython_datetime
 from datetime import datetime, timedelta
 from libc.stdlib cimport free, malloc
 from functools import partialmethod
+from os.path import splitext
 
 # external imports
 from .solver cimport (
@@ -324,6 +341,7 @@ class SWMMNodeProperties(Enum):
     POLLUTANT_CONCENTRATION = swmm_NodeProperty.swmm_NODE_POLLUTANT_CONCENTRATION # Pollutant concentration
     POLLUTANT_LATERAL_MASS_FLUX = swmm_NodeProperty.swmm_NODE_POLLUTANT_LATMASS_FLUX # Pollutant inflow concentration
     OUTFLOW = swmm_NodeProperty.swmm_NODE_OUTFLOW
+    STORAGE_AREA = swmm_NodeProperty.swmm_NODE_STORAGE_AREA
 
 class SWMMLinkProperties(Enum):
     """Enumeration of SWMM link properties.
@@ -729,9 +747,9 @@ def run_solver(
 
     @param inp_file: Input file name.
     @type inp_file: str
-    @param rpt_file: Report file name.
+    @param rpt_file: Report file name. Derived from C{inp_file} when omitted.
     @type rpt_file: str
-    @param out_file: Output file name.
+    @param out_file: Output file name. Derived from C{inp_file} when omitted.
     @type out_file: str
     @param swmm_progress_callback: Optional progress callback receiving a
         float between 0.0 and 1.0.
@@ -745,11 +763,11 @@ def run_solver(
     cdef bytes c_inp_file_bytes = inp_file.encode('utf-8')
     cdef progress_callback c_swm_progress_callback
 
-    if rpt_file is not None:
-       rpt_file = inp_file.replace('.inp', '.rpt')
+    if rpt_file is None:
+        rpt_file = splitext(inp_file)[0] + '.rpt'
 
-    if out_file is not None:
-         out_file = inp_file.replace('.inp', '.out')
+    if out_file is None:
+        out_file = splitext(inp_file)[0] + '.out'
 
     cdef bytes c_rpt_file_bytes = rpt_file.encode('utf-8')
     cdef bytes c_out_file_bytes = out_file.encode('utf-8')
@@ -945,12 +963,12 @@ cdef class Solver:
         if rpt_file is not None:
             self._rpt_file = rpt_file
         else:
-            self._rpt_file = inp_file.replace('.inp', '.rpt')
+            self._rpt_file = splitext(inp_file)[0] + '.rpt'
 
         if out_file is not None:
             self._out_file = out_file
         else:
-            self._out_file = inp_file.replace('.inp', '.out')
+            self._out_file = splitext(inp_file)[0] + '.out'
         
         self._callbacks = {
             CallbackType.BEFORE_INITIALIZE: [],

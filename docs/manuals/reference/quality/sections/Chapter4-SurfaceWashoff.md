@@ -52,7 +52,7 @@ size and runoff rate. An analysis of the Sartor and Boyd (1972) data by
 Ammon (1979) indicates that *k* increases with runoff rate, as would be
 expected, and decreases with particle size.
 
-![](quality/media/media/image12.png "sartor and boyd washoff plots")
+![](quality/media/media/quality-image12.png "sartor and boyd washoff plots")
 <p><span id="_Toc454288769"
 class="anchor"></span><strong>Figure 4‑1 Washoff of street solids by
 flushing with a sprinkler system (from Sartor and Boyd,
@@ -238,7 +238,7 @@ Rating Curve               850 (mg/sec)(cfs)<sup>-1.5</sup>           1.5
 
 EMC                        20 mg/L × 28.3 L/ft<sup>3</sup>            \-
 
-![](quality/media/media/image13.png "image13")
+![](quality/media/media/quality-image13.png "image13")
 <p><span id="_Toc454288770"
 class="anchor"></span><strong>Figure 4‑2 Comparison of washoff
 functions</strong></p>
@@ -305,7 +305,7 @@ with the variables defined as follows:
 
 *Q<sub>out</sub>*       =   rate of runoff leaving the subcatchment (cfs).
 
-![](quality/media/media/image14.png "image14")
+![](quality/media/media/quality-image14.png "image14")
 <p><span id="_Toc454288771"
 class="anchor"></span><strong>Figure 4‑3 Two-stream approach to modeling
 pollutant washoff</strong></p>
@@ -596,9 +596,9 @@ Washoff is higher for flows on the ascending limb of the hydrograph
 because there is higher buildup available and lower during the
 descending limb since there is less buildup present.
 
-![](quality/media/media/image15.png)   ![](quality/media/media/image16.png)
+![](quality/media/media/quality-image15.png)   ![](quality/media/media/quality-image16.png)
 
-![](quality/media/media/image17.png) ![](quality/media/media/image18.png)
+![](quality/media/media/quality-image17.png) ![](quality/media/media/quality-image18.png)
 
 **Figure 4‑4 Simulated load variations within a storm as a function of runoff rate**
 

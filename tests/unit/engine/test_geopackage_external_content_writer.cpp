@@ -1,16 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_geopackage_external_content_writer.cpp
- * @brief Slice IO-7 — verify `write_external_content` fans out the
+ * @file      test_geopackage_external_content_writer.cpp
+ * @brief     Slice IO-7 — verify `write_external_content` fans out the
  *        in-memory external-file slots into the Part D content tables.
  *
  * @details Each case:
  *            1. Lays down a fresh GeoPackage at
- *               tests/unit/engine/data/io7_writer/<case>.gpkg.
+ *               tests/unit/engine/data/io7_writer/&lt;case&gt;.gpkg.
  *            2. Plants a minimal model in the Part A tables (just the
  *               parent rows needed for FK satisfaction).
  *            3. Writes a real external file (timeseries / climate /
  *               raingage / hot-start / routing interface) under
- *               tests/unit/engine/data/io7_writer/<case>_input.<ext>
+ *               tests/unit/engine/data/io7_writer/&lt;case&gt;_input.&lt;ext&gt;
  *               so a reviewer can open it.
  *            4. Builds a SimulationContext with the external-file slot
  *               pointing at that real file.
@@ -20,9 +36,9 @@
  *          USE-direction missing-file and SAVE-pending behaviours are
  *          covered by dedicated tests.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -58,16 +74,33 @@ using openswmm::gpkg::DbPtr;
 
 namespace {
 
+/**
+ * @brief Locate/create the retained external-content writer artifact directory.
+ *
+ * Searches up to eight parents of cwd for the data tree, then creates the target even if not found.
+ * Does not change cwd or clean existing artifacts; filesystem failures propagate.
+ * @return Path ending tests/unit/engine/data/io7_writer under the found or last searched ancestor.
+ */
 fs::path testDir() {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/io7_writer";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Reset one controlled writer database and create the maintained schema.
+ *
+ * Deletion errors are ignored, so previous contents can survive. Directory/open/schema exceptions
+ * propagate; no transaction or rollback covers earlier filesystem work.
+ *
+ * @param[in] stem Safe basename beneath testDir; stem.gpkg may be deleted.
+ * @return Owning SQLite connection to the schema-initialized database.
+ */
 DbPtr freshDb(const std::string& stem) {
     auto path = testDir() / (stem + ".gpkg");
     std::error_code ec;
@@ -78,23 +111,50 @@ DbPtr freshDb(const std::string& stem) {
 }
 
 // Plant a single-row model providing FK targets for content rows.
+/**
+ * @brief Insert parent object rows for external-content writer foreign keys.
+ *
+ * Inserts simulation, J1/O1, L1, S1, G1 and TSS; statements can throw and leave earlier inserts
+ * committed. Does not build or run an engine context, escape SQL or wrap a transaction.
+ *
+ * @param[in,out] db Borrowed writable maintained-schema connection without conflicting fixture
+ *     rows.
+ * @param[in] sim Trusted simulation id without unescaped single quotes, interpolated into SQL.
+ */
 void plantMinimalModel(sqlite3* db, const std::string& sim) {
     exec(db, "INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
-              "VALUES ('" + sim + "', 't', '2026-01-01T00:00:00Z', '6.0.0')");
+             "VALUES ('" +
+                 sim + "', 't', '2026-01-01T00:00:00Z', '6.0.0')");
     exec(db, "INSERT INTO nodes (simulation_id, node_id, node_type) "
-              "VALUES ('" + sim + "', 'J1', 'JUNCTION')");
+             "VALUES ('" +
+                 sim + "', 'J1', 'JUNCTION')");
     exec(db, "INSERT INTO nodes (simulation_id, node_id, node_type) "
-              "VALUES ('" + sim + "', 'O1', 'OUTFALL')");
+             "VALUES ('" +
+                 sim + "', 'O1', 'OUTFALL')");
     exec(db, "INSERT INTO links (simulation_id, link_id, link_type, from_node, to_node) "
-              "VALUES ('" + sim + "', 'L1', 'CONDUIT', 'J1', 'O1')");
+             "VALUES ('" +
+                 sim + "', 'L1', 'CONDUIT', 'J1', 'O1')");
     exec(db, "INSERT INTO subcatchments (simulation_id, subcatch_id) "
-              "VALUES ('" + sim + "', 'S1')");
+             "VALUES ('" +
+                 sim + "', 'S1')");
     exec(db, "INSERT INTO rain_gages (simulation_id, gage_id) "
-              "VALUES ('" + sim + "', 'G1')");
+             "VALUES ('" +
+                 sim + "', 'G1')");
     exec(db, "INSERT INTO pollutants (simulation_id, pollutant_id, units) "
-              "VALUES ('" + sim + "', 'TSS', 'MG/L')");
+             "VALUES ('" +
+                 sim + "', 'TSS', 'MG/L')");
 }
 
+/**
+ * @brief Read the first column of the first result row as an integer.
+ *
+ * prepare can throw; sqlite3_step status is ignored. Statement is finalized through local
+ * ownership; no assertion or independent error indication is returned.
+ *
+ * @param[in] db Borrowed live SQLite connection.
+ * @param[in] sql Trusted query expected to return an integer aggregate in column zero.
+ * @return SQLite integer conversion, potentially zero after unchecked step refusal or no row.
+ */
 int countWhere(sqlite3* db, const std::string& sql) {
     auto stmt = prepare(db, sql);
     sqlite3_step(stmt.get());
@@ -121,22 +181,20 @@ TEST(GpkgExternalContentWriter, TimeseriesFilePopulatesProvenance) {
 
     SimulationContext ctx;
     int t = ctx.tables.add("RAIN_X", TableType::TIMESERIES);
-    ctx.tables[t].file_path = src.string();   // pre-resolved (.original) only
+    ctx.tables[t].file_path = src.string(); // pre-resolved (.original) only
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM input_timeseries "
-        "WHERE simulation_id='sim1' AND series_id='RAIN_X'"), 2);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM input_timeseries "
+                                   "WHERE simulation_id='sim1' AND series_id='RAIN_X'"),
+              2);
 
-    auto stmt = prepare(db.get(),
-        "SELECT source, source_filename, source_column "
-        "FROM input_timeseries WHERE series_id='RAIN_X' LIMIT 1");
+    auto stmt = prepare(db.get(), "SELECT source, source_filename, source_column "
+                                  "FROM input_timeseries WHERE series_id='RAIN_X' LIMIT 1");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
     EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0)),
                  "imported_from_file");
-    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1)),
-                 "ts_input.dat");
+    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1)), "ts_input.dat");
     EXPECT_EQ(sqlite3_column_type(stmt.get(), 2), SQLITE_NULL);
 }
 
@@ -156,12 +214,10 @@ TEST(GpkgExternalContentWriter, TimeseriesWithColumnSuffixCapturesColumn) {
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    auto stmt = prepare(db.get(),
-        "SELECT source_column FROM input_timeseries "
-        "WHERE series_id='RAIN_X' LIMIT 1");
+    auto stmt = prepare(db.get(), "SELECT source_column FROM input_timeseries "
+                                  "WHERE series_id='RAIN_X' LIMIT 1");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
-    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0)),
-                 "East_Gage");
+    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0)), "East_Gage");
 }
 
 // ---------------------------------------------------------------------------
@@ -185,8 +241,8 @@ TEST(GpkgExternalContentWriter, ClimateFilePopulatesRows) {
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM climate_data WHERE simulation_id='sim1'"), 2);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM climate_data WHERE simulation_id='sim1'"),
+              2);
 }
 
 // ---------------------------------------------------------------------------
@@ -210,9 +266,9 @@ TEST(GpkgExternalContentWriter, RaingageFilePopulatesRows) {
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM raingage_data "
-        "WHERE simulation_id='sim1' AND gage_id='G1'"), 2);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM raingage_data "
+                                   "WHERE simulation_id='sim1' AND gage_id='G1'"),
+              2);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,17 +296,18 @@ TEST(GpkgExternalContentWriter, RoutingInflowsFilePopulatesNodeAndPollutantRows)
     plantMinimalModel(db.get(), sim);
 
     SimulationContext ctx;
-    ctx.files.inflows_path = src.string();    // legacy: USE only
+    ctx.files.inflows_path = src.string(); // legacy: USE only
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
     EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM routing_interface_node "
-        "WHERE simulation_id='sim1' AND role='INFLOWS' AND direction='USE'"), 2);
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM routing_interface_node_pollutants "
-        "WHERE simulation_id='sim1' AND role='INFLOWS' "
-        " AND pollutant_id='TSS'"), 2);
+                         "SELECT COUNT(*) FROM routing_interface_node "
+                         "WHERE simulation_id='sim1' AND role='INFLOWS' AND direction='USE'"),
+              2);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM routing_interface_node_pollutants "
+                                   "WHERE simulation_id='sim1' AND role='INFLOWS' "
+                                   " AND pollutant_id='TSS'"),
+              2);
 }
 
 // ---------------------------------------------------------------------------
@@ -266,26 +323,42 @@ TEST(GpkgExternalContentWriter, HotstartUsePopulatesSlotAndState) {
         const char stamp[] = "SWMM5-HOTSTART4";
         o.write(stamp, 15);
         int32_t v;
-        v = 0;  o.write(reinterpret_cast<const char*>(&v), 4); // nSubcatch
-        v = 0;  o.write(reinterpret_cast<const char*>(&v), 4); // nLanduses
-        v = 2;  o.write(reinterpret_cast<const char*>(&v), 4); // nNodes
-        v = 1;  o.write(reinterpret_cast<const char*>(&v), 4); // nLinks
-        v = 1;  o.write(reinterpret_cast<const char*>(&v), 4); // nPollut
-        v = 0;  o.write(reinterpret_cast<const char*>(&v), 4); // flowUnits = CFS
+        v = 0;
+        o.write(reinterpret_cast<const char*>(&v), 4); // nSubcatch
+        v = 0;
+        o.write(reinterpret_cast<const char*>(&v), 4); // nLanduses
+        v = 2;
+        o.write(reinterpret_cast<const char*>(&v), 4); // nNodes
+        v = 1;
+        o.write(reinterpret_cast<const char*>(&v), 4); // nLinks
+        v = 1;
+        o.write(reinterpret_cast<const char*>(&v), 4); // nPollut
+        v = 0;
+        o.write(reinterpret_cast<const char*>(&v), 4); // flowUnits = CFS
         float f;
         // Node J1: depth, lateral, pollut
-        f = 0.5f;   o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 0.10f;  o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 12.5f;  o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.5f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.10f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 12.5f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
         // Node O1
-        f = 0.0f;   o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 0.0f;   o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 0.0f;   o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.0f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.0f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.0f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
         // Link L1: flow, depth, setting, pollut
-        f = 1.75f;  o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 0.40f;  o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 1.0f;   o.write(reinterpret_cast<const char*>(&f), 4);
-        f = 5.0f;   o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 1.75f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 0.40f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 1.0f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
+        f = 5.0f;
+        o.write(reinterpret_cast<const char*>(&f), 4);
     }
     auto db = freshDb("hotstart_use");
     plantMinimalModel(db.get(), sim);
@@ -299,26 +372,25 @@ TEST(GpkgExternalContentWriter, HotstartUsePopulatesSlotAndState) {
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_slots "
-        "WHERE simulation_id='sim1' AND slot_name='use' "
-        " AND direction='USE' AND status='populated'"), 1);
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_node_state "
-        "WHERE simulation_id='sim1' AND slot_name='use'"), 2);
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_link_state "
-        "WHERE simulation_id='sim1' AND slot_name='use' "
-        " AND link_id='L1'"), 1);
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_node_pollutant_state "
-        "WHERE simulation_id='sim1' AND slot_name='use' "
-        " AND node_id='J1' AND pollutant_id='TSS'"), 1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_slots "
+                                   "WHERE simulation_id='sim1' AND slot_name='use' "
+                                   " AND direction='USE' AND status='populated'"),
+              1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_node_state "
+                                   "WHERE simulation_id='sim1' AND slot_name='use'"),
+              2);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_link_state "
+                                   "WHERE simulation_id='sim1' AND slot_name='use' "
+                                   " AND link_id='L1'"),
+              1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_node_pollutant_state "
+                                   "WHERE simulation_id='sim1' AND slot_name='use' "
+                                   " AND node_id='J1' AND pollutant_id='TSS'"),
+              1);
 
     // Spot-check the actual value.
-    auto stmt = prepare(db.get(),
-        "SELECT depth FROM hotstart_node_state "
-        "WHERE node_id='J1' AND slot_name='use'");
+    auto stmt = prepare(db.get(), "SELECT depth FROM hotstart_node_state "
+                                  "WHERE node_id='J1' AND slot_name='use'");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
     EXPECT_NEAR(sqlite3_column_double(stmt.get(), 0), 0.5, 1e-5);
 }
@@ -340,13 +412,13 @@ TEST(GpkgExternalContentWriter, HotstartSavePendingWhenFileMissing) {
 
     ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
 
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_slots "
-        "WHERE simulation_id='sim1' AND slot_name='save_0' "
-        " AND direction='SAVE' AND status='pending'"), 1);
-    EXPECT_EQ(countWhere(db.get(),
-        "SELECT COUNT(*) FROM hotstart_node_state "
-        "WHERE simulation_id='sim1' AND slot_name='save_0'"), 0);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_slots "
+                                   "WHERE simulation_id='sim1' AND slot_name='save_0' "
+                                   " AND direction='SAVE' AND status='pending'"),
+              1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_node_state "
+                                   "WHERE simulation_id='sim1' AND slot_name='save_0'"),
+              0);
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +432,86 @@ TEST(GpkgExternalContentWriter, UseDirectionMissingFileThrows) {
 
     SimulationContext ctx;
     ctx.options.temp_file = (testDir() / "missing_climate.csv").string();
-    EXPECT_THROW(write_external_content(db.get(), ctx, sim),
-                 openswmm::gpkg::GpkgError);
+    EXPECT_THROW(write_external_content(db.get(), ctx, sim), openswmm::gpkg::GpkgError);
+}
+
+// ---------------------------------------------------------------------------
+// SAVE HOTSTART format keyword → hotstart_slots.save_format (NULL = AUTO).
+// A native file already on disk cannot be embedded (the state tables hold
+// the legacy layout), so its slot stays pending instead of failing the save.
+// ---------------------------------------------------------------------------
+
+TEST(GpkgExternalContentWriter, HotstartSaveFormatIsStoredAndNativeFileStaysPending) {
+    const std::string sim = "sim1";
+    auto db = freshDb("hotstart_save_format");
+    plantMinimalModel(db.get(), sim);
+
+    const fs::path native = testDir() / "save_format_native.hsf";
+    { // only the stamp is read; the rest need not be a valid file
+        std::ofstream o(native, std::ios::binary);
+        o.write("OPENSWMM_HS_V1\0", 16);
+        o.write("not-a-real-body", 15);
+    }
+    SimulationContext ctx;
+    openswmm::HotstartSaveEntry a, n, l;
+    a.path = (testDir() / "save_format_auto_missing.hsf").string();
+    n.path = native.string();
+    n.format = openswmm::HotstartFormat::NATIVE;
+    l.path = (testDir() / "save_format_legacy_missing.hsf").string();
+    l.format = openswmm::HotstartFormat::LEGACY;
+    ctx.files.hotstart_saves = {a, n, l};
+
+    ASSERT_NO_THROW(write_external_content(db.get(), ctx, sim));
+
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_0' "
+                                   " AND save_format IS NULL AND status='pending'"),
+              1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_1' "
+                                   " AND save_format='NATIVE' AND status='pending'"),
+              1);
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_slots WHERE slot_name='save_2' "
+                                   " AND save_format='LEGACY'"),
+              1);
+    EXPECT_EQ(
+        countWhere(db.get(), "SELECT COUNT(*) FROM hotstart_node_state WHERE slot_name='save_1'"),
+        0);
+}
+
+TEST(GpkgExternalContentWriter, NativeUseHotstartFileIsRefusedByName) {
+    const std::string sim = "sim1";
+    auto db = freshDb("hotstart_use_native");
+    plantMinimalModel(db.get(), sim);
+    const fs::path native = testDir() / "use_native.hsf";
+    {
+        std::ofstream o(native, std::ios::binary);
+        o.write("OPENSWMM_HS_V1\0", 16);
+    }
+    SimulationContext ctx;
+    ctx.files.hotstart_use_path = native.string();
+    try {
+        write_external_content(db.get(), ctx, sim);
+        FAIL() << "a native USE file was embedded";
+    } catch (const openswmm::gpkg::GpkgError& e) {
+        EXPECT_NE(std::string(e.what()).find("native"), std::string::npos) << e.what();
+    }
+}
+
+TEST(GpkgExternalContentWriter, OlderDatabaseGainsTheSaveFormatColumn) {
+    const fs::path path = testDir() / "hotstart_slots_pre_format.gpkg";
+    std::error_code ec;
+    fs::remove(path, ec);
+    auto db = open_database(path.string());
+    // hotstart_slots as written before the format keyword existed.
+    exec(db.get(), "CREATE TABLE hotstart_slots (simulation_id TEXT NOT NULL, "
+                   "slot_name TEXT NOT NULL, direction TEXT NOT NULL, save_datetime REAL, "
+                   "format_version INTEGER NOT NULL, flow_units TEXT, "
+                   "num_pollutants INTEGER NOT NULL, captured_at TEXT, "
+                   "status TEXT NOT NULL DEFAULT 'pending', "
+                   "PRIMARY KEY (simulation_id, slot_name))");
+    create_schema(db.get());
+    EXPECT_EQ(countWhere(db.get(), "SELECT COUNT(*) FROM pragma_table_info('hotstart_slots') "
+                                   "WHERE name='save_format'"),
+              1);
+    // …and a second pass does not try to add it again.
+    EXPECT_NO_THROW(create_schema(db.get()));
 }

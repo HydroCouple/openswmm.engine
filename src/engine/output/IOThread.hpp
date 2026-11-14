@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file IOThread.hpp
- * @brief Separate IO writer thread with a bounded task queue (Phase 5, R17).
+ * @file      IOThread.hpp
+ * @brief     Separate IO writer thread with a bounded task queue (Phase 5, R17).
  *
  * @details IOThread decouples simulation computation from output writing.
  * The main simulation thread posts WriteTask objects; the IO thread drains
@@ -24,8 +40,10 @@
  *
  * ### Thread safety
  *
- * - `post()` is safe to call from any thread (typically main sim thread).
- * - `stop()` must be called from the main thread exactly once.
+ * - Native `post()` serializes multiple producers; the WebAssembly path runs
+ *   synchronously and requires serialized callers.
+ * - Lifecycle methods are externally serialized and called outside the IO worker.
+ *   `stop()` is safe repeatedly; do not race `start()` with another lifecycle call.
  * - `start()` must be called before `post()`.
  *
  * @see WriteTask.hpp
@@ -33,9 +51,9 @@
  * @see docs/MASTER_IMPLEMENTATION_PLAN.md Phase 5
  * @ingroup engine_io
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_IO_THREAD_HPP
@@ -49,6 +67,15 @@
 #include <queue>
 #include <atomic>
 #include <functional>
+
+/**
+ * @defgroup engine_io Serialized output I/O
+ * @ingroup new_engine
+ *
+ * Bounded asynchronous write queues and native file/archive helpers. The caller
+ * owns producer shutdown, borrowed immutable metadata lifetime and accepted-state
+ * boundaries; individual contracts describe locking and partial-failure behavior.
+ */
 
 namespace openswmm {
 
@@ -68,16 +95,22 @@ public:
 
     /**
      * @brief Construct (does NOT start the thread).
-     * @param factory   Plugin factory whose update_all() is called per task.
-     * @param capacity  Maximum number of queued snapshots before post() blocks.
      */
-    explicit IOThread(PluginFactory& factory,
-                      std::size_t capacity = DEFAULT_QUEUE_CAPACITY);
+    /** @param factory Borrowed factory required to outlive this object and active worker.
+     * Plugins must accept snapshot delivery on the native IO thread (or caller thread
+     * for WebAssembly), and callbacks must not throw across the worker boundary.
+     * @param capacity Positive queued-task budget; zero causes native post() to wait
+     * until stop. Capacity excludes the one currently executing task. No validation/clamp occurs. */
+    explicit IOThread(PluginFactory& factory, std::size_t capacity = DEFAULT_QUEUE_CAPACITY);
 
+    /** @brief Stop/drain and join the native worker before releasing queue storage.
+     * Can block for plugin writes; destruction must not run from the worker itself. */
     ~IOThread();
 
     // Non-copyable, non-movable (owns a thread)
+    /** @brief Disable copying a live thread, queue and borrowed factory association. */
     IOThread(const IOThread&) = delete;
+    /** @brief Disable assignment of thread/queue ownership. */
     IOThread& operator=(const IOThread&) = delete;
 
     // -----------------------------------------------------------------------
@@ -88,14 +121,24 @@ public:
      * @brief Start the IO worker thread.
      * @pre  Thread must not already be running.
      */
+    /** @details Call once before posting, with lifecycle externally serialized. Native
+     * thread sets running asynchronously; repeated immediate start calls can race that
+     * flag and must not occur. After stop/join, restarting retains sequence/counters/
+     * sticky error. WebAssembly only changes flags and uses synchronous writes.
+     * Native thread creation errors propagate. */
     void start();
 
     /**
      * @brief Post a snapshot to the write queue.
      *
-     * @details Blocks if the queue is at capacity. Thread-safe.
-     * @param snap  Snapshot to write (moved into the queue).
+     * @details Native producers block at queue capacity; WebAssembly writes synchronously.
      */
+    /** @param snap Snapshot taken by value and moved into queue ownership. Its owned
+     * vectors isolate ordinary simulation data, but any retained context pointer must
+     * satisfy plugin lifetime/access contracts. Native producers wait for space, or
+     * discard the request if stop is observed. WebAssembly calls update_all() directly
+     * without capacity waiting and requires serialized callers. Errors returned by
+     * plugins become sticky last_error(); no exception recovery is installed. */
     void post(SimulationSnapshot snap);
 
     /**
@@ -104,37 +147,63 @@ public:
      * @details Waits for all queued tasks to be processed, then joins the
      *          thread. Safe to call even if start() was never called.
      */
+    /** @details Discards newly posted work after the stop flag, wakes blocked native
+     * producers, drains already queued tasks and joins the worker. Requires lifecycle
+     * serialization and a nonworker caller. If never started, an existing queue is not
+     * drained; intended usage starts before posting. WebAssembly simply clears running. */
     void stop();
+
+    /** Wait for queued and currently executing writes. Call from the producer. */
+    /** @return Sticky last nonzero plugin update code, or zero before any error. Native
+     * waits until queue empty and no write active; WebAssembly returns immediately.
+     * Call from the producer with a started worker for queued work; never from a plugin
+     * callback on that worker, which would wait for itself. Does not prevent other
+     * producers enqueueing more work after the idle observation. */
+    int flush() const;
 
     // -----------------------------------------------------------------------
     // Diagnostics
     // -----------------------------------------------------------------------
 
     /** @brief True if the thread is running. */
+    /** @return Relaxed atomic running flag; may still be false just after native start(),
+     * and is not a completion barrier for queue/plugin state. */
     bool running() const noexcept { return running_.load(std::memory_order_relaxed); }
 
     /** @brief Number of tasks processed so far. */
-    int tasks_completed() const noexcept { return tasks_completed_.load(std::memory_order_relaxed); }
+    /** @return Relaxed atomic count of attempted plugin-delivery tasks, including ones
+     * with nonzero return codes. Retained across restarts; caller avoids int overflow. */
+    int tasks_completed() const noexcept {
+        return tasks_completed_.load(std::memory_order_relaxed);
+    }
 
     /** @brief Last error code from a plugin update (0 = no error). */
+    /** @return Last nonzero update_all() return code, retained after later successes
+     * and across restart; zero means no error recorded yet, not proof all work completed. */
     int last_error() const noexcept { return last_error_.load(std::memory_order_relaxed); }
 
 private:
-    void run();  ///< Worker thread function
+    /** @brief Drain native queued snapshots, book sticky errors/counts and signal idle.
+     * Runs only on the worker after start(); stops after stop flag plus an empty queue.
+     * Plugin calls execute outside the queue mutex and must not throw. WebAssembly
+     * defines an unused no-op body because post() delivers synchronously. */
+    void run(); ///< Worker thread function
 
-    PluginFactory&           factory_;
-    const std::size_t        capacity_;
+    PluginFactory& factory_;
+    const std::size_t capacity_;
 
-    std::thread              thread_;
-    std::queue<WriteTask>    queue_;
-    std::mutex               mutex_;
-    std::condition_variable  cv_not_full_;   ///< Wakes producer when space available
-    std::condition_variable  cv_not_empty_;  ///< Wakes consumer when task available
-    std::atomic<bool>        stop_flag_      {false};
-    std::atomic<bool>        running_        {false};
-    std::atomic<int>         tasks_completed_{0};
-    std::atomic<int>         last_error_     {0};
-    int                      next_sequence_  = 0;
+    std::thread thread_;
+    std::queue<WriteTask> queue_;
+    mutable std::mutex mutex_;
+    mutable std::condition_variable cv_idle_;
+    bool writing_ = false;
+    std::condition_variable cv_not_full_;  ///< Wakes producer when space available
+    std::condition_variable cv_not_empty_; ///< Wakes consumer when task available
+    std::atomic<bool> stop_flag_{false};
+    std::atomic<bool> running_{false};
+    std::atomic<int> tasks_completed_{0};
+    std::atomic<int> last_error_{0};
+    int next_sequence_ = 0;
 };
 
 } /* namespace openswmm */

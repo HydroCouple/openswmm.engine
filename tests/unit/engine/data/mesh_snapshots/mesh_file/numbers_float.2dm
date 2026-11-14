@@ -1,0 +1,8 @@
+[2D_VERTICES]
++1 -0 1e5
+0x1p3 1E-5 .5
+5. inf -infinity
+nan 1e400 1e-400
+INF NaN Infinity
+0X1P-2 +.5 -5.
+1.7976931348623157e308 4.9e-324 2.2250738585072014e-308

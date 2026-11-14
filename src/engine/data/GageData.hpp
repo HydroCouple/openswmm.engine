@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file GageData.hpp
- * @brief Structure-of-Arrays (SoA) storage for rain gages.
+ * @file      GageData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for rain gages.
  *
  * @details Replaces the global `Gage[]` array and `TGage` struct from
  *          src/solver/objects.h. Rain gages provide precipitation input to
@@ -14,15 +30,16 @@
  * @see Legacy reference: src/solver/globals.h — Gage[], Ngages
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_GAGE_DATA_HPP
 #define OPENSWMM_ENGINE_GAGE_DATA_HPP
 
 #include "../core/FilePathPair.hpp"
+#include "SoaRow.hpp"
 #include "TableData.hpp"
 #include <vector>
 #include <string>
@@ -39,8 +56,8 @@ namespace openswmm {
  * @see Legacy: RainType in src/solver/enums.h
  */
 enum class RainSource : int8_t {
-    TIMESERIES = 0,  ///< Data from an in-file [TIMESERIES]
-    FILE_RAIN  = 1   ///< Data from an external rain file
+    TIMESERIES = 0, ///< Data from an in-file [TIMESERIES]
+    FILE_RAIN = 1   ///< Data from an external rain file
 };
 
 /**
@@ -48,14 +65,16 @@ enum class RainSource : int8_t {
  * @see Legacy: RainFileType in src/solver/enums.h
  */
 enum class RainFileFormat : int8_t {
-    UNKNOWN  = -1,
-    NWS_15   = 0,   ///< NWS 15-minute data
+    UNKNOWN = -1,
+    NWS_15 = 0,     ///< NWS 15-minute data
     NWS_HOURLY = 1, ///< NWS hourly data
     DSI_3240 = 2,   ///< NCDC DSI 3240 hourly
     DSI_3260 = 3,   ///< NCDC DSI 3260 15-minute
     HLY_PRCP = 4,   ///< HLY_PRCP format
     STAN_PRCP = 5,  ///< Standard SWMM rain file
-    USER_CSV = 6    ///< User-supplied multi-column CSV (new in 6.0.0, R08)
+    USER_CSV = 6    ///< User-supplied multi-column text file — CSV, TSV, or
+                    ///< PCSWMM TSF, auto-detected by content (new in 6.0.0,
+                    ///< R08; extended per MULTICOLUMN_SERIES_SINGLE_READ plan)
 };
 
 // ============================================================================
@@ -84,16 +103,16 @@ struct GageData {
      * @brief Rain data type: 0=INTENSITY, 1=VOLUME, 2=CUMULATIVE.
      * @see Legacy: Gage[i].rainType
      */
-    std::vector<int>            rain_type;
+    std::vector<int> rain_type;
 
     /** @brief Precipitation source (TIMESERIES or FILE). */
-    std::vector<RainSource>     source;
+    std::vector<RainSource> source;
 
     /**
      * @brief Time series index (when source == TIMESERIES).
      * @see Legacy: Gage[i].tSeries
      */
-    std::vector<int>            ts_index;
+    std::vector<int> ts_index;
 
     /**
      * @brief External rain file path (when source == FILE_RAIN).
@@ -102,19 +121,20 @@ struct GageData {
      *          keeps existing readers/writers working unchanged.
      * @see Legacy: Gage[i].fname
      */
-    std::vector<FilePathPair>   file_path;
+    std::vector<FilePathPair> file_path;
 
     /**
      * @brief Timeseries name (for deferred resolution when TS parsed after gages).
      */
-    std::vector<std::string>    ts_name;
+    std::vector<std::string> ts_name;
 
     /**
-     * @brief Column name in the external CSV (when source == FILE_RAIN).
-     * @details New in 6.0.0 — supports "FILE path.csv:COLUMN_NAME" syntax (R08).
+     * @brief Column name in the external multi-column file (source == FILE_RAIN).
+     * @details New in 6.0.0 — supports "FILE path.csv:COLUMN_NAME" syntax (R08)
+     *          for multi-column CSV/TSV/TSF files (format auto-detected).
      *          Empty string means use the first/only data column.
      */
-    std::vector<std::string>    col_name;
+    std::vector<std::string> col_name;
 
     /**
      * @brief Station ID for a standard SWMM rain file (when source == FILE_RAIN).
@@ -124,7 +144,7 @@ struct GageData {
      *          rows whose first token matches.  Empty means "accept all rows".
      * @see Legacy: Gage[i].staID
      */
-    std::vector<std::string>    station_id;
+    std::vector<std::string> station_id;
 
     /**
      * @brief Rain depth units declared in the [RAINGAGES] FILE row: 0 = IN, 1 = MM.
@@ -132,7 +152,7 @@ struct GageData {
      *          units when the file units differ from the unit system.
      * @see Legacy: Gage[i].rainUnits
      */
-    std::vector<int>            rain_units;
+    std::vector<int> rain_units;
 
     // -----------------------------------------------------------------------
     // Rainfall-file summary statistics (for the "Rainfall File Summary"
@@ -141,24 +161,31 @@ struct GageData {
     // -----------------------------------------------------------------------
 
     /** @brief First record date found for this gage's station (OADate, 0 = none). */
-    std::vector<double>         file_first_date;
+    std::vector<double> file_first_date;
 
     /** @brief Last record date found for this gage's station (OADate, 0 = none). */
-    std::vector<double>         file_last_date;
+    std::vector<double> file_last_date;
 
     /** @brief Number of records with precipitation > 0 for this station. */
-    std::vector<long>           file_periods_precip;
+    std::vector<long> file_periods_precip;
 
     /**
-     * @brief Resolved rainfall series for a FILE_RAIN gage (windowed to the run).
+     * @brief [RAINGAGES] FILE StartDate (OADate day, 0 = none / `*`).
+     * @details File records dated before this day are skipped entirely, as
+     *          legacy rain.c readStdLine / readNWSLine do (`date1 < day1`).
+     */
+    std::vector<double> file_start_date;
+
+    /**
+     * @brief Resolved rainfall series for a FILE_RAIN gage (full file record).
      * @details Populated by load_external_rain_files() with the station's records
-     *          that fall inside the simulation window, already converted to the
+     *          accepted by the file filters, already converted to the
      *          project's rain depth units.  Reusing a Table gives the runtime the
      *          same cursor/step-function lookup as an inline [TIMESERIES] gage,
      *          without polluting ctx.tables (so INP round-trips still emit FILE).
      *          Empty unless source == FILE_RAIN.
      */
-    std::vector<Table>          rain_series;
+    std::vector<Table> rain_series;
 
     /**
      * @brief Rain file format.
@@ -170,13 +197,13 @@ struct GageData {
      * @brief Recording interval in seconds.
      * @see Legacy: Gage[i].rainInterval
      */
-    std::vector<int>            interval_sec;
+    std::vector<int> interval_sec;
 
     /**
      * @brief Snow catch deficiency correction factor (1.0 = no correction).
      * @see Legacy: Gage[i].snowFactor
      */
-    std::vector<double>         snow_factor;
+    std::vector<double> snow_factor;
 
     /**
      * @brief Rainfall scaling factor (1.0 = no scaling).
@@ -189,7 +216,7 @@ struct GageData {
      *          secondary's substituted.
      * @see Legacy: Gage[i].scaleFactor (Build 5.3.0+)
      */
-    std::vector<double>         scale_factor;
+    std::vector<double> scale_factor;
 
     // -----------------------------------------------------------------------
     // State variables — updated each timestep
@@ -199,31 +226,63 @@ struct GageData {
      * @brief Current rainfall rate (project length/time units — inches or mm/hr).
      * @see Legacy: Gage[i].rainfall
      */
-    std::vector<double>         rainfall;
+    std::vector<double> rainfall;
 
     /**
      * @brief Rainfall rate at the next recorded interval (for interpolation).
      * @see Legacy: Gage[i].nextRainfall
      */
-    std::vector<double>         next_rainfall;
+    std::vector<double> next_rainfall;
 
     /**
      * @brief Current API (antecedent precipitation index) rainfall.
      * @see Legacy: Gage[i].apiRainfall
      */
-    std::vector<double>         api_rainfall;
+    std::vector<double> api_rainfall;
 
     /**
      * @brief Simulation time of the next recorded value (decimal days).
      * @see Legacy: Gage[i].nextRainDate
      */
-    std::vector<double>         next_rain_date;
+    std::vector<double> next_rain_date;
 
     /**
      * @brief Current state flag (0 = no rain, 1 = raining).
      * @see Legacy: Gage[i].currentHour / isUsed logic
      */
-    std::vector<bool>           is_raining;
+    std::vector<bool> is_raining;
+
+    /**
+     * @brief Legacy rain-gage state machine (gage_initState / gage_setState /
+     *        getNextRainfall), kept as record indices on the gage's series
+     *        and advanced by updateAllGages():
+     *        - st_cur: the record legacy's startDate/endDate name — -2 while
+     *          there is no state (NO_DATE: no series, empty series,
+     *          IGNORE_RAINFALL, not yet initialised), -1 for the pre-record
+     *          interval [StartDateTime, x0) legacy forms when the record
+     *          begins after the simulation start, else a record index (the
+     *          FIRST record whatever its value, afterwards only records with
+     *          a non-zero rate: getNextRainfall skips zero rates);
+     *        - st_next: the record legacy's nextDate/nextRainfall name, -1
+     *          for NO_DATE;
+     *        - st_rain: legacy Gage.rainfall as the machine last left it
+     *          (0 in a gap, the current record's rate otherwise), the value
+     *          gage_setReportRainfall reads; user rain units with the units
+     *          and scale factors, before the monthly rain adjustment.
+     *        - st_init: the machine has been seeded (lazily, on the first
+     *          update, from the simulation start date); st_used: legacy
+     *          Gage.isUsed as found then — an unused gage's machine never
+     *          advances and its rainfall keeps the seeded value (legacy
+     *          gage_setState returns at once; runoff_execute still reads
+     *          Gage.rainfall for IsRaining).
+     * @see Legacy: gage_initState, gage_setState, getNextRainfall,
+     *      gage_getNextRainDate, gage_setReportRainfall
+     */
+    std::vector<int> st_cur;
+    std::vector<int> st_next;
+    std::vector<double> st_rain;
+    std::vector<uint8_t> st_init;
+    std::vector<uint8_t> st_used;
 
     // -----------------------------------------------------------------------
     // Past-rain history (for control rules — GAGE_RAIN_PAST)
@@ -232,13 +291,13 @@ struct GageData {
     static constexpr int MAXPASTRAIN = 48; ///< Max past hours tracked per gage
 
     /** @brief Flat 2D: [gage * MAXPASTRAIN + hour]. Hourly rain totals. */
-    std::vector<double>         past_rain;
+    std::vector<double> past_rain;
 
     /** @brief Per-gage accumulator for the current partial hour. */
-    std::vector<double>         past_rain_accum;
+    std::vector<double> past_rain_accum;
 
-    /** @brief Per-gage time (seconds) of last past-rain shift. */
-    std::vector<double>         past_rain_time;
+    /** @brief Per-gage seconds in the current partial hour (0..3600). */
+    std::vector<double> past_rain_interval;
 
     /**
      * @brief Gap #31: Cumulative rainfall accumulator (project rain units).
@@ -246,14 +305,14 @@ struct GageData {
      *          computed each timestep.  Initialised to 0.  Matches legacy
      *          Gage[i].rainAccum.
      */
-    std::vector<double>         cumul_rain_accum;
+    std::vector<double> cumul_rain_accum;
 
     /**
      * @brief Object comment from the INP file (';'-prefixed lines immediately
      *        above this gage's data row), joined by literal "\\n".
      *        Empty string means no comment.
      */
-    std::vector<std::string>    comments;
+    std::vector<std::string> comments;
 
     /**
      * @brief Gap #53: Co-gage index — index of the primary gage sharing the
@@ -262,14 +321,27 @@ struct GageData {
      *          ts_index, the later gage copies its rainfall from the earlier
      *          one (the primary).  Matches legacy Gage[i].coGage.
      */
-    std::vector<int>            co_gage_index;
+    std::vector<int> co_gage_index;
 
     // -----------------------------------------------------------------------
     // Capacity management
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Count rain gages from the source-type column.
+     * @return source.size() converted to int; no name-index or column-alignment validation.
+     */
     int count() const noexcept { return static_cast<int>(source.size()); }
 
+    /**
+     * @brief Replace rain-gage configuration and runtime arrays with defaults.
+     *
+     * Defaults TIMESERIES source, unresolved table/co-gage indices, hourly intervals, unit scale/snow
+     * factors, empty file/text/table records and zero rain histories. API override=-1 and state-machine
+     * cursors=-2/-1. Counts/names are caller-managed; allocations can leave partial column replacement.
+     *
+     * @param[in] n Nonnegative gage count; n*MAXPASTRAIN must fit size_t.
+     */
     void resize(int n) {
         const auto un = static_cast<std::size_t>(n);
 
@@ -284,6 +356,7 @@ struct GageData {
         file_first_date.assign(un, 0.0);
         file_last_date.assign(un, 0.0);
         file_periods_precip.assign(un, 0L);
+        file_start_date.assign(un, 0.0);
         rain_series.assign(un, Table{});
         file_format.assign(un, RainFileFormat::UNKNOWN);
         interval_sec.assign(un, 3600);
@@ -292,71 +365,159 @@ struct GageData {
 
         rainfall.assign(un, 0.0);
         next_rainfall.assign(un, 0.0);
-        api_rainfall.assign(un, -1.0);  // -1.0 means no API override
+        api_rainfall.assign(un, -1.0); // -1.0 means no API override
         next_rain_date.assign(un, 0.0);
         is_raining.assign(un, false);
+        st_cur.assign(un, -2);
+        st_next.assign(un, -1);
+        st_rain.assign(un, 0.0);
+        st_init.assign(un, 0);
+        st_used.assign(un, 0);
 
         past_rain.assign(un * MAXPASTRAIN, 0.0);
         past_rain_accum.assign(un, 0.0);
-        past_rain_time.assign(un, 0.0);
+        past_rain_interval.assign(un, 0.0);
         cumul_rain_accum.assign(un, 0.0);
         co_gage_index.assign(un, -1);
         comments.assign(un, std::string{});
     }
 
     /**
-     * @brief Append one new gage with defaults, preserving existing data.
-     * @details Uses std::vector::resize (extend-only) so existing gages are
-     *          not overwritten. Call instead of resize() when adding a single
-     *          gage interactively.
+     * @brief Extend rain-gage arrays to a requested total while preserving their prefixes.
+     *
+     * Appends all default gage fields and extends the flat hourly history to n*MAXPASTRAIN. May add
+     * multiple gages. Assumes existing columns aligned; allocation failure is not rolled back. Does not
+     * add names or spatial rows.
+     *
+     * @param[in] n Requested total count; <=count() is a no-op, including negative inputs.
      */
     void grow_to(int n) {
-        if (n <= count()) return;
+        if (n <= count())
+            return;
         const auto un = static_cast<std::size_t>(n);
         auto g = [&](auto& v, auto def) { v.resize(un, def); };
-        g(rain_type, 0); g(source, RainSource::TIMESERIES); g(ts_index, -1);
+        g(rain_type, 0);
+        g(source, RainSource::TIMESERIES);
+        g(ts_index, -1);
         ts_name.resize(un, std::string{});
         file_path.resize(un, std::string{});
         col_name.resize(un, std::string{});
         station_id.resize(un, std::string{});
         g(rain_units, 0);
-        g(file_first_date, 0.0); g(file_last_date, 0.0); g(file_periods_precip, 0L);
+        g(file_first_date, 0.0);
+        g(file_last_date, 0.0);
+        g(file_periods_precip, 0L);
+        g(file_start_date, 0.0);
         rain_series.resize(un, Table{});
-        g(file_format, RainFileFormat::UNKNOWN); g(interval_sec, 3600); g(snow_factor, 1.0);
+        g(file_format, RainFileFormat::UNKNOWN);
+        g(interval_sec, 3600);
+        g(snow_factor, 1.0);
         g(scale_factor, 1.0);
-        g(rainfall, 0.0); g(next_rainfall, 0.0);
-        g(api_rainfall, -1.0); g(next_rain_date, 0.0); g(is_raining, false);
+        g(rainfall, 0.0);
+        g(next_rainfall, 0.0);
+        g(api_rainfall, -1.0);
+        g(next_rain_date, 0.0);
+        g(is_raining, false);
+        g(st_cur, -2);
+        g(st_next, -1);
+        g(st_rain, 0.0);
+        g(st_init, static_cast<uint8_t>(0));
+        g(st_used, static_cast<uint8_t>(0));
         // Flat 2D: [gage * MAXPASTRAIN + hour]
         past_rain.resize(un * static_cast<std::size_t>(MAXPASTRAIN), 0.0);
-        g(past_rain_accum, 0.0); g(past_rain_time, 0.0); g(cumul_rain_accum, 0.0);
+        g(past_rain_accum, 0.0);
+        g(past_rain_interval, 0.0);
+        g(cumul_rain_accum, 0.0);
         g(co_gage_index, -1);
         comments.resize(un, std::string{});
     }
 
     /**
-     * @brief Erase the rain gage at index `idx` from every parallel array.
+     * @brief Call @p f with a pointer to every per-gage column member.
      *
-     * @details Removes element `idx` from every SoA vector. The flat-2D
-     *          past_rain array ([gage * MAXPASTRAIN + hour]) has its full
-     *          stride for `idx` removed. Spatial arrays are erased separately.
+     * The one list of columns that erase_at, take_row and put_row share, so a column added here is
+     * erased and restored alike. past_rain is not listed: it holds MAXPASTRAIN cells per gage and
+     * those three functions handle it as a chunk.
+     *
+     * @param[in] f Callable taking a pointer to a std::vector member of GageData.
      */
-    void erase_at(int idx) {
-        const auto ui = static_cast<std::size_t>(idx);
-        auto e = [&](auto& v) { if (ui < v.size()) v.erase(v.begin() + static_cast<std::ptrdiff_t>(idx)); };
+    template <class F>
+    static void for_each_column(F&& f) {
+        f(&GageData::rain_type);
+        f(&GageData::source);
+        f(&GageData::ts_index);
+        f(&GageData::file_path);
+        f(&GageData::ts_name);
+        f(&GageData::col_name);
+        f(&GageData::station_id);
+        f(&GageData::rain_units);
+        f(&GageData::file_first_date);
+        f(&GageData::file_last_date);
+        f(&GageData::file_periods_precip);
+        f(&GageData::file_start_date);
+        f(&GageData::rain_series);
+        f(&GageData::file_format);
+        f(&GageData::interval_sec);
+        f(&GageData::snow_factor);
+        f(&GageData::scale_factor);
+        f(&GageData::rainfall);
+        f(&GageData::next_rainfall);
+        f(&GageData::api_rainfall);
+        f(&GageData::next_rain_date);
+        f(&GageData::is_raining);
+        f(&GageData::st_cur);
+        f(&GageData::st_next);
+        f(&GageData::st_rain);
+        f(&GageData::st_init);
+        f(&GageData::st_used);
+        f(&GageData::past_rain_accum);
+        f(&GageData::past_rain_interval);
+        f(&GageData::cumul_rain_accum);
+        f(&GageData::comments);
+        f(&GageData::co_gage_index);
+    }
 
-        e(rain_type); e(source); e(ts_index); e(ts_name);
-        e(file_path); e(col_name); e(file_format); e(interval_sec); e(snow_factor);
-        e(scale_factor);
-        e(rainfall); e(next_rainfall); e(api_rainfall); e(next_rain_date); e(is_raining);
-        e(past_rain_accum); e(past_rain_time); e(cumul_rain_accum); e(co_gage_index);
-        e(comments);
+    /**
+     * @brief Erase a gage from every column.
+     *
+     * Each column is erased only if it contains idx; past_rain removes its full MAXPASTRAIN stride
+     * when present. Caller repairs spatial/name indexes, co-gage references and dependent
+     * subcatchments separately.
+     *
+     * @param[in] idx Caller-validated existing gage index; no overall index guard.
+     */
+    void erase_at(int idx) { (void)take_row(idx); }
 
+    /**
+     * @brief Remove a gage's cells from every column and return them as a one-gage GageData.
+     *
+     * A column too short to hold idx is left alone and stays empty in the returned row, so
+     * put_row(idx, row) is the exact inverse.
+     *
+     * @param[in] idx Caller-validated existing gage index.
+     * @return The removed cells: each column holds one cell or none; past_rain holds MAXPASTRAIN
+     *     cells or none.
+     */
+    GageData take_row(int idx) {
         // Flat 2D past_rain: [gage * MAXPASTRAIN + hour]
-        const auto base = ui * static_cast<std::size_t>(MAXPASTRAIN);
-        const auto end  = base + static_cast<std::size_t>(MAXPASTRAIN);
-        if (end <= past_rain.size())
-            past_rain.erase(past_rain.begin() + static_cast<std::ptrdiff_t>(base),
-                            past_rain.begin() + static_cast<std::ptrdiff_t>(end));
+        auto past = soa::take_chunk(past_rain, idx, MAXPASTRAIN);
+        GageData row = soa::take_row(*this, idx);
+        row.past_rain = std::move(past);
+        return row;
+    }
+
+    /**
+     * @brief Insert a row taken by take_row back at idx.
+     *
+     * Only the cells the row holds are inserted; later gages shift up by one.
+     *
+     * @param[in] idx Index the row was taken from; each column the row holds a cell for has at least
+     *     idx cells.
+     * @param[in] row Value returned by take_row(idx); its cells are moved out.
+     */
+    void put_row(int idx, GageData&& row) {
+        soa::put_chunk(past_rain, idx, MAXPASTRAIN, row.past_rain);
+        soa::put_row(*this, idx, std::move(row));
     }
 
     /**
@@ -379,23 +540,40 @@ struct GageData {
         api_rainfall.shrink_to_fit();
         next_rain_date.shrink_to_fit();
         is_raining.shrink_to_fit();
+        st_cur.shrink_to_fit();
+        st_next.shrink_to_fit();
+        st_rain.shrink_to_fit();
+        st_init.shrink_to_fit();
+        st_used.shrink_to_fit();
 
         past_rain.shrink_to_fit();
         past_rain_accum.shrink_to_fit();
-        past_rain_time.shrink_to_fit();
+        past_rain_interval.shrink_to_fit();
         cumul_rain_accum.shrink_to_fit();
         co_gage_index.shrink_to_fit();
         comments.shrink_to_fit();
     }
 
+    /**
+     * @brief Clear dynamic rain values, state-machine cursors and antecedent history.
+     *
+     * Restores API override=-1, cursor sentinels -2/-1 and initialization/use flags false. Preserves
+     * static source/file/table records and co-gage mapping. next_rain_date is unchanged; runtime
+     * initialization must reseed timing. Sizes/capacities are retained.
+     */
     void reset_state() noexcept {
-        std::fill(rainfall.begin(),      rainfall.end(),      0.0);
+        std::fill(rainfall.begin(), rainfall.end(), 0.0);
         std::fill(next_rainfall.begin(), next_rainfall.end(), 0.0);
-        std::fill(api_rainfall.begin(),  api_rainfall.end(),  -1.0); // -1 = no override
-        std::fill(is_raining.begin(),    is_raining.end(),    false);
-        std::fill(past_rain.begin(),     past_rain.end(),     0.0);
+        std::fill(api_rainfall.begin(), api_rainfall.end(), -1.0); // -1 = no override
+        std::fill(is_raining.begin(), is_raining.end(), false);
+        std::fill(st_cur.begin(), st_cur.end(), -2);
+        std::fill(st_next.begin(), st_next.end(), -1);
+        std::fill(st_rain.begin(), st_rain.end(), 0.0);
+        std::fill(st_init.begin(), st_init.end(), static_cast<uint8_t>(0));
+        std::fill(st_used.begin(), st_used.end(), static_cast<uint8_t>(0));
+        std::fill(past_rain.begin(), past_rain.end(), 0.0);
         std::fill(past_rain_accum.begin(), past_rain_accum.end(), 0.0);
-        std::fill(past_rain_time.begin(),  past_rain_time.end(),  0.0);
+        std::fill(past_rain_interval.begin(), past_rain_interval.end(), 0.0);
         std::fill(cumul_rain_accum.begin(), cumul_rain_accum.end(), 0.0);
         // co_gage_index is static (set at parse time), not reset between runs
     }

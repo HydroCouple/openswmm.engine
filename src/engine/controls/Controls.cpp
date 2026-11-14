@@ -1,11 +1,27 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file Controls.cpp
- * @brief Rule-based control engine — full legacy parity implementation.
+ * @file      Controls.cpp
+ * @brief     Rule-based control engine — full legacy parity implementation.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "Controls.hpp"
@@ -16,32 +32,33 @@
 #include "../hydraulics/Link.hpp"
 #include "../data/TableData.hpp"
 #include "../core/Constants.hpp"
+#include "../core/ErrorCodes.hpp"
 
 #include <cmath>
 #include <algorithm>
 #include <sstream>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <unordered_map>
 
 namespace openswmm {
 using constants::MISSING;
 namespace controls {
 
-
-
 void ControlEngine::init(const std::vector<Rule>& rules) {
     rules_ = rules;
     pid_states_.clear();
     for (int r = 0; r < static_cast<int>(rules_.size()); ++r) {
-        for (auto& a : rules_[static_cast<size_t>(r)].then_actions) a.rule_idx = r;
-        for (auto& a : rules_[static_cast<size_t>(r)].else_actions) a.rule_idx = r;
+        for (auto& a : rules_[static_cast<size_t>(r)].then_actions)
+            a.rule_idx = r;
+        for (auto& a : rules_[static_cast<size_t>(r)].else_actions)
+            a.rule_idx = r;
     }
     buildPremiseSoA();
     // timeLastSet storage moved to ctx.links.time_last_set, owned by
     // SWMMEngine::stepRouting (P1-C09).
     link_time_last_set_.clear();
-    next_rule_eval_time_ = -1.0;
 }
 
 // ============================================================================
@@ -57,8 +74,7 @@ void ControlEngine::buildPremiseSoA() {
     rule_premise_offset_.assign(rules_.size() + 1, 0);
     for (size_t r = 0; r < rules_.size(); ++r) {
         rule_premise_offset_[r + 1] =
-            rule_premise_offset_[r] +
-            static_cast<int>(rules_[r].premises.size());
+            rule_premise_offset_[r] + static_cast<int>(rules_[r].premises.size());
     }
     total_premises_ = rule_premise_offset_.back();
     premise_results_.assign(static_cast<size_t>(total_premises_), 0);
@@ -84,6 +100,7 @@ void ControlEngine::buildPremiseSoA() {
         g.rule_idx.reserve(static_cast<size_t>(kv.second));
         g.premise_idx.reserve(static_cast<size_t>(kv.second));
         g.obj_idx.reserve(static_cast<size_t>(kv.second));
+        g.param.reserve(static_cast<size_t>(kv.second));
         g.flat_idx.reserve(static_cast<size_t>(kv.second));
         g.op.reserve(static_cast<size_t>(kv.second));
         g.rhs_value.reserve(static_cast<size_t>(kv.second));
@@ -97,14 +114,17 @@ void ControlEngine::buildPremiseSoA() {
         const auto& rule = rules_[static_cast<size_t>(r)];
         for (int p = 0; p < static_cast<int>(rule.premises.size()); ++p) {
             const auto& prem = rule.premises[static_cast<size_t>(p)];
-            if (prem.is_expression) continue;  // expressions evaluated per-premise
+            if (prem.is_expression)
+                continue; // expressions evaluated per-premise
 
             auto it = type_to_group.find(static_cast<int>(prem.lhs_var));
-            if (it == type_to_group.end()) continue;
+            if (it == type_to_group.end())
+                continue;
             auto& g = premise_groups_[it->second];
             g.rule_idx.push_back(r);
             g.premise_idx.push_back(p);
             g.obj_idx.push_back(prem.lhs_idx);
+            g.param.push_back(prem.lhs_param);
             g.flat_idx.push_back(rule_premise_offset_[static_cast<size_t>(r)] + p);
             g.op.push_back(static_cast<int>(prem.op));
             g.rhs_value.push_back(prem.rhs_value);
@@ -129,16 +149,17 @@ void ControlEngine::buildPremiseSoA() {
 // Batch evaluate one variable-type group — VECTORISABLE
 // ============================================================================
 
-void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
-                                        const SimulationContext& ctx,
-                                        double current_time, double half_step) {
-    if (g.count == 0) return;
+void ControlEngine::batchEvaluateGroup(PremiseSoA& g, const SimulationContext& ctx,
+                                       double current_time, double half_step) {
+    if (g.count == 0)
+        return;
 
     // Phase 1a: Batch gather LHS values — single pass over one SoA array
     // This is the key vectorisation win: all gathers hit the same array type
     for (int i = 0; i < g.count; ++i) {
         auto ui = static_cast<size_t>(i);
-        g.lhs_values[ui] = getVariableValue(ctx, g.var_type, g.obj_idx[ui], current_time);
+        g.lhs_values[ui] =
+            getVariableValue(ctx, g.var_type, g.obj_idx[ui], current_time, g.param[ui]);
     }
 
     // Phase 1b: Batch compare — SIMD-friendly: contiguous lhs[] vs threshold[]
@@ -146,16 +167,15 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
     //          the flat premise_results_ cache, indexed via g.flat_idx[].
     //          Variable-RHS premises are skipped here (zero placeholder) and
     //          handled by evaluatePremise() in Phase 1b of evaluate().
-    bool is_time = (g.var_type == ConditionVar::SIM_TIME ||
-                    g.var_type == ConditionVar::CLOCK_TIME ||
-                    g.var_type == ConditionVar::LINK_TIMEOPEN ||
-                    g.var_type == ConditionVar::LINK_TIMECLOSED);
+    bool is_time =
+        (g.var_type == ConditionVar::SIM_TIME || g.var_type == ConditionVar::CLOCK_TIME ||
+         g.var_type == ConditionVar::LINK_TIMEOPEN || g.var_type == ConditionVar::LINK_TIMECLOSED);
 
     for (int i = 0; i < g.count; ++i) {
-        auto ui   = static_cast<size_t>(i);
+        auto ui = static_cast<size_t>(i);
         double lhs = g.lhs_values[ui];
         double rhs = g.rhs_value[ui];
-        auto op    = static_cast<CompareOp>(g.op[ui]);
+        auto op = static_cast<CompareOp>(g.op[ui]);
         uint8_t r;
 
         if (lhs == MISSING) {
@@ -177,28 +197,35 @@ void ControlEngine::batchEvaluateGroup(PremiseSoA& g,
 // Main evaluate — short-circuit AND, priority dedup, modulated actions
 // ============================================================================
 
-int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double dt) {
-    // ---- RULE_STEP gating (P1-C10) ----
-    // Legacy routing.c:286-290 only invokes controls_evaluate when the
-    // routing clock reaches the next configured rule-evaluation time.
-    // rule_step == 0 means "every routing step" (legacy default).
-    if (ctx.options.rule_step > 0.0) {
-        if (next_rule_eval_time_ < 0.0)
-            next_rule_eval_time_ = ctx.current_date;
-        if (ctx.current_date + 0.5 * dt / constants::SEC_PER_DAY
-            < next_rule_eval_time_) {
-            last_action_count_ = 0;
-            return 0;
-        }
-        next_rule_eval_time_ =
-            ctx.current_date + ctx.options.rule_step / constants::SEC_PER_DAY;
+int ControlEngine::evaluate(SimulationContext& ctx, double current_date, double dt,
+                            bool rule_time_reached) {
+    // ---- RULE_STEP gating ----
+    // legacy evaluateControlRules (routing.c) calls controls_evaluate only
+    // when `RuleStep == 0 || fabs(NewRoutingTime - NewRuleTime) < 1.0`;
+    // the caller owns that ms clock and passes the verdict.
+    if (!rule_time_reached) {
+        last_action_count_ = 0;
+        return 0;
     }
+
+    // legacy controls_evaluate: CurrentDate = floor(currentTime),
+    // CurrentTime = currentTime - floor(currentTime), ElapsedTime =
+    // routing.c's currentDate - StartDateTime. The date is the step's
+    // start plus 1 ms, so "SIMULATION TIME > 0" is already true on the
+    // first step and "> 0:00:10" on the step that starts at 10 s
+    // (type5-pump-test's pumps ran their first step at setting 1.0
+    // where legacy ran 1.2).
+    eval_date_ = current_date;
+    cur_date_ = std::floor(current_date);
+    cur_time_ = current_date - cur_date_;
+    elapsed_days_ = current_date - ctx.options.start_date;
+    const double current_time = current_date; // threaded to the value getters
 
     // dt is passed in seconds (matches the rest of stepRouting).  Convert
     // to days so compareTimes() tolerances are in the same unit as the
     // LHS for SIM_TIME / CLOCK_TIME / LINK_TIMEOPEN / LINK_TIMECLOSED.
     // (P0-C03 — legacy routing.c:289 passes routingStep/SECperDAY.)
-    const double dt_days   = dt / constants::SEC_PER_DAY;
+    const double dt_days = dt / constants::SEC_PER_DAY;
     const double half_step = dt_days / 2.0;
     pending_actions_.clear();
 
@@ -218,7 +245,8 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
         const int base = rule_premise_offset_[r];
         for (size_t p = 0; p < rule.premises.size(); ++p) {
             const auto& prem = rule.premises[p];
-            if (!prem.is_expression && !prem.rhs_is_variable) continue;
+            if (!prem.is_expression && !prem.rhs_is_variable)
+                continue;
             const bool ok = evaluatePremise(ctx, prem, current_time, half_step);
             premise_results_[static_cast<size_t>(base) + p] = ok ? 1 : 0;
         }
@@ -234,16 +262,19 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
         const int base = rule_premise_offset_[r];
         bool result = false;
         for (size_t p = 0; p < rule.premises.size(); ++p) {
-            const uint8_t pval =
-                premise_results_[static_cast<size_t>(base) + p];
+            const uint8_t pval = premise_results_[static_cast<size_t>(base) + p];
             const auto logic = rule.premises[p].logic;
             if (p == 0) {
                 result = (pval != 0);
             } else if (logic == LogicOp::AND) {
-                if (!result) continue;          // short-circuit
+                // Legacy stops the rule at a failed AND chain. Continuing
+                // would let a later OR incorrectly revive the rule.
+                if (!result)
+                    break;
                 result = (pval != 0);
             } else { // OR
-                if (!result) result = (pval != 0);
+                if (!result)
+                    result = (pval != 0);
             }
         }
         rule_results_[r] = result;
@@ -252,9 +283,11 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
     // ---- Phase 3: Collect actions from fired rules ----
     for (size_t ur = 0; ur < rules_.size(); ++ur) {
         const int r = static_cast<int>(ur);
-        const auto& actions = rule_results_[ur]
-            ? rules_[ur].then_actions : rules_[ur].else_actions;
-        for (auto a : actions) {
+        const auto& actions = rule_results_[ur] ? rules_[ur].then_actions : rules_[ur].else_actions;
+        // legacy addAction PREPENDS each clause (controls.c:1546), so a
+        // rule's actions run last-authored first
+        for (auto it = actions.rbegin(); it != actions.rend(); ++it) {
+            auto a = *it;
             // PID / CURVE / TIMESERIES actions read the LAST premise's LHS/RHS
             // from control_value_ / set_point_. The batch path does NOT set
             // these members — only the scalar evaluatePremise() path does.
@@ -262,21 +295,19 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
             // so the PID sees the live control variable (matching legacy
             // controls.c where ControlValue/SetPoint are set as a side
             // effect of every premise evaluation).
-            if (a.type == ActionType::PID ||
-                a.type == ActionType::CURVE ||
+            if (a.type == ActionType::PID || a.type == ActionType::CURVE ||
                 a.type == ActionType::TIMESERIES) {
                 if (!rules_[ur].premises.empty()) {
-                    (void)evaluatePremise(ctx, rules_[ur].premises.back(),
-                                          current_time, half_step);
+                    (void)evaluatePremise(ctx, rules_[ur].premises.back(), current_time, half_step);
                 }
             }
             updateActionValue(a, ctx, current_time, dt);
             PendingAction pa;
             pa.link_idx = a.link_idx;
-            pa.value    = a.value;
+            pa.value = a.value;
             pa.priority = rules_[ur].priority;
             pa.rule_idx = r;
-            pa.type     = a.type;
+            pa.type = a.type;
             pending_actions_.push_back(pa);
         }
     }
@@ -292,17 +323,40 @@ int ControlEngine::evaluate(SimulationContext& ctx, double current_time, double 
 int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_time) {
     (void)current_time;
 
-    std::unordered_map<int, PendingAction> best;
-    for (const auto& pa : pending_actions_) {
-        if (pa.link_idx < 0 || pa.link_idx >= ctx.n_links()) continue;
-        auto it = best.find(pa.link_idx);
-        if (it == best.end() || pa.priority > it->second.priority) {
-            best[pa.link_idx] = pa;
+    // Legacy updateActionList: one slot per link, the first action kept
+    // unless a later one has strictly higher priority; executeActionList
+    // walks the slots head first, which fixes the logged order.
+    for (auto& s : action_slots_)
+        s = -1; // clearActionList
+    for (int k = 0; k < static_cast<int>(pending_actions_.size()); ++k) {
+        const auto& pa = pending_actions_[static_cast<size_t>(k)];
+        if (pa.link_idx < 0 || pa.link_idx >= ctx.n_links())
+            continue;
+        size_t s = 0;
+        bool listed = false;
+        for (; s < action_slots_.size() && action_slots_[s] >= 0; ++s) {
+            auto& cur = action_slots_[s];
+            if (pending_actions_[static_cast<size_t>(cur)].link_idx == pa.link_idx) {
+                if (pa.priority > pending_actions_[static_cast<size_t>(cur)].priority)
+                    cur = k;
+                listed = true;
+                break;
+            }
         }
+        if (listed)
+            continue;
+        if (s < action_slots_.size())
+            action_slots_[s] = k; // reuse a node
+        else
+            action_slots_.insert(action_slots_.begin(), k); // prepend
     }
 
     int changes = 0;
-    for (const auto& kv : best) {
+    for (const int slot : action_slots_) {
+        if (slot < 0)
+            break;
+        const std::pair<int, PendingAction> kv{pending_actions_[static_cast<size_t>(slot)].link_idx,
+                                               pending_actions_[static_cast<size_t>(slot)]};
         auto ul = static_cast<size_t>(kv.first);
         if (ctx.links.target_setting[ul] != kv.second.value) {
             ctx.links.target_setting[ul] = kv.second.value;
@@ -313,17 +367,25 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
             // Log for the Control Actions report. Legacy controls.c:1770
             // excludes modulated (CURVE / TIMESERIES / PID) actions from
             // the report — match that here (P1-C08).
-            if (ctx.options.rpt_controls &&
-                kv.second.type == ActionType::NUMERIC) {
-                int ri = kv.second.rule_idx;
-                std::string rname = (ri >= 0 && ri < static_cast<int>(rules_.size()))
-                    ? rules_[static_cast<std::size_t>(ri)].name : "Rule?";
+            if (ctx.options.rpt_controls && kv.second.type == ActionType::NUMERIC) {
+                const int ri = kv.second.rule_idx;
+                const bool known = ri >= 0 && ri < static_cast<int>(rules_.size());
+                if (known) {
+                    // Intern the rule name once; the entry carries the index
+                    // (no per-action string on a deck that toggles every step).
+                    auto& names = ctx.control_rule_names;
+                    if (names.size() < rules_.size())
+                        names.resize(rules_.size());
+                    auto& slot = names[static_cast<std::size_t>(ri)];
+                    if (slot != rules_[static_cast<std::size_t>(ri)].name)
+                        slot = rules_[static_cast<std::size_t>(ri)].name;
+                }
                 SimulationContext::ControlLogEntry entry;
-                entry.link_idx    = kv.first;
-                entry.rule_name   = std::move(rname);
+                entry.link_idx = kv.first;
+                entry.rule_idx = known ? ri : -1;
                 entry.new_setting = kv.second.value;
-                entry.date        = ctx.current_date;
-                ctx.control_log.push_back(std::move(entry));
+                entry.date = eval_date_;
+                ctx.logControlAction(entry);
             }
             changes++;
         }
@@ -335,36 +397,39 @@ int ControlEngine::applyPendingActions(SimulationContext& ctx, double current_ti
 // Update action value (modulated controls: curve, timeseries, PID)
 // ============================================================================
 
-void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx,
-                                      double current_time, double dt) {
+void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx, double current_time,
+                                      double dt) {
     switch (a.type) {
-        case ActionType::NUMERIC:
-            break;
-        case ActionType::CURVE:
-            // Look up action value from curve using control_value_ as x.
-            // Matches legacy: a->value = table_lookup(&Curve[a->curve], ControlValue)
-            if (a.curve_idx >= 0 && a.curve_idx < static_cast<int>(ctx.tables.count())) {
-                a.value = table_lookup_cursor(ctx.tables[a.curve_idx], control_value_);
-            }
-            break;
-        case ActionType::TIMESERIES:
-            // Look up from timeseries using current absolute date.
-            // Matches legacy: a->value = table_tseriesLookup(&Tseries[a->tseries], currentTime, TRUE)
-            if (a.tseries_idx >= 0 && a.tseries_idx < static_cast<int>(ctx.tables.count())) {
-                a.value = table_lookup_cursor(ctx.tables[a.tseries_idx], ctx.current_date);
-            }
-            break;
-        case ActionType::PID:
-            if (a.pid_idx >= 0 && a.pid_idx < static_cast<int>(pid_states_.size())) {
-                auto& pid = pid_states_[static_cast<size_t>(a.pid_idx)];
-                pid.setpoint = set_point_;
-                double cur_setting = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
-                    ? ctx.links.target_setting[static_cast<size_t>(a.link_idx)] : 0.0;
-                bool is_pump = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
-                    ? (ctx.links.type[static_cast<size_t>(a.link_idx)] == LinkType::PUMP) : false;
-                a.value = computePIDSetting(pid, control_value_, cur_setting, is_pump, dt);
-            }
-            break;
+    case ActionType::NUMERIC:
+        break;
+    case ActionType::CURVE:
+        // Look up action value from curve using control_value_ as x.
+        // Matches legacy: a->value = table_lookup(&Curve[a->curve], ControlValue)
+        if (a.curve_idx >= 0 && a.curve_idx < static_cast<int>(ctx.tables.count())) {
+            a.value = table_lookup_cursor(ctx.tables[a.curve_idx], control_value_);
+        }
+        break;
+    case ActionType::TIMESERIES:
+        // Look up from timeseries at legacy's currentTime (the
+        // evaluation date): a->value =
+        // table_tseriesLookup(&Tseries[a->tseries], currentTime, TRUE)
+        if (a.tseries_idx >= 0 && a.tseries_idx < static_cast<int>(ctx.tables.count())) {
+            a.value = table_lookup_cursor(ctx.tables[a.tseries_idx], eval_date_);
+        }
+        break;
+    case ActionType::PID:
+        if (a.pid_idx >= 0 && a.pid_idx < static_cast<int>(pid_states_.size())) {
+            auto& pid = pid_states_[static_cast<size_t>(a.pid_idx)];
+            pid.setpoint = set_point_;
+            double cur_setting = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                                     ? ctx.links.target_setting[static_cast<size_t>(a.link_idx)]
+                                     : 0.0;
+            bool is_pump = (a.link_idx >= 0 && a.link_idx < ctx.n_links())
+                               ? (ctx.links.type[static_cast<size_t>(a.link_idx)] == LinkType::PUMP)
+                               : false;
+            a.value = computePIDSetting(pid, control_value_, cur_setting, is_pump, dt);
+        }
+        break;
     }
 }
 
@@ -372,38 +437,36 @@ void ControlEngine::updateActionValue(Action& a, SimulationContext& ctx,
 // Premise evaluation with expression support
 // ============================================================================
 
-bool ControlEngine::evaluatePremise(const SimulationContext& ctx,
-                                     const Premise& p, double current_time,
-                                     double half_step) {
+bool ControlEngine::evaluatePremise(const SimulationContext& ctx, const Premise& p,
+                                    double current_time, double half_step) {
     double lhs;
-    if (p.is_expression && p.expr_idx >= 0 &&
-        p.expr_idx < static_cast<int>(expressions_.size())) {
+    if (p.is_expression && p.expr_idx >= 0 && p.expr_idx < static_cast<int>(expressions_.size())) {
         lhs = mathexpr::evaluate(expressions_[static_cast<size_t>(p.expr_idx)],
-            [&](const std::string& name) {
-                return getNamedVariableValue(name, ctx, current_time);
-            });
+                                 [&](const std::string& name) {
+                                     return getNamedVariableValue(name, ctx, current_time);
+                                 });
     } else {
         lhs = getVariableValue(ctx, p.lhs_var, p.lhs_idx, current_time, p.lhs_param);
     }
-    if (lhs == MISSING) return false;
+    if (lhs == MISSING)
+        return false;
 
     double rhs = p.rhs_is_variable
-        ? getVariableValue(ctx, p.rhs_var, p.rhs_idx, current_time)
-        : p.rhs_value;
-    if (rhs == MISSING) return false;
+                     ? getVariableValue(ctx, p.rhs_var, p.rhs_idx, current_time, p.rhs_param)
+                     : p.rhs_value;
+    if (rhs == MISSING)
+        return false;
 
     control_value_ = lhs;
     set_point_ = rhs;
 
     // Time-aware comparison
-    bool is_time = (p.lhs_var == ConditionVar::SIM_TIME ||
-                    p.lhs_var == ConditionVar::CLOCK_TIME ||
-                    p.lhs_var == ConditionVar::LINK_TIMEOPEN ||
-                    p.lhs_var == ConditionVar::LINK_TIMECLOSED);
+    bool is_time =
+        (p.lhs_var == ConditionVar::SIM_TIME || p.lhs_var == ConditionVar::CLOCK_TIME ||
+         p.lhs_var == ConditionVar::LINK_TIMEOPEN || p.lhs_var == ConditionVar::LINK_TIMECLOSED);
     if (is_time) {
         bool result = compareTimes(lhs, p.op, rhs, half_step);
-        if (p.lhs_var == ConditionVar::LINK_TIMEOPEN ||
-            p.lhs_var == ConditionVar::LINK_TIMECLOSED)
+        if (p.lhs_var == ConditionVar::LINK_TIMEOPEN || p.lhs_var == ConditionVar::LINK_TIMECLOSED)
             control_value_ = lhs * 24.0;
         return result;
     }
@@ -417,18 +480,23 @@ bool ControlEngine::evaluatePremise(const SimulationContext& ctx,
 
 bool ControlEngine::compareValues(double lhs, CompareOp op, double rhs) const {
     switch (op) {
-        case CompareOp::EQ: return lhs == rhs;
-        case CompareOp::NE: return lhs != rhs;
-        case CompareOp::LT: return lhs <  rhs;
-        case CompareOp::LE: return lhs <= rhs;
-        case CompareOp::GT: return lhs >  rhs;
-        case CompareOp::GE: return lhs >= rhs;
+    case CompareOp::EQ:
+        return lhs == rhs;
+    case CompareOp::NE:
+        return lhs != rhs;
+    case CompareOp::LT:
+        return lhs < rhs;
+    case CompareOp::LE:
+        return lhs <= rhs;
+    case CompareOp::GT:
+        return lhs > rhs;
+    case CompareOp::GE:
+        return lhs >= rhs;
     }
     return false;
 }
 
-bool ControlEngine::compareTimes(double lhs, CompareOp op, double rhs,
-                                  double half_step) const {
+bool ControlEngine::compareTimes(double lhs, CompareOp op, double rhs, double half_step) const {
     if (op == CompareOp::EQ)
         return (lhs >= rhs - half_step && lhs < rhs + half_step);
     if (op == CompareOp::NE)
@@ -440,9 +508,8 @@ bool ControlEngine::compareTimes(double lhs, CompareOp op, double rhs,
 // Get variable value — ALL legacy attribute types
 // ============================================================================
 
-double ControlEngine::getVariableValue(const SimulationContext& ctx,
-                                        ConditionVar var, int idx,
-                                        double current_time, int param) const {
+double ControlEngine::getVariableValue(const SimulationContext& ctx, ConditionVar var, int idx,
+                                       double current_time, int param) const {
     auto ui = static_cast<size_t>(idx);
 
     // Unit conversion factors — rule thresholds are in display/project units,
@@ -452,125 +519,143 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
     int us = ucf::getUnitSystem(fu);
     // UCF converts internal → display: display = internal * UCF
     // (matching legacy controls.c: Node[i].newDepth * UCF(LENGTH), etc.)
-    double ucf_len  = ucf::Ucf[3][us];  // LENGTH
-    double ucf_flow = ucf::Qcf[fu];     // FLOW: internal*UCF → display
-    double ucf_vol  = ucf::Ucf[5][us];  // VOLUME
+    double ucf_len = ucf::Ucf[3][us]; // LENGTH
+    double ucf_flow = ucf::Qcf[fu];   // FLOW: internal*UCF → display
+    double ucf_vol = ucf::Ucf[5][us]; // VOLUME
 
     switch (var) {
-        case ConditionVar::NODE_DEPTH:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.depth[ui] * ucf_len : MISSING;
-        case ConditionVar::NODE_MAXDEPTH:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.full_depth[ui] * ucf_len : MISSING;
-        case ConditionVar::NODE_HEAD:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.head[ui] * ucf_len : MISSING;
-        case ConditionVar::NODE_VOLUME:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.volume[ui] * ucf_vol : MISSING;
-        case ConditionVar::NODE_INFLOW:
-            return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.lat_flow[ui] * ucf_flow : MISSING;
+    case ConditionVar::NODE_DEPTH:
+        return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.depth[ui] * ucf_len : MISSING;
+    case ConditionVar::NODE_MAXDEPTH:
+        return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.full_depth[ui] * ucf_len : MISSING;
+    case ConditionVar::NODE_HEAD:
+        return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.head[ui] * ucf_len : MISSING;
+    case ConditionVar::NODE_VOLUME:
+        return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.volume[ui] * ucf_vol : MISSING;
+    case ConditionVar::NODE_INFLOW:
+        return (idx >= 0 && idx < ctx.n_nodes()) ? ctx.nodes.lat_flow[ui] * ucf_flow : MISSING;
 
-        case ConditionVar::LINK_FLOW:
-            return (idx >= 0 && idx < ctx.n_links())
-                ? ctx.links.flow[ui] * static_cast<double>(ctx.links.direction[ui]) * ucf_flow : MISSING;
-        case ConditionVar::LINK_DEPTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.depth[ui] * ucf_len : MISSING;
-        case ConditionVar::LINK_SETTING:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.setting[ui] : MISSING;
-        case ConditionVar::LINK_STATUS:
-            // Legacy controls.c:1863-1868: returns Link[j].setting (actual 0..1)
-            // for CONDUIT and PUMP only; MISSING for all other link types.
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            if (ctx.links.type[ui] != LinkType::CONDUIT &&
-                ctx.links.type[ui] != LinkType::PUMP)
-                return MISSING;
-            return ctx.links.setting[ui];
-        case ConditionVar::LINK_FULLFLOW: {
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
+    case ConditionVar::LINK_FLOW:
+        return (idx >= 0 && idx < ctx.n_links())
+                   ? ctx.links.flow[ui] * static_cast<double>(ctx.links.direction[ui]) * ucf_flow
+                   : MISSING;
+    case ConditionVar::LINK_DEPTH:
+        return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.depth[ui] * ucf_len : MISSING;
+    case ConditionVar::LINK_SETTING:
+        return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.setting[ui] : MISSING;
+    case ConditionVar::LINK_STATUS:
+        // Legacy controls.c:1863-1868: returns Link[j].setting (actual 0..1)
+        // for CONDUIT and PUMP only; MISSING for all other link types.
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        if (ctx.links.type[ui] != LinkType::CONDUIT && ctx.links.type[ui] != LinkType::PUMP)
+            return MISSING;
+        return ctx.links.setting[ui];
+    case ConditionVar::LINK_FULLFLOW: {
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        return ((cr >= 0) ? ctx.link_subtypes.conduits.q_full[static_cast<size_t>(cr)] : 0.0) *
+               ucf_flow;
+    }
+    case ConditionVar::LINK_FULLDEPTH:
+        return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.xsect_y_full[ui] * ucf_len : MISSING;
+    case ConditionVar::LINK_LENGTH: {
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        return ((cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0) *
+               ucf_len;
+    }
+    case ConditionVar::LINK_SLOPE: {
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        const int cr = ctx.link_subtypes.conduit_row(idx);
+        return (cr >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<size_t>(cr)] : 0.0;
+    }
+    case ConditionVar::LINK_VELOCITY:
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        if (ctx.links.type[ui] != LinkType::CONDUIT)
+            return MISSING;
+        {
+            XSectParams xs;
+            xs.type = ctx.links.xsect_batch_shape[ui];
+            xs.y_full = ctx.links.xsect_y_full[ui];
+            xs.a_full = ctx.links.xsect_a_full[ui];
+            xs.w_max = ctx.links.xsect_w_max[ui];
             const int cr = ctx.link_subtypes.conduit_row(idx);
-            return ((cr >= 0) ? ctx.link_subtypes.conduits.q_full[static_cast<size_t>(cr)] : 0.0) * ucf_flow;
+            const int barrels =
+                (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
+            return link::getVelocity(xs, ctx.links.flow[ui], ctx.links.depth[ui], barrels) *
+                   ucf_len;
         }
-        case ConditionVar::LINK_FULLDEPTH:
-            return (idx >= 0 && idx < ctx.n_links()) ? ctx.links.xsect_y_full[ui] * ucf_len : MISSING;
-        case ConditionVar::LINK_LENGTH: {
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            const int cr = ctx.link_subtypes.conduit_row(idx);
-            return ((cr >= 0) ? ctx.link_subtypes.conduits.length[static_cast<size_t>(cr)] : 0.0) * ucf_len;
-        }
-        case ConditionVar::LINK_SLOPE: {
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            const int cr = ctx.link_subtypes.conduit_row(idx);
-            return (cr >= 0) ? ctx.link_subtypes.conduits.slope[static_cast<size_t>(cr)] : 0.0;
-        }
-        case ConditionVar::LINK_VELOCITY:
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            if (ctx.links.type[ui] != LinkType::CONDUIT) return MISSING;
-            {
-                XSectParams xs;
-                xs.type = ctx.links.xsect_batch_shape[ui];
-                xs.y_full = ctx.links.xsect_y_full[ui];
-                xs.a_full = ctx.links.xsect_a_full[ui];
-                xs.w_max = ctx.links.xsect_w_max[ui];
-                const int cr = ctx.link_subtypes.conduit_row(idx);
-                const int barrels = (cr >= 0) ? ctx.link_subtypes.conduits.barrels[static_cast<size_t>(cr)] : 1;
-                return link::getVelocity(xs, ctx.links.flow[ui], ctx.links.depth[ui],
-                                          barrels) * ucf_len;
-            }
-        case ConditionVar::LINK_TIMEOPEN:
-            // Returns MISSING if link is closed (setting <= 0).
-            // Otherwise returns elapsed time (in days) since setting last changed.
-            // Matches legacy: CurrentDate + CurrentTime - Link[j].timeLastSet.
-            // Storage owned by ctx.links.time_last_set (updated by the
-            // routing layer on open<->closed transitions; P1-C09).
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            if (ctx.links.setting[ui] <= 0.0) return MISSING;
-            if (ui < ctx.links.time_last_set.size())
-                return ctx.current_date - ctx.links.time_last_set[ui];
+    case ConditionVar::LINK_TIMEOPEN:
+        // Returns MISSING if link is closed (setting <= 0).
+        // Otherwise returns elapsed time (in days) since setting last changed.
+        // Matches legacy: CurrentDate + CurrentTime - Link[j].timeLastSet.
+        // Storage owned by ctx.links.time_last_set (updated by the
+        // routing layer on open<->closed transitions; P1-C09).
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        if (ctx.links.setting[ui] <= 0.0)
+            return MISSING;
+        if (ui < ctx.links.time_last_set.size())
+            return cur_date_ + cur_time_ - ctx.links.time_last_set[ui];
+        return 0.0;
+    case ConditionVar::LINK_TIMECLOSED:
+        // Returns MISSING if link is open (setting > 0).
+        // Otherwise returns elapsed time (in days) since setting last changed.
+        if (idx < 0 || idx >= ctx.n_links())
+            return MISSING;
+        if (ctx.links.setting[ui] > 0.0)
+            return MISSING;
+        if (ui < ctx.links.time_last_set.size())
+            return cur_date_ + cur_time_ - ctx.links.time_last_set[ui];
+        return 0.0;
+
+    case ConditionVar::GAGE_RAIN:
+        if (idx < 0 || idx >= ctx.n_gages())
+            return MISSING;
+        return ctx.gages.st_used[ui] ? ctx.gages.rainfall[ui] : 0.0;
+    case ConditionVar::GAGE_RAIN_PAST: {
+        if (idx < 0 || idx >= ctx.n_gages())
+            return MISSING;
+        if (param < 1 || param > GageData::MAXPASTRAIN)
+            return MISSING;
+        if (!ctx.gages.st_used[ui])
             return 0.0;
-        case ConditionVar::LINK_TIMECLOSED:
-            // Returns MISSING if link is open (setting > 0).
-            // Otherwise returns elapsed time (in days) since setting last changed.
-            if (idx < 0 || idx >= ctx.n_links()) return MISSING;
-            if (ctx.links.setting[ui] > 0.0) return MISSING;
-            if (ui < ctx.links.time_last_set.size())
-                return ctx.current_date - ctx.links.time_last_set[ui];
-            return 0.0;
+        double total = 0.0;
+        auto base = ui * static_cast<std::size_t>(GageData::MAXPASTRAIN);
+        for (int h = 0; h < param; ++h)
+            total += ctx.gages.past_rain[base + static_cast<std::size_t>(h)];
+        return total;
+    }
 
-        case ConditionVar::GAGE_RAIN:
-            return (idx >= 0 && idx < ctx.n_gages()) ? ctx.gages.rainfall[ui] : MISSING;
-        case ConditionVar::GAGE_RAIN_PAST: {
-            if (idx < 0 || idx >= ctx.n_gages()) return MISSING;
-            int hours = (param > 0 && param <= GageData::MAXPASTRAIN) ? param : 1;
-            double total = 0.0;
-            auto base = ui * static_cast<std::size_t>(GageData::MAXPASTRAIN);
-            for (int h = 0; h < hours; ++h)
-                total += ctx.gages.past_rain[base + static_cast<std::size_t>(h)];
-            return total;
-        }
-
-        case ConditionVar::SIM_TIME:
-            // ctx.current_time is stored in SECONDS (see TimestepController.cpp:88).
-            // Legacy uses ElapsedTime in days; convert here so SIM_TIME LHS
-            // matches the RHS parsed by parseTimeToken (decimal days).
-            // (Extension to P0-C01 — same root cause: unit mismatch.)
-            return current_time / constants::SEC_PER_DAY;
-        case ConditionVar::SIM_DATE:      return ctx.current_date;
-        case ConditionVar::CLOCK_TIME:
-            // Legacy controls.c:1851-1852 returns CurrentTime = fractional
-            // part of the day (decimal days, 0..1).  RHS is parsed in days
-            // too via datetime_strToTime, so both sides agree.  (P0-C02)
-            return ctx.current_date - std::floor(ctx.current_date);
-        case ConditionVar::SIM_DAY: {
-            // Matches legacy datetime.c:469-478:
-            //   ((floor(date) + DateDelta) % 7) + 1
-            // The DateDelta shift is essential — without it the result is
-            // wrong by 6 days. (P0-C06)
-            int t = static_cast<int>(std::floor(ctx.current_date))
-                  + openswmm::datetime::DateDelta;
-            return static_cast<double>((t % 7) + 1);
-        }
-        case ConditionVar::SIM_MONTH:
-            return static_cast<double>(datetime::monthOfYear(ctx.current_date));
-        case ConditionVar::SIM_DAYOFYEAR:
-            return static_cast<double>(datetime::dayOfYear(ctx.current_date));
+    // legacy getVariableValue: r_TIME = ElapsedTime (days), r_DATE =
+    // CurrentDate (the WHOLE day, so a date premise compares dates
+    // only), r_CLOCKTIME = CurrentTime (the fraction), the calendar
+    // attributes from CurrentDate. All formed by evaluate() from the
+    // step's start-plus-1-ms date.
+    case ConditionVar::SIM_TIME:
+        (void)current_time;
+        return elapsed_days_;
+    case ConditionVar::SIM_DATE:
+        return cur_date_;
+    case ConditionVar::CLOCK_TIME:
+        return cur_time_;
+    case ConditionVar::SIM_DAY: {
+        // Matches legacy datetime.c:469-478:
+        //   ((floor(date) + DateDelta) % 7) + 1
+        // The DateDelta shift is essential — without it the result is
+        // wrong by 6 days. (P0-C06)
+        int t = static_cast<int>(cur_date_) + openswmm::datetime::DateDelta;
+        return static_cast<double>((t % 7) + 1);
+    }
+    case ConditionVar::SIM_MONTH:
+        return static_cast<double>(datetime::monthOfYear(cur_date_));
+    case ConditionVar::SIM_DAYOFYEAR:
+        return static_cast<double>(datetime::dayOfYear(cur_date_));
     }
     return MISSING;
 }
@@ -579,12 +664,16 @@ double ControlEngine::getVariableValue(const SimulationContext& ctx,
 // PID controller
 // ============================================================================
 
-double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
-                                         double current_setting, bool is_pump, double dt) {
-    if (dt <= 0.0) return current_setting;
+double ControlEngine::computePIDSetting(PIDState& pid, double control_value, double current_setting,
+                                        bool is_pump, double dt) {
+    if (dt <= 0.0)
+        return current_setting;
 
-    // Convert dt from seconds to minutes (matching legacy: dt *= 1440 from days)
-    double dt_min = dt / 60.0;
+    // legacy getPIDSetting receives tStep = routingStep / SECperDAY (days)
+    // and forms minutes as dt *= 1440.0 — the same two roundings here, not
+    // dt / 60 (an ulp apart for a 20 s step, and the PID integrates it:
+    // extran3-bottom-orifice-pid drifted from period 41).
+    double dt_min = (dt / constants::SEC_PER_DAY) * 1440.0;
     constexpr double TINY = 1.0e-6;
     constexpr double tolerance = 0.0001;
 
@@ -609,7 +698,8 @@ double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
     double i = (pid.ki != 0.0) ? e0 * dt_min / pid.ki : 0.0;
     double d = (dt_min > 0.0) ? pid.kd * (e0 - 2.0 * pid.e1 + pid.e2) / dt_min : 0.0;
     double update = pid.kp * (p + i + d);
-    if (std::fabs(update) < tolerance) update = 0.0;
+    if (std::fabs(update) < tolerance)
+        update = 0.0;
 
     double setting = current_setting + update;
 
@@ -618,8 +708,10 @@ double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
     pid.e1 = e0;
 
     // Clamp to feasible range (matching legacy controls.c lines 1703-1706)
-    if (setting < 0.0) setting = 0.0;
-    if (!is_pump && setting > 1.0) setting = 1.0;
+    if (setting < 0.0)
+        setting = 0.0;
+    if (!is_pump && setting > 1.0)
+        setting = 1.0;
 
     return setting;
 }
@@ -628,22 +720,23 @@ double ControlEngine::computePIDSetting(PIDState& pid, double control_value,
 // Named variable support
 // ============================================================================
 
-double ControlEngine::getNamedVariableValue(const std::string& name,
-                                             const SimulationContext& ctx,
-                                             double current_time) const {
+double ControlEngine::getNamedVariableValue(const std::string& name, const SimulationContext& ctx,
+                                            double current_time) const {
     for (const auto& nv : named_vars_)
         if (ieq(nv.name, name))
-            return getVariableValue(ctx, nv.var, nv.idx, current_time);
+            return getVariableValue(ctx, nv.var, nv.idx, current_time, nv.param);
     return 0.0;
 }
 
-void ControlEngine::addNamedVariable(const std::string& name, ConditionVar var, int idx) {
-    named_vars_.push_back({name, var, idx});
+void ControlEngine::addNamedVariable(const std::string& name, ConditionVar var, int idx,
+                                     int param) {
+    named_vars_.push_back({name, var, idx, param});
 }
 
 int ControlEngine::addExpression(const std::string& name, const std::string& formula) {
     mathexpr::Expression expr;
-    if (mathexpr::parse(formula, expr) != 0) return -1;
+    if (mathexpr::parse(formula, expr) != 0)
+        return -1;
     int idx = static_cast<int>(expressions_.size());
     expressions_.push_back(std::move(expr));
     expr_index_[name] = idx;
@@ -656,23 +749,37 @@ int ControlEngine::addExpression(const std::string& name, const std::string& for
 
 namespace {
 
-/// Convert a string to upper case (ASCII only).
+/** @brief Copy bytes through C-locale uppercase conversion.
+ * @param s Borrowed bytes; each is converted via unsigned char before toupper.
+ * @return Independent uppercase bytes; no Unicode normalization is performed.
+ */
 static std::string to_upper(const std::string& s) {
     std::string r = s;
-    for (auto& c : r) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (auto& c : r)
+        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     return r;
 }
 
-/// Split a line into whitespace-delimited tokens.
+/** @brief Split on stream whitespace without quote/comment processing.
+ * @param line Borrowed single-line text.
+ * @return Owned nonempty tokens in input order; quoted spaces still split.
+ */
 static std::vector<std::string> tokenize(const std::string& line) {
     std::vector<std::string> toks;
     std::istringstream iss(line);
     std::string tok;
-    while (iss >> tok) toks.push_back(tok);
+    while (iss >> tok)
+        toks.push_back(tok);
     return toks;
 }
 
-/// Try to parse a double from a string.  Returns true on success.
+/** @brief Accept a complete std::stod conversion without range/finite constraints.
+ * @param s Numeric token; any trailing byte makes the result false.
+ * @param[out] val Parsed value on conversion; can be changed even when trailing
+ * bytes cause false. A thrown conversion leaves it unchanged.
+ * @return True only if every byte was consumed. Catches all conversion exceptions;
+ * NaN/infinity tokens accepted by stod are not rejected.
+ */
 static bool tryParseDouble(const std::string& s, double& val) {
     try {
         size_t pos = 0;
@@ -683,64 +790,117 @@ static bool tryParseDouble(const std::string& s, double& val) {
     }
 }
 
-/// Match a relational operator token.  Returns CompareOp or -1 on failure.
+/** @brief Map a literal control comparison token to CompareOp.
+ * @param tok One of =, <>, <, <=, > or >=; no trimming/case conversion.
+ * @return Corresponding enum integer, or -1 for any other token.
+ */
 static int matchRelOp(const std::string& tok) {
-    if (tok == "=")  return static_cast<int>(CompareOp::EQ);
-    if (tok == "<>") return static_cast<int>(CompareOp::NE);
-    if (tok == "<")  return static_cast<int>(CompareOp::LT);
-    if (tok == "<=") return static_cast<int>(CompareOp::LE);
-    if (tok == ">")  return static_cast<int>(CompareOp::GT);
-    if (tok == ">=") return static_cast<int>(CompareOp::GE);
+    if (tok == "=")
+        return static_cast<int>(CompareOp::EQ);
+    if (tok == "<>")
+        return static_cast<int>(CompareOp::NE);
+    if (tok == "<")
+        return static_cast<int>(CompareOp::LT);
+    if (tok == "<=")
+        return static_cast<int>(CompareOp::LE);
+    if (tok == ">")
+        return static_cast<int>(CompareOp::GT);
+    if (tok == ">=")
+        return static_cast<int>(CompareOp::GE);
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for node attributes.
+/** @brief Map an uppercase node attribute keyword.
+ * @param attr DEPTH, MAXDEPTH, HEAD, VOLUME or INFLOW; exact match required.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int nodeAttribute(const std::string& attr) {
-    if (attr == "DEPTH")    return static_cast<int>(ConditionVar::NODE_DEPTH);
-    if (attr == "MAXDEPTH") return static_cast<int>(ConditionVar::NODE_MAXDEPTH);
-    if (attr == "HEAD")     return static_cast<int>(ConditionVar::NODE_HEAD);
-    if (attr == "VOLUME")   return static_cast<int>(ConditionVar::NODE_VOLUME);
-    if (attr == "INFLOW")   return static_cast<int>(ConditionVar::NODE_INFLOW);
+    if (attr == "DEPTH")
+        return static_cast<int>(ConditionVar::NODE_DEPTH);
+    if (attr == "MAXDEPTH")
+        return static_cast<int>(ConditionVar::NODE_MAXDEPTH);
+    if (attr == "HEAD")
+        return static_cast<int>(ConditionVar::NODE_HEAD);
+    if (attr == "VOLUME")
+        return static_cast<int>(ConditionVar::NODE_VOLUME);
+    if (attr == "INFLOW")
+        return static_cast<int>(ConditionVar::NODE_INFLOW);
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for link attributes.
+/** @brief Map an uppercase link attribute keyword.
+ * @param attr Exact FLOW/DEPTH/SETTING/STATUS/FULLFLOW/FULLDEPTH/VELOCITY/LENGTH/
+ * SLOPE/TIMEOPEN/TIMECLOSED token; no subtype validation here.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int linkAttribute(const std::string& attr) {
-    if (attr == "FLOW")       return static_cast<int>(ConditionVar::LINK_FLOW);
-    if (attr == "DEPTH")      return static_cast<int>(ConditionVar::LINK_DEPTH);
-    if (attr == "SETTING")    return static_cast<int>(ConditionVar::LINK_SETTING);
-    if (attr == "STATUS")     return static_cast<int>(ConditionVar::LINK_STATUS);
-    if (attr == "FULLFLOW")   return static_cast<int>(ConditionVar::LINK_FULLFLOW);
-    if (attr == "FULLDEPTH")  return static_cast<int>(ConditionVar::LINK_FULLDEPTH);
-    if (attr == "VELOCITY")   return static_cast<int>(ConditionVar::LINK_VELOCITY);
-    if (attr == "LENGTH")     return static_cast<int>(ConditionVar::LINK_LENGTH);
-    if (attr == "SLOPE")      return static_cast<int>(ConditionVar::LINK_SLOPE);
-    if (attr == "TIMEOPEN")   return static_cast<int>(ConditionVar::LINK_TIMEOPEN);
-    if (attr == "TIMECLOSED") return static_cast<int>(ConditionVar::LINK_TIMECLOSED);
+    if (attr == "FLOW")
+        return static_cast<int>(ConditionVar::LINK_FLOW);
+    if (attr == "DEPTH")
+        return static_cast<int>(ConditionVar::LINK_DEPTH);
+    if (attr == "SETTING")
+        return static_cast<int>(ConditionVar::LINK_SETTING);
+    if (attr == "STATUS")
+        return static_cast<int>(ConditionVar::LINK_STATUS);
+    if (attr == "FULLFLOW")
+        return static_cast<int>(ConditionVar::LINK_FULLFLOW);
+    if (attr == "FULLDEPTH")
+        return static_cast<int>(ConditionVar::LINK_FULLDEPTH);
+    if (attr == "VELOCITY")
+        return static_cast<int>(ConditionVar::LINK_VELOCITY);
+    if (attr == "LENGTH")
+        return static_cast<int>(ConditionVar::LINK_LENGTH);
+    if (attr == "SLOPE")
+        return static_cast<int>(ConditionVar::LINK_SLOPE);
+    if (attr == "TIMEOPEN")
+        return static_cast<int>(ConditionVar::LINK_TIMEOPEN);
+    if (attr == "TIMECLOSED")
+        return static_cast<int>(ConditionVar::LINK_TIMECLOSED);
     return -1;
 }
 
-/// Map attribute keyword to ConditionVar for simulation (system) attributes.
+/** @brief Map an uppercase simulation-clock attribute keyword.
+ * @param attr Exact TIME/DATE/CLOCKTIME/DAY/MONTH/DAYOFYEAR token.
+ * @return ConditionVar integer, or -1 for an unsupported token.
+ */
 static int simAttribute(const std::string& attr) {
-    if (attr == "TIME")      return static_cast<int>(ConditionVar::SIM_TIME);
-    if (attr == "DATE")      return static_cast<int>(ConditionVar::SIM_DATE);
-    if (attr == "CLOCKTIME") return static_cast<int>(ConditionVar::CLOCK_TIME);
-    if (attr == "DAY")       return static_cast<int>(ConditionVar::SIM_DAY);
-    if (attr == "MONTH")     return static_cast<int>(ConditionVar::SIM_MONTH);
-    if (attr == "DAYOFYEAR") return static_cast<int>(ConditionVar::SIM_DAYOFYEAR);
+    if (attr == "TIME")
+        return static_cast<int>(ConditionVar::SIM_TIME);
+    if (attr == "DATE")
+        return static_cast<int>(ConditionVar::SIM_DATE);
+    if (attr == "CLOCKTIME")
+        return static_cast<int>(ConditionVar::CLOCK_TIME);
+    if (attr == "DAY")
+        return static_cast<int>(ConditionVar::SIM_DAY);
+    if (attr == "MONTH")
+        return static_cast<int>(ConditionVar::SIM_MONTH);
+    if (attr == "DAYOFYEAR")
+        return static_cast<int>(ConditionVar::SIM_DAYOFYEAR);
     return -1;
 }
 
-/// Parse a premise variable from tokens starting at position k.
-/// On success, returns true and advances k past the consumed tokens.
-/// Fills out cv (condition variable type) and obj_idx (object index).
-/// On failure, fills `err` with the failing token and reason so callers can
-/// report the actual problem instead of the leading object keyword.
+/** @brief Resolve one object/attribute operand from a token cursor.
+ * @param toks Borrowed token sequence; names resolve through context name tables.
+ * @param[in,out] k Nonnegative starting token position; advanced only on success.
+ * @param ctx Compatible node/link/gage names; borrowed without mutation.
+ * @param[out] cv Attribute assigned on success; unspecified on failure.
+ * @param[out] obj_idx Resolved zero-based index, or -1 for simulation attributes;
+ * may be partially changed on failure. Declared link subtypes are not checked here.
+ * @param[out] extra_param Reset to zero, or history hours for GAGE_RAIN_PAST.
+ * @param[out] err Failure explanation; may retain earlier contents on success.
+ * @param[out] err_code Legacy error category, initialized to ERR_ITEMS.
+ * @param[out] err_tok Cleared initially, then offending name/keyword where available.
+ * @return True on a recognized complete operand, false with diagnostics otherwise.
+ * Gage history accepts a numeric prefix in [1,48], including n-HR_DEPTH, following
+ * strtol behavior. No expression/named-variable lookup is performed by this helper.
+ */
 static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
-                                 const SimulationContext& ctx,
-                                 ConditionVar& cv, int& obj_idx,
-                                 int& extra_param, std::string& err) {
+                                 const SimulationContext& ctx, ConditionVar& cv, int& obj_idx,
+                                 int& extra_param, std::string& err, int& err_code,
+                                 std::string& err_tok) {
     extra_param = 0;
+    err_code = ERR_ITEMS;
+    err_tok.clear();
     if (k >= static_cast<int>(toks.size())) {
         err = "condition clause is empty";
         return false;
@@ -754,13 +914,16 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         }
         obj_idx = ctx.node_names.find(toks[static_cast<size_t>(k + 1)]);
         if (obj_idx < 0) {
-            err = "'" + toks[static_cast<size_t>(k + 1)] +
-                  "' is not the name of a defined NODE";
+            err_code = ERR_NAME;
+            err_tok = toks[static_cast<size_t>(k + 1)];
+            err = "'" + toks[static_cast<size_t>(k + 1)] + "' is not the name of a defined NODE";
             return false;
         }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         int a = nodeAttribute(attr);
         if (a < 0) {
+            err_code = ERR_KEYWORD;
+            err_tok = toks[static_cast<size_t>(k + 2)];
             err = "'" + toks[static_cast<size_t>(k + 2)] +
                   "' is not a valid NODE attribute (expected DEPTH, MAXDEPTH, "
                   "HEAD, VOLUME or INFLOW)";
@@ -778,15 +941,19 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         }
         obj_idx = ctx.link_names.find(toks[static_cast<size_t>(k + 1)]);
         if (obj_idx < 0) {
-            err = "'" + toks[static_cast<size_t>(k + 1)] +
-                  "' is not the name of a defined " + obj_type;
+            err_code = ERR_NAME;
+            err_tok = toks[static_cast<size_t>(k + 1)];
+            err = "'" + toks[static_cast<size_t>(k + 1)] + "' is not the name of a defined " +
+                  obj_type;
             return false;
         }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         int a = linkAttribute(attr);
         if (a < 0) {
-            err = "'" + toks[static_cast<size_t>(k + 2)] +
-                  "' is not a valid " + obj_type + " attribute";
+            err_code = ERR_KEYWORD;
+            err_tok = toks[static_cast<size_t>(k + 2)];
+            err = "'" + toks[static_cast<size_t>(k + 2)] + "' is not a valid " + obj_type +
+                  " attribute";
             return false;
         }
         cv = static_cast<ConditionVar>(a);
@@ -800,24 +967,29 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         }
         obj_idx = ctx.gage_names.find(toks[static_cast<size_t>(k + 1)]);
         if (obj_idx < 0) {
-            err = "'" + toks[static_cast<size_t>(k + 1)] +
-                  "' is not the name of a defined GAGE";
+            err_code = ERR_NAME;
+            err_tok = toks[static_cast<size_t>(k + 1)];
+            err = "'" + toks[static_cast<size_t>(k + 1)] + "' is not the name of a defined GAGE";
             return false;
         }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
         if (attr == "INTENSITY") {
             cv = ConditionVar::GAGE_RAIN;
         } else {
-            // n-hour past rain: attribute is a number
-            double nh = 0.0;
-            if (!tryParseDouble(attr, nh) || nh < 1.0) {
+            // Legacy getGageAttrib uses atoi: n-HR_DEPTH, bare integers,
+            // and historical numeric prefixes all mean an hour count.
+            // strtol retains that behavior without an overflowing int cast.
+            const long hours = std::strtol(attr.c_str(), nullptr, 10);
+            if (hours < 1 || hours > GageData::MAXPASTRAIN) {
+                err_code = ERR_KEYWORD;
+                err_tok = toks[static_cast<size_t>(k + 2)];
                 err = "'" + toks[static_cast<size_t>(k + 2)] +
                       "' is not a valid GAGE attribute (expected INTENSITY "
-                      "or an hour count >= 1)";
+                      "or n-HR_DEPTH with n from 1 to 48)";
                 return false;
             }
             cv = ConditionVar::GAGE_RAIN_PAST;
-            extra_param = static_cast<int>(nh);
+            extra_param = static_cast<int>(hours);
         }
         k += 3;
         return true;
@@ -830,6 +1002,8 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         std::string attr = to_upper(toks[static_cast<size_t>(k + 1)]);
         int a = simAttribute(attr);
         if (a < 0) {
+            err_code = ERR_KEYWORD;
+            err_tok = toks[static_cast<size_t>(k + 1)];
             err = "'" + toks[static_cast<size_t>(k + 1)] +
                   "' is not a valid SIMULATION attribute (expected TIME, "
                   "DATE, CLOCKTIME, DAY, MONTH or DAYOFYEAR)";
@@ -840,16 +1014,28 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         k += 2;
         return true;
     }
+    err_code = ERR_KEYWORD;
+    err_tok = toks[static_cast<size_t>(k)];
     err = "'" + toks[static_cast<size_t>(k)] +
           "' is not a known object, variable or expression in this condition";
     return false;
 }
 
-/// Parse a status word to a numeric value.
+/** @brief Parse case-insensitive link status words.
+ * @param tok Borrowed OFF/CLOSED/ON/OPEN token; no whitespace trimming.
+ * @param[out] val Set to zero or one on success, retained on failure.
+ * @return True for a recognized status word.
+ */
 static bool parseStatusValue(const std::string& tok, double& val) {
     std::string u = to_upper(tok);
-    if (u == "OFF" || u == "CLOSED") { val = 0.0; return true; }
-    if (u == "ON"  || u == "OPEN")   { val = 1.0; return true; }
+    if (u == "OFF" || u == "CLOSED") {
+        val = 0.0;
+        return true;
+    }
+    if (u == "ON" || u == "OPEN") {
+        val = 1.0;
+        return true;
+    }
     return false;
 }
 
@@ -864,18 +1050,24 @@ static bool parseStatusValue(const std::string& tok, double& val) {
 //   r_MONTH                                           -> 1..12
 // ============================================================================
 
-/// Parse a time token (decimal hours or HH[:MM[:SS]]) to decimal days.
-/// Mirrors legacy datetime_strToTime() in datetime.c.
+/** @brief Parse decimal hours or a colon-style duration into SWMM days.
+ * @param s Borrowed token. Complete stod values (including negative/nonfinite) use
+ * hours/24. Otherwise sscanf accepts a nonnegative integer prefix with optional
+ * minute/second fields; trailing bytes and oversized fields are not rejected here.
+ * @param[out] out_days Converted days on success; retained on failure.
+ * @return True if either permissive conversion succeeds; not strict time validation.
+ */
 static bool parseTimeToken(const std::string& s, double& out_days) {
     // Try decimal hours first
     try {
         size_t pos = 0;
         double hours = std::stod(s, &pos);
-        if (pos == s.size()) {  // pure decimal -> hours
+        if (pos == s.size()) { // pure decimal -> hours
             out_days = hours / 24.0;
             return true;
         }
-    } catch (...) { /* fall through */ }
+    } catch (...) { /* fall through */
+    }
     // Parse HH:MM:SS (MM and SS optional, matching legacy sscanf behaviour)
     int hr = 0, mn = 0, sc = 0;
     int n = std::sscanf(s.c_str(), "%d:%d:%d", &hr, &mn, &sc);
@@ -886,8 +1078,13 @@ static bool parseTimeToken(const std::string& s, double& out_days) {
     return false;
 }
 
-/// Parse a date token (M/D/Y, M-D-Y, etc.) to a DateTime.
-/// Mirrors legacy datetime_strToDate(); accepts any non-digit as separator.
+/** @brief Parse three integer calendar components into a SWMM serial day.
+ * @param s Month, day and year separated by single scanned characters; separators
+ * and trailing bytes are not validated. Calendar validity follows encodeDate().
+ * @param[out] out_date Assigned encodeDate result even for a rejected calendar date;
+ * retained when scanning fails.
+ * @return True when all components scan and encodeDate does not return its sentinel.
+ */
 static bool parseDateToken(const std::string& s, double& out_date) {
     int m = 0, d = 0, y = 0;
     char sep1 = 0, sep2 = 0;
@@ -899,8 +1096,13 @@ static bool parseDateToken(const std::string& s, double& out_date) {
     return false;
 }
 
-/// Parse a day-of-year token: "M/D" -> day-of-year, or integer 1..365.
-/// Mirrors legacy controls.c:1394-1402.
+/** @brief Parse a nonleap calendar day or numeric day-of-year value.
+ * @param s Month/day pair (any scanned separator; trailing bytes ignored) interpreted
+ * in 1947, otherwise a complete numeric token in [1,365]. Fractional numeric values
+ * are accepted; no explicit finite-value check is added.
+ * @param[out] out_doy Day number assigned on success, retained on failure.
+ * @return True for an encoded valid date or accepted numeric range.
+ */
 static bool parseDayOfYearToken(const std::string& s, double& out_doy) {
     int m = 0, d = 0;
     char sep = 0;
@@ -914,42 +1116,52 @@ static bool parseDayOfYearToken(const std::string& s, double& out_doy) {
         return false;
     }
     double v = 0.0;
-    if (!tryParseDouble(s, v)) return false;
-    if (v < 1.0 || v > 365.0) return false;
+    if (!tryParseDouble(s, v))
+        return false;
+    if (v < 1.0 || v > 365.0)
+        return false;
     out_doy = v;
     return true;
 }
 
-/// Dispatch RHS parsing on the LHS attribute, mirroring legacy
-/// getPremiseValue() in controls.c:1354-1410.
-static bool parsePremiseRHS(const std::string& tok, ConditionVar lhs_var,
-                            double& val) {
+/** @brief Parse a constant according to the left operand's control attribute.
+ * @param tok Borrowed constant token.
+ * @param lhs_var Status selects word parsing; time selects day conversion; date and
+ * calendar fields select their helpers. Other attributes accept a complete double.
+ * @param[out] val Parsed result; can change before a failed validation as documented
+ * by the selected helper. DAY and MONTH accept fractional numbers within range.
+ * @return True for accepted syntax/range, false otherwise. Hydraulic values remain
+ * in authored project units; no conversion is applied here.
+ */
+static bool parsePremiseRHS(const std::string& tok, ConditionVar lhs_var, double& val) {
     switch (lhs_var) {
-        case ConditionVar::LINK_STATUS:
-            return parseStatusValue(tok, val);
+    case ConditionVar::LINK_STATUS:
+        return parseStatusValue(tok, val);
 
-        case ConditionVar::SIM_TIME:
-        case ConditionVar::CLOCK_TIME:
-        case ConditionVar::LINK_TIMEOPEN:
-        case ConditionVar::LINK_TIMECLOSED:
-            return parseTimeToken(tok, val);
+    case ConditionVar::SIM_TIME:
+    case ConditionVar::CLOCK_TIME:
+    case ConditionVar::LINK_TIMEOPEN:
+    case ConditionVar::LINK_TIMECLOSED:
+        return parseTimeToken(tok, val);
 
-        case ConditionVar::SIM_DATE:
-            return parseDateToken(tok, val);
+    case ConditionVar::SIM_DATE:
+        return parseDateToken(tok, val);
 
-        case ConditionVar::SIM_DAYOFYEAR:
-            return parseDayOfYearToken(tok, val);
+    case ConditionVar::SIM_DAYOFYEAR:
+        return parseDayOfYearToken(tok, val);
 
-        case ConditionVar::SIM_DAY:
-            if (!tryParseDouble(tok, val)) return false;
-            return val >= 1.0 && val <= 7.0;
+    case ConditionVar::SIM_DAY:
+        if (!tryParseDouble(tok, val))
+            return false;
+        return val >= 1.0 && val <= 7.0;
 
-        case ConditionVar::SIM_MONTH:
-            if (!tryParseDouble(tok, val)) return false;
-            return val >= 1.0 && val <= 12.0;
+    case ConditionVar::SIM_MONTH:
+        if (!tryParseDouble(tok, val))
+            return false;
+        return val >= 1.0 && val <= 12.0;
 
-        default:
-            return tryParseDouble(tok, val);
+    default:
+        return tryParseDouble(tok, val);
     }
 }
 
@@ -967,6 +1179,7 @@ void ControlEngine::clearRules() {
     total_premises_ = 0;
     rule_results_.clear();
     pending_actions_.clear();
+    action_slots_.clear();
     last_parse_error_ = ParseError{};
 }
 
@@ -976,7 +1189,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
     // Split the text into lines, keeping each line's 1-based position in the
     // *original* text (blank lines counted) so a rejection can be reported
     // against exactly what the caller submitted.
-    struct SourceLine { int number; std::string text; };
+    struct SourceLine {
+        int number;
+        std::string text;
+    };
     std::vector<SourceLine> lines;
     {
         std::istringstream iss(text);
@@ -986,22 +1202,31 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             ++lineno;
             // Trim leading/trailing whitespace
             size_t start = line.find_first_not_of(" \t\r\n");
-            if (start == std::string::npos) continue;
+            if (start == std::string::npos)
+                continue;
             size_t end = line.find_last_not_of(" \t\r\n");
             std::string trimmed = line.substr(start, end - start + 1);
-            if (!trimmed.empty()) lines.push_back({lineno, std::move(trimmed)});
+            if (!trimmed.empty())
+                lines.push_back({lineno, std::move(trimmed)});
         }
     }
 
-    if (lines.empty()) return 0;
+    if (lines.empty())
+        return 0;
 
     // Every rejection site reads `return fail("...")`, which records the line
     // currently being parsed plus a reason before returning the -1 that
     // callers already test for.
     int current_line = -1;
-    auto fail = [&](const std::string& why) -> int {
+    // `code`/`token` are what legacy controls.c reports for the same
+    // rejection (ERR_ITEMS / ERR_KEYWORD / ERR_NAME / ERR_NUMBER, else
+    // ERR_RULE); `why` is v6's explanation, kept as detail.
+    auto fail = [&](const std::string& why, int code = ERR_CONTROL_RULE,
+                    const std::string& token = std::string()) -> int {
         last_parse_error_.line = current_line;
         last_parse_error_.message = why;
+        last_parse_error_.code = code;
+        last_parse_error_.token = token;
         return -1;
     };
 
@@ -1023,13 +1248,13 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
     // Helper: resolve a token to a named variable. Case-insensitive full
     // match: legacy resolves these through case-blind lookups too (its
     // match() even accepts a prefix — a quirk we deliberately do not copy).
-    auto resolveNamedVariable = [&](const std::string& tok,
-                                    ConditionVar& out_var,
-                                    int& out_idx) -> bool {
+    auto resolveNamedVariable = [&](const std::string& tok, ConditionVar& out_var, int& out_idx,
+                                    int& out_param) -> bool {
         for (const auto& nv : named_vars_) {
             if (ieq(nv.name, tok)) {
                 out_var = nv.var;
                 out_idx = nv.idx;
+                out_param = nv.param;
                 return true;
             }
         }
@@ -1046,7 +1271,8 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
     for (const auto& src : lines) {
         current_line = src.number;
         auto toks = tokenize(src.text);
-        if (toks.empty()) continue;
+        if (toks.empty())
+            continue;
 
         std::string keyword = to_upper(toks[0]);
 
@@ -1055,14 +1281,17 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         // Mirrors legacy controls.c:864 (controls_addVariable).
         if (keyword == "VARIABLE") {
             if (toks.size() < 6 || toks[2] != "=")
-                return fail("expected: VARIABLE <name> = <object> <id> <attribute>");
+                return fail("expected: VARIABLE <name> = <object> <id> <attribute>", ERR_ITEMS);
             int k = 3;
-            ConditionVar var; int obj_idx = -1; int extra = 0;
-            std::string var_err;
-            if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra,
-                                      var_err))
-                return fail("in VARIABLE '" + toks[1] + "': " + var_err);
-            addNamedVariable(toks[1], var, obj_idx);
+            ConditionVar var;
+            int obj_idx = -1;
+            int extra = 0;
+            std::string var_err, var_tok;
+            int var_code = ERR_ITEMS;
+            if (!parsePremiseVariable(toks, k, ctx, var, obj_idx, extra, var_err, var_code,
+                                      var_tok))
+                return fail("in VARIABLE '" + toks[1] + "': " + var_err, var_code, var_tok);
+            addNamedVariable(toks[1], var, obj_idx, extra);
             continue;
         }
 
@@ -1071,34 +1300,38 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         // Mirrors legacy controls.c:891 (controls_addExpression).
         if (keyword == "EXPRESSION") {
             if (toks.size() < 4 || toks[2] != "=")
-                return fail("expected: EXPRESSION <name> = <formula>");
+                return fail("expected: EXPRESSION <name> = <formula>", ERR_ITEMS);
             std::string formula;
             for (size_t i = 3; i < toks.size(); ++i) {
-                if (i > 3) formula += ' ';
+                if (i > 3)
+                    formula += ' ';
                 formula += toks[i];
             }
             if (addExpression(toks[1], formula) < 0)
-                return fail("could not parse the formula for EXPRESSION '" +
-                            toks[1] + "'");
+                return fail("could not parse the formula for EXPRESSION '" + toks[1] + "'");
             continue;
         }
 
         // ---- RULE keyword ----
         if (keyword == "RULE") {
             // If we were building a previous rule, finish it
-            if (state != ParseState::IDLE) finishRule();
-            if (toks.size() < 2) return fail("RULE is missing its name");
+            if (state != ParseState::IDLE)
+                finishRule();
+            if (toks.size() < 2)
+                return fail("RULE is missing its name", ERR_ITEMS);
             current_rule.name = toks[1];
-            state = ParseState::IDLE;  // wait for IF
+            state = ParseState::IDLE; // wait for IF
             continue;
         }
 
         // ---- PRIORITY keyword ----
         if (keyword == "PRIORITY") {
-            if (toks.size() < 2) return fail("PRIORITY is missing its value");
+            if (toks.size() < 2)
+                return fail("PRIORITY is missing its value", ERR_ITEMS);
             double p = 0.0;
             if (!tryParseDouble(toks[1], p))
-                return fail("PRIORITY value '" + toks[1] + "' is not a number");
+                return fail("PRIORITY value '" + toks[1] + "' is not a number", ERR_NUMBER,
+                            toks[1]);
             current_rule.priority = p;
             continue;
         }
@@ -1107,8 +1340,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         if (keyword == "IF" || keyword == "AND" || keyword == "OR") {
 
             // Determine if this is a premise line or action continuation
-            bool is_premise_context = (keyword == "IF") ||
-                                       (state == ParseState::IN_PREMISES);
+            bool is_premise_context = (keyword == "IF") || (state == ParseState::IN_PREMISES);
 
             if (keyword == "IF") {
                 state = ParseState::IN_PREMISES;
@@ -1125,52 +1357,54 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 Premise prem;
                 prem.logic = (keyword == "OR") ? LogicOp::OR : LogicOp::AND;
 
-                int k = 1;  // start after IF/AND/OR keyword
+                int k = 1; // start after IF/AND/OR keyword
 
                 // Parse LHS variable — try named expression first, then
                 // named variable, then object|id|attribute. (P1-C07)
                 ConditionVar lhs_cv = ConditionVar::NODE_DEPTH;
                 int lhs_idx = -1;
                 int lhs_param = 0;
-                std::string lhs_err;
+                std::string lhs_err, lhs_tok;
+                int lhs_code = ERR_ITEMS;
                 if (k < static_cast<int>(toks.size())) {
                     int ei = resolveExpression(toks[static_cast<size_t>(k)]);
                     if (ei >= 0) {
                         prem.is_expression = true;
                         prem.expr_idx = ei;
                         k += 1;
-                    } else if (resolveNamedVariable(toks[static_cast<size_t>(k)],
-                                                    lhs_cv, lhs_idx)) {
+                    } else if (resolveNamedVariable(toks[static_cast<size_t>(k)], lhs_cv, lhs_idx,
+                                                    lhs_param)) {
                         prem.lhs_var = lhs_cv;
                         prem.lhs_idx = lhs_idx;
+                        prem.lhs_param = lhs_param;
                         k += 1;
-                    } else if (!parsePremiseVariable(toks, k, ctx,
-                                                     lhs_cv, lhs_idx, lhs_param,
-                                                     lhs_err)) {
-                        return fail(lhs_err);
+                    } else if (!parsePremiseVariable(toks, k, ctx, lhs_cv, lhs_idx, lhs_param,
+                                                     lhs_err, lhs_code, lhs_tok)) {
+                        return fail(lhs_err, lhs_code, lhs_tok);
                     } else {
                         prem.lhs_var = lhs_cv;
                         prem.lhs_idx = lhs_idx;
                         prem.lhs_param = lhs_param;
                     }
                 } else {
-                    return fail("condition clause is empty after " + keyword);
+                    return fail("condition clause is empty after " + keyword, ERR_ITEMS);
                 }
 
                 // Parse relational operator
                 if (k >= static_cast<int>(toks.size()))
-                    return fail("condition is missing a relational operator");
+                    return fail("condition is missing a relational operator", ERR_ITEMS);
                 int rel = matchRelOp(toks[static_cast<size_t>(k)]);
                 if (rel < 0)
                     return fail("'" + toks[static_cast<size_t>(k)] +
-                                "' is not a relational operator "
-                                "(expected =, <>, <, <=, > or >=)");
+                                    "' is not a relational operator "
+                                    "(expected =, <>, <, <=, > or >=)",
+                                ERR_KEYWORD, toks[static_cast<size_t>(k)]);
                 prem.op = static_cast<CompareOp>(rel);
                 k++;
 
                 // Parse RHS: either a variable or a constant value
                 if (k >= static_cast<int>(toks.size()))
-                    return fail("condition is missing its right-hand value");
+                    return fail("condition is missing its right-hand value", ERR_ITEMS);
 
                 // Try to parse as a variable first — named var, then
                 // object|id|attribute.  (Expressions are LHS-only in legacy.)
@@ -1178,20 +1412,21 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 ConditionVar rhs_cv = ConditionVar::NODE_DEPTH;
                 int rhs_idx = -1;
                 int rhs_param = 0;
-                std::string rhs_err;  // discarded: failure falls back to a
-                                      // constant-value parse below
-                if (resolveNamedVariable(toks[static_cast<size_t>(k)],
-                                          rhs_cv, rhs_idx)) {
+                std::string rhs_err, rhs_tok; // discarded: failure falls back
+                int rhs_code = 0;             // to a constant-value parse below
+                if (resolveNamedVariable(toks[static_cast<size_t>(k)], rhs_cv, rhs_idx,
+                                         rhs_param)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;
+                    prem.rhs_param = rhs_param;
                     k += 1;
-                } else if (parsePremiseVariable(toks, k, ctx,
-                                                 rhs_cv, rhs_idx, rhs_param,
-                                                 rhs_err)) {
+                } else if (parsePremiseVariable(toks, k, ctx, rhs_cv, rhs_idx, rhs_param, rhs_err,
+                                                rhs_code, rhs_tok)) {
                     prem.rhs_is_variable = true;
                     prem.rhs_var = rhs_cv;
                     prem.rhs_idx = rhs_idx;
+                    prem.rhs_param = rhs_param;
                 } else {
                     // Parse as constant value with unit-aware dispatch
                     // (P0-C01).  parsePremiseRHS mirrors legacy
@@ -1205,8 +1440,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                     std::string val_tok = toks[static_cast<size_t>(k)];
                     double val = 0.0;
                     if (!parsePremiseRHS(val_tok, lhs_cv, val))
-                        return fail("'" + val_tok + "' is not a valid value for "
-                                    "this condition variable");
+                        return fail("'" + val_tok +
+                                        "' is not a valid value for "
+                                        "this condition variable",
+                                    ERR_NUMBER, val_tok);
                     prem.rhs_value = val;
                     k++;
                 }
@@ -1233,40 +1470,74 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             // Action format: [THEN/ELSE/AND] <object> <name> <attribute> = <value>
             // Skip the keyword token
             int k = 1;
-            if (keyword == "THEN" || keyword == "ELSE" ||
-                keyword == "AND" || keyword == "OR") {
+            if (keyword == "THEN" || keyword == "ELSE" || keyword == "AND" || keyword == "OR") {
                 k = 1;
             }
 
-            if (k >= static_cast<int>(toks.size())) continue;
+            if (k >= static_cast<int>(toks.size()))
+                continue;
 
             // Parse object type (must be a link type)
             std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
             if (obj_type != "LINK" && obj_type != "CONDUIT" && obj_type != "PUMP" &&
                 obj_type != "ORIFICE" && obj_type != "WEIR" && obj_type != "OUTLET")
-                return fail("'" + toks[static_cast<size_t>(k)] + "' cannot start an "
-                            "action (expected LINK, CONDUIT, PUMP, ORIFICE, WEIR "
-                            "or OUTLET)");
+                return fail("'" + toks[static_cast<size_t>(k)] +
+                                "' cannot start an "
+                                "action (expected LINK, CONDUIT, PUMP, ORIFICE, WEIR "
+                                "or OUTLET)",
+                            ERR_KEYWORD, toks[static_cast<size_t>(k)]);
             k++;
 
             // Parse link name
             if (k >= static_cast<int>(toks.size()))
-                return fail(obj_type + " action is missing its link name");
+                return fail(obj_type + " action is missing its link name", ERR_ITEMS);
             int link_idx = ctx.link_names.find(toks[static_cast<size_t>(k)]);
             if (link_idx < 0)
                 return fail("no link named '" + toks[static_cast<size_t>(k)] +
-                            "' exists in the model");
+                                "' exists in the model",
+                            ERR_NAME, toks[static_cast<size_t>(k)]);
+            // Legacy addAction (controls.c:1435-1461) validates the declared
+            // subtype as well as the name.
+            const auto link_type = ctx.links.type[static_cast<size_t>(link_idx)];
+            if ((obj_type == "CONDUIT" && link_type != LinkType::CONDUIT) ||
+                (obj_type == "PUMP" && link_type != LinkType::PUMP) ||
+                (obj_type == "ORIFICE" && link_type != LinkType::ORIFICE) ||
+                (obj_type == "WEIR" && link_type != LinkType::WEIR) ||
+                (obj_type == "OUTLET" && link_type != LinkType::OUTLET))
+                return fail("link '" + toks[static_cast<size_t>(k)] + "' is not a " + obj_type,
+                            ERR_NAME, toks[static_cast<size_t>(k)]);
             k++;
 
-            // Parse attribute (STATUS or SETTING)
+            // Parse attribute — legacy addAction (controls.c) accepts only
+            // STATUS or SETTING as an action attribute; any other keyword (e.g.
+            // FLOW) is ERR_KEYWORD. v6 formerly swallowed any attribute as a
+            // numeric setting.
             if (k >= static_cast<int>(toks.size()))
-                return fail("action is missing its attribute (STATUS or SETTING)");
+                return fail("action is missing its attribute (STATUS or SETTING)", ERR_ITEMS);
             std::string attr = to_upper(toks[static_cast<size_t>(k)]);
+            if (attr != "STATUS" && attr != "SETTING")
+                return fail("'" + toks[static_cast<size_t>(k)] +
+                                "' is not a valid "
+                                "action attribute (expected STATUS or SETTING)",
+                            ERR_KEYWORD, toks[static_cast<size_t>(k)]);
+            // Legacy addAction (controls.c:1466-1515) then restricts the
+            // attribute by object: CONDUIT takes STATUS only, PUMP STATUS or
+            // SETTING, ORIFICE/WEIR/OUTLET SETTING only, and a generic LINK
+            // action is rejected (ERR_KEYWORD).
+            if (obj_type == "LINK")
+                return fail("a LINK action is not accepted; name the link's type "
+                            "(CONDUIT, PUMP, ORIFICE, WEIR or OUTLET)",
+                            ERR_KEYWORD, obj_type);
+            if (obj_type == "CONDUIT" && attr != "STATUS")
+                return fail("CONDUIT actions take STATUS only", ERR_KEYWORD, attr);
+            if ((obj_type == "ORIFICE" || obj_type == "WEIR" || obj_type == "OUTLET") &&
+                attr != "SETTING")
+                return fail(obj_type + " actions take SETTING only", ERR_KEYWORD, attr);
             k++;
 
             // Skip '=' token
             if (k >= static_cast<int>(toks.size()))
-                return fail("action is missing '=' after " + attr);
+                return fail("action is missing '=' after " + attr, ERR_ITEMS);
             if (toks[static_cast<size_t>(k)] != "=")
                 return fail("expected '=' after " + attr + ", found '" +
                             toks[static_cast<size_t>(k)] + "'");
@@ -1274,7 +1545,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
 
             // Parse value / control type
             if (k >= static_cast<int>(toks.size()))
-                return fail("action is missing its value after '='");
+                return fail("action is missing its value after '='", ERR_ITEMS);
 
             Action action;
             action.link_idx = link_idx;
@@ -1285,23 +1556,24 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 // Modulated by curve: next token is curve name
                 k++;
                 if (k >= static_cast<int>(toks.size()))
-                    return fail("CURVE action is missing its curve name");
+                    return fail("CURVE action is missing its curve name", ERR_ITEMS);
                 int ci = ctx.find_curve(toks[static_cast<size_t>(k)]);
                 if (ci < 0)
                     return fail("no curve named '" + toks[static_cast<size_t>(k)] +
-                                "' exists in the model");
+                                    "' exists in the model",
+                                ERR_NAME, toks[static_cast<size_t>(k)]);
                 action.type = ActionType::CURVE;
                 action.curve_idx = ci;
             } else if (val_tok == "TIMESERIES") {
                 // Modulated by timeseries: next token is timeseries name
                 k++;
                 if (k >= static_cast<int>(toks.size()))
-                    return fail("TIMESERIES action is missing its series name");
+                    return fail("TIMESERIES action is missing its series name", ERR_ITEMS);
                 int ti = ctx.find_timeseries(toks[static_cast<size_t>(k)]);
                 if (ti < 0)
-                    return fail("no time series named '" +
-                                toks[static_cast<size_t>(k)] +
-                                "' exists in the model");
+                    return fail("no time series named '" + toks[static_cast<size_t>(k)] +
+                                    "' exists in the model",
+                                ERR_NAME, toks[static_cast<size_t>(k)]);
                 action.type = ActionType::TIMESERIES;
                 action.tseries_idx = ti;
             } else if (val_tok == "PID") {
@@ -1309,17 +1581,20 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 action.type = ActionType::PID;
                 k++;
                 if (k + 2 >= static_cast<int>(toks.size()))
-                    return fail("PID action requires three coefficients: Kp Ki Kd");
+                    return fail("PID action requires three coefficients: Kp Ki Kd", ERR_ITEMS);
                 double kp = 0.0, ki = 0.0, kd = 0.0;
                 if (!tryParseDouble(toks[static_cast<size_t>(k)], kp))
-                    return fail("PID coefficient Kp '" +
-                                toks[static_cast<size_t>(k)] + "' is not a number");
+                    return fail("PID coefficient Kp '" + toks[static_cast<size_t>(k)] +
+                                    "' is not a number",
+                                ERR_NUMBER, toks[static_cast<size_t>(k)]);
                 if (!tryParseDouble(toks[static_cast<size_t>(k + 1)], ki))
-                    return fail("PID coefficient Ki '" +
-                                toks[static_cast<size_t>(k + 1)] + "' is not a number");
+                    return fail("PID coefficient Ki '" + toks[static_cast<size_t>(k + 1)] +
+                                    "' is not a number",
+                                ERR_NUMBER, toks[static_cast<size_t>(k + 1)]);
                 if (!tryParseDouble(toks[static_cast<size_t>(k + 2)], kd))
-                    return fail("PID coefficient Kd '" +
-                                toks[static_cast<size_t>(k + 2)] + "' is not a number");
+                    return fail("PID coefficient Kd '" + toks[static_cast<size_t>(k + 2)] +
+                                    "' is not a number",
+                                ERR_NUMBER, toks[static_cast<size_t>(k + 2)]);
                 PIDState pid;
                 pid.kp = kp;
                 pid.ki = ki;
@@ -1333,13 +1608,16 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 action.type = ActionType::NUMERIC;
                 if (attr == "STATUS") {
                     if (!parseStatusValue(val_tok, action.value))
-                        return fail("'" + toks[static_cast<size_t>(k)] + "' is not a "
-                                    "valid STATUS (expected ON, OFF, OPEN or CLOSED)");
+                        return fail("'" + toks[static_cast<size_t>(k)] +
+                                        "' is not a "
+                                        "valid STATUS (expected ON, OFF, OPEN or CLOSED)",
+                                    ERR_KEYWORD, toks[static_cast<size_t>(k)]);
                 } else {
                     double v = 0.0;
                     if (!tryParseDouble(toks[static_cast<size_t>(k)], v))
                         return fail("action value '" + toks[static_cast<size_t>(k)] +
-                                    "' is not a number");
+                                        "' is not a number",
+                                    ERR_NUMBER, toks[static_cast<size_t>(k)]);
                     action.value = v;
                 }
             }
@@ -1357,8 +1635,10 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
 
     // Re-index rule_idx on all actions
     for (int r = 0; r < static_cast<int>(rules_.size()); ++r) {
-        for (auto& a : rules_[static_cast<size_t>(r)].then_actions) a.rule_idx = r;
-        for (auto& a : rules_[static_cast<size_t>(r)].else_actions) a.rule_idx = r;
+        for (auto& a : rules_[static_cast<size_t>(r)].then_actions)
+            a.rule_idx = r;
+        for (auto& a : rules_[static_cast<size_t>(r)].else_actions)
+            a.rule_idx = r;
     }
 
     // Rebuild SoA index for batch evaluation

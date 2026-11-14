@@ -13,6 +13,16 @@
  *     - Flow units: CFS, simulation period 1998-01-01 to 1998-01-02 06:00
  */
 
+/**
+ * @file      test_solver_api.cpp
+ * @brief     Tests for solver api.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -24,8 +34,8 @@
 
 // Paths relative to the test working directory (tests/unit/legacy/engine/data)
 #define MODEL_INP "./hotstart/site_drainage_model.inp"
-#define API_RPT   "./hotstart/_api_test.rpt"
-#define API_OUT   "./hotstart/_api_test.out"
+#define API_RPT "./hotstart/_api_test.rpt"
+#define API_OUT "./hotstart/_api_test.out"
 
 // ============================================================
 // Standalone (no-fixture) tests — no simulation state required
@@ -52,12 +62,12 @@ TEST(SolverDate, DecodeDateRoundtrip) {
     double encoded = swmm_encodeDate(1998, 1, 15, 8, 30, 45);
     int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0, dow = 0;
     swmm_decodeDate(encoded, &y, &mo, &d, &h, &mi, &s, &dow);
-    EXPECT_EQ(y,  1998);
+    EXPECT_EQ(y, 1998);
     EXPECT_EQ(mo, 1);
-    EXPECT_EQ(d,  15);
-    EXPECT_EQ(h,  8);
+    EXPECT_EQ(d, 15);
+    EXPECT_EQ(h, 8);
     EXPECT_EQ(mi, 30);
-    EXPECT_EQ(s,  45);
+    EXPECT_EQ(s, 45);
 }
 
 TEST(SolverDate, EncodeDateDayIncrement) {
@@ -73,10 +83,10 @@ TEST(SolverDate, DecodeDateStartOfSimulation) {
     swmm_decodeDate(encoded, &y, &mo, &d, &h, &mi, &s, &dow);
     EXPECT_EQ(y, 1998);
     EXPECT_EQ(mo, 1);
-    EXPECT_EQ(d,  1);
-    EXPECT_EQ(h,  0);
+    EXPECT_EQ(d, 1);
+    EXPECT_EQ(h, 0);
     EXPECT_EQ(mi, 0);
-    EXPECT_EQ(s,  0);
+    EXPECT_EQ(s, 0);
 }
 
 // ============================================================
@@ -85,12 +95,23 @@ TEST(SolverDate, DecodeDateStartOfSimulation) {
 
 class SolverOpenFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open the fixed legacy API model before each test.
+     *
+     * Uses process-global legacy state and fixed input/report/output paths. Asserts open success;
+     * fixture teardown must close any partial project. Concurrent legacy cases cannot share the same
+     * process state.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0) << "swmm_open failed";
     }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 // --- Object counts ---
@@ -153,15 +174,15 @@ TEST_F(SolverOpenFixture, GetFirstSubcatchName) {
 // --- Index lookups ---
 
 TEST_F(SolverOpenFixture, GetIndexByName_Nodes) {
-    EXPECT_EQ(swmm_getIndex(swmm_NODE, "J1"),  0);
-    EXPECT_EQ(swmm_getIndex(swmm_NODE, "J5"),  4);
+    EXPECT_EQ(swmm_getIndex(swmm_NODE, "J1"), 0);
+    EXPECT_EQ(swmm_getIndex(swmm_NODE, "J5"), 4);
     EXPECT_EQ(swmm_getIndex(swmm_NODE, "J11"), 10);
-    EXPECT_EQ(swmm_getIndex(swmm_NODE, "O1"),  11);
+    EXPECT_EQ(swmm_getIndex(swmm_NODE, "O1"), 11);
 }
 
 TEST_F(SolverOpenFixture, GetIndexByName_Links) {
-    EXPECT_EQ(swmm_getIndex(swmm_LINK, "C1"),  0);
-    EXPECT_EQ(swmm_getIndex(swmm_LINK, "C6"),  5);
+    EXPECT_EQ(swmm_getIndex(swmm_LINK, "C1"), 0);
+    EXPECT_EQ(swmm_getIndex(swmm_LINK, "C6"), 5);
     EXPECT_EQ(swmm_getIndex(swmm_LINK, "C11"), 10);
 }
 
@@ -173,9 +194,10 @@ TEST_F(SolverOpenFixture, GetIndexByName_NotFound) {
 // --- Static node properties ---
 
 TEST_F(SolverOpenFixture, GetNodeElevations) {
-    struct { const char* name; double elev; } expected[] = {
-        {"J1",  4973.0}, {"J2",  4969.0}, {"J11", 4963.0}
-    };
+    struct {
+        const char* name;
+        double elev;
+    } expected[] = {{"J1", 4973.0}, {"J2", 4969.0}, {"J11", 4963.0}};
     for (const auto& e : expected) {
         int idx = swmm_getIndex(swmm_NODE, e.name);
         ASSERT_GE(idx, 0) << "Node " << e.name << " not found";
@@ -197,10 +219,10 @@ TEST_F(SolverOpenFixture, GetNodeType_Outfall) {
 // --- Static link properties ---
 
 TEST_F(SolverOpenFixture, GetLinkLengths) {
-    struct { const char* name; double len; } expected[] = {
-        {"C1", 185.0}, {"C2", 526.0}, {"C3", 109.0},
-        {"C7",  95.0}, {"C11", 89.0}
-    };
+    struct {
+        const char* name;
+        double len;
+    } expected[] = {{"C1", 185.0}, {"C2", 526.0}, {"C3", 109.0}, {"C7", 95.0}, {"C11", 89.0}};
     for (const auto& e : expected) {
         int idx = swmm_getIndex(swmm_LINK, e.name);
         ASSERT_GE(idx, 0) << "Link " << e.name << " not found";
@@ -220,10 +242,10 @@ TEST_F(SolverOpenFixture, GetLinkType_AllConduits) {
 TEST_F(SolverOpenFixture, GetLinkFullDepths) {
     // CIRCULAR: C3=2.25, C7=3.5, C11=4.75
     // TRAPEZOIDAL: C1=3, C2=1, C4–C6,C8–C10=3
-    struct { const char* name; double depth; } expected[] = {
-        {"C1", 3.0}, {"C2", 1.0}, {"C3", 2.25},
-        {"C7", 3.5}, {"C11", 4.75}
-    };
+    struct {
+        const char* name;
+        double depth;
+    } expected[] = {{"C1", 3.0}, {"C2", 1.0}, {"C3", 2.25}, {"C7", 3.5}, {"C11", 4.75}};
     for (const auto& e : expected) {
         int idx = swmm_getIndex(swmm_LINK, e.name);
         ASSERT_GE(idx, 0) << "Link " << e.name << " not found";
@@ -236,7 +258,9 @@ TEST_F(SolverOpenFixture, GetLinkConnectivity_C1) {
     int c1 = swmm_getIndex(swmm_LINK, "C1");
     int j1 = swmm_getIndex(swmm_NODE, "J1");
     int j5 = swmm_getIndex(swmm_NODE, "J5");
-    ASSERT_GE(c1, 0); ASSERT_GE(j1, 0); ASSERT_GE(j5, 0);
+    ASSERT_GE(c1, 0);
+    ASSERT_GE(j1, 0);
+    ASSERT_GE(j5, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c1)), j1);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c1)), j5);
 }
@@ -244,8 +268,10 @@ TEST_F(SolverOpenFixture, GetLinkConnectivity_C1) {
 TEST_F(SolverOpenFixture, GetLinkConnectivity_C11) {
     int c11 = swmm_getIndex(swmm_LINK, "C11");
     int j11 = swmm_getIndex(swmm_NODE, "J11");
-    int o1  = swmm_getIndex(swmm_NODE, "O1");
-    ASSERT_GE(c11, 0); ASSERT_GE(j11, 0); ASSERT_GE(o1, 0);
+    int o1 = swmm_getIndex(swmm_NODE, "O1");
+    ASSERT_GE(c11, 0);
+    ASSERT_GE(j11, 0);
+    ASSERT_GE(o1, 0);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE1, c11)), j11);
     EXPECT_EQ(static_cast<int>(swmm_getValue(swmm_LINK_NODE2, c11)), o1);
 }
@@ -265,6 +291,13 @@ TEST_F(SolverOpenFixture, GetSystemFlowUnits) {
 
 class SolverFullRunFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Run and end the fixed legacy model so final statistics remain available.
+     *
+     * Opens process-global MODEL_INP/API_RPT/API_OUT, starts with saved results, asserts every step and
+     * end, and leaves the ended project open for test queries. Fatal assertions can leave a partial
+     * lifecycle for teardown; files are reused across tests.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
@@ -273,9 +306,13 @@ protected:
             ASSERT_EQ(swmm_step(&elapsed), 0);
         ASSERT_EQ(swmm_end(), 0);
     }
-    void TearDown() override {
-        swmm_close();
-    }
+    /**
+     * @brief Close the process-global legacy project after the test.
+     *
+     * Releases partial/open/ended model files and statistics. This wrapper does not call swmm_end or
+     * assert close status.
+     */
+    void TearDown() override { swmm_close(); }
 };
 
 TEST_F(SolverFullRunFixture, NoWarnings) {
@@ -286,14 +323,14 @@ TEST_F(SolverFullRunFixture, MassBalanceErrors_Small) {
     float runoffErr = 0.0f, flowErr = 0.0f, qualErr = 0.0f;
     ASSERT_EQ(swmm_getMassBalErr(&runoffErr, &flowErr, &qualErr), 0);
     EXPECT_LT(std::abs(runoffErr), 10.0f);
-    EXPECT_LT(std::abs(flowErr),   10.0f);
+    EXPECT_LT(std::abs(flowErr), 10.0f);
 }
 
 TEST_F(SolverFullRunFixture, SubcatchStats_FirstSubcatch) {
     swmm_SubcatchStats stats = {};
     ASSERT_EQ(swmm_getSubcatchStats(0, &stats), 0);
-    EXPECT_GT(stats.precip,  0.0);
-    EXPECT_GE(stats.runoff,  0.0);
+    EXPECT_GT(stats.precip, 0.0);
+    EXPECT_GE(stats.runoff, 0.0);
     EXPECT_GE(stats.maxFlow, 0.0);
     EXPECT_GE(stats.impervRunoff, 0.0);
 }
@@ -313,8 +350,8 @@ TEST_F(SolverFullRunFixture, SubcatchStats_AllSubcatches) {
 TEST_F(SolverFullRunFixture, NodeStats_FirstJunction) {
     swmm_NodeStats stats = {};
     ASSERT_EQ(swmm_getNodeStats(0, &stats), 0);
-    EXPECT_GE(stats.maxDepth,   0.0);
-    EXPECT_GE(stats.maxInflow,  0.0);
+    EXPECT_GE(stats.maxDepth, 0.0);
+    EXPECT_GE(stats.maxInflow, 0.0);
     EXPECT_GE(stats.totLatFlow, 0.0);
 }
 
@@ -323,15 +360,14 @@ TEST_F(SolverFullRunFixture, NodeStats_AllNodes) {
     ASSERT_EQ(n, 12);
     for (int i = 0; i < n; ++i) {
         swmm_NodeStats stats = {};
-        EXPECT_EQ(swmm_getNodeStats(i, &stats), 0)
-            << "getNodeStats failed for node " << i;
+        EXPECT_EQ(swmm_getNodeStats(i, &stats), 0) << "getNodeStats failed for node " << i;
     }
 }
 
 TEST_F(SolverFullRunFixture, LinkStats_FirstConduit) {
     swmm_LinkStats stats = {};
     ASSERT_EQ(swmm_getLinkStats(0, &stats), 0);
-    EXPECT_GE(stats.maxFlow,  0.0);
+    EXPECT_GE(stats.maxFlow, 0.0);
     EXPECT_GE(stats.maxVeloc, 0.0);
     EXPECT_GE(stats.maxDepth, 0.0);
 }
@@ -341,8 +377,7 @@ TEST_F(SolverFullRunFixture, LinkStats_AllLinks) {
     ASSERT_EQ(n, 11);
     for (int i = 0; i < n; ++i) {
         swmm_LinkStats stats = {};
-        EXPECT_EQ(swmm_getLinkStats(i, &stats), 0)
-            << "getLinkStats failed for link " << i;
+        EXPECT_EQ(swmm_getLinkStats(i, &stats), 0) << "getLinkStats failed for link " << i;
     }
 }
 
@@ -356,9 +391,9 @@ TEST_F(SolverFullRunFixture, SystemRoutingTotals) {
 TEST_F(SolverFullRunFixture, SystemRunoffTotals) {
     swmm_RunoffTotals totals = {};
     ASSERT_EQ(swmm_getSystemRunoffTotals(&totals), 0);
-    EXPECT_GT(totals.rainfall,      0.0);
-    EXPECT_GE(totals.runoff,        0.0);
-    EXPECT_GE(totals.infil,         0.0);
+    EXPECT_GT(totals.rainfall, 0.0);
+    EXPECT_GE(totals.runoff, 0.0);
+    EXPECT_GE(totals.infil, 0.0);
     EXPECT_LT(std::abs(totals.pctError), 10.0);
 }
 
@@ -368,6 +403,13 @@ TEST_F(SolverFullRunFixture, SystemRunoffTotals) {
 
 class SolverStepFixture : public ::testing::Test {
 protected:
+    /**
+     * @brief Open/start the legacy fixture and take up to ten dynamic steps.
+     *
+     * Stops early at elapsed completion; each attempted step must succeed. Leaves legacy state started
+     * for dynamic-value assertions; no end call occurs here. Fatal GoogleTest assertions return from
+     * this hook on failure; any created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         ASSERT_EQ(swmm_open(MODEL_INP, API_RPT, API_OUT), 0);
         ASSERT_EQ(swmm_start(/*saveFlag=*/1), 0);
@@ -376,6 +418,13 @@ protected:
         for (int i = 0; i < 10 && elapsed > 0.0; ++i)
             ASSERT_EQ(swmm_step(&elapsed), 0);
     }
+    /**
+     * @brief Finish remaining legacy steps, end the run and close global resources.
+     *
+     * Uses elapsed-days completion only and ignores step/end/close statuses; there is no explicit
+     * iteration guard. Intended for the valid fixed fixture, including tests that stop before normal
+     * completion.
+     */
     void TearDown() override {
         double elapsed = 1.0;
         while (elapsed > 0.0)

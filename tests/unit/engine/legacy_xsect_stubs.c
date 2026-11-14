@@ -11,9 +11,19 @@
  * which the parity harness deliberately does NOT exercise (those need real
  * transect/curve data). The stubs exist solely to satisfy the linker.
  */
+
+/**
+ * @file      legacy_xsect_stubs.c
+ * @brief     Tests for legacy xsect stubs.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include "headers.h"
 
-TTable*    Curve    = NULL;
+TTable* Curve = NULL;
 TTransect* Transect = NULL;
-TStreet*   Street   = NULL;
-TShape*    Shape    = NULL;
+TStreet* Street = NULL;
+TShape* Shape = NULL;

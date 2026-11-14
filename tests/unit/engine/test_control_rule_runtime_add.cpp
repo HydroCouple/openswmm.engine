@@ -1,6 +1,6 @@
 /**
- * @file test_control_rule_runtime_add.cpp
- * @brief Rules added via `swmm_control_add_rule` after the model is
+ * @file      test_control_rule_runtime_add.cpp
+ * @brief     Rules added via `swmm_control_add_rule` after the model is
  *        initialized must actually take effect.
  *
  * @details Control rules are compiled once, inside `swmm_engine_initialize()`
@@ -25,6 +25,10 @@
  * @see src/engine/core/openswmm_controls_impl.cpp::swmm_control_add_rule
  * @see src/engine/core/SWMMEngine.cpp::initHydraulics (rule compile site)
  * @ingroup engine_controls
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -95,18 +99,36 @@ LINKS ALL
 /// Link indices follow [CONDUITS] then [ORIFICES] declaration order.
 constexpr int kOR1 = 1, kOR2 = 2, kOR3 = 3, kOR4 = 4;
 
+/**
+ * @brief Read a link's actual control setting for runtime-rule assertions.
+ *
+ * Records an EXPECT status without changing state, transferring ownership or independently checking
+ * target setting.
+ *
+ * @param[in] engine Live fixture engine, borrowed.
+ * @param[in] idx Valid link index.
+ * @return Dimensionless setting, or initial -1/unfilled value after nonfatal getter refusal.
+ */
 double setting_of(SWMM_Engine engine, int idx) {
     double v = -1.0;
     EXPECT_EQ(swmm_link_get_control_setting(engine, idx, &v), SWMM_OK);
     return v;
 }
 
-}  // namespace
+} // namespace
 
 class ControlRuleRuntimeAddTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Write/open/initialize the runtime control-rule fixture.
+     *
+     * Creates kArtifactDir, asserts model.inp output opens, writes kModel, then creates a CREATED
+     * handle for file open and initializes it. Keeps model.rpt/.out artifacts; no start occurs here.
+     * Filesystem errors propagate. Fatal GoogleTest assertions return from this hook on failure; any
+     * created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         fs::create_directories(kArtifactDir);
         const fs::path inp = kArtifactDir / "model.inp";
@@ -120,15 +142,19 @@ protected:
         // opening an .inp requires CREATED, i.e. swmm_engine_create().
         engine = swmm_engine_create();
         ASSERT_NE(engine, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine,
-                                   inp.string().c_str(),
+        ASSERT_EQ(swmm_engine_open(engine, inp.string().c_str(),
                                    (kArtifactDir / "model.rpt").string().c_str(),
-                                   (kArtifactDir / "model.out").string().c_str(),
-                                   nullptr),
+                                   (kArtifactDir / "model.out").string().c_str(), nullptr),
                   SWMM_OK);
         ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
     }
 
+    /**
+     * @brief Destroy the fixture-owned engine and its model resources.
+     *
+     * The destroy API accepts a null handle after failed setup. The member slot is not reset and must
+     * not be used afterward.
+     */
     void TearDown() override { swmm_engine_destroy(engine); }
 
     /// Run a few steps so the control engine gets a chance to evaluate.
@@ -146,10 +172,10 @@ protected:
 // ============================================================================
 
 TEST_F(ControlRuleRuntimeAddTest, RuleAddedAfterInitializeTakesEffect) {
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE R_ONE\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR1 SETTING = 0.11"), SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(engine, "RULE R_ONE\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR1 SETTING = 0.11"),
+              SWMM_OK);
 
     step_a_few();
 
@@ -161,13 +187,13 @@ TEST_F(ControlRuleRuntimeAddTest, RuleAddedAfterInitializeTakesEffect) {
 // ============================================================================
 
 TEST_F(ControlRuleRuntimeAddTest, AllChainedActionsAreApplied) {
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE R_MULTI\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR1 SETTING = 0.11\n"
-        "AND ORIFICE OR2 SETTING = 0.22\n"
-        "AND ORIFICE OR3 SETTING = 0.33\n"
-        "AND ORIFICE OR4 SETTING = 0.44"), SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(engine, "RULE R_MULTI\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR1 SETTING = 0.11\n"
+                                            "AND ORIFICE OR2 SETTING = 0.22\n"
+                                            "AND ORIFICE OR3 SETTING = 0.33\n"
+                                            "AND ORIFICE OR4 SETTING = 0.44"),
+              SWMM_OK);
 
     step_a_few();
 
@@ -184,10 +210,10 @@ TEST_F(ControlRuleRuntimeAddTest, AllChainedActionsAreApplied) {
 TEST_F(ControlRuleRuntimeAddTest, RejectsUnresolvedLinkAfterInitialize) {
     ASSERT_EQ(swmm_control_count(engine), 0);
 
-    EXPECT_EQ(swmm_control_add_rule(engine,
-        "RULE R_GHOST\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR_NOPE SETTING = 1"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_control_add_rule(engine, "RULE R_GHOST\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR_NOPE SETTING = 1"),
+              SWMM_ERR_BADPARAM);
 
     // Rejected text must not land in the store.
     EXPECT_EQ(swmm_control_count(engine), 0);
@@ -209,13 +235,13 @@ TEST_F(ControlRuleRuntimeAddTest, RejectsTextContainingNoRule) {
 
 TEST_F(ControlRuleRuntimeAddTest, PartiallyBadBlockLeavesNoRulesBehind) {
     // First rule is fine; the second references a link that does not exist.
-    EXPECT_EQ(swmm_control_add_rule(engine,
-        "RULE R_GOOD\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR1 SETTING = 0.11\n"
-        "RULE R_BAD\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR_NOPE SETTING = 1"), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_control_add_rule(engine, "RULE R_GOOD\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR1 SETTING = 0.11\n"
+                                            "RULE R_BAD\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR_NOPE SETTING = 1"),
+              SWMM_ERR_BADPARAM);
 
     EXPECT_EQ(swmm_control_count(engine), 0);
 
@@ -237,10 +263,10 @@ TEST_F(ControlRuleRuntimeAddTest, PartiallyBadBlockLeavesNoRulesBehind) {
 // ============================================================================
 
 TEST_F(ControlRuleRuntimeAddTest, RuleSurvivesReinitialize) {
-    ASSERT_EQ(swmm_control_add_rule(engine,
-        "RULE R_ONE\n"
-        "IF SIMULATION TIME >= 0\n"
-        "THEN ORIFICE OR1 SETTING = 0.11"), SWMM_OK);
+    ASSERT_EQ(swmm_control_add_rule(engine, "RULE R_ONE\n"
+                                            "IF SIMULATION TIME >= 0\n"
+                                            "THEN ORIFICE OR1 SETTING = 0.11"),
+              SWMM_OK);
     ASSERT_EQ(swmm_control_count(engine), 1);
 
     ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);

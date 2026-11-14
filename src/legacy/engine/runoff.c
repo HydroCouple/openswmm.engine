@@ -29,8 +29,19 @@
 //   Build 5.2.0:
 //   - Support added for saving rainfall amounts in previous 48 hours.
 //   Build 5.2.2:
-//   - Fixed possible use of canSweep in runoff_execute() with no assigned value. 
+//   - Fixed possible use of canSweep in runoff_execute() with no assigned value.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      runoff.c
+ * @brief     Subcatchment runoff simulation and interface output.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdio.h>
@@ -42,24 +53,24 @@
 //-----------------------------------------------------------------------------
 // Shared variables
 //-----------------------------------------------------------------------------
-static char  IsRaining;                // TRUE if precip. falls on study area
-static char  HasRunoff;                // TRUE if study area generates runoff
-static char  HasSnow;                  // TRUE if any snow cover on study area
-static int   Nsteps;                   // number of runoff time steps taken
-static int   MaxSteps;                 // final number of runoff time steps
-static long  MaxStepsPos;              // position in Runoff interface file
-                                       //    where MaxSteps is saved
+static char IsRaining;   // TRUE if precip. falls on study area
+static char HasRunoff;   // TRUE if study area generates runoff
+static char HasSnow;     // TRUE if any snow cover on study area
+static int Nsteps;       // number of runoff time steps taken
+static int MaxSteps;     // final number of runoff time steps
+static long MaxStepsPos; // position in Runoff interface file
+                         //    where MaxSteps is saved
 
 //-----------------------------------------------------------------------------
-//  Exportable variables 
+//  Exportable variables
 //-----------------------------------------------------------------------------
-char    HasWetLids;  // TRUE if any LIDs are wet (used in lidproc.c)
+char HasWetLids;     // TRUE if any LIDs are wet (used in lidproc.c)
 double* OutflowLoad; // exported pollutant mass load (used in surfqual.c)
 
 //-----------------------------------------------------------------------------
 //  Imported variables
 //-----------------------------------------------------------------------------
-extern float* SubcatchResults;         // Results vector defined in OUTPUT.C
+extern float* SubcatchResults; // Results vector defined in OUTPUT.C
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)
@@ -72,50 +83,48 @@ extern float* SubcatchResults;         // Results vector defined in OUTPUT.C
 // Local functions
 //-----------------------------------------------------------------------------
 static double runoff_getTimeStep(DateTime currentDate);
-static void   runoff_initFile(void);
-static void   runoff_readFromFile(void);
-static void   runoff_saveToFile(float tStep);
-static void   runoff_getOutfallRunon(double tStep);
+static void runoff_initFile(void);
+static void runoff_readFromFile(void);
+static void runoff_saveToFile(float tStep);
+static void runoff_getOutfallRunon(double tStep);
 
 /*!
 * \brief Opens the runoff analyzer.
 * \return Error code
-*/
-int runoff_open()
-//
-//  Input:   none
-//  Output:  returns the global error code
-//  Purpose: opens the runoff analyzer.
-//
-{
+ *
+
+ */
+int runoff_open() {
     IsRaining = FALSE;
     HasRunoff = FALSE;
     HasSnow = FALSE;
     Nsteps = 0;
 
     // --- open the Ordinary Differential Equation solver
-    if ( !odesolve_open(MAXODES) ) report_writeErrorMsg(ERR_ODE_SOLVER, "");
+    if (!odesolve_open(MAXODES))
+        report_writeErrorMsg(ERR_ODE_SOLVER, "");
 
     // --- allocate memory for pollutant runoff loads
     OutflowLoad = NULL;
-    if ( Nobjects[POLLUT] > 0 )
-    {
-        OutflowLoad = (double *) calloc(Nobjects[POLLUT], sizeof(double));
-        if ( !OutflowLoad ) report_writeErrorMsg(ERR_MEMORY, "");
+    if (Nobjects[POLLUT] > 0) {
+        OutflowLoad = (double*)calloc(Nobjects[POLLUT], sizeof(double));
+        if (!OutflowLoad)
+            report_writeErrorMsg(ERR_MEMORY, "");
     }
 
     // --- see if a runoff interface file should be opened
-    switch ( Frunoff.mode )
-    {
-      case USE_FILE:
-        if ( (Frunoff.file = fopen(Frunoff.name, "r+b")) == NULL)
+    switch (Frunoff.mode) {
+    case USE_FILE:
+        if ((Frunoff.file = fopen(Frunoff.name, "r+b")) == NULL)
             report_writeErrorMsg(ERR_RUNOFF_FILE_OPEN, Frunoff.name);
-        else runoff_initFile();
+        else
+            runoff_initFile();
         break;
-      case SAVE_FILE:
-        if ( (Frunoff.file = fopen(Frunoff.name, "w+b")) == NULL)
+    case SAVE_FILE:
+        if ((Frunoff.file = fopen(Frunoff.name, "w+b")) == NULL)
             report_writeErrorMsg(ERR_RUNOFF_FILE_OPEN, Frunoff.name);
-        else runoff_initFile();
+        else
+            runoff_initFile();
         break;
     }
     return ErrorCode;
@@ -123,14 +132,10 @@ int runoff_open()
 
 /*!
 * \brief Closes the runoff analyzer.
-*/
-void runoff_close()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: closes the runoff analyzer.
-//
-{
+ *
+
+ */
+void runoff_close() {
     // --- close the ODE solver
     odesolve_close();
 
@@ -138,11 +143,9 @@ void runoff_close()
     FREE(OutflowLoad);
 
     // --- close runoff interface file if in use
-    if ( Frunoff.file )
-    {
+    if (Frunoff.file) {
         // --- write to file number of time steps simulated
-        if ( Frunoff.mode == SAVE_FILE )
-        {
+        if (Frunoff.mode == SAVE_FILE) {
             fseek(Frunoff.file, MaxStepsPos, SEEK_SET);
             fwrite(&Nsteps, sizeof(int), 1, Frunoff.file);
         }
@@ -150,28 +153,26 @@ void runoff_close()
     }
 
     // --- close climate file if in use
-    if ( Fclimate.file ) fclose(Fclimate.file);
+    if (Fclimate.file)
+        fclose(Fclimate.file);
 }
 
 /*!
 * \brief Computes runoff for each subcatchment at the current runoff time.
-*/
-void runoff_execute()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: computes runoff from each subcatchment at current runoff time.
-//
-{
-    int      j;                        // object index
-    int      day;                      // day of calendar year
-    double   runoffStep;               // runoff time step (sec)
-    double   oldRunoffStep;            // previous runoff time step (sec)
-    double   runoff;                   // subcatchment runoff (ft/sec)
-    DateTime currentDate;              // current date/time 
-    char     canSweep;                 // TRUE if street sweeping can occur
+ *
+ * @details Computes runoff from each subcatchment at current runoff time.
+ */
+void runoff_execute() {
+    int j;                // object index
+    int day;              // day of calendar year
+    double runoffStep;    // runoff time step (sec)
+    double oldRunoffStep; // previous runoff time step (sec)
+    double runoff;        // subcatchment runoff (ft/sec)
+    DateTime currentDate; // current date/time
+    char canSweep;        // TRUE if street sweeping can occur
 
-    if ( ErrorCode ) return;
+    if (ErrorCode)
+        return;
 
     // --- find previous runoff time step in sec
     oldRunoffStep = (NewRunoffTime - OldRunoffTime) / 1000.0;
@@ -183,8 +184,7 @@ void runoff_execute()
     climate_setState(currentDate);
 
     // --- if no subcatchments then simply update runoff elapsed time
-    if ( Nobjects[SUBCATCH] == 0 )
-    {
+    if (Nobjects[SUBCATCH] == 0) {
         OldRunoffTime = NewRunoffTime;
         NewRunoffTime += (double)(DryStep) * 1000.;
         NewRunoffTime = MIN(NewRunoffTime, TotalDuration);
@@ -195,15 +195,14 @@ void runoff_execute()
     //     NOTE: must examine gages in sequential order due to possible
     //     presence of co-gages (gages that share same rain time series).
     IsRaining = FALSE;
-    for (j = 0; j < Nobjects[GAGE]; j++)
-    {
+    for (j = 0; j < Nobjects[GAGE]; j++) {
         gage_setState(j, currentDate);
-        if ( Gage[j].rainfall > 0.0 ) IsRaining = TRUE;
+        if (Gage[j].rainfall > 0.0)
+            IsRaining = TRUE;
     }
 
     // --- read runoff results from interface file if applicable
-    if ( Frunoff.mode == USE_FILE )
-    {
+    if (Frunoff.mode == USE_FILE) {
         runoff_readFromFile();
         return;
     }
@@ -211,16 +210,15 @@ void runoff_execute()
     // --- see if street sweeping can occur on current date
     day = datetime_dayOfYear(currentDate);
     canSweep = FALSE;
-    if ( SweepStart <= SweepEnd )
-    {
-        if ( day >= SweepStart && day <= SweepEnd ) canSweep = TRUE;
-    }
-    else if ( day <= SweepEnd || day >= SweepStart ) canSweep = TRUE;
+    if (SweepStart <= SweepEnd) {
+        if (day >= SweepStart && day <= SweepEnd)
+            canSweep = TRUE;
+    } else if (day <= SweepEnd || day >= SweepStart)
+        canSweep = TRUE;
 
     // --- get runoff time step (in seconds)
     runoffStep = runoff_getTimeStep(currentDate);
-    if ( runoffStep <= 0.0 )
-    {
+    if (runoffStep <= 0.0) {
         ErrorCode = ERR_TIMESTEP;
         return;
     }
@@ -230,8 +228,7 @@ void runoff_execute()
     NewRunoffTime += (double)(1000 * runoffStep);
 
     // --- adjust runoff step so that total duration not exceeded
-    if ( NewRunoffTime > TotalDuration )
-    {
+    if (NewRunoffTime > TotalDuration) {
         runoffStep = (TotalDuration - OldRunoffTime) / 1000.0;
         NewRunoffTime = TotalDuration;
     }
@@ -240,50 +237,57 @@ void runoff_execute()
     for (j = 0; j < Nobjects[GAGE]; j++)
         gage_updatePastRain(j, (int)runoffStep);
 
-    // --- update old state of each subcatchment, 
-    for (j = 0; j < Nobjects[SUBCATCH]; j++) subcatch_setOldState(j);
+    // --- update old state of each subcatchment,
+    for (j = 0; j < Nobjects[SUBCATCH]; j++)
+        subcatch_setOldState(j);
 
     // --- determine any runon from drainage system outfall nodes
-    if ( oldRunoffStep > 0.0 ) runoff_getOutfallRunon(oldRunoffStep);
+    if (oldRunoffStep > 0.0)
+        runoff_getOutfallRunon(oldRunoffStep);
 
     // --- determine runon from upstream subcatchments, and implement snow removal
-    for (j = 0; j < Nobjects[SUBCATCH]; j++)
-    {
-        if ( Subcatch[j].area == 0.0 ) continue;
+    for (j = 0; j < Nobjects[SUBCATCH]; j++) {
+        if (Subcatch[j].area == 0.0)
+            continue;
         subcatch_getRunon(j);
-        if ( !IgnoreSnowmelt ) snow_plowSnow(j, runoffStep);
+        if (!IgnoreSnowmelt)
+            snow_plowSnow(j, runoffStep);
     }
-    
+
     // --- determine runoff and pollutant buildup/washoff in each subcatchment
     HasSnow = FALSE;
     HasRunoff = FALSE;
     HasWetLids = FALSE;
-    for (j = 0; j < Nobjects[SUBCATCH]; j++)
-    {
+    for (j = 0; j < Nobjects[SUBCATCH]; j++) {
         // --- find total runoff rate (in ft/sec) over the subcatchment
         //     (the amount that actually leaves the subcatchment (in cfs)
         //     is also computed and is stored in Subcatch[j].newRunoff)
-        if ( Subcatch[j].area == 0.0 ) continue;
+        if (Subcatch[j].area == 0.0)
+            continue;
         runoff = subcatch_getRunoff(j, runoffStep);
 
         // --- update state of study area surfaces
-        if ( runoff > 0.0 ) HasRunoff = TRUE;
-        if ( Subcatch[j].newSnowDepth > 0.0 ) HasSnow = TRUE;
+        if (runoff > 0.0)
+            HasRunoff = TRUE;
+        if (Subcatch[j].newSnowDepth > 0.0)
+            HasSnow = TRUE;
 
         // --- skip pollutant buildup/washoff if quality ignored
-        if ( IgnoreQuality ) continue;
+        if (IgnoreQuality)
+            continue;
 
         // --- apply api unconstrained pollutant buildup from API
         surfqual_applyAPIBuildup(j);
-        
+
         // --- add to pollutant buildup if runoff is negligible
-        if ( runoff < MIN_RUNOFF ) surfqual_getBuildup(j, runoffStep); 
+        if (runoff < MIN_RUNOFF)
+            surfqual_getBuildup(j, runoffStep);
 
         // --- reduce buildup by street sweeping
-        if ( canSweep && Subcatch[j].rainfall <= MIN_RUNOFF)
+        if (canSweep && Subcatch[j].rainfall <= MIN_RUNOFF)
             surfqual_sweepBuildup(j, currentDate);
 
-        // --- compute pollutant washoff 
+        // --- compute pollutant washoff
         surfqual_getWashoff(j, runoff, runoffStep);
     }
 
@@ -292,17 +296,24 @@ void runoff_execute()
 
     // --- save runoff results to interface file if one is used
     Nsteps++;
-    if ( Frunoff.mode == SAVE_FILE )
-    {
+    if (Frunoff.mode == SAVE_FILE) {
         runoff_saveToFile((float)runoffStep);
     }
 
     // --- reset subcatchment runon to 0
-    for (j = 0; j < Nobjects[SUBCATCH]; j++) Subcatch[j].runon = 0.0;
+    for (j = 0; j < Nobjects[SUBCATCH]; j++)
+        Subcatch[j].runon = 0.0;
 }
 
 //=============================================================================
 
+/**
+ * @brief Choose a runoff step limited by wet/dry state and upcoming forcing changes.
+ * @param[in] currentDate Current absolute SWMM calendar DateTime in days.
+ * @return Time step in seconds: WetStep for active precipitation/snow/runoff/LIDs,
+ * otherwise DryStep, limited by positive next evaporation or rain-gage changes.
+ * @pre WetStep, DryStep and forcing schedules are initialized.
+ */
 double runoff_getTimeStep(DateTime currentDate)
 //
 //  Input:   currentDate = current simulation date/time
@@ -310,51 +321,47 @@ double runoff_getTimeStep(DateTime currentDate)
 //  Purpose: computes a time step to use for runoff calculations.
 //
 {
-    int  j;
+    int j;
     long timeStep;
     long maxStep = DryStep;
 
     // --- find shortest time until next evaporation or rainfall value
     //     (this represents the maximum possible time step)
     timeStep = datetime_timeDiff(climate_getNextEvapDate(), currentDate);
-    if ( timeStep > 0.0 && timeStep < maxStep ) maxStep = timeStep;
-    for (j = 0; j < Nobjects[GAGE]; j++)
-    {
-        timeStep = datetime_timeDiff(gage_getNextRainDate(j, currentDate),
-                   currentDate);
-        if ( timeStep > 0 && timeStep < maxStep ) maxStep = timeStep;
+    if (timeStep > 0.0 && timeStep < maxStep)
+        maxStep = timeStep;
+    for (j = 0; j < Nobjects[GAGE]; j++) {
+        timeStep = datetime_timeDiff(gage_getNextRainDate(j, currentDate), currentDate);
+        if (timeStep > 0 && timeStep < maxStep)
+            maxStep = timeStep;
     }
 
     // --- determine whether wet or dry time step applies
-    if ( IsRaining || HasSnow || HasRunoff || HasWetLids )
-    {
+    if (IsRaining || HasSnow || HasRunoff || HasWetLids) {
         timeStep = WetStep;
-    }
-    else timeStep = DryStep;
+    } else
+        timeStep = DryStep;
 
     // --- limit time step if necessary
-    if ( timeStep > maxStep ) timeStep = maxStep;
+    if (timeStep > maxStep)
+        timeStep = maxStep;
     return (double)timeStep;
 }
 
 //=============================================================================
 
-void runoff_initFile(void)
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: initializes a Runoff Interface file for saving results.
-//
-{
-    int   nSubcatch;
-    int   nPollut;
-    int   flowUnits;
-    char  fileStamp[] = "SWMM5-RUNOFF";
-    char  fStamp[] = "SWMM5-RUNOFF";
+/**
+ * @brief Initializes a Runoff Interface file for saving results.
+ */
+void runoff_initFile(void) {
+    int nSubcatch;
+    int nPollut;
+    int flowUnits;
+    char fileStamp[] = "SWMM5-RUNOFF";
+    char fStamp[] = "SWMM5-RUNOFF";
 
     MaxSteps = 0;
-    if ( Frunoff.mode == SAVE_FILE )
-    {
+    if (Frunoff.mode == SAVE_FILE) {
         // --- write file stamp, # subcatchments & # pollutants to file
         nSubcatch = Nobjects[SUBCATCH];
         nPollut = Nobjects[POLLUT];
@@ -363,16 +370,14 @@ void runoff_initFile(void)
         fwrite(&nSubcatch, sizeof(int), 1, Frunoff.file);
         fwrite(&nPollut, sizeof(int), 1, Frunoff.file);
         fwrite(&flowUnits, sizeof(int), 1, Frunoff.file);
-        MaxStepsPos = ftell(Frunoff.file); 
+        MaxStepsPos = ftell(Frunoff.file);
         fwrite(&MaxSteps, sizeof(int), 1, Frunoff.file);
     }
 
-    if ( Frunoff.mode == USE_FILE )
-    {
+    if (Frunoff.mode == USE_FILE) {
         // --- check that interface file contains proper header records
         fread(fStamp, sizeof(char), strlen(fileStamp), Frunoff.file);
-        if ( strcmp(fStamp, fileStamp) != 0 )
-        {
+        if (strcmp(fStamp, fileStamp) != 0) {
             report_writeErrorMsg(ERR_RUNOFF_FILE_FORMAT, "");
             return;
         }
@@ -383,32 +388,26 @@ void runoff_initFile(void)
         fread(&nPollut, sizeof(int), 1, Frunoff.file);
         fread(&flowUnits, sizeof(int), 1, Frunoff.file);
         fread(&MaxSteps, sizeof(int), 1, Frunoff.file);
-        if ( nSubcatch != Nobjects[SUBCATCH]
-        ||   nPollut   != Nobjects[POLLUT]
-        ||   flowUnits != FlowUnits
-        ||   MaxSteps  <= 0 )
-        {
-             report_writeErrorMsg(ERR_RUNOFF_FILE_FORMAT, "");
+        if (nSubcatch != Nobjects[SUBCATCH] || nPollut != Nobjects[POLLUT] ||
+            flowUnits != FlowUnits || MaxSteps <= 0) {
+            report_writeErrorMsg(ERR_RUNOFF_FILE_FORMAT, "");
         }
     }
 }
 
 //=============================================================================
 
-void  runoff_saveToFile(float tStep)
-//
-//  Input:   tStep = runoff time step (sec)
-//  Output:  none
-//  Purpose: saves current runoff results to Runoff Interface file.
-//
-{
+/**
+ * @brief Saves current runoff results to Runoff Interface file.
+ *
+ * @param[in] tStep Runoff time step (sec).
+ */
+void runoff_saveToFile(float tStep) {
     int j;
     int n = MAX_SUBCATCH_RESULTS + Nobjects[POLLUT] - 1;
-    
 
     fwrite(&tStep, sizeof(float), 1, Frunoff.file);
-    for (j=0; j<Nobjects[SUBCATCH]; j++)
-    {
+    for (j = 0; j < Nobjects[SUBCATCH]; j++) {
         subcatch_getResults(j, 1.0, SubcatchResults);
         fwrite(SubcatchResults, sizeof(float), n, Frunoff.file);
     }
@@ -416,28 +415,25 @@ void  runoff_saveToFile(float tStep)
 
 //=============================================================================
 
-void  runoff_readFromFile(void)
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: reads runoff results from Runoff Interface file for current time.
-//
-{
-    int    i, j;
-    int    nResults;                   // number of results per subcatch.
-    int    kount;                      // count of items read from file
-    float  tStep;                      // runoff time step (sec)
-    TGroundwater* gw;                  // ptr. to Groundwater object
+/**
+ * @brief Reads runoff results from Runoff Interface file for current time.
+ */
+void runoff_readFromFile(void) {
+    int i, j;
+    int nResults;     // number of results per subcatch.
+    int kount;        // count of items read from file
+    float tStep;      // runoff time step (sec)
+    TGroundwater* gw; // ptr. to Groundwater object
 
     // --- make sure not past end of file
-    if ( Nsteps > MaxSteps )
-    {
-         report_writeErrorMsg(ERR_RUNOFF_FILE_END, "");
-         return;
+    if (Nsteps > MaxSteps) {
+        report_writeErrorMsg(ERR_RUNOFF_FILE_END, "");
+        return;
     }
 
     // --- replace old state with current one for all subcatchments
-    for (j = 0; j < Nobjects[SUBCATCH]; j++) subcatch_setOldState(j);
+    for (j = 0; j < Nobjects[SUBCATCH]; j++)
+        subcatch_setOldState(j);
 
     // --- read runoff time step
     kount = 0;
@@ -447,84 +443,74 @@ void  runoff_readFromFile(void)
     nResults = MAX_SUBCATCH_RESULTS + Nobjects[POLLUT] - 1;
 
     // --- for each subcatchment
-    for (j = 0; j < Nobjects[SUBCATCH]; j++)
-    {
+    for (j = 0; j < Nobjects[SUBCATCH]; j++) {
         // --- read vector of saved results
         kount += (int)fread(SubcatchResults, sizeof(float), nResults, Frunoff.file);
 
         // --- extract hydrologic results, converting units where necessary
         //     (results were saved to file in user's units)
-        Subcatch[j].newSnowDepth = SubcatchResults[SUBCATCH_SNOWDEPTH] /
-                                   UCF(RAINDEPTH);
-        Subcatch[j].evapLoss     = SubcatchResults[SUBCATCH_EVAP] /
-                                   UCF(RAINFALL);
-        Subcatch[j].infilLoss    = SubcatchResults[SUBCATCH_INFIL] /
-                                   UCF(RAINFALL);
-        Subcatch[j].newRunoff    = SubcatchResults[SUBCATCH_RUNOFF] /
-                                   UCF(FLOW);
+        Subcatch[j].newSnowDepth = SubcatchResults[SUBCATCH_SNOWDEPTH] / UCF(RAINDEPTH);
+        Subcatch[j].evapLoss = SubcatchResults[SUBCATCH_EVAP] / UCF(RAINFALL);
+        Subcatch[j].infilLoss = SubcatchResults[SUBCATCH_INFIL] / UCF(RAINFALL);
+        Subcatch[j].newRunoff = SubcatchResults[SUBCATCH_RUNOFF] / UCF(FLOW);
         gw = Subcatch[j].groundwater;
-        if ( gw )
-        {
-            gw->newFlow    = SubcatchResults[SUBCATCH_GW_FLOW] / UCF(FLOW);
-            gw->lowerDepth = Aquifer[gw->aquifer].bottomElev -
-                             (SubcatchResults[SUBCATCH_GW_ELEV] / UCF(LENGTH));
-            gw->theta      = SubcatchResults[SUBCATCH_SOIL_MOIST];
+        if (gw) {
+            gw->newFlow = SubcatchResults[SUBCATCH_GW_FLOW] / UCF(FLOW);
+            gw->lowerDepth =
+                Aquifer[gw->aquifer].bottomElev - (SubcatchResults[SUBCATCH_GW_ELEV] / UCF(LENGTH));
+            gw->theta = SubcatchResults[SUBCATCH_SOIL_MOIST];
         }
 
         // --- extract water quality results
-        for (i = 0; i < Nobjects[POLLUT]; i++)
-        {
+        for (i = 0; i < Nobjects[POLLUT]; i++) {
             Subcatch[j].newQual[i] = SubcatchResults[SUBCATCH_WASHOFF + i];
         }
     }
 
     // --- report error if not enough values were read
-    if ( kount < 1 + Nobjects[SUBCATCH] * nResults )
-    {
-         report_writeErrorMsg(ERR_RUNOFF_FILE_READ, "");
-         return;
+    if (kount < 1 + Nobjects[SUBCATCH] * nResults) {
+        report_writeErrorMsg(ERR_RUNOFF_FILE_READ, "");
+        return;
     }
 
     // --- update runoff time clock
     OldRunoffTime = NewRunoffTime;
-    NewRunoffTime = OldRunoffTime + (double)(tStep)*1000.0;
+    NewRunoffTime = OldRunoffTime + (double)(tStep) * 1000.0;
     NewRunoffTime = MIN(NewRunoffTime, TotalDuration);
     Nsteps++;
 }
 
 //=============================================================================
 
-
-void runoff_getOutfallRunon(double tStep)
-//
-//  Input:   tStep = previous runoff time step (sec)
-//  Output:  none
-//  Purpose: adds flow and pollutant loads leaving drainage system outfalls
-//           during the previous runoff time step to designated subcatchments.
-//
-{
+/**
+ * @brief Adds flow and pollutant loads leaving drainage system outfalls during the previous runoff
+ *        time step to designated subcatchments.
+ *
+ * @param[in] tStep Previous runoff time step (sec).
+ */
+void runoff_getOutfallRunon(double tStep) {
     int i, k, p;
     double w;
 
     // --- examine each outfall node
-    for (i = 0; i < Nnodes[OUTFALL]; i++)
-    {
+    for (i = 0; i < Nnodes[OUTFALL]; i++) {
         // --- ignore node if outflow not re-routed onto a subcatchment
         k = Outfall[i].routeTo;
-        if ( k < 0 ) continue;
-        if ( Subcatch[k].area == 0.0 ) continue;
+        if (k < 0)
+            continue;
+        if (Subcatch[k].area == 0.0)
+            continue;
 
         // --- add outfall's flow to subcatchment as runon and re-set routed
         //     flow volume to 0
-        subcatch_addRunonFlow(k, Outfall[i].vRouted/tStep);
+        subcatch_addRunonFlow(k, Outfall[i].vRouted / tStep);
         massbal_updateRunoffTotals(RUNOFF_RUNON, Outfall[i].vRouted);
         Outfall[i].vRouted = 0.0;
 
         // --- add outfall's pollutant load on to subcatchment's wet
         //     deposition load and re-set routed load to 0
         //     (Subcatch.newQual is being used as a temporary load accumulator)
-        for (p = 0; p < Nobjects[POLLUT]; p++)
-        {
+        for (p = 0; p < Nobjects[POLLUT]; p++) {
             w = Outfall[i].wRouted[p] * LperFT3;
             massbal_updateLoadingTotals(DEPOSITION_LOAD, p, w * Pollut[p].mcf);
             Subcatch[k].newQual[p] += w / tStep;

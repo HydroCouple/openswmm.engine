@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file RoutingInterfaceFormat.hpp
- * @brief SWMM5 routing interface text format — parser / materialiser.
+ * @file      RoutingInterfaceFormat.hpp
+ * @brief     SWMM5 routing interface text format — parser / materialiser.
  *
  * @details Slice IO-6b. Reads and writes the EPA-SWMM routing interface
  *          text file format produced and consumed by the legacy
@@ -30,9 +46,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_ROUTING_INTERFACE_FORMAT_HPP
@@ -54,23 +70,27 @@ namespace openswmm::gpkg::formats {
  *                  `meta.pollutant_ids.size()`.
  * @param rows      Output data rows (appended; caller clears if needed).
  */
-FormatResult parseRoutingInterfaceText(
-    const std::string&                path,
-    RoutingInterfaceMetadata&         meta,
-    std::vector<RoutingInterfaceRow>& rows);
+FormatResult parseRoutingInterfaceText(const std::string& path, RoutingInterfaceMetadata& meta,
+                                       std::vector<RoutingInterfaceRow>& rows);
 
 /**
- * @brief Write metadata + rows out to a SWMM5 routing-interface text file.
+ * @brief Overwrite a SWMM5 text routing interface from retained metadata and rows.
  *
- * @details `meta.object_ids` is written verbatim to the header. Rows whose
- *          `object_id` doesn't appear in `meta.object_ids` are still
- *          emitted — the legacy reader would silently skip them, so we
- *          do not enforce the registry.
+ * Emits missing pollutant-unit labels as empty strings, and each row's entire concentration vector
+ * without shape validation against metadata. Does not reorder/group periods, validate IDs/clocks,
+ * convert units, escape text or check late write/close errors. Direct truncation, no atomic stage.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in] meta Borrowed title/report-step/flow-unit/pollutant/object metadata; counts must be
+ *     int-representable.
+ * @param[in] rows Borrowed object/OADate/flow/concentration rows, already in the units named by
+ *     metadata.
+ * @return Failure on open refusal, otherwise success.
  */
-FormatResult writeRoutingInterfaceText(
-    const std::string&                      path,
-    const RoutingInterfaceMetadata&         meta,
-    const std::vector<RoutingInterfaceRow>& rows);
+FormatResult writeRoutingInterfaceText(const std::string& path,
+                                       const RoutingInterfaceMetadata& meta,
+                                       const std::vector<RoutingInterfaceRow>& rows);
 
 } // namespace openswmm::gpkg::formats
 

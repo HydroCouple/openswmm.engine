@@ -1,0 +1,1787 @@
+#include "transport/components/ReactionModule/ReactionsWriter.hpp"
+/**
+ * @file      test_msx_buildup_washoff.cpp
+ * @brief     BW-MSX (2026-09-19) — the reactions component's (MSX) species build
+ *        up on land uses and wash off with runoff, by the same relations and
+ *        arithmetic as pollutants.
+ *
+ * Design: plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md §8.9.
+ *
+ * Gates:
+ *   a. SameParametersSameSurfaceLoads — an MSX species X (units MG) with the
+ *      pollutant TSS's [BUILDUP]/[WASHOFF] rows and DRY_DAYS produces the
+ *      SAME per-subcatchment washoff load (user mass) bit-for-bit, and its
+ *      buildup store ends at TSS's per-land-use buildup bit-for-bit.
+ *   b. LoadReachesTheNetwork — under LEGACY and EULERIAN_ARD the outlet
+ *      junction's X concentration tracks TSS's (same load, same water)
+ *      within a tight relative band once flow is established.
+ *   c. LedgerCloses — init + net buildup − washed − swept − BMP == final
+ *      store (user mass) to 1e-10 relative, with sweeping on.
+ *   d. PollutantsAreBitIdenticalWithMsxRowsPresent — adding the X rows
+ *      leaves every TSS trajectory and the TSS ledger bit-identical.
+ *   e. RoundTripThroughWriterAndCApi — the writer emits the X rows, a
+ *      reopened deck resolves them, and the C API reads them through the
+ *      surface-species index (n_pollutants + m); a [LOADINGS] X row is
+ *      applied as initial buildup.
+ *   f. UnknownConstituentWarnsAndRuns — a row naming neither a pollutant nor
+ *      a species produces one warning and the run proceeds.
+ *   g. MsxOnlyDeckBuildsUpAndWashesOff — no [POLLUTANTS] at all.
+ *
+ * Artefacts: the decks/results this test writes land in the working
+ * directory; run it from tests/output/msx_buildup_washoff (CLAUDE.md §4.1).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstdlib>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_output.h>
+#include "core/UnitConversion.hpp"
+#include <openswmm/engine/openswmm_quality.h>
+#include <openswmm/engine/openswmm_subcatchments.h>
+#include <openswmm/engine/openswmm_infrastructure.h>
+
+#include "core/SWMMEngine.hpp"
+#include "core/SimulationContext.hpp"
+#include "quality/MsxSurfaceQuality.hpp"
+
+namespace {
+
+/**
+ * @brief Borrow the C++ engine behind the test opaque handle.
+ *
+ * Unchecked cast/dereference; no validation, ownership transfer or model mutation occurs in this
+ * helper.
+ *
+ * @param[in] e Non-null live handle allocated by the new-engine C API.
+ * @return Mutable engine reference valid until handle destruction.
+ */
+openswmm::SWMMEngine& cpp(SWMM_Engine e) {
+    return *static_cast<openswmm::SWMMEngine*>(e);
+}
+
+// One 10-acre subcatchment, 50 % impervious, under 1 in/hr for an hour,
+// draining J1 -> O1. Land use LU1 covers it fully.
+/**
+ * @brief Build a three-hour rained-on watershed for MSX surface-quality tests.
+ *
+ * Copies raw rows without escaping or parser validation; does not write files or run the model.
+ *
+ * @param[in] options_extra Raw rows appended inside OPTIONS.
+ * @param[in] quality Raw pollutant/buildup/washoff sections after land coverage.
+ * @param[in] process_components Raw process rows; empty omits PROCESS_COMPONENTS section.
+ * @param[in] landuse_line Raw LANDUSES body, normally LU1; caller supplies line breaks.
+ * @return Owned CFS deck with ten-acre, 50 percent impervious S1 and one-inch/hour rain.
+ */
+std::string deck(const std::string& options_extra, const std::string& quality,
+                 const std::string& process_components,
+                 const std::string& landuse_line = "LU1  0  0  0\n") {
+    std::ostringstream s;
+    s << "[OPTIONS]\n"
+         "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\nINFILTRATION         HORTON\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             03:00:00\n"
+         "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\nDRY_STEP             00:05:00\n"
+         "ROUTING_STEP         0:00:30\nDRY_DAYS             5\n"
+      << options_extra
+      << "\n[RAINGAGES]\nRG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+         "\n[SUBCATCHMENTS]\nS1  RG1  J1  10.0  50   500  0.5  0\n"
+         "\n[SUBAREAS]\nS1  0.01  0.1  0.05  0.05  25  OUTLET\n"
+         "\n[INFILTRATION]\nS1  3.0  0.5  4.0  7  0\n"
+         // Spacing >= the 0:05 recording interval (legacy ERROR 159).
+         "\n[TIMESERIES]\nTS1  01/01/2026 00:00 1.0\nTS1  01/01/2026 01:00 1.0\nTS1  01/01/2026 01:05 0.0\n"
+         "\n[JUNCTIONS]\nJ1  100.0  10.0  0.0  0.0  0.0\n"
+         "\n[OUTFALLS]\nO1  95.0  FREE\n"
+         "\n[CONDUITS]\nC1  J1  O1  400.0  0.013  0  0\n"
+         "\n[XSECTIONS]\nC1  CIRCULAR  1.5  0  0  0  1\n"
+         "\n[LANDUSES]\n"
+      << landuse_line << "\n[COVERAGES]\nS1  LU1  100\n"
+      << quality
+      << (process_components.empty() ? "" : "\n[PROCESS_COMPONENTS]\n" + process_components + "\n")
+      << "\n[REPORT]\nINPUT NO\n";
+    return s.str();
+}
+
+const char* kPollut = "\n[POLLUTANTS]\nTSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n";
+
+/**
+ * @brief Build one LU1 power-law buildup row followed by one exponential washoff row.
+ *
+ * No token/range validation or escaping is performed.
+ *
+ * @param[in] name Non-null raw pollutant/species token.
+ * @param[in] sweep Non-null raw sweeping-removal percentage token.
+ * @param[in] bmp Non-null raw BMP-removal percentage token.
+ * @return Owned two-row text without section headers; both rows end in a newline.
+ */
+std::string rows(const char* name, const char* sweep = "0", const char* bmp = "0") {
+    return std::string("LU1  ") + name + "  POW  100  2  1  AREA\n" + "LU1  " + name +
+           "  EXP  0.1  1.0  " + sweep + "  " + bmp + "\n";
+}
+// [BUILDUP] then [WASHOFF] with the rows split by section
+/**
+ * @brief Build matching BUILDUP and WASHOFF sections for each requested species.
+ *
+ * Uses fixed POW 100 2 1 AREA and EXP 0.1 1.0 laws; copies tokens without validation or escaping.
+ *
+ * @param[in] names Borrowed raw pollutant/species names, in output order.
+ * @param[in] sweep Non-null raw sweeping-removal percentage token.
+ * @param[in] bmp Non-null raw BMP-removal percentage token.
+ * @return Owned section text, including headers even when names is empty.
+ */
+std::string bw(const std::vector<std::string>& names, const char* sweep = "0",
+               const char* bmp = "0") {
+    std::string b = "\n[BUILDUP]\n", w = "\n[WASHOFF]\n";
+    for (const auto& n : names) {
+        b += "LU1  " + n + "  POW  100  2  1  AREA\n";
+        w += "LU1  " + n + "  EXP  0.1  1.0  " + sweep + "  " + bmp + "\n";
+    }
+    return b + w;
+}
+
+/**
+ * @brief Truncate a fixture artifact and copy raw body text.
+ *
+ * Does not check stream open/write/close status; local stream closes at return. No caller storage
+ * is retained.
+ *
+ * @param[in] path Borrowed destination filename; parent directory must exist.
+ * @param[in] body Borrowed text written verbatim, with no appended newline.
+ */
+void write(const std::string& path, const std::string& body) {
+    std::ofstream f(path);
+    f << body;
+}
+/**
+ * @brief Build a zero-rate reaction config for bulk species X.
+ *
+ * Returns text only; no reaction instance or file is created.
+ * @return Owned RK5 config with X in MG and zero pipe/tank rates.
+ */
+std::string rxn_inert() {
+    return "[REACTION_OPTIONS]\nSOLVER RK5\n[REACTION_SPECIES]\nBULK X MG\n"
+           "[REACTION_PIPES]\nRATE X 0\n[REACTION_TANKS]\nRATE X 0\n";
+}
+/**
+ * @brief Build a reaction process-component row referring to a sidecar.
+ *
+ * No path escaping, file existence check or parser validation occurs.
+ *
+ * @param[in] rxn Non-null raw sidecar path copied inside double quotes.
+ * @return Owned process row without a trailing newline.
+ */
+std::string pc(const char* rxn) {
+    return std::string("org.hydrocouple.openswmm.reactions config=\"") + rxn + "\"";
+}
+
+struct DeckRun {
+    SWMM_Engine e = nullptr;
+    bool ok = false;
+    std::vector<double> tss_node; ///< J1 TSS per step
+    std::vector<double> x_node;   ///< J1 X per step
+    std::vector<std::string> warnings;
+};
+
+/**
+ * @brief Run a surface-quality fixture while retaining its engine and optional samples.
+ *
+ * Allocates/opens/initializes/starts, then steps until completion, rejection or 100000 guard
+ * iterations. Native concentrations are retained, missing entries become zero, and the final
+ * completion call is sampled. Caller must close every non-null e, including failed-open/setup
+ * records; this function does not end or release.
+ *
+ * @param[in] tag Raw artifact prefix for .inp/.rpt/.out; existing paths may be overwritten.
+ * @param[in] body Borrowed full deck text written verbatim.
+ * @param[in] record Copy J1 first-pollutant/first-species concentrations after each accepted step
+ *     when true.
+ * @return Record owning e and copied trajectories/warnings; ok means setup succeeded, and remains
+ *     true after step failure or guard exhaustion.
+ */
+DeckRun run(const std::string& tag, const std::string& body, bool record = true) {
+    DeckRun r;
+    write(tag + ".inp", body);
+    r.e = swmm_engine_create();
+    if (!r.e)
+        return r;
+    if (swmm_engine_open(r.e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
+                         (tag + ".out").c_str(), nullptr) != SWMM_OK)
+        return r;
+    if (swmm_engine_initialize(r.e) != SWMM_OK || swmm_engine_start(r.e, 1) != SWMM_OK)
+        return r;
+    auto& ctx = cpp(r.e).context();
+    const int j1 = ctx.node_names.find("J1");
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        if (swmm_engine_step(r.e, &elapsed) != SWMM_OK)
+            break;
+        if (record && j1 >= 0) {
+            const auto uj = static_cast<std::size_t>(j1);
+            r.tss_node.push_back(ctx.n_pollutants() > 0 &&
+                                         uj * ctx.n_pollutants() < ctx.nodes.conc.size()
+                                     ? ctx.nodes.conc[uj * ctx.n_pollutants()]
+                                     : 0.0);
+            const int nm = ctx.reactions.n_species();
+            r.x_node.push_back(nm > 0 && uj * nm < ctx.reactions.msx_node_conc.size()
+                                   ? ctx.reactions.msx_node_conc[uj * nm]
+                                   : 0.0);
+        }
+    } while (elapsed > 0.0 && ++guard < 100000);
+    r.warnings = ctx.warnings;
+    r.ok = true;
+    return r;
+}
+/**
+ * @brief End, close and destroy a retained surface-quality run.
+ *
+ * Calls end even for a partial setup record and ignores lifecycle statuses. Copied samples/warnings
+ * remain owned by r; does not remove artifacts.
+ *
+ * @param[in,out] r Record owning e; non-null handle is released and reset to null.
+ */
+void close(DeckRun& r) {
+    if (!r.e)
+        return;
+    swmm_engine_end(r.e);
+    swmm_engine_close(r.e);
+    swmm_engine_destroy(r.e);
+    r.e = nullptr;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// a. Same parameters -> same surface loads and same final buildup, bit-for-bit.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, SameParametersSameSurfaceLoads) {
+    write("_bw_a.rxn", rxn_inert());
+    DeckRun r = run("_bw_a", deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_a.rxn")));
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    ASSERT_TRUE(ms.active());
+    ASSERT_EQ(ms.n_species, 1);
+    ASSERT_EQ(ctx.n_pollutants(), 1);
+
+    // Per-subcatchment washoff total, user mass: pollutant side is
+    // subcatches.total_load[sc*np + p] (Washoff Summary), MSX side the mirror.
+    ASSERT_GE(ctx.subcatches.total_load.size(), 1u);
+    const double tss_load = ctx.subcatches.total_load[0];
+    const double x_load = ms.led_subcatch_load[ms.sidx(0, 0)];
+    EXPECT_GT(tss_load, 0.0) << "the storm must wash something off";
+    EXPECT_EQ(x_load, tss_load) << "same relations, same arithmetic — must be bit-identical";
+
+    // Final buildup store per land use: SurfaceQualitySoA vs the MSX store.
+    const auto& sq = cpp(r.e).surfaceQuality();
+    const double tss_bu = sq.buildup[sq.bu_idx(0, 0, 0)];
+    const double x_bu = ms.buildup[ms.bu_idx(0, 0, 0)];
+    EXPECT_EQ(x_bu, tss_bu);
+
+    // Ledger totals: initial buildup at DRY_DAYS, net buildup and delivered load.
+    EXPECT_EQ(ms.led_init_buildup[0], ctx.mass_balance.qual_init_buildup[0]);
+    EXPECT_EQ(ms.led_runoff_load[0], ctx.mass_balance.qual_runoff_load[0]);
+    close(r);
+}
+
+// ---------------------------------------------------------------------------
+// b. The load reaches the network: J1's X tracks J1's TSS under both quality
+//    solvers. The delivery seams differ (qual_mass_in vs msx_ext_mass_in;
+//    ARD stage 1b vs the legacy CSTR), so this is a band, not bit-identity.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, LoadReachesTheNetworkUnderBothSolvers) {
+    for (const char* solver : {"LEGACY", "EULERIAN_ARD"}) {
+        write("_bw_b.rxn", rxn_inert());
+        const std::string tag = std::string("_bw_b_") + (solver[0] == 'L' ? "leg" : "ard");
+        DeckRun r = run(tag, deck(std::string("QUALITY_SOLVER        ") + solver + "\n",
+                                  std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_b.rxn")));
+        ASSERT_TRUE(r.ok) << solver;
+        ASSERT_GT(r.tss_node.size(), 10u);
+        double max_tss = 0.0, max_x = 0.0, worst = 0.0;
+        int compared = 0;
+        for (std::size_t k = 0; k < r.tss_node.size(); ++k) {
+            max_tss = std::max(max_tss, r.tss_node[k]);
+            max_x = std::max(max_x, r.x_node[k]);
+        }
+        EXPECT_GT(max_tss, 1.0) << solver << ": TSS must appear at J1";
+        EXPECT_GT(max_x, 1.0) << solver << ": X must appear at J1";
+        for (std::size_t k = 0; k < r.tss_node.size(); ++k) {
+            if (r.tss_node[k] < 0.05 * max_tss)
+                continue; // compare in the wet, established part
+            worst = std::max(worst, std::fabs(r.x_node[k] - r.tss_node[k]) / r.tss_node[k]);
+            ++compared;
+        }
+        EXPECT_GT(compared, 5);
+        EXPECT_LT(worst, 5.0e-2) << solver << ": X at J1 must track TSS (same load, same water)";
+        close(r);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// c. Ledger closes with sweeping and BMP removal on.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, LedgerCloses) {
+    write("_bw_c.rxn", rxn_inert());
+    // LU1 sweeps every 0.05 day (1.2 h) with availability 0.6 — a FRACTION,
+    // as legacy reads it (landuse.c:70; :81 rejects anything outside [0,1]).
+    // The sweep clock runs on calendar time seeded from the LastSweep column
+    // (legacy landuse.c:377), so with LastSweep 0 the first sweep comes due
+    // 1.2 h in — during the storm — and fires at the first dry step after
+    // 01:01, with a second in the dry tail of the 3 h run. The assertion is
+    // ledger closure, which every firing must preserve.
+    DeckRun r = run("_bw_c", deck("", std::string(kPollut) + bw({"TSS", "X"}, "50", "20"),
+                                  pc("_bw_c.rxn"), "LU1  0.05  0.6  0\n"));
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    ASSERT_TRUE(ms.active());
+    // Final store in user mass over the land use's normalizer.
+    const double frac = ctx.subcatches.coverage[0] / 100.0;
+    const double norm = frac * ctx.subcatches.area[0];
+    const double final_store = ms.buildup[ms.bu_idx(0, 0, 0)] * norm;
+    const double lhs = ms.led_init_buildup[0] + ms.led_buildup[0] -
+                       ms.led_subcatch_load[ms.sidx(0, 0)] - ms.led_bmp_removal[0] -
+                       ms.led_sweeping[0];
+    const double scale = std::max(1.0, ms.led_init_buildup[0] + ms.led_buildup[0]);
+    EXPECT_NEAR(lhs, final_store, 1.0e-10 * scale)
+        << "init + net buildup − washed − BMP − swept must equal the final store";
+    EXPECT_GT(ms.led_bmp_removal[0], 0.0);
+    EXPECT_GT(ms.led_sweeping[0], 0.0) << "one sweep event must have fired in the dry tail";
+    // The pollutant's identical ledger closes the same way (same arithmetic).
+    const auto& sq = cpp(r.e).surfaceQuality();
+    const double tss_final = sq.buildup[sq.bu_idx(0, 0, 0)] * norm;
+    EXPECT_EQ(final_store, tss_final);
+    EXPECT_EQ(ms.led_sweeping[0], ctx.mass_balance.qual_sweeping[0]);
+    // BMP removal is the one quantity in this group that is NOT bit-comparable,
+    // and the comment above overclaimed for it. The two sides reach the same
+    // mathematical number by different expressions — the MSX row books
+    // `bmp_removed * dt_runoff * mcf_m` (MsxSurfaceQuality.cpp), the pollutant
+    // row `c_out * (v_lost - v_infil) * mcf_p` (SWMMEngine.cpp) — so they agree
+    // only to rounding. Clang/macOS happens to produce identical doubles and
+    // GCC/Linux differs by 1 ULP (0.11693027411237766 vs …65), which is why
+    // this stood for weeks: it was only ever exercised on one toolchain.
+    //
+    // This is a corrected assertion, not a widened one. The property that
+    // matters — adding MSX rows leaves the pollutant arithmetic untouched — is
+    // asserted bitwise by the two EXPECT_EQs that remain and by test (d)
+    // below; nothing here is weaker as a result.
+    EXPECT_DOUBLE_EQ(ms.led_bmp_removal[0], ctx.mass_balance.qual_bmp_removal[0]);
+    close(r);
+}
+
+// ---------------------------------------------------------------------------
+// d. Pollutants untouched: adding the X rows leaves TSS bit-identical.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, PollutantsAreBitIdenticalWithMsxRowsPresent) {
+    write("_bw_d.rxn", rxn_inert());
+    DeckRun a = run("_bw_d_no", deck("", std::string(kPollut) + bw({"TSS"}), pc("_bw_d.rxn")));
+    DeckRun b =
+        run("_bw_d_with", deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_d.rxn")));
+    ASSERT_TRUE(a.ok);
+    ASSERT_TRUE(b.ok);
+    ASSERT_EQ(a.tss_node.size(), b.tss_node.size());
+    for (std::size_t k = 0; k < a.tss_node.size(); ++k)
+        ASSERT_EQ(a.tss_node[k], b.tss_node[k]) << "step " << k;
+    const auto& ca = cpp(a.e).context();
+    const auto& cb = cpp(b.e).context();
+    EXPECT_EQ(ca.mass_balance.qual_runoff_load[0], cb.mass_balance.qual_runoff_load[0]);
+    EXPECT_EQ(ca.subcatches.total_load[0], cb.subcatches.total_load[0]);
+    EXPECT_FALSE(ca.reactions.surface.active());
+    EXPECT_TRUE(cb.reactions.surface.active());
+    close(a);
+    close(b);
+}
+
+// ---------------------------------------------------------------------------
+// e. Round trip: writer emits the rows; reopened deck resolves them; C API
+//    reads them at n_pollutants + m; a [LOADINGS] row seeds the store.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, RoundTripThroughWriterAndCApi) {
+    write("_bw_e.rxn", rxn_inert());
+    const std::string body = deck("",
+                                  std::string(kPollut) + bw({"TSS", "X"}, "30", "10") +
+                                      "\n[LOADINGS]\nS1  TSS  12.5\nS1  X  7.25\n",
+                                  pc("_bw_e.rxn"));
+    write("_bw_e.inp", body);
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_engine_open(e, "_bw_e.inp", "_bw_e.rpt", "_bw_e.out", nullptr), SWMM_OK);
+    {
+        const auto& ctx = cpp(e).context();
+        const int np = ctx.n_pollutants();
+        ASSERT_EQ(np, 1);
+        ASSERT_EQ(ctx.reactions.n_species(), 1);
+        int ft = -1;
+        double c1 = 0, c2 = 0, c3 = 0;
+        int nz = -1;
+        ASSERT_EQ(swmm_buildup_get(e, 0, np + 0, &ft, &c1, &c2, &c3, &nz), SWMM_OK);
+        EXPECT_EQ(ft, 1);
+        EXPECT_DOUBLE_EQ(c1, 100.0);
+        EXPECT_DOUBLE_EQ(c2, 2.0);
+        EXPECT_DOUBLE_EQ(c3, 1.0);
+        EXPECT_EQ(nz, 0);
+        double co = 0, ex = 0, sw = 0, bm = 0;
+        ASSERT_EQ(swmm_washoff_get(e, 0, np + 0, &ft, &co, &ex, &sw, &bm), SWMM_OK);
+        EXPECT_EQ(ft, 1);
+        EXPECT_DOUBLE_EQ(co, 0.1);
+        EXPECT_DOUBLE_EQ(ex, 1.0);
+        EXPECT_DOUBLE_EQ(sw, 30.0);
+        EXPECT_DOUBLE_EQ(bm, 10.0);
+        double ld = 0.0;
+        ASSERT_EQ(swmm_subcatch_get_initial_loading(e, 0, np + 0, &ld), SWMM_OK);
+        EXPECT_DOUBLE_EQ(ld, 7.25);
+        EXPECT_NE(swmm_buildup_get(e, 0, np + 1, &ft, &c1, &c2, &c3, &nz), SWMM_OK)
+            << "past the species";
+        // Edit through the API, then write.
+        ASSERT_EQ(swmm_washoff_set(e, 0, np + 0, 3, 55.0, 0.0, 30.0, 10.0), SWMM_OK); // EMC 55 mg/L
+    }
+    ASSERT_EQ(swmm_model_write(e, "_bw_e_rt.inp"), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    // The written deck carries the X rows in the pollutant sections.
+    {
+        std::ifstream f("_bw_e_rt.inp");
+        std::stringstream ss;
+        ss << f.rdbuf();
+        const std::string t = ss.str();
+        EXPECT_NE(t.find("LU1              X                POW"), std::string::npos) << t;
+        EXPECT_NE(t.find("LU1              X                EMC"), std::string::npos) << t;
+
+    }
+    // Reopen: same values back, and the initial loading seeds the store.
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_bw_e_rt.inp", "_bw_e_rt.rpt", "_bw_e_rt.out", nullptr),
+              SWMM_OK);
+    int ft = -1;
+    double co = 0, ex = 0, sw = 0, bm = 0;
+    double loading = 0;
+    ASSERT_EQ(swmm_subcatch_get_initial_loading(e2, 0, 1, &loading), SWMM_OK);
+    EXPECT_DOUBLE_EQ(loading, 7.25);
+    ASSERT_EQ(swmm_washoff_get(e2, 0, 1, &ft, &co, &ex, &sw, &bm), SWMM_OK);
+    EXPECT_EQ(ft, 3);
+    EXPECT_DOUBLE_EQ(co, 55.0);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    {
+        const auto& ctx = cpp(e2).context();
+        const auto& ms = ctx.reactions.surface;
+        ASSERT_TRUE(ms.active());
+        EXPECT_DOUBLE_EQ(ms.buildup[ms.bu_idx(0, 0, 0)], 7.25) << "[LOADINGS] wins over DRY_DAYS";
+        EXPECT_DOUBLE_EQ(ms.led_init_buildup[0], 7.25 * ctx.subcatches.area[0]);
+    }
+    swmm_engine_close(e2);
+    swmm_engine_destroy(e2);
+}
+
+// ---------------------------------------------------------------------------
+// f. Unknown constituent: one warning, run proceeds; MSX store inactive.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, UnknownConstituentWarnsAndRuns) {
+    write("_bw_f.rxn", rxn_inert());
+    DeckRun r =
+        run("_bw_f", deck("", std::string(kPollut) + bw({"TSS", "NOPE"}), pc("_bw_f.rxn")), false);
+    ASSERT_TRUE(r.ok);
+    int hits = 0;
+    for (const auto& w : r.warnings)
+        if (w.find("NOPE") != std::string::npos &&
+            w.find("neither a pollutant") != std::string::npos)
+            ++hits;
+    EXPECT_EQ(hits, 2) << "one warning per row ([BUILDUP], [WASHOFF])";
+    EXPECT_FALSE(cpp(r.e).context().reactions.surface.active());
+    close(r);
+}
+
+// ---------------------------------------------------------------------------
+// g. MSX-only deck (no [POLLUTANTS]): X builds up at DRY_DAYS, washes off,
+//    and reaches J1.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, MsxOnlyDeckBuildsUpAndWashesOff) {
+    write("_bw_g.rxn", rxn_inert());
+    DeckRun r = run("_bw_g", deck("QUALITY_SOLVER        LEGACY\n", bw({"X"}), pc("_bw_g.rxn")));
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    ASSERT_TRUE(ms.active());
+    EXPECT_EQ(ctx.n_pollutants(), 0);
+    EXPECT_GT(ms.led_init_buildup[0], 0.0) << "DRY_DAYS seeds the store";
+    EXPECT_GT(ms.led_subcatch_load[ms.sidx(0, 0)], 0.0);
+    double max_x = 0.0;
+    for (double v : r.x_node)
+        max_x = std::max(max_x, v);
+    EXPECT_GT(max_x, 1.0) << "X must reach J1 with no pollutant in the deck";
+    close(r);
+}
+
+// ---------------------------------------------------------------------------
+// Review C3 (2026-10-15): run-on. S1 (the only subcatchment with land-use
+// buildup) drains onto S2, an impervious subcatchment that drains to J1. Every
+// unit of X that reaches the network must come through S2 as run-on. At base
+// a subcatchment whose outlet is another subcatchment was skipped: S1's X was
+// washed off its land and delivered nowhere.
+// ---------------------------------------------------------------------------
+TEST(MsxBuildupWashoff, RunonCarriesSpeciesToTheReceivingSubcatchment) {
+    write("_bw_runon.rxn", rxn_inert());
+    std::string body = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_bw_runon.rxn"));
+    auto rep = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a);
+        ASSERT_NE(at, std::string::npos) << a;
+        body.replace(at, a.size(), b);
+    };
+    rep("S1  RG1  J1  10.0  50   500  0.5  0\n",
+        "S1  RG1  S2  10.0  50   500  0.5  0\nS2  RG1  J1  2.0  100   200  0.5  0\n");
+    rep("S1  0.01  0.1  0.05  0.05  25  OUTLET\n",
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\nS2  0.01  0.1  0.05  0.05  0  OUTLET\n");
+    rep("S1  3.0  0.5  4.0  7  0\n", "S1  3.0  0.5  4.0  7  0\nS2  3.0  0.5  4.0  7  0\n");
+    DeckRun r = run("_bw_runon", body);
+    ASSERT_TRUE(r.ok);
+    const auto& ctx = cpp(r.e).context();
+    const auto& ms = ctx.reactions.surface;
+    double x_peak = 0.0, tss_peak = 0.0;
+    for (double v : r.x_node)
+        x_peak = std::max(x_peak, v);
+    for (double v : r.tss_node)
+        tss_peak = std::max(tss_peak, v);
+    ASSERT_GT(tss_peak, 0.0) << "TSS control never reached J1; deck defect";
+    EXPECT_GT(x_peak, 0.0) << "S1's species never reached the network";
+    // Multispecies Phase 2: the species now runs the pollutant kernel, run-on
+    // included (ponded mix at the receiver, the same one-step lag), so the
+    // check is the twin rule: S1's species reaches J1 exactly as TSS does.
+    // The earlier ledger closure leaned on a private run-on ledger that the
+    // shared kernel replaced.
+    ASSERT_EQ(r.x_node.size(), r.tss_node.size());
+    for (std::size_t k = 0; k < r.x_node.size(); ++k)
+        ASSERT_EQ(r.x_node[k], r.tss_node[k]) << "J1 at step " << k;
+    EXPECT_EQ(ms.led_runoff_load[0], ctx.mass_balance.qual_runoff_load[0]);
+    close(r);
+}
+
+// ===========================================================================
+// Phase 2 twin gates (2026-10-15, MULTISPECIES_PHASE2_WATERSHED_LID_DESIGN).
+// A species X carrying TSS's [BUILDUP]/[WASHOFF] rows must produce TSS's
+// numbers exactly, in every regime the pollutant kernel supports — not only
+// in the EXP/OUTLET/no-LID regime gate (a) runs, where every difference
+// between the two kernels happens to vanish.
+// ===========================================================================
+namespace {
+
+struct TwinOpts {
+    std::string flow_units = "CFS";
+    std::string routing = "OUTLET"; ///< [SUBAREAS] RouteTo
+    std::string pct_routed = "100";
+    std::string buildup = "POW  100  2  1  AREA"; ///< "" = no buildup row
+    std::string washoff = "EXP  0.1  1.0";
+    std::string sweep_bmp = "0  0";
+    std::string tss_rain = "0"; ///< [POLLUTANTS] Crain for TSS
+    bool runon = false;         ///< S1 drains to S2, S2 to J1
+    std::string lid_controls;   ///< full [LID_CONTROLS] body
+    std::string lid_usage;      ///< full [LID_USAGE] body
+    std::string rxn_extra;      ///< appended to the reactions file
+    std::string lid_extra;      ///< appended to [LID_CONTROLS] (e.g. REMOVALS)
+    bool landuse_rows = true;   ///< false: no [BUILDUP]/[WASHOFF] rows at all
+};
+
+/**
+ * @brief Build matched TSS/MSX watershed and optional LID authoring rows.
+ *
+ * Only exact flow_units CMS selects the metric numeric transcription; other strings use the US
+ * numeric set. Selects fixed geometries, optional S2 runon, same buildup/washoff for TSS/X, and
+ * caller raw LID rows. Does not create reaction sidecars, parse inputs or run the engine.
+ *
+ * @param[in] o Borrowed fixture options for units/routing/laws/LIDs and rain; raw strings are
+ *     copied without escaping.
+ * @return Owned three-hour deck text, before process-component and report appendices.
+ */
+std::string twinDeck(const TwinOpts& o) {
+    const bool si = o.flow_units == "CMS";
+    std::ostringstream s;
+    s << "[OPTIONS]\nFLOW_UNITS           " << o.flow_units
+      << "\nFLOW_ROUTING         DYNWAVE\nINFILTRATION         HORTON\n"
+         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\nEND_TIME             03:00:00\n"
+         "REPORT_STEP          00:05:00\nWET_STEP             00:05:00\nDRY_STEP             00:05:00\n"
+         "ROUTING_STEP         0:00:30\nDRY_DAYS             5\n"
+         "\n[RAINGAGES]\nRG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+         "\n[SUBCATCHMENTS]\n";
+    if (si) {
+        s << "S1  RG1  " << (o.runon ? "S2" : "J1") << "  4.0  50  150  0.5  0\n";
+        if (o.runon)
+            s << "S2  RG1  J1  0.8  100  60  0.5  0\n";
+    } else {
+        s << "S1  RG1  " << (o.runon ? "S2" : "J1") << "  10.0  50  500  0.5  0\n";
+        if (o.runon)
+            s << "S2  RG1  J1  2.0  100  200  0.5  0\n";
+    }
+    s << "\n[SUBAREAS]\n";
+    const char* sub = si ? "0.01  0.1  1.27  1.27" : "0.01  0.1  0.05  0.05";
+    // Nimp Nperv Simp Sperv PctZero RouteTo PctRouted.
+    s << "S1  " << sub << "  25  " << o.routing << "  " << o.pct_routed << "\n";
+    if (o.runon)
+        s << "S2  " << sub << "  0  OUTLET\n";
+    s << "\n[INFILTRATION]\n";
+    const char* inf = si ? "76  12.7  4.0  7  0" : "3.0  0.5  4.0  7  0";
+    s << "S1  " << inf << "\n";
+    if (o.runon)
+        s << "S2  " << inf << "\n";
+    s << "\n[TIMESERIES]\nTS1  01/01/2026 00:00 " << (si ? "25.4" : "1.0")
+      << "\nTS1  01/01/2026 01:00 " << (si ? "25.4" : "1.0") << "\nTS1  01/01/2026 01:05 0.0\n";
+    if (si)
+        s << "\n[JUNCTIONS]\nJ1  30.0  3.0  0.0  0.0  0.0\n\n[OUTFALLS]\nO1  28.5  FREE\n"
+             "\n[CONDUITS]\nC1  J1  O1  120.0  0.013  0  0\n\n[XSECTIONS]\nC1  CIRCULAR  0.45  0  0  0  1\n";
+    else
+        s << "\n[JUNCTIONS]\nJ1  100.0  10.0  0.0  0.0  0.0\n\n[OUTFALLS]\nO1  95.0  FREE\n"
+             "\n[CONDUITS]\nC1  J1  O1  400.0  0.013  0  0\n\n[XSECTIONS]\nC1  CIRCULAR  1.5  0  0  0  1\n";
+    s << "\n[POLLUTANTS]\nTSS  MG/L  " << o.tss_rain << "  0  0  0  NO  *  0.0  0  0\n"
+      << "\n[LANDUSES]\nLU1  0  0  0\n\n[COVERAGES]\nS1  LU1  100\n";
+    if (o.runon)
+        s << "S2  LU1  100\n";
+    if (o.landuse_rows) {
+        s << "\n[BUILDUP]\n";
+        if (!o.buildup.empty())
+            for (const char* n : {"TSS", "X"})
+                s << "LU1  " << n << "  " << o.buildup << "\n";
+        s << "\n[WASHOFF]\n";
+        for (const char* n : {"TSS", "X"})
+            s << "LU1  " << n << "  " << o.washoff << "  " << o.sweep_bmp << "\n";
+    }
+    if (!o.lid_controls.empty())
+        s << "\n[LID_CONTROLS]\n" << o.lid_controls << o.lid_extra;
+    if (!o.lid_usage.empty())
+        s << "\n[LID_USAGE]\n" << o.lid_usage;
+    return s.str();
+}
+
+/// Largest |X − TSS| over a quantity, beside the largest |TSS| it was
+/// compared against (so a failure says how big the gap is, not just that).
+struct Gap {
+    double diff = 0.0, scale = 0.0;
+    int n = 0;
+    /**
+     * @brief Accumulate the maximum twin concentration/load disagreement.
+     *
+     * Updates diff=max(diff,abs(x-tss)), scale=max(scale,abs(tss)), then increments n. Uses ordinary
+     * std::max behavior without finite-value checks; does not retain individual samples.
+     *
+     * @param[in] tss Reference pollutant quantity in its native units.
+     * @param[in] x Matching species quantity in the same units.
+     */
+    void add(double tss, double x) {
+        diff = std::max(diff, std::fabs(x - tss));
+        scale = std::max(scale, std::fabs(tss));
+        ++n;
+    }
+};
+
+struct Twin {
+    bool ok = false;
+    double drain_seen = 0.0; ///< LID drain flow that reached a node (cfs, summed over steps)
+    double drain_sub = 0.0;  ///< subcatchment LID drain flow (cfs, summed over steps)
+    Gap conc, node, load, buildup, init, runoff, bmp, sweep, wet, infil, final;
+};
+
+/**
+ * @brief Run the matched pollutant/species fixture and summarize surface-quality equality.
+ *
+ * Owns/destroys a temporary engine, writes inert X sidecar plus extra chemistry, samples every
+ * subcatchment and J1, then copies final buildup and quality ledgers. Assumes matching TSS/X
+ * first-row layout and valid fixture arrays. Steps at most 100000 guard iterations; end status is
+ * ignored. Prints evidence and optional TWIN_LID_DEBUG rows; drain flow sums are sample sums, not
+ * integrated volumes.
+ *
+ * @param[in] tag Raw artifact prefix for .rxn/.inp/.rpt/.out; matching paths may be overwritten.
+ * @param[in] o Borrowed options selecting the authored watershed/LIDs and appended reaction config.
+ * @return Owned summary with peak differences/scales and summed drain diagnostics; ok is true after
+ *     accepted setup even if a later step fails or guard expires.
+ */
+Twin runTwin(const std::string& tag, const TwinOpts& o) {
+    Twin t;
+    write(tag + ".rxn", rxn_inert() + o.rxn_extra);
+    std::string body = twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc((tag + ".rxn").c_str()) +
+                       "\n\n[REPORT]\nINPUT NO\n";
+    write(tag + ".inp", body);
+    SWMM_Engine e = swmm_engine_create();
+    if (!e)
+        return t;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(),
+                         nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_destroy(e);
+        return t;
+    }
+    auto& ctx = cpp(e).context();
+    const auto& ms = ctx.reactions.surface;
+    const int np = ctx.n_pollutants(), nm = ctx.reactions.n_species(), ns = ctx.n_subcatches();
+    const int j1 = ctx.node_names.find("J1");
+    double elapsed = 0.0;
+    int guard = 0;
+    do {
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
+        for (int sc = 0; sc < ns; ++sc)
+            t.conc.add(ctx.subcatches.conc[static_cast<std::size_t>(sc * np)],
+                       ms.washoff_conc[ms.sidx(sc, 0)]);
+        const auto uj = static_cast<std::size_t>(j1);
+        t.node.add(ctx.nodes.conc[uj * np], ctx.reactions.msx_node_conc[uj * nm]);
+        for (double v : ctx.nodes.lid_drain_qual_vol)
+            t.drain_seen += v;
+        for (double v : ctx.subcatches.lid_drain_flow)
+            t.drain_sub += v;
+        if (std::getenv("TWIN_LID_DEBUG"))
+            for (int g = 0; g < cpp(e).lid().numGroups(); ++g) {
+                const auto& grp = cpp(e).lid().group(g);
+                for (int u = 0; u < grp.count; ++u)
+                    std::printf(
+                        "LID t=%.0f g%d u%d surf %.4g soil %.4g stor %.4g drain %.4g node %d\n",
+                        elapsed * 86400.0, g, u, grp.surf_depth[u], grp.soil_moist[u],
+                        grp.stor_depth[u], grp.drain_flow[u], grp.drain_node[u]);
+            }
+    } while (elapsed > 0.0 && ++guard < 100000);
+    swmm_engine_end(e);
+    const auto& sq = cpp(e).surfaceQuality();
+    for (int sc = 0; sc < ns; ++sc) {
+        t.load.add(ctx.subcatches.total_load[static_cast<std::size_t>(sc * np)],
+                   ms.led_subcatch_load[ms.sidx(sc, 0)]);
+        if (ms.n_landuses > 0 && !sq.buildup.empty() && !ms.buildup.empty())
+            t.buildup.add(sq.buildup[sq.bu_idx(sc, 0, 0)], ms.buildup[ms.bu_idx(sc, 0, 0)]);
+    }
+    const auto& mb = ctx.mass_balance;
+    t.init.add(mb.qual_init_buildup[0], ms.led_init_buildup[0]);
+    t.runoff.add(mb.qual_runoff_load[0], ms.led_runoff_load[0]);
+    t.bmp.add(mb.qual_bmp_removal[0], ms.led_bmp_removal[0]);
+    t.sweep.add(mb.qual_sweeping[0], ms.led_sweeping[0]);
+    if (ms.active()) {
+        t.wet.add(mb.qual_wet_deposition[0], ms.led_wet_deposition[0]);
+        t.infil.add(mb.qual_infil_loss[0], ms.led_infil_loss[0]);
+        t.final.add(mb.qual_final_buildup[0], openswmm::msxsurf::remainingBuildup(ctx, 0));
+    }
+    t.ok = true;
+    // Evidence line for the round records.
+    std::printf(
+        "TWIN %-24s conc %.6g/%.6g node %.6g/%.6g load %.6g/%.6g bu %.6g/%.6g runoff %.6g/%.6g bmp %.6g/%.6g\n",
+        tag.c_str(), t.conc.diff, t.conc.scale, t.node.diff, t.node.scale, t.load.diff,
+        t.load.scale, t.buildup.diff, t.buildup.scale, t.runoff.diff, t.runoff.scale, t.bmp.diff,
+        t.bmp.scale);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return t;
+}
+
+/**
+ * @brief Require a wet twin run and exact pollutant/species quantity agreement.
+ *
+ * Fatally requires ok and nonzero load scale so a dry/vacuous fixture cannot pass, then nonfatally
+ * requires zero peak differences for concentrations, loads, buildup and all tracked
+ * removal/deposition ledgers. Does not rerun or mutate the fixture.
+ *
+ * @param[in] t Borrowed run summary to inspect.
+ * @param[in] tag Borrowed diagnostic label, never used as a filename here.
+ */
+void expectTwin(const Twin& t, const std::string& tag) {
+    ASSERT_TRUE(t.ok) << tag << " did not run";
+    ASSERT_GT(t.load.scale, 0.0) << tag << ": nothing washed off; deck defect";
+    EXPECT_EQ(t.conc.diff, 0.0) << tag << ": subcatchment concentration differs (TSS up to "
+                                << t.conc.scale << ")";
+    EXPECT_EQ(t.node.diff, 0.0) << tag << ": J1 concentration differs (TSS up to " << t.node.scale
+                                << ")";
+    EXPECT_EQ(t.load.diff, 0.0) << tag << ": subcatchment load differs (TSS " << t.load.scale
+                                << ")";
+    EXPECT_EQ(t.buildup.diff, 0.0) << tag << ": final buildup differs";
+    EXPECT_EQ(t.init.diff, 0.0) << tag << ": initial buildup differs";
+    EXPECT_EQ(t.runoff.diff, 0.0) << tag << ": runoff load ledger differs (TSS " << t.runoff.scale
+                                  << ")";
+    EXPECT_EQ(t.bmp.diff, 0.0) << tag << ": BMP removal ledger differs (TSS " << t.bmp.scale << ")";
+    EXPECT_EQ(t.sweep.diff, 0.0) << tag << ": sweeping ledger differs";
+    EXPECT_EQ(t.wet.diff, 0.0) << tag << ": wet deposition ledger differs (TSS " << t.wet.scale
+                               << ")";
+    EXPECT_EQ(t.infil.diff, 0.0) << tag << ": infiltration loss ledger differs (TSS "
+                                 << t.infil.scale << ")";
+    EXPECT_EQ(t.final.diff, 0.0) << tag << ": remaining buildup differs (TSS " << t.final.scale
+                                 << ")";
+}
+
+const char* kBioRetention =
+    "BC1  BC\nBC1  SURFACE  6.0  0.0  0.1  1.0  5\nBC1  SOIL  12.0  0.5  0.2  0.1  0.5  10.0  3.5\n"
+    "BC1  STORAGE  12.0  0.75  0.5  0\nBC1  DRAIN  0.5  0.5  6  6\n";
+
+} // namespace
+
+TEST(MsxSurfaceTwin, R1_ExpOutletNoLid) {
+    TwinOpts o;
+    expectTwin(runTwin("_tw_r1", o), "R1");
+}
+TEST(MsxSurfaceTwin, R2_ExpPervious) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r2", o), "R2");
+}
+TEST(MsxSurfaceTwin, R3_ExpImpervious) {
+    TwinOpts o;
+    o.routing = "IMPERVIOUS";
+    o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r3", o), "R3");
+}
+TEST(MsxSurfaceTwin, R4_RatingCurveOutletAndPervious) {
+    TwinOpts o;
+    o.washoff = "RC  2.0  1.2";
+    expectTwin(runTwin("_tw_r4a", o), "R4 outlet");
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r4b", o), "R4 pervious");
+}
+TEST(MsxSurfaceTwin, R5_EmcWithBuildupFunction) {
+    TwinOpts o;
+    o.washoff = "EMC  20  0";
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r5", o), "R5");
+}
+TEST(MsxSurfaceTwin, R6_RatingCurveWithoutBuildup) {
+    TwinOpts o;
+    o.buildup = "";
+    o.washoff = "RC  2.0  1.2";
+    expectTwin(runTwin("_tw_r6", o), "R6");
+}
+TEST(MsxSurfaceTwin, R7_BioRetentionDrainToNode) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    o.lid_controls = kBioRetention;
+    o.lid_usage = "S1  BC1  1  20000  100  0  50  0  *  J1\n";
+    expectTwin(runTwin("_tw_r7", o), "R7");
+}
+TEST(MsxSurfaceTwin, R9_RainBarrelReturnToPervious) {
+    TwinOpts o;
+    o.lid_controls = "RB1  RB\nRB1  STORAGE  36  0.75  0  0\nRB1  DRAIN  0.5  0.5  0  6\n";
+    o.lid_usage = "S1  RB1  4  12  0  0  30  1\n";
+    expectTwin(runTwin("_tw_r9", o), "R9");
+}
+TEST(MsxSurfaceTwin, R10_RunonOntoFullyCoveredLid) {
+    TwinOpts o;
+    o.runon = true;
+    o.lid_controls = kBioRetention;
+    o.lid_usage = "S2  BC1  1  87120  100  0  100  0\n"; // 2 ac = 87120 ft²: S2 fully covered
+    expectTwin(runTwin("_tw_r10", o), "R10");
+}
+TEST(MsxSurfaceTwin, R11_RunonPondedMix) {
+    TwinOpts o;
+    o.runon = true;
+    expectTwin(runTwin("_tw_r11", o), "R11");
+}
+TEST(MsxSurfaceTwin, R15_SiTwinOfR2) {
+    TwinOpts o;
+    o.flow_units = "CMS";
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    expectTwin(runTwin("_tw_r15", o), "R15");
+}
+
+// S3: a bio-retention cell whose underdrain actually flows (no offset, no
+// seepage into native soil), with the drain removing 30 % of both. At base
+// the species' drain mass reached nothing and its removal row was dropped.
+namespace {
+const char* kFlowingBioRetention =
+    "BC2  BC\nBC2  SURFACE  6.0  0.0  0.1  1.0  5\nBC2  SOIL  12.0  0.5  0.2  0.1  10.0  10.0  3.5\n"
+    "BC2  STORAGE  12.0  0.75  0.0  0\nBC2  DRAIN  2.0  0.5  0  0\n";
+}
+TEST(MsxSurfaceTwin, R7b_FlowingUnderdrainWithRemoval) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r7b", o);
+    EXPECT_GT(t.drain_seen, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R7b");
+}
+
+// S3: LID REMOVALS rows survive a save, for pollutants and species alike.
+// Before, the writer emitted no REMOVALS row at all, so saving a model lost
+// every LID drain removal.
+TEST(MsxSurfaceTwin, LidRemovalsRoundTripThroughTheWriter) {
+    TwinOpts o;
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  40\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    write("_tw_rm.rxn", rxn_inert());
+    write("_tw_rm.inp",
+          twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_rm.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_rm.inp", "_tw_rm.rpt", "_tw_rm.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_model_write(e, "_tw_rm_rt.inp"), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    std::ifstream f("_tw_rm_rt.inp");
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string text = ss.str();
+    const auto at = text.find("REMOVALS");
+    ASSERT_NE(at, std::string::npos) << "no REMOVALS row written";
+    const std::string row = text.substr(at, text.find('\n', at) - at);
+    EXPECT_NE(row.find("TSS"), std::string::npos) << row;
+    EXPECT_NE(row.find("X"), std::string::npos) << row;
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_tw_rm_rt.inp", "_tw_rm_rt.rpt", "_tw_rm_rt.out", nullptr),
+              SWMM_OK);
+    const auto& ms = cpp(e2).context().reactions.surface;
+    ASSERT_EQ(ms.lid_rmvl.size(), 1u) << "species removal not resolved after reload";
+    EXPECT_DOUBLE_EQ(ms.lid_rmvl[0], 0.40);
+    swmm_engine_close(e2);
+    swmm_engine_destroy(e2);
+}
+
+// S3 parity: a pollutant's LID REMOVALS row read before [POLLUTANTS] (the
+// usual SWMM file order) was dropped, because the name was not yet known.
+// Legacy applies it. The same deck in either section order must book the
+// same BMP removal. Measured on this deck: base 0.032 lb with the late
+// order against 0.348 lb (legacy 0.348).
+TEST(MsxSurfaceTwin, PollutantLidRemovalDeclaredBeforePollutantsApplies) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    std::string early = twinDeck(o);
+    // Pollutant-only: drop the species rows.
+    std::string kept;
+    for (std::size_t a = 0, b; a < early.size(); a = b + 1) {
+        b = early.find('\n', a);
+        if (b == std::string::npos)
+            b = early.size();
+        const std::string line = early.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0)
+            continue;
+        kept += line + "\n";
+    }
+    early = kept + "\n[REPORT]\nINPUT NO\n";
+    // Late order: move the [POLLUTANTS] block to the end.
+    std::string late = early;
+    const auto p0 = late.find("[POLLUTANTS]");
+    const auto p1 = late.find("\n[", p0 + 1);
+    const std::string block = late.substr(p0, p1 - p0);
+    late.erase(p0, p1 - p0);
+    late.insert(late.find("[REPORT]"), block + "\n");
+    auto bmp = [](const std::string& tag, const std::string& body) {
+        write(tag + ".inp", body);
+        SWMM_Engine e = swmm_engine_create();
+        double v = -1.0;
+        if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
+                             (tag + ".out").c_str(), nullptr) == SWMM_OK &&
+            swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK) {
+            double t = 0.0;
+            while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {
+            }
+            swmm_engine_end(e);
+            v = cpp(e).context().mass_balance.qual_bmp_removal[0];
+        }
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+        return v;
+    };
+    const double a = bmp("_tw_rm_early", early), b = bmp("_tw_rm_late", late);
+    ASSERT_GT(a, 0.0);
+    EXPECT_EQ(b, a) << "REMOVALS before [POLLUTANTS] booked " << b << " against " << a;
+}
+
+// S4: rain carries the species in. TSS rains at its [POLLUTANTS] Crain, X at
+// its [REACTION_RAINFALL] value; the two must deposit identically, on the
+// pervious ponded water and on a LID footprint.
+TEST(MsxSurfaceTwin, R12_RainConcentration) {
+    TwinOpts o;
+    o.tss_rain = "2";
+    o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n";
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    const Twin t = runTwin("_tw_r12", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12");
+}
+// …and with no buildup or washoff rows at all: deposition alone.
+TEST(MsxSurfaceTwin, R12b_RainOnlyNoLandUseRows) {
+    TwinOpts o;
+    o.tss_rain = "2";
+    o.rxn_extra = "[REACTION_RAINFALL]\nX  2\n";
+    o.landuse_rows = false;
+    const Twin t = runTwin("_tw_r12b", o);
+    EXPECT_GT(t.wet.scale, 0.0) << "TSS deposited nothing; deck defect";
+    expectTwin(t, "R12b");
+}
+
+// P2-D4 parity: a LID underdrain routed to another subcatchment adds its
+// water and its quality, less removal, to that subcatchment's run-on, one
+// runoff step late (legacy lid_addDrainRunon). v6 sent the quality straight
+// to the receiver's outlet node, with a second copy of the drain water.
+TEST(MsxSurfaceTwin, R8_UnderdrainToAnotherSubcatchment) {
+    TwinOpts o;
+    o.runon = true;
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30  X  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    const Twin t = runTwin("_tw_r8", o);
+    EXPECT_GT(t.drain_sub, 0.0) << "the underdrain never flowed; deck defect";
+    expectTwin(t, "R8");
+}
+
+// P2-D4 parity, pollutant side: with the drain's quality on the node twice
+// over and absent from the receiver's runoff, the routing ledger did not
+// close (wet inflow 2.331 lb, outflow 1.225 lb; legacy 2.176 / 2.163). It
+// must close to the small stored remainder, and the surface runoff ledger
+// must equal the routing inflow up to the last step in transit.
+TEST(MsxSurfaceTwin, UnderdrainRunonClosesTheRoutingLedger) {
+    TwinOpts o;
+    o.runon = true;
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_extra = "BC2  REMOVALS  TSS  30\n";
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  S2\n";
+    std::string body = twinDeck(o), kept;
+    for (std::size_t a = 0, b; a < body.size(); a = b + 1) {
+        b = body.find('\n', a);
+        if (b == std::string::npos)
+            b = body.size();
+        const std::string line = body.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0)
+            continue;
+        kept += line + "\n";
+    }
+    write("_tw_d4.inp", kept + "\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_d4.inp", "_tw_d4.rpt", "_tw_d4.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {
+    }
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    const double wet = mb.qual_routing_wet[0], out = mb.qual_routing_outflow[0];
+    const double runoff = mb.qual_runoff_load[0];
+    ASSERT_GT(wet, 0.0);
+    EXPECT_NEAR(out, wet, 0.02 * wet) << "routing in " << wet << ", out " << out;
+    // The routing ledger is mg/L x ft3; the runoff ledger is lb (US deck).
+    const double wet_lb = wet * 28.317 / 453592.37;
+    EXPECT_NEAR(runoff, wet_lb, 0.02 * wet_lb)
+        << "surface runoff " << runoff << " lb, routing in " << wet_lb << " lb";
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
+// S7 parity: street sweeping happens where legacy does it — decided at the
+// step's start against the last-swept DATE, applied between buildup and
+// washoff. v6 swept after the washoff and on a summed day counter: on this
+// deck (12 h interval, LastSweep 0.3 d, hourly dry steps) it swept 73.794 lb
+// and left 37.686 lb against legacy's 74.178 / 37.306.
+TEST(MsxSurfaceTwin, StreetSweepingMatchesLegacyTiming) {
+    const char* deck = "[OPTIONS]\n"
+                       "FLOW_UNITS           CFS\n"
+                       "FLOW_ROUTING         DYNWAVE\n"
+                       "INFILTRATION         HORTON\n"
+                       "START_DATE           01/01/2026\n"
+                       "START_TIME           00:00:00\n"
+                       "END_DATE             01/03/2026\n"
+                       "END_TIME             00:00:00\n"
+                       "REPORT_STEP          00:15:00\n"
+                       "WET_STEP             00:05:00\n"
+                       "DRY_STEP             01:00:00\n"
+                       "ROUTING_STEP         0:00:30\n"
+                       "DRY_DAYS             5\n"
+                       "\n"
+                       "[RAINGAGES]\n"
+                       "RG1  INTENSITY 0:05 1.0 TIMESERIES TS1\n"
+                       "\n"
+                       "[SUBCATCHMENTS]\n"
+                       "S1  RG1  J1  10.0  50   500  0.5  0\n"
+                       "\n"
+                       "[SUBAREAS]\n"
+                       "S1  0.01  0.1  0.05  0.05  25  OUTLET\n"
+                       "\n"
+                       "[INFILTRATION]\n"
+                       "S1  3.0  0.5  4.0  7  0\n"
+                       "\n"
+                       "[TIMESERIES]\n"
+                       "TS1  01/02/2026 06:00 1.0\n"
+                       "TS1  01/02/2026 07:00 1.0\n"
+                       "TS1  01/02/2026 07:05 0.0\n"
+                       "\n"
+                       "[JUNCTIONS]\n"
+                       "J1  100.0  10.0  0.0  0.0  0.0\n"
+                       "\n"
+                       "[OUTFALLS]\n"
+                       "O1  95.0  FREE\n"
+                       "\n"
+                       "[CONDUITS]\n"
+                       "C1  J1  O1  400.0  0.013  0  0\n"
+                       "\n"
+                       "[XSECTIONS]\n"
+                       "C1  CIRCULAR  1.5  0  0  0  1\n"
+                       "\n"
+                       "[POLLUTANTS]\n"
+                       "TSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+                       "\n"
+                       "[LANDUSES]\n"
+                       "LU1  0.5  0.6  0.3\n"
+                       "\n"
+                       "[COVERAGES]\n"
+                       "S1  LU1  100\n"
+                       "\n"
+                       "[LOADINGS]\n"
+                       "S1  TSS  7.5\n"
+                       "\n"
+                       "[BUILDUP]\n"
+                       "LU1  TSS  POW  100  2  1  AREA\n"
+                       "\n"
+                       "[WASHOFF]\n"
+                       "LU1  TSS  EXP  0.1  1.0  50  0\n"
+                       "\n"
+                       "[REPORT]\n"
+                       "INPUT NO\n"
+                       "SUBCATCHMENTS ALL\n"
+                       "\n";
+    write("_tw_sweep.inp", deck);
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_sweep.inp", "_tw_sweep.rpt", "_tw_sweep.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {
+    }
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    // Legacy 5.3.0 .rpt values (3 decimals).
+    EXPECT_NEAR(mb.qual_sweeping[0], 74.178, 6e-4) << "sweeping";
+    EXPECT_NEAR(mb.qual_runoff_load[0], 0.253, 6e-4) << "surface runoff";
+    EXPECT_NEAR(mb.qual_init_buildup[0], 75.000, 6e-4) << "[LOADINGS] initial buildup";
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
+// S6: the report lists reaction species beside the pollutants in the Runoff
+// Quality Continuity block and the Subcatchment Washoff Summary (the
+// separate MSX washoff block is gone). With TSS's rows, X's column equals
+// TSS's, line by line.
+TEST(MsxSurfaceTwin, ReportListsSpeciesBesidePollutants) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    write("_tw_rpt.rxn", rxn_inert());
+    write("_tw_rpt.inp", twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_rpt.rxn") +
+                             "\n\n[REPORT]\nINPUT NO\n");
+    {
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_EQ(swmm_engine_open(e, "_tw_rpt.inp", "_tw_rpt.rpt", "_tw_rpt.out", nullptr),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+        double t = 0.0;
+        while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {
+        }
+        swmm_engine_end(e);
+        swmm_engine_report(e);
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+    }
+    std::ifstream f("_tw_rpt.rpt");
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string text = ss.str();
+    auto rowValues = [&](std::size_t from, const std::string& label) {
+        const auto at = text.find(label, from);
+        EXPECT_NE(at, std::string::npos) << label;
+        std::istringstream line(
+            text.substr(at + label.size(), text.find('\n', at) - at - label.size()));
+        std::vector<std::string> v;
+        std::string w;
+        while (line >> w)
+            v.push_back(w);
+        return v;
+    };
+    const auto cont = text.find("Runoff Quality Continuity");
+    ASSERT_NE(cont, std::string::npos);
+    for (const char* label : {"Initial Buildup ..........", "Surface Runoff ...........",
+                              "Remaining Buildup ........"}) {
+        const auto v = rowValues(cont, label);
+        ASSERT_EQ(v.size(), 2u) << label << ": expected a TSS and an X column";
+        EXPECT_EQ(v[0], v[1]) << label;
+    }
+    const auto wo = text.find("Subcatchment Washoff Summary");
+    ASSERT_NE(wo, std::string::npos);
+    const auto sys = rowValues(wo, "System");
+    ASSERT_EQ(sys.size(), 2u);
+    EXPECT_EQ(sys[0], sys[1]);
+    EXPECT_EQ(text.find("MSX Washoff Summary"), std::string::npos);
+}
+
+// Open item O1 (2026-10-17): what remains on the land includes the mass in
+// ponded water, and every pond written off as it dried (legacy
+// massbal_getBuildup + surfqual.c FINAL_LOAD). v6 counted buildup only and
+// dropped a drying pond's mass, so a run-on deck reported 118.558 lb
+// remaining against legacy's 118.677 and a 0.113 % continuity error against
+// 0.014 %.
+TEST(MsxSurfaceTwin, RemainingBuildupCountsPondedMassLikeLegacy) {
+    TwinOpts o;
+    o.runon = true;
+    std::string body = twinDeck(o), kept;
+    for (std::size_t a = 0, b; a < body.size(); a = b + 1) {
+        b = body.find('\n', a);
+        if (b == std::string::npos)
+            b = body.size();
+        const std::string line = body.substr(a, b - a);
+        if (line.rfind("LU1  X  ", 0) == 0)
+            continue;
+        kept += line + "\n";
+    }
+    write("_tw_o1.inp", kept + "\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_o1.inp", "_tw_o1.rpt", "_tw_o1.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e, &t) == SWMM_OK && t > 0.0) {
+    }
+    swmm_engine_end(e);
+    const auto& mb = cpp(e).context().mass_balance;
+    EXPECT_NEAR(mb.qual_final_buildup[0], 118.677, 6e-4) << "remaining buildup (legacy 118.677)";
+    EXPECT_NEAR(mb.qual_runoff_load[0], 1.307, 6e-4) << "surface runoff (legacy 1.307)";
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+
+// Open item O2 (2026-10-17): LID underdrain removals are editable through the
+// C API for pollutants and reaction species alike (constituent = pollutant
+// count + species index), survive a save, and drive the drain. Before there
+// was no API for either.
+TEST(MsxSurfaceTwin, LidRemovalApiCoversPollutantsAndSpecies) {
+    TwinOpts o;
+    o.routing = "PERVIOUS";
+    o.pct_routed = "50";
+    o.lid_controls = kFlowingBioRetention;
+    o.lid_usage = "S1  BC2  1  4000  50  100  100  0  *  J1\n";
+    write("_tw_o2.rxn", rxn_inert());
+    write("_tw_o2.inp",
+          twinDeck(o) + "\n[PROCESS_COMPONENTS]\n" + pc("_tw_o2.rxn") + "\n\n[REPORT]\nINPUT NO\n");
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, "_tw_o2.inp", "_tw_o2.rpt", "_tw_o2.out", nullptr), SWMM_OK);
+    const int lid = swmm_lid_index(e, "BC2");
+    ASSERT_GE(lid, 0);
+    double v = -1.0;
+    ASSERT_EQ(swmm_lid_get_removal(e, lid, 1, &v), SWMM_OK); // X, no row yet
+    EXPECT_EQ(v, 0.0);
+    ASSERT_EQ(swmm_lid_set_removal(e, lid, 0, 30.0), SWMM_OK); // TSS
+    ASSERT_EQ(swmm_lid_set_removal(e, lid, 1, 30.0), SWMM_OK); // X
+    EXPECT_NE(swmm_lid_set_removal(e, lid, 1, 120.0), SWMM_OK);
+    EXPECT_NE(swmm_lid_set_removal(e, lid, 2, 10.0), SWMM_OK); // no such constituent
+    ASSERT_EQ(swmm_lid_get_removal(e, lid, 1, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 30.0);
+    ASSERT_EQ(swmm_model_write(e, "_tw_o2_rt.inp"), SWMM_OK);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    // The written deck carries both rows, and runs as the R7b twin does.
+    std::ifstream f("_tw_o2_rt.inp");
+    std::stringstream ss;
+    ss << f.rdbuf();
+    const std::string text = ss.str();
+    const auto at = text.find("REMOVALS");
+    ASSERT_NE(at, std::string::npos);
+    const std::string row = text.substr(at, text.find('\n', at) - at);
+    EXPECT_NE(row.find("TSS"), std::string::npos) << row;
+    EXPECT_NE(row.find(" X "), std::string::npos) << row;
+    SWMM_Engine e2 = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e2, "_tw_o2_rt.inp", "_tw_o2_rt.rpt", "_tw_o2_rt.out", nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_lid_get_removal(e2, swmm_lid_index(e2, "BC2"), 1, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 30.0);
+    ASSERT_EQ(swmm_engine_initialize(e2), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e2, 1), SWMM_OK);
+    double t = 0.0;
+    while (swmm_engine_step(e2, &t) == SWMM_OK && t > 0.0) {
+    }
+    swmm_engine_end(e2);
+    const auto& ctx = cpp(e2).context();
+    ASSERT_GT(ctx.mass_balance.qual_bmp_removal[0], 0.0);
+    EXPECT_EQ(ctx.reactions.surface.led_bmp_removal[0], ctx.mass_balance.qual_bmp_removal[0])
+        << "the species drain removal did not apply like the pollutant's";
+    swmm_engine_close(e2);
+    swmm_engine_destroy(e2);
+}
+
+// ---------------------------------------------------------------------------
+// O3: a run split at a hot start keeps the reaction species' network and
+// surface state, in both file formats. The legacy layout carries it after
+// legacy's routing records (legacy stops reading there); the native format
+// in its V16 surface block. With X twinning TSS, the continuation washes off
+// what TSS does. On the run-on deck the continuation's first run-on is built
+// from the restored runoff and washoff concentrations, so S1's load reaches
+// S2 and J1 as TSS's does (the hot start keeps no pending run-on of its own,
+// exactly as legacy: oldRunoff/oldQual come from the restored state).
+// ---------------------------------------------------------------------------
+namespace {
+/**
+ * @brief Save/restart a watershed and compare restored MSX surface and network state.
+ *
+ * Runs the first two hours, captures reaction state before end saves the hotstart, then restarts
+ * for the final hour. Requires nonzero buildup/load and compares node/link/surface state, stepwise
+ * J1 TSS/X and load ledgers at 1e-12 native or 1e-6 legacy relative tolerance. Uses fatal
+ * assertions without RAII for all temporary handles, so an early assertion can bypass local
+ * cleanup. Successful path ends/closes/destroys; matching artifacts remain for review.
+ *
+ * @param[in] base Borrowed three-hour base deck with the exact expected start/end fragments and
+ *     species layout.
+ * @param[in] tag Raw artifact prefix used for split input/report/result/hotstart files.
+ * @param[in] format Non-null format suffix; empty selects legacy comparison tolerance, nonempty
+ *     selects native tolerance.
+ * @param[in] nsc Number of intended subcatchment rows to inspect, within populated array bounds.
+ */
+void checkSpeciesHotstart(const std::string& base, const std::string& tag, const char* format,
+                          int nsc) {
+    SCOPED_TRACE(tag + (format[0] ? " NATIVE" : " legacy"));
+    auto split = [](std::string body, const char* t0, const char* t1, const std::string& files) {
+        auto rep = [&](const std::string& a, const std::string& b) {
+            const auto k = body.find(a);
+            if (k != std::string::npos)
+                body.replace(k, a.size(), b);
+        };
+        rep("START_TIME           00:00:00", std::string("START_TIME           ") + t0);
+        rep("END_TIME             03:00:00", std::string("END_TIME             ") + t1);
+        return body + "\n[FILES]\n" + files + "\n";
+    };
+    const std::string hs = tag + ".hs";
+    DeckRun a =
+        run(tag + "1",
+            split(base, "00:00:00", "02:00:00", "SAVE HOTSTART \"" + hs + "\" " + format), false);
+    ASSERT_TRUE(a.ok);
+    const auto end1 = cpp(a.e).context().reactions; // copy, before end() writes the file
+    close(a);
+    ASSERT_GT(end1.surface.buildup[0], 0.0);
+
+    write(tag + "2.inp", split(base, "02:00:00", "03:00:00", "USE HOTSTART \"" + hs + "\""));
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, (tag + "2.inp").c_str(), (tag + "2.rpt").c_str(),
+                               (tag + "2.out").c_str(), nullptr),
+              SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    const auto& ctx = cpp(e).context();
+    const auto& rx = ctx.reactions;
+    for (const auto& w : ctx.warnings) {
+        EXPECT_EQ(w.find("species"), std::string::npos) << w;
+        EXPECT_EQ(w.find("lacks"), std::string::npos) << w;
+    }
+    EXPECT_EQ(rx.msx_node_conc, end1.msx_node_conc);
+    EXPECT_EQ(rx.msx_link_conc, end1.msx_link_conc);
+    EXPECT_EQ(rx.surface.buildup, end1.surface.buildup);
+    EXPECT_EQ(rx.surface.washoff_conc, end1.surface.washoff_conc);
+    EXPECT_EQ(rx.surface.ponded_qual, end1.surface.ponded_qual);
+    const double tss_init = ctx.mass_balance.qual_init_buildup[0];
+    EXPECT_GT(tss_init, 0.0);
+    EXPECT_NEAR(rx.surface.led_init_buildup[0], tss_init, 1e-12 * tss_init);
+
+    // The twin rule through the restart: J1's X follows J1's TSS step by
+    // step. Near, not equal: the legacy layout keeps network pollutant
+    // concentrations as legacy does, in single precision (and TSS buildup as
+    // mass, one ulp), while the species block is double. The native format
+    // keeps both in double.
+    const double tol = format[0] ? 1e-12 : 1e-6;
+    const int j1 = ctx.node_names.find("J1");
+    const auto uj = static_cast<std::size_t>(j1);
+    const int np = ctx.n_pollutants(), nm = rx.n_species();
+    double elapsed = 0.0, tss_peak = 0.0;
+    int steps = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+        const double t = ctx.nodes.conc[uj * np], x = rx.msx_node_conc[uj * nm];
+        tss_peak = std::max(tss_peak, t);
+        ASSERT_NEAR(x, t, tol * std::max(std::abs(t), 1e-30)) << "J1 at step " << steps;
+        ++steps;
+    } while (elapsed > 0.0);
+    EXPECT_GT(tss_peak, 0.0);
+    for (int sc = 0; sc < nsc; ++sc) {
+        const double tss_load = ctx.subcatches.total_load[static_cast<std::size_t>(sc) * np];
+        EXPECT_GT(tss_load, 0.0) << sc;
+        EXPECT_NEAR(rx.surface.led_subcatch_load[rx.surface.sidx(sc, 0)], tss_load, tol * tss_load)
+            << sc;
+    }
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+}
+} // namespace
+
+TEST(MsxSurfaceTwin, HotstartCarriesSpeciesState) {
+    write("_hs_x.rxn", rxn_inert());
+    const std::string base = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_x.rxn"));
+    checkSpeciesHotstart(base, "_hs_x", "", 1);
+    checkSpeciesHotstart(base, "_hs_xn", "NATIVE", 1);
+}
+
+TEST(MsxSurfaceTwin, HotstartCarriesSpeciesRunon) {
+    write("_hs_r.rxn", rxn_inert());
+    std::string body = deck("", std::string(kPollut) + bw({"TSS", "X"}), pc("_hs_r.rxn"));
+    auto rep = [&](const std::string& a, const std::string& b) {
+        const auto at = body.find(a);
+        ASSERT_NE(at, std::string::npos) << a;
+        body.replace(at, a.size(), b);
+    };
+    rep("S1  RG1  J1  10.0  50   500  0.5  0\n",
+        "S1  RG1  S2  10.0  50   500  0.5  0\nS2  RG1  J1  2.0  100   200  0.5  0\n");
+    rep("S1  0.01  0.1  0.05  0.05  25  OUTLET\n",
+        "S1  0.01  0.1  0.05  0.05  25  OUTLET\nS2  0.01  0.1  0.05  0.05  0  OUTLET\n");
+    rep("S1  3.0  0.5  4.0  7  0\n", "S1  3.0  0.5  4.0  7  0\nS2  3.0  0.5  4.0  7  0\n");
+    rep("\n[COVERAGES]\nS1  LU1  100\n", "\n[COVERAGES]\nS1  LU1  100\nS2  LU1  100\n");
+    checkSpeciesHotstart(body, "_hs_r", "", 2);
+    checkSpeciesHotstart(body, "_hs_rn", "NATIVE", 2);
+}
+
+namespace {
+class WetSubcatchmentReactions : public ::testing::Test {
+protected:
+    SWMM_Engine engine = nullptr;
+    /**
+     * @brief Initialize a controlled wet-subcatchment chemistry fixture.
+     *
+     * Overwrites fixed _wet_scope.rxn/.inp/.rpt/.out paths and stores a new owned engine; caller must
+     * not replace an older live handle. Fatal assertions require create/open/init, then directly seed a
+     * 100 ft2 catchment at 0.1 ft ponded depth and zero rain/runon/runoff/infiltration. Does not
+     * start/step; teardown destroys and removes the fixed artifacts.
+     *
+     * @param[in] chemistry Raw species/rate sections appended to full-coupling SEC chemistry options.
+     * @param[in] metric Append FLOW_UNITS CMS to the base OPTIONS when true; otherwise retain CFS.
+     */
+    void open(const std::string& chemistry, bool metric = false) {
+        write("_wet_scope.rxn",
+              "[REACTION_OPTIONS]\nCOUPLING FULL\nRATE_UNITS SEC\nATOL 1e-10\nRTOL 1e-8\n" +
+                  chemistry);
+        write("_wet_scope.inp", deck(metric ? "FLOW_UNITS CMS\n" : "", "", pc("_wet_scope.rxn")));
+        engine = swmm_engine_create();
+        ASSERT_NE(engine, nullptr);
+        ASSERT_EQ(
+            swmm_engine_open(engine, "_wet_scope.inp", "_wet_scope.rpt", "_wet_scope.out", nullptr),
+            SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(engine), SWMM_OK);
+        auto& ctx = cpp(engine).context();
+        auto& sc = ctx.subcatches;
+        sc.area[0] = 100 * openswmm::ucf::UCF(openswmm::ucf::LANDAREA, ctx.options);
+        sc.old_ponded_depth[0] = sc.ponded_depth[0] = .1; // 10 ft3
+        sc.rainfall[0] = sc.runon_inflow[0] = sc.runoff[0] = sc.infil_loss[0] = 0;
+    }
+    /**
+     * @brief Release the wet-scope engine and delete its four fixed artifacts.
+     *
+     * Destroys a non-null engine and attempts .inp/.rxn/.rpt/.out removal, ignoring errors. Does not
+     * clear the member handle; fixture lifetime ends after this call.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+        for (const auto* suffix : {".inp", ".rxn", ".rpt", ".out"})
+            std::remove((std::string("_wet_scope") + suffix).c_str());
+    }
+    /**
+     * @brief Seed one surface species ponded mass and its initial buildup ledger.
+     *
+     * Sets ponded_qual=concentration*28.317*volume, then converts it to the species ledger units using
+     * mcf. Does not change hydraulic ponding or other species entries; requires initialized engine and
+     * valid row arrays.
+     *
+     * @param[in] species Valid species index for ponded_qual, mcf and led_init_buildup.
+     * @param[in] concentration Native species concentration per litre.
+     * @param[in] volume Ponded water volume in ft3, normally matching the manually controlled catchment
+     *     volume.
+     */
+    void seed(int species, double concentration, double volume = 10) {
+        auto& s = cpp(engine).context().reactions.surface;
+        s.ponded_qual[species] = concentration * 28.317 * volume;
+        s.led_init_buildup[species] = s.ponded_qual[species] * s.mcf[species];
+    }
+};
+const std::string wetConversion = "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                                  "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\nRATE B 0.01 * A\n";
+}
+
+TEST_F(WetSubcatchmentReactions, CoupledConversionConservesAnIsolatedWetPool) {
+    open(wetConversion);
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    seed(0, 10);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    const double litres = 10 * 28.317;
+    EXPECT_NEAR(s.ponded_qual[0] / litres, 10 * std::exp(-.1), 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[1] / litres, 10 * (1 - std::exp(-.1)), 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[0] + s.ponded_qual[1], 10 * litres, 1.e-9);
+    EXPECT_NEAR(s.led_reacted[0] + s.led_reacted[1], 0, 1.e-14);
+    EXPECT_DOUBLE_EQ(s.washoff_conc[0], 0);
+}
+
+TEST_F(WetSubcatchmentReactions,
+       ReactedPoolFeedsInfiltrationRunoffAndEvaporativelyConcentratedStorage) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_RAINFALL]\nA 4\n"
+         "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    auto& sc = ctx.subcatches;
+    seed(0, 2);
+    sc.rainfall[0] = 5.0 / 100 / 10; // 5 ft3 rain in 10 s
+    sc.runon_inflow[0] = 3.0 / 10;
+    s.runon_qual_rate[0] = 6 * 28.317 * 3 / 10; // 3 ft3 run-on at 6 mg/L
+    sc.infil_loss[0] = 2.0 / 100 / 10;
+    sc.runoff[0] = 4.0 / 10;
+    sc.ponded_depth[0] = 11.0 / 100; // one ft3 evaporated; evaporation removes no solute
+    const double input_mass = (2 * 10 + 4 * 5 + 6 * 3) * 28.317;
+    const double reacted_mass = input_mass * std::exp(-.1);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    openswmm::msxsurf::bookPostLid(ctx, 10, std::vector<double>(1, 0));
+    EXPECT_NEAR(s.washoff_conc[0], reacted_mass / (18 * 28.317), 1.e-8);
+    EXPECT_NEAR(s.ponded_qual[0], reacted_mass * 12 / 18, 1.e-6);
+    const double cf = s.mcf[0];
+    EXPECT_NEAR(s.led_infil_loss[0], reacted_mass * 2 / 18 * cf, 1.e-12);
+    EXPECT_NEAR(s.led_runoff_load[0], reacted_mass * 4 / 18 * cf, 1.e-12);
+    EXPECT_NEAR(s.led_reacted[0] + s.led_infil_loss[0] + s.led_runoff_load[0] +
+                    s.ponded_qual[0] * cf,
+                input_mass * cf, 1.e-12);
+}
+
+TEST_F(WetSubcatchmentReactions, DryAndSubLitrePoolsDoNotExecuteFormulaOrInventMass) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_SUBCATCHMENTS]\nFORMULA A 99\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = 0;
+    s.ponded_qual[0] = 47;
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 0);
+    EXPECT_DOUBLE_EQ(s.led_ponded_lost[0], 47 * s.mcf[0]);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = 1.e-20;
+    s.ponded_qual[0] = 1;
+    openswmm::msxsurf::step(ctx, 10, 10);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 1);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = .1;
+    s.ponded_qual[0] = 0;
+    openswmm::msxsurf::step(ctx, 10, 20);
+    EXPECT_NEAR(s.ponded_qual[0], 99 * 10 * 28.317, 1.e-9);
+}
+
+TEST_F(WetSubcatchmentReactions, FailedAlgebraicStepLeavesTheMixedInventoryUnchanged) {
+    open("[REACTION_SPECIES]\nBULK A MG\n[REACTION_SUBCATCHMENTS]\nFORMULA A SQRT(-1)\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    seed(0, 2);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 2 * 10 * 28.317);
+    EXPECT_DOUBLE_EQ(s.led_reacted[0], 0);
+    bool warned = false;
+    for (const auto& w : ctx.warnings)
+        warned |= w.find("unreacted mixed pool retained") != std::string::npos;
+    EXPECT_TRUE(warned);
+}
+
+TEST_F(WetSubcatchmentReactions, NumericalClampHasAnExplicitMassAdditionLedger) {
+    open("[REACTION_SPECIES]\nBULK A MG\n"
+         "[REACTION_SUBCATCHMENTS]\nRATE A -A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    ctx.reactions.solver = openswmm::ReactionSolverKind::EUL;
+    seed(0, 2);
+    const double initial = s.ponded_qual[0] * s.mcf[0];
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_DOUBLE_EQ(s.ponded_qual[0], 0);
+    EXPECT_NEAR(s.led_reacted[0], initial * 10, 1.e-14);
+    EXPECT_NEAR(s.led_reaction_clamped[0], initial * 9, 1.e-14);
+    EXPECT_NEAR(initial + s.led_reaction_clamped[0] - s.led_reacted[0], 0, 1.e-14);
+}
+
+TEST_F(WetSubcatchmentReactions, AlgebraicFormsAndBeginningOfStepTemperatureUseTheirOwnScope) {
+    open("[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+         "[REACTION_SUBCATCHMENTS]\nEQUIL A A - TEMP\nFORMULA B 2 * A\n");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    ctx.reactions.default_temp_c = 25;
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 25, 1.e-7);
+    EXPECT_NEAR(s.ponded_qual[1] / (10 * 28.317), 50, 1.e-7);
+    ctx.options.heat_transport = true;
+    ctx.heat_state.subcatch_runoff_temp.assign(1, 12);
+    openswmm::msxsurf::step(ctx, 10, 10);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 12, 1.e-7);
+}
+
+TEST_F(WetSubcatchmentReactions, DeclaredMassBasisSurvivesProjectUnitChanges) {
+    const std::string chemistry = "[REACTION_SPECIES]\nBULK A UG\n"
+                                  "[REACTION_SUBCATCHMENTS]\nRATE A -0.01 * A\n";
+    open(chemistry, true);
+    ASSERT_NE(engine, nullptr);
+    ASSERT_EQ(cpp(engine).context().state, openswmm::EngineState::INITIALIZED);
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    seed(0, 7);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_NEAR(s.ponded_qual[0] / (10 * 28.317), 7 * std::exp(-.1), 1.e-7);
+    EXPECT_NEAR(s.led_reacted[0], (7 * 10 * 28.317 - s.ponded_qual[0]) * s.mcf[0], 1.e-14);
+}
+
+TEST(WetSubcatchmentReactorProfile, LidCombinationIsRefusedAtInitialization) {
+    TwinOpts options;
+    options.lid_controls = kFlowingBioRetention;
+    options.lid_usage = "S1 BC2 1 4000 50 100 100 0 * J1\n";
+    write("_wet_lid.rxn", "[REACTION_SPECIES]\nBULK X MG\n[REACTION_SUBCATCHMENTS]\nRATE X -X\n");
+    write("_wet_lid.inp",
+          twinDeck(options) + "\n[PROCESS_COMPONENTS]\n" + pc("_wet_lid.rxn") + "\n");
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(engine.open("_wet_lid.inp", "_wet_lid.rpt", "_wet_lid.out"), SWMM_OK);
+    EXPECT_NE(engine.initialize(), SWMM_OK);
+    EXPECT_NE(engine.context().error_message.find("non-LID"), std::string::npos);
+}
+
+TEST(WetSubcatchmentReactorProfile, ProductAndConservedSumReachNativeOutputAcrossNetworkSolvers) {
+    for (const auto* solver : {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"}) {
+        SCOPED_TRACE(solver);
+        const auto tag = std::string("_wet_output_") + solver;
+        write(tag + ".rxn", "[REACTION_OPTIONS]\nRATE_UNITS HR\nCOUPLING FULL\n"
+                            "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\nBULK tracer MG\n"
+                            "[REACTION_RAINFALL]\nA 2\ntracer 2\n"
+                            "[REACTION_SUBCATCHMENTS]\nRATE A -0.3 * A\nRATE B 0.3 * A\n");
+        std::string body =
+            deck(std::string("QUALITY_SOLVER ") + solver + "\n", "", pc((tag + ".rxn").c_str()));
+        body += "\n[REPORT]\nNODES ALL\nLINKS ALL\nSUBCATCHMENTS ALL\n";
+        DeckRun result = run(tag, body, false);
+        ASSERT_TRUE(result.ok);
+        const auto& s = cpp(result.e).context().reactions.surface;
+        EXPECT_NEAR(s.led_reacted[0] + s.led_reacted[1], 0, 1.e-12);
+        EXPECT_GT(s.led_reacted[0], 0);
+        for (int m = 0; m < 3; ++m) {
+            const double input = s.led_init_buildup[m] + s.led_buildup[m] +
+                                 s.led_wet_deposition[m] + s.led_reaction_clamped[m];
+            const double output = s.led_sweeping[m] + s.led_infil_loss[m] + s.led_bmp_removal[m] +
+                                  s.led_runoff_load[m] + s.led_reacted[m] +
+                                  openswmm::msxsurf::remainingBuildup(cpp(result.e).context(), m);
+            EXPECT_NEAR(input, output, 1.e-10 * std::max(1.0, std::abs(input)));
+        }
+        ASSERT_EQ(swmm_engine_end(result.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_report(result.e), SWMM_OK);
+        {
+            std::ifstream report(tag + ".rpt");
+            std::ostringstream text;
+            text << report.rdbuf();
+            EXPECT_NE(text.str().find("Wet Pool Mass Reacted"), std::string::npos);
+            EXPECT_NE(text.str().find("Clamped to Zero (added)"), std::string::npos);
+        }
+        swmm_engine_destroy(result.e);
+        result.e = nullptr;
+        SWMM_Output output = swmm_output_open((tag + ".out").c_str());
+        ASSERT_NE(output, nullptr);
+        ASSERT_EQ(swmm_output_get_pollut_count(output), 3);
+        const int periods = swmm_output_get_period_count(output);
+        ASSERT_GT(periods, 0);
+        double subcatch_product = 0, node_product = 0;
+        for (int period = 0; period < periods; ++period) {
+            float values[32] = {};
+            int count = 0;
+            ASSERT_EQ(swmm_output_get_subcatch_attribute(output, 0, period, values, &count), 0);
+            ASSERT_GE(count, 11);
+            EXPECT_NEAR(values[8] + values[9], values[10], 2.e-6);
+            subcatch_product = std::max(subcatch_product, double(values[9]));
+            ASSERT_EQ(swmm_output_get_node_attribute(output, 0, period, values, &count), 0);
+            ASSERT_GE(count, 9);
+            EXPECT_NEAR(values[6] + values[7], values[8], 2.e-5);
+            node_product = std::max(node_product, double(values[7]));
+        }
+        EXPECT_GT(subcatch_product, .001);
+        EXPECT_GT(node_product, .001);
+        swmm_output_close(output);
+    }
+}
+
+TEST_F(WetSubcatchmentReactions, SelectedWetLawsOverrideGlobalsAndRoundTrip) {
+    open(
+        "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_SUBCATCHMENTS]\nRATE A -A\nSUBCATCHMENT S1 RATE A -0.01*A\nSUBCATCHMENT S1 RATE B 0.01*A\n");
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    ASSERT_EQ(ctx.reactions.wet_laws.size(), 2u);
+    seed(0, 10);
+    openswmm::msxsurf::step(ctx, 10, 0);
+    EXPECT_NEAR(s.ponded_qual[0] / 283.17, 10 * std::exp(-.1), 1e-7);
+    EXPECT_NEAR(s.ponded_qual[0] + s.ponded_qual[1], 2831.7, 1e-8);
+    const auto text = openswmm::transport::serializeReactionSystem(ctx);
+    EXPECT_NE(text.find("SUBCATCHMENT S1 RATE A -0.01*A"), std::string::npos);
+}
+TEST_F(WetSubcatchmentReactions, ContinuouslyFedPoolConvergesAtFirstOrderUnderStepHalving) {
+    open(wetConversion + "[REACTION_RAINFALL]\nA 2\n");
+    auto& ctx = cpp(engine).context();
+    auto& s = ctx.reactions.surface;
+    auto& sc = ctx.subcatches;
+    double prior = 0;
+    for (double dt : {8., 4., 2., 1.}) {
+        std::fill(s.ponded_qual.begin(), s.ponded_qual.end(), 0.);
+        seed(0, 10);
+        double volume = 10;
+        for (double time = 0; time < 64; time += dt) {
+            sc.old_ponded_depth[0] = volume / 100.;
+            volume += dt;
+            sc.ponded_depth[0] = volume / 100.;
+            sc.rainfall[0] = .01;
+            openswmm::msxsurf::step(ctx, dt, time);
+        }
+        const double expected = (100 * std::exp(-.64) + 200 * (1 - std::exp(-.64))) / 74.;
+        const double error = std::abs(s.ponded_qual[0] / (74 * 28.317) - expected);
+        if (prior > 0)
+            EXPECT_GT(prior / error, 1.9);
+        prior = error;
+        EXPECT_NEAR(s.ponded_qual[0] + s.ponded_qual[1], (100 + 128) * 28.317, 1e-7);
+    }
+    EXPECT_LT(prior, .0065);
+}
+TEST_F(WetSubcatchmentReactions, DryBuildupConversionRetainsProductAcrossAreaAndProjectUnits) {
+    for (bool metric : {false, true})
+        for (const char* area : {"FT2", "M2", "CM2"}) {
+            SCOPED_TRACE(area);
+            SCOPED_TRACE(metric);
+            open(
+                std::string("[REACTION_OPTIONS]\nAREA_UNITS ") + area +
+                    "\n[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n[REACTION_BUILDUP]\nLANDUSE LU1 RATE A -0.01*A\nSUBCATCHMENT S1 LANDUSE LU1 RATE B 0.01*A\n",
+                metric);
+            auto& ctx = cpp(engine).context();
+            auto& s = ctx.reactions.surface;
+            ASSERT_TRUE(s.active());
+            ASSERT_GT(s.n_landuses, 0);
+            ASSERT_EQ(ctx.reactions.buildup_laws.size(), 2u);
+            ctx.subcatches.coverage[0] = 100;
+            const double norm = ctx.subcatches.area[0];
+            s.buildup[s.bu_idx(0, 0, 0)] = 10 / norm;
+            s.buildup[s.bu_idx(0, 0, 1)] = 0;
+            ctx.subcatches.old_ponded_depth[0] = ctx.subcatches.ponded_depth[0] = 0;
+            // No accrual or washoff: isolate the authored dry reactor.
+            std::fill(s.bu_type.begin(), s.bu_type.end(), 0);
+            std::fill(s.wo_type.begin(), s.wo_type.end(), 0);
+            openswmm::msxsurf::step(ctx, 10, 0);
+            EXPECT_NEAR(s.buildup[0] * norm, 10 * std::exp(-.1), 1e-7);
+            EXPECT_NEAR((s.buildup[0] + s.buildup[1]) * norm, 10, 1e-10);
+            EXPECT_NEAR(s.led_reacted[0] + s.led_reacted[1], 0, 1e-10);
+            openswmm::msxsurf::step(ctx, 10, 10);
+            EXPECT_NEAR((s.buildup[0] + s.buildup[1]) * norm, 10, 1e-10);
+            swmm_engine_destroy(engine);
+            engine = nullptr;
+        }
+}

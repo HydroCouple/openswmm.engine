@@ -1,0 +1,8 @@
+[0/2] Re-checking globbed directories...
+[1/8] Building CXX object src/engine/CMakeFiles/openswmm_engine.dir/2d/subsurface/SubsurfaceSolver.cpp.o
+[2/8] Linking CXX shared library src/engine/libopenswmm.engine.6.0.0.dylib
+[3/8] Creating library symlink src/engine/libopenswmm.engine.6.dylib src/engine/libopenswmm.engine.dylib
+[4/8] Linking CXX executable tests/verification/gw2d_gates/gw2d_gates
+[5/8] Linking CXX executable bin/Release/test_engine_common_source_stage
+[6/8] Building CXX object tests/unit/engine/CMakeFiles/test_engine_sigma_conservation.dir/test_sigma_conservation.cpp.o
+[7/8] Linking CXX executable bin/Release/test_engine_sigma_conservation

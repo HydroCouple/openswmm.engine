@@ -49,6 +49,13 @@ def _quality_model(cgw=50.0, cdwf=100.0, tag="dwf"):
     text = re.sub(r'^IGNORE_QUALITY\s+\S+', 'IGNORE_QUALITY       NO',
                   text, count=1, flags=re.MULTILINE)
     text = text + _pollutants(cgw, cdwf)
+    # The derived copy is written to _OUT_DIR, so the base model's *relative*
+    # FILE tokens (e.g. [TIMESERIES] ... FILE "dir/series.dat") would resolve
+    # against _OUT_DIR instead of the model folder. Anchor them to the original
+    # model's directory so the derived copy references the same files.
+    _base_dir = os.path.dirname(_DWF_INP).replace("\\", "/")
+    text = re.sub(r'(FILE\s+")(?![/\\]|[A-Za-z]:)',
+                  lambda m: m.group(1) + _base_dir + "/", text)
     path = os.path.join(_OUT_DIR, f"quality_{tag}.inp")
     with open(path, "w") as f:
         f.write(text)

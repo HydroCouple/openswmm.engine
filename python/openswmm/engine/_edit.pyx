@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Model Editing — Object Deletion and Type Conversion
 ======================================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 The :class:`ModelEditor` class exposes the two editing capabilities added in
 engine 6.0.0:
@@ -206,6 +222,101 @@ cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
 
 
 # =============================================================================
+# DeleteRecord
+# =============================================================================
+
+cdef class DeleteRecord:
+    """How to undo one recorded delete exactly.
+
+    Returned by the C{*_recorded} delete methods of L{ModelEditor}. It holds
+    every row the delete removed, with its original index, and every
+    reference the delete cleared or renumbered. L{restore} puts all of it
+    back, at most once, on the engine that made the delete.
+
+    The native record is released when this object is garbage-collected, or
+    earlier by L{close}. It cannot be constructed directly.
+    """
+
+    cdef SWMM_DeleteRecord _record
+    cdef object _owner
+    cdef bint _restored
+
+    def __cinit__(self):
+        self._record = NULL
+        self._owner = None
+        self._restored = False
+
+    def __init__(self):
+        raise TypeError("DeleteRecord is returned by ModelEditor's *_recorded delete methods.")
+
+    def __dealloc__(self):
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    @property
+    def restorable(self) -> bool:
+        """C{True} until L{restore} succeeds or L{close} is called.
+
+        @rtype: bool
+        """
+        return self._record != NULL and not self._restored
+
+    def restore(self) -> None:
+        """Undo the delete: reinsert every removed row at its original index
+        and restore every reference the delete cleared or renumbered.
+
+        The engine refuses, changing nothing, when the model no longer matches
+        the state the delete left (object counts, the name being free,
+        cleared references still clear); the record then stays restorable.
+        A successful restore spends the record and invalidates existing
+        element wrappers, as a delete does.
+
+        @raise ValueError: If the record was already restored or closed.
+        @raise BadHandleError: If the engine that made the record has been
+            destroyed.
+        @raise BadParamError: If the model no longer matches the state the
+            delete left.
+        @raise EngineError: On another C API failure, such as an engine that
+            is not in C{BUILDING} or C{OPENED} state.
+        """
+        if self._restored:
+            raise ValueError("This delete record was already restored.")
+        if self._record == NULL:
+            raise ValueError("This delete record was closed.")
+        cdef size_t address = self._owner.handle
+        if not address:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "Engine has been destroyed")
+        _check(swmm_delete_record_restore(<SWMM_Engine>address, self._record))
+        self._restored = True
+        self._owner._bump_generation()
+
+    def close(self) -> None:
+        """Release the native record; it can no longer be restored.
+
+        Safe to call more than once, and after the engine is destroyed.
+        """
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    def __repr__(self) -> str:
+        state = ("restored" if self._restored
+                 else "restorable" if self._record != NULL else "closed")
+        return f"DeleteRecord({state})"
+
+
+cdef DeleteRecord _delete_record(object owner, SWMM_DeleteRecord record):
+    """Wrap a record a recorded delete just created; the wrapper owns it."""
+    cdef DeleteRecord wrapped = DeleteRecord.__new__(DeleteRecord)
+    wrapped._record = record
+    wrapped._owner = owner
+    return wrapped
+
+
+# =============================================================================
 # ModelEditor
 # =============================================================================
 
@@ -248,10 +359,283 @@ cdef class ModelEditor:
         result = ed.convert_link("C2", LinkType.WEIR)
     """
 
-    cdef SWMM_Engine _handle
+    cdef object _owner
+
+    cdef SWMM_Engine _h(self) except NULL:
+        cdef size_t address = self._owner.handle
+        if not address:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "Engine has been destroyed")
+        return <SWMM_Engine>address
 
     def __init__(self, engine):
-        self._handle = <SWMM_Engine><size_t>engine.handle
+        self._owner = engine
+        self._h()
+
+    def delete_nodes(self, keys):
+        """Delete a batch using pre-edit names/indices; validate all before mutation.
+
+        Duplicates are ignored. Returns the aggregate cascade report and
+        invalidates existing element wrappers after a nonempty batch.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._node_idx(key))
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_many(self._h(), indices.data(), <int>indices.size(), &report)
+        if rc != 0:
+            swmm_impact_report_free(&report)
+            _check(rc)
+        if indices.size():
+            self._owner._bump_generation()
+        return _impact_report_to_list(&report)
+
+    def delete_links(self, keys):
+        """Delete a batch using pre-edit names/indices; validate all before mutation.
+
+        Duplicates are ignored. Returns the aggregate cascade report and
+        invalidates existing element wrappers after a nonempty batch.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._link_idx(key))
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_many(self._h(), indices.data(), <int>indices.size(), &report)
+        if rc != 0:
+            swmm_impact_report_free(&report)
+            _check(rc)
+        if indices.size():
+            self._owner._bump_generation()
+        return _impact_report_to_list(&report)
+
+    def delete_subcatchments(self, keys):
+        """Delete a batch using pre-edit names/indices; validate all before mutation.
+
+        Duplicates are ignored. Returns the aggregate cascade report and
+        invalidates existing element wrappers after a nonempty batch.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._subcatch_idx(key))
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_many(self._h(), indices.data(), <int>indices.size(), &report)
+        if rc != 0:
+            swmm_impact_report_free(&report)
+            _check(rc)
+        if indices.size():
+            self._owner._bump_generation()
+        return _impact_report_to_list(&report)
+
+    def delete_gages(self, keys):
+        """Delete a batch using pre-edit names/indices; validate all before mutation.
+
+        Duplicates are ignored. Returns the aggregate cascade report and
+        invalidates existing element wrappers after a nonempty batch.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._gage_idx(key))
+        cdef SWMM_ImpactReport report
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_many(self._h(), indices.data(), <int>indices.size(), &report)
+        if rc != 0:
+            swmm_impact_report_free(&report)
+            _check(rc)
+        if indices.size():
+            self._owner._bump_generation()
+        return _impact_report_to_list(&report)
+
+    # =========================================================================
+    # Recorded deletion (undoable)
+    # =========================================================================
+
+    cdef tuple _recorded(self, int rc, SWMM_ImpactReport* report, SWMM_DeleteRecord record,
+                         bint changed):
+        """Raise on failure; otherwise return C{(impacts, DeleteRecord)}."""
+        if rc != 0:
+            swmm_impact_report_free(report)
+            _check(rc)
+        if changed:
+            self._owner._bump_generation()
+        return _impact_report_to_list(report), _delete_record(self._owner, record)
+
+    def delete_node_recorded(self, id_or_idx) -> tuple:
+        """Delete a node as L{delete_node} does, and record how to undo it.
+
+        The record covers the node's row, subtype and 2D coupling rows, name
+        and coordinates, every link it cascade-deletes, its inlet usages,
+        inflow, DWF and RDII rows, treatment, reaction rows, initial quality,
+        user flags and heat overrides, and every reference the delete cleared
+        or renumbered.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}: the cascade report, as from
+            L{delete_node}, and the L{DeleteRecord} that undoes the delete.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On C API failure, such as an engine that is not
+            in C{BUILDING} or C{OPENED} state.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_link_recorded(self, id_or_idx) -> tuple:
+        """Delete a link as L{delete_link} does, and record how to undo it.
+
+        The record covers the link's row, subtype row, name and geometry, its
+        inlet usages, LID node outlets, reaction rows, initial quality, user
+        flags and heat overrides, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Link name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_subcatch_recorded(self, id_or_idx) -> tuple:
+        """Delete a subcatchment as L{delete_subcatch} does, and record how to
+        undo it.
+
+        The record covers the subcatchment's row, name, polygon and patterns,
+        its LID usage rows, surface loadings, reaction laws, groundwater flow
+        expressions and user flags, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Subcatchment name (C{str}) or zero-based index
+            (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the subcatchment is not
+            found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._subcatch_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_gage_recorded(self, id_or_idx) -> tuple:
+        """Delete a rain gage as L{delete_gage} does, and record how to undo it,
+        including the subcatchment references the delete cleared.
+
+        @param id_or_idx: Gage name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the gage is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._gage_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_nodes_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_nodes} does, and record how to undo the
+        whole batch: one L{DeleteRecord} restores every node at its original
+        index.
+
+        An empty batch deletes nothing and returns a record whose restore does
+        nothing.
+
+        @param keys: Pre-batch node names or zero-based indices.
+        @return: C{(impacts, record)}: the aggregate cascade report and the
+            record.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If a name is not found; nothing is deleted.
+        @raise EngineError: On C API failure; nothing is deleted.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._node_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_links_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_links} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch link names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._link_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_subcatchments_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_subcatchments} does, and record how to
+        undo the whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch subcatchment names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._subcatch_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_gages_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_gages} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch gage names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._gage_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
 
     # =========================================================================
     # Internal index resolution helpers
@@ -262,7 +646,7 @@ cdef class ModelEditor:
         cdef int ni
         if isinstance(id_or_idx, str):
             nb = id_or_idx.encode('utf-8')
-            ni = swmm_node_index(self._handle, nb)
+            ni = swmm_node_index(self._h(), nb)
             if ni < 0:
                 raise ElementNotFoundError(id_or_idx)
             return ni
@@ -273,7 +657,7 @@ cdef class ModelEditor:
         cdef int li
         if isinstance(id_or_idx, str):
             lb = id_or_idx.encode('utf-8')
-            li = swmm_link_index(self._handle, lb)
+            li = swmm_link_index(self._h(), lb)
             if li < 0:
                 raise ElementNotFoundError(id_or_idx)
             return li
@@ -284,7 +668,7 @@ cdef class ModelEditor:
         cdef int si
         if isinstance(id_or_idx, str):
             sb = id_or_idx.encode('utf-8')
-            si = swmm_subcatch_index(self._handle, sb)
+            si = swmm_subcatch_index(self._h(), sb)
             if si < 0:
                 raise ElementNotFoundError(id_or_idx)
             return si
@@ -295,7 +679,7 @@ cdef class ModelEditor:
         cdef int gi
         if isinstance(id_or_idx, str):
             gb = id_or_idx.encode('utf-8')
-            gi = swmm_gage_index(self._handle, gb)
+            gi = swmm_gage_index(self._h(), gb)
             if gi < 0:
                 raise ElementNotFoundError(id_or_idx)
             return gi
@@ -306,7 +690,7 @@ cdef class ModelEditor:
         cdef int ti
         if isinstance(id_or_idx, str):
             tb = id_or_idx.encode('utf-8')
-            ti = swmm_table_index(self._handle, tb)
+            ti = swmm_table_index(self._h(), tb)
             if ti < 0:
                 raise ElementNotFoundError(id_or_idx)
             return ti
@@ -317,7 +701,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_pollutant_index(self._handle, b)
+            i = swmm_pollutant_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -328,7 +712,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_pattern_index(self._handle, b)
+            i = swmm_pattern_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -339,7 +723,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_aquifer_index(self._handle, b)
+            i = swmm_aquifer_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -350,7 +734,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_snowpack_index(self._handle, b)
+            i = swmm_snowpack_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -361,7 +745,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_lid_index(self._handle, b)
+            i = swmm_lid_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -372,7 +756,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_street_index(self._handle, b)
+            i = swmm_street_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -383,7 +767,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_inlet_index(self._handle, b)
+            i = swmm_inlet_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -394,7 +778,7 @@ cdef class ModelEditor:
         cdef int i
         if isinstance(id_or_idx, str):
             b = id_or_idx.encode('utf-8')
-            i = swmm_landuse_index(self._handle, b)
+            i = swmm_landuse_index(self._h(), b)
             if i < 0:
                 raise ElementNotFoundError(id_or_idx)
             return i
@@ -419,7 +803,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_node_analyze_impact(self._handle, idx, &report))
+        _check(swmm_node_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_link_impact(self, id_or_idx) -> list:
@@ -437,7 +821,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_link_analyze_impact(self._handle, idx, &report))
+        _check(swmm_link_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_subcatch_impact(self, id_or_idx) -> list:
@@ -457,7 +841,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_subcatch_analyze_impact(self._handle, idx, &report))
+        _check(swmm_subcatch_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_gage_impact(self, id_or_idx) -> list:
@@ -475,7 +859,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_gage_analyze_impact(self._handle, idx, &report))
+        _check(swmm_gage_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_table_impact(self, id_or_idx) -> list:
@@ -493,7 +877,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_table_analyze_impact(self._handle, idx, &report))
+        _check(swmm_table_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_transect_impact(self, int idx) -> list:
@@ -509,7 +893,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_transect_analyze_impact(self._handle, idx, &report))
+        _check(swmm_transect_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_pollutant_impact(self, id_or_idx) -> list:
@@ -527,7 +911,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_pollutant_analyze_impact(self._handle, idx, &report))
+        _check(swmm_pollutant_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_pattern_impact(self, id_or_idx) -> list:
@@ -545,7 +929,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_pattern_analyze_impact(self._handle, idx, &report))
+        _check(swmm_pattern_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_aquifer_impact(self, id_or_idx) -> list:
@@ -562,7 +946,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_aquifer_analyze_impact(self._handle, idx, &report))
+        _check(swmm_aquifer_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_snowpack_impact(self, id_or_idx) -> list:
@@ -579,7 +963,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_snowpack_analyze_impact(self._handle, idx, &report))
+        _check(swmm_snowpack_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_lid_impact(self, id_or_idx) -> list:
@@ -597,7 +981,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_lid_analyze_impact(self._handle, idx, &report))
+        _check(swmm_lid_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_street_impact(self, id_or_idx) -> list:
@@ -614,7 +998,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_street_analyze_impact(self._handle, idx, &report))
+        _check(swmm_street_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_inlet_impact(self, id_or_idx) -> list:
@@ -632,7 +1016,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_inlet_analyze_impact(self._handle, idx, &report))
+        _check(swmm_inlet_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_landuse_impact(self, id_or_idx) -> list:
@@ -649,7 +1033,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_landuse_analyze_impact(self._handle, idx, &report))
+        _check(swmm_landuse_analyze_impact(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def analyze_hydrograph_impact(self, str uh_name) -> list:
@@ -668,7 +1052,7 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_hydrograph_analyze_impact(self._handle, nb, &report))
+        _check(swmm_hydrograph_analyze_impact(self._h(), nb, &report))
         return _impact_report_to_list(&report)
 
     # =========================================================================
@@ -697,7 +1081,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_node_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_node_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_link(self, id_or_idx) -> list:
@@ -720,7 +1105,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_link_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_link_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_subcatch(self, id_or_idx) -> list:
@@ -745,7 +1131,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_subcatch_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_subcatch_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_gage(self, id_or_idx) -> list:
@@ -765,7 +1152,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_gage_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_gage_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_table(self, id_or_idx) -> list:
@@ -789,7 +1177,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_table_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_table_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_transect(self, int idx) -> list:
@@ -810,7 +1199,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_transect_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_transect_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_pollutant(self, id_or_idx) -> list:
@@ -834,7 +1224,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_pollutant_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_pollutant_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_pattern(self, id_or_idx) -> list:
@@ -858,7 +1249,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_pattern_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_pattern_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_aquifer(self, id_or_idx) -> list:
@@ -880,7 +1272,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_aquifer_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_aquifer_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_snowpack(self, id_or_idx) -> list:
@@ -902,7 +1295,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_snowpack_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_snowpack_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_lid(self, id_or_idx) -> list:
@@ -925,7 +1319,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_lid_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_lid_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_street(self, id_or_idx) -> list:
@@ -948,7 +1343,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_street_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_street_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_inlet(self, id_or_idx) -> list:
@@ -971,7 +1367,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_inlet_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_inlet_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_landuse(self, id_or_idx) -> list:
@@ -993,7 +1390,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_landuse_delete(self._handle, idx, &report))
+        self._owner._bump_generation()
+        _check(swmm_landuse_delete(self._h(), idx, &report))
         return _impact_report_to_list(&report)
 
     def delete_hydrograph(self, str uh_name) -> list:
@@ -1014,7 +1412,8 @@ cdef class ModelEditor:
         cdef SWMM_ImpactReport report
         report.entries = NULL
         report.n_entries = 0
-        _check(swmm_hydrograph_delete(self._handle, nb, &report))
+        self._owner._bump_generation()
+        _check(swmm_hydrograph_delete(self._h(), nb, &report))
         return _impact_report_to_list(&report)
 
     # =========================================================================
@@ -1052,7 +1451,8 @@ cdef class ModelEditor:
         res.n_cleared = 0
         res.warnings = NULL
         res.n_warnings = 0
-        _check(swmm_node_convert(self._handle, idx, new_type, &res))
+        self._owner._bump_generation()
+        _check(swmm_node_convert(self._h(), idx, new_type, &res))
         return _conversion_result_to_py(&res)
 
     def convert_link(self, id_or_idx, int new_type) -> ConversionResult:
@@ -1084,7 +1484,8 @@ cdef class ModelEditor:
         res.n_cleared = 0
         res.warnings = NULL
         res.n_warnings = 0
-        _check(swmm_link_convert(self._handle, idx, new_type, &res))
+        self._owner._bump_generation()
+        _check(swmm_link_convert(self._h(), idx, new_type, &res))
         return _conversion_result_to_py(&res)
 
     # =========================================================================
@@ -1109,7 +1510,7 @@ cdef class ModelEditor:
         @raise EngineError: On a violated usage rule or C API failure.
         """
         cdef int idx = self._node_idx(id_or_idx)
-        _check(swmm_node_set_virtual(self._handle, idx, 1 if make_virtual else 0))
+        _check(swmm_node_set_virtual(self._h(), idx, 1 if make_virtual else 0))
 
     def split_conduit(self, id_or_idx, double t, str new_node_name,
                       str new_link_name, bint make_virtual=False) -> tuple:
@@ -1146,7 +1547,8 @@ cdef class ModelEditor:
         cdef bytes link_b = new_link_name.encode('utf-8')
         cdef int new_node = -1
         cdef int new_link = -1
-        _check(swmm_conduit_split(self._handle, idx, t, node_b, link_b,
+        self._owner._bump_generation()
+        _check(swmm_conduit_split(self._h(), idx, t, node_b, link_b,
                                   1 if make_virtual else 0,
                                   &new_node, &new_link))
         return (new_node, new_link)
@@ -1171,7 +1573,98 @@ cdef class ModelEditor:
         """
         cdef int idx = self._node_idx(id_or_idx)
         cdef int surviving = -1
-        _check(swmm_virtual_junction_fuse(self._handle, idx, &surviving))
+        self._owner._bump_generation()
+        _check(swmm_virtual_junction_fuse(self._h(), idx, &surviving))
+        return surviving
+
+    def set_node_inlet(self, id_or_idx, bint make_inlet=True) -> None:
+        """Promote a node to an inlet junction, or demote it back.
+
+        An inlet junction is a virtual junction on a STREET conduit pair that
+        also carries a street inlet (INP C{[INLET_JUNCTIONS]}). Promotion runs
+        the virtual-junction rules plus the street shape rule (623) B{before}
+        changing anything, and makes the node virtual first if it is not
+        already; on a violated rule the node is left exactly as it was.
+        Demotion clears the flag and deletes the node's inlet-usage row,
+        leaving a plain virtual junction.
+
+        Give the node a usage row (C{infrastructure.inlet_usages.set} with
+        C{host_kind=InletHostKind.NODE}) before running the model — an inlet
+        junction without one fails validation.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param make_inlet: C{True} to promote, C{False} to demote.
+        @type make_inlet: bool
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On a violated usage rule or C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        _check(swmm_node_set_inlet(self._h(), idx, 1 if make_inlet else 0))
+
+    def split_conduit_inlet(self, id_or_idx, double t, str new_node_name,
+                            str new_link_name, str inlet_id,
+                            str capture_node) -> tuple:
+        """Split a street conduit, inserting an B{inlet junction}.
+
+        L{split_conduit} with C{make_virtual=True}, followed by the inlet
+        promotion and the usage row in one step: the inserted node captures
+        gutter flow with design C{inlet_id} and delivers it to
+        C{capture_node}. The usage row takes the C{[INLET_USAGE]} defaults
+        (one inlet, no clogging, no flow limit, no local depression,
+        AUTOMATIC placement); edit it afterwards through
+        C{infrastructure.inlet_usages}.
+
+        @param id_or_idx: Conduit name (C{str}) or zero-based index (C{int}).
+        @type id_or_idx: int or str
+        @param t: Normalized split position, exclusive (0, 1).
+        @type t: float
+        @param new_node_name: Unique name for the inserted inlet junction.
+        @type new_node_name: str
+        @param new_link_name: Unique name for the new downstream conduit.
+        @type new_link_name: str
+        @param inlet_id: Name of an existing C{[INLETS]} design.
+        @type inlet_id: str
+        @param capture_node: Name of the receiving (underdrain) node.
+        @type capture_node: str
+        @return: C{(new_node_index, new_link_index)}.
+        @rtype: tuple[int, int]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On invalid C{t}, duplicate names, an unknown
+            design or capture node, a non-STREET conduit, or a rule failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef bytes node_b = new_node_name.encode('utf-8')
+        cdef bytes link_b = new_link_name.encode('utf-8')
+        cdef bytes inlet_b = inlet_id.encode('utf-8')
+        cdef bytes cap_b = capture_node.encode('utf-8')
+        cdef int new_node = -1
+        cdef int new_link = -1
+        self._owner._bump_generation()
+        _check(swmm_conduit_split_inlet(self._h(), idx, t, node_b, link_b,
+                                        inlet_b, cap_b, &new_node, &new_link))
+        return (new_node, new_link)
+
+    def fuse_inlet_junction(self, id_or_idx) -> int:
+        """Re-fuse the two conduits of an inlet junction into one.
+
+        Inverse of L{split_conduit_inlet}: the node's inlet-usage row is
+        removed, then the pair is fused exactly as
+        L{fuse_virtual_junction} does.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}) of
+            the inlet junction.
+        @type id_or_idx: int or str
+        @return: Index of the surviving conduit AFTER deletions renumber.
+        @rtype: int
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: If the node is not a two-conduit through
+            junction, or on C API failure.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef int surviving = -1
+        self._owner._bump_generation()
+        _check(swmm_inlet_junction_fuse(self._h(), idx, &surviving))
         return surviving
 
     # =========================================================================
@@ -1185,7 +1678,7 @@ cdef class ModelEditor:
         @return: Node count.
         @rtype: int
         """
-        return swmm_node_count(self._handle)
+        return swmm_node_count(self._h())
 
     @property
     def link_count(self) -> int:
@@ -1194,7 +1687,7 @@ cdef class ModelEditor:
         @return: Link count.
         @rtype: int
         """
-        return swmm_link_count(self._handle)
+        return swmm_link_count(self._h())
 
     @property
     def subcatch_count(self) -> int:
@@ -1203,7 +1696,7 @@ cdef class ModelEditor:
         @return: Subcatchment count.
         @rtype: int
         """
-        return swmm_subcatch_count(self._handle)
+        return swmm_subcatch_count(self._h())
 
     @property
     def gage_count(self) -> int:
@@ -1212,7 +1705,7 @@ cdef class ModelEditor:
         @return: Gage count.
         @rtype: int
         """
-        return swmm_gage_count(self._handle)
+        return swmm_gage_count(self._h())
 
     @property
     def table_count(self) -> int:
@@ -1221,7 +1714,7 @@ cdef class ModelEditor:
         @return: Table count.
         @rtype: int
         """
-        return swmm_table_count(self._handle)
+        return swmm_table_count(self._h())
 
     # =========================================================================
     # Typed time-control properties (datetime)
@@ -1235,13 +1728,13 @@ cdef class ModelEditor:
         @raise EngineError: On C API failure.
         """
         cdef double v = 0.0
-        _check(swmm_options_get_start_date(self._handle, &v))
+        _check(swmm_options_get_start_date(self._h(), &v))
         return oadate_to_datetime(v)
 
     @start_datetime.setter
     def start_datetime(self, value: datetime) -> None:
         cdef double v = datetime_to_oadate(value)
-        _check(swmm_options_set_start_date(self._handle, v))
+        _check(swmm_options_set_start_date(self._h(), v))
 
     @property
     def end_datetime(self) -> datetime:
@@ -1251,13 +1744,13 @@ cdef class ModelEditor:
         @raise EngineError: On C API failure.
         """
         cdef double v = 0.0
-        _check(swmm_options_get_end_date(self._handle, &v))
+        _check(swmm_options_get_end_date(self._h(), &v))
         return oadate_to_datetime(v)
 
     @end_datetime.setter
     def end_datetime(self, value: datetime) -> None:
         cdef double v = datetime_to_oadate(value)
-        _check(swmm_options_set_end_date(self._handle, v))
+        _check(swmm_options_set_end_date(self._h(), v))
 
     @property
     def report_start_datetime(self) -> datetime:
@@ -1267,10 +1760,17 @@ cdef class ModelEditor:
         @raise EngineError: On C API failure.
         """
         cdef double v = 0.0
-        _check(swmm_options_get_report_start(self._handle, &v))
+        _check(swmm_options_get_report_start(self._h(), &v))
         return oadate_to_datetime(v)
 
     @report_start_datetime.setter
     def report_start_datetime(self, value: datetime) -> None:
         cdef double v = datetime_to_oadate(value)
-        _check(swmm_options_set_report_start(self._handle, v))
+        _check(swmm_options_set_report_start(self._h(), v))
+
+from libcpp.vector cimport vector
+cdef extern from "openswmm/engine/openswmm_edit.h":
+    int swmm_node_delete_many(SWMM_Engine, const int*, int, SWMM_ImpactReport*)
+    int swmm_link_delete_many(SWMM_Engine, const int*, int, SWMM_ImpactReport*)
+    int swmm_subcatch_delete_many(SWMM_Engine, const int*, int, SWMM_ImpactReport*)
+    int swmm_gage_delete_many(SWMM_Engine, const int*, int, SWMM_ImpactReport*)

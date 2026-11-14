@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Report Snapshot
 ===============
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Provides :func:`get_report_snapshot` — a single call that assembles the
 programmatic equivalent of the SWMM ``.rpt`` file into structured Python
@@ -15,8 +31,7 @@ Example::
     from openswmm.engine import Solver, get_report_snapshot
 
     with Solver("model.inp", "model.rpt", "model.out") as s:
-        s.start()
-        while s.step() == 0:
+        for _ in s.steps():
             pass
         s.end()
         report = get_report_snapshot(s)
@@ -98,6 +113,9 @@ class RunoffContinuity:
     initial_storage: float
     final_storage: float
 
+    initial_snow: float = 0.0
+    final_snow: float = 0.0
+
 
 @dataclass
 class RoutingContinuity:
@@ -119,6 +137,10 @@ class RoutingContinuity:
     seepage_loss: float
     initial_storage: float
     final_storage: float
+
+    forcing_inflow: float = 0.0
+    coupling_outflow: float = 0.0
+    link_groundwater_inflow: float = 0.0
 
 
 @dataclass
@@ -275,7 +297,7 @@ def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
 
         with Solver("model.inp", "model.rpt", "model.out") as s:
             s.start()
-            while s.step() == 0:
+            for _ in s.steps():
                 pass
             s.end()
             snap = get_report_snapshot(s)
@@ -303,39 +325,13 @@ def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
     )
 
     # --- Routing diagnostics (convergence) ------------------------------------
-    raw_rs: Dict[str, Any] = {}
-    if hasattr(mb, "get_routing_stats"):
-        try:
-            raw_rs = mb.get_routing_stats() or {}
-        except Exception:
-            pass
-
-    n_steps = int(raw_rs.get("n_steps", 0))
-    pct_nc  = float(raw_rs.get("pct_non_converged", 0.0))
-
-    max_courant = 0.0
-    if hasattr(mb, "get_max_courant"):
-        try:
-            max_courant = mb.get_max_courant()
-        except Exception:
-            max_courant = float(raw_rs.get("max_courant", 0.0))
-    else:
-        max_courant = float(raw_rs.get("max_courant", 0.0))
-
-    routing_diag = RoutingDiagnostics(
-        avg_time_step=float(raw_rs.get("avg_step", 0.0)),
-        min_time_step=float(raw_rs.get("min_step", 0.0)),
-        max_time_step=float(raw_rs.get("max_step", 0.0)),
-        n_steps=n_steps,
-        pct_not_converged=pct_nc,
-        n_steps_not_converged=round(n_steps * pct_nc / 100.0),
-        avg_iterations=float(raw_rs.get("avg_iterations", 0.0)),
-        max_courant=max_courant,
-    )
+    # Use the current typed API. Probing retired get_* methods silently
+    # produced all-zero diagnostics even after a completed simulation.
+    routing_diag = mb.routing_diagnostics
 
     # --- Runoff continuity ----------------------------------------------------
     runoff_cont = RunoffContinuity(
-        continuity_error_pct=mb.runoff_continuity_error,
+        continuity_error_pct=100.0 * mb.runoff_continuity_error,
         total_rainfall=mb.runoff_total(RunoffTotal.RAINFALL),
         total_evaporation=mb.runoff_total(RunoffTotal.EVAP),
         total_infiltration=mb.runoff_total(RunoffTotal.INFIL),
@@ -343,11 +339,13 @@ def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
         total_snow_removal=mb.runoff_total(RunoffTotal.SNOWREMOV),
         initial_storage=mb.runoff_total(RunoffTotal.INITSTORE),
         final_storage=mb.runoff_total(RunoffTotal.FINALSTORE),
+        initial_snow=mb.runoff_total(RunoffTotal.INITSNOW),
+        final_snow=mb.runoff_total(RunoffTotal.FINALSNOW),
     )
 
     # --- Routing continuity ---------------------------------------------------
     routing_cont = RoutingContinuity(
-        continuity_error_pct=mb.routing_continuity_error,
+        continuity_error_pct=100.0 * mb.routing_continuity_error,
         dry_weather_inflow=mb.routing_total(RoutingTotal.DRY_WEATHER),
         wet_weather_inflow=mb.routing_total(RoutingTotal.WET_WEATHER),
         groundwater_inflow=mb.routing_total(RoutingTotal.GW_INFLOW),
@@ -359,6 +357,9 @@ def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
         seepage_loss=mb.routing_total(RoutingTotal.SEEP_LOSS),
         initial_storage=mb.routing_total(RoutingTotal.INIT_STORAGE),
         final_storage=mb.routing_total(RoutingTotal.FINAL_STORAGE),
+        forcing_inflow=mb.routing_total(RoutingTotal.FORCING_INFLOW),
+        coupling_outflow=mb.routing_total(RoutingTotal.COUPLING_OUT),
+        link_groundwater_inflow=mb.routing_total(RoutingTotal.LINK_GW_INFLOW),
     )
 
     # --- Quality continuity (per pollutant) -----------------------------------
@@ -374,7 +375,7 @@ def get_report_snapshot(solver: "Solver") -> ReportSnapshot:
             evap = 0.0
         quality_cont.append(QualityContinuity(
             pollutant_id=polls.get_id(i),
-            continuity_error_pct=mb.quality_continuity_error(i),
+            continuity_error_pct=100.0 * mb.quality_continuity_error(i),
             seep_loss=seep,
             evap_loss=evap,
         ))

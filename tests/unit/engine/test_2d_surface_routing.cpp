@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_2d_surface_routing.cpp
- * @brief Unit tests for the optional 2D surface routing module.
+ * @file      test_2d_surface_routing.cpp
+ * @brief     Unit tests for the optional 2D surface routing module.
  *
  * @details Verifies:
  *          - Mesh topology construction (neighbours, edges, areas)
@@ -15,15 +31,21 @@
  * @see src/engine/2d/
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <clocale>
 #include <cmath>
+#include <cctype>
+#include <cstdlib>
+#include <limits>
+#include <utility>
 #include <vector>
+#include <sstream>
 #include <string>
 #include <numeric>
 
@@ -34,7 +56,15 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/mesh/VertexReconstruction.hpp"
 #include "2d/solver/SurfaceFluxCalculator.hpp"
+#include "2d/solver/InertialEdges.hpp"
 #include "2d/input/SectionHandlers2D.hpp"
+#include "2d/solver/SurfaceSolverFactory.hpp"
+#include "2d/solver/ISurfaceSolver.hpp"
+#include "core/SimulationContext.hpp"
+#include "input/InputReader.hpp"
+#include "input/SectionRegistry.hpp"
+
+#include "platform_test_support.hpp"
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
@@ -44,6 +74,11 @@
 #include <filesystem>
 #include <stdexcept>
 #endif
+
+// The backend-selection tests below set OPENSWMM_2D_BACKEND, which MSVC has
+// no setenv/unsetenv for.
+using plattest::setEnvVar;
+using plattest::unsetEnvVar;
 
 using namespace openswmm::twoD;
 
@@ -58,6 +93,13 @@ using namespace openswmm::twoD;
 //   v0 (0,0,0) -------- v1 (1,0,0)
 //
 
+/**
+ * @brief Build the flat two-triangle unit-square surface fixture.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned 1-by-1 m mesh with triangles(0,1,3)/(0,3,2), uniform Manning.035 and built topology.
+ */
 static MeshData makeUnitSquareMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
@@ -67,10 +109,10 @@ static MeshData makeUnitSquareMesh() {
 
     mesh.resize_triangles(2);
     // T0: lower-right triangle
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
+    mesh.set_triangle(0, 0, 1, 3);
     mesh.mannings_n[0] = 0.035;
     // T1: upper-left triangle
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[1] = 0.035;
 
     buildMeshTopology(mesh);
@@ -84,24 +126,30 @@ static MeshData makeUnitSquareMesh() {
 // z = 0.1 * x + 0.2 * y on a 2-triangle mesh
 //
 
+/**
+ * @brief Build a two-triangle planar-bed gradient fixture.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned 10-by-10 m mesh sampled from z=.1*x+.2*y in metres, Manning.03 and built topology.
+ */
 static MeshData makeTiltedPlaneMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
     mesh.vx = {0.0, 10.0, 0.0, 10.0};
-    mesh.vy = {0.0,  0.0, 10.0, 10.0};
+    mesh.vy = {0.0, 0.0, 10.0, 10.0};
     // z = 0.1*x + 0.2*y
     mesh.vz = {0.0, 1.0, 2.0, 3.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.03;
     mesh.mannings_n[1] = 0.03;
 
     buildMeshTopology(mesh);
     return mesh;
 }
-
 
 // ============================================================================
 // MeshBuilder Tests
@@ -128,10 +176,10 @@ TEST(MeshBuilder, FindsSharedNeighbour) {
     auto mesh = makeUnitSquareMesh();
     // The two triangles share one edge (v0-v3 diagonal).
     // At least one neighbour of T0 must be T1, and vice versa.
-    bool t0_sees_t1 = (mesh.tri_nbr0[0] == 1 || mesh.tri_nbr1[0] == 1
-                       || mesh.tri_nbr2[0] == 1);
-    bool t1_sees_t0 = (mesh.tri_nbr0[1] == 0 || mesh.tri_nbr1[1] == 0
-                       || mesh.tri_nbr2[1] == 0);
+    bool t0_sees_t1 = (mesh.cell_neighbour(0, 0) == 1 || mesh.cell_neighbour(0, 1) == 1 ||
+                       mesh.cell_neighbour(0, 2) == 1);
+    bool t1_sees_t0 = (mesh.cell_neighbour(1, 0) == 0 || mesh.cell_neighbour(1, 1) == 0 ||
+                       mesh.cell_neighbour(1, 2) == 0);
     EXPECT_TRUE(t0_sees_t1);
     EXPECT_TRUE(t1_sees_t0);
 }
@@ -140,35 +188,48 @@ TEST(MeshBuilder, BoundaryEdgesAreMinusOne) {
     auto mesh = makeUnitSquareMesh();
     // Each triangle has 3 edges; 1 is shared, 2 are boundary.
     int boundary_count_t0 = 0;
-    if (mesh.tri_nbr0[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr1[0] == -1) ++boundary_count_t0;
-    if (mesh.tri_nbr2[0] == -1) ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 0) == -1)
+        ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 1) == -1)
+        ++boundary_count_t0;
+    if (mesh.cell_neighbour(0, 2) == -1)
+        ++boundary_count_t0;
     EXPECT_EQ(boundary_count_t0, 2);
 
     int boundary_count_t1 = 0;
-    if (mesh.tri_nbr0[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr1[1] == -1) ++boundary_count_t1;
-    if (mesh.tri_nbr2[1] == -1) ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 0) == -1)
+        ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 1) == -1)
+        ++boundary_count_t1;
+    if (mesh.cell_neighbour(1, 2) == -1)
+        ++boundary_count_t1;
     EXPECT_EQ(boundary_count_t1, 2);
 }
 
 TEST(MeshBuilder, EdgeLengthsPositive) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        EXPECT_GT(mesh.edge_length[i], 0.0)
-            << "Edge " << i << " has non-positive length";
+    // Padded layout: every REAL slot (k < cell_nv) has positive length; the
+    // padding slot of a triangle row is zero by contract.
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < kMaxCellVerts; ++e) {
+            const int i = MeshData::slot(t, e);
+            if (e < mesh.cell_vertex_count(t))
+                EXPECT_GT(mesh.edge_length[i], 0.0) << "Edge " << i << " has non-positive length";
+            else
+                EXPECT_EQ(mesh.edge_length[i], 0.0) << "padding slot " << i;
+        }
     }
 }
 
 TEST(MeshBuilder, EdgeNormalsUnitLength) {
     auto mesh = makeUnitSquareMesh();
-    int n3 = mesh.n_triangles() * 3;
-    for (int i = 0; i < n3; ++i) {
-        double len = std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i]
-                               + mesh.edge_ny[i] * mesh.edge_ny[i]);
-        EXPECT_NEAR(len, 1.0, 1e-12)
-            << "Edge " << i << " normal is not unit length";
+    for (int t = 0; t < mesh.n_triangles(); ++t) {
+        for (int e = 0; e < mesh.cell_vertex_count(t); ++e) {
+            const int i = MeshData::slot(t, e);
+            double len =
+                std::sqrt(mesh.edge_nx[i] * mesh.edge_nx[i] + mesh.edge_ny[i] * mesh.edge_ny[i]);
+            EXPECT_NEAR(len, 1.0, 1e-12) << "Edge " << i << " normal is not unit length";
+        }
     }
 }
 
@@ -189,15 +250,15 @@ TEST(MeshBuilder, RecomputeVertexZDependentsUpdatesIncidentTriangles) {
     // Edges incident to v3 see midpoint Z = 0.5 * (0 + 3) = 1.5;
     // edges not incident to v3 stay at 0.
     for (int t = 0; t < mesh.n_triangles(); ++t) {
-        const int v0 = mesh.tri_v0[t];
-        const int v1 = mesh.tri_v1[t];
-        const int v2 = mesh.tri_v2[t];
+        const int v0 = mesh.cell_vertex(t, 0);
+        const int v1 = mesh.cell_vertex(t, 1);
+        const int v2 = mesh.cell_vertex(t, 2);
         const int endpoints[3][2] = {{v1, v2}, {v2, v0}, {v0, v1}};
         for (int e = 0; e < 3; ++e) {
             const int va = endpoints[e][0];
             const int vb = endpoints[e][1];
             const double expected = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-            EXPECT_NEAR(mesh.edge_mz[t * 3 + e], expected, 1e-12)
+            EXPECT_NEAR(mesh.edge_mz(MeshData::slot(t, e)), expected, 1e-12)
                 << "t=" << t << " e=" << e;
         }
     }
@@ -209,15 +270,20 @@ TEST(V_E3_Parser, ParsesAllSupportedTypes) {
     std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
 
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"3", "1", "NORMAL_FLOW", "0.002", "*", "*"}, rows).empty());
+                    {"3", "1", "NORMAL_FLOW", "0.002", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"4", "0", "SPECIFIED_STAGE", "95.4", "*", "*"}, rows).empty());
+                    {"4", "0", "SPECIFIED_STAGE", "95.4", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"5", "2", "TS_STAGE", "DownstreamTS", "*", "Outlet"}, rows).empty());
+                    {"5", "2", "TS_STAGE", "DownstreamTS", "*", "Outlet"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"6", "1", "SPECIFIED_FLOW", "0.5", "*", "*"}, rows).empty());
+                    {"6", "1", "SPECIFIED_FLOW", "0.5", "*", "*"}, rows)
+                    .empty());
     EXPECT_TRUE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"7", "0", "RATING_CURVE", "WeirRC", "*", "*"}, rows).empty());
+                    {"7", "0", "RATING_CURVE", "WeirRC", "*", "*"}, rows)
+                    .empty());
 
     ASSERT_EQ(rows.size(), 5u);
     EXPECT_EQ(rows[0].bc_type, static_cast<int>(BoundaryType::NORMAL_FLOW));
@@ -235,8 +301,9 @@ TEST(V_E3_Parser, ParsesAllSupportedTypes) {
 
 TEST(V_E3_Parser, RejectsBadType) {
     std::vector<openswmm::twoD::SurfaceRouter2D::PendingBoundaryRow> rows;
-    EXPECT_FALSE(openswmm::twoD::parse2DBoundaryConditionsLine(
-        {"1", "0", "GIBBERISH", "0", "*", "*"}, rows).empty());
+    EXPECT_FALSE(
+        openswmm::twoD::parse2DBoundaryConditionsLine({"1", "0", "GIBBERISH", "0", "*", "*"}, rows)
+            .empty());
 }
 
 TEST(V_E3_Parser, EmptyLineIsSilentlySkipped) {
@@ -245,27 +312,284 @@ TEST(V_E3_Parser, EmptyLineIsSilentlySkipped) {
     EXPECT_EQ(rows.size(), 0u);
 }
 
+// The per-slot boundary values are held only where they differ from the
+// default, yet read, write and archive exactly like the dense arrays they
+// replaced (mesh open plan I3).
+TEST(BoundaryData, SlotValuesStoreOnlyWhatDiffersFromTheDefault) {
+    openswmm::twoD::SlotValues<double> v;
+    v.assign(8, 0.0);
+    EXPECT_EQ(v.size(), 8u);
+    EXPECT_EQ(v.stored(), 0u);
+    v[3] = 1.5;
+    v[3] += 0.25;
+    v[3] *= 2.0;
+    v[5] = v[3]; // a reference object copies the value, not the binding
+    v[6] = 0.0;  // the default is not stored
+    EXPECT_DOUBLE_EQ(v[3], 3.5);
+    EXPECT_DOUBLE_EQ(std::as_const(v)[5], 3.5);
+    EXPECT_EQ(v.stored(), 2u);
+    v[5] = 0.0; // back to the default: dropped
+    EXPECT_EQ(v.stored(), 1u);
+    // Bit-for-bit, so a dense copy is exactly what a dense array would hold.
+    v[1] = -0.0;
+    v[2] = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_EQ(v.stored(), 3u);
+    const auto dense = v.dense();
+    ASSERT_EQ(dense.size(), 8u);
+    EXPECT_TRUE(std::signbit(dense[1]));
+    EXPECT_TRUE(std::isnan(dense[2]));
+    EXPECT_DOUBLE_EQ(dense[3], 3.5);
+    EXPECT_FALSE(std::signbit(dense[0]));
+    openswmm::twoD::SlotValues<double> back;
+    back.assign(dense);
+    EXPECT_EQ(back.size(), 8u);
+    EXPECT_EQ(back.stored(), 3u);
+    EXPECT_TRUE(std::signbit(back[1]));
+    // The stored slots, in slot order whatever order they were written in.
+    const auto entries = v.entries();
+    ASSERT_EQ(entries.size(), 3u);
+    EXPECT_EQ(entries[0].first, 1u);
+    EXPECT_EQ(entries[1].first, 2u);
+    EXPECT_EQ(entries[2].first, 3u);
+    EXPECT_DOUBLE_EQ(entries[2].second, 3.5);
+    EXPECT_THROW(std::as_const(v).at(8), std::out_of_range);
+    EXPECT_THROW(v.at(8) = 1.0, std::out_of_range);
+
+    // The table indices default to -1 ("none"), before and after a resize.
+    BoundaryData b;
+    EXPECT_EQ(std::as_const(b).edge_bc_tseries[0], -1);
+    b.resize(12);
+    b.edge_bc_rating_curve[7] = -2;
+    b.edge_bc_rating_curve.edit([](std::size_t slot, int& curve) {
+        EXPECT_EQ(slot, 7u);
+        curve = -1; // resolved to "none": dropped
+    });
+    EXPECT_EQ(b.edge_bc_rating_curve.stored(), 0u);
+    b.edge_bc_head[2] = 4.0;
+    b.resize(12); // a resize starts again from the defaults
+    EXPECT_EQ(b.edge_bc_head.stored(), 0u);
+    EXPECT_DOUBLE_EQ(b.edge_bc_head[2], 0.0);
+}
+
+// A mesh's tags and coupled node names are stored once per distinct string
+// and read back exactly as the string-per-element array they replaced
+// (working set plan W1).
+TEST(MeshData, InternedStringsReadBackAsOneStringPerElement) {
+    openswmm::twoD::InternedStrings v;
+    v.resize(5);
+    v.set(1, "road");
+    v.set(3, "road");
+    v.set(4, "roof");
+    EXPECT_EQ(v.size(), 5u);
+    EXPECT_EQ(v[0], "");
+    EXPECT_EQ(v[1], "road");
+    EXPECT_EQ(v[3], "road");
+    EXPECT_EQ(v[4], "roof");
+    v.set(4, ""); // cleared
+    v.set(1, "yard");
+    v.resize(7); // keeps what is there, new elements empty
+    const std::vector<std::string> expected{"", "yard", "", "road", "", "", ""};
+    EXPECT_EQ(v.dense(), expected);
+    v.resize(2);
+    EXPECT_EQ(v.dense(), (std::vector<std::string>{"", "yard"}));
+    openswmm::twoD::InternedStrings back;
+    back.assign(expected);
+    EXPECT_EQ(back.dense(), expected);
+    EXPECT_TRUE(back.interned());
+
+    // A column with more distinct strings than 2 bytes can index (a unique tag
+    // per vertex) falls back to one string per element and reads the same.
+    openswmm::twoD::InternedStrings many;
+    const std::size_t n = 70000;
+    many.resize(n);
+    for (std::size_t i = 0; i < n; ++i)
+        many.set(i, "v" + std::to_string(i));
+    EXPECT_FALSE(many.interned());
+    EXPECT_EQ(many.size(), n);
+    EXPECT_EQ(many[0], "v0");
+    EXPECT_EQ(many[65534], "v65534");
+    EXPECT_EQ(many[65535], "v65535");
+    EXPECT_EQ(many[69999], "v69999");
+    many.set(12, "");
+    many.resize(n + 1);
+    EXPECT_EQ(many[12], "");
+    EXPECT_EQ(many[n], "");
+    EXPECT_EQ(many[n - 1], "v69999");
+}
+
+// The API's per-cell forcing overrides take no memory until one is set, and
+// read and archive as the plain arrays they replaced (working set plan W3).
+TEST(SurfaceState, ForcingOverridesAreAllocatedOnFirstUse) {
+    openswmm::twoD::SurfaceStateData state;
+    state.resize(6, 8);
+    EXPECT_EQ(state.rainfall_forced.size(), 6u);
+    EXPECT_FALSE(state.rainfall_forced.allocated());
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    EXPECT_EQ(state.rainfall_forced[3], 0);
+    EXPECT_DOUBLE_EQ(state.evap_force_val[5], 0.0);
+    state.rainfall_force_val.set(2, 0.0); // the default: still nothing to store
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    state.rainfall_force_val.set(2, 1.5e-6);
+    state.rainfall_forced.set(2, 1);
+    EXPECT_TRUE(state.rainfall_force_val.allocated());
+    EXPECT_FALSE(state.evap_force_val.allocated());
+    EXPECT_DOUBLE_EQ(state.rainfall_force_val[2], 1.5e-6);
+    EXPECT_DOUBLE_EQ(state.rainfall_force_val[1], 0.0);
+    EXPECT_EQ(state.rainfall_force_val.dense(),
+              (std::vector<double>{0.0, 0.0, 1.5e-6, 0.0, 0.0, 0.0}));
+    EXPECT_EQ(state.evap_force_val.dense(), std::vector<double>(6, 0.0));
+    openswmm::twoD::LazyArray<double> back;
+    back.assign(std::vector<double>(4, 0.0));
+    EXPECT_EQ(back.size(), 4u);
+    EXPECT_FALSE(back.allocated());
+    back.assign(std::vector<double>{0.0, -0.0, 0.0});
+    EXPECT_TRUE(back.allocated()); // bit for bit: a negative zero is kept
+    EXPECT_TRUE(std::signbit(back[1]));
+    state.resize(6, 8); // a resize starts again from nothing
+    EXPECT_FALSE(state.rainfall_force_val.allocated());
+    EXPECT_EQ(state.rainfall_forced[2], 0);
+}
+
+// A mesh's initial HGL and velocity arrays take no memory unless authored,
+// and grow, fill and rescale as the plain arrays did (working set plan W4).
+TEST(MeshData, InitialHglAndVelocityAreAllocatedWhenAuthored) {
+    MeshData mesh;
+    mesh.resize_triangles(4);
+    EXPECT_EQ(mesh.tri_init_hgl.size(), 4u);
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    EXPECT_FALSE(mesh.tri_init_u.allocated());
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[2]));
+    EXPECT_DOUBLE_EQ(mesh.tri_init_v[3], 0.0);
+    mesh.tri_init_hgl.set(1, std::numeric_limits<double>::quiet_NaN()); // "not prescribed"
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    mesh.tri_init_hgl.transform([](double h) { return h * 0.3048; }); // NaN stays NaN
+    EXPECT_FALSE(mesh.tri_init_hgl.allocated());
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[0]));
+    mesh.tri_init_hgl.set(1, 10.0);
+    mesh.resize_triangles(6); // keeps what is there, new cells unprescribed
+    EXPECT_EQ(mesh.tri_init_hgl.size(), 6u);
+    EXPECT_DOUBLE_EQ(mesh.tri_init_hgl[1], 10.0);
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[5]));
+    mesh.tri_init_hgl.transform([](double h) { return h * 0.5; });
+    EXPECT_DOUBLE_EQ(mesh.tri_init_hgl[1], 5.0);
+    EXPECT_TRUE(std::isnan(mesh.tri_init_hgl[0]));
+    mesh.tri_init_u.fill(0.25);
+    EXPECT_EQ(mesh.tri_init_u.dense(), std::vector<double>(6, 0.25));
+    mesh.tri_init_u.fill(0.0); // back to the default: released
+    EXPECT_FALSE(mesh.tri_init_u.allocated());
+    EXPECT_EQ(mesh.tri_init_u.dense(), std::vector<double>(6, 0.0));
+}
+
+// Edge midpoints are computed from the vertices where read (working set plan
+// W6a): the same values the builder stored, 0 on a triangle's padding slot,
+// and 0 for cells that were sized before any vertex exists.
+TEST(MeshData, EdgeMidpointsComeFromTheVertices) {
+    MeshData mesh;
+    mesh.resize_vertices(3);
+    mesh.vx = {0.0, 4.0, 0.0};
+    mesh.vy = {0.0, 0.0, 2.0};
+    mesh.vz = {1.0, 3.0, 7.0};
+    mesh.resize_triangles(1);
+    mesh.set_triangle(0, 0, 1, 2);
+    EXPECT_TRUE(mesh.edge_mid_values(0).empty()); // no geometry yet: nothing to archive
+    buildMeshTopology(mesh);
+    // Edge e is opposite vertex e.
+    EXPECT_DOUBLE_EQ(mesh.edge_mx(MeshData::slot(0, 0)), 2.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_my(MeshData::slot(0, 0)), 1.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 0)), 5.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mx(MeshData::slot(0, 1)), 0.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 1)), 4.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 2)), 2.0);
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 3)), 0.0); // padding slot
+    EXPECT_EQ(mesh.edge_mid_values(2), (std::vector<double>{5.0, 4.0, 2.0, 0.0}));
+    // The centroid-to-edge distance (W6b) is (midpoint - centroid) . normal: 2A / (3 L) on a
+    // triangle, 0 on the padding slot.
+    for (int e = 0; e < 3; ++e) {
+        const auto slot = MeshData::slot(0, e);
+        EXPECT_NEAR(mesh.edge_dist_c(slot), 2.0 * mesh.tri_area[0] / (3.0 * mesh.edge_length[slot]),
+                    1e-12);
+    }
+    EXPECT_EQ(mesh.edge_dist_c(MeshData::slot(0, 3)), 0.0);
+    EXPECT_EQ(mesh.edge_dist_c_values().size(), 4u);
+    mesh.vz[2] = 9.0; // a bed edit shows without a refresh
+    EXPECT_DOUBLE_EQ(mesh.edge_mz(MeshData::slot(0, 0)), 6.0);
+
+    MeshData bare; // cells sized by hand, no vertices: zero geometry, as size_geometry() says
+    bare.resize_triangles(2);
+    bare.size_geometry();
+    EXPECT_EQ(bare.edge_mid_values(0), std::vector<double>(8, 0.0));
+    EXPECT_DOUBLE_EQ(bare.edge_mz(MeshData::slot(1, 2)), 0.0);
+    EXPECT_EQ(bare.edge_dist_c_values(), std::vector<double>(8, 0.0));
+    EXPECT_FALSE(std::signbit(bare.edge_dist_c(MeshData::slot(1, 2))));
+}
+
+// The solver's per-edge arrays that only one mode reads are built only when
+// asked for, and the VFR pair built later equals the pair built up front
+// (working set plan W9a).
+TEST(InertialEdges, ModeSpecificArraysAreBuiltOnlyWhenNeeded) {
+    MeshData mesh;
+    mesh.resize_vertices(5);
+    mesh.vx = {0.0, 10.0, 10.0, 0.0, 5.0};
+    mesh.vy = {0.0, 0.0, 10.0, 10.0, 5.0};
+    mesh.vz = {1.0, 2.0, 4.0, 3.0, 0.5};
+    mesh.resize_triangles(4);
+    mesh.set_triangle(0, 0, 1, 4);
+    mesh.set_triangle(1, 1, 2, 4);
+    mesh.set_triangle(2, 2, 3, 4);
+    mesh.set_triangle(3, 3, 0, 4);
+    mesh.mannings_n = {0.02, 0.03, 0.04, 0.05};
+    buildMeshTopology(mesh);
+
+    InertialEdges all, lean;
+    all.build(mesh);
+    ASSERT_EQ(all.ne, 4);
+    EXPECT_EQ(all.ze_lo.size(), 4u);
+    EXPECT_EQ(all.n_face.size(), 4u);
+    EXPECT_EQ(all.n2_face.size(), 4u);
+
+    lean.build(mesh, {false, false, true}); // the inertial law with MEAN faces
+    EXPECT_EQ(lean.ne, 4);
+    EXPECT_TRUE(lean.ze_lo.empty());
+    EXPECT_TRUE(lean.ze_hi.empty());
+    EXPECT_TRUE(lean.n_face.empty());
+    EXPECT_EQ(lean.n2_face, all.n2_face);
+    EXPECT_EQ(lean.zface, all.zface);
+    EXPECT_EQ(lean.xi, all.xi);
+
+    lean.buildVfrFaces(mesh); // the face mode switched to VFR_FACE after the build
+    EXPECT_EQ(lean.ze_lo, all.ze_lo);
+    EXPECT_EQ(lean.ze_hi, all.ze_hi);
+    lean.buildVfrFaces(mesh); // already there: unchanged
+    EXPECT_EQ(lean.ze_lo, all.ze_lo);
+
+    InertialEdges diffusive;
+    diffusive.build(mesh, {true, true, false});
+    EXPECT_EQ(diffusive.n_face, all.n_face);
+    EXPECT_TRUE(diffusive.n2_face.empty());
+    EXPECT_EQ(diffusive.ze_hi, all.ze_hi);
+}
+
 TEST(BoundaryData, ResizeInitialisesAllSlotsIncludingV_E4andV_E5) {
     // Verifies V-E4 (SPECIFIED_FLOW) + V-E5 (RATING_CURVE) slots resize
     // correctly alongside the legacy stage/slope slots, and that the
     // default values are the "unset" / "constant zero" sentinels the
     // API documents.
     BoundaryData b;
-    b.resize(12);  // 4 triangles * 3 edges
+    b.resize(12); // 4 triangles * 3 edges
     EXPECT_EQ(b.size(), 12);
     for (int i = 0; i < 12; ++i) {
         EXPECT_EQ(b.edge_bc_type[i], static_cast<int8_t>(BoundaryType::WALL));
-        EXPECT_DOUBLE_EQ(b.edge_bed_slope[i],  0.0);
-        EXPECT_DOUBLE_EQ(b.edge_bc_head[i],    0.0);
-        EXPECT_EQ(b.edge_bc_tseries[i],         -1);
+        EXPECT_DOUBLE_EQ(b.edge_bed_slope[i], 0.0);
+        EXPECT_DOUBLE_EQ(b.edge_bc_head[i], 0.0);
+        EXPECT_EQ(b.edge_bc_tseries[i], -1);
         EXPECT_TRUE(b.edge_bc_tseries_name[i].empty());
         EXPECT_DOUBLE_EQ(b.edge_bc_cum_flux[i], 0.0);
 
-        EXPECT_DOUBLE_EQ(b.edge_bc_flow[i],    0.0);
-        EXPECT_EQ(b.edge_bc_flow_tseries[i],    -1);
+        EXPECT_DOUBLE_EQ(b.edge_bc_flow[i], 0.0);
+        EXPECT_EQ(b.edge_bc_flow_tseries[i], -1);
         EXPECT_TRUE(b.edge_bc_flow_tseries_name[i].empty());
 
-        EXPECT_EQ(b.edge_bc_rating_curve[i],   -1);
+        EXPECT_EQ(b.edge_bc_rating_curve[i], -1);
         EXPECT_TRUE(b.edge_bc_rating_curve_name[i].empty());
     }
 }
@@ -275,21 +599,21 @@ TEST(MeshBuilder, RecomputeVertexZDependentsLeavesNonIncidentTrianglesAlone) {
     // the centroid Z of the other.
     MeshData mesh;
     mesh.resize_vertices(6);
-    mesh.vx = {0, 1, 0,   10, 11, 10};
-    mesh.vy = {0, 0, 1,   10, 10, 11};
-    mesh.vz = {0, 0, 0,   0,  0,  0};
+    mesh.vx = {0, 1, 0, 10, 11, 10};
+    mesh.vy = {0, 0, 1, 10, 10, 11};
+    mesh.vz = {0, 0, 0, 0, 0, 0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
-    mesh.tri_v0[1] = 3; mesh.tri_v1[1] = 4; mesh.tri_v2[1] = 5;
+    mesh.set_triangle(0, 0, 1, 2);
+    mesh.set_triangle(1, 3, 4, 5);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
     buildMeshTopology(mesh);
 
     mesh.vz[1] = 9.0;
     recomputeVertexZDependents(mesh, 1);
-    EXPECT_NEAR(mesh.tri_cz[0], 3.0, 1e-12);  // (0 + 9 + 0) / 3
-    EXPECT_NEAR(mesh.tri_cz[1], 0.0, 1e-12);  // untouched
+    EXPECT_NEAR(mesh.tri_cz[0], 3.0, 1e-12); // (0 + 9 + 0) / 3
+    EXPECT_NEAR(mesh.tri_cz[1], 0.0, 1e-12); // untouched
 }
 
 TEST(MeshBuilder, ValidationRejectsNegativeArea) {
@@ -300,7 +624,7 @@ TEST(MeshBuilder, ValidationRejectsNegativeArea) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     mesh.mannings_n[0] = 0.035;
 
     buildMeshTopology(mesh);
@@ -319,10 +643,11 @@ TEST(MeshBuilder, ValidationRejectsDuplicateVertices) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
+    mesh.size_geometry(); // validateMesh reads tri_area
     // Degenerate: two vertices are the same index
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 0; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 0, 2);
     mesh.mannings_n[0] = 0.035;
-    mesh.tri_area[0] = 1.0;  // Fake area so we reach the duplicate check
+    mesh.tri_area[0] = 1.0; // Fake area so we reach the duplicate check
 
     auto err = validateMesh(mesh);
     EXPECT_FALSE(err.empty());
@@ -337,7 +662,8 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     mesh.vz = {0.0, 0.0, 0.0};
 
     mesh.resize_triangles(1);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 99;  // out of range
+    mesh.size_geometry();           // validateMesh reads tri_area
+    mesh.set_triangle(0, 0, 1, 99); // out of range
     mesh.mannings_n[0] = 0.035;
     mesh.tri_area[0] = 1.0;
 
@@ -345,7 +671,6 @@ TEST(MeshBuilder, ValidationRejectsOutOfRangeIndex) {
     EXPECT_FALSE(err.empty());
     EXPECT_NE(err.find("out-of-range"), std::string::npos);
 }
-
 
 // ============================================================================
 // VertexReconstruction Tests
@@ -358,16 +683,16 @@ TEST(VertexReconstruction, StencilWeightsSumToOne) {
     int nv = mesh.n_vertices();
     for (int b = 0; b < nv; ++b) {
         int start = mesh.vert_stencil_ptr[b];
-        int end   = mesh.vert_stencil_ptr[b + 1];
+        int end = mesh.vert_stencil_ptr[b + 1];
 
-        if (start == end) continue;  // isolated vertex
+        if (start == end)
+            continue; // isolated vertex
 
         double wsum = 0.0;
         for (int k = start; k < end; ++k) {
             wsum += mesh.vert_stencil_wt[k];
         }
-        EXPECT_NEAR(wsum, 1.0, 1e-10)
-            << "Stencil weights for vertex " << b << " sum to " << wsum;
+        EXPECT_NEAR(wsum, 1.0, 1e-10) << "Stencil weights for vertex " << b << " sum to " << wsum;
     }
 }
 
@@ -376,8 +701,7 @@ TEST(VertexReconstruction, WeightsNonNegative) {
     buildVertexStencils(mesh);
 
     for (std::size_t k = 0; k < mesh.vert_stencil_wt.size(); ++k) {
-        EXPECT_GE(mesh.vert_stencil_wt[k], 0.0)
-            << "Stencil weight " << k << " is negative";
+        EXPECT_GE(mesh.vert_stencil_wt[k], 0.0) << "Stencil weight " << k << " is negative";
     }
 }
 
@@ -424,7 +748,6 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
     }
 }
 
-
 // ============================================================================
 // Cell Free-Surface Closure Tests (render/output eta(V) inversion)
 // ============================================================================
@@ -432,16 +755,29 @@ TEST(VertexReconstruction, ReconstructsLinearFieldAccurately) {
 // Analytic mean depth h(eta) for a planar-bed triangular cell with sorted
 // vertex elevations z1 <= z2 <= z3 — the forward relation the inversion must
 // round-trip. Mirrors the piecewise form documented in VertexReconstruction.hpp.
+/**
+ * @brief Evaluate the analytic planar-triangle mean water-depth relation.
+ *
+ * Requires finite sorted elevations and nonzero denominators in the selected partial-wetting
+ * branch; a fully flat cell takes only dry/full branches. No sorting, tolerance normalization or
+ * production inversion routine is invoked.
+ *
+ * @param[in] eta Absolute water-surface elevation in metres.
+ * @param[in] z1 Lowest vertex elevation in metres.
+ * @param[in] z2 Middle vertex elevation, z1<=z2<=z3.
+ * @param[in] z3 Highest vertex elevation in metres.
+ * @return Area-mean water depth in metres: zero when dry, eta-meanBed when fully wet, cubic
+ *     partial-wetting expression otherwise.
+ */
 static double meanDepthAtEta(double eta, double z1, double z2, double z3) {
     const double zbar = (z1 + z2 + z3) / 3.0;
-    if (eta <= z1) return 0.0;
-    if (eta >= z3) return eta - zbar;
+    if (eta <= z1)
+        return 0.0;
+    if (eta >= z3)
+        return eta - zbar;
     if (eta <= z2)
-        return (eta - z1) * (eta - z1) * (eta - z1)
-               / (3.0 * (z2 - z1) * (z3 - z1));
-    return (eta - zbar)
-           + (z3 - eta) * (z3 - eta) * (z3 - eta)
-             / (3.0 * (z3 - z1) * (z3 - z2));
+        return (eta - z1) * (eta - z1) * (eta - z1) / (3.0 * (z2 - z1) * (z3 - z1));
+    return (eta - zbar) + (z3 - eta) * (z3 - eta) * (z3 - eta) / (3.0 * (z3 - z1) * (z3 - z2));
 }
 
 TEST(CellFreeSurface, FlatCellMatchesFlatClosure) {
@@ -460,21 +796,21 @@ TEST(CellFreeSurface, RoundTripsTiltedCell) {
     // eta -> h (analytic forward) -> eta (inversion under test), across both
     // partial-wet branches and several bed shapes, in any vertex order.
     const double beds[][3] = {
-        {0.0, 0.5, 1.0},   // general tilt
-        {0.0, 0.0, 1.0},   // z1 == z2 (branch A degenerate)
-        {0.0, 1.0, 1.0},   // z2 == z3 (branch B degenerate)
-        {3.0, 3.2, 7.0},   // step-like cell with datum offset
+        {0.0, 0.5, 1.0}, // general tilt
+        {0.0, 0.0, 1.0}, // z1 == z2 (branch A degenerate)
+        {0.0, 1.0, 1.0}, // z2 == z3 (branch B degenerate)
+        {3.0, 3.2, 7.0}, // step-like cell with datum offset
     };
     for (const auto& z : beds) {
         for (double frac : {0.05, 0.25, 0.5, 0.75, 0.95, 1.0}) {
-            const double eta   = z[0] + frac * (z[2] - z[0]);
-            const double h     = meanDepthAtEta(eta, z[0], z[1], z[2]);
-            if (!(h > 0.0)) continue;
+            const double eta = z[0] + frac * (z[2] - z[0]);
+            const double h = meanDepthAtEta(eta, z[0], z[1], z[2]);
+            if (!(h > 0.0))
+                continue;
             // Scrambled argument order must not matter.
             const double eta_r = cellFreeSurfaceElevation(h, z[2], z[0], z[1]);
             EXPECT_NEAR(eta_r, eta, 1e-8)
-                << "bed {" << z[0] << "," << z[1] << "," << z[2]
-                << "} frac " << frac;
+                << "bed {" << z[0] << "," << z[1] << "," << z[2] << "} frac " << frac;
         }
     }
 }
@@ -484,14 +820,13 @@ TEST(CellFreeSurface, PartialWetSitsBelowFlatClosure) {
     // flat closure) — the water pools on the low side, eta < zbar + h. This is
     // the step-cell overstatement the closure exists to remove.
     const double z1 = 0.0, z2 = 0.5, z3 = 1.0, zbar = 0.5;
-    const double h  = 0.05;
+    const double h = 0.05;
     const double eta = cellFreeSurfaceElevation(h, z1, z2, z3);
     EXPECT_LT(eta, zbar + h);
     EXPECT_GT(eta, z1);
     // And it must round-trip mass: h(eta) == h.
     EXPECT_NEAR(meanDepthAtEta(eta, z1, z2, z3), h, 1e-10);
 }
-
 
 // ============================================================================
 // Vertex Render Reconstruction Tests (wet-masked signed depths)
@@ -505,6 +840,14 @@ TEST(CellFreeSurface, PartialWetSitsBelowFlatClosure) {
 //     | T0   \    |
 //   v0 (0,0, z=0) ---- v1 (1,0, z=0)
 //
+/**
+ * @brief Build a unit square with one raised vertex for partial-wetting tests.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned two-triangle mesh with v2 at5 m and other vertex beds zero, Manning.035 and built
+ *     topology.
+ */
 static MeshData makeStepMesh() {
     MeshData mesh;
     mesh.resize_vertices(4);
@@ -513,8 +856,8 @@ static MeshData makeStepMesh() {
     mesh.vz = {0.0, 0.0, 5.0, 0.0};
 
     mesh.resize_triangles(2);
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 3;
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 3; mesh.tri_v2[1] = 2;
+    mesh.set_triangle(0, 0, 1, 3);
+    mesh.set_triangle(1, 0, 3, 2);
     mesh.mannings_n[0] = 0.035;
     mesh.mannings_n[1] = 0.035;
 
@@ -538,8 +881,8 @@ TEST(VertexRenderReconstruction, DryNeighborDoesNotRaiseWaterSurface) {
 
     reconstructVertexRenderDepths(mesh, state, dry);
 
-    const double eta0 = cellFreeSurfaceElevation(
-        0.5, mesh.vz[0], mesh.vz[1], mesh.vz[3]);   // T0's free surface (0.5)
+    const double eta0 = cellFreeSurfaceElevation(0.5, mesh.vz[0], mesh.vz[1],
+                                                 mesh.vz[3]); // T0's free surface (0.5)
 
     // Shared vertices see ONLY the wet cell's eta.
     EXPECT_NEAR(state.vert_depth_signed[0], eta0 - mesh.vz[0], 1e-12);
@@ -557,7 +900,7 @@ TEST(VertexRenderReconstruction, DryNeighborDoesNotRaiseWaterSurface) {
 }
 
 TEST(VertexRenderReconstruction, LakeAtRestIsFlat) {
-    auto mesh = makeUnitSquareMesh();   // flat bed z = 0
+    auto mesh = makeUnitSquareMesh(); // flat bed z = 0
     buildVertexStencils(mesh);
 
     SurfaceStateData state;
@@ -596,8 +939,8 @@ TEST(VertexRenderReconstruction, WallTopVertexIsNoDataNotNotched) {
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
-    state.depth[0] = 0.5;    // flat T0: eta = 0.5
-    state.depth[1] = 0.2;    // tilted T1 (z 0..5): partially wet, eta << 5
+    state.depth[0] = 0.5; // flat T0: eta = 0.5
+    state.depth[1] = 0.2; // tilted T1 (z 0..5): partially wet, eta << 5
 
     reconstructVertexRenderDepths(mesh, state, 1.0e-3);
 
@@ -625,15 +968,14 @@ TEST(VertexRenderReconstruction, WallBaseFilmDoesNotNotchPool) {
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
-    state.depth[0] = 1.0;     // pool: flat T0, eta = 1.0
-    state.depth[1] = 0.01;    // thin film on the flank, pools near the base
+    state.depth[0] = 1.0;  // pool: flat T0, eta = 1.0
+    state.depth[1] = 0.01; // thin film on the flank, pools near the base
 
     reconstructVertexRenderDepths(mesh, state, 1.0e-3);
 
-    const double eta0 = cellFreeSurfaceElevation(
-        1.0, mesh.vz[0], mesh.vz[1], mesh.vz[3]);           // 1.0
-    const double eta1 = cellFreeSurfaceElevation(
-        0.01, mesh.vz[0], mesh.vz[3], mesh.vz[2]);          // ≈ base level
+    const double eta0 = cellFreeSurfaceElevation(1.0, mesh.vz[0], mesh.vz[1], mesh.vz[3]); // 1.0
+    const double eta1 =
+        cellFreeSurfaceElevation(0.01, mesh.vz[0], mesh.vz[3], mesh.vz[2]); // ≈ base level
 
     // Wall-top vertex: film eta << z_v2 → sentinel, not a negative.
     EXPECT_DOUBLE_EQ(state.vert_depth_signed[2], 0.0);
@@ -647,7 +989,6 @@ TEST(VertexRenderReconstruction, WallBaseFilmDoesNotNotchPool) {
     // Pool-only vertex v1 reads the pool exactly.
     EXPECT_NEAR(state.vert_depth_signed[1], eta0 - mesh.vz[1], 1e-12);
 }
-
 
 // ============================================================================
 // Gradient Computation Tests
@@ -705,8 +1046,10 @@ TEST(GradientComputation, LimiterReducesForUniformGradient) {
     state.resize(mesh.n_triangles(), mesh.n_vertices());
 
     // Set gradients to identical values in both cells
-    state.grad_hx[0] = 1.0; state.grad_hy[0] = 2.0;
-    state.grad_hx[1] = 1.0; state.grad_hy[1] = 2.0;
+    state.grad_hx[0] = 1.0;
+    state.grad_hy[0] = 2.0;
+    state.grad_hx[1] = 1.0;
+    state.grad_hy[1] = 2.0;
 
     computeLimitedGradients(mesh, state, 1e-6);
 
@@ -746,25 +1089,34 @@ TEST(GradientComputation, LimiterReducesForUniformGradient) {
 //                          \ /
 //                          v5 (0.5, -sqrt(3)/2)
 //
+/**
+ * @brief Build a central equilateral triangle with one neighbor across each edge.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned flat six-vertex/four-cell mesh with unit-metre edge triangles, Manning.035 and
+ *     built topology.
+ */
 static MeshData makeCentralTriangleMesh() {
     const double h = std::sqrt(3.0) * 0.5;
     MeshData mesh;
     mesh.resize_vertices(6);
-    mesh.vx = { 0.0,  1.0,  0.5, -0.5,  1.5,  0.5};
-    mesh.vy = { 0.0,  0.0,    h,    h,    h,   -h};
-    mesh.vz = { 0.0,  0.0,  0.0,  0.0,  0.0,  0.0};
+    mesh.vx = {0.0, 1.0, 0.5, -0.5, 1.5, 0.5};
+    mesh.vy = {0.0, 0.0, h, h, h, -h};
+    mesh.vz = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
     mesh.resize_triangles(4);
     // T0 (central): v0, v1, v2
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1 (left,  shares edge v0-v2 with T0): v0, v2, v3
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2 (right, shares edge v1-v2 with T0): v1, v4, v2
-    mesh.tri_v0[2] = 1; mesh.tri_v1[2] = 4; mesh.tri_v2[2] = 2;
+    mesh.set_triangle(2, 1, 4, 2);
     // T3 (below, shares edge v0-v1 with T0): v0, v5, v1
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 5; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 5, 1);
 
-    for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.035;
+    for (int i = 0; i < 4; ++i)
+        mesh.mannings_n[i] = 0.035;
 
     buildMeshTopology(mesh);
     return mesh;
@@ -774,9 +1126,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     auto mesh = makeCentralTriangleMesh();
 
     // Confirm the central triangle (T0) really has three interior neighbours.
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -784,7 +1136,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     // Three distinct neighbour gradients (deliberately differing magnitudes
     // and directions so the limiter actually has to mix them) and a fixed
     // self-gradient on the central triangle.
-    struct Grad { double gx, gy; };
+    struct Grad {
+        double gx, gy;
+    };
     Grad neighbour_grads[3] = {
         {1.0, 0.0},
         {0.0, 3.0},
@@ -799,9 +1153,9 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
         state.grad_hy[0] = self_grad.gy;
         int order[3] = {p0, p1, p2};
         for (int slot = 0; slot < 3; ++slot) {
-            int nbr = (slot == 0) ? mesh.tri_nbr0[0]
-                    : (slot == 1) ? mesh.tri_nbr1[0]
-                    :               mesh.tri_nbr2[0];
+            int nbr = (slot == 0)   ? mesh.cell_neighbour(0, 0)
+                      : (slot == 1) ? mesh.cell_neighbour(0, 1)
+                                    : mesh.cell_neighbour(0, 2);
             state.grad_hx[nbr] = neighbour_grads[order[slot]].gx;
             state.grad_hy[nbr] = neighbour_grads[order[slot]].gy;
         }
@@ -817,20 +1171,14 @@ TEST(GradientComputation, LimiterIsPermutationInvariant) {
     // T0 — the limiter result is a function of the multiset of contributing
     // gradients, not of slot order.
     int perms[5][3] = {
-        {0, 2, 1},
-        {1, 0, 2},
-        {1, 2, 0},
-        {2, 0, 1},
-        {2, 1, 0},
+        {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0},
     };
     for (auto& p : perms) {
         Grad out = run_with_assignment(p[0], p[1], p[2]);
-        EXPECT_NEAR(out.gx, ref.gx, 1e-12)
-            << "Limited grad_x changes under neighbour permutation ("
-            << p[0] << "," << p[1] << "," << p[2] << ")";
-        EXPECT_NEAR(out.gy, ref.gy, 1e-12)
-            << "Limited grad_y changes under neighbour permutation ("
-            << p[0] << "," << p[1] << "," << p[2] << ")";
+        EXPECT_NEAR(out.gx, ref.gx, 1e-12) << "Limited grad_x changes under neighbour permutation ("
+                                           << p[0] << "," << p[1] << "," << p[2] << ")";
+        EXPECT_NEAR(out.gy, ref.gy, 1e-12) << "Limited grad_y changes under neighbour permutation ("
+                                           << p[0] << "," << p[1] << "," << p[2] << ")";
     }
 }
 
@@ -842,9 +1190,9 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     // normalization step that masked the asymmetric denominator; the new
     // form satisfies it structurally with no normalization fix-up.
     auto mesh = makeCentralTriangleMesh();
-    ASSERT_GE(mesh.tri_nbr0[0], 0);
-    ASSERT_GE(mesh.tri_nbr1[0], 0);
-    ASSERT_GE(mesh.tri_nbr2[0], 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 0), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 1), 0);
+    ASSERT_GE(mesh.cell_neighbour(0, 2), 0);
 
     SurfaceStateData state;
     state.resize(mesh.n_triangles(), mesh.n_vertices());
@@ -852,11 +1200,12 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     // Four gradients, each with squared magnitude = 1, pointing in four
     // different directions. The arithmetic mean has zero x-component and
     // a positive y-component because of how the four directions are placed.
-    double gx[4] = { 1.0,  0.0, -1.0,  0.0};
-    double gy[4] = { 0.0,  1.0,  0.0,  1.0};
+    double gx[4] = {1.0, 0.0, -1.0, 0.0};
+    double gy[4] = {0.0, 1.0, 0.0, 1.0};
 
-    state.grad_hx[0] = gx[0]; state.grad_hy[0] = gy[0];
-    int nbrs[3] = {mesh.tri_nbr0[0], mesh.tri_nbr1[0], mesh.tri_nbr2[0]};
+    state.grad_hx[0] = gx[0];
+    state.grad_hy[0] = gy[0];
+    int nbrs[3] = {mesh.cell_neighbour(0, 0), mesh.cell_neighbour(0, 1), mesh.cell_neighbour(0, 2)};
     for (int k = 0; k < 3; ++k) {
         state.grad_hx[nbrs[k]] = gx[k + 1];
         state.grad_hy[nbrs[k]] = gy[k + 1];
@@ -873,7 +1222,6 @@ TEST(GradientComputation, LimiterEqualsAverageForUniformMagnitudes) {
     EXPECT_NEAR(state.grad_hy_lim[0], mean_y, 1e-9)
         << "Limited grad_y ≠ mean for equal-magnitude inputs";
 }
-
 
 // ============================================================================
 // Edge Flux Tests
@@ -907,14 +1255,13 @@ TEST(CellContinuity, DetectsImbalance) {
 
     // No fluxes/sources but storage grows → residual = dV/dt (nonzero).
     SolverOptions2D opts;
-    state.save_state();                          // old_volume = 0
-    state.volume[0] = 0.10 * mesh.tri_area[0];   // volume grew with no inflow
+    state.save_state();                        // old_volume = 0
+    state.volume[0] = 0.10 * mesh.tri_area[0]; // volume grew with no inflow
     computeCellContinuity(mesh, state, opts, 5.0);
 
     double expected = 0.10 * mesh.tri_area[0] / 5.0;
     EXPECT_NEAR(state.cell_continuity_err[0], expected, 1e-12);
 }
-
 
 // ============================================================================
 // RT0 cell-centred velocity reconstruction
@@ -931,12 +1278,12 @@ TEST(FaceVelocity, ReconstructsUniformField) {
     //   edge_flux_e = (q · n_e) · L_e.
     const double qx = 0.3, qy = -0.2, depth = 0.5;
     std::fill(state.depth.begin(), state.depth.end(), depth);
+    std::fill(state.head.begin(), state.head.end(), depth);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         for (int e = 0; e < 3; ++e) {
-            int idx = i * 3 + e;
+            int idx = MeshData::slot(i, e);
             state.edge_flux[idx] =
-                (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx])
-                * mesh.edge_length[idx];
+                (qx * mesh.edge_nx[idx] + qy * mesh.edge_ny[idx]) * mesh.edge_length[idx];
         }
 
     computeFaceVelocity(mesh, state, opts);
@@ -955,7 +1302,7 @@ TEST(FaceVelocity, DryCellIsZero) {
     state.resize(mesh.n_triangles(), mesh.n_vertices());
     SolverOptions2D opts;
 
-    std::fill(state.depth.begin(), state.depth.end(), 0.0);  // dry
+    std::fill(state.depth.begin(), state.depth.end(), 0.0); // dry
     std::fill(state.edge_flux.begin(), state.edge_flux.end(), 0.123);
 
     computeFaceVelocity(mesh, state, opts);
@@ -965,7 +1312,6 @@ TEST(FaceVelocity, DryCellIsZero) {
         EXPECT_EQ(state.face_vy[i], 0.0);
     }
 }
-
 
 // ============================================================================
 // Input Parsing Tests
@@ -1011,12 +1357,10 @@ TEST(InputParsing, Parse2DOptionsLine) {
     // programmatic path (no warnings sink), warn-and-ignore on the file-load
     // path (warnings sink provided) so legacy models still open.
     std::vector<std::string> warns;
-    for (const char* retired : {"REL_TOLERANCE", "ABS_TOLERANCE",
-                                "MAX_CVODE_STEPS", "LINEAR_SOLVER",
-                                "PRECONDITIONER", "MAX_KRYLOV_DIM",
-                                "COUPLING_INTERVAL", "COUPLING_WINDOW",
-                                "MIN_TIMESTEP", "ACTIVE_SET", "MOMENTUM",
-                                "JACOBIAN", "ATOL_AREA_REF"}) {
+    for (const char* retired :
+         {"REL_TOLERANCE", "ABS_TOLERANCE", "MAX_CVODE_STEPS", "LINEAR_SOLVER", "PRECONDITIONER",
+          "MAX_KRYLOV_DIM", "COUPLING_INTERVAL", "COUPLING_WINDOW", "MIN_TIMESTEP", "ACTIVE_SET",
+          "MOMENTUM", "JACOBIAN", "ATOL_AREA_REF"}) {
         err = parse2DOptionsLine({retired, "1"}, opts);
         EXPECT_FALSE(err.empty()) << retired << " must be a hard error";
         EXPECT_FALSE(is2DOptionKey(retired)) << retired;
@@ -1033,8 +1377,7 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_FALSE(err.empty()) << "INTEGRATOR ARKODE must be a hard error";
     err = parse2DOptionsLine({"INTEGRATOR", "CVODE"}, opts, &warns);
     EXPECT_TRUE(err.empty()) << "INTEGRATOR CVODE must warn on file load: " << err;
-    EXPECT_NE(warns.back().find("INTEGRATOR CVODE"), std::string::npos)
-        << warns.back();
+    EXPECT_NE(warns.back().find("INTEGRATOR CVODE"), std::string::npos) << warns.back();
 
     // RAINFALL_MODE NONE: no rain on the mesh (subcatchments already capture
     // the storm; rain-on-mesh would double-count it).
@@ -1042,6 +1385,94 @@ TEST(InputParsing, Parse2DOptionsLine) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(opts.rainfall_mode, RainfallMode::NONE);
     EXPECT_EQ(format2DOptionValue(opts, "RAINFALL_MODE"), "NONE");
+
+    // BACKEND: the model's own marcher-backend request (AUTO default). Every
+    // token round-trips through format2DOptionValue, case-insensitively, and
+    // an unknown accelerator is rejected rather than silently becoming AUTO.
+    EXPECT_EQ(opts.backend, Backend2D::AUTO);
+    EXPECT_TRUE(is2DOptionKey("BACKEND"));
+    EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), "AUTO");
+    const struct {
+        const char* tok;
+        Backend2D want;
+    } backends[] = {
+        {"cpu", Backend2D::CPU}, {"OMP", Backend2D::OMP},   {"Cuda", Backend2D::CUDA},
+        {"HIP", Backend2D::HIP}, {"sycl", Backend2D::SYCL}, {"auto", Backend2D::AUTO},
+    };
+    for (const auto& b : backends) {
+        err = parse2DOptionsLine({"BACKEND", b.tok}, opts);
+        EXPECT_TRUE(err.empty()) << b.tok << ": " << err;
+        EXPECT_EQ(opts.backend, b.want) << b.tok;
+        std::string upper = b.tok;
+        for (char& c : upper)
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), upper) << b.tok;
+    }
+    err = parse2DOptionsLine({"BACKEND", "METAL"}, opts);
+    EXPECT_FALSE(err.empty()) << "BACKEND METAL must be rejected";
+    EXPECT_EQ(opts.backend, Backend2D::AUTO)
+        << "a rejected token must not clobber the previous value";
+}
+
+// The factory honours [2D_OPTIONS] BACKEND when OPENSWMM_2D_BACKEND is unset,
+// and the environment variable overrides the option when set — the same
+// precedence the FV module gives OPENSWMM_FV_BACKEND over FV_BACKEND. The
+// ctest harness pins OPENSWMM_2D_BACKEND=cpu for this binary, so the variable
+// is saved, cleared and restored around the checks.
+TEST(SurfaceSolverFactory, DeckBackendOptionSelectsMarcher) {
+    const char* prev = std::getenv("OPENSWMM_2D_BACKEND");
+    const std::string saved = prev ? prev : "";
+    /** @cond */
+    struct Restore {
+        std::string v;
+        bool had;
+        /**
+         * @brief Restore the process 2D backend request captured by the test.
+         *
+         * Installs saved v when had is true, otherwise removes OPENSWMM_2D_BACKEND. Uses platform
+         * environment helpers without independent status checks. Caller serializes process-global
+         * environment mutation; no solver/model state is restored.
+         */
+        ~Restore() {
+            if (had)
+                setEnvVar("OPENSWMM_2D_BACKEND", v.c_str());
+            else
+                unsetEnvVar("OPENSWMM_2D_BACKEND");
+        }
+    } restore{saved, prev != nullptr};
+    /** @endcond */
+
+    SolverOptions2D opts;
+    std::string chosen;
+
+    // CPU by option, no env: the built-in marcher, no plugin discovery.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::CPU;
+    auto s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // Env wins over the option: BACKEND OMP in the deck, cpu in the env.
+    setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 200000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(chosen.rfind("cpu", 0), 0u) << chosen;
+
+    // OMP by option, no env: the Kokkos OpenMP plugin when it is discoverable
+    // (co-located beside the engine library in every default build); an
+    // absent plugin falls back to CPU by contract, which is not a failure of
+    // the option plumbing — so that case is reported as skipped, not passed.
+    unsetEnvVar("OPENSWMM_2D_BACKEND");
+    opts.backend = Backend2D::OMP;
+    chosen.clear();
+    s = openswmm::twoD::makeSurfaceSolver(opts, &chosen, 10); // below every floor
+    ASSERT_TRUE(s);
+    if (chosen.rfind("omp", 0) != 0)
+        GTEST_SKIP() << "omp plugin not discoverable here (chosen='" << chosen
+                     << "'); CPU + env-precedence legs passed";
+    EXPECT_EQ(chosen.rfind("omp", 0), 0u) << chosen;
 }
 
 TEST(InputParsing, Parse2DOptionsRejectsUnknown) {
@@ -1064,7 +1495,7 @@ TEST(InputParsing, Parse2DVertexLine) {
     EXPECT_EQ(mesh.n_vertices(), 1);
     EXPECT_NEAR(mesh.vx[0], 100.0, 1e-12);
     EXPECT_NEAR(mesh.vy[0], 200.0, 1e-12);
-    EXPECT_NEAR(mesh.vz[0], 10.5,  1e-12);
+    EXPECT_NEAR(mesh.vz[0], 10.5, 1e-12);
 
     err = parse2DVertexLine({"101.0", "201.0", "10.3", "inlet_tag"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
@@ -1086,16 +1517,16 @@ TEST(InputParsing, Parse2DTriangleLine) {
     auto err = parse2DTriangleLine({"0", "1", "2", "0.035"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 1);
-    EXPECT_EQ(mesh.tri_v0[0], 0);
-    EXPECT_EQ(mesh.tri_v1[0], 1);
-    EXPECT_EQ(mesh.tri_v2[0], 2);
+    EXPECT_EQ(mesh.cell_vertex(0, 0), 0);
+    EXPECT_EQ(mesh.cell_vertex(0, 1), 1);
+    EXPECT_EQ(mesh.cell_vertex(0, 2), 2);
     EXPECT_NEAR(mesh.mannings_n[0], 0.035, 1e-12);
 
     err = parse2DTriangleLine({"0", "2", "1", "0.025", "road"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_EQ(mesh.n_triangles(), 2);
     EXPECT_EQ(mesh.tri_tag[1], "road");
-    EXPECT_NEAR(mesh.tri_init_depth[1], 0.0, 1e-12);   // tag-only: dry default
+    EXPECT_NEAR(mesh.tri_init_depth[1], 0.0, 1e-12); // tag-only: dry default
 }
 
 TEST(InputParsing, Parse2DTriangleInitDepth) {
@@ -1135,7 +1566,7 @@ TEST(InputParsing, Parse2DInitialVelocity) {
     EXPECT_TRUE(err.empty()) << err;
     EXPECT_NEAR(mesh.tri_init_u[1], 0.5, 1e-12);
     EXPECT_NEAR(mesh.tri_init_v[1], -1.25, 1e-12);
-    EXPECT_NEAR(mesh.tri_init_u[0], 0.0, 1e-12);   // unlisted rows stay 0
+    EXPECT_NEAR(mesh.tri_init_u[0], 0.0, 1e-12); // unlisted rows stay 0
 
     // Out-of-range triangle and short rows rejected
     EXPECT_FALSE(parse2DInitialVelocityLine({"2", "1", "1"}, mesh).empty());
@@ -1145,7 +1576,7 @@ TEST(InputParsing, Parse2DInitialVelocity) {
 TEST(InputParsing, Parse2DVertexNodeMap) {
     MeshData mesh;
     mesh.resize_vertices(3);
-    mesh.vtag[1] = "inlet";
+    mesh.vtag.set(1, "inlet");
 
     // By index
     auto err = parse2DVertexNodeMapLine({"0", "J1"}, mesh);
@@ -1164,7 +1595,7 @@ TEST(InputParsing, Parse2DTriangleNodeMap) {
     MeshData mesh;
     mesh.resize_vertices(3);
     mesh.resize_triangles(2);
-    mesh.tri_tag[1] = "road_surface";
+    mesh.tri_tag.set(1, "road_surface");
 
     auto err = parse2DTriangleNodeMapLine({"0", "J3"}, mesh);
     EXPECT_TRUE(err.empty()) << err;
@@ -1183,6 +1614,427 @@ TEST(InputParsing, Parse2DVertexNodeMapRejectsOutOfRange) {
     EXPECT_FALSE(err.empty());
 }
 
+// ============================================================================
+// Node-map tag lookup through the section reader (mesh open plan E1).
+//
+// [2D_VERTEX_NODE_MAP] / [2D_TRIANGLE_NODE_MAP] rows name their vertex or
+// cell by index or by tag. These pin the resolution rules through the real
+// section path (InputReader -> register2DSections), which is where a tag
+// index would live: an in-range index wins over an equal tag; an
+// out-of-range number falls back to a numeric tag; duplicate tags resolve to
+// the FIRST row; the match is exact and case-sensitive; vertex rows
+// overwrite, cell rows append.
+// ============================================================================
+
+namespace {
+
+/// One 2D read of `text` through the main reader's 2D registrations.
+struct SectionRead2D {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::SimulationContext ctx;
+    bool ok = false;
+
+    explicit SectionRead2D(const std::string& text) {
+        openswmm::input::SectionRegistry registry;
+        register2DSections(mesh, opts, bc, ec, iq, ibq, bq, registry);
+        openswmm::input::InputReader reader(registry);
+        std::istringstream in(text);
+        ok = reader.read_stream(in, ctx);
+    }
+};
+
+// Vertices: tag A twice (0 and 2), numeric tag 5001 (3), lower-case b (4),
+// and tag "2" on vertex 5 so the index 2 and the tag "2" name different
+// vertices. Cells: tag T twice (0 and 1), numeric tag 7001 (2), and tag "1"
+// on cell 3.
+const char* const kTaggedMesh = "[2D_VERTICES]\n"
+                                "0 0 0 A\n"
+                                "1 0 0 B\n"
+                                "0 1 0 A\n"
+                                "1 1 0 5001\n"
+                                "2 2 0 b\n"
+                                "3 3 0 2\n"
+                                "[2D_TRIANGLES]\n"
+                                "0 1 3 0.03 0 T\n"
+                                "1 3 2 0.03 0 T\n"
+                                "2 3 4 0.03 0 7001\n"
+                                "3 4 5 0.03 0 1\n";
+
+} // namespace
+
+TEST(NodeMapTagLookup, VertexMapResolvesIndexTagAndFirstDuplicate) {
+    const SectionRead2D r(std::string(kTaggedMesh) +
+                          "[2D_VERTEX_NODE_MAP]\n"
+                          "A J1\n"       // tag A: first row (vertex 0), not 2
+                          "5001 J2\n"    // out-of-range number: tag 5001 (vertex 3)
+                          "2 J3\n"       // in-range index 2 wins over tag "2" (vertex 5)
+                          "A J4 0.6\n"); // vertex rows overwrite: vertex 0 -> J4
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_vertices(), 6);
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "J4");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[1], "");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[2], "J3");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[3], "J2");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[4], "");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[5], "");
+    EXPECT_EQ(r.mesh.vert_coupling_cd[0], 0.6);
+    EXPECT_EQ(r.mesh.vert_coupling_cd_set[0], 1);
+}
+
+TEST(NodeMapTagLookup, TriangleMapResolvesIndexTagAndAppends) {
+    const SectionRead2D r(std::string(kTaggedMesh) +
+                          "[2D_TRIANGLE_NODE_MAP]\n"
+                          "T J1\n"    // tag T: first row (cell 0), not 1
+                          "7001 J2\n" // out-of-range number: tag 7001 (cell 2)
+                          "1 J3\n"    // in-range index 1 wins over tag "1" (cell 3)
+                          "T J5\n");  // cell rows append: a second coupling on cell 0
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_triangles(), 4);
+    ASSERT_EQ(r.mesh.tri_couplings.size(), 4u);
+    const int want_tri[] = {0, 2, 1, 0};
+    const char* const want_node[] = {"J1", "J2", "J3", "J5"};
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(r.mesh.tri_couplings[i].tri, want_tri[i]) << "row " << i;
+        EXPECT_EQ(r.mesh.tri_couplings[i].node_name, want_node[i]) << "row " << i;
+    }
+    // The per-cell mirror keeps the last row per cell.
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[0], "J5");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[1], "J3");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[2], "J2");
+    EXPECT_EQ(r.mesh.tri_coupled_node_name[3], "");
+}
+
+TEST(NodeMapTagLookup, VertexTagMatchIsCaseSensitive) {
+    // "a" matches neither A (vertices 0, 2) nor anything else.
+    const SectionRead2D r(std::string(kTaggedMesh) + "[2D_VERTEX_NODE_MAP]\na J1\n");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.ctx.error_message.find("Unknown vertex index or tag: a"), std::string::npos)
+        << r.ctx.error_message;
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "");
+}
+
+TEST(NodeMapTagLookup, TriangleTagMatchIsCaseSensitive) {
+    const SectionRead2D r(std::string(kTaggedMesh) + "[2D_TRIANGLE_NODE_MAP]\nt J1\n");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.ctx.error_message.find("Unknown triangle index or tag: t"), std::string::npos)
+        << r.ctx.error_message;
+    EXPECT_TRUE(r.mesh.tri_couplings.empty());
+}
+
+TEST(NodeMapTagLookup, TagRowsSeeOnlyVerticesReadSoFar) {
+    // A map section read before more vertices arrive (repeated headers) must
+    // resolve against the vertices read so far, then see the later ones.
+    const SectionRead2D r("[2D_VERTICES]\n0 0 0 P\n"
+                          "[2D_VERTEX_NODE_MAP]\nP J1\n"
+                          "[2D_VERTICES]\n1 0 0 Q\n0 1 0 P\n"
+                          "[2D_VERTEX_NODE_MAP]\nQ J2\nP J3\n");
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    ASSERT_EQ(r.mesh.n_vertices(), 3);
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[0], "J3"); // P is still vertex 0
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[1], "J2");
+    EXPECT_EQ(r.mesh.vert_coupled_node_name[2], "");
+}
+
+// ============================================================================
+// 2D number tokens (mesh open plan E3c, §8 Q2): C-locale, today's syntax.
+// ============================================================================
+
+TEST(InputParsing, NumbersKeepStrtodSyntax) {
+    MeshData mesh;
+    ASSERT_TRUE(parse2DVertexLine({"+1.5", "0x1p3", "1e400"}, mesh).empty());
+    ASSERT_TRUE(parse2DVertexLine({"-inf", "nan", "1e-400"}, mesh).empty());
+    ASSERT_TRUE(parse2DVertexLine({".5", "5.", "1E+2"}, mesh).empty());
+    EXPECT_EQ(mesh.vx[0], 1.5);
+    EXPECT_EQ(mesh.vy[0], 8.0);
+    EXPECT_TRUE(std::isinf(mesh.vz[0]) && mesh.vz[0] > 0); // overflow reads as inf, as strtod
+    EXPECT_TRUE(std::isinf(mesh.vx[1]) && mesh.vx[1] < 0);
+    EXPECT_TRUE(std::isnan(mesh.vy[1]));
+    EXPECT_EQ(mesh.vz[1], 0.0); // underflow
+    EXPECT_EQ(mesh.vx[2], 0.5);
+    EXPECT_EQ(mesh.vy[2], 5.0);
+    EXPECT_EQ(mesh.vz[2], 100.0);
+    EXPECT_FALSE(parse2DVertexLine({"1..2", "0", "0"}, mesh).empty());
+    EXPECT_FALSE(parse2DVertexLine({"1x", "0", "0"}, mesh).empty());
+    EXPECT_FALSE(parse2DVertexLine({"", "0", "0"}, mesh).empty());
+
+    // Integer indices: +, leading zeros; long values are narrowed as strtol + static_cast do.
+    ASSERT_TRUE(parse2DTriangleLine({"+0", "0001", "2", "0.03"}, mesh).empty());
+    EXPECT_EQ(mesh.cell_v[0], 0);
+    EXPECT_EQ(mesh.cell_v[1], 1);
+    ASSERT_TRUE(parse2DTriangleLine({"4294967297", "-7", "2", "0.03"}, mesh).empty());
+    EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 0],
+              static_cast<int>(std::strtol("4294967297", nullptr, 10)));
+    EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 1], -7);
+    EXPECT_FALSE(parse2DTriangleLine({"1.0", "2", "3", "0.03"}, mesh).empty());
+    EXPECT_FALSE(parse2DTriangleLine({"0x1", "2", "3", "0.03"}, mesh).empty());
+}
+
+TEST(InputParsing, NumbersIgnoreTheProcessLocale) {
+    // A Qt application calls setlocale(LC_ALL, ""); under a comma-decimal
+    // LC_NUMERIC, std::strtod stops at the '.'. The 2D parsers must not.
+    const std::string saved = std::setlocale(LC_NUMERIC, nullptr);
+    const char* comma = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "fr_FR.UTF-8", "fr_FR"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr &&
+            *std::localeconv()->decimal_point == ',') {
+            comma = name;
+            break;
+        }
+    }
+    if (comma == nullptr) {
+        std::setlocale(LC_NUMERIC, saved.c_str());
+        GTEST_SKIP() << "no comma-decimal locale installed";
+    }
+    MeshData mesh;
+    const std::string err = parse2DVertexLine({"0.5", "-1.25e2", "+.75"}, mesh);
+    const std::string err_hex = parse2DVertexLine({"0x1.8p1", "inf", "2.5E-3"}, mesh);
+    std::setlocale(LC_NUMERIC, saved.c_str());
+    ASSERT_TRUE(err.empty()) << comma << ": " << err;
+    ASSERT_TRUE(err_hex.empty()) << comma << ": " << err_hex;
+    EXPECT_EQ(mesh.vx[0], 0.5);
+    EXPECT_EQ(mesh.vy[0], -125.0);
+    EXPECT_EQ(mesh.vz[0], 0.75);
+    EXPECT_EQ(mesh.vx[1], 3.0);
+    EXPECT_TRUE(std::isinf(mesh.vy[1]));
+    EXPECT_EQ(mesh.vz[1], 0.0025);
+}
+
+// ============================================================================
+// UTF-8 byte-order mark (mesh open plan F1): Notepad and many Windows tools
+// start a file with EF BB BF. It used to hide the first section header and a
+// first-line `;; UNITS:` marker, in the .inp reader and the mesh-file reader.
+// ============================================================================
+
+TEST(Utf8Bom, InpReaderSeesTheFirstHeader) {
+    const SectionRead2D r("\xEF\xBB\xBF[2D_VERTICES]\n0 0 1\n10 0 1\n");
+    ASSERT_TRUE(r.ok) << r.ctx.error_message;
+    EXPECT_EQ(r.mesh.n_vertices(), 2);
+}
+
+TEST(Utf8Bom, MeshFileReaderSeesTheFirstHeader) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_bom/bom_header.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_EQ(mesh.n_vertices(), 3);
+    EXPECT_EQ(mesh.n_triangles(), 1);
+    EXPECT_FALSE(opts.mesh_units_si);
+}
+
+TEST(Utf8Bom, UnitsMarkerOnTheFirstLineIsRead) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_bom/bom_units.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_TRUE(opts.mesh_units_si);
+    EXPECT_EQ(mesh.n_vertices(), 3);
+
+    SolverOptions2D prescanned;
+    prescan2DUnitsHeader("mesh_bom/bom_units.2dm", prescanned); // the .inp-side scan
+    EXPECT_TRUE(prescanned.mesh_units_si);
+}
+
+// ============================================================================
+// Ctrl-Z (mesh open plan F4): a text-mode read on Windows ends a file at the
+// first 0x1A byte. Both readers keep that rule there and nowhere else, so a
+// row after a Ctrl-Z counts except on Windows.
+// ============================================================================
+
+TEST(CtrlZ, BothReadersEndTheFileThereOnlyOnWindows) {
+#if defined(_WIN32)
+    constexpr int kVertices = 2;
+#else
+    constexpr int kVertices = 3;
+#endif
+    MeshData inp_mesh;
+    SolverOptions2D inp_opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::input::SectionRegistry registry;
+    register2DSections(inp_mesh, inp_opts, bc, ec, iq, ibq, bq, registry);
+    openswmm::input::InputReader reader(registry);
+    openswmm::SimulationContext ctx;
+    ASSERT_TRUE(reader.read("mesh_ctrlz/ctrlz.inp", ctx)) << ctx.error_message;
+    EXPECT_EQ(inp_mesh.n_vertices(), kVertices);
+
+    MeshData mesh;
+    SolverOptions2D opts;
+    const std::string err =
+        load2DMeshExternalFile(mesh, opts, bc, ec, nullptr, "mesh_ctrlz/ctrlz.2dm", "");
+    ASSERT_TRUE(err.empty()) << err;
+    EXPECT_EQ(mesh.n_vertices(), kVertices);
+}
+
+// ============================================================================
+// The main .inp reader on line views (mesh open plan E3-inline): InputReader
+// reads the whole text once and walks it with views. A view handler and a
+// string handler must get the same lines, by the rules of the former getline
+// loop, whether the text comes from read_text or read_stream.
+// ============================================================================
+
+namespace {
+
+/// The sections one read handed out, and the lines its observer saw.
+struct LineCapture {
+    std::vector<std::string> title, views, strings, observed;
+    int lines_read = -1;
+    bool ok = false;
+
+    LineCapture(const std::string& text, bool through_stream) {
+        openswmm::input::SectionRegistry registry;
+        registry.register_custom("TITLE",
+                                 [this](openswmm::SimulationContext&,
+                                        const std::vector<std::string>& lines) { title = lines; });
+        registry.register_custom_views("VIEWS", [this](openswmm::SimulationContext&,
+                                                       const std::vector<std::string_view>& lines) {
+            views.assign(lines.begin(), lines.end());
+        });
+        registry.register_custom(
+            "STRINGS", [this](openswmm::SimulationContext&, const std::vector<std::string>& lines) {
+                strings = lines;
+            });
+        openswmm::input::InputReader reader(registry);
+        reader.set_line_observer([this](std::string_view line) { observed.emplace_back(line); });
+        openswmm::SimulationContext ctx;
+        if (through_stream) {
+            std::istringstream in(text);
+            ok = reader.read_stream(in, ctx);
+        } else {
+            ok = reader.read_text(text, ctx);
+        }
+        lines_read = reader.lines_read();
+    }
+};
+
+} // namespace
+
+TEST(InputReaderText, ViewAndStringHandlersGetTheSameLines) {
+    const std::string text = "stray text before any header\r\n"
+                             "[TITLE]\r\n"
+                             "  [Draft] a title; with a semicolon\r\n"
+                             "[VIEWS]   ; a header comment\r\n"
+                             "  a 1 ; trailing comment\r\n"
+                             " \t \r\n"
+                             ";; note \r\n"
+                             "[STRINGS]\n"
+                             "  a 1 ; trailing comment\n"
+                             ";; note \n"
+                             "b 2"; // no final newline
+    for (const bool through_stream : {false, true}) {
+        SCOPED_TRACE(through_stream ? "read_stream" : "read_text");
+        const LineCapture c(text, through_stream);
+        ASSERT_TRUE(c.ok);
+        EXPECT_EQ(c.title, (std::vector<std::string>{"  [Draft] a title; with a semicolon"}));
+        EXPECT_EQ(c.views, (std::vector<std::string>{"a 1", ";; note"}));
+        EXPECT_EQ(c.strings, (std::vector<std::string>{"a 1", ";; note", "b 2"}));
+        EXPECT_EQ(c.lines_read, 11);
+        // The observer gets every line untrimmed, its '\r' still on.
+        ASSERT_EQ(c.observed.size(), 11u);
+        EXPECT_EQ(c.observed[0], "stray text before any header\r");
+        EXPECT_EQ(c.observed[5], " \t \r");
+        EXPECT_EQ(c.observed[10], "b 2");
+    }
+}
+
+TEST(InputReaderText, EmptyAndBomOnlyTextsReadNothing) {
+    for (const std::string text : {std::string(), std::string("\xEF\xBB\xBF")}) {
+        const LineCapture c(text, false);
+        EXPECT_TRUE(c.ok);
+        EXPECT_EQ(c.lines_read, text.empty() ? 0 : 1);
+        EXPECT_TRUE(c.views.empty());
+        EXPECT_TRUE(c.strings.empty());
+        ASSERT_EQ(c.observed.size(), text.empty() ? 0u : 1u);
+        if (!text.empty())
+            EXPECT_EQ(c.observed[0], ""); // the BOM is not part of the line
+    }
+}
+
+// The simulation-period open (mesh open plan §10.2) drops the 2D mesh sections
+// while reading: a skipped section is neither kept, dispatched nor reported as
+// unknown, and the sections around it read as before. An empty list turns it off.
+TEST(InputReaderText, SkippedSectionsAreDroppedWhileReading) {
+    const std::string text = "[VIEWS]\na 1\n[MESH]\n0 0 1\n;; note\n[ROWS]\nr 1\n"
+                             "[UNREGISTERED]\nu 1\n[STRINGS]\nb 2\n";
+    for (const bool skipping : {true, false}) {
+        for (const bool through_stream : {false, true}) {
+            SCOPED_TRACE(std::string(skipping ? "skipping" : "not skipping") +
+                         (through_stream ? ", read_stream" : ", read_text"));
+            std::vector<std::string> views, strings;
+            int mesh_rows = -1, rows = -1, observed = 0;
+            openswmm::input::SectionRegistry registry;
+            registry.register_custom_views(
+                "VIEWS", [&](openswmm::SimulationContext&, const std::vector<std::string_view>& l) {
+                    views.assign(l.begin(), l.end());
+                });
+            registry.register_custom_views(
+                "MESH", [&](openswmm::SimulationContext&, const std::vector<std::string_view>& l) {
+                    mesh_rows = int(l.size());
+                });
+            registry.register_custom(
+                "ROWS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
+                    rows = int(l.size());
+                });
+            registry.register_custom(
+                "STRINGS", [&](openswmm::SimulationContext&, const std::vector<std::string>& l) {
+                    strings = l;
+                });
+            openswmm::input::InputReader reader(registry);
+            if (skipping)
+                reader.set_sections_to_skip({"MESH", "ROWS", "UNREGISTERED"});
+            reader.set_line_observer([&](std::string_view) { ++observed; });
+            openswmm::SimulationContext ctx;
+            std::istringstream in(text);
+            ASSERT_TRUE(through_stream ? reader.read_stream(in, ctx) : reader.read_text(text, ctx));
+            EXPECT_EQ(views, std::vector<std::string>{"a 1"});
+            EXPECT_EQ(strings, std::vector<std::string>{"b 2"});
+            EXPECT_EQ(mesh_rows, skipping ? -1 : 2);
+            EXPECT_EQ(rows, skipping ? -1 : 1);
+            EXPECT_EQ(reader.skipped_sections(),
+                      skipping ? std::vector<std::string>{}
+                               : std::vector<std::string>{"UNREGISTERED"});
+            EXPECT_EQ(reader.lines_read(), 11);
+            EXPECT_EQ(observed, 11); // the observer still sees every line
+        }
+    }
+}
+
+// The simulation-period open skips twoD::meshSectionTags(): the main
+// registry's 2D sections that take line views, which are the mesh rows and
+// every row that addresses a cell. A new such section must join the list.
+TEST(MeshSectionTags, AreTheMainRegistrysViewSections) {
+    MeshData mesh;
+    SolverOptions2D opts;
+    std::vector<SurfaceRouter2D::PendingBoundaryRow> bc;
+    std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> ec;
+    std::vector<SurfaceRouter2D::PendingInitialQualityRow> iq;
+    std::vector<SurfaceRouter2D::PendingInitialBedQualityRow> ibq;
+    std::vector<SurfaceRouter2D::PendingBoundaryQualityRow> bq;
+    openswmm::input::SectionRegistry registry;
+    register2DSections(mesh, opts, bc, ec, iq, ibq, bq, registry);
+    std::vector<std::string> views;
+    for (const auto& tag : registry.registered_tags())
+        if (registry.takes_views(tag))
+            views.push_back(tag);
+    std::vector<std::string> expected = meshSectionTags();
+    std::sort(views.begin(), views.end());
+    std::sort(expected.begin(), expected.end());
+    EXPECT_EQ(views, expected);
+}
 
 // ============================================================================
 // SurfaceStateData Lifecycle Tests
@@ -1195,7 +2047,7 @@ TEST(SurfaceState, ResizeSetsZero) {
     EXPECT_EQ(state.depth.size(), 10u);
     EXPECT_EQ(state.head.size(), 10u);
     EXPECT_EQ(state.vert_head.size(), 5u);
-    EXPECT_EQ(state.edge_flux.size(), 30u);  // 10 * 3
+    EXPECT_EQ(state.edge_flux.size(), 40u); // 10 * kMaxCellVerts (padded)
 
     for (int i = 0; i < 10; ++i) {
         EXPECT_EQ(state.depth[i], 0.0);
@@ -1231,15 +2083,17 @@ TEST(SurfaceState, UpdateStatisticsTracksMax) {
     state.resize(2, 1);
     std::vector<double> areas = {10.0, 20.0};
 
-    state.depth[0] = 0.5; state.depth[1] = 0.3;
+    state.depth[0] = 0.5;
+    state.depth[1] = 0.3;
     state.update_statistics(areas, 1.0);
     EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12);
     EXPECT_NEAR(state.stat_max_depth[1], 0.3, 1e-12);
 
-    state.depth[0] = 0.2; state.depth[1] = 0.8;
+    state.depth[0] = 0.2;
+    state.depth[1] = 0.8;
     state.update_statistics(areas, 1.0);
-    EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12);  // Still 0.5
-    EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12);  // Updated to 0.8
+    EXPECT_NEAR(state.stat_max_depth[0], 0.5, 1e-12); // Still 0.5
+    EXPECT_NEAR(state.stat_max_depth[1], 0.8, 1e-12); // Updated to 0.8
 }
 
 TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
@@ -1248,10 +2102,12 @@ TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
     std::vector<double> areas = {10.0, 20.0};
 
     // Step 1: cell 0 moves fast (3-4-5 triangle → |v| = 5), cell 1 slow.
-    state.face_vx[0] = 3.0; state.face_vy[0] = 4.0;   // |v| = 5
-    state.face_vx[1] = 0.6; state.face_vy[1] = 0.8;   // |v| = 1
-    state.cell_continuity_err[0] = -2.0;              // |err| = 2
-    state.cell_continuity_err[1] =  0.5;
+    state.face_vx[0] = 3.0;
+    state.face_vy[0] = 4.0; // |v| = 5
+    state.face_vx[1] = 0.6;
+    state.face_vy[1] = 0.8;              // |v| = 1
+    state.cell_continuity_err[0] = -2.0; // |err| = 2
+    state.cell_continuity_err[1] = 0.5;
     state.update_statistics(areas, 1.0);
     EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);
     EXPECT_NEAR(state.stat_max_velocity[1], 1.0, 1e-12);
@@ -1259,29 +2115,52 @@ TEST(SurfaceState, UpdateStatisticsTracksVelocityAndContinuityEnvelopes) {
     EXPECT_NEAR(state.stat_max_cont_err[1], 0.5, 1e-12);
 
     // Step 2: cell 0 slows, cell 1 speeds up; envelopes are monotone.
-    state.face_vx[0] = 1.0; state.face_vy[0] = 0.0;   // |v| = 1 (< 5)
-    state.face_vx[1] = 0.0; state.face_vy[1] = 2.0;   // |v| = 2 (> 1)
-    state.cell_continuity_err[0] =  0.1;              // |err| = 0.1 (< 2)
-    state.cell_continuity_err[1] = -3.0;              // |err| = 3 (> 0.5)
+    state.face_vx[0] = 1.0;
+    state.face_vy[0] = 0.0; // |v| = 1 (< 5)
+    state.face_vx[1] = 0.0;
+    state.face_vy[1] = 2.0;              // |v| = 2 (> 1)
+    state.cell_continuity_err[0] = 0.1;  // |err| = 0.1 (< 2)
+    state.cell_continuity_err[1] = -3.0; // |err| = 3 (> 0.5)
     state.update_statistics(areas, 1.0);
-    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12);  // retained
-    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12);  // raised
-    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12);  // retained
-    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12);  // raised
+    EXPECT_NEAR(state.stat_max_velocity[0], 5.0, 1e-12); // retained
+    EXPECT_NEAR(state.stat_max_velocity[1], 2.0, 1e-12); // raised
+    EXPECT_NEAR(state.stat_max_cont_err[0], 2.0, 1e-12); // retained
+    EXPECT_NEAR(state.stat_max_cont_err[1], 3.0, 1e-12); // raised
+}
+
+TEST(SurfaceState, VelocityEnvelopesExcludeUnavailableSamples) {
+    SurfaceStateData state;
+    state.resize(2, 1);
+    const double missing = std::numeric_limits<double>::quiet_NaN();
+    state.face_vx = {missing, 0.0};
+    state.face_vy = {missing, 0.0};
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_TRUE(std::isnan(state.stat_max_velocity[0]));
+    EXPECT_EQ(state.stat_max_velocity[1], 0.0); // A valid still/dry cell.
+    state.face_vx[0] = 3.; state.face_vy[0] = 4.;
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_EQ(state.stat_max_velocity[0], 5.0);
+    state.face_vx[0] = state.face_vy[0] = missing;
+    state.update_statistics({1.0, 1.0}, 1.0);
+    EXPECT_EQ(state.stat_max_velocity[0], 5.0);
 }
 
 TEST(SurfaceState, ClearResetForcings) {
     SurfaceStateData state;
     state.resize(2, 1);
 
-    // Set RESET forcing on cell 0, PERSIST on cell 1
-    state.rainfall_forced[0] = 1;
-    state.rainfall_force_val[0] = 0.001;
-    state.rainfall_persist[0] = 0;  // RESET
+    // Set RESET forcing on cell 0, PERSIST on cell 1. forcing_ever_set is
+    // what the swmm_2d_force_* API stamps when it writes a prescription; the
+    // expiry sweep is skipped without it (it is dead work on every deck that
+    // never forces anything), so a direct-write test must stamp it too.
+    state.forcing_ever_set = true;
+    state.rainfall_forced.set(0, 1);
+    state.rainfall_force_val.set(0, 0.001);
+    state.rainfall_persist.set(0, 0); // RESET
 
-    state.rainfall_forced[1] = 1;
-    state.rainfall_force_val[1] = 0.002;
-    state.rainfall_persist[1] = 1;  // PERSIST
+    state.rainfall_forced.set(1, 1);
+    state.rainfall_force_val.set(1, 0.002);
+    state.rainfall_persist.set(1, 1); // PERSIST
 
     state.clear_reset_forcings();
 
@@ -1293,7 +2172,6 @@ TEST(SurfaceState, ClearResetForcings) {
     EXPECT_EQ(state.rainfall_forced[1], 1);
     EXPECT_NEAR(state.rainfall_force_val[1], 0.002, 1e-12);
 }
-
 
 // ============================================================================
 // SolverOptions2D Defaults
@@ -1321,7 +2199,6 @@ TEST(SolverOptions, DefaultValues) {
     EXPECT_NEAR(opts.froude_max, 1.5, 1e-12);
     EXPECT_FALSE(opts.coupling_area_auto);
 }
-
 
 // ============================================================================
 // MeshData Resize Tests
@@ -1353,15 +2230,34 @@ TEST(MeshData, ResizeTriangles) {
     mesh.resize_triangles(3);
 
     EXPECT_EQ(mesh.n_triangles(), 3);
-    EXPECT_EQ(mesh.tri_v0.size(), 3u);
-    EXPECT_EQ(mesh.edge_length.size(), 9u);  // 3 * 3
+    EXPECT_EQ(mesh.cell_nv.size(), 3u);
+    EXPECT_EQ(mesh.edge_conveyance.size(), 12u); // authored, 3 * kMaxCellVerts (padded)
+    EXPECT_EQ(mesh.n_quads(), 0);
+    EXPECT_EQ(mesh.edge_stride(), 3); // public stride stays 3 for all-tri
     EXPECT_EQ(mesh.mannings_n.size(), 3u);
 
-    // Default neighbours are -1
+    // The derived arrays are MeshBuilder's (mesh open plan E4): resize leaves
+    // them unallocated, size_neighbours / size_geometry size them.
+    EXPECT_TRUE(mesh.cell_nbr.empty());
+    EXPECT_TRUE(mesh.edge_length.empty());
+    EXPECT_TRUE(mesh.tri_area.empty());
+    EXPECT_FALSE(mesh.neighbours_built());
+    EXPECT_FALSE(mesh.geometry_built());
+    mesh.size_neighbours();
+    mesh.size_geometry();
+    EXPECT_TRUE(mesh.neighbours_built());
+    EXPECT_TRUE(mesh.geometry_built());
+    EXPECT_EQ(mesh.edge_length.size(), 12u);
+
+    // Default neighbours are -1; the padding slot of a triangle is -2 and
+    // its padding vertex is -1.
     for (int i = 0; i < 3; ++i) {
-        EXPECT_EQ(mesh.tri_nbr0[i], -1);
-        EXPECT_EQ(mesh.tri_nbr1[i], -1);
-        EXPECT_EQ(mesh.tri_nbr2[i], -1);
+        EXPECT_EQ(mesh.cell_vertex_count(i), 3);
+        EXPECT_EQ(mesh.cell_neighbour(i, 0), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 1), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 2), -1);
+        EXPECT_EQ(mesh.cell_neighbour(i, 3), -2);
+        EXPECT_EQ(mesh.cell_vertex(i, 3), -1);
     }
 
     // Default Manning's n
@@ -1369,7 +2265,6 @@ TEST(MeshData, ResizeTriangles) {
         EXPECT_NEAR(mesh.mannings_n[i], 0.035, 1e-12);
     }
 }
-
 
 // ============================================================================
 // Larger Mesh: 4-triangle diamond
@@ -1386,24 +2281,33 @@ TEST(MeshData, ResizeTriangles) {
 //        v4 (0,-2,0)
 //
 
+/**
+ * @brief Build a flat four-triangle diamond around its center.
+ *
+ * Geometry and state arrays are owned by the returned mesh. No solver, forcing or water state is
+ * initialized; allocation/topology errors propagate.
+ * @return Owned five-vertex mesh spanning axes +/-2 m, four triangular cells, Manning.03 and built
+ *     topology.
+ */
 static MeshData makeDiamondMesh() {
     MeshData mesh;
     mesh.resize_vertices(5);
-    mesh.vx = { 0.0, 2.0,  0.0, -2.0,  0.0};
-    mesh.vy = { 0.0, 0.0,  2.0,  0.0, -2.0};
-    mesh.vz = { 0.0, 0.0,  0.0,  0.0,  0.0};
+    mesh.vx = {0.0, 2.0, 0.0, -2.0, 0.0};
+    mesh.vy = {0.0, 0.0, 2.0, 0.0, -2.0};
+    mesh.vz = {0.0, 0.0, 0.0, 0.0, 0.0};
 
     mesh.resize_triangles(4);
     // T0: v0, v1, v2 (right-upper)
-    mesh.tri_v0[0] = 0; mesh.tri_v1[0] = 1; mesh.tri_v2[0] = 2;
+    mesh.set_triangle(0, 0, 1, 2);
     // T1: v0, v2, v3 (left-upper)
-    mesh.tri_v0[1] = 0; mesh.tri_v1[1] = 2; mesh.tri_v2[1] = 3;
+    mesh.set_triangle(1, 0, 2, 3);
     // T2: v0, v3, v4 (left-lower)
-    mesh.tri_v0[2] = 0; mesh.tri_v1[2] = 3; mesh.tri_v2[2] = 4;
+    mesh.set_triangle(2, 0, 3, 4);
     // T3: v0, v4, v1 (right-lower)
-    mesh.tri_v0[3] = 0; mesh.tri_v1[3] = 4; mesh.tri_v2[3] = 1;
+    mesh.set_triangle(3, 0, 4, 1);
 
-    for (int i = 0; i < 4; ++i) mesh.mannings_n[i] = 0.03;
+    for (int i = 0; i < 4; ++i)
+        mesh.mannings_n[i] = 0.03;
 
     buildMeshTopology(mesh);
     return mesh;
@@ -1416,11 +2320,14 @@ TEST(DiamondMesh, AllTrianglesHaveOneNeighbourEach) {
     // adjacent triangles) and 1 boundary edge.
     for (int t = 0; t < 4; ++t) {
         int internal = 0;
-        if (mesh.tri_nbr0[t] >= 0) ++internal;
-        if (mesh.tri_nbr1[t] >= 0) ++internal;
-        if (mesh.tri_nbr2[t] >= 0) ++internal;
-        EXPECT_EQ(internal, 2) << "Triangle " << t << " has "
-                                << internal << " internal edges, expected 2";
+        if (mesh.cell_neighbour(t, 0) >= 0)
+            ++internal;
+        if (mesh.cell_neighbour(t, 1) >= 0)
+            ++internal;
+        if (mesh.cell_neighbour(t, 2) >= 0)
+            ++internal;
+        EXPECT_EQ(internal, 2) << "Triangle " << t << " has " << internal
+                               << " internal edges, expected 2";
     }
 }
 
@@ -1440,7 +2347,7 @@ TEST(DiamondMesh, CentreVertexStencilHasFourCells) {
 
     // Vertex 0 (centre) should have all 4 triangles in its stencil
     int start = mesh.vert_stencil_ptr[0];
-    int end   = mesh.vert_stencil_ptr[1];
+    int end = mesh.vert_stencil_ptr[1];
     EXPECT_EQ(end - start, 4);
 }
 
@@ -1479,9 +2386,10 @@ TEST(DiamondMesh, VertexReconstructionConstantExact) {
 // ============================================================================
 
 TEST(EdgeConveyance, DefaultsToOneForEveryEdgeAfterResize) {
-    MeshData mesh = makeUnitSquareMesh();   // 2 triangles → 6 edge slots
-    ASSERT_EQ(mesh.edge_conveyance.size(), 6u);
-    for (double c : mesh.edge_conveyance) EXPECT_DOUBLE_EQ(c, 1.0);
+    MeshData mesh = makeUnitSquareMesh(); // 2 triangles → 8 padded edge slots
+    ASSERT_EQ(mesh.edge_conveyance.size(), 8u);
+    for (double c : mesh.edge_conveyance)
+        EXPECT_DOUBLE_EQ(c, 1.0);
 }
 
 TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
@@ -1490,16 +2398,54 @@ TEST(EdgeConveyance, ParserAcceptsValidRowAndStashesIt) {
     EXPECT_TRUE(err.empty()) << err;
     ASSERT_EQ(pending.size(), 1u);
     EXPECT_EQ(pending[0].v_from, 17);
-    EXPECT_EQ(pending[0].v_to,   18);
+    EXPECT_EQ(pending[0].v_to, 18);
     EXPECT_DOUBLE_EQ(pending[0].conveyance, 0.4);
+}
+
+// ============================================================================
+// recomputeAllZDependents — whole-mesh form must equal the per-vertex form
+// ============================================================================
+//
+// swmm_2d_set_vertex_z_bulk exists because the scalar setter rescans every
+// triangle per call, making a whole-mesh rewrite O(nVertices x nTriangles).
+// The bulk path is only a legitimate substitute if it lands on bitwise the
+// same derived geometry — hence EXPECT_EQ on the raw doubles, not EXPECT_NEAR.
+
+TEST(RecomputeAllZDependents, MatchesPerVertexFormBitwise) {
+    // Irregular Zs so cancellation/ordering differences would show up.
+    const std::vector<double> zs = {1.25, -3.5, 7.125, 0.0, 12.875, -0.375};
+
+    MeshData a = makeUnitSquareMesh();
+    ASSERT_GE(static_cast<std::size_t>(a.n_vertices()), 4u);
+
+    // Reference: assign every Z, then recompute vertex by vertex, exactly what
+    // a loop of swmm_2d_set_vertex_z does.
+    for (int v = 0; v < a.n_vertices(); ++v) {
+        a.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+        recomputeVertexZDependents(a, v);
+    }
+
+    // Candidate: same Zs, one whole-mesh pass.
+    MeshData b = makeUnitSquareMesh();
+    for (int v = 0; v < b.n_vertices(); ++v)
+        b.vz[v] = zs[static_cast<std::size_t>(v) % zs.size()];
+    recomputeAllZDependents(b);
+
+    ASSERT_EQ(a.n_triangles(), b.n_triangles());
+    for (int t = 0; t < a.n_triangles(); ++t) {
+        EXPECT_EQ(a.tri_cz[t], b.tri_cz[t]) << "tri_cz diverged at triangle " << t;
+        for (int e = 0; e < 3; ++e)
+            EXPECT_EQ(a.edge_mz(MeshData::slot(t, e)), b.edge_mz(MeshData::slot(t, e)))
+                << "edge_mz diverged at triangle " << t << " edge " << e;
+    }
 }
 
 TEST(EdgeConveyance, ParserRejectsOutOfRangeConveyance) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "-0.1"}, pending).empty());
-    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "1.5"},  pending).empty());
-    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "0.0"},  pending).empty());
-    EXPECT_TRUE (parse2DEdgeConveyanceLine({"0", "1", "1.0"},  pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1", "1.5"}, pending).empty());
+    EXPECT_TRUE(parse2DEdgeConveyanceLine({"0", "1", "0.0"}, pending).empty());
+    EXPECT_TRUE(parse2DEdgeConveyanceLine({"0", "1", "1.0"}, pending).empty());
     // The two bad rows pushed nothing; the two good rows pushed one each.
     EXPECT_EQ(pending.size(), 2u);
 }
@@ -1513,7 +2459,7 @@ TEST(EdgeConveyance, ParserRejectsEqualFromAndTo) {
 TEST(EdgeConveyance, ParserRejectsTooFewTokens) {
     std::vector<SurfaceRouter2D::PendingEdgeConveyanceRow> pending;
     EXPECT_FALSE(parse2DEdgeConveyanceLine({"0", "1"}, pending).empty());
-    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0"},      pending).empty());
+    EXPECT_FALSE(parse2DEdgeConveyanceLine({"0"}, pending).empty());
 }
 
 TEST(EdgeConveyance, ParserSkipsEmptyTokenList) {
@@ -1530,38 +2476,38 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
 
     // Hand-build a tiny 2-triangle mesh (the unit square)
     MeshData mesh = makeUnitSquareMesh();
-    const int n_tri  = mesh.n_triangles();
+    const int n_tri = mesh.n_triangles();
     const int n_vert = mesh.n_vertices();
-    ASSERT_EQ(n_tri,  2);
+    ASSERT_EQ(n_tri, 2);
     ASSERT_EQ(n_vert, 4);
 
     // Build a snapshot carrying one tick's worth of surface state
     openswmm::SimulationSnapshot snap;
-    snap.sim_time            = 0.0;
-    snap.surface_tri_count   = n_tri;
-    snap.surface_vert_count  = n_vert;
-    snap.surface_depth         = {0.05, 0.10};
-    snap.surface_head          = {0.05, 0.10};
-    snap.surface_grad_hx       = {0.0,  0.0};
-    snap.surface_grad_hy       = {0.0,  0.0};
-    snap.surface_grad_hx_lim   = {0.0,  0.0};
-    snap.surface_grad_hy_lim   = {0.0,  0.0};
-    snap.surface_rainfall      = {0.0,  0.0};
-    snap.surface_coupling_flux = {0.0,  0.0};
-    snap.surface_net_source    = {0.0,  0.0};
-    snap.surface_face_vx       = {0.0,  0.0};
-    snap.surface_face_vy       = {0.0,  0.0};
-    snap.surface_continuity_err = {0.0,  0.0};
-    snap.surface_edge_flux     = {0.0, 0.0, 0.0,  0.0, 0.0, 0.0}; // [tri*3+e]
-    snap.surface_vert_head     = {0.0, 0.0, 0.0,  0.0};
+    snap.sim_time = 0.0;
+    snap.surface_tri_count = n_tri;
+    snap.surface_vert_count = n_vert;
+    snap.surface_depth = {0.05, 0.10};
+    snap.surface_head = {0.05, 0.10};
+    snap.surface_grad_hx = {0.0, 0.0};
+    snap.surface_grad_hy = {0.0, 0.0};
+    snap.surface_grad_hx_lim = {0.0, 0.0};
+    snap.surface_grad_hy_lim = {0.0, 0.0};
+    snap.surface_rainfall = {0.0, 0.0};
+    snap.surface_rain_cum = {3.0, 7.0}; // m³ per cell; sums to rainfall_in
+    snap.surface_coupling_flux = {0.0, 0.0};
+    snap.surface_net_source = {0.0, 0.0};
+    snap.surface_face_vx = {0.0, 0.0};
+    snap.surface_face_vy = {0.0, 0.0};
+    snap.surface_continuity_err = {0.0, 0.0};
+    snap.surface_edge_flux = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}; // [tri*3+e]
+    snap.surface_vert_head = {0.0, 0.0, 0.0, 0.0};
     // Cumulative rendering envelopes (per face)
-    snap.surface_stat_max_depth    = {0.05, 0.10};
+    snap.surface_stat_max_depth = {0.05, 0.10};
     snap.surface_stat_max_velocity = {0.20, 0.40};
     snap.surface_stat_max_cont_err = {1.0e-6, 2.0e-6};
 
     // Output path in a temp location; remove any stale file first.
-    const fs::path h5_path = fs::temp_directory_path() /
-                              "openswmm_test_2d_output.h5";
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_output.h5";
     fs::remove(h5_path);
 
     // Exercise the plugin lifecycle
@@ -1573,13 +2519,13 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     // path. We instantiate a stack context via the SWMM SDK header.
     openswmm::SimulationContext ctx{};
     ASSERT_EQ(plugin.validate(ctx), 0);
-    ASSERT_EQ(plugin.prepare(ctx),  0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
 
     // Activate the global 2D mass balance so finalize() writes /mass_balance_2d.
-    ctx.mass_balance_2d.active        = true;
-    ctx.mass_balance_2d.init_storage  = 0.0;
-    ctx.mass_balance_2d.rainfall_in   = 10.0;
-    ctx.mass_balance_2d.final_storage = 10.0;  // closed, conservative → error ~0
+    ctx.mass_balance_2d.active = true;
+    ctx.mass_balance_2d.init_storage = 0.0;
+    ctx.mass_balance_2d.rainfall_in = 10.0;
+    ctx.mass_balance_2d.final_storage = 10.0; // closed, conservative → error ~0
 
     plugin.prepareMeshAndDatasets(mesh);
 
@@ -1587,17 +2533,13 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     ASSERT_EQ(plugin.finalize(ctx), 0);
 
     // File should exist on disk
-    ASSERT_TRUE(fs::exists(h5_path))
-        << "Default2DOutputPlugin did not create " << h5_path;
+    ASSERT_TRUE(fs::exists(h5_path)) << "Default2DOutputPlugin did not create " << h5_path;
 
     // Open the file read-only and assert the documented UGRID datasets exist
-    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY,
-                             H5P_DEFAULT);
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     ASSERT_GE(file_id, 0) << "H5Fopen failed on " << h5_path;
 
-    auto exists = [file_id](const char* name) {
-        return H5Lexists(file_id, name, H5P_DEFAULT) > 0;
-    };
+    auto exists = [file_id](const char* name) { return H5Lexists(file_id, name, H5P_DEFAULT) > 0; };
     EXPECT_TRUE(exists("Mesh2"));
     EXPECT_TRUE(exists("Mesh2_node_x"));
     EXPECT_TRUE(exists("Mesh2_node_y"));
@@ -1609,6 +2551,8 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
     EXPECT_TRUE(exists("Mesh2_node_depth"));
     EXPECT_TRUE(exists("Mesh2_face_vx"));
     EXPECT_TRUE(exists("Mesh2_face_vy"));
+    EXPECT_TRUE(exists("Mesh2_face_rainfall"));
+    EXPECT_TRUE(exists("Mesh2_face_rain_cum"));
     EXPECT_TRUE(exists("Mesh2_face_continuity_err"));
     EXPECT_TRUE(exists("Mesh2_face_max_depth"));
     EXPECT_TRUE(exists("Mesh2_face_max_velocity"));
@@ -1641,6 +2585,24 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         H5Dclose(ds);
     }
 
+    // /Mesh2_face_rain_cum is [1, n_tri] and carries the per-cell cumulative
+    // rainfall volume (m³) verbatim.
+    {
+        hid_t ds = H5Dopen2(file_id, "Mesh2_face_rain_cum", H5P_DEFAULT);
+        ASSERT_GE(ds, 0);
+        hid_t space = H5Dget_space(ds);
+        hsize_t dims[2] = {0, 0};
+        H5Sget_simple_extent_dims(space, dims, nullptr);
+        EXPECT_EQ(dims[0], 1u);
+        EXPECT_EQ(dims[1], static_cast<hsize_t>(n_tri));
+        std::vector<double> vals(n_tri, 0.0);
+        H5Dread(ds, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, vals.data());
+        EXPECT_NEAR(vals[0], 3.0, 1e-12);
+        EXPECT_NEAR(vals[1], 7.0, 1e-12);
+        H5Sclose(space);
+        H5Dclose(ds);
+    }
+
     // Envelope dataset is fixed [n_tri] (no time dimension) and holds the
     // values from the last update().
     {
@@ -1668,11 +2630,162 @@ TEST(Default2DOutputPlugin, WritesUgridHdf5WithExpectedDatasets) {
         hid_t attr = H5Aopen(grp, "continuity_error", H5P_DEFAULT);
         double err = 1.0;
         H5Aread(attr, H5T_NATIVE_DOUBLE, &err);
-        EXPECT_NEAR(err, 0.0, 1e-9);  // init+rainfall(10) − final(10) = 0
+        EXPECT_NEAR(err, 0.0, 1e-9); // init+rainfall(10) − final(10) = 0
         H5Aclose(attr);
         H5Gclose(grp);
     }
 
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+// ---------------------------------------------------------------------------
+// Issue #155 — the .2d.h5 must say how its (always-SI) coordinates relate to
+// the model's CRS. Without it, a consumer of a foot-CRS model reasonably reads
+// the metres as feet and renders the results ~0.3048x toward the CRS origin
+// while the .2dm-backed mesh, which never leaves model units, sits correctly.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/**
+ * @brief Read one scalar HDF5 string attribute in fixed- or variable-length form.
+ *
+ * Requires scalar string shape; an attribute array is not supported by the single-value buffers.
+ * Variable strings are copied then H5free_memory is called on successful non-null data; fixed
+ * strings receive a zero sentinel and stop at the first NUL. Closes temporary type/attribute ids,
+ * ignoring close status; does not own loc or throw a diagnostic for HDF5 errors.
+ *
+ * @param[in] loc Borrowed valid HDF5 file/group/dataset location with no concurrent close/mutation.
+ * @param[in] name Non-null scalar attribute name.
+ * @return Owned string, empty for absence, query/open/read error, non-string datatype or a stored
+ *     empty string.
+ */
+std::string readStringAttrForTest(hid_t loc, const char* name) {
+    if (H5Aexists(loc, name) <= 0)
+        return {};
+    hid_t attr = H5Aopen(loc, name, H5P_DEFAULT);
+    if (attr < 0)
+        return {};
+    hid_t type = H5Aget_type(attr);
+    std::string out;
+    if (type >= 0 && H5Tget_class(type) == H5T_STRING) {
+        if (H5Tis_variable_str(type) > 0) {
+            char* raw = nullptr;
+            if (H5Aread(attr, type, &raw) >= 0 && raw) {
+                out = raw;
+                H5free_memory(raw);
+            }
+        } else {
+            std::vector<char> buf(H5Tget_size(type) + 1, '\0');
+            if (H5Aread(attr, type, buf.data()) >= 0)
+                out = buf.data();
+        }
+    }
+    if (type >= 0)
+        H5Tclose(type);
+    H5Aclose(attr);
+    return out;
+}
+
+} // namespace
+
+TEST(Default2DOutputPlugin, DeclaresModelCrsAndCoordinateScale) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_crs.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{};
+    ctx.spatial.crs = "EPSG:2249"; // NAD83 / Mass. Mainland (ftUS)
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+
+    // What SurfaceRouter2D::initialize() applied for a US-FLOW_UNITS project.
+    plugin.setMeshCoordinateScale(0.3048);
+    plugin.prepareMeshAndDatasets(mesh);
+    // finalize() closes the file. Without it the plugin still holds it open
+    // RDWR, and the fs::remove below throws on Windows.
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+
+    ASSERT_TRUE(H5Lexists(file_id, "crs", H5P_DEFAULT) > 0)
+        << "no /crs variable — consumers cannot tell metres from model units";
+
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_EQ(readStringAttrForTest(crs, "model_crs"), "EPSG:2249");
+    EXPECT_EQ(readStringAttrForTest(crs, "units"), "m");
+
+    ASSERT_TRUE(H5Aexists(crs, "metres_per_model_unit") > 0);
+    {
+        hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+        double factor = 0.0;
+        ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+        EXPECT_DOUBLE_EQ(factor, 0.3048);
+        H5Aclose(attr);
+    }
+    H5Dclose(crs);
+
+    // The mesh variables must point at it, or nothing leads a reader there.
+    // The attribute is `openswmm_crs`, NOT CF's `grid_mapping` — /crs is
+    // deliberately not a CF grid mapping (see the class docs and #155).
+    for (const char* name :
+         {"Mesh2", "Mesh2_node_x", "Mesh2_node_y", "Mesh2_face_x", "Mesh2_face_y"}) {
+        hid_t ds = H5Dopen2(file_id, name, H5P_DEFAULT);
+        ASSERT_GE(ds, 0) << name;
+        EXPECT_EQ(readStringAttrForTest(ds, "openswmm_crs"), "crs")
+            << name << " does not reference the /crs variable";
+        EXPECT_FALSE(H5Aexists(ds, "grid_mapping") > 0)
+            << name << " advertises a CF grid mapping /crs cannot honour";
+        H5Dclose(ds);
+    }
+
+    H5Fclose(file_id);
+    fs::remove(h5_path);
+}
+
+TEST(Default2DOutputPlugin, CrsVariableClaimsNothingWhenModelDeclaresNoCrs) {
+    namespace fs = std::filesystem;
+
+    MeshData mesh = makeUnitSquareMesh();
+    const fs::path h5_path = fs::temp_directory_path() / "openswmm_test_2d_crs_absent.h5";
+    fs::remove(h5_path);
+
+    Default2DOutputPlugin plugin(h5_path.string());
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+
+    openswmm::SimulationContext ctx{}; // no [OPTIONS] CRS
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    // setMeshCoordinateScale deliberately not called (SI project / no 2D
+    // router wiring): the file must report an identity factor, not guess.
+    plugin.prepareMeshAndDatasets(mesh);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+
+    hid_t file_id = H5Fopen(h5_path.string().c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    ASSERT_GE(file_id, 0);
+    hid_t crs = H5Dopen2(file_id, "crs", H5P_DEFAULT);
+    ASSERT_GE(crs, 0);
+
+    EXPECT_FALSE(H5Aexists(crs, "model_crs") > 0)
+        << "model_crs must be absent rather than empty when none was declared";
+
+    hid_t attr = H5Aopen(crs, "metres_per_model_unit", H5P_DEFAULT);
+    ASSERT_GE(attr, 0);
+    double factor = 0.0;
+    ASSERT_GE(H5Aread(attr, H5T_NATIVE_DOUBLE, &factor), 0);
+    EXPECT_DOUBLE_EQ(factor, 1.0);
+    H5Aclose(attr);
+
+    H5Dclose(crs);
     H5Fclose(file_id);
     fs::remove(h5_path);
 }

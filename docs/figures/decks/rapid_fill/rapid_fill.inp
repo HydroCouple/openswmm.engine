@@ -1,0 +1,71 @@
+[TITLE]
+E2 (2006 parameterization) - Vasconcelos et al. (2006) rapid pipe-filling experiment.
+Acrylic pipe L=14.33 m, D=0.094 m, horizontal. Upstream fill box 0.25x0.25 m (h=0.31 m),
+downstream surge tank D=0.19 m (h=1.50 m). Initial uniform depth 0.073 m (78%D), at rest.
+Inflow 3.1 L/s admitted at fill box at t=0. Free air venting (vent tower not modeled - 1D water).
+Measured: pressure head at x=9.9 m (VJ99) and x=14.1 m (VJ141); velocity at 9.9 m (link C2);
+surge-tank level (node ST depth). Paper numerics: 400 cells (dx~0.036 m), Cr=0.95, n=0.012,
+a=25 m/s. Stations are VIRTUAL junctions: sealed splices, transparent to the solution -
+they double as the VJ-composition check (plan MIXED_FLOW_CLOSURES §2.2(6)).
+
+[OPTIONS]
+FLOW_UNITS           LPS
+FLOW_ROUTING         FV
+LINK_OFFSETS         DEPTH
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:05:00
+REPORT_STEP          0.05
+ROUTING_STEP         0.01
+MIN_SURFAREA         0.05
+SURCHARGE_METHOD     EXTRAN
+INERTIAL_DAMPING     NONE
+NORMAL_FLOW_LIMITED  NEITHER
+FV_CELL_LENGTH       0.036
+FV_MIN_CELLS         4
+FV_SLOT_CELERITY     25
+
+[STORAGE]
+;;Name  Elev  MaxDepth InitDepth Shape      A1/Curve A2  A0      SurDepth Fevap
+FB      0.0   0.31     0.073     FUNCTIONAL 0        0   0.0625  0        0
+ST      0.0   1.50     0.073     FUNCTIONAL 0        0   0.02835 0        0
+
+[VIRTUAL_JUNCTIONS]
+;;Name  Elev
+VJ99    0.0
+VJ141   0.0
+
+; Rim-overflow path: the surge tank is open-topped (rim at 1.50 m). The weir crest
+; sits AT the rim (= ST MaxDepth), so it is transparent to the solution; it exists
+; because the engine (legacy ERROR 145 parity) requires >= 1 outfall node.
+[OUTFALLS]
+;;Name  Elev   Type   StageData  Gated
+DN      0.0    FREE              NO
+
+[WEIRS]
+;;Name  From  To   Type        CrestHt  Cd    Gated  EC
+OVF     ST    DN   TRANSVERSE  1.50     1.84  NO     0
+
+[CONDUITS]
+;;Name  From   To     Length  N      Zin  Zout  Q0
+C1      FB     VJ99   9.90    0.012  0    0     0
+C2      VJ99   VJ141  4.20    0.012  0    0     0
+C3      VJ141  ST     0.23    0.012  0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2 Geom3 Geom4 Barrels
+C1      CIRCULAR  0.094  0     0     0     1
+C2      CIRCULAR  0.094  0     0     0     1
+C3      CIRCULAR  0.094  0     0     0     1
+OVF     RECT_OPEN 0.10   0.19  0     0
+
+[INFLOWS]
+;;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline
+FB      FLOW         ""       FLOW  1.0      1.0      3.1
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL

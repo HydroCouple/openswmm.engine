@@ -238,3 +238,10 @@ Collection Systems Design Handbook*, L.W. Mays editor, McGraw-Hill, NY,
 
 
 
+
+Rubinato, M., Martins, R., Kesserwani, G., Leandro, J., Djordjević, S., and
+Shucksmith, J., "Experimental calibration and validation of sewer/surface
+flow exchange equations in steady and unsteady flow conditions", *Journal
+of Hydrology* 552, 421-432, 2017.
+<https://doi.org/10.1016/j.jhydrol.2017.06.024>
+

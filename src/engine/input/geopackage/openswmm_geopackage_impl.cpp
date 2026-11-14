@@ -1,11 +1,15 @@
 /**
- * @file openswmm_geopackage_impl.cpp
- * @brief C API implementation for GeoPackage I/O.
+ * @file      openswmm_geopackage_impl.cpp
+ * @brief     C API implementation for GeoPackage I/O.
  *
  * @details Model definitions and simulation results are read-only.
  *          Only observed/sensor timeseries data is writable through this API.
  *
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <openswmm/engine/openswmm_geopackage.h>
@@ -30,16 +34,41 @@ struct GpkgHandle {
     bool in_transaction = false;
 };
 
+/**
+ * @brief Recover the private GeoPackage handle representation.
+ *
+ * @param[in] h Opaque handle returned by this module, or NULL; no lifetime validation.
+ * @return Same borrowed pointer with internal type; ownership unchanged.
+ */
 static GpkgHandle* as_handle(SWMM_Gpkg h) {
     return static_cast<GpkgHandle*>(h);
 }
 
-static const char* safe_str(const char* s) { return s ? s : ""; }
+/**
+ * @brief Substitute an empty static token for a NULL SQLite string.
+ *
+ * @param[in] s Borrowed NUL-terminated string pointer or NULL.
+ * @return s unchanged when non-NULL, otherwise a static empty literal; never free the fallback.
+ */
+static const char* safe_str(const char* s) {
+    return s ? s : "";
+}
 
 // Variable ID lookup helper (cached per query, not per handle — simple enough)
+/**
+ * @brief Look up a variable ID by exact stored name and object category.
+ *
+ * Prepare failures can throw; bind/step status is not propagated separately. No per-handle cache or
+ * ownership transfer.
+ *
+ * @param[in,out] db Borrowed open schema-compatible SQLite connection; query statement is
+ *     scoped/released locally.
+ * @param[in] name Borrowed NUL-terminated variable name, bound to first parameter.
+ * @param[in] obj_type Borrowed NUL-terminated object-category token.
+ * @return First result ID, or -1 when sqlite3_step yields no row, including step errors.
+ */
 static int lookup_variable_id(sqlite3* db, const char* name, const char* obj_type) {
-    auto stmt = prepare(db,
-        "SELECT variable_id FROM variables WHERE name = ? AND object_type = ?");
+    auto stmt = prepare(db, "SELECT variable_id FROM variables WHERE name = ? AND object_type = ?");
     bind_text(stmt.get(), 1, name);
     bind_text(stmt.get(), 2, obj_type);
     if (sqlite3_step(stmt.get()) == SQLITE_ROW)
@@ -47,9 +76,23 @@ static int lookup_variable_id(sqlite3* db, const char* name, const char* obj_typ
     return -1;
 }
 
+/**
+ * @brief Read the first integer result from a caller-supplied query.
+ *
+ * Prepare failures can throw; caller controls SQL and validates count range. Bind/step errors are
+ * not returned distinctly from an empty result.
+ *
+ * @param[in,out] db Borrowed open SQLite connection; locally prepared statement is finalized on
+ *     return.
+ * @param[in] sql Complete SQL expected to return an integer count in column zero.
+ * @param[in] param Optional NUL-terminated value bound to parameter one; NULL leaves parameters
+ *     unbound.
+ * @return First column converted by SQLite to int, or zero if no row/step refusal.
+ */
 static int count_query(sqlite3* db, const std::string& sql, const char* param = nullptr) {
     auto stmt = prepare(db, sql);
-    if (param) bind_text(stmt.get(), 1, param);
+    if (param)
+        bind_text(stmt.get(), 1, param);
     if (sqlite3_step(stmt.get()) == SQLITE_ROW)
         return column_int(stmt.get(), 0);
     return 0;
@@ -64,7 +107,8 @@ extern "C" {
 // ---------- Lifecycle -------------------------------------------------------
 
 SWMM_ENGINE_API SWMM_Gpkg swmm_gpkg_open(const char* path) {
-    if (!path) return nullptr;
+    if (!path)
+        return nullptr;
     try {
         auto* h = new GpkgHandle();
         // Default flags are SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE.
@@ -84,7 +128,8 @@ SWMM_ENGINE_API SWMM_Gpkg swmm_gpkg_open(const char* path) {
 }
 
 SWMM_ENGINE_API void swmm_gpkg_close(SWMM_Gpkg gpkg) {
-    if (!gpkg) return;
+    if (!gpkg)
+        return;
     auto* h = as_handle(gpkg);
     if (h->in_transaction) {
         sqlite3_exec(h->db.get(), "ROLLBACK", nullptr, nullptr, nullptr);
@@ -94,51 +139,69 @@ SWMM_ENGINE_API void swmm_gpkg_close(SWMM_Gpkg gpkg) {
 }
 
 SWMM_ENGINE_API const char* swmm_gpkg_last_error(SWMM_Gpkg gpkg) {
-    if (!gpkg) return "";
+    if (!gpkg)
+        return "";
     return as_handle(gpkg)->error_msg.c_str();
 }
 
 // ---------- Transactions ----------------------------------------------------
 
 SWMM_ENGINE_API int swmm_gpkg_begin(SWMM_Gpkg gpkg) {
-    if (!gpkg) return SWMM_GPKG_ERR;
+    if (!gpkg)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
-    if (h->in_transaction) { h->error_msg = "Transaction already active"; return SWMM_GPKG_ERR; }
+    if (h->in_transaction) {
+        h->error_msg = "Transaction already active";
+        return SWMM_GPKG_ERR;
+    }
     try {
         exec(h->db.get(), "BEGIN IMMEDIATE");
         h->in_transaction = true;
         return SWMM_GPKG_OK;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_commit(SWMM_Gpkg gpkg) {
-    if (!gpkg) return SWMM_GPKG_ERR;
+    if (!gpkg)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
-    if (!h->in_transaction) { h->error_msg = "No active transaction"; return SWMM_GPKG_ERR; }
+    if (!h->in_transaction) {
+        h->error_msg = "No active transaction";
+        return SWMM_GPKG_ERR;
+    }
     try {
         exec(h->db.get(), "COMMIT");
         h->in_transaction = false;
         return SWMM_GPKG_OK;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_rollback(SWMM_Gpkg gpkg) {
-    if (!gpkg) return SWMM_GPKG_ERR;
+    if (!gpkg)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
-    if (!h->in_transaction) return SWMM_GPKG_OK; // no-op
+    if (!h->in_transaction)
+        return SWMM_GPKG_OK; // no-op
     try {
         exec(h->db.get(), "ROLLBACK");
         h->in_transaction = false;
         return SWMM_GPKG_OK;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Registration ----------------------------------------------------
 
-SWMM_ENGINE_API int swmm_gpkg_register(const char* license_key,
-                                         const char* organization,
-                                         const char* contact_email,
-                                         const char* deployment_id) {
+SWMM_ENGINE_API int swmm_gpkg_register(const char* license_key, const char* organization,
+                                       const char* contact_email, const char* deployment_id) {
     RegistrationInfo info;
     info.license_key = safe_str(license_key);
     info.organization = safe_str(organization);
@@ -154,18 +217,23 @@ SWMM_ENGINE_API int swmm_gpkg_is_registered(void) {
 // ---------- Read: Simulation metadata ---------------------------------------
 
 SWMM_ENGINE_API int swmm_gpkg_simulation_count(SWMM_Gpkg gpkg) {
-    if (!gpkg) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM simulations"); }
-    catch (...) { return -1; }
+    if (!gpkg)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM simulations");
+    } catch (...) {
+        return -1;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index,
-                                              char* buf, int bufsz) {
-    if (!gpkg || !buf || bufsz <= 0) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index, char* buf, int bufsz) {
+    if (!gpkg || !buf || bufsz <= 0)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt = prepare(h->db.get(),
-            "SELECT simulation_id FROM simulations ORDER BY created_at LIMIT 1 OFFSET ?");
+        auto stmt =
+            prepare(h->db.get(),
+                    "SELECT simulation_id FROM simulations ORDER BY created_at LIMIT 1 OFFSET ?");
         bind_int(stmt.get(), 1, index);
         if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string id = column_text(stmt.get(), 0);
@@ -174,66 +242,93 @@ SWMM_ENGINE_API int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index,
             return SWMM_GPKG_OK;
         }
         return SWMM_GPKG_ERR;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Read: Model object counts ---------------------------------------
 
 SWMM_ENGINE_API int swmm_gpkg_node_count(SWMM_Gpkg gpkg, const char* sim_id) {
-    if (!gpkg || !sim_id) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(),
-        "SELECT count(*) FROM nodes WHERE simulation_id = ?", sim_id); }
-    catch (...) { return -1; }
+    if (!gpkg || !sim_id)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM nodes WHERE simulation_id = ?", sim_id);
+    } catch (...) {
+        return -1;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_link_count(SWMM_Gpkg gpkg, const char* sim_id) {
-    if (!gpkg || !sim_id) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(),
-        "SELECT count(*) FROM links WHERE simulation_id = ?", sim_id); }
-    catch (...) { return -1; }
+    if (!gpkg || !sim_id)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM links WHERE simulation_id = ?", sim_id);
+    } catch (...) {
+        return -1;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_subcatch_count(SWMM_Gpkg gpkg, const char* sim_id) {
-    if (!gpkg || !sim_id) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(),
-        "SELECT count(*) FROM subcatchments WHERE simulation_id = ?", sim_id); }
-    catch (...) { return -1; }
+    if (!gpkg || !sim_id)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM subcatchments WHERE simulation_id = ?", sim_id);
+    } catch (...) {
+        return -1;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_gage_count(SWMM_Gpkg gpkg, const char* sim_id) {
-    if (!gpkg || !sim_id) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(),
-        "SELECT count(*) FROM rain_gages WHERE simulation_id = ?", sim_id); }
-    catch (...) { return -1; }
+    if (!gpkg || !sim_id)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM rain_gages WHERE simulation_id = ?", sim_id);
+    } catch (...) {
+        return -1;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_topology_edge_count(SWMM_Gpkg gpkg, const char* sim_id) {
-    if (!gpkg || !sim_id) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(),
-        "SELECT count(*) FROM node_links WHERE simulation_id = ?", sim_id); }
-    catch (...) { return -1; }
+    if (!gpkg || !sim_id)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM node_links WHERE simulation_id = ?", sim_id);
+    } catch (...) {
+        return -1;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_variable_count(SWMM_Gpkg gpkg) {
-    if (!gpkg) return -1;
-    try { return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM variables"); }
-    catch (...) { return -1; }
+    if (!gpkg)
+        return -1;
+    try {
+        return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM variables");
+    } catch (...) {
+        return -1;
+    }
 }
 
 // ---------- Read: Result timeseries -----------------------------------------
 
-SWMM_ENGINE_API int swmm_gpkg_result_ts_count(SWMM_Gpkg gpkg,
-                                                const char* simulation_id,
-                                                const char* object_type,
-                                                const char* object_id,
-                                                const char* variable_name) {
+SWMM_ENGINE_API int swmm_gpkg_result_ts_count(SWMM_Gpkg gpkg, const char* simulation_id,
+                                              const char* object_type, const char* object_id,
+                                              const char* variable_name) {
     if (!gpkg || !simulation_id || !object_type || !object_id || !variable_name)
         return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         int vid = lookup_variable_id(h->db.get(), variable_name, object_type);
-        if (vid < 0) return 0;
-        auto stmt = prepare(h->db.get(),
+        if (vid < 0)
+            return 0;
+        auto stmt = prepare(
+            h->db.get(),
             "SELECT count(*) FROM result_timeseries "
             "WHERE simulation_id = ? AND object_type = ? AND object_id = ? AND variable_id = ?");
         bind_text(stmt.get(), 1, simulation_id);
@@ -243,26 +338,29 @@ SWMM_ENGINE_API int swmm_gpkg_result_ts_count(SWMM_Gpkg gpkg,
         if (sqlite3_step(stmt.get()) == SQLITE_ROW)
             return column_int(stmt.get(), 0);
         return 0;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_read_result_ts(SWMM_Gpkg gpkg,
-                                               const char* simulation_id,
-                                               const char* object_type,
-                                               const char* object_id,
-                                               const char* variable_name,
-                                               double* times,
-                                               double* values,
-                                               int max_count) {
-    if (!gpkg || !simulation_id || !object_type || !object_id || !variable_name
-        || !times || !values || max_count <= 0)
+SWMM_ENGINE_API int swmm_gpkg_read_result_ts(SWMM_Gpkg gpkg, const char* simulation_id,
+                                             const char* object_type, const char* object_id,
+                                             const char* variable_name, double* times,
+                                             double* values, int max_count) {
+    if (!gpkg || !simulation_id || !object_type || !object_id || !variable_name || !times ||
+        !values || max_count <= 0)
         return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         int vid = lookup_variable_id(h->db.get(), variable_name, object_type);
-        if (vid < 0) { h->error_msg = "Unknown variable"; return 0; }
+        if (vid < 0) {
+            h->error_msg = "Unknown variable";
+            return 0;
+        }
 
-        auto stmt = prepare(h->db.get(),
+        auto stmt = prepare(
+            h->db.get(),
             "SELECT elapsed_time, value FROM result_timeseries "
             "WHERE simulation_id = ? AND object_type = ? AND object_id = ? AND variable_id = ? "
             "ORDER BY elapsed_time LIMIT ?");
@@ -279,25 +377,27 @@ SWMM_ENGINE_API int swmm_gpkg_read_result_ts(SWMM_Gpkg gpkg,
             ++n;
         }
         return n;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Read: Summary statistics ----------------------------------------
 
-SWMM_ENGINE_API int swmm_gpkg_read_summary(SWMM_Gpkg gpkg,
-                                             const char* simulation_id,
-                                             const char* object_type,
-                                             const char* object_id,
-                                             const char* variable_name,
-                                             double* value) {
+SWMM_ENGINE_API int swmm_gpkg_read_summary(SWMM_Gpkg gpkg, const char* simulation_id,
+                                           const char* object_type, const char* object_id,
+                                           const char* variable_name, double* value) {
     if (!gpkg || !simulation_id || !object_type || !object_id || !variable_name || !value)
         return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         int vid = lookup_variable_id(h->db.get(), variable_name, object_type);
-        if (vid < 0) return SWMM_GPKG_ERR;
+        if (vid < 0)
+            return SWMM_GPKG_ERR;
 
-        auto stmt = prepare(h->db.get(),
+        auto stmt = prepare(
+            h->db.get(),
             "SELECT value FROM result_summary "
             "WHERE simulation_id = ? AND object_type = ? AND object_id = ? AND variable_id = ?");
         bind_text(stmt.get(), 1, simulation_id);
@@ -310,26 +410,28 @@ SWMM_ENGINE_API int swmm_gpkg_read_summary(SWMM_Gpkg gpkg,
         }
         h->error_msg = "Summary value not found";
         return SWMM_GPKG_ERR;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Write: Observed data (the only writable section) ----------------
 
-SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg,
-                                                       const char* name,
-                                                       const char* variable_name,
-                                                       const char* object_type,
-                                                       const char* object_id,
-                                                       const char* source,
-                                                       const char* units) {
-    if (!gpkg || !name || !variable_name) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg, const char* name,
+                                                     const char* variable_name,
+                                                     const char* object_type, const char* object_id,
+                                                     const char* source, const char* units) {
+    if (!gpkg || !name || !variable_name)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         std::string obj_type = object_type ? object_type : "NODE";
         int vid = lookup_variable_id(h->db.get(), variable_name, obj_type.c_str());
         if (vid < 0) {
             // Create a new variable entry for this observed measurement
-            auto ins = prepare(h->db.get(),
+            auto ins = prepare(
+                h->db.get(),
                 "INSERT INTO variables (name, object_type, category, units) VALUES (?, ?, 'STATE', ?)");
             bind_text(ins.get(), 1, variable_name);
             bind_text(ins.get(), 2, obj_type);
@@ -341,20 +443,28 @@ SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg,
             vid = static_cast<int>(sqlite3_last_insert_rowid(h->db.get()));
         }
 
-        auto stmt = prepare(h->db.get(),
-            "INSERT INTO observed_series "
-            "(name, variable_id, object_type, object_id, source, units) "
-            "VALUES (?, ?, ?, ?, ?, ?)");
+        auto stmt =
+            prepare(h->db.get(), "INSERT INTO observed_series "
+                                 "(name, variable_id, object_type, object_id, source, units) "
+                                 "VALUES (?, ?, ?, ?, ?, ?)");
         bind_text(stmt.get(), 1, name);
         bind_int(stmt.get(), 2, vid);
-        if (object_type) bind_text(stmt.get(), 3, object_type);
-        else bind_null(stmt.get(), 3);
-        if (object_id) bind_text(stmt.get(), 4, object_id);
-        else bind_null(stmt.get(), 4);
-        if (source) bind_text(stmt.get(), 5, source);
-        else bind_null(stmt.get(), 5);
-        if (units) bind_text(stmt.get(), 6, units);
-        else bind_null(stmt.get(), 6);
+        if (object_type)
+            bind_text(stmt.get(), 3, object_type);
+        else
+            bind_null(stmt.get(), 3);
+        if (object_id)
+            bind_text(stmt.get(), 4, object_id);
+        else
+            bind_null(stmt.get(), 4);
+        if (source)
+            bind_text(stmt.get(), 5, source);
+        else
+            bind_null(stmt.get(), 5);
+        if (units)
+            bind_text(stmt.get(), 6, units);
+        else
+            bind_null(stmt.get(), 6);
         // A failed insert (e.g. UNIQUE violation on name) previously went
         // unchecked, and sqlite3_last_insert_rowid() then returned a stale or
         // zero rowid — callers wrote observed values into a bogus series_id.
@@ -364,45 +474,50 @@ SWMM_ENGINE_API int swmm_gpkg_create_observed_series(SWMM_Gpkg gpkg,
         }
 
         return static_cast<int>(sqlite3_last_insert_rowid(h->db.get()));
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_write_observed_value(SWMM_Gpkg gpkg,
-                                                     int series_id,
-                                                     const char* timestamp,
-                                                     double value,
-                                                     const char* quality_flag) {
-    if (!gpkg || !timestamp) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_write_observed_value(SWMM_Gpkg gpkg, int series_id,
+                                                   const char* timestamp, double value,
+                                                   const char* quality_flag) {
+    if (!gpkg || !timestamp)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt = prepare(h->db.get(),
-            "INSERT INTO observed_values (series_id, timestamp, value, quality_flag) "
-            "VALUES (?, ?, ?, ?)");
+        auto stmt = prepare(
+            h->db.get(), "INSERT INTO observed_values (series_id, timestamp, value, quality_flag) "
+                         "VALUES (?, ?, ?, ?)");
         bind_int(stmt.get(), 1, series_id);
         bind_text(stmt.get(), 2, timestamp);
         bind_double(stmt.get(), 3, value);
-        if (quality_flag) bind_text(stmt.get(), 4, quality_flag);
-        else bind_null(stmt.get(), 4);
+        if (quality_flag)
+            bind_text(stmt.get(), 4, quality_flag);
+        else
+            bind_null(stmt.get(), 4);
         if (sqlite3_step(stmt.get()) != SQLITE_DONE) {
             h->error_msg = sqlite3_errmsg(h->db.get());
             return SWMM_GPKG_ERR;
         }
         return SWMM_GPKG_OK;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_write_observed_values(SWMM_Gpkg gpkg,
-                                                      int series_id,
-                                                      const char** timestamps,
-                                                      const double* values,
-                                                      const char** quality_flags,
-                                                      int count) {
-    if (!gpkg || !timestamps || !values || count <= 0) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_write_observed_values(SWMM_Gpkg gpkg, int series_id,
+                                                    const char** timestamps, const double* values,
+                                                    const char** quality_flags, int count) {
+    if (!gpkg || !timestamps || !values || count <= 0)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt = prepare(h->db.get(),
-            "INSERT INTO observed_values (series_id, timestamp, value, quality_flag) "
-            "VALUES (?, ?, ?, ?)");
+        auto stmt = prepare(
+            h->db.get(), "INSERT INTO observed_values (series_id, timestamp, value, quality_flag) "
+                         "VALUES (?, ?, ?, ?)");
 
         for (int i = 0; i < count; ++i) {
             sqlite3_reset(stmt.get());
@@ -421,42 +536,48 @@ SWMM_ENGINE_API int swmm_gpkg_write_observed_values(SWMM_Gpkg gpkg,
             }
         }
         return SWMM_GPKG_OK;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Read: Observed data ---------------------------------------------
 
 SWMM_ENGINE_API int swmm_gpkg_observed_series_count(SWMM_Gpkg gpkg) {
-    if (!gpkg) return SWMM_GPKG_ERR;
-    try { return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM observed_series"); }
-    catch (...) { return SWMM_GPKG_ERR; }
+    if (!gpkg)
+        return SWMM_GPKG_ERR;
+    try {
+        return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM observed_series");
+    } catch (...) {
+        return SWMM_GPKG_ERR;
+    }
 }
 
 SWMM_ENGINE_API int swmm_gpkg_observed_value_count(SWMM_Gpkg gpkg, int series_id) {
-    if (!gpkg) return SWMM_GPKG_ERR;
+    if (!gpkg)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt = prepare(h->db.get(),
-            "SELECT count(*) FROM observed_values WHERE series_id = ?");
+        auto stmt =
+            prepare(h->db.get(), "SELECT count(*) FROM observed_values WHERE series_id = ?");
         bind_int(stmt.get(), 1, series_id);
         if (sqlite3_step(stmt.get()) == SQLITE_ROW)
             return column_int(stmt.get(), 0);
         return 0;
-    } catch (...) { return SWMM_GPKG_ERR; }
+    } catch (...) {
+        return SWMM_GPKG_ERR;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_read_observed_values(SWMM_Gpkg gpkg,
-                                                     int series_id,
-                                                     char* timestamps,
-                                                     int ts_buf_len,
-                                                     double* values,
-                                                     int max_count) {
-    if (!gpkg || !values || max_count <= 0) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_read_observed_values(SWMM_Gpkg gpkg, int series_id, char* timestamps,
+                                                   int ts_buf_len, double* values, int max_count) {
+    if (!gpkg || !values || max_count <= 0)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt = prepare(h->db.get(),
-            "SELECT timestamp, value FROM observed_values "
-            "WHERE series_id = ? ORDER BY timestamp LIMIT ?");
+        auto stmt = prepare(h->db.get(), "SELECT timestamp, value FROM observed_values "
+                                         "WHERE series_id = ? ORDER BY timestamp LIMIT ?");
         bind_int(stmt.get(), 1, series_id);
         bind_int(stmt.get(), 2, max_count);
 
@@ -472,25 +593,32 @@ SWMM_ENGINE_API int swmm_gpkg_read_observed_values(SWMM_Gpkg gpkg,
             ++n;
         }
         return n;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 // ---------- Read: Ad-hoc queries --------------------------------------------
 
 SWMM_ENGINE_API int swmm_gpkg_query_int(SWMM_Gpkg gpkg, const char* sql) {
-    if (!gpkg || !sql) return SWMM_GPKG_ERR;
+    if (!gpkg || !sql)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         auto stmt = prepare(h->db.get(), sql);
         if (sqlite3_step(stmt.get()) == SQLITE_ROW)
             return column_int(stmt.get(), 0);
         return SWMM_GPKG_ERR;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
-SWMM_ENGINE_API int swmm_gpkg_query_double(SWMM_Gpkg gpkg, const char* sql,
-                                             double* result) {
-    if (!gpkg || !sql || !result) return SWMM_GPKG_ERR;
+SWMM_ENGINE_API int swmm_gpkg_query_double(SWMM_Gpkg gpkg, const char* sql, double* result) {
+    if (!gpkg || !sql || !result)
+        return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
         auto stmt = prepare(h->db.get(), sql);
@@ -499,7 +627,10 @@ SWMM_ENGINE_API int swmm_gpkg_query_double(SWMM_Gpkg gpkg, const char* sql,
             return SWMM_GPKG_OK;
         }
         return SWMM_GPKG_ERR;
-    } catch (const std::exception& e) { h->error_msg = e.what(); return SWMM_GPKG_ERR; }
+    } catch (const std::exception& e) {
+        h->error_msg = e.what();
+        return SWMM_GPKG_ERR;
+    }
 }
 
 } // extern "C"

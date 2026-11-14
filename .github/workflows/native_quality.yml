@@ -1,0 +1,87 @@
+name: Native code quality
+
+on:
+  pull_request:
+    branches: [main, develop, swmm6_rel]
+  push:
+    branches: [main, develop, swmm6_rel]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Format changed C and C++ files
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y clang-format-19
+      - name: Check formatting
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          # The PR checkout is the test merge. Manual runs check the last commit.
+          if [[ -z "$BASE" ]]; then
+            BASE=$(git rev-parse --verify HEAD^ || git hash-object -w -t tree /dev/null)
+          elif ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            # An initial branch push or an unreachable prior tip.
+            BASE=$(git hash-object -w -t tree /dev/null)
+          fi
+          # Check only the changed lines: most older files predate .clang-format.
+          git clang-format-19 --binary clang-format-19 --style=file --diff \
+            --extensions c,cc,cpp,cxx,h,hh,hpp,hxx,inl,ipp "$BASE" HEAD
+
+  linux:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [clang-tidy, ASan and UBSan]
+    env:
+      CC: clang-19
+      CXX: clang++-19
+      OMP_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-19 clang-tidy-19 libclang-rt-19-dev \
+            libomp-19-dev libgtest-dev libgmock-dev libsqlite3-dev libhdf5-dev
+      - name: Configure the native engine
+        env:
+          CHECK: ${{ matrix.check }}
+        run: |
+          if [[ "$CHECK" == "ASan and UBSan" ]]; then
+            export CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+            export CXXFLAGS="$CFLAGS"
+            export LDFLAGS="-fsanitize=address,undefined"
+          fi
+          cmake -S . -B build/quality -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS_DEBUG="-O1 -g1" -DCMAKE_CXX_FLAGS_DEBUG="-O1 -g1" \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DOPENSWMM_BUILD_UNIT_TESTS=ON \
+            -DOPENSWMM_BUILD_GPU_PLUGIN=OFF -DOPENSWMM_ENGINE_FORCE_OPTIMIZED=OFF \
+            -DOPENSWMM_ENABLE_LTO=OFF -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
+            -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+          # No module scan: clang-tidy cannot read the build-time module maps.
+          # No 2D HDF5 writer: it needs HDF5 1.14, and Ubuntu 24.04 ships 1.10.
+      - name: Analyze engine and CLI translation units
+        if: matrix.check == 'clang-tidy'
+        run: run-clang-tidy-19 -p build/quality -j 2 -quiet '/src/(engine|cli)/'
+      - name: Build instrumented binaries
+        if: matrix.check == 'ASan and UBSan'
+        run: cmake --build build/quality --parallel 2
+      - name: Run instrumented unit tests
+        if: matrix.check == 'ASan and UBSan'
+        env:
+          ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build/quality -L unit --no-tests=error --parallel 2 --timeout 900 --output-on-failure

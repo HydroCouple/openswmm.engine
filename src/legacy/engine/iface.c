@@ -13,6 +13,17 @@
 //   Build 5.3.0:
 //   - Support added for saving multiple hotstart files at different times.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      iface.c
+ * @brief     Legacy routing and runoff interface file handling.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <stdlib.h>
@@ -22,23 +33,23 @@
 //-----------------------------------------------------------------------------
 //  Imported variables
 //-----------------------------------------------------------------------------
-extern double Qcf[];                   // flow units conversion factors
-                                       // (see swmm5.c)
+extern double Qcf[]; // flow units conversion factors
+                     // (see swmm5.c)
 
-//-----------------------------------------------------------------------------                  
+//-----------------------------------------------------------------------------
 //  Shared variables
-//-----------------------------------------------------------------------------                  
-static int      IfaceFlowUnits;        // flow units for routing interface file
-static int      IfaceStep;             // interface file time step (sec)
-static int      NumIfacePolluts;       // number of pollutants in interface file
-static int*     IfacePolluts;          // indexes of interface file pollutants
-static int      NumIfaceNodes;         // number of nodes on interface file
-static int*     IfaceNodes;            // indexes of nodes on interface file
-static double** OldIfaceValues;        // interface flows & WQ at previous time
-static double** NewIfaceValues;        // interface flows & WQ at next time
-static double   IfaceFrac;             // fraction of interface file time step
-static DateTime OldIfaceDate;          // previous date of interface values
-static DateTime NewIfaceDate;          // next date of interface values
+//-----------------------------------------------------------------------------
+static int IfaceFlowUnits;      // flow units for routing interface file
+static int IfaceStep;           // interface file time step (sec)
+static int NumIfacePolluts;     // number of pollutants in interface file
+static int* IfacePolluts;       // indexes of interface file pollutants
+static int NumIfaceNodes;       // number of nodes on interface file
+static int* IfaceNodes;         // indexes of nodes on interface file
+static double** OldIfaceValues; // interface flows & WQ at previous time
+static double** NewIfaceValues; // interface flows & WQ at next time
+static double IfaceFrac;        // fraction of interface file time step
+static DateTime OldIfaceDate;   // previous date of interface values
+static DateTime NewIfaceDate;   // next date of interface values
 
 //-----------------------------------------------------------------------------
 //  External Functions (declared in funcs.h)
@@ -55,107 +66,101 @@ static DateTime NewIfaceDate;          // next date of interface values
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
-static void  openFileForOutput(void);
-static void  openFileForInput(void);
-static int   getIfaceFilePolluts(void);
-static int   getIfaceFileNodes(void);
-static void  setOldIfaceValues(void);
-static void  readNewIfaceValues(void);
-static int   isOutletNode(int node);
+static void openFileForOutput(void);
+static void openFileForInput(void);
+static int getIfaceFilePolluts(void);
+static int getIfaceFileNodes(void);
+static void setOldIfaceValues(void);
+static void readNewIfaceValues(void);
+static int isOutletNode(int node);
 
 //=============================================================================
 
-int iface_readFileParams(char* tok[], int ntoks)
-//
-//  Input:   tok[] = array of string tokens
-//           ntoks = number of tokens
-//  Output:  returns an error code
-//  Purpose: reads interface file information from a line of input data.
-//
-//  Data format is:
-//  USE/SAVE  FileType  FileName
-//
-{
-    char  k;
-    int   i, j;
-    char  fname[MAXFNAME+1];
+/**
+ * @brief Reads interface file information from a line of input data. Data format is: USE/SAVE
+ *        FileType  FileName.
+ *
+ * @param tok Array of string tokens.
+ * @param[in] ntoks Number of tokens.
+ * @return An error code.
+ */
+int iface_readFileParams(char* tok[], int ntoks) {
+    char k;
+    int i, j;
+    char fname[MAXFNAME + 1];
     double saveDateTime = 0, saveDate, saveTime;
 
     // --- determine file disposition and type
-    if ( ntoks < 2 ) return error_setInpError(ERR_ITEMS, "");
+    if (ntoks < 2)
+        return error_setInpError(ERR_ITEMS, "");
     k = (char)findmatch(tok[0], FileModeWords);
-    if ( k < 0 ) return error_setInpError(ERR_KEYWORD, tok[0]);
+    if (k < 0)
+        return error_setInpError(ERR_KEYWORD, tok[0]);
     j = findmatch(tok[1], FileTypeWords);
-    if ( j < 0 ) return error_setInpError(ERR_KEYWORD, tok[1]);
-    if ( ntoks < 3 ) return 0;
+    if (j < 0)
+        return error_setInpError(ERR_KEYWORD, tok[1]);
+    if (ntoks < 3)
+        return 0;
     sstrncpy(fname, tok[2], MAXFNAME);
 
-    if (ntoks == 5)
-    {
-        if (!datetime_strToDate(tok[3], &saveDate))
-        {
+    if (ntoks == 5) {
+        if (!datetime_strToDate(tok[3], &saveDate)) {
             return error_setInpError(ERR_DATETIME, tok[3]);
         }
 
-        if (!datetime_strToTime(tok[4], &saveTime))
-		{
-			return error_setInpError(ERR_DATETIME, tok[4]);
-		}
+        if (!datetime_strToTime(tok[4], &saveTime)) {
+            return error_setInpError(ERR_DATETIME, tok[4]);
+        }
 
         saveDateTime = saveDate + saveTime;
     }
 
     // --- process file name
-    switch ( j )
-    {
-      case RAINFALL_FILE:
+    switch (j) {
+    case RAINFALL_FILE:
         Frain.mode = k;
         sstrncpy(Frain.name, addAbsolutePath(fname), MAXFNAME);
         break;
 
-      case RUNOFF_FILE:
+    case RUNOFF_FILE:
         Frunoff.mode = k;
         sstrncpy(Frunoff.name, addAbsolutePath(fname), MAXFNAME);
         break;
 
-      case HOTSTART_FILE:
-        if ( k == USE_FILE )
-        {
+    case HOTSTART_FILE:
+        if (k == USE_FILE) {
             FhotstartInput.mode = k;
             sstrncpy(FhotstartInput.name, addAbsolutePath(fname), MAXFNAME);
-        }
-        else if ( k == SAVE_FILE )
-        {   
-            for (i = 0; i < MAXHOTSTARTFILES; i++)
-			{
-				if (FhotstartOutputs[i].mode == NO_FILE)
-				{
+        } else if (k == SAVE_FILE) {
+            for (i = 0; i < MAXHOTSTARTFILES; i++) {
+                if (FhotstartOutputs[i].mode == NO_FILE) {
                     FhotstartOutputs[i].mode = k;
                     sstrncpy(FhotstartOutputs[i].name, addAbsolutePath(fname), MAXFNAME);
 
-                    if(saveDateTime > 0)
+                    if (saveDateTime > 0)
                         FhotstartOutputs[i].saveDateTime = saveDateTime;
 
-					break;
-				}
-			}
-
+                    break;
+                }
+            }
         }
         break;
 
-      case RDII_FILE:
+    case RDII_FILE:
         Frdii.mode = k;
         sstrncpy(Frdii.name, fname, MAXFNAME);
         break;
 
-      case INFLOWS_FILE:
-        if ( k != USE_FILE ) return error_setInpError(ERR_ITEMS, "");
+    case INFLOWS_FILE:
+        if (k != USE_FILE)
+            return error_setInpError(ERR_ITEMS, "");
         Finflows.mode = k;
         sstrncpy(Finflows.name, addAbsolutePath(fname), MAXFNAME);
         break;
 
-      case OUTFLOWS_FILE:
-        if ( k != SAVE_FILE ) return error_setInpError(ERR_ITEMS, "");
+    case OUTFLOWS_FILE:
+        if (k != SAVE_FILE)
+            return error_setInpError(ERR_ITEMS, "");
         Foutflows.mode = k;
         sstrncpy(Foutflows.name, addAbsolutePath(fname), MAXFNAME);
         break;
@@ -165,13 +170,10 @@ int iface_readFileParams(char* tok[], int ntoks)
 
 //=============================================================================
 
-void iface_openRoutingFiles()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: opens routing interface files.
-//
-{
+/**
+ * @brief Opens routing interface files.
+ */
+void iface_openRoutingFiles() {
     // --- initialize shared variables
     NumIfacePolluts = 0;
     IfacePolluts = NULL;
@@ -181,59 +183,60 @@ void iface_openRoutingFiles()
     NewIfaceValues = NULL;
 
     // --- check that inflows & outflows files are not the same
-    if ( Foutflows.mode != NO_FILE && Finflows.mode != NO_FILE )
-    {
-        if ( strcomp(Foutflows.name, Finflows.name) )
-        {
+    if (Foutflows.mode != NO_FILE && Finflows.mode != NO_FILE) {
+        if (strcomp(Foutflows.name, Finflows.name)) {
             report_writeErrorMsg(ERR_ROUTING_FILE_NAMES, "");
             return;
         }
     }
 
     // --- open the file for reading or writing
-    if ( Foutflows.mode == SAVE_FILE ) openFileForOutput();
-    if ( Finflows.mode == USE_FILE ) openFileForInput();
+    if (Foutflows.mode == SAVE_FILE)
+        openFileForOutput();
+    if (Finflows.mode == USE_FILE)
+        openFileForInput();
 }
 
 //=============================================================================
 
-void iface_closeRoutingFiles()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: closes routing interface files.
-//
-{
+/**
+ * @brief Closes routing interface files.
+ */
+void iface_closeRoutingFiles() {
     FREE(IfacePolluts);
     FREE(IfaceNodes);
-    if ( OldIfaceValues != NULL ) project_freeMatrix(OldIfaceValues);
-    if ( NewIfaceValues != NULL ) project_freeMatrix(NewIfaceValues);
-    if ( Finflows.file )  fclose(Finflows.file);
-    if ( Foutflows.file ) fclose(Foutflows.file);
+    if (OldIfaceValues != NULL)
+        project_freeMatrix(OldIfaceValues);
+    if (NewIfaceValues != NULL)
+        project_freeMatrix(NewIfaceValues);
+    if (Finflows.file)
+        fclose(Finflows.file);
+    if (Foutflows.file)
+        fclose(Foutflows.file);
 }
 
 //=============================================================================
 
-int iface_getNumIfaceNodes(DateTime currentDate)
-//
-//  Input:   currentDate = current date/time
-//  Output:  returns number of interface nodes if data exists or
-//           0 otherwise
-//  Purpose: reads inflow data from interface file at current date.
-//
-{
+/**
+ * @brief Reads inflow data from interface file at current date.
+ *
+ * @param[in] currentDate Current date/time.
+ * @return Number of interface nodes if data exists or 0 otherwise.
+ */
+int iface_getNumIfaceNodes(DateTime currentDate) {
     // --- return 0 if file begins after current date
-    if ( OldIfaceDate > currentDate ) return 0;
+    if (OldIfaceDate > currentDate)
+        return 0;
 
     // --- keep updating new interface values until current date bracketed
-    while ( NewIfaceDate < currentDate && NewIfaceDate != NO_DATE )
-    {
+    while (NewIfaceDate < currentDate && NewIfaceDate != NO_DATE) {
         setOldIfaceValues();
         readNewIfaceValues();
     }
 
     // --- return 0 if no data available
-    if ( NewIfaceDate == NO_DATE ) return 0;
+    if (NewIfaceDate == NO_DATE)
+        return 0;
 
     // --- find fraction current date is bewteen old & new interface dates
     IfaceFrac = (currentDate - OldIfaceDate) / (NewIfaceDate - OldIfaceDate);
@@ -246,93 +249,91 @@ int iface_getNumIfaceNodes(DateTime currentDate)
 
 //=============================================================================
 
-int iface_getIfaceNode(int index)
-//
-//  Input:   index = interface file node index
-//  Output:  returns project node index
-//  Purpose: finds index of project node associated with interface node index
-//
-{
-    if ( index >= 0 && index < NumIfaceNodes ) return IfaceNodes[index];
-    else return -1;
+/**
+ * @brief Finds index of project node associated with interface node index.
+ *
+ * @param[in] index Interface file node index.
+ * @return Project node index.
+ */
+int iface_getIfaceNode(int index) {
+    if (index >= 0 && index < NumIfaceNodes)
+        return IfaceNodes[index];
+    else
+        return -1;
 }
 
 //=============================================================================
 
-double iface_getIfaceFlow(int index)
-//
-//  Input:   index = interface file node index
-//  Output:  returns inflow to node
-//  Purpose: finds interface flow for particular node index.
-//
-{
+/**
+ * @brief Finds interface flow for particular node index.
+ *
+ * @param[in] index Interface file node index.
+ * @return Inflow to node.
+ */
+double iface_getIfaceFlow(int index) {
     double q1, q2;
 
-    if ( index >= 0 && index < NumIfaceNodes )
-    {
+    if (index >= 0 && index < NumIfaceNodes) {
         // --- interpolate flow between old and new values
         q1 = OldIfaceValues[index][0];
         q2 = NewIfaceValues[index][0];
-        return (1.0 - IfaceFrac)*q1 + IfaceFrac*q2;
-    }
-    else return 0.0;
+        return (1.0 - IfaceFrac) * q1 + IfaceFrac * q2;
+    } else
+        return 0.0;
 }
 
 //=============================================================================
 
-double iface_getIfaceQual(int index, int pollut)
-//
-//  Input:   index = index of node on interface file
-//           pollut = index of pollutant on interface file
-//  Output:  returns inflow pollutant concentration
-//  Purpose: finds interface concentration for particular node index & pollutant.
-//
-{
-    int    j;
+/**
+ * @brief Finds interface concentration for particular node index & pollutant.
+ *
+ * @param[in] index Index of node on interface file.
+ * @param[in] pollut Index of pollutant on interface file.
+ * @return Inflow pollutant concentration.
+ */
+double iface_getIfaceQual(int index, int pollut) {
+    int j;
     double c1, c2;
 
-    if ( index >= 0 && index < NumIfaceNodes )
-    {
+    if (index >= 0 && index < NumIfaceNodes) {
         // --- find index of pollut on interface file
         j = IfacePolluts[pollut];
-        if ( j < 0 ) return 0.0;
+        if (j < 0)
+            return 0.0;
 
         // --- interpolate flow between old and new values
         //     (remember that 1st col. of values matrix is for flow)
-        c1 = OldIfaceValues[index][j+1];
-        c2 = NewIfaceValues[index][j+1];
-        return (1.0 - IfaceFrac)*c1 + IfaceFrac*c2;
-    }
-    else return 0.0;
+        c1 = OldIfaceValues[index][j + 1];
+        c2 = NewIfaceValues[index][j + 1];
+        return (1.0 - IfaceFrac) * c1 + IfaceFrac * c2;
+    } else
+        return 0.0;
 }
 
 //=============================================================================
 
-void iface_saveOutletResults(DateTime reportDate, FILE* file)
-//
-//  Input:   reportDate = reporting date/time
-//           file = ptr. to interface file
-//  Output:  none
-//  Purpose: saves system outflows to routing interface file.
-//
-{
+/**
+ * @brief Saves system outflows to routing interface file.
+ *
+ * @param[in] reportDate Reporting date/time.
+ * @param file Ptr. to interface file.
+ */
+void iface_saveOutletResults(DateTime reportDate, FILE* file) {
     int i, p, yr, mon, day, hr, min, sec;
     char theDate[26];
     datetime_decodeDate(reportDate, &yr, &mon, &day);
     datetime_decodeTime(reportDate, &hr, &min, &sec);
-    snprintf(theDate, 26, " %04d %02d  %02d  %02d  %02d  %02d ",
-            yr, mon, day, hr, min, sec);
-    for (i=0; i<Nobjects[NODE]; i++)
-    {
+    snprintf(theDate, 26, " %04d %02d  %02d  %02d  %02d  %02d ", yr, mon, day, hr, min, sec);
+    for (i = 0; i < Nobjects[NODE]; i++) {
         // --- check that node is an outlet node
-        if ( !isOutletNode(i) ) continue;
+        if (!isOutletNode(i))
+            continue;
 
         // --- write node ID, date, flow, and quality to file
         fprintf(file, "\n%-16s", Node[i].ID);
         fprintf(file, "%s", theDate);
         fprintf(file, " %-10f", Node[i].inflow * UCF(FLOW));
-        for ( p = 0; p < Nobjects[POLLUT]; p++ )
-        {
+        for (p = 0; p < Nobjects[POLLUT]; p++) {
             fprintf(file, " %-10f", Node[i].newQual[p]);
         }
     }
@@ -340,19 +341,15 @@ void iface_saveOutletResults(DateTime reportDate, FILE* file)
 
 //=============================================================================
 
-void openFileForOutput()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: opens a routing interface file for writing.
-//
-{
+/**
+ * @brief Opens a routing interface file for writing.
+ */
+void openFileForOutput() {
     int i, n;
 
     // --- open the routing file for writing text
     Foutflows.file = fopen(Foutflows.name, "wt");
-    if ( Foutflows.file == NULL )
-    {
+    if (Foutflows.file == NULL) {
         report_writeErrorMsg(ERR_ROUTING_FILE_OPEN, Foutflows.name);
         return;
     }
@@ -363,70 +360,59 @@ void openFileForOutput()
     fprintf(Foutflows.file, "\n%-4d - reporting time step in sec", ReportStep);
 
     // --- write number & names of each constituent (including flow) to file
-    fprintf(Foutflows.file, "\n%-4d - number of constituents as listed below:",
-            Nobjects[POLLUT] + 1);
+    fprintf(Foutflows.file,
+            "\n%-4d - number of constituents as listed below:", Nobjects[POLLUT] + 1);
     fprintf(Foutflows.file, "\nFLOW %s", FlowUnitWords[FlowUnits]);
-    for (i=0; i<Nobjects[POLLUT]; i++)
-    {
-        fprintf(Foutflows.file, "\n%s %s", Pollut[i].ID,
-            QualUnitsWords[Pollut[i].units]);
+    for (i = 0; i < Nobjects[POLLUT]; i++) {
+        fprintf(Foutflows.file, "\n%s %s", Pollut[i].ID, QualUnitsWords[Pollut[i].units]);
     }
 
     // --- count number of outlet nodes
     n = 0;
-    for (i=0; i<Nobjects[NODE]; i++)
-    {
-        if ( isOutletNode(i) ) n++;
+    for (i = 0; i < Nobjects[NODE]; i++) {
+        if (isOutletNode(i))
+            n++;
     }
 
     // --- write number and names of outlet nodes to file
     fprintf(Foutflows.file, "\n%-4d - number of nodes as listed below:", n);
-    for (i=0; i<Nobjects[NODE]; i++)
-    {
-          if ( isOutletNode(i) )
+    for (i = 0; i < Nobjects[NODE]; i++) {
+        if (isOutletNode(i))
             fprintf(Foutflows.file, "\n%s", Node[i].ID);
     }
 
     // --- write column headings
-    fprintf(Foutflows.file,
-        "\nNode             Year Mon Day Hr  Min Sec FLOW      ");
-    for (i=0; i<Nobjects[POLLUT]; i++)
-    {
+    fprintf(Foutflows.file, "\nNode             Year Mon Day Hr  Min Sec FLOW      ");
+    for (i = 0; i < Nobjects[POLLUT]; i++) {
         fprintf(Foutflows.file, " %-10s", Pollut[i].ID);
     }
 
     // --- if reporting starts immediately, save initial outlet values
-    if ( ReportStart == StartDateTime )
-    {
+    if (ReportStart == StartDateTime) {
         iface_saveOutletResults(ReportStart, Foutflows.file);
     }
 }
 
 //=============================================================================
 
-void openFileForInput()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: opens a routing interface file for reading.
-//
-{
-    int   err;                         // error code
-    char  line[MAXLINE+1];             // line from Routing interface file
-    char  s[MAXLINE+1];                // general string variable
+/**
+ * @brief Opens a routing interface file for reading.
+ */
+void openFileForInput() {
+    int err;                // error code
+    char line[MAXLINE + 1]; // line from Routing interface file
+    char s[MAXLINE + 1];    // general string variable
 
     // --- open the routing interface file for reading text
     Finflows.file = fopen(Finflows.name, "rt");
-    if ( Finflows.file == NULL )
-    {
+    if (Finflows.file == NULL) {
         report_writeErrorMsg(ERR_ROUTING_FILE_OPEN, Finflows.name);
         return;
     }
 
     // --- check for correct file type
     fgets(line, MAXLINE, Finflows.file);
-    if ( !sscanf(line, "%s", s) || !strcomp(s, "SWMM5") )
-    {
+    if (!sscanf(line, "%s", s) || !strcomp(s, "SWMM5")) {
         report_writeErrorMsg(ERR_ROUTING_FILE_FORMAT, Finflows.name);
         return;
     }
@@ -437,35 +423,29 @@ void openFileForInput()
     // --- read reporting time step (sec)
     IfaceStep = 0;
     fgets(line, MAXLINE, Finflows.file);
-    if ( !sscanf(line, "%d", &IfaceStep) || IfaceStep <= 0 )
-    {
+    if (!sscanf(line, "%d", &IfaceStep) || IfaceStep <= 0) {
         report_writeErrorMsg(ERR_ROUTING_FILE_FORMAT, Finflows.name);
         return;
     }
 
     // --- match constituents in file with those in project
     err = getIfaceFilePolluts();
-    if ( err > 0 )
-    {
+    if (err > 0) {
         report_writeErrorMsg(err, Finflows.name);
         return;
     }
 
     // --- match nodes in file with those in project
     err = getIfaceFileNodes();
-    if ( err > 0 )
-    {
+    if (err > 0) {
         report_writeErrorMsg(err, Finflows.name);
         return;
     }
 
     // --- create matrices for old & new interface flows & WQ values
-    OldIfaceValues = project_createMatrix(NumIfaceNodes,
-                                         1+NumIfacePolluts);
-    NewIfaceValues = project_createMatrix(NumIfaceNodes,
-                                         1+NumIfacePolluts);
-    if ( OldIfaceValues == NULL || NewIfaceValues == NULL )
-    {
+    OldIfaceValues = project_createMatrix(NumIfaceNodes, 1 + NumIfacePolluts);
+    NewIfaceValues = project_createMatrix(NumIfaceNodes, 1 + NumIfacePolluts);
+    if (OldIfaceValues == NULL || NewIfaceValues == NULL) {
         report_writeErrorMsg(ERR_MEMORY, "");
         return;
     }
@@ -477,57 +457,57 @@ void openFileForInput()
 
 //=============================================================================
 
-int  getIfaceFilePolluts()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: reads names of pollutants saved on the inflows interface file.
-//
-{
-    int   i, j;
-    char  line[MAXLINE+1];             // line from inflows interface file
-    char  s1[MAXLINE+1];               // general string variable
-    char  s2[MAXLINE+1];         
+/**
+ * @brief Reads names of pollutants saved on the inflows interface file.
+ *
+ * @return An error code.
+ */
+int getIfaceFilePolluts() {
+    int i, j;
+    char line[MAXLINE + 1]; // line from inflows interface file
+    char s1[MAXLINE + 1];   // general string variable
+    char s2[MAXLINE + 1];
 
     // --- read number of pollutants (minus FLOW)
     fgets(line, MAXLINE, Finflows.file);
     NumIfacePolluts = -1;
     if (sscanf(line, "%d", &NumIfacePolluts))
         NumIfacePolluts--;
-    if ( NumIfacePolluts < 0 ) return ERR_ROUTING_FILE_FORMAT;
+    if (NumIfacePolluts < 0)
+        return ERR_ROUTING_FILE_FORMAT;
 
     // --- read flow units
     fgets(line, MAXLINE, Finflows.file);
     if (sscanf(line, "%s %s", s1, s2) < 2)
         return ERR_ROUTING_FILE_FORMAT;
-    if ( !strcomp(s1, "FLOW") )
+    if (!strcomp(s1, "FLOW"))
         return ERR_ROUTING_FILE_FORMAT;
     IfaceFlowUnits = findmatch(s2, FlowUnitWords);
-    if ( IfaceFlowUnits < 0 )
+    if (IfaceFlowUnits < 0)
         return ERR_ROUTING_FILE_FORMAT;
 
     // --- allocate memory for pollutant index array
-    if ( Nobjects[POLLUT] > 0 )
-    {
-        IfacePolluts = (int *) calloc(Nobjects[POLLUT], sizeof(int));
-        if ( !IfacePolluts ) return ERR_MEMORY;
-        for (i=0; i<Nobjects[POLLUT]; i++) IfacePolluts[i] = -1;
+    if (Nobjects[POLLUT] > 0) {
+        IfacePolluts = (int*)calloc(Nobjects[POLLUT], sizeof(int));
+        if (!IfacePolluts)
+            return ERR_MEMORY;
+        for (i = 0; i < Nobjects[POLLUT]; i++)
+            IfacePolluts[i] = -1;
     }
 
     // --- read pollutant names & units
-    if ( NumIfacePolluts > 0 && Nobjects[POLLUT] > 0 )
-    {
+    if (NumIfacePolluts > 0 && Nobjects[POLLUT] > 0) {
         // --- check each pollutant name on file with project's pollutants
-        for (i=0; i<NumIfacePolluts; i++)
-        {
-            if ( feof(Finflows.file) )
+        for (i = 0; i < NumIfacePolluts; i++) {
+            if (feof(Finflows.file))
                 return ERR_ROUTING_FILE_FORMAT;
             fgets(line, MAXLINE, Finflows.file);
-            if ( sscanf(line, "%s %s", s1, s2) < 2 )
+            if (sscanf(line, "%s %s", s1, s2) < 2)
                 return ERR_ROUTING_FILE_FORMAT;
             j = project_findObject(POLLUT, s1);
-            if ( j < 0 ) continue;
-            if ( !strcomp(s2, QualUnitsWords[Pollut[j].units]) )
+            if (j < 0)
+                continue;
+            if (!strcomp(s2, QualUnitsWords[Pollut[j].units]))
                 return ERR_ROUTING_FILE_NOMATCH;
             IfacePolluts[j] = i;
         }
@@ -537,30 +517,29 @@ int  getIfaceFilePolluts()
 
 //=============================================================================
 
-int getIfaceFileNodes()
-//
-//  Input:   none
-//  Output:  returns an error code
-//  Purpose: reads names of nodes contained on inflows interface file.
-//
-{
-    int   i;
-    char  line[MAXLINE+1];             // line from inflows interface file
-    char  s[MAXLINE+1];                // general string variable
+/**
+ * @brief Reads names of nodes contained on inflows interface file.
+ *
+ * @return An error code.
+ */
+int getIfaceFileNodes() {
+    int i;
+    char line[MAXLINE + 1]; // line from inflows interface file
+    char s[MAXLINE + 1];    // general string variable
 
     // --- read number of interface nodes
     fgets(line, MAXLINE, Finflows.file);
-    if ( !sscanf(line, "%d", &NumIfaceNodes) || NumIfaceNodes <= 0 )
+    if (!sscanf(line, "%d", &NumIfaceNodes) || NumIfaceNodes <= 0)
         return ERR_ROUTING_FILE_FORMAT;
 
     // --- allocate memory for interface nodes index array
-    IfaceNodes = (int *) calloc(NumIfaceNodes, sizeof(int));
-    if ( !IfaceNodes ) return ERR_MEMORY;
+    IfaceNodes = (int*)calloc(NumIfaceNodes, sizeof(int));
+    if (!IfaceNodes)
+        return ERR_MEMORY;
 
     // --- read names of interface nodes from file & save their indexes
-    for ( i=0; i<NumIfaceNodes; i++ )
-    {
-        if ( feof(Finflows.file) )
+    for (i = 0; i < NumIfaceNodes; i++) {
+        if (feof(Finflows.file))
             return ERR_ROUTING_FILE_FORMAT;
         IfaceNodes[i] = 0;
         fgets(line, MAXLINE, Finflows.file);
@@ -570,89 +549,88 @@ int getIfaceFileNodes()
     }
 
     // --- skip over column headings line
-    if ( feof(Finflows.file) ) return ERR_ROUTING_FILE_FORMAT;
+    if (feof(Finflows.file))
+        return ERR_ROUTING_FILE_FORMAT;
     fgets(line, MAXLINE, Finflows.file);
     return 0;
 }
 
 //=============================================================================
 
-void readNewIfaceValues()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: reads data from inflows interface file for next date.
-//
-{
-    int    i, j;
-    char*  s;
-    int    yr = 0, mon = 0, day = 0,
-		   hr = 0, min = 0, sec = 0;   // year, month, day, hour, minute, second
-    char   line[MAXLINE+1];            // line from interface file
+/**
+ * @brief Reads data from inflows interface file for next date.
+ */
+void readNewIfaceValues() {
+    int i, j;
+    char* s;
+    int yr = 0, mon = 0, day = 0, hr = 0, min = 0,
+        sec = 0;            // year, month, day, hour, minute, second
+    char line[MAXLINE + 1]; // line from interface file
 
     // --- read a line for each interface node
     NewIfaceDate = NO_DATE;
-    for (i=0; i<NumIfaceNodes; i++)
-    {
-        if ( feof(Finflows.file) ) return;
+    for (i = 0; i < NumIfaceNodes; i++) {
+        if (feof(Finflows.file))
+            return;
         fgets(line, MAXLINE, Finflows.file);
 
         // --- parse date & time from line
-        if ( strtok(line, SEPSTR) == NULL ) return;
+        if (strtok(line, SEPSTR) == NULL)
+            return;
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
-        yr  = atoi(s);
+        if (s == NULL)
+            return;
+        yr = atoi(s);
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
+        if (s == NULL)
+            return;
         mon = atoi(s);
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
+        if (s == NULL)
+            return;
         day = atoi(s);
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
-        hr  = atoi(s);
+        if (s == NULL)
+            return;
+        hr = atoi(s);
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
+        if (s == NULL)
+            return;
         min = atoi(s);
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
+        if (s == NULL)
+            return;
         sec = atoi(s);
 
         // --- parse flow value
         s = strtok(NULL, SEPSTR);
-        if ( s == NULL ) return;
-        NewIfaceValues[i][0] = atof(s) / Qcf[IfaceFlowUnits]; 
+        if (s == NULL)
+            return;
+        NewIfaceValues[i][0] = atof(s) / Qcf[IfaceFlowUnits];
 
         // --- parse pollutant values
-        for (j=1; j<=NumIfacePolluts; j++)
-        {
+        for (j = 1; j <= NumIfacePolluts; j++) {
             s = strtok(NULL, SEPSTR);
-            if ( s == NULL ) return;
+            if (s == NULL)
+                return;
             NewIfaceValues[i][j] = atof(s);
         }
-
     }
 
     // --- encode date & time values
-    NewIfaceDate = datetime_encodeDate(yr, mon, day) +
-                   datetime_encodeTime(hr, min, sec);
+    NewIfaceDate = datetime_encodeDate(yr, mon, day) + datetime_encodeTime(hr, min, sec);
 }
 
 //=============================================================================
 
-void setOldIfaceValues()
-//
-//  Input:   none
-//  Output:  none
-//  Purpose: replaces old values read from routing interface file with new ones. 
-//
-{
+/**
+ * @brief Replaces old values read from routing interface file with new ones.
+ */
+void setOldIfaceValues() {
     int i, j;
     OldIfaceDate = NewIfaceDate;
-    for ( i=0; i<NumIfaceNodes; i++)
-    {
-        for ( j=0; j<NumIfacePolluts+1; j++ )
-        {
+    for (i = 0; i < NumIfaceNodes; i++) {
+        for (j = 0; j < NumIfacePolluts + 1; j++) {
             OldIfaceValues[i][j] = NewIfaceValues[i][j];
         }
     }
@@ -660,19 +638,19 @@ void setOldIfaceValues()
 
 //=============================================================================
 
-int  isOutletNode(int i)
-//
-//  Input:   i = node index
-//  Output:  returns 1 if node is an outlet, 0 if not.
-//  Purpose: determines if a node is an outlet point or not.
-//
-{
+/**
+ * @brief Determines if a node is an outlet point or not.
+ *
+ * @param[in] i Node index.
+ * @return 1 if node is an outlet, 0 if not.
+ */
+int isOutletNode(int i) {
     // --- for DW routing only outfalls are outlets
-    if ( RouteModel == DW )
-    {
+    if (RouteModel == DW) {
         return (Node[i].type == OUTFALL);
     }
 
     // --- otherwise outlets are nodes with no outflow links (degree is 0)
-    else return (Node[i].degree == 0);
+    else
+        return (Node[i].degree == 0);
 }

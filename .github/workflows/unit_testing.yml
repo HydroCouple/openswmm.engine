@@ -1,10 +1,14 @@
 name: Unit Testing
 
+permissions:
+  contents: read
+
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
+  workflow_dispatch:
 
 env:
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
@@ -23,7 +27,6 @@ jobs:
     name: "C++ Engine (${{ matrix.alias }})"
     permissions:
       contents: read
-      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -65,7 +68,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: microsoft/vcpkg
-          ref: 2025.02.14
+          ref: 2026.07.29
           path: vcpkg
 
       - name: Install OpenMP (macOS)
@@ -117,11 +120,22 @@ jobs:
         with:
           arch: x64
 
+      - name: Re-pin VCPKG_ROOT (Windows)
+        # vcvars64 (VS 2022 17.6+) exports VCPKG_ROOT pointing at Visual
+        # Studio's bundled vcpkg, and msvc-dev-cmd forwards it to every later
+        # step, overriding the job-level env — so configure would silently
+        # build against VS's port snapshot instead of the pinned checkout.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
+
       # gpu;hypre are vcpkg default-features and the plugin/hypre CMake options
       # default ON, but request them EXPLICITLY so the Kokkos `tests/gpu` parity
       # tests and the BoomerAMG path are always built+exercised here even if an
       # upstream default flips (find_package(Kokkos/HYPRE REQUIRED) → configure
       # fails loudly rather than silently dropping Kokkos/AMG).
+      # With CMP0184 NEW, CMake adds /RTC1 separately from *_FLAGS_DEBUG.
+      # Disable it for this optimized Debug build: MSVC rejects /RTC1 with /O1.
       - name: Configure
         run: >
           cmake
@@ -134,68 +148,45 @@ jobs:
           -DOPENSWMM_GPU_BACKEND=omp
           -DOPENSWMM_WITH_HYPRE=ON
           -DOPENSWMM_WITH_GEOPACKAGE=ON
+          ${{ runner.os == 'Windows' && '-DCMAKE_MSVC_RUNTIME_CHECKS=' || '' }}
+          "-DCMAKE_C_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
+          "-DCMAKE_CXX_FLAGS_DEBUG=${{ runner.os == 'Windows' && '/Zi /O1 /DDEBUG' || '-O1 -g -DDEBUG' }}"
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.cmake_osx_arch }}
 
       - name: Build
         run: cmake --build build-${{ matrix.vcpkg_triplet }} --config Debug
 
       - name: Unit tests
-        run: ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit --output-on-failure
+        # Keep assertions/debug symbols, but optimize numerical kernels on Unix.
+        # Bound each executable and stream its cases on every platform. CTest
+        # honors the fixture resource locks when running two suites together.
+        timeout-minutes: 90
+        run: >-
+          ctest --test-dir build-${{ matrix.vcpkg_triplet }} -C Debug -L unit
+          --parallel 2 --timeout 900 --verbose --output-on-failure
+          --output-junit "${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}/unit-tests.xml"
+
+      - name: Upload unit-test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-test-logs-${{ matrix.vcpkg_triplet }}
+          path: |
+            build-${{ matrix.vcpkg_triplet }}/Testing/Temporary/
+            build-${{ matrix.vcpkg_triplet }}/unit-tests.xml
+          if-no-files-found: ignore
 
       - name: Diagnose Linux unit-test segfaults (gdb)
         if: failure() && runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
           sudo apt-get install -y gdb
-          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
-          # CTest records the tests that failed in this run here, one per line
-          # as "<index>:<testName>". Derive the binaries to backtrace from that
-          # instead of a hard-coded list, so this always targets whatever
-          # actually failed.
-          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
-          if [ -z "$FAILED_LOG" ]; then
-            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
-          fi
-          echo "Failed tests this run:"; cat "$FAILED_LOG"
-          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
-            [ -z "$t" ] && continue
-            bin=$(find "$BUILD" -name "$t" -type f -executable | head -1)
-            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
-            echo "==================================================="
-            echo "==== gdb backtrace: $t  ($bin)"
-            echo "==================================================="
-            gdb -batch \
-              -ex 'set pagination off' \
-              -ex 'set confirm off' \
-              -ex 'handle SIGSEGV stop print nopass' \
-              -ex run \
-              -ex 'thread apply all bt full' \
-              -ex quit \
-              "$bin" 2>&1 | head -400 || true
-          done
+          python3 .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" gdb
 
       - name: Diagnose macOS unit-test segfaults (lldb)
         if: failure() && runner.os == 'macOS'
-        run: |
-          BUILD="${{ github.workspace }}/build-${{ matrix.vcpkg_triplet }}"
-          # Same approach as the Linux gdb step, using lldb (ships with Xcode).
-          FAILED_LOG=$(find "$BUILD/Testing/Temporary" -name 'LastTestsFailed*.log' 2>/dev/null | head -1)
-          if [ -z "$FAILED_LOG" ]; then
-            echo "No LastTestsFailed log found under $BUILD/Testing/Temporary"; exit 0
-          fi
-          echo "Failed tests this run:"; cat "$FAILED_LOG"
-          cut -d: -f2 "$FAILED_LOG" | while read -r t; do
-            [ -z "$t" ] && continue
-            bin=$(find "$BUILD" -name "$t" -type f -perm -u+x | head -1)
-            if [ -z "$bin" ]; then echo "Binary for test '$t' not found"; continue; fi
-            echo "==================================================="
-            echo "==== lldb backtrace: $t  ($bin)"
-            echo "==================================================="
-            lldb --batch \
-              -o 'run' \
-              -o 'thread backtrace all' \
-              -o 'quit' \
-              "$bin" 2>&1 | head -400 || true
-          done
+        timeout-minutes: 10
+        run: python3 .github/scripts/debug_failed_tests.py "build-${{ matrix.vcpkg_triplet }}" lldb
 
       - name: Dump failed vcpkg build logs (Windows)
         if: failure() && runner.os == 'Windows'

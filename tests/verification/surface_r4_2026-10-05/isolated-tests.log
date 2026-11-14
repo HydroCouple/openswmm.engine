@@ -1,0 +1,23 @@
+[OUTPUT]
+Internal ctest changing into directory: /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-r4-isolated
+
+[HANDLER_OUTPUT]
+Test project /Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-r4-isolated
+
+    Start 205: test_engine_2d_aquifer
+1/5 Test #205: test_engine_2d_aquifer ..................   Passed    0.83 sec
+    Start 206: test_engine_surface_ownership
+2/5 Test #206: test_engine_surface_ownership ...........   Passed    0.18 sec
+    Start 207: test_engine_surface_et_budget
+3/5 Test #207: test_engine_surface_et_budget ...........   Passed    0.14 sec
+    Start 208: test_engine_surface_aquifer_receiving
+4/5 Test #208: test_engine_surface_aquifer_receiving ...   Passed    0.14 sec
+    Start 228: test_engine_geopackage_mesh2d
+5/5 Test #228: test_engine_geopackage_mesh2d ...........   Passed    0.53 sec
+
+100% tests passed, 0 tests failed out of 5
+
+Label Time Summary:
+unit    =   1.81 sec*proc (5 tests)
+
+Total Test time (real) =   1.84 sec
