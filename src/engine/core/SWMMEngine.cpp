@@ -139,13 +139,15 @@ static std::string plugin_io_error(const PluginFactory& plugins, const char* fal
     auto detail = [](const auto& instances) -> std::string {
         for (const auto* instance : instances) {
             const char* message = instance->last_error_message();
-            if (message && *message) return message;
+            if (message && *message)
+                return message;
         }
         return {};
     };
     for (const auto& message : {detail(plugins.output_plugins()), detail(plugins.report_plugins()),
                                 detail(plugins.state_io_plugins())})
-        if (!message.empty()) return std::string(fallback) + ": " + message;
+        if (!message.empty())
+            return std::string(fallback) + ": " + message;
     return fallback;
 }
 
@@ -204,23 +206,32 @@ void SWMMEngine::wire2DModelIO() noexcept {
 void SWMMEngine::checkLivePassiveExchange(bool preflight_history) const {
     if (live_passive_exchange_ && live_passive_exchange_->failed())
         throw std::runtime_error(live_passive_exchange_->error());
-    if ((preflight_history || (live_passive_exchange_ && live_passive_exchange_->preflightsHistory())) &&
-        (callbacks_.on_progress || callbacks_.on_warning || callbacks_.on_step_begin || callbacks_.on_step_end || callbacks_.on_phase))
-        throw std::invalid_argument("Live history preflight excludes callbacks that can mutate the accepted boundary.");
-    const bool paired = surface_router_.joint_hydraulic_ == &router_ && surface_router_.source_context_ == &ctx_;
-    if (split_ || process_component_host_ || !ctx_.events.empty() || (checkpoint_enabled_ && !paired) || runtime_water_driver_ || runtime_pipeline_ || source_delivery_ ||
-        source_stage_ || engine_source_stream_ || engine_source_history_ || exchange_target_ >= 0 ||
-        !pending_hotstart_checkpoint_.empty() || !ctx_.files.hotstart_saves.empty())
-        throw std::invalid_argument("Live passive exchange excludes split, source, runtime and checkpoint sessions.");
+    if ((preflight_history ||
+         (live_passive_exchange_ && live_passive_exchange_->preflightsHistory())) &&
+        (callbacks_.on_progress || callbacks_.on_warning || callbacks_.on_step_begin ||
+         callbacks_.on_step_end || callbacks_.on_phase))
+        throw std::invalid_argument(
+            "Live history preflight excludes callbacks that can mutate the accepted boundary.");
+    const bool paired =
+        surface_router_.joint_hydraulic_ == &router_ && surface_router_.source_context_ == &ctx_;
+    if (split_ || process_component_host_ || !ctx_.events.empty() ||
+        (checkpoint_enabled_ && !paired) || runtime_water_driver_ || runtime_pipeline_ ||
+        source_delivery_ || source_stage_ || engine_source_stream_ || engine_source_history_ ||
+        exchange_target_ >= 0 || !pending_hotstart_checkpoint_.empty() ||
+        !ctx_.files.hotstart_saves.empty())
+        throw std::invalid_argument(
+            "Live passive exchange excludes split, source, runtime and checkpoint sessions.");
     if (auto error = surface_router_.livePassiveProfile(); !error.empty())
         throw std::invalid_argument(error);
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_); !error.empty())
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+            !error.empty())
             throw std::invalid_argument(error);
     for (const auto& point : surface_router_.node_coupling_points_)
         if (std::size_t(point.node_idx) >= ctx_.forcing.node_head_boundary_mode.size() ||
             ctx_.forcing.node_head_boundary_mode[point.node_idx] != ForcingMode::NONE)
-            throw std::invalid_argument("Live passive exchange excludes mapped node head overrides.");
+            throw std::invalid_argument(
+                "Live passive exchange excludes mapped node head overrides.");
 }
 std::string SWMMEngine::attachLivePassiveExchange(std::size_t capacity) {
     return attachLivePassiveExchange(quality::PassiveStorageArithmetic::EXACT, capacity);
@@ -228,55 +239,79 @@ std::string SWMMEngine::attachLivePassiveExchange(std::size_t capacity) {
 std::string SWMMEngine::attachLiveChangingVolumeExchange(std::size_t capacity) {
     return attachLiveChangingVolumeExchange(capacity, false);
 }
-std::string SWMMEngine::attachLiveChangingVolumeExchange(std::size_t capacity, bool preflight_history) {
-    return attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic::EXACT, capacity, preflight_history);
+std::string SWMMEngine::attachLiveChangingVolumeExchange(std::size_t capacity,
+                                                         bool preflight_history) {
+    return attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic::EXACT, capacity,
+                                            preflight_history);
 }
-std::string SWMMEngine::attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic water,
-                                                       std::size_t capacity, bool preflight_history) {
+std::string
+SWMMEngine::attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithmetic water,
+                                             std::size_t capacity, bool preflight_history) {
     try {
         if (live_passive_exchange_ || step_active_ || ctx_.state != EngineState::RUNNING ||
-            ctx_.error_code != SWMM_OK || !do_routing_ || ctx_.elapsed_ms != 0 || surface_router_.pending_dt_ != 0)
+            ctx_.error_code != SWMM_OK || !do_routing_ || ctx_.elapsed_ms != 0 ||
+            surface_router_.pending_dt_ != 0)
             return "Attach changing-volume exchange at an initial running boundary with no prior owner.";
         checkLivePassiveExchange(preflight_history);
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_); !error.empty()) return error;
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+            !error.empty())
+            return error;
         auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
-            ctx_, surface_router_.state_, surface_router_.node_coupling_points_, surface_router_.options_.flow_2d_to_1d,
-            capacity, quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, preflight_history, quality::PassiveStorageLaw::CHANGING_VOLUME, water);
+            ctx_, surface_router_.state_, surface_router_.node_coupling_points_,
+            surface_router_.options_.flow_2d_to_1d, capacity,
+            quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, preflight_history,
+            quality::PassiveStorageLaw::CHANGING_VOLUME, water);
         surface_router_.live_passive_exchange_ = owner.get();
         live_passive_exchange_ = std::move(owner);
         return {};
-    } catch (const std::exception& error) { return error.what(); }
+    } catch (const std::exception& error) {
+        return error.what();
+    }
 }
-std::string SWMMEngine::attachLiveChangingVolumeSlicedExchange(std::size_t capacity, bool preflight_history) {
+std::string SWMMEngine::attachLiveChangingVolumeSlicedExchange(std::size_t capacity,
+                                                               bool preflight_history) {
     try {
         if (live_passive_exchange_ || step_active_ || ctx_.state != EngineState::RUNNING ||
-            ctx_.error_code != SWMM_OK || !do_routing_ || ctx_.elapsed_ms != 0 || surface_router_.pending_dt_ != 0)
+            ctx_.error_code != SWMM_OK || !do_routing_ || ctx_.elapsed_ms != 0 ||
+            surface_router_.pending_dt_ != 0)
             return "Attach changing-volume exchange at an initial running boundary with no prior owner.";
         checkLivePassiveExchange(preflight_history);
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_); !error.empty()) return error;
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+            !error.empty())
+            return error;
         auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
-            ctx_, surface_router_.state_, surface_router_.node_coupling_points_, surface_router_.options_.flow_2d_to_1d,
-            capacity, quality::PassiveStorageArithmetic::RETAIN_EXACT_SLICES, preflight_history, quality::PassiveStorageLaw::CHANGING_VOLUME, quality::PassiveStorageWaterArithmetic::RETAIN_AGGREGATES);
+            ctx_, surface_router_.state_, surface_router_.node_coupling_points_,
+            surface_router_.options_.flow_2d_to_1d, capacity,
+            quality::PassiveStorageArithmetic::RETAIN_EXACT_SLICES, preflight_history,
+            quality::PassiveStorageLaw::CHANGING_VOLUME,
+            quality::PassiveStorageWaterArithmetic::RETAIN_AGGREGATES);
         surface_router_.live_passive_exchange_ = owner.get();
         live_passive_exchange_ = std::move(owner);
         return {};
-    } catch (const std::exception& error) { return error.what(); }
+    } catch (const std::exception& error) {
+        return error.what();
+    }
 }
-std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic, std::size_t capacity) {
+std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
+                                                  std::size_t capacity) {
     return attachLivePassiveExchange(arithmetic, capacity, false);
 }
-std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic, std::size_t capacity, bool preflight_history) {
+std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithmetic arithmetic,
+                                                  std::size_t capacity, bool preflight_history) {
     try {
         if (live_passive_exchange_ || step_active_ || ctx_.state != EngineState::RUNNING ||
             ctx_.error_code != SWMM_OK || !do_routing_ || surface_router_.pending_dt_ != 0)
             return "Attach live passive exchange at a running settled boundary with no prior owner.";
         checkLivePassiveExchange(preflight_history);
         auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
-            ctx_, surface_router_.state_, surface_router_.node_coupling_points_, surface_router_.options_.flow_2d_to_1d, capacity, arithmetic, preflight_history);
+            ctx_, surface_router_.state_, surface_router_.node_coupling_points_,
+            surface_router_.options_.flow_2d_to_1d, capacity, arithmetic, preflight_history);
         surface_router_.live_passive_exchange_ = owner.get();
         live_passive_exchange_ = std::move(owner);
         return {};
-    } catch (const std::exception& error) { return error.what(); }
+    } catch (const std::exception& error) {
+        return error.what();
+    }
 }
 #endif
 
@@ -293,8 +328,7 @@ SWMMEngine::~SWMMEngine() {
 // ============================================================================
 
 int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out_path,
-                     const char* input_plugin_lib, bool metadata_only,
-                     bool skip_2d_mesh) noexcept {
+                     const char* input_plugin_lib, bool metadata_only, bool skip_2d_mesh) noexcept {
     if (ctx_.state != EngineState::CREATED && ctx_.state != EngineState::CLOSED) {
         set_error(SWMM_ERR_WRONG_STATE,
                   "swmm_engine_open: engine is not in CREATED or CLOSED state");
@@ -744,10 +778,9 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     // whether or not the run proceeds.
     {
         // The period open has no mesh to check the rows' cells and tags against.
-        auto gw_errs = skip_2d_mesh
-                           ? std::vector<std::string>{}
-                           : twoD::resolveGwTransport(ctx_, surface_router_.mesh(),
-                                                      surface_router_.gwTransport());
+        auto gw_errs = skip_2d_mesh ? std::vector<std::string>{}
+                                    : twoD::resolveGwTransport(ctx_, surface_router_.mesh(),
+                                                               surface_router_.gwTransport());
         for (auto& e : gw_errs)
             ctx_.errors.push_back(std::move(e));
         // T7.1: the rows are inert only where there is no kernel to
@@ -817,9 +850,9 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
 
     // Phase 4: load plugins listed in [PLUGINS]
     if (!ctx_.plugin_specs.empty()) {
-        plugins_.load_plugins(ctx_.plugin_specs, [this](const std::string& msg) {
-            emit_warning(SWMM_ERR_PLUGIN, msg.c_str());
-        }, &ctx_);
+        plugins_.load_plugins(
+            ctx_.plugin_specs,
+            [this](const std::string& msg) { emit_warning(SWMM_ERR_PLUGIN, msg.c_str()); }, &ctx_);
     }
 
     // Explicit per-role writer choices are independent of the plugin catalogue.
@@ -828,55 +861,73 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
         return it == ctx_.options.ext_options.end() ? "" : it->second;
     };
     auto pluginChoice = [&](const char* key) {
-        const auto id = ioOption(key); return !id.empty() && id != "BUILTIN";
+        const auto id = ioOption(key);
+        return !id.empty() && id != "BUILTIN";
     };
     const bool single = ioOption("IO_SINGLE_CONTAINER") == "YES";
     auto selectedWriter = [&](bool report) -> bool {
         const auto id = ioOption(report ? "IO_REPORT_WRITER" : "IO_OUTPUT_WRITER");
-        if (id.empty() || id == "BUILTIN") return true;
+        if (id.empty() || id == "BUILTIN")
+            return true;
         auto* info = plugins_.find_component(id);
-        if (!info || (report ? !info->has_report() : !info->has_output())) return false;
+        if (!info || (report ? !info->has_report() : !info->has_output()))
+            return false;
         std::string extension;
         for (const auto& filter : info->file_filters()) {
-            if (filter.role != (report ? PluginRole::REPORT_WRITE : PluginRole::OUTPUT_WRITE)) continue;
+            if (filter.role != (report ? PluginRole::REPORT_WRITE : PluginRole::OUTPUT_WRITE))
+                continue;
             if (!filter.patterns.empty()) {
                 extension = filter.patterns.front();
-                if (extension.starts_with("*")) extension.erase(0, 1);
+                if (extension.starts_with("*"))
+                    extension.erase(0, 1);
                 break;
             }
         }
         std::string target = ioOption(report ? "IO_REPORT_PATH" : "IO_OUTPUT_PATH");
         if (single) {
             target = ioOption("IO_OUTPUT_PATH");
-            if (target.empty()) target = ioOption("IO_REPORT_PATH");
+            if (target.empty())
+                target = ioOption("IO_REPORT_PATH");
         }
         auto input = io::utf8_path(inp_path ? inp_path : "");
-        if (target.empty()) { auto dest = input; dest.replace_extension(extension); target = io::path_utf8(dest); }
-        else if (io::utf8_path(target).is_relative()) target = io::path_utf8(input.parent_path() / io::utf8_path(target));
+        if (target.empty()) {
+            auto dest = input;
+            dest.replace_extension(extension);
+            target = io::path_utf8(dest);
+        } else if (io::utf8_path(target).is_relative())
+            target = io::path_utf8(input.parent_path() / io::utf8_path(target));
         // A native deck must never be overwritten by a plugin selected for results.
         if (io::utf8_path(target).lexically_normal() == input.lexically_normal() &&
-            input.extension() != extension) return false;
+            input.extension() != extension)
+            return false;
         if (report) {
-            auto* writer = info->create_report_plugin(); if (!writer) return false;
+            auto* writer = info->create_report_plugin();
+            if (!writer)
+                return false;
             plugins_.add_report_plugin(writer, {target}, info);
         } else {
-            auto* writer = info->create_output_plugin(); if (!writer) return false;
+            auto* writer = info->create_output_plugin();
+            if (!writer)
+                return false;
             plugins_.add_output_plugin(writer, {target}, info);
         }
         return true;
     };
     if (!selectedWriter(false) || !selectedWriter(true)) {
-        set_error(SWMM_ERR_PLUGIN, "The selected output/report writer or destination is unavailable");
+        set_error(SWMM_ERR_PLUGIN,
+                  "The selected output/report writer or destination is unavailable");
         return SWMM_ERR_PLUGIN;
     }
     // Native companions support the GUI's existing results and report readers.
     // Selected plugins use the authored destinations above, never these files.
     if (pluginChoice("IO_OUTPUT_WRITER") && !out_path_.empty()) {
-        auto companion = io::utf8_path(inp_path ? inp_path : ""); companion.replace_extension(".out");
+        auto companion = io::utf8_path(inp_path ? inp_path : "");
+        companion.replace_extension(".out");
         out_path_ = io::path_utf8(companion);
     }
     if (pluginChoice("IO_REPORT_WRITER") && !rpt_path_.empty()) {
-        auto companion = io::utf8_path(inp_path ? inp_path : ""); companion.replace_extension(".rpt");
+        auto companion = io::utf8_path(inp_path ? inp_path : "");
+        companion.replace_extension(".rpt");
         rpt_path_ = io::path_utf8(companion);
     }
 
@@ -1055,14 +1106,21 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
         ctx_.state_accessors.has_fv_retained_dry_mass = [this]() {
             return quality_.hasFvRetainedDryMass();
         };
-        ctx_.state_accessors.get_fv_dry_state = [this]() {return quality_.fvDryRestartState(ctx_);};
-        ctx_.state_accessors.set_fv_dry_state = [this](const std::string& blob,bool apply) {
-            const auto error=quality_.restoreFvDryRestart(ctx_,blob,apply);
-            if(error.empty()&&apply)router_.restoreFvClassicState(ctx_);
+        ctx_.state_accessors.get_fv_dry_state = [this]() {
+            return quality_.fvDryRestartState(ctx_);
+        };
+        ctx_.state_accessors.set_fv_dry_state = [this](const std::string& blob, bool apply) {
+            const auto error = quality_.restoreFvDryRestart(ctx_, blob, apply);
+            if (error.empty() && apply)
+                router_.restoreFvClassicState(ctx_);
             return error;
         };
-        ctx_.state_accessors.get_fv_retained_pollutant_mass = [this]() {return quality_.fvRetainedPollutantMass(ctx_);};
-        ctx_.state_accessors.get_fv_retained_species_mass = [this]() {return quality_.fvRetainedSpeciesMass(ctx_);};
+        ctx_.state_accessors.get_fv_retained_pollutant_mass = [this]() {
+            return quality_.fvRetainedPollutantMass(ctx_);
+        };
+        ctx_.state_accessors.get_fv_retained_species_mass = [this]() {
+            return quality_.fvRetainedSpeciesMass(ctx_);
+        };
         ctx_.state_accessors.get_surface_state = [this]() { return nativeSurfaceState(); };
         ctx_.state_accessors.set_surface_state = [this](const std::string& blob, bool apply) {
             return applyNativeSurfaceState(blob, apply);
@@ -1150,7 +1208,8 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
         if (std::any_of(ctx_.process_component_specs.begin(), ctx_.process_component_specs.end(),
                         components::foreign_component))
             process_component_host_ = std::make_unique<components::ProcessComponentHost>(
-                this, ctx_, plugins_, io::path_utf8(io::utf8_path(inp_path ? inp_path : "").parent_path()));
+                this, ctx_, plugins_,
+                io::path_utf8(io::utf8_path(inp_path ? inp_path : "").parent_path()));
     } catch (const std::exception& error) {
         set_error(SWMM_ERR_PLUGIN, error.what());
         return SWMM_ERR_PLUGIN;
@@ -1185,7 +1244,8 @@ int SWMMEngine::setSurfaceResultsFile(const char* path) noexcept {
         }
         surface_router_.options().output_file = destination;
         surface_output_plugin_->h5_path_ = std::move(destination);
-        surface_output_plugin_->checkpoint_fresh_ = true; // exclusive creation, also for ordinary runs
+        surface_output_plugin_->checkpoint_fresh_ =
+            true; // exclusive creation, also for ordinary runs
         return SWMM_OK;
     } catch (const std::bad_alloc&) {
         return SWMM_ERR_MEMORY;
@@ -1221,7 +1281,8 @@ int SWMMEngine::initialize() noexcept {
     if (!process_component_host_ &&
         std::any_of(ctx_.process_component_specs.begin(), ctx_.process_component_specs.end(),
                     components::foreign_component)) {
-        set_error(SWMM_ERR_PLUGIN, "Hosted process rows added after open require saving and reopening the model");
+        set_error(SWMM_ERR_PLUGIN,
+                  "Hosted process rows added after open require saving and reopening the model");
         return SWMM_ERR_PLUGIN;
     }
 
@@ -1299,26 +1360,38 @@ int SWMMEngine::initialize() noexcept {
             const auto ui = static_cast<std::size_t>(i);
             if (!std::isfinite(ctx_.nodes.storage_area[ui]) || ctx_.nodes.storage_area[ui] < 0.0 ||
                 !std::isfinite(ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui])) {
-                set_error(SWMM_ERR_BADPARAM, "Junction StorageArea and chamber capacity must be finite and nonnegative");
+                set_error(
+                    SWMM_ERR_BADPARAM,
+                    "Junction StorageArea and chamber capacity must be finite and nonnegative");
                 return SWMM_ERR_BADPARAM;
             }
             if (ctx_.nodes.storage_area[ui] > 0.0) {
                 if (ctx_.nodes.type[ui] != NodeType::JUNCTION || ctx_.nodes.is_virtual[ui] ||
-                    ctx_.nodes.is_inlet[ui] || ctx_.options.routing_model == RoutingModel::KINWAVE ||
+                    ctx_.nodes.is_inlet[ui] ||
+                    ctx_.options.routing_model == RoutingModel::KINWAVE ||
                     ctx_.options.routing_model == RoutingModel::STEADY) {
-                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea requires an ordinary junction and DYNWAVE or supported FV routing");
+                    set_error(
+                        SWMM_ERR_BADPARAM,
+                        "Junction StorageArea requires an ordinary junction and DYNWAVE or supported FV routing");
                     return SWMM_ERR_BADPARAM;
                 }
                 if (ctx_.options.routing_model == RoutingModel::DYNWAVE &&
-                    ctx_.options.surcharge_method == static_cast<int>(dynwave::SurchargeMethod::DYNAMIC_SLOT)) {
-                    set_error(SWMM_ERR_BADPARAM, "Junction StorageArea is not qualified with DYNAMIC_SLOT; use EXTRAN or SLOT");
+                    ctx_.options.surcharge_method ==
+                        static_cast<int>(dynwave::SurchargeMethod::DYNAMIC_SLOT)) {
+                    set_error(
+                        SWMM_ERR_BADPARAM,
+                        "Junction StorageArea is not qualified with DYNAMIC_SLOT; use EXTRAN or SLOT");
                     return SWMM_ERR_BADPARAM;
                 }
-                if (ctx_.options.routing_model == RoutingModel::FV && ctx_.nodes.sur_depth[ui] > 0.0) {
-                    set_error(SWMM_ERR_BADPARAM, "FV junction StorageArea does not support above-rim pressure allowance; use DYNWAVE or set SurDepth to zero");
+                if (ctx_.options.routing_model == RoutingModel::FV &&
+                    ctx_.nodes.sur_depth[ui] > 0.0) {
+                    set_error(
+                        SWMM_ERR_BADPARAM,
+                        "FV junction StorageArea does not support above-rim pressure allowance; use DYNWAVE or set SurDepth to zero");
                     return SWMM_ERR_BADPARAM;
                 }
-                ctx_.nodes.full_volume[ui] = ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui];
+                ctx_.nodes.full_volume[ui] =
+                    ctx_.nodes.storage_area[ui] * ctx_.nodes.full_depth[ui];
                 continue;
             }
             if (ctx_.nodes.type[ui] == NodeType::STORAGE)
@@ -1376,7 +1449,9 @@ int SWMMEngine::initialize() noexcept {
     for (int i = 0; i < ctx_.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
         ctx_.nodes.rpt_full_volume[ui] =
-            (ctx_.nodes.type[ui] == NodeType::STORAGE || ctx_.nodes.storage_area[ui] > 0.0) ? ctx_.nodes.full_volume[ui] : 0.0;
+            (ctx_.nodes.type[ui] == NodeType::STORAGE || ctx_.nodes.storage_area[ui] > 0.0)
+                ? ctx_.nodes.full_volume[ui]
+                : 0.0;
     }
 
     // Type-1 (volume-controlled) pumps: the inlet junction acts as a wet well
@@ -1839,9 +1914,10 @@ int SWMMEngine::initialize() noexcept {
     }
 
     ctx_.state = EngineState::INITIALIZED;
-    try { initializeSplitSources(); }
-    catch (const std::exception& error) {
-        set_error(SWMM_ERR_PLUGIN,error.what());
+    try {
+        initializeSplitSources();
+    } catch (const std::exception& error) {
+        set_error(SWMM_ERR_PLUGIN, error.what());
         return SWMM_ERR_PLUGIN;
     }
     return SWMM_OK;
@@ -1926,9 +2002,9 @@ int SWMMEngine::start(int save_results) noexcept {
         set_error(SWMM_ERR_LIFECYCLE, "Split surface requires validated geometry before start");
         return SWMM_ERR_LIFECYCLE;
     }
-    if (split_ && split_->role == SWMM_SPLIT_NETWORK &&
-        (!split_->geometry || !split_->callback)) {
-        set_error(SWMM_ERR_LIFECYCLE, "Split network requires matching geometry and a phase callback before start");
+    if (split_ && split_->role == SWMM_SPLIT_NETWORK && (!split_->geometry || !split_->callback)) {
+        set_error(SWMM_ERR_LIFECYCLE,
+                  "Split network requires matching geometry and a phase callback before start");
         return SWMM_ERR_LIFECYCLE;
     }
 
@@ -2006,8 +2082,7 @@ int SWMMEngine::start(int save_results) noexcept {
     // (legacy runoff_open() → openRunoffFile()). If the C API already
     // opened one explicitly (swmm_runoff_iface_open_*), the slot defers.
     if (ctx_.n_subcatches() > 0 && ctx_.files.runoff_mode != FileMode::NONE &&
-        !ctx_.files.runoff_path.empty() &&
-        !(runoff_iface_file_ && runoff_iface_file_->isOpen())) {
+        !ctx_.files.runoff_path.empty() && !(runoff_iface_file_ && runoff_iface_file_->isOpen())) {
         const std::string& rp = !ctx_.files.runoff_path.absolute.empty()
                                     ? ctx_.files.runoff_path.absolute
                                     : ctx_.files.runoff_path.original;
@@ -2074,12 +2149,17 @@ int SWMMEngine::start(int save_results) noexcept {
         perf::ScopedTimer _pt(perf::sec_start_plugins);
         plugins_prepare_attempted_ = true;
         if (plugins_.initialize_all(ctx_) != 0 || plugins_.validate_all(ctx_) != 0) {
-            set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Selected plugin initialization or validation failed").c_str());
+            set_error(
+                SWMM_ERR_PLUGIN,
+                plugin_io_error(plugins_, "Selected plugin initialization or validation failed")
+                    .c_str());
             return SWMM_ERR_PLUGIN;
         }
         const int rc = plugins_.prepare_all(ctx_);
         if (rc != 0) {
-            set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "swmm_engine_start: plugin prepare() failed").c_str());
+            set_error(
+                SWMM_ERR_PLUGIN,
+                plugin_io_error(plugins_, "swmm_engine_start: plugin prepare() failed").c_str());
             return SWMM_ERR_PLUGIN;
         }
     }
@@ -2128,15 +2208,17 @@ int SWMMEngine::start(int save_results) noexcept {
     for (const auto& entry : ctx_.files.hotstart_saves) {
         if (entry.format == HotstartFormat::LEGACY &&
             (ctx_.options.water_age || ctx_.options.heat_transport || ctx_.runtime_coupling_used)) {
-            set_error(CFFI_ERR_HOTSTART,
-                      "LEGACY SAVE HOTSTART cannot preserve age, heat or runtime coupling; use NATIVE.");
+            set_error(
+                CFFI_ERR_HOTSTART,
+                "LEGACY SAVE HOTSTART cannot preserve age, heat or runtime coupling; use NATIVE.");
             return CFFI_ERR_HOTSTART;
         }
         if (ctx_.options.quality_solver != QualitySolverKind::LEGACY &&
             (ctx_.options.water_age || ctx_.options.heat_transport || ctx_.n_pollutants() > 0 ||
              ctx_.reactions.configured)) {
-            set_error(CFFI_ERR_HOTSTART,
-                      "SAVE HOTSTART does not yet preserve ARD/LAGRANGIAN solver inventories; use a supported engine checkpoint session.");
+            set_error(
+                CFFI_ERR_HOTSTART,
+                "SAVE HOTSTART does not yet preserve ARD/LAGRANGIAN solver inventories; use a supported engine checkpoint session.");
             return CFFI_ERR_HOTSTART;
         }
     }
@@ -2146,8 +2228,9 @@ int SWMMEngine::start(int save_results) noexcept {
 
     ctx_.state = EngineState::RUNNING;
     if (process_component_host_) {
-        try { process_component_host_->start(); }
-        catch (const std::exception& error) {
+        try {
+            process_component_host_->start();
+        } catch (const std::exception& error) {
             set_error(SWMM_ERR_PLUGIN, error.what());
             return SWMM_ERR_PLUGIN;
         }
@@ -2163,7 +2246,8 @@ int SWMMEngine::start(int save_results) noexcept {
         if (!hotstart_checkpoint_error_.empty()) {
             set_error(CFFI_ERR_HOTSTART,
                       ("SAVE/USE HOTSTART cannot preserve the complete active state: " +
-                       hotstart_checkpoint_error_).c_str());
+                       hotstart_checkpoint_error_)
+                          .c_str());
             return CFFI_ERR_HOTSTART;
         } else if (!pending_hotstart_checkpoint_.empty()) {
             auto snapshot = std::move(pending_hotstart_checkpoint_);
@@ -2268,12 +2352,15 @@ int SWMMEngine::advanceTo(double seconds, double* actual) noexcept {
 }
 
 int SWMMEngine::step(double* elapsed_time) noexcept {
-    if(split_ && split_->material_pair && split_->material_pair->transporting)return SWMM_ERR_LIFECYCLE;
+    if (split_ && split_->material_pair && split_->material_pair->transporting)
+        return SWMM_ERR_LIFECYCLE;
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_) {
-        if (live_passive_exchange_->failed()) return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_WRONG_STATE;
-        try { checkLivePassiveExchange(); }
-        catch (const std::exception& error) {
+        if (live_passive_exchange_->failed())
+            return ctx_.error_code != SWMM_OK ? ctx_.error_code : SWMM_ERR_WRONG_STATE;
+        try {
+            checkLivePassiveExchange();
+        } catch (const std::exception& error) {
             live_passive_exchange_->fail("Live passive exchange session profile changed.");
             set_error(SWMM_ERR_WRONG_STATE, error.what());
             return SWMM_ERR_WRONG_STATE;
@@ -2286,27 +2373,37 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         return SWMM_ERR_LIFECYCLE;
 #ifdef OPENSWMM_HAS_2D
     if (split_ && split_->material) {
-        if (!split_->material_pair || !split_->material_pair->network || !split_->material_pair->surface ||
+        if (!split_->material_pair || !split_->material_pair->network ||
+            !split_->material_pair->surface ||
             (split_->material_issuer && split_->material_issuer->failed()) ||
-            (split_->material_producer && split_->material_producer->failed())) return SWMM_ERR_LIFECYCLE;
+            (split_->material_producer && split_->material_producer->failed()))
+            return SWMM_ERR_LIFECYCLE;
         try {
             quality::PeerPassiveStorageFunding::validateProfile(ctx_);
-            for(auto mode:ctx_.forcing.node_head_boundary_mode)
-                if(mode!=ForcingMode::NONE)throw std::invalid_argument("Material role excludes node head overrides");
-            if(checkpoint_enabled_ || process_component_host_ || runtime_water_driver_ || source_delivery_ || engine_source_stream_ || engine_source_history_)
+            for (auto mode : ctx_.forcing.node_head_boundary_mode)
+                if (mode != ForcingMode::NONE)
+                    throw std::invalid_argument("Material role excludes node head overrides");
+            if (checkpoint_enabled_ || process_component_host_ || runtime_water_driver_ ||
+                source_delivery_ || engine_source_stream_ || engine_source_history_)
                 throw std::invalid_argument("Material role excludes competing runtime owners");
-        } catch(const std::exception& error){ctx_.error_message=error.what();split_->failed=true;return SWMM_ERR_LIFECYCLE;}
+        } catch (const std::exception& error) {
+            ctx_.error_message = error.what();
+            split_->failed = true;
+            return SWMM_ERR_LIFECYCLE;
+        }
     }
 #endif
     if (step_active_)
         return CFFI_ERR_LIFECYCLE;
     if (materialCheckpointNetwork()) {
-        const auto& p=split_->material_pair;
-        if(!p || !p->checkpoint_accepted || p->active || p->transporting || !p->surface ||
+        const auto& p = split_->material_pair;
+        if (!p || !p->checkpoint_accepted || p->active || p->transporting || !p->surface ||
             !p->surface->split_ || p->surface->step_active_ || p->surface->runtime_pipeline_ ||
             p->surface->split_->material_acceptance_pending || p->surface->split_->failed ||
-            p->surface->split_->sequence!=split_->sequence || p->surface->ctx_.elapsed_ms!=ctx_.elapsed_ms) {
-            ctx_.error_message="Material checkpoint requires its acknowledged native pair boundary.";
+            p->surface->split_->sequence != split_->sequence ||
+            p->surface->ctx_.elapsed_ms != ctx_.elapsed_ms) {
+            ctx_.error_message =
+                "Material checkpoint requires its acknowledged native pair boundary.";
             return SWMM_ERR_WRONG_STATE;
         }
     }
@@ -2506,7 +2603,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 
 #ifdef OPENSWMM_HAS_2D
         if (split_ && split_->role == SWMM_SPLIT_NETWORK && split_->spatial_sources)
-            splitExchange(SWMM_SPLIT_SOURCE_PREPARE,dt_next);
+            splitExchange(SWMM_SPLIT_SOURCE_PREPARE, dt_next);
         if (source_delivery_ && !(split_ && split_->spatial_sources)) {
             const auto error =
                 source_delivery_->stage(ctx_.current_time, ctx_.current_time + dt_next);
@@ -2543,8 +2640,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             if (hasSourceDelivery() && !fv_window_totals)
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
                     if (!lidnode::active(ctx_, n)) {
-                        const double half_receipt = (sourceDeliveryRate(n) - sourceDeliveryRate(n,true)) *
-                                                    dt_next / 2;
+                        const double half_receipt =
+                            (sourceDeliveryRate(n) - sourceDeliveryRate(n, true)) * dt_next / 2;
                         ctx_.nodes.stat_total_inflow_vol[n] += half_receipt;
                         if (ctx_.nodes.type[n] == NodeType::OUTFALL ||
                             (ctx_.nodes.degree[n] == 0 && ctx_.nodes.type[n] != NodeType::STORAGE))
@@ -2552,7 +2649,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     }
 #endif
             stepRouting(dt_next);
-            if ((checkpoint_enabled_ || materialCheckpointNetwork()) && router_.checkpoint_prepared_) {
+            if ((checkpoint_enabled_ || materialCheckpointNetwork()) &&
+                router_.checkpoint_prepared_) {
                 // Event/steady skips still advance the accepted engine clock.
                 router_.checkCheckpointStep(ctx_, dt_next, ctx_.climate_state.evap_rate, false);
                 router_.checkpoint_step_finished_ = true;
@@ -2609,7 +2707,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
 #ifdef OPENSWMM_HAS_2D
             if (hasSourceDelivery())
                 for (int n = 0; n < ctx_.n_nodes(); ++n)
-                    routing_prev_rates_[1] += sourceDeliveryRate(n) - sourceDeliveryRate(n,true);
+                    routing_prev_rates_[1] += sourceDeliveryRate(n) - sourceDeliveryRate(n, true);
 #endif
             const double half = dt_next / 2.0;
             for (int k = 0; k < 11; ++k) {
@@ -2723,13 +2821,17 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // All subcatch/node/link state arrays still reflect the end of the
         // just-completed routing step — advance only updates timers, not state.
         postOutputSnapshot(dt_next);
-        const bool deferred_split_acceptance = split_ && split_->role == SWMM_SPLIT_SURFACE &&
+        const bool deferred_split_acceptance =
+            split_ && split_->role == SWMM_SPLIT_SURFACE &&
             ((split_->settled_reports && split_->awaiting_report) || split_->material);
         if (deferred_split_acceptance) {
-            split_->output_start = phase_start; split_->output_dt = dt_next;
-            if(split_->material)split_->material_acceptance_pending=true;
+            split_->output_start = phase_start;
+            split_->output_dt = dt_next;
+            if (split_->material)
+                split_->material_acceptance_pending = true;
         }
-        if (!split_ || split_->role!=SWMM_SPLIT_SURFACE || !split_->settled_reports || !split_->awaiting_report)
+        if (!split_ || split_->role != SWMM_SPLIT_SURFACE || !split_->settled_reports ||
+            !split_->awaiting_report)
             tracePhase(SWMM_PHASE_OUTPUTS_PUBLISHED, phase_start, dt_next);
 
 #ifdef OPENSWMM_HAS_2D
@@ -2817,7 +2919,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         if (elapsed_time)
             *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
         acceptMaterialBoundary();
-        if (!deferred_split_acceptance) tracePhase(SWMM_PHASE_STEP_ACCEPTED, phase_start, dt_next);
+        if (!deferred_split_acceptance)
+            tracePhase(SWMM_PHASE_STEP_ACCEPTED, phase_start, dt_next);
         if (materialCheckpointNetwork()) {
             router_.acceptCheckpointBoundary(ctx_);
             split_->material_pair->checkpoint_accepted = true;
@@ -2825,20 +2928,28 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         return SWMM_OK;
     } catch (const std::exception& e) {
         checkpoint_ready_ = false;
-        if(split_ && split_->material) {
-            split_->failed=true;
-            if(split_->material_issuer)split_->material_issuer->fail("Material engine step failed; state retained.");
-            if(split_->material_producer)split_->material_producer->fail("Material engine step failed; state retained.");
-            const auto& pair=split_->material_pair;
-            auto* peer=pair ? (split_->role==SWMM_SPLIT_NETWORK ? pair->surface : pair->network) : nullptr;
-            if(peer && peer->split_) {
-                peer->split_->failed=true;
-                if(peer->split_->material_issuer)peer->split_->material_issuer->fail("Material peer step failed; state retained.");
-                if(peer->split_->material_producer)peer->split_->material_producer->fail("Material peer step failed; state retained.");
+        if (split_ && split_->material) {
+            split_->failed = true;
+            if (split_->material_issuer)
+                split_->material_issuer->fail("Material engine step failed; state retained.");
+            if (split_->material_producer)
+                split_->material_producer->fail("Material engine step failed; state retained.");
+            const auto& pair = split_->material_pair;
+            auto* peer = pair ? (split_->role == SWMM_SPLIT_NETWORK ? pair->surface : pair->network)
+                              : nullptr;
+            if (peer && peer->split_) {
+                peer->split_->failed = true;
+                if (peer->split_->material_issuer)
+                    peer->split_->material_issuer->fail(
+                        "Material peer step failed; state retained.");
+                if (peer->split_->material_producer)
+                    peer->split_->material_producer->fail(
+                        "Material peer step failed; state retained.");
             }
         }
 #ifdef OPENSWMM_HAS_2D
-        if (live_passive_exchange_) live_passive_exchange_->fail("Live passive exchange engine step failed.");
+        if (live_passive_exchange_)
+            live_passive_exchange_->fail("Live passive exchange engine step failed.");
 #endif
         set_error(SWMM_ERR_WRONG_STATE, e.what());
         return SWMM_ERR_WRONG_STATE;
@@ -5306,13 +5417,17 @@ void SWMMEngine::stepRouting(double dt_routing) {
 
     // B2c. Freeze prior receipts before the actual native lateral drain.
 #ifdef OPENSWMM_HAS_2D
-    if (live_passive_exchange_) live_passive_exchange_->freeze(ctx_, dt_routing);
-    if (split_ && split_->material_issuer) split_->material_issuer->freeze(dt_routing);
+    if (live_passive_exchange_)
+        live_passive_exchange_->freeze(ctx_, dt_routing);
+    if (split_ && split_->material_issuer)
+        split_->material_issuer->freeze(dt_routing);
 #endif
     assembleLateralInflows(dt_routing);
 #ifdef OPENSWMM_HAS_2D
-    if (live_passive_exchange_) live_passive_exchange_->observeDrain(ctx_);
-    if (split_ && split_->material_issuer) split_->material_issuer->observeDrain();
+    if (live_passive_exchange_)
+        live_passive_exchange_->observeDrain(ctx_);
+    if (split_ && split_->material_issuer)
+        split_->material_issuer->observeDrain();
 #endif
 
 #ifdef OPENSWMM_HAS_2D
@@ -5338,7 +5453,8 @@ void SWMMEngine::stepRouting(double dt_routing) {
     if (split_ && split_->role == SWMM_SPLIT_NETWORK && !split_->mesh_richards_nodes.empty()) {
         splitExchange(SWMM_SPLIT_LID_TRIAL, dt_routing);
         splitExchange(SWMM_SPLIT_LID_ACCEPT, dt_routing);
-    } else surface_router_.prepareLidStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
+    } else
+        surface_router_.prepareLidStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
 #else
     lidnode::prepareStep(ctx_, dt_routing, ctx_.climate_state.evap_rate);
 #endif
@@ -5352,8 +5468,7 @@ void SWMMEngine::stepRouting(double dt_routing) {
     if (hasSourceDelivery())
         for (int n = 0; n < ctx_.n_nodes(); ++n)
             if (!lidnode::active(ctx_, n))
-                ctx_.nodes.old_net_inflow[n] +=
-                    sourceDeliveryRate(n) - sourceDeliveryRate(n,true);
+                ctx_.nodes.old_net_inflow[n] += sourceDeliveryRate(n) - sourceDeliveryRate(n, true);
 #endif
 
     // B3. Hydraulic routing (batch xsect geometry → batch momentum)
@@ -5368,8 +5483,10 @@ void SWMMEngine::stepRouting(double dt_routing) {
     const auto& nc_idx = hydstruct_.nonConduitIndices();
     auto& dw = router_.dwSolver();
     std::exception_ptr split_error;
-    auto non_conduit_fn = [this, &nc_idx, &dw, &split_error](SimulationContext& ctx, double dt, int step) {
-        if (split_error) return;
+    auto non_conduit_fn = [this, &nc_idx, &dw, &split_error](SimulationContext& ctx, double dt,
+                                                             int step) {
+        if (split_error)
+            return;
         auto& links = ctx.links;
 
         // PARITY: legacy findLinkFlows (dynwave.c:383-398) processes
@@ -5512,8 +5629,11 @@ void SWMMEngine::stepRouting(double dt_routing) {
             try {
                 std::vector<std::pair<int, double>> gs;
                 splitExchange(SWMM_SPLIT_CONDUCTANCE, dt, &gs);
-                for (const auto& [node, value] : gs) dw.nodeSumDqdh(node) += value;
-            } catch (...) { split_error = std::current_exception(); }
+                for (const auto& [node, value] : gs)
+                    dw.nodeSumDqdh(node) += value;
+            } catch (...) {
+                split_error = std::current_exception();
+            }
         }
 #endif
     };
@@ -5531,9 +5651,11 @@ void SWMMEngine::stepRouting(double dt_routing) {
                                        non_conduit_fn, true)
                     : router_.step(ctx_, dt_routing, ctx_.climate_state.evap_rate, non_conduit_fn);
     }
-    if (split_error) std::rethrow_exception(split_error);
-    if(ctx_.options.routing_model==RoutingModel::FV && ctx_.options.quality_solver==QualitySolverKind::LEGACY)
-        router_.acceptedQualityWater(ctx_,dt_routing,quality_.fvWater());
+    if (split_error)
+        std::rethrow_exception(split_error);
+    if (ctx_.options.routing_model == RoutingModel::FV &&
+        ctx_.options.quality_solver == QualitySolverKind::LEGACY)
+        router_.acceptedQualityWater(ctx_, dt_routing, quality_.fvWater());
     lidnode::finishStep(ctx_);
     tracePhase(SWMM_PHASE_NETWORK_ROUTED, ctx_.current_time, dt_routing);
     // Legacy counts a step as non-converging from the ACTUAL final Picard flag,
@@ -5638,9 +5760,10 @@ void SWMMEngine::stepRouting(double dt_routing) {
             // removeSystemOutflows later books the authoritative return and may
             // rewrite outfall inflow on reversal. Retain its pre-booking view
             // for the native surface exchange; do not reconstruct the transfer.
-            split_->accepted_inflow=ctx_.nodes.inflow;
-            split_->accepted_outflow=ctx_.nodes.outflow;
-        } else splitExchange(SWMM_SPLIT_ADVANCE, dt_routing);
+            split_->accepted_inflow = ctx_.nodes.inflow;
+            split_->accepted_outflow = ctx_.nodes.outflow;
+        } else
+            splitExchange(SWMM_SPLIT_ADVANCE, dt_routing);
     }
     if (surface_router_.isActive())
         tracePhase(SWMM_PHASE_INTEGRATED_ADVANCED, ctx_.current_time, dt_routing);
@@ -5744,8 +5867,10 @@ void SWMMEngine::stepRouting(double dt_routing) {
             // in the next mix) and its own gate caught it on first run.
         } else {
 #ifdef OPENSWMM_HAS_2D
-            if (live_passive_exchange_) live_passive_exchange_->receive(ctx_, quality_, dt_routing);
-            else if (split_ && split_->material_issuer) split_->material_issuer->receive(quality_,dt_routing);
+            if (live_passive_exchange_)
+                live_passive_exchange_->receive(ctx_, quality_, dt_routing);
+            else if (split_ && split_->material_issuer)
+                split_->material_issuer->receive(quality_, dt_routing);
             else
 #endif
                 quality_.execute(ctx_, dt_routing);
@@ -5877,7 +6002,7 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         double lateral_pair = ctx_.nodes.old_lat_flow[uj] + lat;
 #ifdef OPENSWMM_HAS_2D
         if (hasSourceDelivery())
-            lateral_pair += sourceDeliveryRate(int(uj)) - sourceDeliveryRate(int(uj),true);
+            lateral_pair += sourceDeliveryRate(int(uj)) - sourceDeliveryRate(int(uj), true);
 #endif
         ctx_.nodes.stat_lat_inflow_vol[uj] += lateral_pair * 0.5 * dt_routing;
         // PARITY stats.c:588 stats_updateStorageStats — a storage unit's peak
@@ -7375,7 +7500,8 @@ void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du
  *          posts it to the IO thread for asynchronous writing.
  */
 void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
-    if (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->settled_reports && !split_->reporting) {
+    if (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->settled_reports &&
+        !split_->reporting) {
         split_->awaiting_report = hydraulics::TimestepController::output_due(ctx_);
         return;
     }
@@ -8553,7 +8679,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                                 (std::size_t(sp) * tr.n_layers + layer) * g.n_cells + cell;
                             snap.gw2d_layer_mass[output_index] = tr.layer_mass[k];
                             if (capacity > 0)
-                                snap.gw2d_layer_concentration[output_index] = tr.layer_mass[k] / capacity;
+                                snap.gw2d_layer_concentration[output_index] =
+                                    tr.layer_mass[k] / capacity;
                         }
                 const auto& boundaries = gw.boundaries();
                 snap.gw2d_boundary_count = int(boundaries.size());
@@ -9107,12 +9234,16 @@ void SWMMEngine::applyAvgResults(SimulationSnapshot& snap) noexcept {
 }
 
 int SWMMEngine::end() noexcept {
-    if(split_ && split_->material_pair && split_->material_pair->transporting)return SWMM_ERR_LIFECYCLE;
-    if(split_ && split_->material && split_->material_finalized && !split_->failed &&
+    if (split_ && split_->material_pair && split_->material_pair->transporting)
+        return SWMM_ERR_LIFECYCLE;
+    if (split_ && split_->material && split_->material_finalized && !split_->failed &&
         (!split_->material_issuer || !split_->material_issuer->failed()) &&
-        (!split_->material_producer || !split_->material_producer->failed())) return SWMM_OK;
-    if(materialEndBlocked())return SWMM_ERR_LIFECYCLE;
-    if (split_ && split_->settled_reports && (split_->failed || split_->awaiting_report || split_->reporting))
+        (!split_->material_producer || !split_->material_producer->failed()))
+        return SWMM_OK;
+    if (materialEndBlocked())
+        return SWMM_ERR_LIFECYCLE;
+    if (split_ && split_->settled_reports &&
+        (split_->failed || split_->awaiting_report || split_->reporting))
         return SWMM_ERR_LIFECYCLE;
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_ && live_passive_exchange_->failed())
@@ -9131,20 +9262,23 @@ int SWMMEngine::end() noexcept {
 
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_ && live_passive_exchange_->preflightsHistory()) {
-        try { checkLivePassiveExchange(); }
-        catch (const std::exception& error) {
+        try {
+            checkLivePassiveExchange();
+        } catch (const std::exception& error) {
             live_passive_exchange_->fail("Live history preflight final profile changed.");
             set_error(SWMM_ERR_WRONG_STATE, error.what());
             return SWMM_ERR_WRONG_STATE;
         }
-        if (surface_router_.pending_dt_ > 0 && !live_passive_exchange_->preflightHistory(ctx_, false))
+        if (surface_router_.pending_dt_ > 0 &&
+            !live_passive_exchange_->preflightHistory(ctx_, false))
             return SWMM_ERR_WRONG_STATE;
     }
 #endif
 
     if (process_component_host_) {
-        try { process_component_host_->finish(); }
-        catch (const std::exception& error) {
+        try {
+            process_component_host_->finish();
+        } catch (const std::exception& error) {
             set_error(SWMM_ERR_PLUGIN, error.what());
             return SWMM_ERR_PLUGIN;
         }
@@ -9229,8 +9363,10 @@ int SWMMEngine::end() noexcept {
     // non-convergence — matching legacy stats_findMaxStats)
 #ifdef OPENSWMM_HAS_2D
     if (split_ && split_->role == SWMM_SPLIT_NETWORK && !split_->finished)
-        try { splitExchange(SWMM_SPLIT_FINISH, 0); split_->finished = true; }
-        catch (const std::exception& error) {
+        try {
+            splitExchange(SWMM_SPLIT_FINISH, 0);
+            split_->finished = true;
+        } catch (const std::exception& error) {
             set_error(SWMM_ERR_PLUGIN, error.what());
             return SWMM_ERR_PLUGIN;
         }
@@ -9239,10 +9375,18 @@ int SWMMEngine::end() noexcept {
     // the statistics/reports must read the post-flush state, not a snapshot
     // taken one window early.
     if (live_passive_exchange_ || (split_ && split_->material)) {
-        try { if(live_passive_exchange_)checkLivePassiveExchange();surface_router_.finalize(ctx_); }
-        catch (const std::exception& error) {
-            if(live_passive_exchange_)live_passive_exchange_->fail("Live passive exchange final flush failed.");
-            if(split_ && split_->material){split_->failed=true;if(split_->material_producer)split_->material_producer->fail("Material final flush failed.");}
+        try {
+            if (live_passive_exchange_)
+                checkLivePassiveExchange();
+            surface_router_.finalize(ctx_);
+        } catch (const std::exception& error) {
+            if (live_passive_exchange_)
+                live_passive_exchange_->fail("Live passive exchange final flush failed.");
+            if (split_ && split_->material) {
+                split_->failed = true;
+                if (split_->material_producer)
+                    split_->material_producer->fail("Material final flush failed.");
+            }
             set_error(SWMM_ERR_WRONG_STATE, error.what());
             return SWMM_ERR_WRONG_STATE;
         }
@@ -9295,10 +9439,12 @@ int SWMMEngine::end() noexcept {
     const int pluginResult = plugins_.empty() ? 0 : plugins_.finalize_all(ctx_);
     ctx_.state = EngineState::ENDED;
     if (pluginResult != 0) {
-        set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Cannot finish writing results").c_str());
+        set_error(SWMM_ERR_PLUGIN,
+                  plugin_io_error(plugins_, "Cannot finish writing results").c_str());
         return SWMM_ERR_PLUGIN;
     }
-    if(split_ && split_->material)split_->material_finalized=true;
+    if (split_ && split_->material)
+        split_->material_finalized = true;
     return SWMM_OK;
 }
 
@@ -9339,10 +9485,9 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
 #ifdef OPENSWMM_HAS_2D
     full_continuation |= surface_router_.subsurface().independentClock();
 #endif
-    const bool native =
-        entry.format == HotstartFormat::NATIVE ||
-        (entry.format == HotstartFormat::AUTO &&
-         (lid_restart || full_continuation || ctx_.options.water_age));
+    const bool native = entry.format == HotstartFormat::NATIVE ||
+                        (entry.format == HotstartFormat::AUTO &&
+                         (lid_restart || full_continuation || ctx_.options.water_age));
     int rc = 0;
     if (native) {
         std::unique_ptr<HotStartFile> hs;
@@ -9353,8 +9498,7 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
             std::string snapshot;
             const std::string error = checkpointBytes(snapshot, false);
             if (!error.empty()) {
-                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " +
-                                        error);
+                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " + error);
                 return;
             }
             hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, sp,
@@ -9495,7 +9639,8 @@ int SWMMEngine::report() noexcept {
     const int pluginResult = plugins_.empty() ? 0 : plugins_.write_summary_all(ctx_);
     ctx_.state = EngineState::REPORTED;
     if (pluginResult != 0) {
-        set_error(SWMM_ERR_PLUGIN, plugin_io_error(plugins_, "Cannot write report summary").c_str());
+        set_error(SWMM_ERR_PLUGIN,
+                  plugin_io_error(plugins_, "Cannot write report summary").c_str());
         return SWMM_ERR_PLUGIN;
     }
     return SWMM_OK;
@@ -9506,8 +9651,10 @@ int SWMMEngine::report() noexcept {
 // ============================================================================
 
 int SWMMEngine::close() noexcept {
-    if(materialCloseBlocked())return SWMM_ERR_LIFECYCLE;
-    if (split_ && split_->settled_reports && split_->reporting) return SWMM_ERR_LIFECYCLE;
+    if (materialCloseBlocked())
+        return SWMM_ERR_LIFECYCLE;
+    if (split_ && split_->settled_reports && split_->reporting)
+        return SWMM_ERR_LIFECYCLE;
 #ifdef OPENSWMM_HAS_2D
     surface_router_.state_.live_passive_exchange = nullptr;
     surface_router_.live_passive_exchange_ = nullptr;
@@ -9851,14 +9998,16 @@ void SWMMEngine::set_step_end_callback(SWMM_StepEndCallback cb, void* ud) noexce
 }
 
 int SWMMEngine::set_phase_callback(SWMM_PhaseCallback cb, void* ud) noexcept {
-    if (step_active_) return SWMM_ERR_LIFECYCLE;
+    if (step_active_)
+        return SWMM_ERR_LIFECYCLE;
     callbacks_.on_phase = cb;
     callbacks_.phase_ud = ud;
     return SWMM_OK;
 }
 
 void SWMMEngine::tracePhase(int phase, double start, double duration) noexcept {
-    if (!callbacks_.on_phase) return;
+    if (!callbacks_.on_phase)
+        return;
     try {
         callbacks_.on_phase(this, phase, start, start + duration, callbacks_.phase_ud);
     } catch (...) {
@@ -10331,11 +10480,13 @@ void SWMMEngine::initHydraulics() noexcept {
     //     open fails gracefully, exactly like a 1D validation error.
     try {
         struct RestoreOwnership {
-            bool& flag; bool value;
-            ~RestoreOwnership() { flag=value; }
-        } restoreOwnership{surface_router_.checkpoint_owned_initialization_, surface_router_.checkpoint_owned_initialization_};
+            bool& flag;
+            bool value;
+            ~RestoreOwnership() { flag = value; }
+        } restoreOwnership{surface_router_.checkpoint_owned_initialization_,
+                           surface_router_.checkpoint_owned_initialization_};
         if (split_ && split_->spatial_sources)
-            surface_router_.checkpoint_owned_initialization_=true;
+            surface_router_.checkpoint_owned_initialization_ = true;
         surface_router_.initialize(ctx_);
         // The 2D router has just assigned each coupled junction's ponding
         // footprint (ctx_.nodes.ponded_area, ctx_.coupled_node). Dynamic wave
@@ -10352,7 +10503,8 @@ void SWMMEngine::initHydraulics() noexcept {
                 // Split receivers resolve this owner from the matching surface
                 // geometry before start; they deliberately have no aquifer solver.
                 !(split_ && split_->role == SWMM_SPLIT_NETWORK &&
-                  std::find(split_->lid_nodes.begin(),split_->lid_nodes.end(),n) != split_->lid_nodes.end()) &&
+                  std::find(split_->lid_nodes.begin(), split_->lid_nodes.end(), n) !=
+                      split_->lid_nodes.end()) &&
                 (!surface_router_.isActive() || !surface_router_.subsurface().active() ||
                  n >= int(ctx_.nodes.aquifer2d_bed.size()) || !ctx_.nodes.aquifer2d_bed[n]))
                 throw std::runtime_error(
@@ -11163,7 +11315,8 @@ void SWMMEngine::initQuality() noexcept {
     // Heat checkpoints can occur on a hydrology boundary before the first
     // quality routing call. Seed the complete thermal layout at initialize.
     if (ctx_.options.heat_transport) {
-        const double initial = ctx_.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
+        const double initial =
+            ctx_.heat_config.global_temp[static_cast<int>(HeatSource::INITIAL_STATE)];
         ctx_.heat_state.resize(ctx_.n_nodes(), ctx_.n_links(), initial);
         transport::applyInitialTempOverrides(ctx_);
         ctx_.heat_state.legacy_seeded = true;
@@ -12069,8 +12222,7 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     // "called after regular lateral flows to all nodes have been set but
     // before a flow routing step has been taken"). Not a mass-balance source:
     // both sides of the transfer stay inside the system.
-    inlet_.computeAll(ctx_, dt_routing,
-                      [this](int j) { return router_.fvNodeKeepsOverflow(j); });
+    inlet_.computeAll(ctx_, dt_routing, [this](int j) { return router_.fvNodeKeepsOverflow(j); });
 }
 
 // ============================================================================
@@ -12287,11 +12439,12 @@ void SWMMEngine::initMassBalance() noexcept {
     // A classic FV restart can carry disconnected scalar inventory in V18.
     // It belongs to both opening storage and the current dry-storage ledger;
     // subsequent remobilization books only its delta.
-    if(ctx_.state_accessors.get_fv_retained_pollutant_mass) {
-        const auto held=ctx_.state_accessors.get_fv_retained_pollutant_mass();
-        for(std::size_t p=0;p<held.size()&&p<ctx_.mass_balance.qual_routing_init.size();++p) {
-            ctx_.mass_balance.qual_routing_init[p]+=held[p];
-            ctx_.mass_balance.qual_routing_final_dry[p]=held[p];
+    if (ctx_.state_accessors.get_fv_retained_pollutant_mass) {
+        const auto held = ctx_.state_accessors.get_fv_retained_pollutant_mass();
+        for (std::size_t p = 0; p < held.size() && p < ctx_.mass_balance.qual_routing_init.size();
+             ++p) {
+            ctx_.mass_balance.qual_routing_init[p] += held[p];
+            ctx_.mass_balance.qual_routing_final_dry[p] = held[p];
         }
     }
 
@@ -12345,7 +12498,7 @@ const std::vector<int>* SWMMEngine::ordinarySourceOwners() const noexcept {
 bool SWMMEngine::hasSourceDelivery() const noexcept {
 #ifdef OPENSWMM_HAS_2D
     return bool(source_delivery_) ||
-        (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK);
+           (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK);
 #else
     return false;
 #endif
@@ -12353,7 +12506,8 @@ bool SWMMEngine::hasSourceDelivery() const noexcept {
 double SWMMEngine::sourceDeliveryRate(int node, bool previous) const {
 #ifdef OPENSWMM_HAS_2D
     if (source_delivery_)
-        return (previous ? source_delivery_->lastReceipts() : source_delivery_->receipts())[node].rate;
+        return (previous ? source_delivery_->lastReceipts() : source_delivery_->receipts())[node]
+            .rate;
     if (split_ && split_->spatial_sources && split_->role == SWMM_SPLIT_NETWORK)
         return (previous ? split_->source_previous_rates : split_->source_rates)[node];
 #endif

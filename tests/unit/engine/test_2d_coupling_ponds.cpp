@@ -307,8 +307,8 @@ double qualityContinuity(const std::string& tag, const std::string& text, double
         while (swmm_engine_step(e, &elapsed) == SWMM_OK && elapsed > 0.0) {
         }
         swmm_engine_end(e);
-        swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &spilled, nullptr, nullptr,
-                                 nullptr, nullptr, nullptr, nullptr);
+        swmm_2d_get_mass_balance(e, nullptr, nullptr, nullptr, &spilled, nullptr, nullptr, nullptr,
+                                 nullptr, nullptr, nullptr);
         swmm_get_quality_continuity_error(e, 0, &error);
         swmm_get_routing_continuity_error(e, &flow);
         swmm_engine_report(e);

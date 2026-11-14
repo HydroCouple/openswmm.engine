@@ -545,16 +545,18 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
     if (ctx.options.routing_model == RoutingModel::FV) {
         // Gross carriers are required by every scalar family. A withdrawal
         // removes an accepted mixture; it never shrinks a source numerator's carrier.
-        for(int i=0;i<ctx.n_nodes();++i) {
-            double q=ctx.nodes.user_lat_flow[i];
-            if(static_cast<std::size_t>(i)<ctx.forcing.node_lat_inflow_mode.size()) {
-                if(ctx.forcing.node_lat_inflow_mode[i]==ForcingMode::OVERRIDE)q=ctx.forcing.node_lat_inflow_value[i];
-                else if(ctx.forcing.node_lat_inflow_mode[i]==ForcingMode::ADD)q+=ctx.forcing.node_lat_inflow_value[i];
+        for (int i = 0; i < ctx.n_nodes(); ++i) {
+            double q = ctx.nodes.user_lat_flow[i];
+            if (static_cast<std::size_t>(i) < ctx.forcing.node_lat_inflow_mode.size()) {
+                if (ctx.forcing.node_lat_inflow_mode[i] == ForcingMode::OVERRIDE)
+                    q = ctx.forcing.node_lat_inflow_value[i];
+                else if (ctx.forcing.node_lat_inflow_mode[i] == ForcingMode::ADD)
+                    q += ctx.forcing.node_lat_inflow_value[i];
             }
-            if(q>0) {
-                ctx.nodes.qual_vol_in[i]+=q*dt;
-                addAgeVolume(ctx,i,q,WaterAgeSource::EXTERNAL_INFLOW);
-                addTempVolume(ctx,i,q,HeatSource::EXTERNAL_INFLOW);
+            if (q > 0) {
+                ctx.nodes.qual_vol_in[i] += q * dt;
+                addAgeVolume(ctx, i, q, WaterAgeSource::EXTERNAL_INFLOW);
+                addTempVolume(ctx, i, q, HeatSource::EXTERNAL_INFLOW);
             }
         }
         return;
@@ -593,9 +595,9 @@ void QualitySolver::assembleExternalLoads(SimulationContext& ctx, double dt) {
             // lat_flow carries the signed 2D coupling too; take it back out.
             const double coupling =
                 ui < nodes.coupling_inflow.size() ? nodes.coupling_inflow[ui] : 0.0;
-            const double lat_net_pos =
-                (ui < nodes.lat_flow.size()) ? std::max(0.0, nodes.lat_flow[ui] - coupling) * dt
-                                             : 0.0;
+            const double lat_net_pos = (ui < nodes.lat_flow.size())
+                                           ? std::max(0.0, nodes.lat_flow[ui] - coupling) * dt
+                                           : 0.0;
             const double corr = lat_net_pos - qual_vol_lat_[ui];
             if (corr < 0.0)
                 nodes.qual_vol_in[ui] += corr;
@@ -857,17 +859,22 @@ void QualitySolver::execute(SimulationContext& ctx, double dt, PassiveStorageExc
         return;
 
     assembleExternalLoads(ctx, dt);
-    if (ctx.options.routing_model==RoutingModel::FV && fv_transport_.execute(ctx,dt)) {
-        updateUntreatedStorageHrt(ctx,dt);
-        if(transport::legacyReactionsActive(ctx)) {
-            transport::reactLegacyNodes(ctx,dt);
-            transport::reactLegacyLinks(ctx,dt);
-        } else fv_transport_.applyPollutantDecay(ctx,dt);
-        applyLinkQualityForcing(ctx,n_pollutants_,dt);
-        if(transport::heat::bedExchangeEnabled(ctx)) {
-            const int np=ctx.links.conc_n_pollutants,nm=ctx.reactions.n_species(),nt=np+nm;
-            if(np>0)transport::heat::applyBedSoluteExchange(ctx,ctx.links.conc.data(),np,0,nt,dt);
-            if(nm>0)transport::heat::applyBedSoluteExchange(ctx,ctx.reactions.msx_link_conc.data(),nm,np,nt,dt);
+    if (ctx.options.routing_model == RoutingModel::FV && fv_transport_.execute(ctx, dt)) {
+        updateUntreatedStorageHrt(ctx, dt);
+        if (transport::legacyReactionsActive(ctx)) {
+            transport::reactLegacyNodes(ctx, dt);
+            transport::reactLegacyLinks(ctx, dt);
+        } else
+            fv_transport_.applyPollutantDecay(ctx, dt);
+        applyLinkQualityForcing(ctx, n_pollutants_, dt);
+        if (transport::heat::bedExchangeEnabled(ctx)) {
+            const int np = ctx.links.conc_n_pollutants, nm = ctx.reactions.n_species(),
+                      nt = np + nm;
+            if (np > 0)
+                transport::heat::applyBedSoluteExchange(ctx, ctx.links.conc.data(), np, 0, nt, dt);
+            if (nm > 0)
+                transport::heat::applyBedSoluteExchange(ctx, ctx.reactions.msx_link_conc.data(), nm,
+                                                        np, nt, dt);
         }
         return;
     }
@@ -1763,8 +1770,9 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt,
                 // the legacy queue. All affected pools were preflighted before
                 // this single mixing pass; no source clamp can refund a debit.
                 const double amount = exchange->prepared_->amount[ui];
-                c_new = exchange->changingVolume() ? (c1 * v_old + amount) / nodes.volume[ui] :
-                    amount == 0 ? c1 : (c1 * v_old + amount) / v_old;
+                c_new = exchange->changingVolume() ? (c1 * v_old + amount) / nodes.volume[ui]
+                        : amount == 0              ? c1
+                                                   : (c1 * v_old + amount) / v_old;
             } else if (q_in <= LEGACY_ZERO) {
                 c_new = c1;
                 // A positive coupling amount can arrive with exactly zero
@@ -1776,8 +1784,7 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt,
                 if (is_storage && !dry && !lidnode::active(ctx, i) && !reactions_active &&
                     !any_treatment && k == 0.0 && v_old > ZERO_VOLUME && v_in == 0.0 &&
                     nodes.volume[ui] == v_old && ui < nodes.coupling_inflow.size() &&
-                    nodes.coupling_inflow[ui] == 0.0 &&
-                    idx < nodes.coupling_qual_inflow.size() &&
+                    nodes.coupling_inflow[ui] == 0.0 && idx < nodes.coupling_qual_inflow.size() &&
                     nodes.coupling_qual_inflow[idx] > 0.0) {
                     c_new = (c1 * v_old + mass_in) / v_old;
                 }
