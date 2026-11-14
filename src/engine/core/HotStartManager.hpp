@@ -156,7 +156,7 @@ struct HotStartSubcatchRecord {
 struct HotStartHeader {
     uint32_t version = 1;
     int64_t timestamp = 0;   ///< Unix epoch seconds at save time
-    double sim_time = 0.0;   ///< Simulation elapsed time (decimal days)
+    double sim_time = 0.0;   ///< Simulation elapsed time (seconds; SimulationContext::current_time)
     double start_date = 0.0; ///< options.start_date (OADate (days since 12/30/1899))
     double end_date = 0.0;   ///< options.end_date (OADate (days since 12/30/1899))
     std::string crs;         ///< CRS string (may be empty)
@@ -244,6 +244,9 @@ struct HotStartFile {
 
     std::string path;   ///< File path (for flush-on-close)
     bool dirty = false; ///< True if set_*() was called
+    /// Nonzero: the SWMM5 legacy file version this handle was read from against a model
+    /// (HotStartManager::read_legacy). Such a handle is read-only and has no path.
+    int legacy_version = 0;
 
     std::vector<std::string> warnings; ///< Populated by HotStartManager::apply()
 
@@ -306,6 +309,29 @@ struct HotStartFile {
      * @return True on a matching record, false with no mutation when absent.
      */
     bool set_subcatch_runoff(const std::string& id, double v);
+    /**
+     * @brief Set a node's depth and mark its head and volume for derivation (NaN), then dirty.
+     *
+     * HotStartManager::apply() derives a NaN head as invert + depth and a NaN volume from the
+     * applying model's node geometry, so the restart state stays consistent.
+     *
+     * @param[in] id Byte-exact record ID.
+     * @param[in] depth New depth in ft above invert.
+     * @return True on a matching record, false with no mutation when absent.
+     */
+    bool set_node_state(const std::string& id, double depth);
+    /**
+     * @brief Set a link's flow and depth and mark its volume for derivation (NaN), then dirty.
+     *
+     * HotStartManager::apply() derives a NaN conduit volume as area(depth) x routing length x
+     * barrels, and zero for other links.
+     *
+     * @param[in] id Byte-exact record ID.
+     * @param[in] flow New flow in cfs in stored link orientation.
+     * @param[in] depth New depth in ft.
+     * @return True on a matching record, false with no mutation when absent.
+     */
+    bool set_link_state(const std::string& id, double flow, double depth);
 };
 
 // ============================================================================
@@ -417,6 +443,24 @@ public:
      * @returns Heap-allocated `HotStartFile*` on success, nullptr on error.
      */
     static HotStartFile* open(const std::string& path);
+
+    /**
+     * @brief Read a legacy EPA SWMM5 `.hsf` into records named from a model, for inspection.
+     *
+     * @details The legacy file stores values in object order without names, so it is read
+     *          against @p ctx exactly as apply_legacy_routing() reads it: the subcatchment, node,
+     *          link and pollutant counts must equal the model's. Node records get depth (head and
+     *          volume NaN: not stored), link records flow and depth (volume NaN), subcatchment
+     *          records the runoff and, where the model has groundwater, upper-zone moisture and
+     *          groundwater flow (lower-zone depth NaN: the file stores the water-table elevation,
+     *          which needs the aquifer bottom); pollutant concentrations become the species block. The reaction-species trailer is not read.
+     *          The handle is read-only (legacy_version set, no path). No model state changes.
+     *
+     * @param path File path.
+     * @param ctx  Model whose object order and structure the file was written for.
+     * @returns Heap-allocated handle, or nullptr with last_io_error() set.
+     */
+    static HotStartFile* read_legacy(const std::string& path, const SimulationContext& ctx);
 
     /**
      * @brief Probe the native hot-start magic without parsing records.

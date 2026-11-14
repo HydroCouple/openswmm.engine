@@ -337,6 +337,26 @@ SWMM_ENGINE_API const char* swmm_hotstart_last_io_error(void);
  */
 SWMM_ENGINE_API int swmm_hotstart_open(const char* path, SWMM_HotStart* hs);
 
+/**
+ * @brief Read a legacy EPA SWMM5 `.hsf` file against a model, for inspection.
+ *
+ * The legacy format stores values in object order without names, so the file is matched to
+ * @p model the way USE HOTSTART reads it: its subcatchment, node, link and pollutant counts must
+ * equal the model's, and records take the model's object names. Node head and volume and link
+ * volume are not stored (NaN); pollutant concentrations are the species. The handle is read-only:
+ * every setter and swmm_hotstart_apply() refuse it, and swmm_hotstart_close() writes nothing.
+ * The model is not changed. Contents include SWMM_HOTSTART_LEGACY.
+ *
+ * @param[in] model Non-null engine holding the model (OPENED or later), borrowed for the call.
+ * @param[in] path Non-null, nonempty NUL-terminated legacy hot-start path.
+ * @param[out] hs Non-null output slot, set to NULL first, then to a caller-owned handle.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for a null model; SWMM_ERR_BADPARAM for null arguments;
+ *     SWMM_ERR_HOTSTART when the file cannot be read, is not a legacy file or was written for
+ *     another model (swmm_hotstart_last_io_error() says which).
+ */
+SWMM_ENGINE_API int swmm_hotstart_open_legacy(SWMM_Engine model, const char* path,
+                                              SWMM_HotStart* hs);
+
 /* =========================================================================
  * Apply
  * ========================================================================= */
@@ -456,6 +476,38 @@ SWMM_ENGINE_API int swmm_hotstart_set_link_depth(SWMM_HotStart hs, const char* l
 SWMM_ENGINE_API int swmm_hotstart_set_subcatch_runoff(SWMM_HotStart hs, const char* subcatch_id,
                                                       double runoff);
 
+/**
+ * @brief Set a node's depth so that a restart derives a consistent head and volume.
+ *
+ * Stores the depth and marks the stored head and volume NaN; swmm_hotstart_apply() (and USE
+ * HOTSTART) then sets head = invert + depth and the volume from the restarting model's node
+ * geometry. Marks the file dirty for swmm_hotstart_close().
+ *
+ * @param[in] hs Non-null live handle from swmm_hotstart_open().
+ * @param[in] node_id Non-null exact node ID of a stored record.
+ * @param[in] depth Finite, nonnegative depth in internal feet (ft).
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADPARAM for a null/unmatched ID or a
+ *     depth that is negative or not finite; SWMM_ERR_HOTSTART for a read-only legacy handle or a
+ *     file whose full engine checkpoint a restart restores instead of the records.
+ */
+SWMM_ENGINE_API int swmm_hotstart_set_node_state(SWMM_HotStart hs, const char* node_id,
+                                                 double depth);
+
+/**
+ * @brief Set a link's flow and depth so that a restart derives a consistent volume.
+ *
+ * Stores flow and depth and marks the stored volume NaN; a restart sets a conduit's volume to
+ * area(depth) x routing length x barrels and other links' to zero. Marks the file dirty.
+ *
+ * @param[in] hs Non-null live handle from swmm_hotstart_open().
+ * @param[in] link_id Non-null exact link ID of a stored record.
+ * @param[in] flow Finite flow in internal cubic feet per second, signed in link orientation.
+ * @param[in] depth Finite, nonnegative depth in internal feet (ft).
+ * @return As swmm_hotstart_set_node_state().
+ */
+SWMM_ENGINE_API int swmm_hotstart_set_link_state(SWMM_HotStart hs, const char* link_id,
+                                                 double flow, double depth);
+
 /* =========================================================================
  * Query hot start metadata
  * ========================================================================= */
@@ -518,6 +570,151 @@ SWMM_ENGINE_API int swmm_hotstart_node_count(SWMM_HotStart hs);
  * @return Stored link-record count, or -1 for null hs.
  */
 SWMM_ENGINE_API int swmm_hotstart_link_count(SWMM_HotStart hs);
+
+/* =========================================================================
+ * Contents and per-object records
+ * ========================================================================= */
+
+#define SWMM_HOTSTART_HAS_SPECIES 0x01           /**< node/link species concentrations */
+#define SWMM_HOTSTART_HAS_GROUNDWATER 0x02       /**< 2D two-zone groundwater cells */
+#define SWMM_HOTSTART_HAS_GW_TRANSPORT 0x04      /**< groundwater species / transport state */
+#define SWMM_HOTSTART_HAS_SNOW 0x08              /**< snowpack state */
+#define SWMM_HOTSTART_HAS_LID 0x10               /**< node LID cell state */
+#define SWMM_HOTSTART_HAS_SURFACE 0x20           /**< subcatchment surface state */
+#define SWMM_HOTSTART_HAS_ENGINE_CHECKPOINT 0x40 /**< full checkpoint; records are not applied */
+#define SWMM_HOTSTART_LEGACY 0x80                /**< read with swmm_hotstart_open_legacy() */
+
+/**
+ * @brief Read which state blocks a handle holds (SWMM_HOTSTART_* flags).
+ * @param[in] hs Non-null live handle.
+ * @param[out] flags Non-null destination for the OR of the flags present.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADPARAM for null flags.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_contents(SWMM_HotStart hs, int* flags);
+
+/**
+ * @brief Read the file format version: the native OPENSWMM_HS_V1 record version, or for a legacy
+ *     handle the SWMM5 hot-start version (1-4).
+ * @param[in] hs Non-null live handle.
+ * @param[out] version Non-null destination.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADPARAM for null version.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_version(SWMM_HotStart hs, int* version);
+
+/**
+ * @brief Read when a native file was saved (Unix epoch seconds); 0 for a legacy handle.
+ * @param[in] hs Non-null live handle.
+ * @param[out] seconds Non-null destination.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADPARAM for null seconds.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_saved_at(SWMM_HotStart hs, long long* seconds);
+
+/**
+ * @brief Read the saving run's end date (OADate decimal days); 0 for a legacy handle.
+ * @param[in] hs Non-null live handle.
+ * @param[out] end_date Non-null destination.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADPARAM for null end_date.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_end_date(SWMM_HotStart hs, double* end_date);
+
+/**
+ * @brief Count stored subcatchment records.
+ * @param[in] hs Live handle.
+ * @return Record count, or -1 for null hs.
+ */
+SWMM_ENGINE_API int swmm_hotstart_subcatch_count(SWMM_HotStart hs);
+
+/**
+ * @brief Read one stored node record. Every output may be NULL to skip it.
+ *
+ * Values are in internal units (ft). Head and volume are NaN when not stored (legacy handle) or
+ * marked for derivation by swmm_hotstart_set_node_state(). Age is in seconds, negative when not
+ * tracked.
+ *
+ * @param[in] hs Non-null live handle.
+ * @param[in] index Zero-based record index in [0, swmm_hotstart_node_count(hs)).
+ * @param[out] id Optional buffer for the NUL-terminated ID, truncated to id_len-1 bytes.
+ * @param[in] id_len Capacity of @p id including NUL; must be positive when @p id is non-null.
+ * @param[out] depth,head,volume,age Optional destinations.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE for null hs; SWMM_ERR_BADINDEX for an index out of range;
+ *     SWMM_ERR_BADPARAM for a non-null id with nonpositive id_len.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_node(SWMM_HotStart hs, int index, char* id, int id_len,
+                                           double* depth, double* head, double* volume,
+                                           double* age);
+
+/**
+ * @brief Read one stored link record. Every output may be NULL to skip it.
+ *
+ * Flow in ft3/s (signed in link orientation), depth in ft, volume in ft3 (NaN when not stored or
+ * marked for derivation), age in seconds (negative when not tracked).
+ *
+ * @param[in] hs Non-null live handle.
+ * @param[in] index Zero-based record index in [0, swmm_hotstart_link_count(hs)).
+ * @param[out] id Optional ID buffer (see swmm_hotstart_get_node()).
+ * @param[in] id_len Capacity of @p id including NUL.
+ * @param[out] flow,depth,volume,age Optional destinations.
+ * @return As swmm_hotstart_get_node().
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_link(SWMM_HotStart hs, int index, char* id, int id_len,
+                                           double* flow, double* depth, double* volume,
+                                           double* age);
+
+/**
+ * @brief Read one stored subcatchment record. Every output may be NULL to skip it.
+ *
+ * Runoff and groundwater flow in ft3/s; upper-zone moisture as a fraction; lower-zone depth in
+ * ft. A value the file does not hold is NaN (runoff of legacy version 1-2 files; groundwater
+ * values of a subcatchment without groundwater or of a native file before V2).
+ *
+ * @param[in] hs Non-null live handle.
+ * @param[in] index Zero-based record index in [0, swmm_hotstart_subcatch_count(hs)).
+ * @param[out] id Optional ID buffer (see swmm_hotstart_get_node()).
+ * @param[in] id_len Capacity of @p id including NUL.
+ * @param[out] runoff,gw_flow,gw_upper_moisture,gw_lower_depth Optional destinations.
+ * @return As swmm_hotstart_get_node().
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_subcatch(SWMM_HotStart hs, int index, char* id, int id_len,
+                                               double* runoff, double* gw_flow,
+                                               double* gw_upper_moisture, double* gw_lower_depth);
+
+/**
+ * @brief Count the species whose node and link concentrations the handle holds.
+ * @param[in] hs Live handle.
+ * @return Species count, or -1 for null hs.
+ */
+SWMM_ENGINE_API int swmm_hotstart_species_count(SWMM_HotStart hs);
+
+/**
+ * @brief Copy one species name (a pollutant or reaction species, as saved).
+ * @param[in] hs Non-null live handle.
+ * @param[in] index Zero-based index in [0, swmm_hotstart_species_count(hs)).
+ * @param[out] name Non-null buffer; NUL-terminated, truncated to name_len-1 bytes.
+ * @param[in] name_len Positive capacity including NUL.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE; SWMM_ERR_BADINDEX; SWMM_ERR_BADPARAM for a null buffer or
+ *     nonpositive length.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_species(SWMM_HotStart hs, int index, char* name,
+                                              int name_len);
+
+/**
+ * @brief Read one node's stored concentration of one species (the species' own units).
+ * @param[in] hs Non-null live handle.
+ * @param[in] node_index Node record index.
+ * @param[in] species_index Species index.
+ * @param[out] value Non-null destination.
+ * @return SWMM_OK; SWMM_ERR_BADHANDLE; SWMM_ERR_BADINDEX for an index out of range;
+ *     SWMM_ERR_BADPARAM for null value.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_node_species(SWMM_HotStart hs, int node_index,
+                                                   int species_index, double* value);
+
+/**
+ * @brief Read one link's stored concentration of one species. As
+ *     swmm_hotstart_get_node_species() for link records.
+ */
+SWMM_ENGINE_API int swmm_hotstart_get_link_species(SWMM_HotStart hs, int link_index,
+                                                   int species_index, double* value);
 
 /* =========================================================================
  * Warning access (populated after swmm_hotstart_apply())

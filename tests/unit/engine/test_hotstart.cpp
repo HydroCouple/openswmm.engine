@@ -35,6 +35,7 @@
 #include "../../src/engine/core/HotStartManager.hpp"
 #include "../../src/engine/core/SWMMEngine.hpp"
 #include "../../src/engine/core/SimulationContext.hpp"
+#include "../../src/engine/hydraulics/Node.hpp"
 #include "../../include/openswmm/engine/openswmm_hotstart.h"
 
 namespace fs = std::filesystem;
@@ -1437,4 +1438,321 @@ TEST(HotStartReview, AutoFormatPreservesLegacySolverWaterAge) {
     EXPECT_EQ(source.context().water_age_state.link_age, target.context().water_age_state.link_age);
     EXPECT_GT(*std::max_element(source.context().water_age_state.link_age.begin(),
                                source.context().water_age_state.link_age.end()), 0);
+}
+
+// ============================================================================
+// Review G-09 (GUI hot-start inspector): record getters, consistent edits and
+// the legacy reader. Files go to hotstart_inspection/ in the test's directory.
+// ============================================================================
+
+namespace {
+
+/** Junctions J1, J2, storage ST1 (1000 ft2 functional), outfall O1, conduits C1-C3, TSS. */
+std::string inspectionDeck(const char* initDepth, const char* initFlow, const char* cinit) {
+    return std::string("[TITLE]\nhot-start inspection\n\n[OPTIONS]\nFLOW_UNITS CFS\n"
+                       "FLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2024\nSTART_TIME 00:00:00\n"
+                       "REPORT_START_DATE 01/01/2024\nREPORT_START_TIME 00:00:00\n"
+                       "END_DATE 01/01/2024\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\n"
+                       "WET_STEP 00:05:00\nDRY_STEP 00:05:00\nROUTING_STEP 0:00:10\n\n"
+                       "[JUNCTIONS]\nJ1 100 10 ") +
+           initDepth +
+           " 0 0\nJ2 99 10 0 0 0\n\n[STORAGE]\nST1 98 12 " + initDepth +
+           " FUNCTIONAL 1000 0 0 0 0\n\n[OUTFALLS]\nO1 95 FREE NO\n\n[CONDUITS]\nC1 J1 J2 400 "
+           "0.013 0 0 " +
+           initFlow +
+           " 0\nC2 J2 ST1 400 0.013 0 0 0 0\nC3 ST1 O1 400 0.013 0 0 0 0\n\n[XSECTIONS]\n"
+           "C1 CIRCULAR 2 0 0 0 1\nC2 CIRCULAR 2 0 0 0 1\nC3 CIRCULAR 2 0 0 0 1\n\n"
+           "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 " +
+           cinit + "\n\n[COORDINATES]\nJ1 0 0\nJ2 400 0\nST1 800 0\nO1 1200 0\n";
+}
+
+/** Open and initialize @p deck written to hotstart_inspection/<name>.inp. */
+void openInitialized(openswmm::SWMMEngine& engine, const std::string& name,
+                     const std::string& deck) {
+    fs::create_directories("hotstart_inspection");
+    const std::string inp = "hotstart_inspection/" + name + ".inp";
+    std::ofstream(inp) << deck;
+    ASSERT_EQ(engine.open(inp.c_str(), ("hotstart_inspection/" + name + ".rpt").c_str(), nullptr),
+              SWMM_OK);
+    ASSERT_EQ(engine.initialize(), SWMM_OK);
+}
+
+SWMM_Engine handle(openswmm::SWMMEngine& engine) {
+    return static_cast<SWMM_Engine>(&engine);
+}
+
+} // namespace
+
+TEST(HotStartInspection, GettersReadEveryStoredRecord) {
+    openswmm::SWMMEngine model;
+    openInitialized(model, "getters", inspectionDeck("2", "1.5", "5"));
+    const auto& ctx = model.context();
+    const std::string path = "hotstart_inspection/getters.hsf";
+    std::unique_ptr<HotStartFile> saved(HotStartManager::save(ctx, path));
+    ASSERT_NE(saved, nullptr) << HotStartManager::last_io_error();
+
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(path.c_str(), &hs), SWMM_OK);
+    int flags = -1, version = -1;
+    long long savedAt = -1;
+    double endDate = 0;
+    ASSERT_EQ(swmm_hotstart_get_contents(hs, &flags), SWMM_OK);
+    EXPECT_EQ(flags, SWMM_HOTSTART_HAS_SPECIES);
+    ASSERT_EQ(swmm_hotstart_get_version(hs, &version), SWMM_OK);
+    EXPECT_EQ(version, static_cast<int>(saved->header.version));
+    ASSERT_EQ(swmm_hotstart_get_saved_at(hs, &savedAt), SWMM_OK);
+    EXPECT_EQ(savedAt, saved->header.timestamp);
+    EXPECT_GT(savedAt, 0);
+    ASSERT_EQ(swmm_hotstart_get_end_date(hs, &endDate), SWMM_OK);
+    EXPECT_EQ(endDate, ctx.options.end_date);
+
+    ASSERT_EQ(swmm_hotstart_node_count(hs), ctx.n_nodes());
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        char id[64] = {};
+        double depth = -1, head = -1, volume = -1, age = 0;
+        ASSERT_EQ(swmm_hotstart_get_node(hs, i, id, sizeof id, &depth, &head, &volume, &age),
+                  SWMM_OK);
+        const int n = ctx.node_names.find(id);
+        ASSERT_GE(n, 0) << id;
+        const auto un = static_cast<std::size_t>(n);
+        EXPECT_EQ(depth, ctx.nodes.depth[un]) << id;
+        EXPECT_EQ(head, ctx.nodes.head[un]) << id;
+        EXPECT_EQ(volume, ctx.nodes.volume[un]) << id;
+        EXPECT_LT(age, 0.0) << id; // water age not tracked
+    }
+    ASSERT_EQ(swmm_hotstart_link_count(hs), ctx.n_links());
+    for (int i = 0; i < ctx.n_links(); ++i) {
+        char id[64] = {};
+        double flow = -1, depth = -1, volume = -1;
+        ASSERT_EQ(swmm_hotstart_get_link(hs, i, id, sizeof id, &flow, &depth, &volume, nullptr),
+                  SWMM_OK);
+        const auto ul = static_cast<std::size_t>(ctx.link_names.find(id));
+        EXPECT_EQ(flow, ctx.links.flow[ul]) << id;
+        EXPECT_EQ(depth, ctx.links.depth[ul]) << id;
+        EXPECT_EQ(volume, ctx.links.volume[ul]) << id;
+    }
+    EXPECT_EQ(swmm_hotstart_subcatch_count(hs), 0);
+
+    ASSERT_EQ(swmm_hotstart_species_count(hs), 1);
+    char name[8] = {};
+    ASSERT_EQ(swmm_hotstart_get_species(hs, 0, name, sizeof name), SWMM_OK);
+    EXPECT_STREQ(name, "TSS");
+    double conc = -1;
+    ASSERT_EQ(swmm_hotstart_get_node_species(hs, 0, 0, &conc), SWMM_OK);
+    EXPECT_EQ(conc, saved->node_species[0]);
+    ASSERT_EQ(swmm_hotstart_get_link_species(hs, 2, 0, &conc), SWMM_OK);
+    EXPECT_EQ(conc, saved->link_species[2]);
+
+    // Bounds, null outputs and a short ID buffer.
+    EXPECT_EQ(swmm_hotstart_get_node(hs, ctx.n_nodes(), nullptr, 0, nullptr, nullptr, nullptr,
+                                     nullptr),
+              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_get_link(hs, -1, nullptr, 0, nullptr, nullptr, nullptr, nullptr),
+              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_get_node(hs, 0, nullptr, 0, nullptr, nullptr, nullptr, nullptr),
+              SWMM_OK);
+    char tiny[2] = {'x', 'x'};
+    ASSERT_EQ(swmm_hotstart_get_node(hs, 0, tiny, 2, nullptr, nullptr, nullptr, nullptr), SWMM_OK);
+    EXPECT_EQ(tiny[1], '\0');
+    EXPECT_EQ(swmm_hotstart_get_node(hs, 0, tiny, 0, nullptr, nullptr, nullptr, nullptr),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_get_node_species(hs, 0, 1, &conc), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_hotstart_get_species(hs, 0, nullptr, 8), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_get_contents(nullptr, &flags), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_hotstart_subcatch_count(nullptr), -1);
+    EXPECT_EQ(swmm_hotstart_close(hs), SWMM_OK);
+}
+
+TEST(HotStartInspection, ConsistentEditsDeriveHeadAndVolumeAtRestart) {
+    // Reference: the engine's own initial state for depth 2 ft and C1 flow 1.5 cfs.
+    openswmm::SWMMEngine reference;
+    openInitialized(reference, "reference", inspectionDeck("2", "1.5", "0"));
+    const auto& ref = reference.context();
+    const auto node = [&](const char* id) {
+        return static_cast<std::size_t>(ref.node_names.find(id));
+    };
+    const auto c1 = static_cast<std::size_t>(ref.link_names.find("C1"));
+    ASSERT_GT(ref.links.depth[c1], 0.0);
+    ASSERT_GT(ref.links.volume[c1], 0.0);
+    ASSERT_DOUBLE_EQ(ref.nodes.volume[node("ST1")], 2000.0);
+
+    // A file saved from the dry model, then edited to the reference state.
+    openswmm::SWMMEngine dry;
+    openInitialized(dry, "dry", inspectionDeck("0", "0", "0"));
+    const std::string path = "hotstart_inspection/edited.hsf";
+    std::unique_ptr<HotStartFile> saved(HotStartManager::save(dry.context(), path));
+    ASSERT_NE(saved, nullptr) << HotStartManager::last_io_error();
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(path.c_str(), &hs), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_set_node_state(hs, "J1", 2.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_set_node_state(hs, "ST1", 2.0), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_set_link_state(hs, "C1", ref.links.flow[c1], ref.links.depth[c1]),
+              SWMM_OK);
+    double depth = 0, head = 0, volume = 0;
+    ASSERT_EQ(swmm_hotstart_get_node(hs, 0, nullptr, 0, &depth, &head, &volume, nullptr), SWMM_OK);
+    EXPECT_EQ(depth, 2.0);
+    EXPECT_TRUE(std::isnan(head)); // derived at restart
+    EXPECT_TRUE(std::isnan(volume));
+    ASSERT_EQ(swmm_hotstart_close(hs), SWMM_OK); // writes the edits
+
+    openswmm::SWMMEngine restart;
+    openInitialized(restart, "restart", inspectionDeck("0", "0", "0"));
+    ASSERT_EQ(swmm_hotstart_open(path.c_str(), &hs), SWMM_OK);
+    ASSERT_EQ(swmm_hotstart_apply(handle(restart), hs), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_close(hs), SWMM_OK);
+    const auto& out = restart.context();
+    for (const char* id : {"J1", "ST1"}) {
+        EXPECT_DOUBLE_EQ(out.nodes.depth[node(id)], 2.0) << id;
+        EXPECT_DOUBLE_EQ(out.nodes.head[node(id)], ref.nodes.invert_elev[node(id)] + 2.0) << id;
+    }
+    // Storage: initialization's own volume for the same depth (1000 ft2 x 2 ft). A junction's
+    // volume is filled by routing, not initialization, so it is checked against routing's rule.
+    EXPECT_DOUBLE_EQ(out.nodes.volume[node("ST1")], ref.nodes.volume[node("ST1")]);
+    const int j1 = ref.node_names.find("J1");
+    const double routed = openswmm::node::getVolume(out.nodes, j1, 2.0);
+    EXPECT_GT(routed, 0.0);
+    EXPECT_DOUBLE_EQ(out.nodes.volume[node("J1")], routed);
+    EXPECT_DOUBLE_EQ(out.links.flow[c1], ref.links.flow[c1]);
+    EXPECT_DOUBLE_EQ(out.links.depth[c1], ref.links.depth[c1]);
+    EXPECT_DOUBLE_EQ(out.links.volume[c1], ref.links.volume[c1]);
+    // Records that were not edited keep their stored values.
+    const auto j2 = node("J2");
+    EXPECT_EQ(out.nodes.head[j2], dry.context().nodes.head[j2]);
+    EXPECT_EQ(out.nodes.volume[j2], dry.context().nodes.volume[j2]);
+}
+
+TEST(HotStartInspection, EditsARestartWouldIgnoreAreRefused) {
+    openswmm::SWMMEngine model;
+    openInitialized(model, "refusals", inspectionDeck("0", "0", "0"));
+    const std::string path = "hotstart_inspection/refusals.hsf";
+    std::unique_ptr<HotStartFile> saved(HotStartManager::save(model.context(), path));
+    ASSERT_NE(saved, nullptr);
+    SWMM_HotStart hs = nullptr;
+    ASSERT_EQ(swmm_hotstart_open(path.c_str(), &hs), SWMM_OK);
+    EXPECT_EQ(swmm_hotstart_set_node_state(hs, "J1", -1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_set_node_state(hs, "J1", std::nan("")), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_set_link_state(hs, "C1", INFINITY, 1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_set_node_state(hs, "nope", 1.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_hotstart_set_node_state(nullptr, "J1", 1.0), SWMM_ERR_BADHANDLE);
+    // A full engine checkpoint is what a restart restores; record edits would do nothing.
+    static_cast<HotStartFile*>(hs)->engine_checkpoint = "checkpoint";
+    int flags = 0;
+    ASSERT_EQ(swmm_hotstart_get_contents(hs, &flags), SWMM_OK);
+    EXPECT_TRUE(flags & SWMM_HOTSTART_HAS_ENGINE_CHECKPOINT);
+    EXPECT_EQ(swmm_hotstart_set_node_state(hs, "J1", 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_link_state(hs, "C1", 1.0, 1.0), SWMM_ERR_HOTSTART);
+    static_cast<HotStartFile*>(hs)->engine_checkpoint.clear();
+    EXPECT_FALSE(static_cast<HotStartFile*>(hs)->dirty);
+    EXPECT_EQ(swmm_hotstart_close(hs), SWMM_OK);
+}
+
+TEST(HotStartInspection, LegacyFileReadsAsUseHotstartLoadsIt) {
+    fs::create_directories("hotstart_inspection");
+    const std::string path = "hotstart_inspection/legacy_v4.hsf";
+    write_legacy_hsf_v4(path, 2, 1, 3, 2, 1, {true, false}, {false, true},
+                        {NodeType::JUNCTION, NodeType::STORAGE, NodeType::OUTFALL},
+                        {{{1.25f, 0.5f}}, {{3.5f, 0.0f}}, {{0.75f, 0.0f}}},
+                        {{{2.5f, 0.4f, 1.0f}}, {{-0.5f, 0.3f, 1.0f}}});
+    auto applied = make_legacy_routing_context();
+    std::vector<double> runoff;
+    ASSERT_EQ(HotStartManager::apply_legacy_routing(path, applied, nullptr, &runoff), 0)
+        << HotStartManager::last_io_error();
+
+    const auto model = make_legacy_routing_context();
+    std::unique_ptr<HotStartFile> read(HotStartManager::read_legacy(path, model));
+    ASSERT_NE(read, nullptr) << HotStartManager::last_io_error();
+    EXPECT_EQ(read->legacy_version, 4);
+    EXPECT_TRUE(read->path.empty());
+    ASSERT_EQ(read->nodes.size(), 3u);
+    for (std::size_t i = 0; i < 3; ++i) {
+        EXPECT_EQ(read->nodes[i].id, model.node_names.name_of(static_cast<int>(i)));
+        EXPECT_EQ(read->nodes[i].depth, applied.nodes.depth[i]);
+        EXPECT_TRUE(std::isnan(read->nodes[i].head));
+        EXPECT_TRUE(std::isnan(read->nodes[i].volume));
+        EXPECT_EQ(read->node_species[i], applied.nodes.conc[i]);
+    }
+    ASSERT_EQ(read->links.size(), 2u);
+    for (std::size_t i = 0; i < 2; ++i) {
+        EXPECT_EQ(read->links[i].id, model.link_names.name_of(static_cast<int>(i)));
+        EXPECT_EQ(read->links[i].flow, applied.links.flow[i]);
+        EXPECT_EQ(read->links[i].depth, applied.links.depth[i]);
+        EXPECT_EQ(read->link_species[i], applied.links.conc[i]);
+    }
+    ASSERT_EQ(read->species, std::vector<std::string>{"TSS"});
+    // Subcatchments: runoff is the fourth double of each record (fixture value 0.25 * 4);
+    // S1's groundwater block starts after the 4 + 6 runoff and infiltration doubles.
+    ASSERT_EQ(read->subcatches.size(), 2u);
+    EXPECT_EQ(read->subcatches[0].runoff, 1.0);
+    EXPECT_EQ(read->subcatches[1].runoff, 1.0);
+    EXPECT_EQ(read->subcatches[0].gw_theta, 0.25 * 11);
+    EXPECT_EQ(read->subcatches[0].gwater, 0.25 * 13);
+    EXPECT_TRUE(std::isnan(read->subcatches[0].gw_lower_depth));
+    EXPECT_EQ(runoff.at(3), 1.0); // the engine's own reader agrees on the layout
+
+    // Another model's shape is refused with the counts.
+    auto other = make_legacy_routing_context();
+    other.node_names.add("EXTRA");
+    other.allocate_objects();
+    EXPECT_EQ(HotStartManager::read_legacy(path, other), nullptr);
+    EXPECT_NE(HotStartManager::last_io_error().find("another model"), std::string::npos);
+    // A native file is not a legacy file.
+    openswmm::SWMMEngine native;
+    openInitialized(native, "legacy_native", inspectionDeck("0", "0", "0"));
+    std::unique_ptr<HotStartFile> nativeFile(
+        HotStartManager::save(native.context(), "hotstart_inspection/native.hsf"));
+    ASSERT_NE(nativeFile, nullptr);
+    EXPECT_EQ(HotStartManager::read_legacy("hotstart_inspection/native.hsf", native.context()),
+              nullptr);
+}
+
+TEST(HotStartInspection, LegacyHandleIsReadOnly) {
+    openswmm::SWMMEngine model;
+    openInitialized(model, "legacy_handle", inspectionDeck("0", "0", "0"));
+    const auto& ctx = model.context();
+    const std::string path = "hotstart_inspection/legacy_handle.hsf";
+    std::vector<NodeType> types;
+    std::vector<std::array<float, 2>> nodes;
+    for (int i = 0; i < ctx.n_nodes(); ++i) {
+        types.push_back(ctx.nodes.type[static_cast<std::size_t>(i)]);
+        nodes.push_back({{0.5f * static_cast<float>(i + 1), 0.0f}});
+    }
+    write_legacy_hsf_v4(path, 0, 0, ctx.n_nodes(), ctx.n_links(), 1, {}, {}, types, nodes,
+                        {{{1.0f, 0.2f, 1.0f}}, {{2.0f, 0.3f, 1.0f}}, {{3.0f, 0.4f, 1.0f}}});
+    std::ifstream before(path, std::ios::binary);
+    const std::string bytes((std::istreambuf_iterator<char>(before)), {});
+
+    SWMM_HotStart hs = nullptr;
+    EXPECT_EQ(swmm_hotstart_open(path.c_str(), &hs), SWMM_ERR_HOTSTART); // not native
+    ASSERT_EQ(swmm_hotstart_open_legacy(handle(model), path.c_str(), &hs), SWMM_OK)
+        << swmm_hotstart_last_io_error();
+    int flags = 0, version = 0;
+    ASSERT_EQ(swmm_hotstart_get_contents(hs, &flags), SWMM_OK);
+    EXPECT_EQ(flags, SWMM_HOTSTART_LEGACY | SWMM_HOTSTART_HAS_SPECIES);
+    ASSERT_EQ(swmm_hotstart_get_version(hs, &version), SWMM_OK);
+    EXPECT_EQ(version, 4);
+    char id[16] = {};
+    double depth = 0;
+    ASSERT_EQ(swmm_hotstart_get_node(hs, 1, id, sizeof id, &depth, nullptr, nullptr, nullptr),
+              SWMM_OK);
+    EXPECT_STREQ(id, ctx.node_names.name_of(1).c_str());
+    EXPECT_FLOAT_EQ(static_cast<float>(depth), 1.0f);
+
+    EXPECT_EQ(swmm_hotstart_set_node_state(hs, id, 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_link_state(hs, "C1", 1.0, 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_node_depth(hs, id, 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_node_head(hs, id, 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_link_flow(hs, "C1", 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_link_depth(hs, "C1", 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_set_subcatch_runoff(hs, "S1", 1.0), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_apply(handle(model), hs), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(swmm_hotstart_close(hs), SWMM_OK);
+    std::ifstream after(path, std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(after)), {}), bytes);
+
+    // Counts that differ from the model are refused.
+    write_legacy_hsf_v4(path, 0, 0, 1, 0, 0, {}, {}, {NodeType::JUNCTION}, {{{1.0f, 0.0f}}}, {});
+    EXPECT_EQ(swmm_hotstart_open_legacy(handle(model), path.c_str(), &hs), SWMM_ERR_HOTSTART);
+    EXPECT_EQ(hs, nullptr);
+    EXPECT_NE(std::string(swmm_hotstart_last_io_error()).find("another model"), std::string::npos);
+    EXPECT_EQ(swmm_hotstart_open_legacy(nullptr, path.c_str(), &hs), SWMM_ERR_BADHANDLE);
 }

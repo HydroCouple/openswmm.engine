@@ -1,5 +1,7 @@
 #include "../hydrology/LidNode.hpp"
 #include "../hydraulics/Node.hpp"
+#include "../hydraulics/Link.hpp"
+#include "../hydraulics/XSectBatch.hpp"
 #include "UnitConversion.hpp"
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -59,9 +61,12 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <memory>
+#include <limits>
 #include <fstream>
 #include <sstream>
 
@@ -919,6 +924,32 @@ bool HotStartFile::set_link_depth(const std::string& id, double v) {
     for (auto& l : links) {
         if (l.id == id) {
             l.depth = v;
+            dirty = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HotStartFile::set_node_state(const std::string& id, double depth) {
+    for (auto& n : nodes) {
+        if (n.id == id) {
+            n.depth = depth;
+            n.head = std::numeric_limits<double>::quiet_NaN();
+            n.volume = std::numeric_limits<double>::quiet_NaN();
+            dirty = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HotStartFile::set_link_state(const std::string& id, double flow, double depth) {
+    for (auto& l : links) {
+        if (l.id == id) {
+            l.flow = flow;
+            l.depth = depth;
+            l.volume = std::numeric_limits<double>::quiet_NaN();
             dirty = true;
             return true;
         }
@@ -2213,6 +2244,14 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         ctx.nodes.depth[i] = rec.depth;
         ctx.nodes.head[i] = rec.head;
         ctx.nodes.volume[i] = rec.volume;
+        // A depth edited through set_node_state() leaves head and volume NaN: derive them from
+        // this model's geometry, as initialization does, so the restart is consistent.
+        if (!std::isfinite(rec.head))
+            ctx.nodes.head[i] = ctx.nodes.invert_elev[i] + rec.depth;
+        if (!std::isfinite(rec.volume))
+            ctx.nodes.volume[i] = node::getVolume(
+                ctx.nodes, idx, rec.depth, &ctx.tables,
+                ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
         // A2a: restore water age. Sizing happens once (guarded resize);
         // both engines then seed FROM the loaded state instead of
         // INITIAL_STATE (hotstart_loaded; legacy_seeded suppresses the
@@ -2238,6 +2277,21 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
         ctx.links.flow[i] = rec.flow;
         ctx.links.depth[i] = rec.depth;
         ctx.links.volume[i] = rec.volume;
+        // set_link_state() leaves the volume NaN: a conduit stores area(depth) x routing length x
+        // barrels (initialization's rule); other links store none.
+        if (!std::isfinite(rec.volume)) {
+            ctx.links.volume[i] = 0.0;
+            const int cr = ctx.links.type[i] == LinkType::CONDUIT
+                               ? ctx.link_subtypes.conduit_row(idx)
+                               : -1;
+            if (cr >= 0) {
+                const auto& conduits = ctx.link_subtypes.conduits;
+                const auto ucr = static_cast<std::size_t>(cr);
+                const XSectParams xs = link::buildXSectParams(ctx.links, i, &ctx.transect_tables);
+                ctx.links.volume[i] =
+                    xsect::getAofY(xs, rec.depth) * conduits.true_length[ucr] * conduits.barrels[ucr];
+            }
+        }
         if (rec.age >= 0.0 && ctx.options.water_age) {
             auto& ws = ctx.water_age_state;
             if (ws.link_age.size() != static_cast<std::size_t>(ctx.n_links()))
@@ -2422,6 +2476,164 @@ std::size_t HotStartManager::legacy_runoff_size(const SimulationContext& ctx, in
             n += 2 * np + static_cast<std::size_t>(std::max(n_land, 0)) * (np + 1);
     }
     return n;
+}
+
+HotStartFile* HotStartManager::read_legacy(const std::string& path,
+                                          const SimulationContext& ctx) {
+    tl_last_io_error.clear();
+    std::ifstream file(openswmm::io::utf8_path(path), std::ios::binary);
+    if (!file) {
+        tl_last_io_error = "Cannot open hotstart file '" + path + "'";
+        return nullptr;
+    }
+    // Same stamp rules as apply_legacy_routing().
+    char stamp[16] = {};
+    file.read(stamp, 15);
+    if (!file) {
+        tl_last_io_error = "Hotstart file '" + path + "' too small for header";
+        return nullptr;
+    }
+    int version = 0;
+    if (std::memcmp(stamp, "SWMM5-HOTSTART4", 15) == 0)
+        version = 4;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART3", 15) == 0)
+        version = 3;
+    else if (std::memcmp(stamp, "SWMM5-HOTSTART2", 15) == 0)
+        version = 2;
+    else {
+        file.clear();
+        file.seekg(0, std::ios::beg);
+        char s14[15] = {};
+        file.read(s14, 14);
+        if (!file || std::memcmp(s14, "SWMM5-HOTSTART", 14) != 0) {
+            tl_last_io_error = "'" + path + "' is not a legacy EPA SWMM5 hotstart file";
+            return nullptr;
+        }
+        version = 1;
+    }
+    const auto truncated = [&](const char* what) -> HotStartFile* {
+        tl_last_io_error = std::string("Hotstart ") + what + " truncated in '" + path + "'";
+        return nullptr;
+    };
+    int32_t nSub = ctx.n_subcatches(), nLand = 0, nNodes = 0, nLinks = 0, nPollut = 0,
+            flowUnits = 0;
+    if ((version >= 2 && !read_pod(file, nSub)) || (version >= 3 && !read_pod(file, nLand)) ||
+        !read_pod(file, nNodes) || !read_pod(file, nLinks) || !read_pod(file, nPollut) ||
+        !read_pod(file, flowUnits))
+        return truncated("header");
+    if (nSub != ctx.n_subcatches() || nNodes != ctx.n_nodes() || nLinks != ctx.n_links() ||
+        nPollut != ctx.n_pollutants() || nLand < 0) {
+        tl_last_io_error = "The hotstart file was written for another model: it holds " +
+                           std::to_string(nSub) + " subcatchments, " + std::to_string(nNodes) +
+                           " nodes, " + std::to_string(nLinks) + " links and " +
+                           std::to_string(nPollut) + " pollutants; the model has " +
+                           std::to_string(ctx.n_subcatches()) + ", " +
+                           std::to_string(ctx.n_nodes()) + ", " + std::to_string(ctx.n_links()) +
+                           " and " + std::to_string(ctx.n_pollutants()) + ".";
+        return nullptr;
+    }
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    auto hs = std::make_unique<HotStartFile>();
+    hs->legacy_version = version;
+    hs->header.version = 0;
+
+    // Subcatchments (saveRunoff record layout; see the skip in apply_legacy_routing()).
+    const auto& sub = ctx.subcatches;
+    hs->subcatches.resize(static_cast<std::size_t>(nSub));
+    for (int i = 0; i < nSub; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        auto& rec = hs->subcatches[ui];
+        rec.id = ctx.subcatch_names.name_of(i);
+        rec.runoff = nan;
+        rec.gwater = nan;
+        const bool gw = ui < sub.gw_aquifer.size() && sub.gw_aquifer[ui] >= 0;
+        if (version >= 3) {
+            std::size_t nd = 4 + 6;
+            if (gw)
+                nd += 4;
+            if (ui < sub.snowpack.size() && sub.snowpack[ui] >= 0)
+                nd += 15;
+            if (nPollut > 0)
+                nd += 2 * static_cast<std::size_t>(nPollut) +
+                      static_cast<std::size_t>(nLand) * (static_cast<std::size_t>(nPollut) + 1);
+            std::vector<double> values(nd);
+            file.read(reinterpret_cast<char*>(values.data()),
+                      static_cast<std::streamsize>(nd * sizeof(double)));
+            if (!file)
+                return truncated("runoff section");
+            rec.runoff = values[3];
+            // gwater_getState order: theta, water-table elevation, flow, max infil volume. The
+            // lower-zone depth needs the aquifer bottom, so it is left unset (NaN).
+            if (gw) {
+                rec.gw_theta = values[10];
+                rec.gw_lower_depth = nan;
+                rec.gwater = values[12];
+            }
+        } else if (version == 2) {
+            float theta = 0.0f, table = 0.0f;
+            if (!read_pod(file, theta) || !read_pod(file, table))
+                return truncated("groundwater block");
+            if (gw)
+                rec.gw_theta = static_cast<double>(theta);
+        }
+    }
+
+    // Pollutant concentrations become the species block, by pollutant name.
+    for (int j = 0; j < nPollut; ++j)
+        hs->species.push_back(ctx.pollutant_names.name_of(j));
+    const auto np = static_cast<std::size_t>(nPollut);
+    hs->node_species.assign(static_cast<std::size_t>(nNodes) * np, 0.0);
+    hs->link_species.assign(static_cast<std::size_t>(nLinks) * np, 0.0);
+
+    hs->nodes.resize(static_cast<std::size_t>(nNodes));
+    for (int i = 0; i < nNodes; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        auto& rec = hs->nodes[ui];
+        rec.id = ctx.node_names.name_of(i);
+        float depth = 0.0f, lat = 0.0f;
+        if (!read_pod(file, depth) || !read_pod(file, lat))
+            return truncated("node records");
+        rec.depth = static_cast<double>(depth);
+        rec.head = nan;
+        rec.volume = nan;
+        if (version >= 4 && ctx.nodes.type[ui] == NodeType::STORAGE) {
+            float hrt = 0.0f;
+            if (!read_pod(file, hrt))
+                return truncated("node records");
+        }
+        for (std::size_t j = 0; j < np; ++j) {
+            float q = 0.0f;
+            if (!read_pod(file, q))
+                return truncated("node records");
+            hs->node_species[ui * np + j] = static_cast<double>(q);
+        }
+        if (version <= 2)
+            for (std::size_t j = 0; j < np; ++j) {
+                float q = 0.0f;
+                if (!read_pod(file, q))
+                    return truncated("node records");
+            }
+    }
+
+    hs->links.resize(static_cast<std::size_t>(nLinks));
+    for (int i = 0; i < nLinks; ++i) {
+        const auto ui = static_cast<std::size_t>(i);
+        auto& rec = hs->links[ui];
+        rec.id = ctx.link_names.name_of(i);
+        float flow = 0.0f, depth = 0.0f, setting = 0.0f;
+        if (!read_pod(file, flow) || !read_pod(file, depth) || !read_pod(file, setting))
+            return truncated("link records");
+        rec.flow = static_cast<double>(flow);
+        rec.depth = static_cast<double>(depth);
+        rec.volume = nan;
+        for (std::size_t j = 0; j < np; ++j) {
+            float q = 0.0f;
+            if (!read_pod(file, q))
+                return truncated("link records");
+            hs->link_species[ui * np + j] = static_cast<double>(q);
+        }
+    }
+    return hs.release();
 }
 
 int HotStartManager::apply_legacy_routing(const std::string& path, SimulationContext& ctx,
