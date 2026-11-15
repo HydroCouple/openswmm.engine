@@ -57,6 +57,9 @@ function(add_gtest_unit TEST_NAME)
     if(MSVC)
         # Large Google Test translation units exceed the default COFF section limit.
         target_compile_options(${TEST_NAME} PRIVATE /EHsc /bigobj)
+        # Debug frames are large (one checkpoint test body alone takes about 800 KB), and
+        # the default 1 MB stack overflows. 8 MB matches the Linux and macOS main thread.
+        target_link_options(${TEST_NAME} PRIVATE /STACK:8388608)
     endif()
 
     set_target_properties(${TEST_NAME} PROPERTIES

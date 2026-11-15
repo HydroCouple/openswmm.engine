@@ -117,9 +117,10 @@ const char* cTerminated(std::string_view s, char (&stack)[64], std::string& heap
  * @param[in] s Token bytes.
  * @param[out] ok True iff at least one character parsed and no bytes remain before a NUL.
  * @return The value. `[+-]?D{1,9}` is read directly (it always fits an int, so this agrees with
- * strtol everywhere); every other token goes through strtol on a NUL-terminated copy and is
- * narrowed as before: leading whitespace/sign accepted, no errno/long/int range checks, and the
- * value is returned even on failure.
+ * strtoll everywhere); every other token goes through strtoll on a NUL-terminated copy and is
+ * narrowed as before: leading whitespace/sign accepted, no errno/int range checks, and the
+ * value is returned even on failure. strtoll rather than strtol, so an out-of-range token
+ * narrows the same way where long is 32 bits (Windows) as where it is 64.
  * @note No model mutation; empty/surplus/noninteger syntax reports ok=false.
  */
 int tryParseInt(std::string_view s, bool& ok) {
@@ -143,7 +144,7 @@ int tryParseInt(std::string_view s, bool& ok) {
     std::string heap;
     const char* c = cTerminated(s, stack, heap);
     char* end = nullptr;
-    long val = std::strtol(c, &end, 10);
+    long long val = std::strtoll(c, &end, 10);
     ok = (end != c && *end == '\0');
     return static_cast<int>(val);
 }

@@ -33,6 +33,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <type_traits>
@@ -47,6 +48,8 @@ namespace {
 #undef MESH_SNAPSHOT_DECLARATIONS
 
 template <class T> std::enable_if_t<std::is_floating_point_v<T>> dump(std::ostream& o, T v) {
+    if (v != v) // one NaN: the bits strtod gives "nan" differ between C libraries
+        v = std::numeric_limits<T>::quiet_NaN();
     if constexpr (sizeof(T) == 8) {
         std::uint64_t b;
         std::memcpy(&b, &v, 8);
