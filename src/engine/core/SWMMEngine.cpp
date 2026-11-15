@@ -5214,9 +5214,10 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
     // Convert to CFS: q_cfs = gw_flow * area_ft2
     // Note: do NOT scatter to lat_flow here — Phase 2 does interpolated scatter.
     // Note: do NOT accumulate routing_gw_inflow here — updateRoutingMassBalance does it.
+    const auto& gw_flow_rates = groundwater_.state().gw_flow; // empty without aquifers
     for (int i = 0; i < ns; ++i) {
         auto ui = static_cast<std::size_t>(i);
-        double gw_rate = groundwater_.state().gw_flow[ui]; // ft/sec
+        double gw_rate = ui < gw_flow_rates.size() ? gw_flow_rates[ui] : 0.0; // ft/sec
         double area_ft2 = ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options);
         ctx_.subcatches.gw_flow[ui] = gw_rate * area_ft2; // CFS
 
@@ -9340,7 +9341,7 @@ int SWMMEngine::end() noexcept {
     {
         auto& gw = groundwater_.state();
         ctx_.mass_balance.gw_final_storage = 0.0;
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        for (int i = 0; i < gw.n_subcatch; ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (gw.total_depth[ui] <= 0.0)
                 continue;
@@ -10937,7 +10938,9 @@ void SWMMEngine::initHydrology() noexcept {
     gage_states_.resize(static_cast<std::size_t>(ctx_.n_gages()));
 
     // Both ordinary runoff and completed source owners use one snow setup.
-    if (const auto error = surface::initializeNativeSnow(ctx_, snow_); !error.empty()) {
+    // Its per-subcatchment arrays are allocated only if a subcatchment has a
+    // snowpack (they were ~2.5 KB per subcatchment in every model).
+    if (const auto error = surface::initializeNativeSnow(ctx_, snow_, true); !error.empty()) {
         ctx_.errors.push_back(error);
         set_error(SWMM_ERR_PARSE, error.c_str());
     }
@@ -11132,8 +11135,15 @@ void SWMMEngine::initHydrology() noexcept {
         set_error(SWMM_ERR_PARSE, error.c_str());
     }
 
-    // 6. Groundwater solver: init and populate from parsed aquifer/GW data
-    groundwater_.init(ctx_.n_subcatches());
+    // 6. Groundwater solver: init and populate from parsed aquifer/GW data.
+    // Its per-subcatchment arrays are allocated only if a subcatchment has an
+    // aquifer; every reader skips subcatchments without one.
+    {
+        const auto& aquifers = ctx_.subcatches.gw_aquifer;
+        const bool any_aquifer =
+            std::any_of(aquifers.begin(), aquifers.end(), [](int a) { return a >= 0; });
+        groundwater_.init(any_aquifer ? ctx_.n_subcatches() : 0);
+    }
     {
         auto& gw = groundwater_.state();
         int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
@@ -12505,7 +12515,7 @@ void SWMMEngine::initMassBalance() noexcept {
     // gwater_getVolume = theta * upperDepth + porosity * lowerDepth
     {
         auto& gw = groundwater_.state();
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+        for (int i = 0; i < gw.n_subcatch; ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (gw.total_depth[ui] <= 0.0)
                 continue;

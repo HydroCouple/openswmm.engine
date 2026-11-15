@@ -2584,7 +2584,9 @@ std::string SWMMEngine::enableCheckpointingImpl(
             source_delivery_ = std::move(bridge);
             if (stage->sources().snow().active()) {
                 double initial = 0;
-                for (int sc = 0; sc < ctx_.n_subcatches(); ++sc) {
+                // The engine's snow arrays are empty when no subcatchment has a
+                // snowpack (a pack-less source holds no snow volume either).
+                for (int sc = 0; sc < snow_.state().n_subcatch; ++sc) {
                     snow_.state().enabled[sc] = !ownsSpatialSource(sc);
                     if (!ownsSpatialSource(sc)) {
                         const double area =

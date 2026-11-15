@@ -75,8 +75,12 @@ double nativeSnowVolume(const snow::SnowSoA& s, int sc, double area) {
     }
     return water * area;
 }
-std::string initializeNativeSnow(SimulationContext& ctx_, snow::SnowSolver& snow_) {
-    snow_.init(ctx_.n_subcatches());
+std::string initializeNativeSnow(SimulationContext& ctx_, snow::SnowSolver& snow_,
+                                 bool only_when_used) {
+    const auto& packs = ctx_.subcatches.snowpack;
+    const bool used =
+        !only_when_used || std::any_of(packs.begin(), packs.end(), [](int p) { return p >= 0; });
+    snow_.init(used ? ctx_.n_subcatches() : 0);
     {
         auto& soa = snow_.state();
         int unit_sys_snow = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
@@ -195,7 +199,7 @@ std::string initializeNativeSnow(SimulationContext& ctx_, snow::SnowSolver& snow
     if (auto error = ueb::initializeSubcatchments(ctx_, snow_.state()); !error.empty())
         return error;
     for (int sc = 0; sc < ctx_.n_subcatches(); ++sc)
-        ctx_.subcatches.snow_depth[sc] = nativeSnowDepth(snow_.state(), sc);
+        ctx_.subcatches.snow_depth[sc] = used ? nativeSnowDepth(snow_.state(), sc) : 0.0;
     return {};
 }
 }

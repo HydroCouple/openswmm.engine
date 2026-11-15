@@ -1156,6 +1156,62 @@ TEST(SnowEngineIntegration, ADegreeDayPackMeltsWhenSteppedThroughTheEngine) {
     swmm_engine_destroy(e);
 }
 
+// Per-subcatchment snow and groundwater state is allocated only when a
+// subcatchment has a snowpack or an aquifer: a model with neither (city-scale
+// roof subcatchments) runs with empty snow, UEB and groundwater arrays, and a
+// pack-less subcatchment still answers the snow-state query as before.
+TEST(SnowEngineIntegration, SnowAndGroundwaterStateIsAllocatedOnlyWhenUsed) {
+    auto deck = [](const char* path, bool with_pack) {
+        std::ofstream f(path);
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING KINWAVE\nINFILTRATION HORTON\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+             "END_DATE 01/01/2026\nEND_TIME 01:00:00\n"
+             "WET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
+             "[TIMESERIES]\nrain_ts 01/01/2026 00:00 1.0\nrain_ts 01/01/2026 01:05 1.0\n\n";
+        if (with_pack)
+            f << "[SNOWPACKS]\n"
+                 "SP1 PLOWABLE   0.02 0.06 32.0 0.10 0 0.0 0.0\n"
+                 "SP1 IMPERVIOUS 0.02 0.06 32.0 0.10 0 0.0 0.0\n"
+                 "SP1 PERVIOUS   0.01 0.03 32.0 0.10 0 0.0 0.0\n\n";
+        f << "[SUBCATCHMENTS]\nS1 RG1 OUT 5 50 500 0.5 0" << (with_pack ? " SP1" : "")
+          << "\nS2 RG1 OUT 3 100 300 1.0 0\n\n"
+             "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\nS2 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
+             "[INFILTRATION]\nS1 3.0 0.5 4 7 0\nS2 3.0 0.5 4 7 0\n\n"
+             "[OUTFALLS]\nOUT 9.0 FREE NO\n\n[REPORT]\nINPUT NO\n";
+    };
+    for (const bool with_pack : {false, true}) {
+        SCOPED_TRACE(with_pack ? "with a snowpack" : "without snow or groundwater");
+        deck("_alloc_by_use.inp", with_pack);
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_engine_open(e, "_alloc_by_use.inp", "_alloc_by_use.rpt", "_alloc_by_use.out",
+                                   nullptr),
+                  SWMM_OK);
+        ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+        auto& eng = *static_cast<SWMMEngine*>(e);
+        const auto& sn = eng.snowSolver().state();
+        EXPECT_EQ(sn.n_subcatch, with_pack ? 2 : 0);
+        EXPECT_EQ(sn.wsnow.size(), with_pack ? 6u : 0u);
+        EXPECT_EQ(eng.context().snowpacks.runtime.columns.size(), with_pack ? 6u : 0u);
+        EXPECT_EQ(eng.gwSolver().state().n_subcatch, 0);
+        EXPECT_TRUE(eng.gwSolver().state().theta.empty());
+        SWMM_SnowState state{};
+        EXPECT_EQ(swmm_subcatch_get_snow_process_state(e, 1, 0, &state), SWMM_ERR_BADINDEX)
+            << "a pack-less subcatchment";
+
+        ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+        double elapsed = 0.0;
+        int guard = 0;
+        do {
+            ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+        } while (elapsed > 0.0 && ++guard < 40000);
+        ASSERT_EQ(swmm_engine_end(e), SWMM_OK);
+        EXPECT_GT(eng.context().subcatches.stat_runoff_vol[1], 0.0);
+        swmm_engine_destroy(e);
+    }
+}
+
 namespace {
 namespace ueb = openswmm::surface::ueb;
 /**

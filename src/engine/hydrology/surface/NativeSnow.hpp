@@ -27,8 +27,12 @@ namespace openswmm::surface {
  * @return Empty on accepted UEB initialization, otherwise its diagnostic; preceding
  * solver/context changes remain. No all-model parameter/index validation or rollback;
  * allocation/setup exceptions propagate. Caller sets seasonal melt coefficients
- * before stepping, then applies the correct native/UEB ownership lifecycle. */
-std::string initializeNativeSnow(SimulationContext& context, snow::SnowSolver& solver);
+ * before stepping, then applies the correct native/UEB ownership lifecycle.
+ * @param[in] only_when_used True sizes the solver's per-source arrays to zero when no
+ * subcatchment has a snowpack; every engine reader skips pack-less subcatchments.
+ * Callers that index every source unconditionally (completed-source snow) keep false. */
+std::string initializeNativeSnow(SimulationContext& context, snow::SnowSolver& solver,
+                                 bool only_when_used = false);
 /** @brief Detect an enabled authored UEB snowpack assignment without initializing it.
  * @param context Borrowed subcatchment pack assignments and snow model configuration.
  * @return False when snowmelt ignored, otherwise true for any nonnegative assigned

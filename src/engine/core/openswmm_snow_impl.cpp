@@ -283,8 +283,15 @@ SWMM_ENGINE_API int swmm_subcatch_get_snow_process_state(SWMM_Engine engine, int
     const auto& ctx = *context;
     const auto& snow = *state;
     const int i = sc * 3 + surface;
-    if (i >= int(snow.wsnow.size()))
-        return SWMM_ERR_LIFECYCLE;
+    if (i >= int(snow.wsnow.size())) {
+        // An initialized model without snowpacks has no snow arrays; its
+        // subcatchments still answer as pack-less ones.
+        const bool initialized = ctx.state != openswmm::EngineState::CREATED &&
+                                 ctx.state != openswmm::EngineState::OPENED &&
+                                 ctx.state != openswmm::EngineState::BUILDING;
+        return initialized && ctx.subcatches.snowpack[sc] < 0 ? SWMM_ERR_BADINDEX
+                                                              : SWMM_ERR_LIFECYCLE;
+    }
     if (ctx.subcatches.snowpack[sc] < 0)
         return SWMM_ERR_BADINDEX;
     const double nan = std::numeric_limits<double>::quiet_NaN();
