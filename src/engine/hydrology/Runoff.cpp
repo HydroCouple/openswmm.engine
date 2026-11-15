@@ -162,14 +162,16 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha,
             double captured_alpha = alpha;
             double captured_dStore = dStore;
 
-            ode::integrate(&depth, 1, 0.0, tx, ODETOL, tx,
-                           [captured_inflow, captured_alpha,
-                            captured_dStore](double /*t*/, const double* d, double* dddt) {
-                               double rx = *d - captured_dStore;
-                               double outflow =
-                                   (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
-                               *dddt = captured_inflow - outflow;
-                           });
+            // integrateCallable: the same Cash-Karp arithmetic as integrate(),
+            // without building a heap-allocated std::function per call.
+            ode::integrateCallable(&depth, 1, 0.0, tx, ODETOL, tx,
+                                   [captured_inflow, captured_alpha,
+                                    captured_dStore](double /*t*/, const double* d, double* dddt) {
+                                       double rx = *d - captured_dStore;
+                                       double outflow =
+                                           (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
+                                       *dddt = captured_inflow - outflow;
+                                   });
         } else {
             tx = std::max(tx, 0.0);
             depth += inflow * tx;
