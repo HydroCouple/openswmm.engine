@@ -309,7 +309,9 @@ TEST(LivePassiveStorageExchange, CanonicalEngineFailureCannotRetryOnStepOrEnd) {
     EXPECT_NE(e.end(), SWMM_OK);
     EXPECT_EQ(owner->legCount(), count);
     EXPECT_EQ(e.surfaceRouter2D().state().volume, water);
-    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr);
+    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr)
+        << "is the owner: " << (e.surfaceRouter2D().state().live_passive_exchange == owner)
+        << "; owner error: " << owner->error() << "; engine error: " << e.context().error_message;
     EXPECT_EQ(e.context().error_message, error);
     EXPECT_EQ(e.close(), SWMM_OK);
 }
@@ -463,7 +465,9 @@ TEST(LivePassiveStorageExchange, CanonicalFinalFlushSamplesActualNativeStateAndC
     EXPECT_NE(e.end(), SWMM_OK);
     EXPECT_EQ(owner->legCount(), count);
     EXPECT_EQ(e.surfaceRouter2D().state().volume, water);
-    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr);
+    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr)
+        << "is the owner: " << (e.surfaceRouter2D().state().live_passive_exchange == owner)
+        << "; owner error: " << owner->error() << "; engine error: " << e.context().error_message;
     EXPECT_EQ(e.close(), SWMM_OK);
 }
 
@@ -488,7 +492,9 @@ TEST(LivePassiveStorageExchange, CanonicalBinaryReportFlushUsesActualPostQuality
     const auto water = e.surfaceRouter2D().state().volume;
     EXPECT_NE(e.end(), SWMM_OK);
     EXPECT_EQ(e.surfaceRouter2D().state().volume, water);
-    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr);
+    EXPECT_EQ(e.surfaceRouter2D().state().live_passive_exchange, nullptr)
+        << "is the owner: " << (e.surfaceRouter2D().state().live_passive_exchange == owner)
+        << "; owner error: " << owner->error() << "; engine error: " << e.context().error_message;
     EXPECT_EQ(e.close(), SWMM_OK);
 }
 

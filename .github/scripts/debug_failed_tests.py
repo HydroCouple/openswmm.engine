@@ -81,6 +81,8 @@ def main():
                 "quit",
                 "--",
             ]
+        # Under cdb a Debug test runs several times slower, and the fault can be minutes in.
+        limit = 1800 if args.debugger == "cdb" else 300
         # A debugger must not read the failed-test list or consume later names
         # as interactive commands. Keep CTest's arguments and working directory.
         try:
@@ -92,15 +94,15 @@ def main():
                 stderr=subprocess.STDOUT,
                 text=True,
                 errors="replace",
-                timeout=300,
+                timeout=limit,
             )
             output = result.stdout
         except subprocess.TimeoutExpired as error:
             output = error.stdout or b""
             if isinstance(output, bytes):
                 output = output.decode(errors="replace")
-            output += "\nDebugger rerun exceeded 300 seconds."
-        lines = output.splitlines()
+            output += f"\nDebugger rerun exceeded {limit} seconds."
+        lines = [line for line in output.splitlines() if not line.startswith("ModLoad:")]
         # cdb lists every module it loads first; its stack is at the end.
         print("\n".join(lines[-300:] if args.debugger == "cdb" else lines[:400]))
 
