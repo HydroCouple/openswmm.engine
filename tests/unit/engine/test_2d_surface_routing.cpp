@@ -1765,13 +1765,13 @@ TEST(InputParsing, NumbersKeepStrtodSyntax) {
     EXPECT_FALSE(parse2DVertexLine({"1x", "0", "0"}, mesh).empty());
     EXPECT_FALSE(parse2DVertexLine({"", "0", "0"}, mesh).empty());
 
-    // Integer indices: +, leading zeros; long values are narrowed as strtol + static_cast do.
+    // Integer indices: +, leading zeros; long values are narrowed as strtoll + static_cast do.
     ASSERT_TRUE(parse2DTriangleLine({"+0", "0001", "2", "0.03"}, mesh).empty());
     EXPECT_EQ(mesh.cell_v[0], 0);
     EXPECT_EQ(mesh.cell_v[1], 1);
     ASSERT_TRUE(parse2DTriangleLine({"4294967297", "-7", "2", "0.03"}, mesh).empty());
     EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 0],
-              static_cast<int>(std::strtol("4294967297", nullptr, 10)));
+              static_cast<int>(std::strtoll("4294967297", nullptr, 10)));
     EXPECT_EQ(mesh.cell_v[kMaxCellVerts + 1], -7);
     EXPECT_FALSE(parse2DTriangleLine({"1.0", "2", "3", "0.03"}, mesh).empty());
     EXPECT_FALSE(parse2DTriangleLine({"0x1", "2", "3", "0.03"}, mesh).empty());
