@@ -14,6 +14,7 @@
 #include "CommonSourceStage.hpp"
 #include "../../core/SWMMEngine.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
+#include "../../core/FileIO.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -79,7 +80,7 @@ struct File {
      * closes the stream, but does not remove its path. This aggregate must not be copied into
      * multiple FILE owners.
      */
-    explicit File(const std::string& path, const char* mode) : f(std::fopen(path.c_str(), mode)) {
+    explicit File(const std::string& path, const char* mode) : f(io::fopen_utf8(path, mode)) {
         require(f, "Cannot open source stream.");
         std::setvbuf(f, nullptr, _IONBF, 0);
     }
@@ -173,7 +174,8 @@ struct Identity {
  * filesystem exceptions can propagate. No file is opened or mutated; caller excludes path races.
  */
 Identity identity(const std::string& path, bool writable = false) {
-    auto status = std::filesystem::symlink_status(path);
+    const auto native = io::utf8_path(path); // engine paths are UTF-8, also on Windows
+    auto status = std::filesystem::symlink_status(native);
     require(std::filesystem::is_regular_file(status),
             "Source stream must be a regular file, not a symlink.");
     if (writable)
@@ -183,8 +185,7 @@ Identity identity(const std::string& path, bool writable = false) {
                 "Source stream is not writable.");
 #ifdef _WIN32
     struct _stat64 s{};
-    require(_wstat64(std::filesystem::path(path).c_str(), &s) == 0,
-            "Cannot inspect source stream.");
+    require(_wstat64(native.c_str(), &s) == 0, "Cannot inspect source stream.");
 #else
     struct stat s{};
     require(stat(path.c_str(), &s) == 0, "Cannot inspect source stream.");
@@ -719,7 +720,7 @@ std::string EngineSourceResultStream::initialize(const SWMMEngine& e, const std:
     } catch (const std::exception& e) {
         if (created) {
             std::error_code ec;
-            std::filesystem::remove(path, ec);
+            std::filesystem::remove(io::utf8_path(path), ec);
         }
         path_.clear();
         metadata_.clear();
@@ -902,15 +903,17 @@ EngineSourceResultStream::prepareRestore(const std::string& contract,
     require(verified.header.metadata == metadata_ && verified.latest.kind != Kind::SourceInterval &&
                 verified.latest.boundary_fingerprint == anchor,
             "Stream identity/model/profile or physical checkpoint binding differs.");
-    require(std::filesystem::weakly_canonical(source) != std::filesystem::weakly_canonical(path_) &&
-                !std::filesystem::equivalent(source, path_),
+    const auto source_path = io::utf8_path(source), live_path = io::utf8_path(path_);
+    require(std::filesystem::weakly_canonical(source_path) !=
+                    std::filesystem::weakly_canonical(live_path) &&
+                !std::filesystem::equivalent(source_path, live_path),
             "Stream restore source aliases its destination.");
     auto prepared = std::make_unique<PreparedRestore>();
-    prepared->publication = {path_ + ".stream-part-" + cursor_.identity + "-" +
-                                 std::to_string(++preparation_sequence_),
-                             path_, fresh_header_, -1};
+    prepared->publication = {io::utf8_path(path_ + ".stream-part-" + cursor_.identity + "-" +
+                                           std::to_string(++preparation_sequence_)),
+                             live_path, fresh_header_, -1};
     {
-        File in(source, "rb"), out(prepared->publication.staging.string(), "wbx");
+        File in(source, "rb"), out(io::path_utf8(prepared->publication.staging), "wbx");
         prepared->owns_staging = true;
         std::string buffer(64 * 1024, '\0');
         uint64_t left = cursor.bytes;
@@ -924,8 +927,8 @@ EngineSourceResultStream::prepareRestore(const std::string& contract,
         sync(out.f);
     }
     // Validate the copied bytes as well, detecting changes during preparation.
-    auto copied = scan(prepared->publication.staging.string(), cursor);
-    auto named = identity(prepared->publication.staging.string());
+    auto copied = scan(io::path_utf8(prepared->publication.staging), cursor);
+    auto named = identity(io::path_utf8(prepared->publication.staging));
     prepared->cursor = cursor;
     prepared->latest = std::move(copied.latest);
     prepared->device = named.device;
