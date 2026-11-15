@@ -99,6 +99,13 @@ foreach(_lang C CXX)
     endif()
 endforeach()
 
+# The Windows presets set CMAKE_CXX_FLAGS, which replaces CMake's default MSVC flags and
+# with them /EHsc. Without it MSVC still catches exceptions but runs no destructors while
+# unwinding (warning C4530): locks stay held and scoped cleanups are skipped after any throw.
+if(MSVC AND NOT CMAKE_CXX_FLAGS MATCHES "/EH")
+    string(APPEND CMAKE_CXX_FLAGS " /EHsc")
+endif()
+
 # Modern feature options with namespacing
 option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." OFF)
 option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
