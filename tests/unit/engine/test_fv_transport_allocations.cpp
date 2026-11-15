@@ -14,6 +14,16 @@ void* operator new(std::size_t n) {
 void* operator new[](std::size_t n) {
     return ::operator new(n);
 }
+// The nothrow forms too: the library versions take from a different allocator than the
+// operator delete below releases to (googletest allocates with new (std::nothrow)).
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept {
+    if (measuring)
+        ++allocations;
+    return std::malloc(n ? n : 1);
+}
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept {
+    return ::operator new(n, std::nothrow);
+}
 void operator delete(void* p) noexcept {
     std::free(p);
 }

@@ -90,4 +90,10 @@ jobs:
         env:
           ASAN_OPTIONS: halt_on_error=1:detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build/quality -L unit --no-tests=error --parallel 2 --timeout 900 --output-on-failure
+        # The two longest tests are left out: instrumented they ran at 85 to 95 % of their
+        # time limits (3,065 of 3,600 s and 759 of 900 s) and then over them. Unit Testing
+        # runs both on four platforms.
+        run: >-
+          ctest --test-dir build/quality -L unit --no-tests=error --parallel 2 --timeout 900
+          --output-on-failure
+          -E "^(test_engine_checkpoint|test_engine_2d_exchange_rubinato_model)$"
