@@ -76,6 +76,7 @@ private:
     std::vector<Point> points_;
     std::vector<int> recv_;  ///< Reused SPREAD scratch; empty outside apply(), not checkpointed.
     std::vector<int> nodes_; ///< distinct outfall nodes of points_
+    std::vector<char> listed_; ///< per node: 1 if it is in nodes_; set by initialize()
     std::vector<int> degree_;
     std::vector<double> node_area_, node_reserved_;
     /// Per node: tailwater record (s, s, 1D length); see recordTailwater().

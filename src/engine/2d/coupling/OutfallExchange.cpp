@@ -51,6 +51,7 @@ void OutfallExchange::initialize(const MeshData& mesh, const std::vector<Couplin
     tw_engaged_s_.assign(ctx.n_nodes(), 0);
     tw_submerged_s_.assign(ctx.n_nodes(), 0);
     tw_max_.assign(ctx.n_nodes(), -1.0e30);
+    listed_.assign(ctx.n_nodes(), 0);
     std::vector<int> users(mesh.n_cells(), 0);
     std::vector<char> seen;
     for (std::size_t k = 0; k < cps.size(); ++k) {
@@ -107,8 +108,10 @@ void OutfallExchange::initialize(const MeshData& mesh, const std::vector<Couplin
             for (int c : marked)
                 seen[static_cast<std::size_t>(c)] = 0;
         }
-        if (std::find(nodes_.begin(), nodes_.end(), p.node) == nodes_.end())
+        if (!listed_.at(p.node)) {
+            listed_[p.node] = 1;
             nodes_.push_back(p.node);
+        }
         points_.push_back(std::move(p));
     }
     if (points_.empty())
@@ -358,9 +361,9 @@ void OutfallExchange::recordTailwater(const SimulationContext& ctx, double dt) {
 
 bool OutfallExchange::tailwater(int node, double& engaged_s, double& submerged_s,
                                 double& max_stage) const {
-    if (std::find(nodes_.begin(), nodes_.end(), node) == nodes_.end())
-        return false;
     const auto un = static_cast<std::size_t>(node);
+    if (node < 0 || un >= listed_.size() || !listed_[un])
+        return false;
     engaged_s = tw_engaged_s_[un];
     submerged_s = tw_submerged_s_[un];
     max_stage = tw_max_[un];
