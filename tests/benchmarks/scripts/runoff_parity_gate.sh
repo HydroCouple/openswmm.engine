@@ -14,9 +14,9 @@
 #  2. The hot start file, which stores every subcatchment's subarea depths,
 #     runoff and infiltration state as doubles. Each deck is cut short to end
 #     at 01:30 (mid-storm) and at 03:00 (recession) with SAVE HOTSTART at the
-#     end of the run (legacy's timed SAVE HOTSTART compares elapsed ms with an
-#     absolute date, so it fires on the second routing step); the two files
-#     must be byte-identical.
+#     end of the run (end-of-run saves also work with a legacy CLI built
+#     before its dated SAVE HOTSTART fix); the two files must be
+#     byte-identical.
 #
 # <ref-dir> caches the legacy outputs; a missing one is produced with
 # <legacy-cli> first. Candidate outputs are deleted after a match to save

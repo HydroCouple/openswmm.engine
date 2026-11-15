@@ -120,8 +120,14 @@ void hotstart_save() {
     int i;
 
     for (i = 0; i < MAXHOTSTARTFILES; i++) {
+        // --- saveDateTime is an absolute date (decimal days) while
+        //     NewRoutingTime is elapsed msec, so convert the save time to
+        //     elapsed msec before comparing (comparing them directly fired
+        //     every dated save on the second routing step). The 1 msec
+        //     allowance absorbs date rounding, as the engine does.
         if (FhotstartOutputs[i].file && FhotstartOutputs[i].saveDateTime > 0 &&
-            NewRoutingTime >= FhotstartOutputs[i].saveDateTime) {
+            NewRoutingTime + 1.0 >=
+                (FhotstartOutputs[i].saveDateTime - StartDateTime) * MSECperDAY) {
             saveRunoff(&FhotstartOutputs[i]);
             saveRouting(&FhotstartOutputs[i]);
             fclose(FhotstartOutputs[i].file);

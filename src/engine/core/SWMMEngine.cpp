@@ -9494,9 +9494,7 @@ int SWMMEngine::end() noexcept {
 
 void SWMMEngine::writeDueHotstartSaves() {
     // Each dated row is written once, from the state at the end of the first
-    // step that reaches its time. (Legacy compares the elapsed milliseconds
-    // with the absolute date, so it fires within the first minute of the
-    // run; the date is honoured here.)
+    // step that reaches its time, the same test legacy hotstart_save() makes.
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() || hotstart_save_done_[k])

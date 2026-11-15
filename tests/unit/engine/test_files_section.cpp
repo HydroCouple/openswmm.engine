@@ -1186,3 +1186,38 @@ TEST(HotstartFormatRunTest, DatedSaveHoldsTheStateAtItsTime) {
                               "before its save time 01/02/2020 00:00:00."));
     EXPECT_FALSE(hasWarning(w, "dated_0600.hsf' was not written"));
 }
+
+// Legacy SWMM 5.3 writes a dated row at its time too: its hotstart_save()
+// compared the elapsed milliseconds with the absolute save date, so every
+// dated file held the state of the second routing step. Its 06:00 file must
+// equal its own end-of-run file of a run stopped at 06:00, and the engine's.
+TEST(HotstartFormatRunTest, LegacyDatedSaveHoldsTheStateAtItsTime) {
+    const fs::path dir = fs::absolute("hotstart_format");
+    fs::create_directories(dir);
+    std::string base = slurpFile("hotstart_legacy_parity.inp");
+    ASSERT_FALSE(base.empty());
+    replaceOnce(base, "THREADS              1", "THREADS              1\nVARIABLE_STEP        0");
+    std::string stop6 = base;
+    replaceOnce(stop6, "END_TIME             12:00:00", "END_TIME             06:00:00");
+
+    const fs::path dated = dir / "swmm53_dated_0600.hsf", end6 = dir / "swmm53_end_0600.hsf";
+    const fs::path engine = dir / "engine_dated_0600.hsf";
+    for (const auto& p : {dated, end6, engine})
+        fs::remove(p);
+    ASSERT_EQ(runSwmm53(deckFrom(base, dir, "swmm53_dated_full",
+                                 "SAVE HOTSTART " + q(dated) + " 01/01/2020 06:00:00\n")),
+              0);
+    ASSERT_EQ(runSwmm53(deckFrom(stop6, dir, "swmm53_dated_stop_0600",
+                                 "SAVE HOTSTART " + q(end6) + "\n")),
+              0);
+    ASSERT_EQ(runDeck(deckFrom(base, dir, "engine_dated_full",
+                               "SAVE HOTSTART " + q(engine) + " 01/01/2020 06:00:00\n")),
+              SWMM_OK);
+
+    const std::string fd = slurpBinary(dated);
+    ASSERT_FALSE(fd.empty());
+    EXPECT_TRUE(fd == slurpBinary(end6)) << "the legacy dated file is not the 06:00 state";
+    const std::string fe = slurpBinary(engine);
+    ASSERT_EQ(fd.size(), fe.size());
+    EXPECT_TRUE(fd.substr(0, 39) == fe.substr(0, 39)) << "stamp and object counts";
+}
