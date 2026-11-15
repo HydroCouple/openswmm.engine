@@ -357,8 +357,7 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
         const bool prepared =
             start < end - 1e-9 && !(start + span < end - 1e-9) && span <= horizon &&
             std::all_of(
-                configuration.active_cells_.begin(), configuration.active_cells_.end(),
-                [&](int i) {
+                configuration.active_cells_.begin(), configuration.active_cells_.end(), [&](int i) {
                     return configuration.kind_[i] == SnowKind::Ueb &&
                            !configuration.groundContactEnabled(i) && held_[i].pending() &&
                            span <= held_[i].duration - held_[i].elapsed && std::isfinite(rain[i]) &&
