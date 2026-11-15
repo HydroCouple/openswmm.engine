@@ -1468,6 +1468,12 @@ TEST(MaterialPairOutputCheckpoint, SecondRenameFailureRollsBackFreshWritersAndAl
     ASSERT_TRUE(target.network.materialPairCheckpointBytes(before).empty());
     const auto binary = target.dir / "network.out", mesh = target.dir / "surface.h5";
     const auto bh = read(binary), mh = read(mesh);
+#ifdef _WIN32
+    // The live mesh writer holds an exclusive range lock, which Windows enforces on every other
+    // handle: the file cannot be read by path. test_checkpoint_output_io covers the rollback there.
+    if (mh.empty())
+        GTEST_SKIP() << "The live mesh results file cannot be read by path on Windows.";
+#endif
     const auto a = target.dir / "first-stage", b = target.dir / "second-stage";
     std::ofstream(a) << "first published replacement";
     std::ofstream(b) << "second published replacement";
