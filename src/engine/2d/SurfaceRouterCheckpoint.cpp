@@ -836,7 +836,8 @@ std::string SurfaceRouter2D::liveCheckpointBytes(const SimulationContext& ctx,
         : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()
             ? "OpenSWMM paired changing-volume surface boundary"
             : "OpenSWMM paired passive surface boundary";
-    uint32_t version = 1, endian = 0x01020304, long_bytes = sizeof(long), crc = checksum(payload);
+    // Version 2 carries the mesh run statistics (checkpoint::meshStatistics()).
+    uint32_t version = 2, endian = 0x01020304, long_bytes = sizeof(long), crc = checksum(payload);
     Archive file;
     file(magic, version, endian, long_bytes, model, payload, crc);
     if (file.bytes().size() > maxBytes)
@@ -868,7 +869,7 @@ std::string SurfaceRouter2D::materialCheckpointBytes(const SimulationContext& ct
     out(marker);
     saved.snapshot.archive(out);
     saved.cpu.checkpointState(out, true);
-    marker = "native material pair mesh v1";
+    marker = "native material pair mesh v2"; // v2: with the mesh run statistics
     out(marker);
     checkpoint::meshState(out, saved.surface);
     out.fixed(saved.published);
@@ -888,9 +889,9 @@ SurfaceRouter2D::prepareMaterialCheckpoint(const SimulationContext& ctx, std::st
     p->snapshot.archive(in);
     p->cpu.checkpointState(in, true);
     in(marker);
-    if (marker != "native material pair mesh v1")
+    if (marker != "native material pair mesh v1" && marker != "native material pair mesh v2")
         throw std::invalid_argument("Material mesh schema differs.");
-    checkpoint::meshState(in, p->surface);
+    checkpoint::meshState(in, p->surface, marker == "native material pair mesh v2");
     in.fixed(p->published);
     if (outputs)
         in(p->published_ms);
@@ -1033,7 +1034,7 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(
         : live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume()
             ? "OpenSWMM paired changing-volume surface boundary"
             : "OpenSWMM paired passive surface boundary";
-    if (magic != expected_magic || version != 1 || endian != 0x01020304 ||
+    if (magic != expected_magic || (version != 1 && version != 2) || endian != 0x01020304 ||
         long_bytes != sizeof(long) || model != source_router_model_ || crc != checksum(payload))
         return "Live surface checkpoint format/model/checksum differs.";
     RestartState snapshot(*this, ctx);
@@ -1048,7 +1049,7 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(
     if (physical != (paired_water_checkpoint_ ? "native coupled water mesh state v1"
                                               : "native passive mesh state v1"))
         return "Live checkpoint mesh profile differs.";
-    checkpoint::meshState(state, surface);
+    checkpoint::meshState(state, surface, version == 2);
     std::string hydraulic, receipt;
     state(hydraulic, snapshot.delivery);
     snapshot.archiveJoint(state);

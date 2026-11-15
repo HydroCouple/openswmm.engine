@@ -36,6 +36,8 @@ constexpr uint32_t checkpointVersion = 1;
 constexpr uint32_t thermalCheckpointOffset = 5;
 // Profiles 11-20 append compensated-water remainders to the unchanged 1-10 prefix.
 constexpr uint32_t compensatedWaterOffset = 10;
+/// Checkpoints that carry the mesh run statistics (checkpoint::meshStatistics()).
+constexpr uint32_t runStatisticsOffset = 20;
 constexpr uint64_t maxCheckpointBytes = 64 * 1024 * 1024;
 /**
  * @brief Compute the reflected IEEE CRC-32 of an internal checkpoint payload.
@@ -277,8 +279,35 @@ void publish(const std::string& path, const std::string& bytes) {
  * @note Delegates to meshStateImpl(); no rollback, model reconstruction or pointer ownership
  * transfer occurs. Callers stage private state before publishing a restore.
  */
-void checkpoint::meshState(Archive& a, SurfaceStateData& s) {
+void checkpoint::meshState(Archive& a, SurfaceStateData& s, bool statistics) {
     meshStateImpl(a, s);
+    meshStatistics(a, s, statistics);
+}
+void checkpoint::meshStatistics(Archive& a, SurfaceStateData& s, bool present) {
+    if (!present) {
+        if (a.reading())
+            s.reset_run_statistics();
+        return;
+    }
+    std::string profile = a.reading() ? std::string{} : "mesh run statistics v1";
+    a(profile);
+    if (a.reading() && profile != "mesh run statistics v1")
+        throw std::runtime_error("Unsupported mesh run statistics checkpoint profile.");
+    a.fixed(s.stat_max_head, s.stat_min_head, s.stat_depth_time, s.stat_vx_time, s.stat_vy_time,
+            s.stat_time_max_depth, s.stat_time_max_velocity, s.stat_peak_vx, s.stat_peak_vy);
+    a(s.stat_elapsed);
+    if (!std::isfinite(s.stat_elapsed) || s.stat_elapsed < 0)
+        throw std::runtime_error("Invalid mesh run statistics clock.");
+    for (const auto* values : {&s.stat_depth_time, &s.stat_vx_time, &s.stat_vy_time})
+        for (double v : *values)
+            if (!std::isfinite(v))
+                throw std::runtime_error("Nonfinite mesh run statistics integral.");
+    // NaN marks a cell without a sample; an infinity is never a valid statistic.
+    for (const auto* values : {&s.stat_max_head, &s.stat_min_head, &s.stat_time_max_depth,
+                               &s.stat_time_max_velocity, &s.stat_peak_vx, &s.stat_peak_vy})
+        for (double v : *values)
+            if (std::isinf(v))
+                throw std::runtime_error("Infinite mesh run statistic.");
 }
 using checkpoint::meshState;
 /** Archive the shared mesh/options/transport identity in the existing field order. */
@@ -454,7 +483,7 @@ std::string CommonSourceStage::checkpointBytes(std::string& bytes) const {
                                                             : checkpointVersion;
         if (surface_->heat.enabled || gw_->heat().active())
             version += thermalCheckpointOffset;
-        version += compensatedWaterOffset;
+        version += compensatedWaterOffset + runStatisticsOffset;
         uint32_t endian = 0x01020304;
         uint32_t longBytes = sizeof(long), doubleBytes = sizeof(double);
         auto model = checkpoint_model_, payload = state.bytes();
@@ -581,8 +610,13 @@ std::string CommonSourceStage::loadCheckpointBytes(
                                                                  : checkpointVersion;
         if (surface_->heat.enabled || gw_->heat().active())
             expected_version += thermalCheckpointOffset;
-        const bool compensated = version == expected_version + compensatedWaterOffset;
-        if (magic != "OpenSWMM source boundary" || (!compensated && version != expected_version) ||
+        // Older checkpoints carry no run statistics; those restart (meshStatistics()).
+        const bool statistics =
+            version == expected_version + runStatisticsOffset ||
+            version == expected_version + compensatedWaterOffset + runStatisticsOffset;
+        const uint32_t profile = statistics ? version - runStatisticsOffset : version;
+        const bool compensated = profile == expected_version + compensatedWaterOffset;
+        if (magic != "OpenSWMM source boundary" || (!compensated && profile != expected_version) ||
             endian != 0x01020304 || longBytes != sizeof(long) || doubleBytes != sizeof(double))
             return "Unsupported source checkpoint version or platform.";
         if (model != checkpoint_model_)
@@ -611,7 +645,7 @@ std::string CommonSourceStage::loadCheckpointBytes(
         source.checkpoint(state, false);
         if (!standalone_local_bed_)
             gw.checkpoint(state, false);
-        meshState(state, mesh);
+        meshState(state, mesh, statistics);
         if (runtimeWaterEnabled()) {
             std::string providers;
             state(providers);

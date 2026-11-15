@@ -1659,7 +1659,8 @@ std::string ExplicitInertialSolver::rk2CheckpointBytes(std::string& bytes) const
                                       surface.transport.n_species);
         }
         std::string magic = magicName, payload = state.bytes();
-        uint32_t version = 4, endian = 0x01020304, longBytes = sizeof(long),
+        // Version 5 carries the mesh run statistics (checkpoint::meshStatistics()).
+        uint32_t version = 5, endian = 0x01020304, longBytes = sizeof(long),
                  crc = checksum(payload);
         Archive file;
         file(magic, version, endian, longBytes, payload, crc);
@@ -1722,7 +1723,8 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(
         uint32_t version = 0, endian = 0, longBytes = 0, crc = 0;
         file(magic, version, endian, longBytes, payload, crc);
         file.finish();
-        if (magic != magicName || version != 4 || endian != 0x01020304 || longBytes != sizeof(long))
+        if (magic != magicName || (version != 4 && version != 5) || endian != 0x01020304 ||
+            longBytes != sizeof(long))
             return "Unsupported RK2 checkpoint version/platform.";
         if (crc != checksum(payload))
             return "RK2 checkpoint checksum differs.";
@@ -1778,7 +1780,7 @@ std::string ExplicitInertialSolver::loadRk2CheckpointBytes(
             for (const auto& [slot, r] : boundary.receipts)
                 trial.pin_t0_.at(MeshData::slot_cell(slot)) = 1;
         }
-        checkpoint::meshState(state, surface);
+        checkpoint::meshState(state, surface, version == 5);
         if (binding && model != trial.rk2CheckpointModel(binding))
             return "Managed RK2 checkpoint project, prescriptions or prepared weather differs.";
         gw.checkpoint(state, false);

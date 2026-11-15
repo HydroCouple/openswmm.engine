@@ -131,6 +131,13 @@ class SourceResultHistory;
  * - /Mesh2_face_max_depth          [nFace] max overland depth (m)
  * - /Mesh2_face_max_velocity       [nFace] max cell speed |v| (m/s)
  * - /Mesh2_face_max_continuity_err [nFace] max |continuity residual| (m³/s)
+ * - /Mesh2_face_max_head           [nFace] max water surface elevation (m)
+ * - /Mesh2_face_min_head           [nFace] min water surface elevation (m)
+ * - /Mesh2_face_mean_depth         [nFace] time-weighted mean depth (m)
+ * - /Mesh2_face_mean_vx, _mean_vy  [nFace] time-weighted mean cell velocity (m/s)
+ * - /Mesh2_face_peak_vx, _peak_vy  [nFace] cell velocity at the max speed (m/s)
+ * - /Mesh2_face_time_max_depth     [nFace] time of max depth (h from simulation start)
+ * - /Mesh2_face_time_max_velocity  [nFace] time of max speed (h from simulation start)
  *
  * ### Global mass balance (written once in finalize())
  * - /mass_balance_2d               group of scalar terms (m³) + `continuity_error`
@@ -502,6 +509,15 @@ private:
     hid_t ds_face_max_depth_ = H5I_INVALID_HID;
     hid_t ds_face_max_velocity_ = H5I_INVALID_HID;
     hid_t ds_face_max_continuity_err_ = H5I_INVALID_HID;
+    hid_t ds_face_max_head_ = H5I_INVALID_HID;
+    hid_t ds_face_min_head_ = H5I_INVALID_HID;
+    hid_t ds_face_mean_depth_ = H5I_INVALID_HID;
+    hid_t ds_face_mean_vx_ = H5I_INVALID_HID;
+    hid_t ds_face_mean_vy_ = H5I_INVALID_HID;
+    hid_t ds_face_peak_vx_ = H5I_INVALID_HID;
+    hid_t ds_face_peak_vy_ = H5I_INVALID_HID;
+    hid_t ds_face_time_max_depth_ = H5I_INVALID_HID;
+    hid_t ds_face_time_max_velocity_ = H5I_INVALID_HID;
 
     hsize_t n_faces_ = 0;
     hsize_t n_nodes_ = 0;
@@ -631,14 +647,18 @@ private:
      * @param[in] name Nonnull terminated unused dataset path/name.
      * @param[in] long_name Nonnull terminated descriptive attribute.
      * @param[in] units Nonnull terminated unit label, copied to the dataset attribute.
+     * @param[in] cell_methods Nonnull terminated CF cell_methods text naming the statistic over
+     * time ("time: maximum", "time: minimum", "time: mean"; a time of maximum keeps
+     * "time: maximum").
      * @return New owned fixed [n_faces_] dataset ID using configured precision, or negative on
-     * HDF5 creation failure. Attaches mesh/location/time-maximum metadata and closes temporary
+     * HDF5 creation failure. Attaches mesh/location/cell_methods metadata and closes temporary
      * space.
      * @note Caller holds global result mutex with a prepared file and valid positive face count.
      * No chunking/compression or initial data write; later writeFaceEnvelope() publishes the
      * cumulative field. HDF5 setup failures are not all checked or rolled back.
      */
-    hid_t createFaceEnvelopeDataset(const char* name, const char* long_name, const char* units);
+    hid_t createFaceEnvelopeDataset(const char* name, const char* long_name, const char* units,
+                                    const char* cell_methods = "time: maximum");
     /**
      * @brief Overwrite a fixed [nFace] dataset in place with the latest envelope.
      *

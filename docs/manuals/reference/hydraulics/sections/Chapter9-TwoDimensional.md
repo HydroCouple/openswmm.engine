@@ -2499,6 +2499,18 @@ speeds during unavailable intervals. Depth and speed envelopes are sampled
 independently; their peaks need not occur at the same time. Good water
 continuity alone does not establish velocity accuracy.
 
+The same refresh keeps whole-run statistics of each cell, written with the
+envelopes: maximum and minimum free-surface elevation, the time-weighted mean
+depth and mean velocity (integrals over the refresh spans divided by the time
+they cover; an unavailable velocity adds nothing), the velocity at the
+maximum speed, and the times of the maximum depth and the maximum speed in
+hours from the start of the simulation. A cell without a sample of a kind is
+NaN there: a time of maximum depth exists only once the cell has held water.
+Each dataset names its statistic in `cell_methods` (`time: maximum`,
+`time: minimum`, `time: mean`). Checkpoints carry the statistics, so a resumed
+run continues them; a checkpoint written before they existed restarts them at
+the restore.
+
 Saved rendering uses available stored velocity arrays as authoritative,
 including their NaNs. Edge reconstruction is retained only for sources or
 frames without a stored pair. The bulk C API `swmm_2d_get_velocities_bulk`
@@ -2563,7 +2575,7 @@ CF/UGRID-aware reader. Four keys shape it:
 | `COUPLING` | `Mesh2_face_coupling_flux`, `Mesh2_face_net_source` | no |
 | `GRADIENTS` | `Mesh2_face_grad_hx`, `Mesh2_face_grad_hy` and their limited pair (solver diagnostics) | no |
 | `CONTINUITY` | `Mesh2_face_continuity_err` (solver diagnostic) | no |
-| `ENVELOPES` | `Mesh2_face_max_depth`, `Mesh2_face_max_velocity`, `Mesh2_face_max_continuity_err` | yes |
+| `ENVELOPES` | `Mesh2_face_max_depth`, `Mesh2_face_max_velocity`, `Mesh2_face_max_continuity_err` (with `CONTINUITY`), `Mesh2_face_max_head`, `Mesh2_face_min_head`, `Mesh2_face_mean_depth`, `Mesh2_face_mean_vx`, `Mesh2_face_mean_vy`, `Mesh2_face_peak_vx`, `Mesh2_face_peak_vy`, `Mesh2_face_time_max_depth`, `Mesh2_face_time_max_velocity` (one value per face; see above) | yes |
 | `BUILDUP` | `Mesh2_face_buildup`, when `[2D_COVERAGES]` rows resolved | yes |
 | `GROUNDWATER` | the per-cell `Mesh2_face_gw_*` fields, the groundwater ledger and the node-exchange cumulative, when a mesh aquifer resolved | yes |
 | `GW_DETAILED` | `Mesh2_face_gw_theta_sigma` per layer and face — \f$m\f$ layers × nFace per step | no |

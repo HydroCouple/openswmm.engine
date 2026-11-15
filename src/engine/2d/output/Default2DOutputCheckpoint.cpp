@@ -528,6 +528,13 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         attributes(a.id, b.id);
         auto dims = shape(a.id), maximum = shape(a.id, true);
         const bool series = !maximum.empty() && maximum[0] == H5S_UNLIMITED;
+        // Whole-run statistics are rewritten every report, like the maxima, and hold NaN
+        // where a cell has no sample.
+        static const std::set<std::string> runStatistics{
+            "Mesh2_face_max_head", "Mesh2_face_min_head",       "Mesh2_face_mean_depth",
+            "Mesh2_face_mean_vx",  "Mesh2_face_mean_vy",        "Mesh2_face_peak_vx",
+            "Mesh2_face_peak_vy",  "Mesh2_face_time_max_depth", "Mesh2_face_time_max_velocity"};
+        const bool runStatistic = runStatistics.count(name) != 0;
         if (series)
             dims[0] = steps;
         require(dims == shape(b.id) && maximum == shape(b.id, true),
@@ -593,7 +600,7 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         // snapshot. NaN is the missing marker; infinity is still invalid.
         else if (name == "Mesh2_face_gw_infil_capacity" || name == "Mesh2_face_gw_infil_refresh" ||
                  name == "Mesh2_face_et_stress" || name == "Mesh2_face_vx" ||
-                 name == "Mesh2_face_vy" || name == "Mesh2_face_max_velocity")
+                 name == "Mesh2_face_vy" || name == "Mesh2_face_max_velocity" || runStatistic)
             missing.assign(n_faces_, 1);
         if (H5Tget_class(bt.id) == H5T_FLOAT || H5Tget_class(bt.id) == H5T_INTEGER)
             visitNumbers(
@@ -606,7 +613,7 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
         else
             require(H5Tget_class(bt.id) == H5T_STRING && !series,
                     "Unsupported mesh checkpoint dataset type.");
-        if (!series && name.find("Mesh2_face_max_") != 0)
+        if (!series && name.find("Mesh2_face_max_") != 0 && !runStatistic)
             require(raw(a.id, false) == raw(b.id, false),
                     "Mesh checkpoint static geometry or aquifer identity differs.");
     }

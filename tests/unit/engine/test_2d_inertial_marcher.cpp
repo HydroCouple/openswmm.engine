@@ -5873,7 +5873,7 @@ TEST(CoupledGroundwaterRk2, PorousThermalSeriesCheckpointBindsValuesAnchorAndLat
             uint32_t version = 0, endian = 0, long_bytes = 0, crc = 0;
             current(magic, version, endian, long_bytes, payload, crc);
             current.finish();
-            ASSERT_EQ(version, 4);
+            ASSERT_EQ(version, 5); // 5: with the mesh run statistics
             version = 3;
             openswmm::detail::CompletedSourceArchive historical;
             historical(magic, version, endian, long_bytes, payload, crc);

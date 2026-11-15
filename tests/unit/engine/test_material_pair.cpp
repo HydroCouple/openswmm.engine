@@ -1026,12 +1026,12 @@ TEST(MaterialPairCheckpoint, ChecksumValidSecondRoleDamageIsAtomicAndRetryable) 
                         meshVector(
                             mesh, "cell_mass",
                             [](char* p, std::size_t n) { addFirstDouble(p, n, 1); },
-                            "native material pair mesh v1");
+                            "native material pair mesh v2");
                     if (edit == 1)
                         meshVector(
                             mesh, "volume",
                             [](char* p, std::size_t n) { addFirstDouble(p, n, .125); },
-                            "native material pair mesh v1");
+                            "native material pair mesh v2");
                     if (edit == 2) {
                         double c = original.surface.context().nodes.conc_old[0];
                         detail::CompletedSourceArchive a;
@@ -1066,12 +1066,12 @@ TEST(MaterialPairCheckpoint, ChecksumValidSecondRoleDamageIsAtomicAndRetryable) 
                         const double dz = 1 / original.surface.surfaceRouter2D().mesh().tri_area[0];
                         meshVector(
                             mesh, "volume", [](char* p, std::size_t n) { addFirstDouble(p, n, 1); },
-                            "native material pair mesh v1");
+                            "native material pair mesh v2");
                         for (const auto* column : {"head", "depth"})
                             meshVector(
                                 mesh, column,
                                 [&](char* p, std::size_t n) { addFirstDouble(p, n, dz); },
-                                "native material pair mesh v1");
+                                "native material pair mesh v2");
                     });
             }
             if (edit == 5)

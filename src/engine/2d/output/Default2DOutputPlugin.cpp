@@ -141,7 +141,8 @@ void Default2DOutputPlugin::writeDoubleAttr(hid_t loc, const char* name, double 
 }
 
 hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name, const char* long_name,
-                                                       const char* units) {
+                                                       const char* units,
+                                                       const char* cell_methods) {
     // Fixed [nFace] dataset — no time dimension, no chunking. Overwritten in
     // place each update(); since envelopes are monotone the last write is final.
     hid_t space = H5Screate_simple(1, &n_faces_, nullptr);
@@ -151,7 +152,7 @@ hid_t Default2DOutputPlugin::createFaceEnvelopeDataset(const char* name, const c
     writeStringAttr(ds, "units", units);
     writeStringAttr(ds, "mesh", "Mesh2");
     writeStringAttr(ds, "location", "face");
-    writeStringAttr(ds, "cell_methods", "time: maximum");
+    writeStringAttr(ds, "cell_methods", cell_methods);
     H5Sclose(space);
     return ds;
 }
@@ -827,6 +828,27 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             ds_face_max_continuity_err_ = createFaceEnvelopeDataset(
                 "Mesh2_face_max_continuity_err", "maximum absolute per-cell continuity residual",
                 "m3 s-1");
+        // Whole-run statistics sampled with the maxima; NaN where a cell has no sample.
+        ds_face_max_head_ = createFaceEnvelopeDataset("Mesh2_face_max_head",
+                                                      "maximum water surface elevation", "m");
+        ds_face_min_head_ = createFaceEnvelopeDataset(
+            "Mesh2_face_min_head", "minimum water surface elevation", "m", "time: minimum");
+        ds_face_mean_depth_ = createFaceEnvelopeDataset(
+            "Mesh2_face_mean_depth", "time-weighted mean overland flow depth", "m", "time: mean");
+        ds_face_mean_vx_ = createFaceEnvelopeDataset(
+            "Mesh2_face_mean_vx", "time-weighted mean cell velocity X", "m s-1", "time: mean");
+        ds_face_mean_vy_ = createFaceEnvelopeDataset(
+            "Mesh2_face_mean_vy", "time-weighted mean cell velocity Y", "m s-1", "time: mean");
+        ds_face_peak_vx_ = createFaceEnvelopeDataset("Mesh2_face_peak_vx",
+                                                     "cell velocity X at maximum speed", "m s-1");
+        ds_face_peak_vy_ = createFaceEnvelopeDataset("Mesh2_face_peak_vy",
+                                                     "cell velocity Y at maximum speed", "m s-1");
+        ds_face_time_max_depth_ = createFaceEnvelopeDataset(
+            "Mesh2_face_time_max_depth", "time of maximum overland flow depth", "h");
+        ds_face_time_max_velocity_ = createFaceEnvelopeDataset(
+            "Mesh2_face_time_max_velocity", "time of maximum cell velocity magnitude", "h");
+        for (hid_t ds : {ds_face_time_max_depth_, ds_face_time_max_velocity_})
+            writeStringAttr(ds, "time_origin", "start of simulation");
     }
     if (checkpoint_fresh_ && !checkpoint_write_failed_) {
         try {
@@ -1240,6 +1262,18 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
         writeFaceEnvelope(ds_face_max_velocity_, snap.surface_stat_max_velocity.data());
     if (snap.surface_stat_max_cont_err.size() == n_faces_)
         writeFaceEnvelope(ds_face_max_continuity_err_, snap.surface_stat_max_cont_err.data());
+    for (const auto& [ds, values] :
+         {std::pair{ds_face_max_head_, &snap.surface_stat_max_head},
+          std::pair{ds_face_min_head_, &snap.surface_stat_min_head},
+          std::pair{ds_face_mean_depth_, &snap.surface_stat_mean_depth},
+          std::pair{ds_face_mean_vx_, &snap.surface_stat_mean_vx},
+          std::pair{ds_face_mean_vy_, &snap.surface_stat_mean_vy},
+          std::pair{ds_face_peak_vx_, &snap.surface_stat_peak_vx},
+          std::pair{ds_face_peak_vy_, &snap.surface_stat_peak_vy},
+          std::pair{ds_face_time_max_depth_, &snap.surface_stat_time_max_depth},
+          std::pair{ds_face_time_max_velocity_, &snap.surface_stat_time_max_velocity}})
+        if (values->size() == n_faces_)
+            writeFaceEnvelope(ds, values->data());
 
     if (checkpoint_write_failed_)
         return 1;
@@ -2176,7 +2210,16 @@ std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
                             &ds_node_depth_,
                             &ds_face_max_depth_,
                             &ds_face_max_velocity_,
-                            &ds_face_max_continuity_err_};
+                            &ds_face_max_continuity_err_,
+                            &ds_face_max_head_,
+                            &ds_face_min_head_,
+                            &ds_face_mean_depth_,
+                            &ds_face_mean_vx_,
+                            &ds_face_mean_vy_,
+                            &ds_face_peak_vx_,
+                            &ds_face_peak_vy_,
+                            &ds_face_time_max_depth_,
+                            &ds_face_time_max_velocity_};
     for (auto& id : ds_gw_face_)
         ids.push_back(&id);
     for (auto& id : ds_snow_)
@@ -2265,6 +2308,15 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_face_max_depth_);
     closeDS(ds_face_max_velocity_);
     closeDS(ds_face_max_continuity_err_);
+    closeDS(ds_face_max_head_);
+    closeDS(ds_face_min_head_);
+    closeDS(ds_face_mean_depth_);
+    closeDS(ds_face_mean_vx_);
+    closeDS(ds_face_mean_vy_);
+    closeDS(ds_face_peak_vx_);
+    closeDS(ds_face_peak_vy_);
+    closeDS(ds_face_time_max_depth_);
+    closeDS(ds_face_time_max_velocity_);
 }
 
 } // namespace openswmm::twoD

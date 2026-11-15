@@ -533,6 +533,75 @@ TEST(Output2DWriter, UnavailableVelocitySurvivesBothPrecisionsAndEnvelopeOutput)
     }
 }
 
+// The whole-run statistics the GUI renders (2D result statistics plan 2026-11-14 §4): fixed
+// [nFace] datasets in the ENVELOPES group, each naming its statistic in cell_methods, NaN kept.
+TEST(Output2DWriter, RunStatisticsAreWrittenAsEnvelopesWithTheirTimeMethods) {
+    struct Expected {
+        const char* name;
+        const char* units;
+        const char* methods;
+        std::vector<double> values;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const std::vector<Expected> expected = {
+        {"Mesh2_face_max_head", "m", "time: maximum", {10.5, 11.25}},
+        {"Mesh2_face_min_head", "m", "time: minimum", {10.0, 11.0}},
+        {"Mesh2_face_mean_depth", "m", "time: mean", {0.125, 0.25}},
+        {"Mesh2_face_mean_vx", "m s-1", "time: mean", {0.375, -0.5}},
+        {"Mesh2_face_mean_vy", "m s-1", "time: mean", {0.625, 0.75}},
+        {"Mesh2_face_peak_vx", "m s-1", "time: maximum", {nan, 1.5}},
+        {"Mesh2_face_peak_vy", "m s-1", "time: maximum", {nan, -2.0}},
+        {"Mesh2_face_time_max_depth", "h", "time: maximum", {nan, 2.5}},
+        {"Mesh2_face_time_max_velocity", "h", "time: maximum", {nan, 3.75}},
+    };
+    fs::create_directories(kOutDir);
+    const auto path = kOutDir / "run_statistics.h5";
+    auto mesh = unitSquare();
+    Default2DOutputPlugin plugin(path.string());
+    openswmm::SimulationContext ctx{};
+    ASSERT_EQ(plugin.initialize({}, nullptr), 0);
+    ASSERT_EQ(plugin.validate(ctx), 0);
+    ASSERT_EQ(plugin.prepare(ctx), 0);
+    ASSERT_TRUE(plugin.configureOutput(SolverOptions2D{}, 30.).empty());
+    plugin.prepareMeshAndDatasets(mesh);
+    auto snap = makeSnap(0., .01, .02);
+    std::vector<double>* fields[] = {
+        &snap.surface_stat_max_head,         &snap.surface_stat_min_head,
+        &snap.surface_stat_mean_depth,       &snap.surface_stat_mean_vx,
+        &snap.surface_stat_mean_vy,          &snap.surface_stat_peak_vx,
+        &snap.surface_stat_peak_vy,          &snap.surface_stat_time_max_depth,
+        &snap.surface_stat_time_max_velocity};
+    for (std::size_t i = 0; i < expected.size(); ++i)
+        *fields[i] = expected[i].values;
+    ASSERT_EQ(plugin.update(snap), 0);
+    ASSERT_EQ(plugin.finalize(ctx), 0);
+    H5File file(path);
+    ASSERT_GE(file.id, 0);
+    for (const auto& e : expected) {
+        ASSERT_TRUE(file.has(e.name)) << e.name;
+        EXPECT_EQ(file.dims(e.name), std::vector<hsize_t>{2}) << e.name;
+        EXPECT_EQ(file.dsAttr(e.name, "units"), e.units) << e.name;
+        EXPECT_EQ(file.dsAttr(e.name, "cell_methods"), e.methods) << e.name;
+        const auto values = file.readAll(e.name);
+        ASSERT_EQ(values.size(), 2u) << e.name;
+        for (std::size_t c = 0; c < 2; ++c)
+            if (std::isnan(e.values[c]))
+                EXPECT_TRUE(std::isnan(values[c])) << e.name << " cell " << c;
+            else // float32 storage by default; every value above is exact in binary
+                EXPECT_EQ(values[c], e.values[c]) << e.name << " cell " << c;
+    }
+    EXPECT_EQ(file.dsAttr("Mesh2_face_time_max_depth", "time_origin"), "start of simulation");
+
+    // Without ENVELOPES no statistic is created.
+    SolverOptions2D depthOnly;
+    depthOnly.report_2d_vars = report2d::DEPTH;
+    const auto plain = writeFile("run_statistics_off", depthOnly, 300.0, 1, 0.0);
+    H5File off(plain);
+    ASSERT_GE(off.id, 0);
+    for (const auto& e : expected)
+        EXPECT_FALSE(off.has(e.name)) << e.name;
+}
+
 TEST(Output2DWriter, DefaultIsFloat32AndDropsDiagnostics) {
     SolverOptions2D o; // defaults: FLOAT32, level 4, DEFAULT mask
     const fs::path p = writeFile("default", o, 300.0, 2, 300.0 / 86400.0);

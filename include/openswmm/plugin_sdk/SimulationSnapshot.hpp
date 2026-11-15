@@ -442,6 +442,16 @@ struct SimulationSnapshot {
     std::vector<double> surface_stat_max_depth;    ///< Max overland depth ψ_o (m), per face
     std::vector<double> surface_stat_max_velocity; ///< Max cell speed |v| (m/s), per face
     std::vector<double> surface_stat_max_cont_err; ///< Max |continuity residual| (m³/s), per face
+    // Whole-run statistics up to the snapshot, per face; NaN where a cell has no sample.
+    std::vector<double> surface_stat_max_head;          ///< Max free-surface elevation (m)
+    std::vector<double> surface_stat_min_head;          ///< Min free-surface elevation (m)
+    std::vector<double> surface_stat_mean_depth;        ///< Time-weighted mean depth (m)
+    std::vector<double> surface_stat_mean_vx;           ///< Time-weighted mean velocity X (m/s)
+    std::vector<double> surface_stat_mean_vy;           ///< Time-weighted mean velocity Y (m/s)
+    std::vector<double> surface_stat_peak_vx;           ///< Velocity X at the max speed (m/s)
+    std::vector<double> surface_stat_peak_vy;           ///< Velocity Y at the max speed (m/s)
+    std::vector<double> surface_stat_time_max_depth;    ///< Time of max depth (h from start)
+    std::vector<double> surface_stat_time_max_velocity; ///< Time of max speed (h from start)
     std::vector<double> gw2d_infil_capacity; ///< Aquifer top-interface receiving capacity (m s-1)
     std::vector<double>
         gw2d_infil_remaining; ///< Remaining receiving allowance after pending receipts (m3)

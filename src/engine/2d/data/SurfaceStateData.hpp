@@ -286,6 +286,19 @@ struct SurfaceStateData {
     std::vector<double> stat_max_cont_err; ///< Max |cell_continuity_err| (m³/s)
     std::vector<double> stat_cum_volume;   ///< Cumulative volume through cell (m³)
 
+    // Whole-run statistics written to the result file's ENVELOPES group, sampled with the
+    // maxima above. NaN marks a cell that has no sample of that kind yet.
+    std::vector<double> stat_max_head;          ///< Maximum free-surface elevation η (m)
+    std::vector<double> stat_min_head;          ///< Minimum free-surface elevation η (m)
+    std::vector<double> stat_depth_time;        ///< ∫ depth dt (m·s)
+    std::vector<double> stat_vx_time;           ///< ∫ face_vx dt (m); unresolved samples add 0
+    std::vector<double> stat_vy_time;           ///< ∫ face_vy dt (m); unresolved samples add 0
+    std::vector<double> stat_time_max_depth;    ///< stat_elapsed (s) when stat_max_depth was set
+    std::vector<double> stat_time_max_velocity; ///< stat_elapsed (s) when stat_max_velocity was set
+    std::vector<double> stat_peak_vx;           ///< face_vx at stat_max_velocity (m/s)
+    std::vector<double> stat_peak_vy;           ///< face_vy at stat_max_velocity (m/s)
+    double stat_elapsed = 0.0;                  ///< Time the statistics have integrated (s)
+
     /// Cumulative evaporation loss over the whole simulation (m³). Kept here
     /// (not in core's MassBalance2D, owned by another work stream) and folded
     /// into the API-level totals by Api2D.cpp.
@@ -366,7 +379,29 @@ struct SurfaceStateData {
         stat_max_velocity.assign(nt, std::numeric_limits<double>::quiet_NaN());
         stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
+        reset_run_statistics();
         evap_loss_total = 0.0;
+    }
+
+    /**
+     * @brief Clear the whole-run statistics added beside the maxima (max/min head, time
+     *   integrals, times of maximum, peak velocity) to their no-sample state.
+     * @post Sizes follow depth.size(); NaN where no sample exists yet, zero integrals and clock.
+     *   The depth/speed/continuity maxima and stat_cum_volume are untouched.
+     */
+    void reset_run_statistics() {
+        const std::size_t nt = depth.size();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        stat_max_head.assign(nt, nan);
+        stat_min_head.assign(nt, nan);
+        stat_depth_time.assign(nt, 0.0);
+        stat_vx_time.assign(nt, 0.0);
+        stat_vy_time.assign(nt, 0.0);
+        stat_time_max_depth.assign(nt, nan);
+        stat_time_max_velocity.assign(nt, nan);
+        stat_peak_vx.assign(nt, nan);
+        stat_peak_vy.assign(nt, nan);
+        stat_elapsed = 0.0;
     }
 
     /**
@@ -438,8 +473,11 @@ struct SurfaceStateData {
      * @param[in] dt Finite nonnegative accepted routing interval in seconds.
      * @param[in] nthreads Positive OpenMP worker count; 1 serial, ignored without OpenMP.
      * @post Updates cumulative depth/speed/absolute-continuity maxima and volume-time integral
-     * in m3*s. Statistic/velocity/continuity arrays are preallocated to depth.size(); no bounds
-     * checks/allocation.
+     * in m3*s; the head maximum/minimum over finite samples; the depth and velocity time
+     * integrals (an unresolved velocity adds nothing); and, where a maximum rises, its time
+     * (stat_elapsed after this span) and, for the speed, the velocity that set it. Advances
+     * stat_elapsed by dt. Statistic/velocity/continuity arrays are preallocated to
+     * depth.size(); no bounds checks/allocation.
      * @note Read/write only this accepted-state statistics snapshot. Fixed per-cell operation
      * order gives serial-equivalent gathers; caller keeps inputs stable and statistic outputs
      * exclusive while the parallel loop runs.
@@ -450,17 +488,25 @@ struct SurfaceStateData {
         // schedule(static) keeps this bit-identical to serial for any thread
         // count. int loop index for OpenMP canonical-loop form.
         const int n = static_cast<int>(depth.size());
+        // The sample stands for the end of the span it integrates.
+        const double now = stat_elapsed + dt;
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for schedule(static) num_threads(nthreads)
 #endif
         for (int i = 0; i < n; ++i) {
-            if (depth[i] > stat_max_depth[i])
+            if (depth[i] > stat_max_depth[i]) {
                 stat_max_depth[i] = depth[i];
+                stat_time_max_depth[i] = now;
+            }
 
             const double speed = std::sqrt(face_vx[i] * face_vx[i] + face_vy[i] * face_vy[i]);
             if (std::isfinite(speed) &&
-                (!std::isfinite(stat_max_velocity[i]) || speed > stat_max_velocity[i]))
+                (!std::isfinite(stat_max_velocity[i]) || speed > stat_max_velocity[i])) {
                 stat_max_velocity[i] = speed;
+                stat_time_max_velocity[i] = now;
+                stat_peak_vx[i] = face_vx[i];
+                stat_peak_vy[i] = face_vy[i];
+            }
 
             const double aerr = std::abs(cell_continuity_err[i]);
             if (aerr > stat_max_cont_err[i])
@@ -468,7 +514,20 @@ struct SurfaceStateData {
 
             // Cell water volume × dt (VFR: V is the integrated state, not h̄·A).
             stat_cum_volume[i] += volume[i] * dt;
+
+            if (std::isfinite(head[i])) {
+                if (!(head[i] <= stat_max_head[i]))
+                    stat_max_head[i] = head[i];
+                if (!(head[i] >= stat_min_head[i]))
+                    stat_min_head[i] = head[i];
+            }
+            stat_depth_time[i] += depth[i] * dt;
+            if (std::isfinite(speed)) {
+                stat_vx_time[i] += face_vx[i] * dt;
+                stat_vy_time[i] += face_vy[i] * dt;
+            }
         }
+        stat_elapsed = now;
     }
 };
 

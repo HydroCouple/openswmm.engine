@@ -8620,6 +8620,36 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     snap.surface_stat_max_depth = st.stat_max_depth;
     snap.surface_stat_max_velocity = st.stat_max_velocity;
     snap.surface_stat_max_cont_err = st.stat_max_cont_err;
+    snap.surface_stat_max_head = st.stat_max_head;
+    snap.surface_stat_min_head = st.stat_min_head;
+    {
+        // Means divide the time integrals by the time they cover; velocities take the output
+        // sign, like surface_face_vx/vy above; times are hours from the start.
+        const std::size_t n = st.stat_depth_time.size();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double span = st.stat_elapsed;
+        snap.surface_stat_mean_depth.assign(n, nan);
+        snap.surface_stat_mean_vx.assign(n, nan);
+        snap.surface_stat_mean_vy.assign(n, nan);
+        if (span > 0)
+            for (std::size_t c = 0; c < n; ++c) {
+                snap.surface_stat_mean_depth[c] = st.stat_depth_time[c] / span;
+                snap.surface_stat_mean_vx[c] = -st.stat_vx_time[c] / span;
+                snap.surface_stat_mean_vy[c] = -st.stat_vy_time[c] / span;
+            }
+        snap.surface_stat_peak_vx = st.stat_peak_vx;
+        snap.surface_stat_peak_vy = st.stat_peak_vy;
+        for (double& v : snap.surface_stat_peak_vx)
+            v = -v;
+        for (double& v : snap.surface_stat_peak_vy)
+            v = -v;
+        snap.surface_stat_time_max_depth = st.stat_time_max_depth;
+        snap.surface_stat_time_max_velocity = st.stat_time_max_velocity;
+        for (auto* times :
+             {&snap.surface_stat_time_max_depth, &snap.surface_stat_time_max_velocity})
+            for (double& t : *times)
+                t /= 3600.0;
+    }
     // G-O: the two-zone aquifer's per-cell state and ledgers, SI, straight
     // from the kernel's state (the same arrays swmm_gw2d_get_cell_bulk reads).
     {

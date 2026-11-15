@@ -68,6 +68,8 @@
 
 #ifdef OPENSWMM_HAS_2D
 #include "2d/output/Default2DOutputPlugin.hpp"
+#include "2d/heat/MeshCheckpointState.hpp"
+#include "core/CompletedSourceArchive.hpp"
 #include "core/SimulationContext.hpp"
 #include <openswmm/plugin_sdk/SimulationSnapshot.hpp>
 #include <hdf5.h>
@@ -2145,6 +2147,118 @@ TEST(SurfaceState, VelocityEnvelopesExcludeUnavailableSamples) {
     state.face_vx[0] = state.face_vy[0] = missing;
     state.update_statistics({1.0, 1.0}, 1.0);
     EXPECT_EQ(state.stat_max_velocity[0], 5.0);
+}
+
+// Whole-run statistics (max/min head, time-weighted means, times of maximum, peak velocity)
+// written to the ENVELOPES group: 2D result statistics plan 2026-11-14 §4.
+TEST(SurfaceState, UpdateStatisticsTracksRunStatistics) {
+    SurfaceStateData state;
+    state.resize(2, 1);
+    const double missing = std::numeric_limits<double>::quiet_NaN();
+    // No sample yet: NaN where a statistic needs one, zero integrals and clock.
+    EXPECT_TRUE(std::isnan(state.stat_max_head[0]));
+    EXPECT_TRUE(std::isnan(state.stat_min_head[0]));
+    EXPECT_TRUE(std::isnan(state.stat_time_max_depth[0]));
+    EXPECT_TRUE(std::isnan(state.stat_peak_vx[0]));
+    EXPECT_EQ(state.stat_depth_time[0], 0.0);
+    EXPECT_EQ(state.stat_elapsed, 0.0);
+
+    // Span 1 (10 s): cell 0 wet and moving; cell 1 dry with an unresolved velocity.
+    state.depth = {0.4, 0.0};
+    state.head = {10.4, 5.0};
+    state.face_vx = {3.0, missing};
+    state.face_vy = {4.0, missing};
+    state.update_statistics({1.0, 1.0}, 10.0);
+    // Span 2 (30 s): cell 0 deeper but slower, cell 1 wet with a velocity.
+    state.depth = {0.6, 0.2};
+    state.head = {10.6, 5.2};
+    state.face_vx = {0.0, -1.0};
+    state.face_vy = {1.0, 0.0};
+    state.update_statistics({1.0, 1.0}, 30.0);
+    // Span 3 (20 s): both drain.
+    state.depth = {0.1, 0.0};
+    state.head = {10.1, 5.0};
+    state.face_vx = {0.0, 0.0};
+    state.face_vy = {0.0, 0.0};
+    state.update_statistics({1.0, 1.0}, 20.0);
+
+    EXPECT_EQ(state.stat_elapsed, 60.0);
+    EXPECT_DOUBLE_EQ(state.stat_max_head[0], 10.6);
+    EXPECT_DOUBLE_EQ(state.stat_min_head[0], 10.1);
+    EXPECT_DOUBLE_EQ(state.stat_max_head[1], 5.2);
+    EXPECT_DOUBLE_EQ(state.stat_min_head[1], 5.0);
+    // ∫ depth dt = 0.4·10 + 0.6·30 + 0.1·20 and 0.2·30.
+    EXPECT_DOUBLE_EQ(state.stat_depth_time[0], 24.0);
+    EXPECT_DOUBLE_EQ(state.stat_depth_time[1], 6.0);
+    // The unresolved velocity of span 1 adds nothing.
+    EXPECT_DOUBLE_EQ(state.stat_vx_time[0], 30.0);
+    EXPECT_DOUBLE_EQ(state.stat_vy_time[0], 40.0 + 30.0);
+    EXPECT_DOUBLE_EQ(state.stat_vx_time[1], -30.0);
+    EXPECT_DOUBLE_EQ(state.stat_vy_time[1], 0.0);
+    // Times are the end of the span that set the maximum.
+    EXPECT_EQ(state.stat_time_max_depth[0], 40.0);
+    EXPECT_EQ(state.stat_time_max_depth[1], 40.0);
+    EXPECT_EQ(state.stat_time_max_velocity[0], 10.0);
+    EXPECT_EQ(state.stat_peak_vx[0], 3.0);
+    EXPECT_EQ(state.stat_peak_vy[0], 4.0);
+    // Cell 1's first finite speed (span 2's 1 m/s) is its maximum; span 3's 0 does not replace it.
+    EXPECT_EQ(state.stat_time_max_velocity[1], 40.0);
+    EXPECT_EQ(state.stat_peak_vx[1], -1.0);
+    EXPECT_EQ(state.stat_peak_vy[1], 0.0);
+}
+
+TEST(SurfaceState, NeverWetCellHasNoTimeOfMaximumDepth) {
+    SurfaceStateData state;
+    state.resize(1, 1);
+    state.head = {3.0};
+    state.update_statistics({1.0}, 5.0);
+    EXPECT_TRUE(std::isnan(state.stat_time_max_depth[0]));
+    EXPECT_EQ(state.stat_max_head[0], 3.0);
+    // A dry still cell has a valid zero speed, so its time of maximum speed is set.
+    EXPECT_EQ(state.stat_time_max_velocity[0], 5.0);
+}
+
+TEST(SurfaceState, RunStatisticsCheckpointRoundTripsAndOldPayloadsRestart) {
+    using Archive = openswmm::detail::CompletedSourceArchive;
+    SurfaceStateData state;
+    state.resize(2, 1);
+    state.depth = {0.3, 0.1};
+    state.head = {2.3, 4.1};
+    state.face_vx = {1.0, 0.0};
+    state.face_vy = {0.0, 2.0};
+    state.update_statistics({1.0, 1.0}, 15.0);
+
+    Archive out;
+    checkpoint::meshStatistics(out, state, true);
+    SurfaceStateData restored;
+    restored.resize(2, 1);
+    Archive in(out.bytes());
+    checkpoint::meshStatistics(in, restored, true);
+    in.finish();
+    EXPECT_EQ(restored.stat_elapsed, 15.0);
+    EXPECT_EQ(restored.stat_max_head, state.stat_max_head);
+    EXPECT_EQ(restored.stat_min_head, state.stat_min_head);
+    EXPECT_EQ(restored.stat_depth_time, state.stat_depth_time);
+    EXPECT_EQ(restored.stat_vx_time, state.stat_vx_time);
+    EXPECT_EQ(restored.stat_vy_time, state.stat_vy_time);
+    EXPECT_EQ(restored.stat_time_max_depth, state.stat_time_max_depth);
+    EXPECT_EQ(restored.stat_time_max_velocity, state.stat_time_max_velocity);
+    EXPECT_EQ(restored.stat_peak_vx, state.stat_peak_vx);
+    EXPECT_EQ(restored.stat_peak_vy, state.stat_peak_vy);
+
+    // A checkpoint whose format predates the block (its version or marker says so) reads none:
+    // the statistics restart from their no-sample state instead of keeping stale values.
+    Archive old(std::string{});
+    checkpoint::meshStatistics(old, state, false);
+    old.finish();
+    EXPECT_EQ(state.stat_elapsed, 0.0);
+    EXPECT_TRUE(std::isnan(state.stat_max_head[0]));
+    EXPECT_EQ(state.stat_depth_time[0], 0.0);
+
+    // An infinite statistic is refused.
+    restored.stat_max_head[1] = std::numeric_limits<double>::infinity();
+    Archive bad;
+    EXPECT_THROW(checkpoint::meshStatistics(bad, restored, true), std::runtime_error);
 }
 
 TEST(SurfaceState, ClearResetForcings) {

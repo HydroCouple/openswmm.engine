@@ -2547,7 +2547,7 @@ TEST(CommonSourceStage, CompensatedWaterRestartPreservesRemaindersAndReadsLegacy
     uint32_t version = 0, endian = 0, long_bytes = 0, double_bytes = 0, crc = 0;
     file(magic, version, endian, long_bytes, double_bytes, model, payload, crc);
     file.finish();
-    ASSERT_EQ(version, 11u);
+    ASSERT_EQ(version, 31u); // compensated water (+10) with the mesh run statistics (+20)
     const auto extra = sizeof(uint64_t) + (continuous.mesh.n_cells() + 3) * sizeof(double);
     ASSERT_GT(payload.size(), extra);
     const auto offset = payload.size() - extra;
