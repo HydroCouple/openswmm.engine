@@ -5901,10 +5901,31 @@ void SWMMEngine::ensureXspCache() noexcept {
     xsp_cache_gen_ = ctx_.xsect_generation;
 }
 
+// Team size for a pass over n objects in which each iteration writes only its
+// own object's rows: the THREADS option (0 = every available thread), once n
+// is large enough to repay starting the team. Order-dependent sums stay in
+// serial loops of their own, so the result does not depend on the count.
+static int perObjectThreads(const SimulationContext& ctx, int n) noexcept {
+#if defined(SWMM_USE_OPENMP)
+    if (n < 16384 || omp_in_parallel())
+        return 1;
+    return ctx.options.num_threads > 0 ? ctx.options.num_threads : threadinfo::ompMaxThreads();
+#else
+    (void)ctx;
+    (void)n;
+    return 1;
+#endif
+}
+
 void SWMMEngine::accumulateNodeRoutingTotals(double half_step) noexcept {
     // legacy massbal_updateRoutingTotals (massbal.c:581-595). An outfall, or a
     // non-storage node with no links, passes its inflow straight out.
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
+    const int n_nodes = ctx_.n_nodes();
+    [[maybe_unused]] const int threads = perObjectThreads(ctx_, n_nodes);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+#endif
+    for (int j = 0; j < n_nodes; ++j) {
         const auto uj = static_cast<std::size_t>(j);
         const double qin = ctx_.nodes.inflow[uj];
         ctx_.nodes.stat_total_inflow_vol[uj] += qin * half_step;
@@ -5944,8 +5965,14 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
     ctx_.routing_stats.report_time += dt_routing;
     double sys_outfall_flow = 0.0; // legacy SysOutfallFlow
 
-    // B6. Update statistics (P8-G11)
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
+    // B6. Update statistics (P8-G11). Each node updates only its own rows;
+    // the system outfall flow is summed afterwards, in node order.
+    const int n_nodes = ctx_.n_nodes();
+    [[maybe_unused]] const int threads = perObjectThreads(ctx_, n_nodes);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+#endif
+    for (int j = 0; j < n_nodes; ++j) {
         auto uj = static_cast<std::size_t>(j);
         // Depth statistics
         double cur_depth = ctx_.nodes.depth[uj];
@@ -6016,7 +6043,6 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
         // Outfall statistics
         if (ctx_.nodes.type[uj] == NodeType::OUTFALL) {
             double qi = ctx_.nodes.inflow[uj];
-            sys_outfall_flow += qi;
             if (qi >= 0.001) { // legacy MIN_RUNOFF_FLOW, stats.c
                 ctx_.nodes.stat_outfall_avg_flow[uj] += qi;
                 if (qi > ctx_.nodes.stat_outfall_max_flow[uj])
@@ -6035,6 +6061,9 @@ void SWMMEngine::updateStatistics(double dt_routing) noexcept {
             }
         }
     }
+    for (int j = 0; j < n_nodes; ++j)
+        if (ctx_.nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL)
+            sys_outfall_flow += ctx_.nodes.inflow[static_cast<std::size_t>(j)];
     ctx_.routing_stats.max_outfall_flow =
         std::max(ctx_.routing_stats.max_outfall_flow, sys_outfall_flow);
     ensureXspCache();
