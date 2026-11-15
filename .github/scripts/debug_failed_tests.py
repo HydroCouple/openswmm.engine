@@ -4,7 +4,28 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import subprocess
+
+
+def gtest_filter(build, name):
+    """The cases of `name` that failed or never finished in the last CTest run, as a filter."""
+    log = build / "Testing/Temporary/LastTest.log"
+    if not log.exists():
+        return []
+    text = log.read_text(errors="replace")
+    section = re.search(
+        rf"^\d+/\d+ Test: {re.escape(name)}$(.*?)(?=^\d+/\d+ Testing: |\Z)", text, re.M | re.S
+    )
+    if not section:
+        return []
+    body = section.group(1)
+    cases = re.findall(r"^\[  FAILED  \] (\S+) \(", body, re.M)
+    runs = re.findall(r"^\[ RUN      \] (\S+)", body, re.M)
+    done = set(re.findall(r"^\[       OK \] (\S+)", body, re.M)) | set(cases)
+    if runs and runs[-1] not in done:
+        cases.append(runs[-1])  # the case that crashed the process or hung
+    return [f"--gtest_filter={':'.join(dict.fromkeys(cases))}"] if cases else []
 
 
 def main():
@@ -81,13 +102,15 @@ def main():
                 "quit",
                 "--",
             ]
-        # Under cdb a Debug test runs several times slower, and the fault can be minutes in.
-        limit = 1800 if args.debugger == "cdb" else 300
+        # cdb reruns only the cases that failed or hung: a whole Debug test can take longer
+        # under it than the step allows.
+        only = gtest_filter(build, test["name"]) if args.debugger == "cdb" else []
+        limit = 420 if args.debugger == "cdb" else 300
         # A debugger must not read the failed-test list or consume later names
         # as interactive commands. Keep CTest's arguments and working directory.
         try:
             result = subprocess.run(
-                debugger + command,
+                debugger + command + only,
                 cwd=cwd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
