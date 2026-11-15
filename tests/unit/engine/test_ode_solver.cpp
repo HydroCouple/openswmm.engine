@@ -540,3 +540,61 @@ TEST(OdeSolver, TypedCallbackPreservesErasedValuesAndEveryEvaluation) {
         EXPECT_EQ(evaluations, 3);
     }
 }
+
+// integrateScalar is integrate() with n == 1 and the state in locals. Over a
+// sweep of runoff ponded-depth problems (the equation RunoffSolver solves),
+// it must return the same code, the same final state and evaluate the
+// derivative at exactly the same points, bit for bit.
+TEST(OdeSolver, ScalarMatchesIntegrateBitForBit) {
+    constexpr double MEXP = 1.6666667;
+    int cases = 0;
+    for (double inflow : {0.0, 1e-7, 3.3e-6, 2.1e-5, -4e-6})
+        for (double alpha : {0.0, 0.07, 1.9, 35.0})
+            for (double dstore : {0.0, 0.004, 0.0125})
+                for (double depth : {0.0, 0.004, 0.03, 0.2})
+                    for (double dt : {1.0, 60.0, 3600.0}) {
+                        std::vector<double> scalar_trace, array_trace;
+                        auto rhs = [&](std::vector<double>& trace) {
+                            return [&trace, inflow, alpha, dstore](double, const double* d,
+                                                                   double* dddt) {
+                                trace.push_back(*d);
+                                const double rx = *d - dstore;
+                                *dddt = inflow - ((rx > 0.0) ? alpha * std::pow(rx, MEXP) : 0.0);
+                            };
+                        };
+                        double ys = depth, ya = depth;
+                        const int a = openswmm::ode::integrateScalar(&ys, 0.0, dt, 0.0001, dt,
+                                                                     rhs(scalar_trace));
+                        const int b = openswmm::ode::integrateCallable(&ya, 1, 0.0, dt, 0.0001, dt,
+                                                                       rhs(array_trace));
+                        ASSERT_EQ(a, b);
+                        ASSERT_EQ(0, std::memcmp(&ys, &ya, sizeof(double)));
+                        ASSERT_EQ(scalar_trace.size(), array_trace.size());
+                        ASSERT_EQ(0, std::memcmp(scalar_trace.data(), array_trace.data(),
+                                                 scalar_trace.size() * sizeof(double)));
+                        ++cases;
+                    }
+    EXPECT_EQ(cases, 5 * 4 * 3 * 4 * 3);
+
+    // Exhausted steps leave the state alone, as integrate() does.
+    auto stiff = [](double, const double* y, double* dy) { dy[0] = -100 * y[0]; };
+    double scalar = 1., array = 1.;
+    const int a = openswmm::ode::integrateScalar(&scalar, 1e20, 1e20 + 1e6, 1e-10, 1000., stiff);
+    const int b = openswmm::ode::integrate(&array, 1, 1e20, 1e20 + 1e6, 1e-10, 1000., stiff);
+    EXPECT_EQ(a, openswmm::ode::ODE_MAX_STEPS);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(0, std::memcmp(&scalar, &array, sizeof(double)));
+
+    // A throwing derivative propagates and leaves the state alone.
+    int evaluations = 0;
+    auto throws = [&](double, const double* y, double* dy) {
+        if (++evaluations == 3)
+            throw std::runtime_error("ODE test refusal");
+        dy[0] = -y[0];
+    };
+    double value = 2.;
+    EXPECT_THROW(openswmm::ode::integrateScalar(&value, 0., 1., 1e-8, 1., throws),
+                 std::runtime_error);
+    EXPECT_DOUBLE_EQ(value, 2.);
+    EXPECT_EQ(evaluations, 3);
+}

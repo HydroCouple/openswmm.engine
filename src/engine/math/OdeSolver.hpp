@@ -118,6 +118,15 @@ int integrate(double* y, int n, double x1, double x2, double eps, double h1,
 template <typename F>
 int integrateCallable(double* y, int n, double x1, double x2, double eps, double h1, F&& derivs);
 
+/**
+ * @brief integrateCallable() for one equation, with the solver state in locals.
+ * @note Evaluates the same Cash-Karp expressions in the same order as
+ * integrate() with n == 1, so results are bit-identical; it only avoids the
+ * per-thread workspace arrays. Writes *y only on ODE_OK, like integrate().
+ */
+template <typename F>
+int integrateScalar(double* y, double x1, double x2, double eps, double h1, F&& derivs);
+
 // ============================================================================
 // Batch integrator (SoA, for vectorized subcatchment processing)
 // ============================================================================

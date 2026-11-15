@@ -222,4 +222,87 @@ template <typename F>
 int integrateCallable(double* y, int n, double x1, double x2, double eps, double h1, F&& derivs) {
     return detail::integrate(y, n, x1, x2, eps, h1, std::forward<F>(derivs));
 }
+
+// detail::integrate / rkqs / rkck with n == 1, each expression written as it
+// is there so the operation order (and so every rounding) is unchanged.
+template <typename F>
+int integrateScalar(double* ystart, double x1, double x2, double eps, double h1, F&& derivs) {
+    using namespace detail;
+    double y = *ystart, dydx, yscal, ytemp, yerr, ak2, ak3, ak4, ak5, ak6;
+    double hdid, hnext;
+    double x = x1;
+    double h = h1;
+
+    for (int nstp = 1; nstp <= MAXSTP; nstp++) {
+        derivs(x, &y, &dydx);
+        yscal = std::fabs(y) + std::fabs(dydx * h) + TINY;
+        if ((x + h - x2) * (x + h - x1) > 0.0)
+            h = x2 - x;
+
+        // rkqs
+        double err, errmax, htemp, xnew, xold = x;
+        bool underflow = false;
+        for (;;) {
+            // rkck
+            ytemp = y + b21 * h * dydx;
+            derivs(xold + a2 * h, &ytemp, &ak2);
+            ytemp = y + h * (b31 * dydx + b32 * ak2);
+            derivs(xold + a3 * h, &ytemp, &ak3);
+            ytemp = y + h * (b41 * dydx + b42 * ak2 + b43 * ak3);
+            derivs(xold + a4 * h, &ytemp, &ak4);
+            ytemp = y + h * (b51 * dydx + b52 * ak2 + b53 * ak3 + b54 * ak4);
+            derivs(xold + a5 * h, &ytemp, &ak5);
+            ytemp = y + h * (b61 * dydx + b62 * ak2 + b63 * ak3 + b64 * ak4 + b65 * ak5);
+            derivs(xold + a6 * h, &ytemp, &ak6);
+            ytemp = y + h * (c1 * dydx + c3 * ak3 + c4 * ak4 + c6 * ak6);
+            yerr = h * (dc1 * dydx + dc3 * ak3 + dc4 * ak4 + dc5 * ak5 + dc6 * ak6);
+
+            errmax = 0.0;
+            err = std::fabs(yerr / yscal);
+            if (err > errmax)
+                errmax = err;
+            errmax /= eps;
+
+            if (errmax > 1.0) {
+                htemp = SAFETY * h * std::pow(errmax, PSHRNK);
+                if (h >= 0) {
+                    if (htemp > 0.1 * h)
+                        h = htemp;
+                    else
+                        h = 0.1 * h;
+                } else {
+                    if (htemp < 0.1 * h)
+                        h = htemp;
+                    else
+                        h = 0.1 * h;
+                }
+                xnew = xold + h;
+                if (xnew == xold) {
+                    underflow = true;
+                    break;
+                }
+                continue;
+            }
+            if (errmax > ERRCON)
+                hnext = SAFETY * h * std::pow(errmax, PGROW);
+            else
+                hnext = 5.0 * h;
+            x += (hdid = h);
+            y = ytemp;
+            break;
+        }
+        if (underflow)
+            break;
+
+        if ((x - x2) * (x2 - x1) >= 0.0) {
+            *ystart = y;
+            return ODE_OK;
+        }
+        if (std::fabs(hnext) <= 0.0)
+            return ODE_UNDERFLOW;
+        h = hnext;
+    }
+    (void)hdid;
+    return ODE_MAX_STEPS;
+}
 } // namespace openswmm::ode
