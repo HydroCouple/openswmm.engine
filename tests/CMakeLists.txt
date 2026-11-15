@@ -172,6 +172,7 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_expanded_api
         test_legacy_solver_storage_shapes
         test_legacy_solver_transect_nc
+        test_legacy_solver_backflow_quality
         test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"
