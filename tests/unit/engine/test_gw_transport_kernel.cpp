@@ -5752,3 +5752,104 @@ TEST(GwCompletion, LayerColumnsPreserveBothPendingNativeSeamsAndPublicRestart) {
     if (const char* dir = std::getenv("OPENSWMM_GW_LAYER_TEST_OUT"))
         gw_packet_fixture::save(std::filesystem::path(dir) / "engine.bin", result.bytes);
 }
+
+// Parallel bulk cell sweep and face-cache pre-fill (fireGwCellsParallel).
+// The sweep journals every run-wide addition and replays it in cell order, so
+// the aquifer must come out bit-identical at any thread count.
+namespace gw_thread_fixture {
+/// An n-by-n grid of triangle pairs (10 m cells) over a bulk aquifer with a
+/// sorbing, decaying pollutant, dispersion, rain, infiltration and one node bed.
+inline std::string deck(int n, const char* closure, int threads) {
+    std::ostringstream s;
+    s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+         "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:05:00\n"
+         "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+         "ALLOW_PONDING NO\nTHREADS "
+      << threads
+      << "\n[POLLUTANTS]\nTSS MG/L 10.0 0.0 0.0 0.0 NO * 0.0 0.0\n"
+         "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n"
+         "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n"
+         "[TIMESERIES]\nRAIN 0:00 20.0\nRAIN 0:10 0.0\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 3\n"
+         "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"
+         "[2D_VERTICES]\n";
+    for (int y = 0; y <= n; ++y)
+        for (int x = 0; x <= n; ++x)
+            s << 10 * x << ' ' << 10 * y << " 0\n";
+    s << "[2D_TRIANGLES]\n";
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) {
+            const int a = y * (n + 1) + x, b = a + 1, d = a + n + 1, c = d + 1;
+            s << a << ' ' << b << ' ' << c << " 0.03 0\n"
+              << a << ' ' << c << ' ' << d << " 0.03 0\n";
+        }
+    const int cells = 2 * n * n;
+    s << "[2D_INFILTRATION_DEFAULTS]\n* CONSTANT 40.0 - - - -\n"
+         "[2D_AQUIFER_OPTIONS]\nCLOSURE "
+      << closure << "\nM_LAYERS 4\nNODE_ENROLMENT ROWS\n[2D_AQUIFER]\n* 36 1 .45 .10 2 HG0 .5\n";
+    // Uneven tables give every face a head gradient; a few cells start nearly
+    // saturated so saturation excess returns to the surface.
+    for (int c = 0; c < cells; ++c)
+        s << "CELL " << c + 1 << " 36 1 .45 .10 2 HG0 " << (c % 97 == 0 ? .95 : .3 + .01 * (c % 23))
+          << '\n';
+    s << "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\n"
+         "[GW_SORPTION]\n* TSS 0.2 1.0\n"
+         "[GW_INITIAL_QUALITY]\n* SAT TSS 5.0\n* UNSAT TSS 2.0\nCELL 1 SAT TSS 25.0\n"
+         "[2D_AQUIFER_NODE]\nJ1 1\n"
+         "[COORDINATES]\nJ1 5.0 5.0\nO1 400.0 400.0\n[REPORT]\nINPUT NO\n";
+    return s.str();
+}
+struct Capture {
+    std::string bytes;
+    long parallel_sweeps = 0;
+    bool ok = false;
+};
+/// Run the deck to its end and serialize the aquifer checkpoint, the run-wide
+/// water and species ledgers, and the surface volume and species mass.
+inline Capture run(const std::string& tag, const char* closure, int threads) {
+    Capture result;
+    auto r = open(tag, deck(18, closure, threads));
+    result.ok = ::run(r);
+    if (result.ok) {
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        result.parallel_sweeps = gw.parallelCellSweeps();
+        auto copy = gw;
+        gw_packet_fixture::Archive a;
+        copy.checkpoint(a, false);
+        auto wire = a.bytes();
+        auto& st = copy.state();
+        auto& tr = copy.transport();
+        std::vector<double> ledgers{st.led_recharge, st.led_lateral, st.led_deep,    st.led_node,
+                                    st.led_reject,   st.led_dunne,   st.led_caprise, st.led_et,
+                                    st.led_infil_in, st.led_link};
+        auto& surface = r.eng->surfaceRouter2D().state();
+        gw_packet_fixture::Archive out;
+        out(wire, ledgers, tr.sat_mass, tr.gained_infil, tr.net_lateral, tr.internal_recharge,
+            tr.lost_reaction, tr.lost_dunne, tr.lost_node, tr.node_out_mass, surface.volume,
+            surface.transport.cell_mass);
+        result.bytes = out.bytes();
+        gw_packet_fixture::save(kOutDir / (tag + ".capture.bin"), result.bytes);
+    }
+    finish(r);
+    return result;
+}
+} // namespace gw_thread_fixture
+
+TEST(GwParallelSweep, BulkAquiferIsBitIdenticalAcrossThreadCounts) {
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"}) {
+        const std::string stem = std::string("gw_threads_") + closure + "_t";
+        const auto serial = gw_thread_fixture::run(stem + "1", closure, 1);
+        ASSERT_TRUE(serial.ok) << closure;
+        EXPECT_EQ(serial.parallel_sweeps, 0) << closure;
+        for (int threads : {4, 8}) {
+            const auto parallel =
+                gw_thread_fixture::run(stem + std::to_string(threads), closure, threads);
+            ASSERT_TRUE(parallel.ok) << closure << " threads " << threads;
+            // The comparison means nothing unless the parallel sweep actually ran.
+            if (openswmm::twoD::SubsurfaceSolver::parallelCellSweepAvailable())
+                EXPECT_GT(parallel.parallel_sweeps, 0) << closure << " threads " << threads;
+            EXPECT_TRUE(parallel.bytes == serial.bytes) << closure << " threads " << threads;
+        }
+    }
+}

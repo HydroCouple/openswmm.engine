@@ -1344,6 +1344,10 @@ public:
      * or engine calendar update occurs.
      */
     void checkpoint(detail::CompletedSourceArchive&, bool model); // internal accepted-boundary IO
+    /// Cell sweeps fired concurrently so far (diagnostic; never saved).
+    long parallelCellSweeps() const noexcept { return parallel_cell_sweeps_; }
+    /// True when this build can fire a cell sweep concurrently (compiled with OpenMP).
+    static bool parallelCellSweepAvailable() noexcept;
     bool independentClock() const noexcept { return active() && options_.independent_clock; }
     void prepareClock(double initial_time = 0.0);
     void advanceClock(double end, SurfaceStateData& surface, bool gw_only, bool finish = false,
@@ -2034,6 +2038,48 @@ private:
         CellScratch(CellScratch&&) noexcept = default;
         CellScratch& operator=(CellScratch&&) noexcept = default;
     } cell_scratch_;
+
+    // Parallel bulk cell sweep (fireGwCellsParallel). While a worker holds a
+    // journal, every addition to a run-wide accumulator (water and species
+    // ledgers, the per-node export mass, the pending-surface list, the
+    // node-refund count and clock telemetry) is recorded instead of applied.
+    // The journals are replayed afterwards in the original cell order, so each
+    // total sees the same additions in the same order as the serial sweep:
+    // bit-identical.
+    struct LedgerJournal {
+        std::vector<std::pair<double*, double>> adds;
+        std::vector<int> pending_surface;
+        std::vector<int> fired; ///< cells to report to clock telemetry
+        long node_refunds = 0;
+    };
+    static inline thread_local LedgerJournal* journal_ = nullptr;
+    /// Add to a run-wide accumulator, or record the addition in the active journal.
+    void book(double& total, double amount) {
+        if (journal_)
+            journal_->adds.emplace_back(&total, amount);
+        else
+            total += amount;
+    }
+    void countNodeRefund() noexcept {
+        if (journal_)
+            ++journal_->node_refunds;
+        else
+            ++node_refunds_;
+    }
+    /// Fire `cells` concurrently when the bulk profile makes that equivalent to
+    /// the serial loop; returns false (having done nothing) otherwise.
+    bool fireGwCellsParallel(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
+                             double time, GwFiringOrigin origin, double intake_through);
+    long parallel_cell_sweeps_ = 0; ///< diagnostic count of sweeps fired in parallel
+    // Per-thread journals; transient within one sweep, never copied or saved.
+    struct JournalScratch {
+        std::vector<LedgerJournal> journals;
+        JournalScratch() = default;
+        JournalScratch(const JournalScratch&) noexcept {}
+        JournalScratch& operator=(const JournalScratch&) noexcept { return *this; }
+        JournalScratch(JournalScratch&&) noexcept = default;
+        JournalScratch& operator=(JournalScratch&&) noexcept = default;
+    } journal_scratch_;
 };
 
 } // namespace openswmm::twoD
