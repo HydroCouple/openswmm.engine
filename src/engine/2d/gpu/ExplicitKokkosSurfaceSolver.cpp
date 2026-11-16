@@ -362,6 +362,127 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         d_rk_cpl0_ = DView("rk_cpl0", nt2);
         d_rk_evap0_ = DView("rk_evap0", nt2);
     }
+    // Optional momentum physics: the wall-drag slots, the option checks and
+    // the work arrays (== serial marcher's initialize).
+    {
+        std::vector<int> wd_slot, wd_group(1, 0);
+        std::vector<double> wd_cw;
+        if (state.boundary) {
+            const auto& b = *state.boundary;
+            // Only the edges with a drag are stored; visit them in slot order.
+            for (const auto& [stored_slot, cw] : b.edge_wall_drag.entries()) {
+                const int slot = int(stored_slot);
+                if (!std::isfinite(cw) || cw < 0)
+                    throw std::invalid_argument("WALL_DRAG requires finite nonnegative Cw.");
+                if (cw == 0)
+                    continue;
+                const int i = MeshData::slot_cell(slot), e = MeshData::slot_local(slot);
+                if (i >= mesh.n_cells() || e >= mesh.cell_vertex_count(i) ||
+                    mesh.cell_neighbour(i, e) >= 0 ||
+                    b.edge_bc_type[slot] != int8_t(BoundaryType::WALL))
+                    throw std::invalid_argument("WALL_DRAG must name an exterior WALL edge.");
+                wd_slot.push_back(slot);
+                wd_cw.push_back(cw);
+            }
+        }
+        opts.wall_drag_enabled = !wd_slot.empty();
+        if (!std::isfinite(opts.eddy_viscosity_background) || opts.eddy_viscosity_background < 0)
+            throw std::invalid_argument(
+                "EDDY_VISCOSITY_BACKGROUND must be finite and nonnegative.");
+        physics_ = opts.momentumPhysics();
+        wall_drag_energy_ = 0.0;
+        ph_substeps_ = ph_retries_ = 0;
+        ph_last_limit_ = std::numeric_limits<double>::infinity();
+        if (physics_) {
+            if (!swe_ || opts.lts_tiers != 1)
+                throw std::invalid_argument(
+                    "Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
+            if (opts.coriolis == Coriolis2D::LATITUDE && !opts.coriolis_latitude_set)
+                throw std::invalid_argument("CORIOLIS LATITUDE requires CORIOLIS_LATITUDE.");
+            if (opts.coriolis == Coriolis2D::CONSTANT_F && !opts.coriolis_f_set)
+                throw std::invalid_argument("CORIOLIS CONSTANT_F requires CORIOLIS_F.");
+            if (!std::isfinite(opts.coriolisParameter()) || !std::isfinite(opts.smagorinsky_cs) ||
+                !std::isfinite(opts.mixing_length_coefficient) ||
+                opts.mixing_length_coefficient < 0 || opts.smagorinsky_cs < 0 ||
+                !std::isfinite(opts.coriolis_latitude) || std::abs(opts.coriolis_latitude) > 90)
+                throw std::invalid_argument("Invalid Coriolis/Smagorinsky parameters.");
+            if (state.heat.enabled || state.snow.active() ||
+                (state.node_coupling && !state.node_coupling->empty()))
+                throw std::invalid_argument("Coriolis/Smagorinsky/wall drag currently require "
+                                            "uncoupled surface hydraulics.");
+            std::fprintf(stderr,
+                         "[openswmm 2D] optional momentum physics: f=%.17g s^-1, "
+                         "turbulence=%s Cs=%.17g, mixing-length c=%.17g, background nu=%.17g "
+                         "m2/s, Kokkos global stepping.\n",
+                         opts.coriolisParameter(), turbulenceName(opts.turbulence),
+                         opts.smagorinsky_cs, opts.mixing_length_coefficient,
+                         opts.eddy_viscosity_background);
+        }
+        // Slots of one cell are consecutive: one group per cell.
+        for (std::size_t k = 1; k <= wd_slot.size(); ++k)
+            if (k == wd_slot.size() ||
+                MeshData::slot_cell(wd_slot[k]) != MeshData::slot_cell(wd_slot[k - 1]))
+                wd_group.push_back(static_cast<int>(k));
+        n_wall_drag_ = static_cast<int>(wd_slot.size());
+        n_wall_groups_ = static_cast<int>(wd_group.size()) - 1;
+        d_wd_slot_ = devCopy("wall_drag_slot", wd_slot);
+        d_wd_cw_ = devCopy("wall_drag_cw", wd_cw);
+        d_wd_group_ = devCopy("wall_drag_group", wd_group);
+        d_wd_removed_ = DView("wall_drag_removed", 2 * n_wall_drag_);
+        const int ntp = physics_ ? nt : 0, nep = physics_ ? ne : 0;
+        for (DView* v : {&d_ph_rx_, &d_ph_ry_, &d_ph_sx_, &d_ph_sy_, &d_ph_tx_, &d_ph_ty_,
+                         &d_ph_x0_, &d_ph_y0_, &d_ph_oldx_, &d_ph_oldy_, &d_ph_visc_, &d_ph_term_,
+                         &d_held_vol_, &d_held_qx_, &d_held_qy_})
+            *v = DView("physics_cell", ntp);
+        for (DView* v : {&d_ph_etx_, &d_ph_ety_, &d_ph_ebx_, &d_ph_eby_})
+            *v = DView("physics_face", nep);
+        d_ph_stgx_ = DView("stencil_gx", 5 * ntp);
+        d_ph_stgy_ = DView("stencil_gy", 5 * ntp);
+        d_ph_stid_ = IView("stencil_id", 5 * ntp);
+        d_ph_stn_ = IView("stencil_count", ntp);
+        d_ph_single_ = IView("stencil_single", ntp);
+        d_ph_conn_ = IView("face_connected", nep);
+        std::vector<int> sorted_edge;
+        std::vector<double> wall_distance;
+        if (physics_) {
+            // Each cell's faces in ascending face order, the order in which
+            // the CPU's face loop adds stress to the cell.
+            sorted_edge = edges_.cell_edge;
+            for (int i = 0; i < nt; ++i)
+                std::sort(sorted_edge.begin() + edges_.cell_ptr[i],
+                          sorted_edge.begin() + edges_.cell_ptr[i + 1]);
+            if (opts.turbulence == Turbulence2D::MIXING_LENGTH &&
+                opts.mixing_length_coefficient > 0) {
+                // Distance from each centroid to the nearest mesh boundary edge
+                // (== MomentumPhysics2D::computeWallDistance).
+                std::vector<std::array<double, 4>> segments;
+                for (int c = 0; c < mesh.n_cells(); ++c)
+                    for (int k = 0; k < mesh.cell_vertex_count(c); ++k)
+                        if (mesh.cell_neighbour(c, k) < 0) {
+                            int a, b;
+                            mesh.cell_edge_vertices(c, k, a, b);
+                            segments.push_back({mesh.vx[a], mesh.vy[a], mesh.vx[b], mesh.vy[b]});
+                        }
+                wall_distance.assign(static_cast<std::size_t>(nt),
+                                     std::numeric_limits<double>::infinity());
+                for (int c = 0; c < nt; ++c) {
+                    const double px = mesh.tri_cx[c], py = mesh.tri_cy[c];
+                    double best = std::numeric_limits<double>::infinity();
+                    for (const auto& g : segments) {
+                        const double dx = g[2] - g[0], dy = g[3] - g[1], len2 = dx * dx + dy * dy;
+                        const double t =
+                            len2 > 0
+                                ? std::clamp(((px - g[0]) * dx + (py - g[1]) * dy) / len2, 0.0, 1.0)
+                                : 0.0;
+                        best = std::min(best, std::hypot(px - g[0] - t * dx, py - g[1] - t * dy));
+                    }
+                    wall_distance[c] = best;
+                }
+            }
+        }
+        d_ph_sedge_ = devCopy("sorted_cell_edge", sorted_edge);
+        d_ph_walld_ = devCopy("wall_distance", wall_distance);
+    }
     // FRONT_REBUILD AUTO is on for FULL_SWE only (== serial marcher).
     front_rebuild_ = (opts.front_rebuild < 0) ? swe_ : (opts.front_rebuild != 0);
     front_breach_ = false;
@@ -852,10 +973,13 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
 
     auto active = d_active_, seed = d_scratch_, pin = d_pin_t0_;
     auto depth = d_depth_, coup = d_coup_;
+    // Optional stresses and rotation can accelerate any wet neighbor: the
+    // momentum-physics mode keeps every cell active (== serial marcher).
+    const bool all_cells = physics_;
     Kokkos::parallel_for(
         "seed", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             const double thresh = active(i) ? h_off : h_on;
-            seed(i) = (depth(i) >= thresh || coup(i) != 0.0 || pin(i)) ? 1 : 0;
+            seed(i) = (all_cells || depth(i) >= thresh || coup(i) != 0.0 || pin(i)) ? 1 : 0;
         });
     Kokkos::parallel_for(
         "seed_to_active", Kokkos::RangePolicy<ExecSpace>(0, nt),
@@ -1774,6 +1898,15 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     auto slot_nx = d_slot_nx_, slot_ny = d_slot_ny_, slot_len = d_edge_length_;
     auto manning = d_mannings_n_;
     const bool so = muscl_;
+    // Optional momentum physics: boundary edges read the state held at the start
+    // of this firing, the same beginning state the interior faces used.
+    const bool held = physics_ && !bc_cell_host_.empty();
+    auto held_vol = d_held_vol_, held_qx = d_held_qx_, held_qy = d_held_qy_;
+    if (held) {
+        Kokkos::deep_copy(held_vol, d_volume_);
+        Kokkos::deep_copy(held_qx, d_qcx_);
+        Kokkos::deep_copy(held_qy, d_qcy_);
+    }
     const int ncell = mesh_->n_triangles();
     auto gex = d_gex_, gey = d_gey_, gux = d_gux_, guy = d_guy_, gvx = d_gvx_, gvy = d_gvy_;
     auto slot_mx = d_slot_mx_, slot_my = d_slot_my_;
@@ -1954,10 +2087,16 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         // Ghost-cell Riemann boundary: mass AND momentum
                         // (swe::boundaryFlux, shared with the serial marcher).
                         if (L > 1.0e-12) {
-                            const swe::BoundaryFlux r =
-                                swe::boundaryFlux(ty, L, slot_nx(idx), slot_ny(idx), head(i),
-                                                  depth(i), qcx(i), qcy(i), n, bc_slope(kk),
-                                                  bc_head(kk), bc_flow(kk), bc_conv(kk), dry);
+                            double eta_i = head(i), h_i = depth(i);
+                            double qx_i = qcx(i), qy_i = qcy(i);
+                            if (held) {
+                                cell.etaDepth(i, held_vol(i), eta_i, h_i);
+                                qx_i = held_qx(i);
+                                qy_i = held_qy(i);
+                            }
+                            const swe::BoundaryFlux r = swe::boundaryFlux(
+                                ty, L, slot_nx(idx), slot_ny(idx), eta_i, h_i, qx_i, qy_i, n,
+                                bc_slope(kk), bc_head(kk), bc_flow(kk), bc_conv(kk), dry);
                             f = r.flow;
                             if (r.wet) {
                                 swe_dqx = r.fmx * L * dt_c / area(i);
@@ -2299,6 +2438,514 @@ void ExplicitKokkosSurfaceSolver::runMacroCycle(double dt0, int nsub) {
 }
 
 // ===========================================================================
+// Optional momentum physics: Coriolis, turbulent mixing, wall drag
+// ===========================================================================
+// Each routine follows its MomentumPhysics2D counterpart and keeps that code's
+// summation orders, so the OpenMP backend reproduces the CPU marcher exactly.
+
+void ExplicitKokkosSurfaceSolver::physicsRotate(double angle) {
+    if (angle == 0)
+        return;
+    const double c = std::cos(angle), s = std::sin(angle);
+    auto qx = d_qcx_, qy = d_qcy_;
+    Kokkos::parallel_for(
+        "ph_rotate", Kokkos::RangePolicy<ExecSpace>(0, mesh_->n_triangles()), KOKKOS_LAMBDA(int i) {
+            const double x = qx(i), y = qy(i);
+            qx(i) = c * x + s * y;
+            qy(i) = c * y - s * x;
+        });
+}
+
+double ExplicitKokkosSurfaceSolver::physicsWallDrag(double seconds) {
+    const int n = n_wall_drag_;
+    if (n == 0)
+        return 0.0;
+    auto slots = d_wd_slot_, group = d_wd_group_;
+    auto cw = d_wd_cw_, removed = d_wd_removed_;
+    auto h = d_depth_, eta = d_head_, qx = d_qcx_, qy = d_qcy_;
+    auto area = d_tri_area_, len = d_edge_length_, snx = d_slot_nx_, sny = d_slot_ny_;
+    auto vz = d_vz_;
+    auto cvv = d_cell_v_, nvv = d_nv_;
+    const double dry = opts_->dry_depth;
+    const bool vfr = opts_->cell_closure == CellClosure2D::VFR;
+    // The CPU sweeps every slot forward, then every slot in reverse. Slots of
+    // different cells are independent, so each cell runs its own forward and
+    // reverse sweep; the energy terms are folded below in the CPU's order.
+    Kokkos::parallel_for(
+        "ph_wall_drag", Kokkos::RangePolicy<ExecSpace>(0, n_wall_groups_), KOKKOS_LAMBDA(int g) {
+            const int first = group(g), last = group(g + 1);
+            for (int pass = 0; pass < 2; ++pass) {
+                for (int step = 0; step < last - first; ++step) {
+                    const int s = pass == 0 ? first + step : last - 1 - step;
+                    const int out = pass == 0 ? s : n + s;
+                    removed(out) = 0.0;
+                    const int slot = slots(s);
+                    const int i = slot / kMaxCellVerts;
+                    if (h(i) <= dry)
+                        continue;
+                    double hw = h(i);
+                    if (vfr) {
+                        const int e = slot % kMaxCellVerts, nvi = nvv(i);
+                        const double za = vz(cvv(i * kMaxCellVerts + (e + 1) % nvi));
+                        const double zb = vz(cvv(i * kMaxCellVerts + (e + 2) % nvi));
+                        hw = inertial::faceDepthFromEta(eta(i), (zb < za) ? zb : za,
+                                                        (za < zb) ? zb : za);
+                    }
+                    const double k = cw(s) * len(slot) * hw / (area(i) * h(i));
+                    if (k == 0)
+                        continue;
+                    const double tx = -sny(slot), ty = snx(slot);
+                    const double ut = (qx(i) * tx + qy(i) * ty) / h(i);
+                    if (ut == 0)
+                        continue;
+                    const double next =
+                        Kokkos::copysign(1.0 / (1.0 / std::fabs(ut) + .5 * seconds * k), ut);
+                    const double dq = h(i) * (next - ut);
+                    qx(i) += dq * tx;
+                    qy(i) += dq * ty;
+                    removed(out) = .5 * area(i) * h(i) * (ut - next) * (ut + next);
+                }
+            }
+        });
+    auto removed_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), removed);
+    double sum = 0;
+    for (int s = 0; s < n; ++s)
+        sum += removed_h(s);
+    for (int s = n - 1; s >= 0; --s)
+        sum += removed_h(n + s);
+    return sum;
+}
+
+double ExplicitKokkosSurfaceSolver::physicsEnergy(const DView& qx, const DView& qy) {
+    const int nt = mesh_->n_triangles();
+    auto h = d_depth_, area = d_tri_area_, term = d_ph_term_;
+    const double dry = opts_->dry_depth;
+    Kokkos::parallel_for(
+        "ph_energy", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+            term(i) = h(i) > dry ? .5 * area(i) * (qx(i) * qx(i) + qy(i) * qy(i)) / h(i) : 0.0;
+        });
+    // The total decides whether a mixing sub-step is accepted, so it is folded
+    // in cell order like the CPU's.
+    auto term_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), term);
+    auto h_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), h);
+    double sum = 0;
+    for (int i = 0; i < nt; ++i)
+        if (h_h(i) > dry)
+            sum += term_h(i);
+    return sum;
+}
+
+double ExplicitKokkosSurfaceSolver::physicsEvaluate(const DView& qx, const DView& qy,
+                                                    const DView& rx, const DView& ry, double cs,
+                                                    double background, double depth_coefficient) {
+    const int nt = mesh_->n_triangles();
+    const int ne = edges_.ne;
+    auto h = d_depth_, eta = d_head_;
+    auto conn = d_ph_conn_;
+    auto cLv = d_cL_, cRv = d_cR_;
+    auto conv = d_conveyance_;
+    const double dry = opts_->dry_depth;
+    Kokkos::parallel_for(
+        "ph_connected", Kokkos::RangePolicy<ExecSpace>(0, ne), KOKKOS_LAMBDA(int e) {
+            const int i = cLv(e), j = cRv(e);
+            const double bi = eta(i) - h(i), bj = eta(j) - h(j);
+            const double sill = (bi < bj) ? bj : bi;
+            const double low = (eta(j) < eta(i)) ? eta(j) : eta(i);
+            conn(e) = (conv(e) > 0 && h(i) > dry && h(j) > dry && low - sill > dry) ? 1 : 0;
+        });
+
+    auto ptr = d_cell_ptr_, edge = d_cell_edge_;
+    auto cx = d_tri_cx_, cy = d_tri_cy_, area = d_tri_area_;
+    auto stid = d_ph_stid_, stn = d_ph_stn_;
+    auto stgx = d_ph_stgx_, stgy = d_ph_stgy_;
+    auto visc = d_ph_visc_, walld = d_ph_walld_;
+    const double kappa = 0.41; // MomentumPhysics2D::kappa
+    int bad = 0;
+    Kokkos::parallel_reduce(
+        "ph_stencil", Kokkos::RangePolicy<ExecSpace>(0, nt),
+        KOKKOS_LAMBDA(int i, int& flag) {
+            visc(i) = 0;
+            for (int k = 0; k < 5; ++k) {
+                stid(5 * i + k) = 0;
+                stgx(5 * i + k) = 0;
+                stgy(5 * i + k) = 0;
+            }
+            stn(i) = 0;
+            if (h(i) <= dry)
+                return;
+            int ids[5] = {i, 0, 0, 0, 0};
+            double gx[5] = {0, 0, 0, 0, 0}, gy[5] = {0, 0, 0, 0, 0};
+            int count = 1;
+            double xx = 0, xy = 0, yy = 0;
+            for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                const int e = edge(p);
+                if (!conn(e))
+                    continue;
+                const int j = cLv(e) == i ? cRv(e) : cLv(e);
+                const double dx = cx(j) - cx(i), dy = cy(j) - cy(i);
+                const double w = 1 / (dx * dx + dy * dy);
+                ids[count] = j;
+                gx[count] = w * dx;
+                gy[count] = w * dy;
+                ++count;
+                xx += w * dx * dx;
+                xy += w * dx * dy;
+                yy += w * dy * dy;
+            }
+            const double det = xx * yy - xy * xy;
+            const bool single = count < 3 || det <= 1e-10 * (xx + yy) * (xx + yy);
+            if (!single) {
+                for (int k = 1; k < count; ++k) {
+                    const double x = gx[k], y = gy[k];
+                    gx[k] = (yy * x - xy * y) / det;
+                    gy[k] = (xx * y - xy * x) / det;
+                    gx[0] -= gx[k];
+                    gy[0] -= gy[k];
+                }
+            }
+            for (int k = 0; k < 5; ++k) {
+                stid(5 * i + k) = ids[k];
+                stgx(5 * i + k) = gx[k];
+                stgy(5 * i + k) = gy[k];
+            }
+            if (single) {
+                stn(i) = 1;
+                return;
+            }
+            stn(i) = count;
+            double ux = 0, uy = 0, vx = 0, vy = 0;
+            for (int k = 0; k < count; ++k) {
+                const int j = ids[k];
+                const double u = qx(j) / h(j), v = qy(j) / h(j);
+                ux += gx[k] * u;
+                uy += gy[k] * u;
+                vx += gx[k] * v;
+                vy += gy[k] * v;
+            }
+            const double strain = std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
+            const double vorticity = std::fabs(vx - uy);
+            if (depth_coefficient > 0) {
+                const double a = depth_coefficient * h(i), b = kappa * walld(i);
+                visc(i) = background + Kokkos::pow((b < a) ? b : a, 2.0) * vorticity;
+            } else {
+                visc(i) = background + cs * cs * area(i) * strain;
+            }
+            if (!Kokkos::isfinite(visc(i)))
+                flag = 1;
+        },
+        Kokkos::Max<int>(bad));
+    if (bad > 0)
+        throw std::runtime_error("Nonfinite Smagorinsky viscosity.");
+
+    // A corner with one wet neighbor cannot determine a transverse gradient: it
+    // borrows a connected neighbor's complete stencil. A borrowing cell can
+    // serve a later one, so these few cells run in ascending order on one thread.
+    auto single = d_ph_single_;
+    int n_single = 0;
+    Kokkos::parallel_scan(
+        "ph_single_list", Kokkos::RangePolicy<ExecSpace>(0, nt),
+        KOKKOS_LAMBDA(int i, int& upd, bool fin) {
+            const int f = (h(i) > dry && stn(i) == 1) ? 1 : 0;
+            if (fin && f)
+                single(upd) = i;
+            upd += f;
+        },
+        n_single);
+    if (n_single > 0)
+        Kokkos::parallel_for(
+            "ph_single", Kokkos::RangePolicy<ExecSpace>(0, 1), KOKKOS_LAMBDA(int) {
+                for (int idx = 0; idx < n_single; ++idx) {
+                    const int i = single(idx);
+                    for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                        const int e = edge(p);
+                        if (!conn(e))
+                            continue;
+                        const int j = cLv(e) == i ? cRv(e) : cLv(e);
+                        if (stn(j) > 1) {
+                            for (int k = 0; k < 5; ++k) {
+                                stid(5 * i + k) = stid(5 * j + k);
+                                stgx(5 * i + k) = stgx(5 * j + k);
+                                stgy(5 * i + k) = stgy(5 * j + k);
+                            }
+                            stn(i) = stn(j);
+                            break;
+                        }
+                    }
+                    double ux = 0, uy = 0, vx = 0, vy = 0;
+                    for (int k = 0; k < stn(i); ++k) {
+                        const int j = stid(5 * i + k);
+                        const double u = qx(j) / h(j), v = qy(j) / h(j);
+                        ux += stgx(5 * i + k) * u;
+                        uy += stgy(5 * i + k) * u;
+                        vx += stgx(5 * i + k) * v;
+                        vy += stgy(5 * i + k) * v;
+                    }
+                    const double strain =
+                        std::sqrt(2 * ux * ux + 2 * vy * vy + (uy + vx) * (uy + vx));
+                    const double vorticity = std::fabs(vx - uy);
+                    if (depth_coefficient > 0) {
+                        const double a = depth_coefficient * h(i), b = kappa * walld(i);
+                        visc(i) = background + Kokkos::pow((b < a) ? b : a, 2.0) * vorticity;
+                    } else {
+                        visc(i) = background + cs * cs * area(i) * strain;
+                    }
+                }
+            });
+
+    // Face stress and its contribution to the step bound, one face each.
+    auto nxv = d_nx_, nyv = d_ny_, xi = d_xi_, emx = d_mx_, emy = d_my_;
+    auto etx = d_ph_etx_, ety = d_ph_ety_, ebx = d_ph_ebx_, eby = d_ph_eby_;
+    bad = 0;
+    Kokkos::parallel_reduce(
+        "ph_face_stress", Kokkos::RangePolicy<ExecSpace>(0, ne),
+        KOKKOS_LAMBDA(int e, int& flag) {
+            etx(e) = ety(e) = ebx(e) = eby(e) = 0;
+            if (!conn(e))
+                return;
+            const int i = cLv(e), j = cRv(e);
+            const double nx = nxv(e), ny = nyv(e);
+            const double dx = cx(j) - cx(i), dy = cy(j) - cy(i);
+            const double dn = dx * nx + dy * ny;
+            if (!(dn > 0)) {
+                flag = 1;
+                return;
+            }
+            int ids[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            double gx[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            double gy[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            int count = 0;
+            const double fx = emx(e), fy = emy(e);
+            const double di = Kokkos::hypot(fx - cx(i), fy - cy(i));
+            const double dj = Kokkos::hypot(fx - cx(j), fy - cy(j));
+            const double wi = dj / (di + dj), wj = 1 - wi;
+            for (int side = 0; side < 2; ++side) {
+                const int cell = side == 0 ? i : j;
+                const double w = side == 0 ? wi : wj;
+                for (int k = 0; k < stn(cell); ++k) {
+                    const int id = stid(5 * cell + k);
+                    int m = 0;
+                    while (m < count && ids[m] != id)
+                        ++m;
+                    if (m == count) {
+                        ids[m] = id;
+                        ++count;
+                    }
+                    gx[m] += w * stgx(5 * cell + k);
+                    gy[m] += w * stgy(5 * cell + k);
+                }
+            }
+            for (int side = 0; side < 2; ++side) {
+                const int id = side == 0 ? i : j;
+                int m = 0;
+                while (m < count && ids[m] != id)
+                    ++m;
+                if (m == count) {
+                    ids[m] = id;
+                    ++count;
+                }
+                gx[m] += 0.0; // the CPU's add(id, 0, 0): keeps the sign of a zero identical
+                gy[m] += 0.0;
+            }
+            double ux = 0, uy = 0, vx = 0, vy = 0, bx = 0, by = 0;
+            const double nu = wi * visc(i) + wj * visc(j);
+            const double low = (eta(j) < eta(i)) ? eta(j) : eta(i);
+            const double bi = eta(i) - h(i), bj = eta(j) - h(j);
+            const double span = low - ((bi < bj) ? bj : bi);
+            const double wet = (0. < span) ? span : 0.;
+            const double weight = xi(e) * wet * nu * conv(e);
+            for (int k = 0; k < count; ++k) {
+                const int id = ids[k];
+                const double delta = (id == j ? 1. : 0.) - (id == i ? 1. : 0.);
+                const double correction = (delta - gx[k] * dx - gy[k] * dy) / dn;
+                gx[k] += nx * correction;
+                gy[k] += ny * correction;
+                ux += gx[k] * qx(id) / h(id);
+                uy += gy[k] * qx(id) / h(id);
+                vx += gx[k] * qy(id) / h(id);
+                vy += gy[k] * qy(id) / h(id);
+                bx += std::fabs(2 * nx * gx[k] + ny * gy[k]) + std::fabs(ny * gx[k]);
+                by += std::fabs(nx * gy[k]) + std::fabs(nx * gx[k] + 2 * ny * gy[k]);
+            }
+            etx(e) = weight * (2 * ux * nx + (uy + vx) * ny);
+            ety(e) = weight * (2 * vy * ny + (uy + vx) * nx);
+            ebx(e) = weight * bx;
+            eby(e) = weight * by;
+        },
+        Kokkos::Max<int>(bad));
+    if (bad > 0)
+        throw std::runtime_error("Invalid mixing face geometry.");
+
+    // Each cell gathers its faces in ascending face order, the order in which
+    // the CPU's face loop adds to it.
+    auto sedge = d_ph_sedge_;
+    double rate = 0;
+    Kokkos::parallel_reduce(
+        "ph_gather", Kokkos::RangePolicy<ExecSpace>(0, nt),
+        KOKKOS_LAMBDA(int c, double& mx) {
+            double sx = 0, sy = 0, bx = 0, by = 0;
+            const double mass = area(c) * h(c);
+            for (int p = ptr(c); p < ptr(c + 1); ++p) {
+                const int e = sedge(p);
+                if (!conn(e))
+                    continue;
+                if (cLv(e) == c) {
+                    sx += etx(e) / area(c);
+                    sy += ety(e) / area(c);
+                } else {
+                    sx -= etx(e) / area(c);
+                    sy -= ety(e) / area(c);
+                }
+                bx += ebx(e) / mass;
+                by += eby(e) / mass;
+            }
+            rx(c) = sx;
+            ry(c) = sy;
+            const double b = (bx < by) ? by : bx;
+            if (mx < b)
+                mx = b;
+        },
+        Kokkos::Max<double>(rate));
+    if (rate < 0)
+        rate = 0;
+    if (!std::isfinite(rate))
+        throw std::runtime_error("Nonfinite mixing timestep bound.");
+    ph_last_limit_ = rate > 0 ? .4 / rate : std::numeric_limits<double>::infinity();
+    return ph_last_limit_;
+}
+
+void ExplicitKokkosSurfaceSolver::physicsAdvance(double cs, double seconds, double background,
+                                                 double depth_coefficient) {
+    if (seconds <= 0 || (cs == 0 && background == 0 && depth_coefficient == 0))
+        return;
+    const int nt = mesh_->n_triangles();
+    auto qx = d_qcx_, qy = d_qcy_;
+    auto rx = d_ph_rx_, ry = d_ph_ry_, sx = d_ph_sx_, sy = d_ph_sy_;
+    auto tx = d_ph_tx_, ty = d_ph_ty_;
+    Kokkos::deep_copy(d_ph_oldx_, qx);
+    Kokkos::deep_copy(d_ph_oldy_, qy);
+    try {
+        double elapsed = 0;
+        while (elapsed < seconds) {
+            const double bound = physicsEvaluate(qx, qy, rx, ry, cs, background, depth_coefficient);
+            double dt = std::min(seconds - elapsed, bound);
+            const double e0 = physicsEnergy(qx, qy);
+            bool accepted = false;
+            for (int retry = 0; retry < 40; ++retry) {
+                Kokkos::parallel_for(
+                    "ph_predict", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int j) {
+                        tx(j) = qx(j) + dt * rx(j);
+                        ty(j) = qy(j) + dt * ry(j);
+                    });
+                const double stage_bound =
+                    physicsEvaluate(tx, ty, sx, sy, cs, background, depth_coefficient);
+                if (dt <= stage_bound) {
+                    Kokkos::parallel_for(
+                        "ph_correct", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int j) {
+                            tx(j) = .5 * (qx(j) + tx(j) + dt * sx(j));
+                            ty(j) = .5 * (qy(j) + ty(j) + dt * sy(j));
+                        });
+                    const double e1 = physicsEnergy(tx, ty);
+                    if (std::isfinite(e1) && e1 <= e0 + 1e-13 * std::max(e0, 1e-30)) {
+                        accepted = true;
+                        break;
+                    }
+                }
+                dt *= .5;
+                ++ph_retries_;
+            }
+            if (!accepted || elapsed + dt == elapsed)
+                throw std::runtime_error("Smagorinsky mixing cannot find an admissible timestep.");
+            Kokkos::deep_copy(qx, tx);
+            Kokkos::deep_copy(qy, ty);
+            elapsed = dt == seconds - elapsed ? seconds : elapsed + dt;
+            ++ph_substeps_;
+        }
+        physicsEvaluate(qx, qy, rx, ry, cs, background, depth_coefficient);
+    } catch (...) {
+        Kokkos::deep_copy(qx, d_ph_oldx_);
+        Kokkos::deep_copy(qy, d_ph_oldy_);
+        throw;
+    }
+}
+
+void ExplicitKokkosSurfaceSolver::applyMomentumPhysics(double seconds) {
+    wall_drag_energy_ += physicsWallDrag(.5 * seconds);
+    const double f = opts_->coriolisParameter();
+    physicsRotate(.5 * seconds * f);
+    if (opts_->turbulence == Turbulence2D::SMAGORINSKY)
+        physicsAdvance(opts_->smagorinsky_cs, seconds, opts_->eddy_viscosity_background, 0.0);
+    else if (opts_->turbulence == Turbulence2D::MIXING_LENGTH)
+        physicsAdvance(0.0, seconds, opts_->eddy_viscosity_background,
+                       opts_->mixing_length_coefficient);
+    physicsRotate(.5 * seconds * f);
+    wall_drag_energy_ += physicsWallDrag(.5 * seconds);
+}
+
+double ExplicitKokkosSurfaceSolver::runMomentumStep(double limit) {
+    if (state_->transport.active() || state_->heat.enabled || state_->snow.active() ||
+        (state_->node_coupling && !state_->node_coupling->empty()) ||
+        state_->runtime_sources.active() || !state_->runtime_forcings.rows.empty())
+        throw std::runtime_error(
+            "Optional momentum physics has an unqualified coupled source owner.");
+    const int nt = mesh_->n_triangles();
+    double dt = limit;
+    const double f = std::abs(opts_->coriolisParameter());
+    if (f > 0)
+        dt = std::min(dt, .25 / f);
+    if (opts_->turbulence == Turbulence2D::SMAGORINSKY &&
+        (opts_->smagorinsky_cs > 0 || opts_->eddy_viscosity_background > 0)) {
+        dt = std::min(dt, physicsEvaluate(d_qcx_, d_qcy_, d_ph_rx_, d_ph_ry_, opts_->smagorinsky_cs,
+                                          opts_->eddy_viscosity_background, 0.0));
+    } else if (opts_->turbulence == Turbulence2D::MIXING_LENGTH &&
+               (opts_->mixing_length_coefficient > 0 || opts_->eddy_viscosity_background > 0)) {
+        dt = std::min(dt, physicsEvaluate(d_qcx_, d_qcy_, d_ph_rx_, d_ph_ry_, 0.0,
+                                          opts_->eddy_viscosity_background,
+                                          opts_->mixing_length_coefficient));
+    }
+    // Only momentum changes during a trial. Tighten the hydrodynamic CFL after
+    // the first split half.
+    Kokkos::deep_copy(d_ph_x0_, d_qcx_);
+    Kokkos::deep_copy(d_ph_y0_, d_qcy_);
+    const double wall_energy0 = wall_drag_energy_;
+    auto depth = d_depth_, lpos = d_lpos_, qcx = d_qcx_, qcy = d_qcy_;
+    const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
+    for (int trial = 0;; ++trial) {
+        Kokkos::deep_copy(d_qcx_, d_ph_x0_);
+        Kokkos::deep_copy(d_qcy_, d_ph_y0_);
+        wall_drag_energy_ = wall_energy0;
+        applyMomentumPhysics(.5 * dt);
+        double stable = 1.0e300;
+        Kokkos::parallel_reduce(
+            "ph_wave_cfl", Kokkos::RangePolicy<ExecSpace>(0, nt),
+            KOKKOS_LAMBDA(int i, double& mn) {
+                if (depth(i) > dry) {
+                    const double s = inertial::cellCflDt(alpha, lpos(i), depth(i),
+                                                         Kokkos::hypot(qcx(i), qcy(i)) / depth(i));
+                    if (s < mn)
+                        mn = s;
+                }
+            },
+            Kokkos::Min<double>(stable));
+        stable = std::min(opts_->max_timestep, stable);
+        if (dt <= stable)
+            break;
+        if (trial == 39) {
+            Kokkos::deep_copy(d_qcx_, d_ph_x0_);
+            Kokkos::deep_copy(d_qcy_, d_ph_y0_);
+            wall_drag_energy_ = wall_energy0;
+            throw std::runtime_error("Optional momentum physics cannot satisfy the wave CFL.");
+        }
+        dt = std::min(.5 * dt, stable);
+    }
+    if (second_order_)
+        runRk2Step(dt);
+    else
+        runMacroCycle(dt, 1);
+    applyMomentumPhysics(.5 * dt);
+    return dt;
+}
+
+// ===========================================================================
 // advance
 // ===========================================================================
 
@@ -2487,6 +3134,15 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
         } else {
             refreshDt0();
         }
+        if (physics_) {
+            const double dt = runMomentumStep(std::min(dt0_, t_target - t));
+            if (!(dt > 0) || t + dt == t)
+                throw std::runtime_error("Optional momentum physics cannot advance the clock.");
+            t = dt == t_target - t ? t_target : t + dt;
+            last_dt_ = dt;
+            ++cycles_since_rebuild;
+            continue;
+        }
         const int nsub_full = 1 << (K_ - 1);
         const double remaining = t_target - t;
 
@@ -2638,6 +3294,16 @@ void ExplicitKokkosSurfaceSolver::finalize() {
     if (!initialized_)
         return;
     kperf::dump();
+    // The same end-of-run diagnostics as the serial marcher.
+    if (n_wall_drag_ > 0)
+        std::fprintf(
+            stderr, "[openswmm 2D] quadratic wall drag: %d faces, energy removed/rho=%.17g m5/s2\n",
+            n_wall_drag_, wall_drag_energy_);
+    if (opts_ && opts_->turbulence != Turbulence2D::NONE)
+        std::fprintf(stderr,
+                     "[openswmm 2D] %s mixing: %llu substeps, %llu retries, "
+                     "last diffusion bound %.17g s.\n",
+                     turbulenceName(opts_->turbulence), ph_substeps_, ph_retries_, ph_last_limit_);
     // fireBc and fireExchange stay serial inside a run or group, so their
     // device latency follows the longest one rather than the mesh size.
     if (perf::enabled())

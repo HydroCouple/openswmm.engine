@@ -28,6 +28,11 @@ namespace gpu = openswmm::twoD::gpu;
 namespace sk = gpu::swe_kernels;
 namespace openswmm::twoD {
 struct ExplicitInertialSolverTestAccess {
+    /// Wall-drag energy ledger and mixing statistics of the CPU marcher (momentum physics).
+    static std::array<double, 4> physicsLedger(const ExplicitInertialSolver& s) {
+        return {s.wall_drag_energy_, double(s.momentum_physics_.substeps),
+                double(s.momentum_physics_.retries), s.momentum_physics_.last_limit};
+    }
     /**
      * @brief Recompute CPU limited SWE reconstruction gradients for the device comparison.
      *
@@ -190,6 +195,11 @@ struct ExplicitInertialSolverTestAccess {
 } // namespace openswmm::twoD
 namespace openswmm::twoD::gpu {
 struct ExplicitKokkosSurfaceSolverTestAccess {
+    /// Wall-drag energy ledger and mixing statistics of the Kokkos marcher (momentum physics).
+    static std::array<double, 4> physicsLedger(const ExplicitKokkosSurfaceSolver& s) {
+        return {s.wall_drag_energy_, double(s.ph_substeps_), double(s.ph_retries_),
+                s.ph_last_limit_};
+    }
     /**
      * @brief Upload current boundary/source inputs and rebuild the device firing state at time zero.
      *
@@ -286,6 +296,7 @@ struct ExplicitKokkosSurfaceSolverTestAccess {
 };
 } // namespace openswmm::twoD::gpu
 using A = ExplicitInertialSolverTestAccess;
+using KA = gpu::ExplicitKokkosSurfaceSolverTestAccess;
 /**
  * @brief Fail the standalone alignment test when a required condition is false.
  *
@@ -486,27 +497,21 @@ void frozenTier() {
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
  * Separately tries each configuration outside kKokkosSurfaceCapabilities (transport rows,
- * FRONT_REBUILD YES, momentum physics), requiring
+ * FRONT_REBUILD YES), requiring
  * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
  * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
  * its capability and its parity check.
  */
 void unsupported() {
-    const char* names[] = {"", "transport", "", "FRONT_REBUILD", "wall drag"};
-    for (int kind : {1, 3, 4}) {
+    const char* names[] = {"", "transport", "", "FRONT_REBUILD"};
+    for (int kind : {1, 3}) {
         auto m = mesh(2);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 4)
-            o.momentum = Momentum2D::FULL_SWE;
         if (kind == 1)
             s.transport.resize(1, m.n_cells(), 0);
         if (kind == 3)
             o.front_rebuild = 1;
-        if (kind == 4) {
-            o.wall_drag_enabled = true;
-            o.lts_tiers = 1;
-        }
         bool rejected = false;
         try {
             gpu::ExplicitKokkosSurfaceSolver solver;
@@ -754,6 +759,182 @@ void modeParity(Momentum2D mode, const char* name, int order = 1) {
                     ++cases;
                 }
     std::cout << name << " CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
+}
+/**
+ * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit with the optional
+ * momentum physics enabled.
+ *
+ * FULL_SWE on one tier, both reconstruction orders, both closures, triangle, mixed and quad
+ * meshes. A moving pool runs under Coriolis, Smagorinsky mixing, depth mixing length with a
+ * background viscosity, quadratic wall drag, and all of them together with rain and a
+ * specified-stage boundary on the west edge. Volume, head, depth, edge flux, the published cell
+ * velocity and the step count must match exactly over three windows. Requires initialized
+ * Kokkos; prints PASS or throws at the first mismatch.
+ */
+void physicsParity() {
+    const char* labels[] = {"Coriolis", "Smagorinsky", "mixing length", "wall drag", "combined"};
+    int cases = 0;
+    for (int order : {1, 2})
+        for (int shape : {0, 2, 1})
+            for (bool vfr : {false, true})
+                for (int physics = 0; physics < 5; ++physics) {
+                    auto m = mesh(8, shape, true, true);
+                    auto a = state(m, .05);
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (m.tri_cx[i] < 4)
+                            a.volume[i] = .3 * m.tri_area[i];
+                        // A dry strip under rain in the combined case (wetting under
+                        // rotation, mixing and drag).
+                        if (physics == 4 && m.tri_cx[i] > 6)
+                            a.volume[i] = 0;
+                        const auto c = static_cast<std::size_t>(i);
+                        m.tri_init_u.set(c, .3 + .05 * m.tri_cy[i]); // sheared, so it mixes
+                        m.tri_init_v.set(c, m.tri_cx[i] < 4 ? -.2 : .1);
+                        if (physics == 4)
+                            a.rainfall[i] = .01;
+                    }
+                    auto b = a;
+                    auto o = options(1);
+                    o.momentum = Momentum2D::FULL_SWE;
+                    o.reconstruction_order = order;
+                    if (vfr) {
+                        o.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    if (physics == 0 || physics == 4) {
+                        o.coriolis = Coriolis2D::CONSTANT_F;
+                        // Unphysically fast in the Coriolis-only case, so that the
+                        // rotation step limit 0.25/f binds.
+                        o.coriolis_f = physics == 0 ? 20. : .05;
+                        o.coriolis_f_set = true;
+                    }
+                    if (physics == 1 || physics == 4) {
+                        o.turbulence = Turbulence2D::SMAGORINSKY;
+                        o.smagorinsky_cs = .2;
+                    }
+                    if (physics == 2) {
+                        o.turbulence = Turbulence2D::MIXING_LENGTH;
+                        o.mixing_length_coefficient = .5;
+                        // Large enough that the diffusion step bound binds and sub-steps.
+                        o.eddy_viscosity_background = 2.;
+                    }
+                    BoundaryData ba;
+                    ba.resize(m.n_cells() * kMaxCellVerts);
+                    int drag_edges = 0, open_edges = 0;
+                    for (int i = 0; i < m.n_cells(); ++i)
+                        for (int e = 0; e < m.cell_vertex_count(i); ++e) {
+                            if (m.cell_neighbour(i, e) >= 0)
+                                continue;
+                            const int slot = MeshData::slot(i, e);
+                            int va, vb;
+                            m.cell_edge_vertices(i, e, va, vb);
+                            const bool west = m.vx[va] == 0 && m.vx[vb] == 0;
+                            if (physics == 4 && west) {
+                                ba.edge_bc_type[slot] =
+                                    static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
+                                ba.edge_bc_head[slot] = .25;
+                                ++open_edges;
+                            } else if (physics >= 3) {
+                                ba.edge_wall_drag[slot] = .05;
+                                ++drag_edges;
+                            }
+                        }
+                    require(physics < 3 || drag_edges > 0, "physics fixture has wall drag");
+                    require(physics < 4 || open_edges > 0, "physics fixture has an open boundary");
+                    auto bb = ba;
+                    a.boundary = &ba;
+                    b.boundary = &bb;
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    int window = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string("physics ") + labels[physics] +
+                            " order=" + std::to_string(order) + " shape=" + std::to_string(shape) +
+                            (vfr ? " VFR" : " FLAT") + " window=" + std::to_string(window) + " ";
+                        require(cpu.last_num_steps() == kk.last_num_steps(),
+                                (tag + "steps").c_str());
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(b.head, a.head, tag + "head");
+                        exact(b.depth, a.depth, tag + "depth");
+                        exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                        require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                                (tag + "velocity publication").c_str());
+                        exact(b.face_vx, a.face_vx, tag + "velocity x");
+                        exact(b.face_vy, a.face_vy, tag + "velocity y");
+                        // Wall-drag energy removed, mixing sub-steps and retries, and the
+                        // last diffusion bound.
+                        require(A::physicsLedger(cpu) == KA::physicsLedger(kk),
+                                (tag + "physics ledger").c_str());
+                        t = end;
+                        ++window;
+                    }
+                    ++cases;
+                }
+    std::cout << "Momentum physics CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
+}
+/**
+ * @brief Require identical wall drag in a cell whose wall edges are not perpendicular.
+ *
+ * One scalene triangle, all three edges dragging walls, water moving obliquely. The CPU applies
+ * the drag slot by slot forward and then in reverse; on a right-angle corner that order cannot
+ * be told apart, on this cell it can. Volume and the published velocity must match exactly over
+ * three windows. Requires initialized Kokkos; prints PASS or throws.
+ */
+void wallDragOrder() {
+    for (bool vfr : {false, true}) {
+        MeshData m;
+        m.resize_vertices(3);
+        m.vx = {0., 3., .7};
+        m.vy = {0., .4, 2.1};
+        m.vz = {0., .02, .05};
+        m.resize_triangles(1);
+        m.set_triangle(0, 0, 1, 2);
+        buildMeshTopology(m);
+        m.tri_init_u.set(0, .6);
+        m.tri_init_v.set(0, -.35);
+        auto a = state(m, .4), b = a;
+        auto o = options(1);
+        o.momentum = Momentum2D::FULL_SWE;
+        if (vfr) {
+            o.cell_closure = CellClosure2D::VFR;
+            o.face_reconstruction = FaceDepth2D::VFR_FACE;
+        }
+        BoundaryData ba;
+        ba.resize(kMaxCellVerts);
+        for (int e = 0; e < 3; ++e)
+            ba.edge_wall_drag[MeshData::slot(0, e)] = .3 + .2 * e;
+        auto bb = ba;
+        a.boundary = &ba;
+        b.boundary = &bb;
+        auto oa = o, ob = o;
+        ExplicitInertialSolver cpu;
+        gpu::ExplicitKokkosSurfaceSolver kk;
+        cpu.initialize(m, a, oa);
+        kk.initialize(m, b, ob);
+        double t = 0;
+        for (double end : {.4, .9, 1.5}) {
+            cpu.advance(t, end);
+            kk.advance(t, end);
+            require(cpu.last_num_steps() == kk.last_num_steps(), "wall drag order steps");
+            exact(b.volume, a.volume, "wall drag order volume");
+            require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                    "wall drag order velocity publication");
+            exact(b.face_vx, a.face_vx, "wall drag order velocity x");
+            exact(b.face_vy, a.face_vy, "wall drag order velocity y");
+            require(a.face_vx[0] != 0 && a.face_vy[0] != 0, "wall drag order fixture moves");
+            require(A::physicsLedger(cpu) == KA::physicsLedger(kk), "wall drag order ledger");
+            require(A::physicsLedger(cpu)[0] > 0, "wall drag order fixture removes energy");
+            t = end;
+        }
+    }
+    std::cout << "Wall drag sweep order PASS\n";
 }
 // All non-wall laws, in both directions and closures. Boundary values are
 // resolved by the router before advance; rating curves arrive as held flows.
@@ -1317,6 +1498,14 @@ int main(int argc, char** argv) {
             require(gpu::ExecSpace().concurrency() == std::atoi(n),
                     "requested OpenMP concurrency was not active");
 #endif
+        // OPENSWMM_ALIGNMENT_ONLY=physics runs the momentum-physics parity alone (mutation checks).
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "physics") {
+            physicsParity();
+            wallDragOrder();
+            Kokkos::finalize();
+            return 0;
+        }
         perModelCounters();
         frozenTier();
         unsupported();
@@ -1325,6 +1514,8 @@ int main(int argc, char** argv) {
         modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
         modeParity(Momentum2D::FULL_SWE, "FULL_SWE");
         modeParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
+        physicsParity();
+        wallDragOrder();
         edgeConveyance();
         boundaries();
         boundaryReversal();

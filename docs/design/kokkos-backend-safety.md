@@ -19,7 +19,7 @@ Performance counters belong to each solver and are activated only during that so
 | Operator | Current execution contract |
 | --- | --- |
 | Local-inertial, diffusive-wave and FULL_SWE (orders 1 and 2) surface water on triangle, quad and mixed meshes, FLAT/VFR | Kokkos surface path, subject to backend qualification |
-| Coriolis/turbulence/wall drag | Built-in CPU; isolated device helper tests do not establish an integrated solver |
+| Coriolis/turbulence/wall drag (FULL_SWE, one tier, uncoupled) | Kokkos surface path; the kinetic-energy acceptance total and the wall-drag energy ledger are folded on the host in the CPU order |
 | Surface pollutants, water age, temperature | Built-in CPU; the Kokkos surface solver rejects transport rows |
 | Coupled 2D groundwater and its canonical state | Built-in CPU surface/subsurface ownership |
 | CLOSED_FORM raw groundwater recharge | Optional explicitly requested Kokkos OpenMP operator; water stores, receipts, quality and heat remain host-owned |

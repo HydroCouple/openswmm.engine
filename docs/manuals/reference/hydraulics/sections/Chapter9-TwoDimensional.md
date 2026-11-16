@@ -2818,14 +2818,19 @@ the OpenMP plugin all three reproduce the CPU marcher's depths, heads,
 face fluxes and (under `FULL_SWE`) cell velocities bit for bit; a device
 backend agrees to its platform's rounding. Under `FULL_SWE` the front
 rebuild's tier pull-down (§9.5.7) is an edge-ordered sweep, so the
-plugin runs it on the host at each rebuild. A model that carries species,
+plugin runs it on the host at each rebuild. The optional momentum
+physics (Coriolis, eddy-viscosity mixing, wall drag) runs on the plugin
+as well: the face stresses are gathered per cell in face order, the few
+corner cells that borrow a neighbor's gradient stencil are processed in
+order on one thread, and the kinetic-energy total that accepts or rejects
+a mixing sub-step is summed on the host in cell order, so each decision
+matches the CPU marcher's. A model that carries species,
 age or temperature rows is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
 served by the CPU marcher. There is no silent physics substitution. The
-same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, the optional
-momentum physics, coupled groundwater and
-porous heat. The run notice names each missing capability, and such a
+same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, coupled
+groundwater and porous heat. The run notice names each missing capability, and such a
 model loads no plugin at all.
 
 ### 9.11.2 Retired keys
@@ -2865,7 +2870,7 @@ behaviour it once configured is now described.
   momentum-dominated contractions fall outside the local-inertial
   model's validity rather than merely being under-resolved in it. §9.10
   quantifies this; `MOMENTUM_EQUATION FULL_SWE` (§9.2.2) restores the
-  term, at the cost of a half-Courant step and CPU-only execution.
+  term, at the cost of a half-Courant step.
 - **Infiltration on the mesh is a hydrology process, not a hydraulic
   one.** The face laws of this chapter know nothing of the soil; what
   leaves the surface downward, and where it goes, is set by the
@@ -2896,8 +2901,8 @@ behaviour it once configured is now described.
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
 - **The Kokkos backends serve hydraulics without transport.**
-  All three closures, `FULL_SWE` without the optional momentum physics;
-  everything else runs on the CPU marcher (§9.11.1).
+  All three closures, with the optional momentum physics; transport,
+  coupled groundwater and porous heat run on the CPU marcher (§9.11.1).
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.

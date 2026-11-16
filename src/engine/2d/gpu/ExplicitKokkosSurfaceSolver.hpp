@@ -259,6 +259,17 @@ private:
     DView d_arm_x_, d_arm_y_, d_slot_mx_, d_slot_my_;
     DView d_rk_v0_, d_rk_qx0_, d_rk_qy0_, d_rk_inf0_, d_rk_cpl0_, d_rk_evap0_;
     DView d_rk_bc_accum0_, d_rk_bc_in0_, d_rk_bc_out0_, d_rk_bc_req0_, d_rk_ex0_, d_rk_drawn0_;
+    // Optional momentum physics (Coriolis, turbulence, wall drag). Stress work arrays, the
+    // least-squares stencil of each cell (five entries), the cells whose stencil must be
+    // borrowed from a neighbor, each cell's edges in ascending edge order, the wall-drag slots
+    // grouped by cell, and the state held for the boundary edges of one cell firing.
+    DView d_ph_rx_, d_ph_ry_, d_ph_sx_, d_ph_sy_, d_ph_tx_, d_ph_ty_, d_ph_x0_, d_ph_y0_;
+    DView d_ph_oldx_, d_ph_oldy_, d_ph_visc_, d_ph_bx_, d_ph_by_, d_ph_term_, d_ph_walld_;
+    DView d_ph_etx_, d_ph_ety_, d_ph_ebx_, d_ph_eby_, d_ph_stgx_, d_ph_stgy_;
+    IView d_ph_conn_, d_ph_stid_, d_ph_stn_, d_ph_single_, d_ph_sedge_;
+    IView d_wd_slot_, d_wd_group_;
+    DView d_wd_cw_, d_wd_removed_;
+    DView d_held_vol_, d_held_qx_, d_held_qy_;
     DView d_dw_slope_; ///< largest face |Δη|/Δx per cell (DIFFUSIVE_WAVE step bound)
 
     // ---- device state -----------------------------------------------------
@@ -336,6 +347,11 @@ private:
     bool has_quads_ = false; ///< the mesh holds at least one quadrilateral cell
     bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE
     bool second_order_ = false; ///< RECONSTRUCTION_ORDER 2 (MUSCL faces, SSP-RK2 step)
+    bool physics_ = false;      ///< Coriolis, turbulence or wall drag is enabled
+    int n_wall_drag_ = 0, n_wall_groups_ = 0;
+    double wall_drag_energy_ = 0.0; ///< kinetic energy removed by wall drag, per unit density
+    double ph_last_limit_ = 0.0;    ///< last diffusion step bound, seconds
+    unsigned long long ph_substeps_ = 0, ph_retries_ = 0;
     bool muscl_ = false;        ///< second order with the MUSCL reconstruction enabled
     bool front_rebuild_ = false;              ///< widened halo and breach-triggered rebuild
     bool front_breach_ = false;               ///< a wetting front reached the halo's outer ring
@@ -470,6 +486,39 @@ public:
      * and counts two steps.
      */
     void runRk2Step(double dt);
+    /**
+     * @brief One globally stepped interval with the optional momentum physics split around it.
+     * @param[in] limit Largest admissible interval, seconds.
+     * @return The interval taken, at most @p limit.
+     * @throws std::runtime_error A coupled source owner is present, or no interval satisfies the
+     * wave CFL after the first physics half.
+     * @note Mirrors ExplicitInertialSolver::runMomentumStep.
+     */
+    double runMomentumStep(double limit);
+    /// Wall drag, half a rotation, turbulent mixing, half a rotation, wall drag over @p seconds.
+    void applyMomentumPhysics(double seconds);
+    /// Rotate every cell's momentum by @p angle radians (Coriolis).
+    void physicsRotate(double angle);
+    /// Quadratic wall drag over @p seconds; returns the kinetic energy removed per unit density.
+    double physicsWallDrag(double seconds);
+    /**
+     * @brief Eddy-viscosity stress divergence of a momentum field and its diffusion step bound.
+     * @param[in] qx X unit discharge per cell.
+     * @param[in] qy Y unit discharge per cell.
+     * @param[out] rx X momentum tendency per cell.
+     * @param[out] ry Y momentum tendency per cell.
+     * @param[in] cs Smagorinsky coefficient, or zero.
+     * @param[in] background Background eddy viscosity, m²/s.
+     * @param[in] depth_coefficient Depth mixing-length coefficient, or zero.
+     * @return Diffusion step bound, seconds (infinite when nothing mixes).
+     * @note Mirrors MomentumPhysics2D::evaluate, keeping its summation orders.
+     */
+    double physicsEvaluate(const DView& qx, const DView& qy, const DView& rx, const DView& ry,
+                           double cs, double background, double depth_coefficient);
+    /// Heun sub-steps of turbulent mixing over @p seconds (MomentumPhysics2D::advance).
+    void physicsAdvance(double cs, double seconds, double background, double depth_coefficient);
+    /// Kinetic energy per unit density of a momentum field, summed in cell order on the host.
+    double physicsEnergy(const DView& qx, const DView& qy);
     /**
      * @brief Refresh each active cell's largest face surface slope for the DIFFUSIVE_WAVE step
      * bound.
