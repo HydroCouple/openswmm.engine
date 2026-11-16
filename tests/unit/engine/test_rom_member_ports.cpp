@@ -110,7 +110,32 @@ int addPond(PortGraph& g, int mh, double a, double c, double h_mh, double d_mh, 
     return pn;
 }
 
-RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false) {
+// One-way structure ports with the engine's O-9 laws (SWMMEngine.cpp): a depth-rated
+// pump / structure table through P::anchoredRatedFlow (a rating T(y) = cap·max(d* + y, 0),
+// flow >= 0), and the floored fallback line max(q* + d·z_up, 0) for a structure whose
+// table cannot be built. Both are nondecreasing in z_up and exact at z = 0.
+PortGraph::Port ratedOneWayPort(int up, int dn, double cap, double d_star, double q_star) {
+    PortGraph::Port p;
+    p.up = up; p.dn = dn;
+    const double T0 = cap * std::max(d_star, 0.0) * P::ramp(d_star);
+    p.dq = [=](int, double zu, double) {
+        if (zu == 0.0) return 0.0;
+        const double Ty = cap * std::max(d_star + zu, 0.0) * P::ramp(d_star + zu);
+        return P::anchoredRatedFlow(Ty, T0, q_star, d_star, zu) - q_star;
+    };
+    return p;
+}
+PortGraph::Port flooredOneWayLine(int up, int dn, double q_star, double d, double d_star) {
+    PortGraph::Port p;
+    p.up = up; p.dn = dn;
+    p.dq = [=](int, double zu, double zd) {
+        if (zu == 0.0 && zd == 0.0) return 0.0;
+        return P::flooredFlow(std::max(q_star + d * zu, 0.0), P::dryFactor(d_star, zu), 1.0) - q_star;
+    };
+    return p;
+}
+
+RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false, bool one_way = false) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
     RandomGraph r;
     PortGraph& g = r.g;
@@ -152,6 +177,17 @@ RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false) {
     g.ports.push_back(weirPort(n - 1, -1, 2.0, 0.3));      // outfall
     FlowEdge out; out.up = n / 2; out.dn = -1; out.conduit = false; out.d = 0.5;
     g.edges.push_back(out);
+    if (one_way) {
+        // O-9: pumps and structures as floored one-way ports (rated table or floored line).
+        for (int k = 0; k < n / 2; ++k) {
+            const int a = static_cast<int>(U(rng) * (n - 1)), c = a + 1 + static_cast<int>(U(rng) * (n - 1 - a));
+            const double d_star = U(rng) < 0.25 ? 0.0 : 0.1 + U(rng);
+            const double cap = 0.5 + 3.0 * U(rng);
+            const double q_star = std::min(cap * d_star, cap) * U(rng);
+            if (U(rng) < 0.5) g.ports.push_back(ratedOneWayPort(a, c, cap, d_star, q_star));
+            else g.ports.push_back(flooredOneWayLine(a, c, q_star + 0.2 * U(rng), 0.5 + 4.0 * U(rng), d_star));
+        }
+    }
     if (ponds) {
         // About a quarter of the network nodes are coupled manholes with a street
         // pond: manhole above, near or below the street; pond wet or dry.
@@ -410,6 +446,151 @@ TEST(PortGraph, PortGraphIsL1Contractive) {
         worst = std::max(worst, rel);
     }
     std::printf("[PH-ports] l1 contraction: worst lhs/rhs %.4f over 80 random port graphs\n", worst);
+}
+
+// ---------------------------------------------------------------------------
+// O-9: one-way structures and pumps are floored ports, never plane lines
+// ---------------------------------------------------------------------------
+
+namespace {
+struct WetWell {
+    PortGraph g;
+    std::size_t orifice_port = 0, pump_port = 0;
+};
+// A wet well W (store, area 12 ft^2, main run 0.8 ft deep) drained by a side orifice to a
+// lateral L (40 ft^2, which drains to an outfall through its own conduit) and by a pump to
+// the outfall. Main run: orifice 0.5 cfs, pump 1.0 cfs, steady inflow 1.5 cfs.
+// as_port: the orifice and the pump are rated ports; otherwise the plane lines q* + d·z_up
+// (the pre-O-9 behaviour of a structure with no unknown end), booked as plane edges.
+WetWell makeWetWell(bool as_port) {
+    WetWell w;
+    PortGraph& g = w.g;
+    g.resize(2);
+    g.dt = 5.0;
+    g.S = {12.0, 40.0};
+    g.store_of[0] = 0;
+    PortGraph::Store st;
+    st.dV = [](double z, double* a) { if (a) *a = 12.0; return 12.0 * z; };
+    g.stores.push_back(st);
+    FlowEdge out; out.up = 1; out.dn = -1; out.ju = 2.0; out.jd = 0.0; out.conduit = true; g.edges.push_back(out);
+    const double d_star = 0.8;
+    if (as_port) {
+        w.orifice_port = g.ports.size();
+        g.ports.push_back(ratedOneWayPort(0, 1, 3.0, d_star, 0.5));
+        w.pump_port = g.ports.size();
+        g.ports.push_back(ratedOneWayPort(0, -1, 2.5, d_star, 1.0));
+    } else {
+        FlowEdge o; o.up = 0; o.dn = 1; o.conduit = false; o.d = 3.0; g.edges.push_back(o);
+        FlowEdge p; p.up = 0; p.dn = -1; p.conduit = false; p.d = 2.5; g.edges.push_back(p);
+    }
+    // The member's negative extra inflow at the well is a sink limited by its water (as in the engine).
+    PortGraph::Port sink;
+    sink.up = 0; sink.dn = -1;
+    sink.dq = [d_star](int, double zu, double) { return 4.0 * (P::dryFactor(d_star, zu) - 1.0); };
+    g.ports.push_back(sink);
+    g.dV_prev.assign(1, 0.0);
+    return w;
+}
+}  // namespace
+
+TEST(OneWayPorts, WetWellOutletsNeverRunBackwardsAndNeverSinkTheLateral) {
+    // A member that loses 4 cfs of inflow at W (b = -4 cfs, a sink limited by its water) while the
+    // main run keeps its structures running: its water at W falls to the invert.
+    // As ports the orifice's flow is q* + dq >= 0 and the pump's too, so the lateral L loses
+    // at most the orifice's q* per step (the orifice shuts) and W stops at its floor.
+    // As plane lines (mutation) the orifice runs backwards once d·|z_W| > q*, pulling water
+    // out of L, and W has no floor at all.
+    const double dt = 5.0, S_L = 40.0, q_or = 0.5, q_pump = 1.0;
+    for (bool as_port : {true, false}) {
+        WetWell w = makeWetWell(as_port);
+        PortGraph& g = w.g;
+        g.b = {-4.0, 0.0};
+        std::vector<double> z = {0.0, 0.0};
+        double zL_min = 0.0, zL_prev = 0.0, worst_step_drop = 0.0, min_or = q_or, min_pump = q_pump;
+        for (int step = 0; step < 40; ++step) {
+            g.z_prev = z;
+            g.dV_prev[0] = g.volume(0, z[0], nullptr);
+            ASSERT_TRUE(g.solve(z)) << "step " << step;
+            zL_min = std::min(zL_min, z[1]);
+            worst_step_drop = std::max(worst_step_drop, zL_prev - z[1]);
+            zL_prev = z[1];
+            if (as_port) {
+                min_or = std::min(min_or, q_or + g.portVolume(w.orifice_port, z) / dt);
+                min_pump = std::min(min_pump, q_pump + g.portVolume(w.pump_port, z) / dt);
+            } else {
+                min_or = std::min(min_or, q_or + 3.0 * z[0]);
+                min_pump = std::min(min_pump, q_pump + 2.5 * z[0]);
+            }
+        }
+        std::printf("[PH-ports] O-9 wet well %s: lateral min z %.3f ft, worst one-step drop %.4f ft (bound %.4f), min orifice flow %.3f cfs, min pump flow %.3f cfs\n",
+                    as_port ? "ports" : "plane lines", zL_min, worst_step_drop, dt * q_or / S_L, min_or, min_pump);
+        if (as_port) {
+            EXPECT_GE(min_or, -1e-9);
+            EXPECT_GE(min_pump, -1e-9);
+            // L can lose only what the orifice carried, per step (its own outlet only slows that)
+            EXPECT_LE(worst_step_drop, dt * q_or / S_L + 1e-9);
+            // and W stops at its floor: the pump and the orifice shut as the well empties
+            EXPECT_GE(0.8 + z[0], -P::kDeltaDry - 1e-9);
+        } else {
+            EXPECT_LT(min_or, -1.0) << "the plane line should run backwards";
+            EXPECT_LT(zL_min, -5.0 * dt * q_or / S_L) << "and sink the lateral";
+        }
+    }
+}
+
+TEST(OneWayPorts, WetWellConservesWaterWithFlooredOneWayPorts) {
+    // Σ dV = dt·(sources − water leaving the graph), booked once per port (the orifice moves water W -> L).
+    WetWell w = makeWetWell(true);
+    PortGraph& g = w.g;
+    for (double b : {-1.5, -0.4, 0.0, 0.7}) {
+        g.b = {b, 0.1};
+        std::vector<double> z = {0.0, 0.0};
+        for (int step = 0; step < 6; ++step) {
+            g.z_prev = z;
+            g.dV_prev[0] = g.volume(0, z[0], nullptr);
+            std::vector<double> z1 = z;
+            ASSERT_TRUE(g.solve(z1));
+            double dv = 0.0;
+            for (int t = 0; t < 2; ++t) dv += g.volume(t, z1[static_cast<std::size_t>(t)], nullptr) - g.volumePrev(t);
+            EXPECT_NEAR(dv, g.dt * (g.b[0] + g.b[1] - g.boundaryOutflow(z1)), 1e-9 * (1.0 + std::fabs(dv)));
+            z = z1;
+        }
+    }
+}
+
+TEST(OneWayPorts, RandomGraphsWithFlooredOneWayPortsAreOrderPreservingAndContractive) {
+    std::mt19937 rng(91);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    double worst_rel = 0.0;
+    for (int trial = 0; trial < 60; ++trial) {
+        const int n = 8 + static_cast<int>(U(rng) * 30);
+        RandomGraph r = makeRandomGraph(rng, n, false, true);
+        PortGraph& g = r.g;
+        // order preservation
+        std::vector<double> b(n), bp(n), zp(n);
+        for (int t = 0; t < n; ++t) {
+            b[static_cast<std::size_t>(t)] = 4.0 * (U(rng) - 0.5);
+            bp[static_cast<std::size_t>(t)] = b[static_cast<std::size_t>(t)] + 3.0 * U(rng) * (U(rng) < 0.5);
+            zp[static_cast<std::size_t>(t)] = U(rng) - 0.5;
+        }
+        for (int t = 0; t < n; ++t)
+            if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+                g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
+        g.z_prev = zp;
+        g.b = b;
+        std::vector<double> z = zp;
+        ASSERT_TRUE(g.solve(z)) << "trial " << trial;
+        g.b = bp;
+        std::vector<double> z2 = zp;
+        ASSERT_TRUE(g.solve(z2)) << "trial " << trial;
+        for (int t = 0; t < n; ++t) EXPECT_LE(z[static_cast<std::size_t>(t)], z2[static_cast<std::size_t>(t)] + 1e-9) << "trial " << trial << " node " << t;
+        // l1 contraction
+        double rel = 0.0;
+        const auto [lhs, rhs] = contraction(g, rng, &rel);
+        EXPECT_LE(lhs, rhs * (1.0 + 1e-9)) << "trial " << trial;
+        worst_rel = std::max(worst_rel, rel);
+    }
+    std::printf("[PH-ports] O-9 one-way floored ports: l1 contraction worst lhs/rhs %.4f over 60 random graphs\n", worst_rel);
 }
 
 // ---------------------------------------------------------------------------

@@ -8148,6 +8148,9 @@ int SWMMEngine::end() noexcept {
                     "members already below invert when admitted %ld\n",
                     rom1d_cl_added_, rom1d_pg_below_all_, rom1d_pg_min_all_, rom1d_pg_admit_below_);
         byNode("any node below invert", rom1d_pg_below_all_node_);
+        std::printf("[PH-ports] of those, below invert only through the per-member correction (shared-plane level >= -0.05 ft): %ld member-steps, deepest %.3f ft\n",
+                    rom1d_pg_below_corr_, rom1d_pg_min_corr_);
+        byNode("correction-only below invert", rom1d_pg_below_corr_node_);
         byNode("admitted below invert", rom1d_pg_admit_below_node_);
         for (int j : rom1d_pg_envelope_links_) std::printf("[PH-ports] monotone envelope on link %s\n", ctx_.link_names.name_of(j).c_str());
         std::fflush(stdout);
@@ -12942,6 +12945,35 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         else if (t == LinkType::PUMP) pumpPort(ed.link);
         else structurePort(ed.link, fullOf(ed.up));
     }
+    // One-way structures and pumps (O-9): a weir, orifice, outlet or pump
+    // passes water only in its own direction, and its plane line
+    // q* + d·z_up runs backwards once a member's deficit exceeds q*/d: the
+    // structure would pull water out of the node it drains into (Bellinge
+    // G80F13P's pump behind the outlet from G80F310). So every one with an end
+    // that is already an unknown of the member graph (an admitted node, or the
+    // end of a port above) is a port itself, with the monotone rating floored at
+    // zero. The loop repeats while it adds ports (each makes its far end an
+    // unknown); a link is a port or a plane edge, never both.
+    std::vector<char> nclass(un, 0);
+    auto markEnds = [&]() {
+        for (std::size_t a = 0; a < un; ++a)
+            if (isA(static_cast<int>(a))) nclass[a] = 1;
+        for (const auto& pt : g.ports) {
+            if (pt.up >= 0 && pt.up < na) nclass[static_cast<std::size_t>(pt.up)] = 1;
+            if (pt.dn >= 0 && pt.dn < na) nclass[static_cast<std::size_t>(pt.dn)] = 1;
+        }
+    };
+    auto isUnknown = [&](int a) { return a >= 0 && a < na && nclass[static_cast<std::size_t>(a)]; };
+    for (bool grew = true; grew;) {
+        grew = false;
+        markEnds();
+        for (const auto& ed : rom1d_add_edges_) {
+            if (ed.link < 0 || is_port[static_cast<std::size_t>(ed.link)]) continue;
+            const LinkType t = links.type[static_cast<std::size_t>(ed.link)];
+            if (t == LinkType::CONDUIT || !(isUnknown(ed.up) || isUnknown(ed.dn))) continue;
+            grew |= (t == LinkType::PUMP) ? pumpPort(ed.link) : structurePort(ed.link, fullOf(ed.up));
+        }
+    }
     // Structures and pumps the main run leaves without an edge (closed), so a
     // member that rises over them can still spill (Bellinge G71F68Y, 2026-10-24).
     for (int j = 0; j < ctx_.n_links(); ++j) {
@@ -12970,12 +13002,14 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         const double q_star = ed.conduit ? ed.q : std::fabs(links.flow[static_cast<std::size_t>(ed.link)]);
         const double ju = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
         const double dU = depthAt(ed.up), dD = depthAt(ed.dn);
+        const bool one_way = !ed.conduit;   // structure, pump or dry pipe the tables above did not take: never backwards (O-9)
         PortGraph::Port p;
         p.up = ed.up;
         p.dn = ed.dn;
         p.dq = [=](int, double zu, double zd) {
             if (zu == 0.0 && zd == 0.0) return 0.0;
-            const double qm = q_star + ju * zu + jd * zd;
+            double qm = q_star + ju * zu + jd * zd;
+            if (one_way) qm = std::max(qm, 0.0);
             return PP::flooredFlow(qm, gu ? PP::dryFactor(dU, zu) : 1.0, gd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
         };
         g.ports.push_back(std::move(p));
@@ -13142,6 +13176,13 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             c[t] = z[t] - u[i * un + t];
             // Diagnostic (O-8): the member's depth at every node, store or linear.
             const double dm = depthAt(static_cast<int>(t)) + z[t];
+            if (dm < -0.05 && depthAt(static_cast<int>(t)) + u[i * un + t] >= -0.05) {
+                // The shared plane left this member above the invert; the solve put it below (O-9).
+                ++rom1d_pg_below_corr_;
+                rom1d_pg_min_corr_ = std::min(rom1d_pg_min_corr_, dm);
+                if (rom1d_pg_below_corr_node_.size() != un) rom1d_pg_below_corr_node_.assign(un, 0);
+                ++rom1d_pg_below_corr_node_[t];
+            }
             if (dm < -0.05) {
                 ++rom1d_pg_below_all_;
                 rom1d_pg_min_all_ = std::min(rom1d_pg_min_all_, dm);

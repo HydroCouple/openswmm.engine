@@ -862,6 +862,9 @@ private:
     long rom1d_pg_below_all_ = 0;                         ///< member-steps ANY active node ended > 0.05 ft below its invert (O-8 diagnostic)
     std::vector<long> rom1d_pg_below_all_node_;           ///< the same, per active node
     double rom1d_pg_min_all_ = 0.0;                       ///< deepest member depth below any node's invert (ft, <= 0)
+    long rom1d_pg_below_corr_ = 0;                        ///< of those, member-steps whose shared-plane level was still >= -0.05 ft: the per-member solve took them below (O-9)
+    double rom1d_pg_min_corr_ = 0.0;                      ///< deepest such member depth (ft, <= 0)
+    std::vector<long> rom1d_pg_below_corr_node_;          ///< the same, per active node
     long rom1d_pg_admit_below_ = 0;                       ///< members already > 0.05 ft below the invert when their node was admitted
     std::vector<long> rom1d_pg_admit_below_node_;         ///< the same, per active node
     std::vector<double> rom1d_fs_relay_;   ///< H18: per-link head relay (1 - Froude gate) from the flow response

@@ -400,3 +400,38 @@ cases the current code excludes). Acceptance gates as in the table.
   G72R211, G73R45x remain. G71O020 has a free conduit to G71U02F, so decision (d) leaves it linear, yet it sinks: the reversed
   one-way line from G71F12P (side orifice, kept as q* + d*z_up) out-drains the free path. Rule (d)'s premise does not hold for
   that port; the fix is on the one-way line (treat a ONE_WAY port's far end as floored irrespective of other paths), not on depth.
+- 2026-11-15: O-9 (one-way structures and pumps are floored ports; `stepRom1dStorageMembers`, tests `OneWayPorts.*`, uncommitted).
+  **Law.** A weir, orifice, outlet or pump with an end that is an unknown of the member graph (an admitted node, or the end of a
+  port already made) is a port with the monotone rating floored at zero in its own direction (`flowAtShiftedDepth` table, the (b1)
+  depth-rated pump table, `anchoredRatedFlow`): Q_i = max(0, Q_law), δQ = Q_i − Q* >= −Q*. The promotion repeats while it adds ports
+  (each makes its far end an unknown); a link is a port or a plane edge, never both. A one-way edge whose table cannot be built
+  (pump of another type, non-finite rating) and that still falls to the generic floored line is now floored at zero too
+  (`max(q* + d·z_up, 0)`), where it used to run backwards. **Findings that change the premise of the task** (measured, Release 1D smoke
+  to 07:00, 4 threads): (1) every structure that touches an ADMITTED node was already a port; the literal step 1 changes one link on
+  Bellinge, the pump G80F13Pp1 behind the outlet G80F310 -> G80F13P (G80F13P leaves the any-node list). (2) G71F12P, G70F11P,
+  G80F13P and G60F60Y are not admitted: the admission seeds are STORAGE nodes with a weir/orifice/outlet outlet, a wet well that is a
+  junction behind pumps is never a seed, and the closure only reaches nodes next to an admitted one (nearest admitted node by hops:
+  G71F12P 2 via the pumps to G71F68Y, G71O020 3, G70F11P 12, G60F60Y 50). Their pumps and the side orifice G71F12Pw1 -> G71O020 are
+  L-L plane lines (13 of 20 non-conduit plane edges at step 3000 have no admitted end, 7 have). (3) **The 1.99 M "linear node below
+  invert" member-steps are 90 % the shared plane's own level**: at the deep nodes u_i (the additive planes' κ_i·Ψ at member 9/39,
+  rain deficit) is -50 ft before the member solve (G72F800 z -55.97 u -55.89; G73F113 -51.59 / -51.33) and is the same with per-member
+  OFF (the reconstruction clamps it at the invert). New diagnostic: member-steps below the invert only through the per-member
+  correction (plane level >= -0.05 ft): O-8b code 183,130 (deepest -160.5 ft: G72R211 13,169, G72R644 7,468, G72R210, G72R190,
+  G72R180...), O-9 191,174 (same deepest; top-40 nodes 170,320 -> 170,716). So the any-node count cannot be made to fall by orders of
+  magnitude by a port law; that target is not met. **Gates (Release)**: member_ports 37 (34 + 3), port_graph_replay 2,
+  additive_channel 12, spectral_rom1d 101, storage gate A 0.889/0.958, B 0.727/0.960, R 0.952/0.880 (unchanged). **Smoke**
+  (O-8b -> O-9): wall 59 -> 48 s, k_max 42 -> 43, Newton 298,626 -> 298,801, Jacobi fallbacks 1 -> 0, not converged 0 -> 0, admitted
+  27 -> 27, store line 95 (G80F11B 90, G72R33Bb 5, deepest -0.123 ft) unchanged, any-node 1,991,191 -> 1,982,368 (deepest -2044.5 ft,
+  G70F11P 21,466 and G71O020 18,814 unchanged). **Tried and not adopted (each measured, patch in the session scratchpad)**:
+  (a) promoting L-L structure/pump edges to ports without admitting their drained node: the node is an unknown with no floor, runs
+  away (any-node deepest -22,111 ft, correction-only -10,380 ft: G71F12P z -22.6 with u -1.7, G60F60Y -49): the old plane line was a
+  phantom source that held it up; (b) (a) plus admitting every node a structure or pump drains (28 more admitted, closure +17 more,
+  k 93, wall 86 s, 1 not converged): G71F12P/G70F11P/G80F13P leave the list but the store G70F11P goes to -2.61 ft (797 member-steps)
+  and correction-only rises to 287,692. Cause of the store sink, traced at G70F11P t=21375: the main run is a dry well (d* = 0) whose
+  inflow the dynamic wave has not stored yet (V* does not rise with dt·net*), so the member's inflow deficit relative to that flow
+  (-q0·dt on two parallel pipes) is booked against zero main-run water and gives negative member water; the storage accounting
+  (`store_scale`) shares a main-run loss only when the store holds water (Wold > δ_dry·A). **Open (owner)**: seeding admission from
+  one-way structures/pumps on junctions needs that empty-store accounting fixed first. **Remaining sunk nodes after O-9 (correction
+  only, with nearest admitted node)**: G72R211 (G72R410, 1 hop, free conduit into the admitted store), G72F020 and G72F030 (G72K020,
+  1-2 hops; the line to K020 carries -28 cfs reversed), G72R210/190/180/170/165, G72R644 (G72R643), G71F147, G71F043/G71F044 (G71F68Y,
+  4 hops through pumps); all behind conduit lines, not structures: a second mechanism, not touched here.
