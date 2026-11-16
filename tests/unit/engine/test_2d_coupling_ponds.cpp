@@ -262,8 +262,9 @@ TEST(CouplingPonds, EqualisationReducesDrainSpillReversals) {
 // CPU marcher. Skipped where the plugin is not built or not found (set
 // OPENSWMM_GPU_PLUGIN_PATH to the plugin directory).
 TEST(CouplingPonds, KokkosCapMatchesCpu) {
-    const std::string opts =
-        "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
+    // The plugin serves only local inertial, no longer the default.
+    const std::string opts = "MOMENTUM_EQUATION LOCAL_INERTIAL\nCOUPLING_LAW WEIR_ORIFICE\n"
+                             "COUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     const PondRun cpu = run("backend_cpu", opts);
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "omp");

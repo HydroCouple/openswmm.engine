@@ -421,7 +421,9 @@ TEST(WeirOrificeCoupling, OptionsRoundTripThroughInp) {
 // round-off. Skipped where the plugin is not built or not found (set
 // OPENSWMM_GPU_PLUGIN_PATH to the plugin directory).
 TEST(WeirOrificeCoupling, KokkosBackendMatchesCpu) {
-    const std::string opts = "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_HEAD STENCIL_WET_MEAN\n"
+    // The plugin serves only local inertial, no longer the default.
+    const std::string opts = "MOMENTUM_EQUATION LOCAL_INERTIAL\n"
+                             "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_HEAD STENCIL_WET_MEAN\n"
                              "COUPLING_POND_MODE TRACKING\nCOUPLING_EQUALIZE YES\n";
     plattest::setEnvVar("OPENSWMM_2D_BACKEND", "cpu");
     LiveRun cpu = run("wo_backend_cpu", opts, "J1 MANHOLE D=0.6\n");
