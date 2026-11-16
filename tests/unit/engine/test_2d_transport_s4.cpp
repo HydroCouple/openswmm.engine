@@ -452,7 +452,7 @@ TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
     ASSERT_TRUE(r.ok);
     bool said = false;
     for (const auto& w : r.eng->surfaceRouter2D().threadWarnings())
-        if (w.find("does not implement FULL_SWE, transport (FULL_SWE)") != std::string::npos)
+        if (w.find("does not implement transport (FULL_SWE)") != std::string::npos)
             said = true;
     EXPECT_TRUE(said) << "transport on: the notice must name the plugin refusal";
     close(r);
@@ -461,7 +461,7 @@ TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
         runDeck("_s4_kokkos_notr", deck("IGNORE_QUALITY       YES\n", "", "O1", -10.0, 0.5), false);
     ASSERT_TRUE(q.ok);
     for (const auto& w : q.eng->surfaceRouter2D().threadWarnings())
-        EXPECT_EQ(w.find("does not implement FULL_SWE, transport (FULL_SWE)"), std::string::npos)
+        EXPECT_EQ(w.find("does not implement transport (FULL_SWE)"), std::string::npos)
             << "no transport: the refusal must not be claimed";
     close(q);
 }

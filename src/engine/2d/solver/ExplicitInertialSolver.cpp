@@ -4087,156 +4087,38 @@ double ExplicitInertialSolver::boundaryFluxSwe(std::size_t k, int i, double dt_c
     const double nx = mesh_->edge_nx[idx], ny = mesh_->edge_ny[idx]; // outward
     const double eta_i = held ? (*held)[0] : state_->head[i],
                  h_i = held ? (*held)[1] : state_->depth[i];
-    const double z_i = eta_i - h_i;
-    const double dry = opts_->dry_depth;
     const double qx_i = held ? (*held)[2] : qcx_[i], qy_i = held ? (*held)[3] : qcy_[i];
-    double u_n = 0.0, u_t = 0.0;
-    if (h_i > dry) {
-        const double ux = qx_i / h_i, uy = qy_i / h_i;
-        u_n = ux * nx + uy * ny;
-        u_t = -ux * ny + uy * nx;
-    }
-    // Ghost (h_g, u_ng, u_tg) in the outward-normal frame.
-    double h_g = h_i, un_g = u_n, ut_g = u_t, eta_g = eta_i;
-    // A prescribed-discharge boundary imposes its mass flux exactly; the
-    // Riemann solve below then only supplies the momentum flux.
-    bool prescribed_mass = false;
-    double q_prescribed = 0.0; // outward-positive, per metre of edge
-    switch (bt) {
-    case BoundaryType::WALL:
-        un_g = -u_n;
-        break;
-    case BoundaryType::NORMAL_FLOW: {
-        // Manning normal-flow outlet, the same law the local-inertial and
-        // diffusive paths apply (SurfaceFluxCalculator::boundaryEdgeFlux):
-        // per-metre outflow q = h^{5/3}·sqrt(S)/n. Under FULL_SWE this used
-        // to be a bare zero-gradient ghost, i.e. the bed slope the modeller
-        // set on the edge did nothing.
-        // The slope is SIGNED: positive falls away from the domain and
-        // drains it (unchanged), negative falls toward it and feeds it.
-        // A negative slope cannot bootstrap a DRY cell — the law conveys
-        // with the interior depth, and h_i = 0 carries nothing; use a
-        // SPECIFIED_FLOW edge for dry-bed inflow, which reconstructs the
-        // critical depth of its discharge.
-        const double S = state_->boundary->edge_bed_slope[idx];
-        const double n_man = mesh_->mannings_n[i];
-        prescribed_mass = true;
-        if (S != 0.0 && h_i > 0.0 && n_man > 0.0) {
-            const double sgnS = (S > 0.0) ? 1.0 : -1.0;
-            const double h53 = h_i * std::cbrt(h_i * h_i);
-            q_prescribed = sgnS * h53 * std::sqrt(std::fabs(S)) / n_man; // outward +
-            un_g = q_prescribed / h_i;
-            ut_g = u_t;
-        } else {
-            // No slope, no depth, no roughness: the law conveys nothing.
-            // The mirror ghost keeps the momentum consistent with that —
-            // a bare zero-gradient ghost is an ABSORBING boundary and
-            // drained a lake at rest through an inert outlet.
-            q_prescribed = 0.0;
-            un_g = -u_n;
-        }
-        break;
-    }
-    case BoundaryType::SPECIFIED_STAGE: {
-        const double eta_bc = state_->boundary->edge_bc_head[idx];
-        const double c_i = std::sqrt(swe::kGravity * std::max(h_i, 0.0));
-        if (h_i > dry && u_n >= c_i) {
-            // Supercritical OUTFLOW: no characteristic enters the domain,
-            // the prescribed stage cannot act — transmissive ghost.
-            break;
-        }
-        eta_g = eta_bc;
-        h_g = (eta_bc - z_i > 0.0) ? eta_bc - z_i : 0.0;
-        // Subcritical: the outgoing Riemann invariant u_n + 2c fixes the
-        // ghost velocity for the prescribed depth (characteristic
-        // extrapolation), instead of a bare copy of the interior velocity.
-        if (h_i > dry && h_g > 0.0)
-            un_g = u_n + 2.0 * (c_i - std::sqrt(swe::kGravity * h_g));
-        // The invariant needs a characteristic leaving the domain. A
-        // supercritical INFLOW has none, and the extrapolated ghost copied
-        // the interior's inflow speed back so the stream fed itself (85 m³/s
-        // at 12 m/s through a 0.5 m head on the complete 2D example). One
-        // prescribed quantity admits at most a critical inflow at its depth.
-        if (h_g > 0.0)
-            un_g = std::max(un_g, -std::sqrt(swe::kGravity * h_g));
-        break;
-    }
-    case BoundaryType::SPECIFIED_FLOW:
-    case BoundaryType::RATING_CURVE: {
-        // A prescribed discharge is a FLUX boundary: the mass flux is the
-        // prescribed value (imposed below, as the local-inertial law does
-        // in SurfaceFluxCalculator), not whatever a Riemann problem
-        // against a ghost happens to deliver. The ghost still sets the
-        // MOMENTUM flux and keeps the Audusse pressure balance, so its
-        // depth should be the physical boundary depth:
-        //   * dry cell            — critical depth (dry-bed inflow),
-        //   * subcritical inflow  — from the outgoing invariant u + 2c
-        //                           together with q (one characteristic
-        //                           leaves, so depth is NOT free),
-        //   * supercritical inflow / any outflow — the interior depth.
-        const double q_out = state_->boundary->edge_bc_flow[idx]; // outward +
-        if (h_i > dry) {
-            h_g = h_i;
-            if (q_out < 0.0) { // inflow
-                const double c_i = std::sqrt(swe::kGravity * h_i);
-                if (std::fabs(u_n) < c_i) // subcritical
-                    h_g = swe::depthFromInvariantAndDischarge(u_n + 2.0 * c_i, q_out, h_i);
-            }
-            eta_g = z_i + h_g;
-        } else {
-            h_g = swe::criticalDepth(std::fabs(q_out));
-            eta_g = z_i + h_g;
-        }
-        un_g = (h_g > 0.0) ? q_out / h_g : 0.0;
-        ut_g = 0.0;
-        prescribed_mass = true;
-        q_prescribed = q_out;
-        break;
-    }
-    }
-    // Interior = L, ghost = R, normal outward; velocities re-expressed as
-    // (x, y) unit discharges for the shared kernel.
-    const double qxg = h_g * (un_g * nx - ut_g * ny);
-    const double qyg = h_g * (un_g * ny + ut_g * nx);
-    swe::FaceFlux F;
-    double cLx, cLy, cRx, cRy;
-    const bool wet = swe::faceFlux(eta_i, h_i, qx_i, qy_i, eta_g, h_g, qxg, qyg, nx, ny, dry, F,
-                                   cLx, cLy, cRx, cRy);
-    const double conv = mesh_->edge_conveyance[idx];
-    // A prescribed inflow must reach a DRY cell too — faceFlux reports "not
-    // wet" there (both reconstructed depths vanish), and returning 0 would
-    // make a dry-bed inflow boundary inert.
-    if (!wet)
-        return prescribed_mass ? -q_prescribed * conv * L : 0.0;
+    // The ghost state, the Riemann solve and the prescribed-mass rule are
+    // swe::boundaryFlux (SweKernels.hpp), shared with the device marcher.
+    const auto& bd = *state_->boundary;
+    const swe::BoundaryFlux r =
+        swe::boundaryFlux(static_cast<int>(bt), L, nx, ny, eta_i, h_i, qx_i, qy_i,
+                          mesh_->mannings_n[i], bd.edge_bed_slope[idx], bd.edge_bc_head[idx],
+                          bd.edge_bc_flow[idx], mesh_->edge_conveyance[idx], opts_->dry_depth);
+    if (!r.wet)
+        return r.flow;
     const double A = mesh_->tri_area[i];
     // Momentum booked now (the mass is applied by the caller with the v ≥ 0
     // clamp; a clamp rescales the momentum in the same ratio there).
-    const double fmx = -F.mx * conv + cLx, fmy = -F.my * conv + cLy;
     // Remembered so the caller can rescale it in the same ratio when its
     // availability clamp shrinks the mass (the boundary loop is serial).
-    swe_bc_dqx_ = fmx * L * dt_c / A;
-    swe_bc_dqy_ = fmy * L * dt_c / A;
+    swe_bc_dqx_ = r.fmx * L * dt_c / A;
+    swe_bc_dqy_ = r.fmy * L * dt_c / A;
     qcx_[i] += swe_bc_dqx_;
     qcy_[i] += swe_bc_dqy_;
-    // Mass: the prescribed discharge verbatim (the local-inertial law's
-    // contract, SurfaceFluxCalculator::boundaryEdgeFlux) — the Riemann
-    // solve's own mass flux is a wave-speed-weighted BLEND of the interior
-    // and prescribed states, which under-delivered the SWASHES bump inflows
-    // by 7-21 % and reversed a supercritical inlet outright.
-    if (prescribed_mass)
-        return -q_prescribed * conv * L;
-    return -F.mass * conv * L; // inflow-positive m³/s
+    return r.flow;
 }
 
-void ExplicitInertialSolver::publishMomentumVelocity() {
+bool ExplicitInertialSolver::publishMomentumVelocity() {
     if (!initialized_ || mode_ != Momentum2D::FULL_SWE)
-        return;
+        return false;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < mesh_->n_cells(); ++i) {
         const double h = state_->depth[i];
         state_->face_vx[i] = h > opts_->dry_depth ? -qcx_[i] / h : 0;
         state_->face_vy[i] = h > opts_->dry_depth ? -qcy_[i] / h : 0;
     }
+    return true;
 }
 
 void ExplicitInertialSolver::applyMomentumPhysics(double seconds) {

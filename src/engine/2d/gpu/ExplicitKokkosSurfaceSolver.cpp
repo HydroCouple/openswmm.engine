@@ -46,6 +46,7 @@
 #include "../coupling/PondModel.hpp"
 #include "../solver/InertialKernels.hpp"
 #include "../solver/DiffusiveKernels.hpp"
+#include "../solver/SweKernels.hpp"
 #include "../solver/SurfaceCapabilities.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -55,6 +56,8 @@ namespace {
 
 /// Active-set / tier rebuild cadence in macro cycles (== serial marcher).
 constexpr int kRebuildEveryCycles = 4;
+/// Halo depth (rings) under FRONT_REBUILD; == the serial marcher's constant.
+constexpr int kFrontHaloRings = 5;
 
 // ---------------------------------------------------------------------------
 // Host→device mirroring helpers.
@@ -265,6 +268,50 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     d_n2_ = devCopy("n2_face", edges_.n2_face);
     d_lchar_ = devCopy("cell_lchar", edges_.cell_lchar);
     diffusive_ = opts.momentum == Momentum2D::DIFFUSIVE_WAVE;
+    swe_ = opts.momentum == Momentum2D::FULL_SWE;
+    if (swe_ && opts.cfl_number > 0.5) {
+        // Positivity bound of the first-order Godunov update (== serial marcher).
+        if (opts.cfl_number != SolverOptions2D{}.cfl_number)
+            std::fprintf(stderr,
+                         "[openswmm 2D] MOMENTUM_EQUATION FULL_SWE: CFL_NUMBER %.3g "
+                         "reduced to 0.5 (positivity bound of the Godunov update).\n",
+                         opts.cfl_number);
+        opts.cfl_number = 0.5;
+    }
+    // FRONT_REBUILD AUTO is on for FULL_SWE only (== serial marcher).
+    front_rebuild_ = (opts.front_rebuild < 0) ? swe_ : (opts.front_rebuild != 0);
+    front_breach_ = false;
+    d_frontier_ = IView("frontier", front_rebuild_ ? nt : 0);
+    d_fmxL_ = DView("fmxL", swe_ ? ne : 0);
+    d_fmxR_ = DView("fmxR", swe_ ? ne : 0);
+    d_fmyL_ = DView("fmyL", swe_ ? ne : 0);
+    d_fmyR_ = DView("fmyR", swe_ ? ne : 0);
+    d_lpos_ = swe_ ? devCopy("cell_lpos", edges_.cell_lpos) : DView();
+    d_slot_nx_ = swe_ ? devCopy("slot_nx", mesh.edge_nx) : DView();
+    d_slot_ny_ = swe_ ? devCopy("slot_ny", mesh.edge_ny) : DView();
+    {
+        // WALL boundary slots per cell, CSR, ascending slot order (== serial marcher).
+        std::vector<int> wall_ptr(1, 0), wall_slot;
+        if (swe_) {
+            wall_ptr.reserve(static_cast<std::size_t>(nt) + 1);
+            for (int i = 0; i < nt; ++i) {
+                const int nvc = mesh.cell_vertex_count(i);
+                for (int k2 = 0; k2 < nvc; ++k2) {
+                    if (mesh.cell_neighbour(i, k2) >= 0)
+                        continue;
+                    const int slot = MeshData::slot(i, k2);
+                    if (state.boundary &&
+                        static_cast<BoundaryType>(state.boundary->edge_bc_type[slot]) !=
+                            BoundaryType::WALL)
+                        continue;
+                    wall_slot.push_back(slot);
+                }
+                wall_ptr.push_back(static_cast<int>(wall_slot.size()));
+            }
+        }
+        d_wall_ptr_ = devCopy("wall_ptr", wall_ptr);
+        d_wall_slot_ = devCopy("wall_slot", wall_slot);
+    }
     d_n_face_ = diffusive_ ? devCopy("n_face", edges_.n_face) : DView();
     d_dw_slope_ = DView("dw_slope", diffusive_ ? nt : 0);
     d_cell_ptr_ = devCopy("cell_ptr", edges_.cell_ptr);
@@ -284,9 +331,11 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     d_faccL_ = DView("faccL", ne);
     d_faccR_ = DView("faccR", ne);
     // Perot vectors serve the θ-blend AND the convective term (== serial).
-    have_perot_ = (opts.theta < 1.0 || opts.advection);
-    d_qcx_ = DView("qcx", have_perot_ ? nt : 0);
-    d_qcy_ = DView("qcy", have_perot_ ? nt : 0);
+    // FULL_SWE uses the same arrays as its prognostic cell momentum and has
+    // no Perot reconstruction.
+    have_perot_ = !swe_ && (opts.theta < 1.0 || opts.advection);
+    d_qcx_ = DView("qcx", (have_perot_ || swe_) ? nt : 0);
+    d_qcy_ = DView("qcy", (have_perot_ || swe_) ? nt : 0);
     d_rain_ = DView("rain", nt);
     d_coup_ = DView("coup", nt);
     d_evap_ = DView("evap", nt);
@@ -521,7 +570,16 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         bool any_uv = false;
         for (int i = 0; i < nt && !any_uv; ++i)
             any_uv = mesh.tri_init_u[i] != 0.0 || mesh.tri_init_v[i] != 0.0;
-        if (any_uv) {
+        if (any_uv && swe_) {
+            // Cell momentum seeds directly: q = h·u (nothing on the faces).
+            std::vector<double> cxh(static_cast<std::size_t>(nt)), cyh(cxh.size());
+            for (int i = 0; i < nt; ++i) {
+                cxh[i] = state.depth[i] * mesh.tri_init_u[i];
+                cyh[i] = state.depth[i] * mesh.tri_init_v[i];
+            }
+            devRefresh(d_qcx_, cxh);
+            devRefresh(d_qcy_, cyh);
+        } else if (any_uv) {
             auto hdep = [&](int i) {
                 const double v = std::max(state.volume[i], 0.0);
                 return (mesh.tri_area[i] > 1.0e-30) ? v / mesh.tri_area[i] : 0.0;
@@ -559,6 +617,12 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                 devRefresh(d_qcy_, cyh);
             }
         }
+    }
+    if (swe_) {
+        qcx_host_.assign(static_cast<std::size_t>(nt), 0.0);
+        qcy_host_.assign(static_cast<std::size_t>(nt), 0.0);
+        hostRefresh(qcx_host_, d_qcx_);
+        hostRefresh(qcy_host_, d_qcy_);
     }
     t_last_sync_ = 0.0;
     cycles_since_rebuild_ = 1000;
@@ -603,6 +667,9 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
     auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
+    auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
+    auto qcx = d_qcx_, qcy = d_qcy_;
+    const bool swe = swe_;
     Kokkos::parallel_for(
         "settle", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             double pending = 0.0;
@@ -614,6 +681,30 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
                 } else {
                     pending += faccR(e);
                     faccR(e) = 0.0;
+                }
+            }
+            if (swe) {
+                // Settle the momentum of mass already applied, so a re-tiered
+                // or deactivated cell does not pick it up stale (== serial).
+                double dmx = 0.0, dmy = 0.0;
+                for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                    const int e = edge(p);
+                    if (sign(p) > 0.0) {
+                        dmx += fmxL(e);
+                        fmxL(e) = 0.0;
+                        dmy += fmyL(e);
+                        fmyL(e) = 0.0;
+                    } else {
+                        dmx += fmxR(e);
+                        fmxR(e) = 0.0;
+                        dmy += fmyR(e);
+                        fmyR(e) = 0.0;
+                    }
+                }
+                if (dmx != 0.0 || dmy != 0.0) {
+                    const double A = area(i);
+                    qcx(i) += dmx / A;
+                    qcy(i) += dmy / A;
                 }
             }
             if (pending == 0.0)
@@ -706,6 +797,46 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
                 active(i) = on;
             });
     }
+    h_on_front_ = h_on;
+    if (front_rebuild_) {
+        // A dry-bed front can cross several rings between two macro cycles:
+        // widen the halo (Jacobi rings, == serial marcher) and mark its outer
+        // ring, whose wetting triggers the next rebuild.
+        auto ptr = d_cell_ptr_, edge = d_cell_edge_, left = d_cL_, right = d_cR_;
+        int n_seed = 0;
+        Kokkos::parallel_reduce(
+            "seed_count", Kokkos::RangePolicy<ExecSpace>(0, nt),
+            KOKKOS_LAMBDA(int i, int& n) { n += seed(i); }, n_seed);
+        if (n_seed != 0 && n_seed != nt) {
+            for (int ring = 1; ring < kFrontHaloRings; ++ring) {
+                Kokkos::deep_copy(seed, active);
+                Kokkos::parallel_for(
+                    "halo_ring", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+                        if (seed(i))
+                            return;
+                        for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                            const int e = edge(p), j = left(e) == i ? right(e) : left(e);
+                            if (seed(j)) {
+                                active(i) = 1;
+                                return;
+                            }
+                        }
+                    });
+            }
+        }
+        auto frontier = d_frontier_;
+        Kokkos::parallel_for(
+            "frontier", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+                int f = 0;
+                if (active(i))
+                    for (int p = ptr(i); p < ptr(i + 1) && !f; ++p) {
+                        const int e = edge(p), j = left(e) == i ? right(e) : left(e);
+                        f = active(j) ? 0 : 1;
+                    }
+                frontier(i) = f;
+            });
+        front_breach_ = false;
+    }
 
     // Per-cell CFL dt + exact min-reduce → dt0.
     if (diffusive_)
@@ -713,8 +844,8 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
     auto dtcell = d_dtcell_;
     auto lchar = d_lchar_;
     auto qcx = d_qcx_, qcy = d_qcy_;
-    auto mann = d_mannings_n_, dw_slope = d_dw_slope_;
-    const bool perot = have_perot_, diffusive = diffusive_;
+    auto mann = d_mannings_n_, dw_slope = d_dw_slope_, lpos = d_lpos_;
+    const bool perot = have_perot_, diffusive = diffusive_, swe = swe_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
     const double dt_max = opts_->max_timestep;
@@ -734,6 +865,11 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
                     const double lc = lchar(i);
                     dt = diffusive::cellDiffusiveDt(alpha, lc, h, mann(i), dw_slope(i),
                                                     dh_eps / (lc > 1.0e-9 ? lc : 1.0e-9));
+                } else if (swe) {
+                    // Cell momentum over depth, against the positivity length.
+                    const double speed =
+                        (h > 1.0e-6) ? inertial::qMagnitude(qcx(i), qcy(i)) / h : 0.0;
+                    dt = inertial::cellCflDt(alpha, lpos(i), h, speed);
                 } else {
                     double speed = 0.0;
                     if (perot && h > 1.0e-6)
@@ -774,6 +910,37 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
             }
             tier(i) = tk;
         });
+
+    if (front_rebuild_) {
+        // Dry halo cells got the coarsest tier, so a front could enter them
+        // only once per macro cycle. Pull each dry active cell down to the
+        // finest tier among its active neighbors. The serial marcher does this
+        // as a Gauss-Seidel sweep over the edges, whose result depends on the
+        // edge order, so it runs on the host in that same order.
+        auto tier_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), tier);
+        auto active_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), active);
+        auto depth_h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), depth);
+        const double dry_depth = opts_->dry_depth;
+        for (int ring = 0; ring < kFrontHaloRings; ++ring) {
+            bool changed = false;
+            for (int e = 0; e < ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                if (!active_h(a) || !active_h(b))
+                    continue;
+                if (depth_h(a) <= dry_depth && tier_h(a) > tier_h(b)) {
+                    tier_h(a) = tier_h(b);
+                    changed = true;
+                }
+                if (depth_h(b) <= dry_depth && tier_h(b) > tier_h(a)) {
+                    tier_h(b) = tier_h(a);
+                    changed = true;
+                }
+            }
+            if (!changed)
+                break;
+        }
+        Kokkos::deep_copy(tier, tier_h);
+    }
 
     // Face tiers (min of incident, both-active) + stale-momentum zero.
     auto ftier = d_face_tier_;
@@ -849,8 +1016,8 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
     auto depth = d_depth_;
     auto lchar = d_lchar_;
     auto qcx = d_qcx_, qcy = d_qcy_;
-    auto mann = d_mannings_n_, dw_slope = d_dw_slope_;
-    const bool perot = have_perot_, diffusive = diffusive_;
+    auto mann = d_mannings_n_, dw_slope = d_dw_slope_, lpos = d_lpos_;
+    const bool perot = have_perot_, diffusive = diffusive_, swe = swe_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
     double fresh = 1.0e30;
@@ -867,6 +1034,9 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
                 const double lc = lchar(i);
                 dt = diffusive::cellDiffusiveDt(alpha, lc, h, mann(i), dw_slope(i),
                                                 dh_eps / (lc > 1.0e-9 ? lc : 1.0e-9));
+            } else if (swe) {
+                const double speed = (h > 1.0e-6) ? inertial::qMagnitude(qcx(i), qcy(i)) / h : 0.0;
+                dt = inertial::cellCflDt(alpha, lpos(i), h, speed);
             } else {
                 double speed = 0.0;
                 if (perot && h > 1.0e-6)
@@ -956,13 +1126,16 @@ void ExplicitKokkosSurfaceSolver::refreshConveyance() {
     auto sign = d_sign_, xi = d_xi_, mx = d_mx_, my = d_my_;
     auto cx = d_tri_cx_, cy = d_tri_cy_, area = d_tri_area_;
     auto qcx = d_qcx_, qcy = d_qcy_;
+    const bool li = !diffusive_;
     Kokkos::parallel_for(
         "refresh_cell_discharge", Kokkos::RangePolicy<ExecSpace>(0, mesh_->n_cells()),
         KOKKOS_LAMBDA(int i) {
             double sx = 0.0, sy = 0.0;
             for (int p = ptr(i); p < ptr(i + 1); ++p) {
                 const int e = edge(p);
-                const double f = sign(p) * q(e) * xi(e) * conv(e);
+                double f = sign(p) * q(e) * xi(e);
+                if (li)
+                    f *= conv(e);
                 sx += f * (mx(e) - cx(i));
                 sy += f * (my(e) - cy(i));
             }
@@ -994,6 +1167,10 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
         return;
     if (diffusive_) {
         fireFacesDiffusive(lo, hi, dt_f, global_step);
+        return;
+    }
+    if (swe_) {
+        fireFacesSwe(lo, hi, dt_f, global_step);
         return;
     }
     auto list = d_edges_compact_;
@@ -1129,6 +1306,88 @@ void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f
     face_passes_ += (hi - lo);
 }
 
+// MOMENTUM_EQUATION FULL_SWE, first order: Godunov face flux (SweKernels.hpp).
+// The arithmetic and its order follow ExplicitInertialSolver::fireFacesSwe.
+void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool global_step) {
+    const int nt = mesh_->n_triangles();
+    auto active = d_active_;
+    auto head = d_head_, depth = d_depth_, vol = d_volume_;
+    auto qcx = d_qcx_, qcy = d_qcy_;
+    const double dry = opts_->dry_depth;
+    // A finite water proposal can still exceed the pressure/kinetic-flux range
+    // of double precision. Refuse it before booking any face. The lowest
+    // offending active cell is reported, as the serial marcher's scan does.
+    int bad = nt;
+    Kokkos::parallel_reduce(
+        "swe_range", Kokkos::RangePolicy<ExecSpace>(0, nt),
+        KOKKOS_LAMBDA(int i, int& first) {
+            if (!active(i))
+                return;
+            const double h = depth(i), qx = qcx(i), qy = qcy(i);
+            if (!(h >= 0) || !Kokkos::isfinite(head(i)) || !Kokkos::isfinite(qx) ||
+                !Kokkos::isfinite(qy) || !Kokkos::isfinite(.5 * swe::kGravity * h * h) ||
+                (h > dry && !Kokkos::isfinite((qx / h) * qx + (qy / h) * qy)))
+                if (i < first)
+                    first = i;
+        },
+        Kokkos::Min<int>(bad));
+    if (bad < nt)
+        throw std::runtime_error("FULL_SWE pressure or momentum exceeds finite range at cell " +
+                                 std::to_string(bad));
+
+    auto list = d_edges_compact_;
+    auto cLv = d_cL_, cRv = d_cR_;
+    auto qv = d_q_, faccL = d_faccL_, faccR = d_faccR_;
+    auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
+    auto nxv = d_nx_, nyv = d_ny_, xi = d_xi_, conv = d_conveyance_;
+    auto tier = d_tier_, ftier = d_face_tier_;
+    const double beta_share = opts_->exchange_beta / 3.0;
+    Kokkos::parallel_for(
+        "fireFacesSwe", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
+            const int e = list(idx);
+            const int a = cLv(e), b = cRv(e);
+            swe::FaceFlux F;
+            double cLx, cLy, cRx, cRy;
+            const bool wet =
+                swe::faceFlux(head(a), depth(a), qcx(a), qcy(a), head(b), depth(b), qcx(b), qcy(b),
+                              nxv(e), nyv(e), dry, F, cLx, cLy, cRx, cRy);
+            // Dry-dry face: no flux and no correction, so nothing to book.
+            if (!wet) {
+                qv(e) = 0.0;
+                return;
+            }
+            // Face conveyance (leaky barriers) scales the whole flux vector.
+            const double c = conv(e);
+            double fh = F.mass * c, fmx = F.mx * c, fmy = F.my * c;
+            // Positivity share: mass and momentum are scaled together.
+            if (fh != 0.0) {
+                const int exp_cell = (fh > 0.0) ? a : b;
+                const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
+                const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
+                const double budget = beta_share / refire * vmax;
+                const double take = std::fabs(fh) * xi(e) * dt_f;
+                if (take > budget) {
+                    const double lam = (take > 0.0) ? budget / take : 0.0;
+                    fh *= lam;
+                    fmx *= lam;
+                    fmy *= lam;
+                }
+            }
+            qv(e) = fh;
+            const double xdt = xi(e) * dt_f;
+            const double dM = fh * xdt; // m³, + = cL→cR
+            faccL(e) -= dM;
+            faccR(e) += dM;
+            // Momentum: −flux + bed-slope correction on the exporter side,
+            // +flux + correction on the receiver side (m⁴/s).
+            fmxL(e) += (-fmx + cLx) * xdt;
+            fmyL(e) += (-fmy + cLy) * xdt;
+            fmxR(e) += (fmx + cRx) * xdt;
+            fmyR(e) += (fmy + cRy) * xdt;
+        });
+    face_passes_ += (hi - lo);
+}
+
 void ExplicitKokkosSurfaceSolver::refreshDiffusiveSlopes() {
     const int nt = mesh_->n_triangles();
     auto active = d_active_;
@@ -1169,20 +1428,42 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     const bool perot = have_perot_;
+    const bool swe = swe_, li = !swe_ && !diffusive_;
     const double dry = opts_->dry_depth;
+    auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
+    auto wall_ptr = d_wall_ptr_, wall_slot = d_wall_slot_;
+    auto slot_nx = d_slot_nx_, slot_ny = d_slot_ny_, slot_len = d_edge_length_;
+    auto manning = d_mannings_n_;
     if (lo < hi) {
         Kokkos::parallel_for(
             "fireCells", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
                 const int i = list(idx);
+                // FULL_SWE keeps the wall flux at the same beginning state as
+                // the interior faces.
+                const double wall_h0 = swe ? depth(i) : 0.0;
+                const double wall_eta0 = swe ? head(i) : 0.0;
                 double flux_m3 = 0.0;
+                double dmx = 0.0, dmy = 0.0; // FULL_SWE momentum gather (m⁴/s)
                 for (int p = ptr(i); p < ptr(i + 1); ++p) {
                     const int e = edge(p);
                     if (sign(p) > 0.0) {
                         flux_m3 += faccL(e);
                         faccL(e) = 0.0;
+                        if (swe) {
+                            dmx += fmxL(e);
+                            fmxL(e) = 0.0;
+                            dmy += fmyL(e);
+                            fmyL(e) = 0.0;
+                        }
                     } else {
                         flux_m3 += faccR(e);
                         faccR(e) = 0.0;
+                        if (swe) {
+                            dmx += fmxR(e);
+                            fmxR(e) = 0.0;
+                            dmy += fmyR(e);
+                            fmyR(e) = 0.0;
+                        }
                     }
                 }
                 const double landed = vol(i) + flux_m3;
@@ -1202,7 +1483,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     double sx = 0.0, sy = 0.0;
                     for (int p = ptr(i); p < ptr(i + 1); ++p) {
                         const int e = edge(p);
-                        const double f = sign(p) * qv(e) * xi(e) * conv(e);
+                        // DIFFUSIVE_WAVE's face discharge already carries the conveyance.
+                        double f = sign(p) * qv(e) * xi(e);
+                        if (li)
+                            f *= conv(e);
                         sx += f * (mx(e) - cx(i));
                         sy += f * (my(e) - cy(i));
                     }
@@ -1210,7 +1494,59 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     qcx(i) = sx * inv_a;
                     qcy(i) = sy * inv_a;
                 }
+                // FULL_SWE momentum update: M = A·q + Σ face bookings, the
+                // wall pressure fluxes at the beginning state, then
+                // semi-implicit friction against the NEW depth (== serial).
+                if (swe) {
+                    const double A = area(i);
+                    const double h_new = depth(i);
+                    if (wall_h0 > dry) {
+                        for (int w = wall_ptr(i); w < wall_ptr(i + 1); ++w) {
+                            const int slot = wall_slot(w);
+                            const double nx = slot_nx(slot), ny = slot_ny(slot);
+                            const double ux = qcx(i) / wall_h0, uy = qcy(i) / wall_h0;
+                            const double un = ux * nx + uy * ny, ut = -ux * ny + uy * nx;
+                            const double ug = -un * nx - ut * ny, vg = -un * ny + ut * nx;
+                            swe::FaceFlux F;
+                            double cLx, cLy, cRx, cRy;
+                            const bool wet = swe::faceFlux(
+                                wall_eta0, wall_h0, qcx(i), qcy(i), wall_eta0, wall_h0,
+                                wall_h0 * ug, wall_h0 * vg, nx, ny, dry, F, cLx, cLy, cRx, cRy);
+                            if (wet) {
+                                const double xdt = slot_len(slot) * dt_c;
+                                dmx += (-F.mx + cLx) * xdt;
+                                dmy += (-F.my + cLy) * xdt;
+                            }
+                        }
+                    }
+                    if (h_new > dry) {
+                        double qx = (A * qcx(i) + dmx) / A;
+                        double qy = (A * qcy(i) + dmy) / A;
+                        swe::frictionUpdate(qx, qy, h_new, manning(i), dt_c);
+                        qcx(i) = qx;
+                        qcy(i) = qy;
+                    } else {
+                        qcx(i) = 0.0;
+                        qcy(i) = 0.0;
+                    }
+                }
             });
+        if (front_rebuild_ && !front_breach_) {
+            // The wetting front reached the halo's outer ring: rebuild next cycle.
+            auto frontier = d_frontier_;
+            const double h_on = h_on_front_;
+            int breached = 0;
+            Kokkos::parallel_reduce(
+                "front_breach", Kokkos::RangePolicy<ExecSpace>(lo, hi),
+                KOKKOS_LAMBDA(int idx, int& any) {
+                    const int i = list(idx);
+                    if (frontier(i) && depth(i) >= h_on)
+                        any = 1;
+                },
+                Kokkos::Max<int>(breached));
+            // Max<int> starts from the lowest int, so "no cell" is not zero.
+            front_breach_ = breached > 0;
+        }
     }
     if (k != 0)
         return;
@@ -1235,6 +1571,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         auto cxv = d_tri_cx_, cyv = d_tri_cy_;
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const bool diffusive = diffusive_;
+        auto bc_conv = d_bc_conv_;
         const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
         const int bt_wall = static_cast<int>(BoundaryType::WALL);
         const int bt_normal = static_cast<int>(BoundaryType::NORMAL_FLOW);
@@ -1252,7 +1589,27 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     const double L = edge_len(idx);
                     const double n = mann(i);
                     double f = 0.0;
-                    if (ty == bt_wall) {
+                    // FULL_SWE: the momentum this edge booked and the mass it
+                    // asked for, so a clamp can take the same fraction back.
+                    double swe_dqx = 0.0, swe_dqy = 0.0, f_requested_swe = 0.0;
+                    if (swe) {
+                        // Ghost-cell Riemann boundary: mass AND momentum
+                        // (swe::boundaryFlux, shared with the serial marcher).
+                        if (L > 1.0e-12) {
+                            const swe::BoundaryFlux r =
+                                swe::boundaryFlux(ty, L, slot_nx(idx), slot_ny(idx), head(i),
+                                                  depth(i), qcx(i), qcy(i), n, bc_slope(kk),
+                                                  bc_head(kk), bc_flow(kk), bc_conv(kk), dry);
+                            f = r.flow;
+                            if (r.wet) {
+                                swe_dqx = r.fmx * L * dt_c / area(i);
+                                swe_dqy = r.fmy * L * dt_c / area(i);
+                                qcx(i) += swe_dqx;
+                                qcy(i) += swe_dqy;
+                            }
+                        }
+                        f_requested_swe = f;
+                    } else if (ty == bt_wall) {
                         f = 0.0;
                     } else if (ty == bt_normal) {
                         const double S = bc_slope(kk);
@@ -1346,7 +1703,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     bc_requested(kk) += dt_c * f;
                     const double v_old = vol(i);
                     double v_new = v_old + dt_c * f;
-                    if (ty == bt_stage) {
+                    if (ty == bt_stage && !swe) {
                         // Equilibrium clamp, kept as the tiny-cell /
                         // overshoot backstop: one substep moves the cell AT
                         // MOST to the prescribed stage.
@@ -1368,6 +1725,14 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         v_new = 0.0; // availability floor
                     f = (v_new - v_old) / dt_c;
                     bc_last_flow(kk) = f;
+                    // FULL_SWE booked its momentum against the REQUESTED mass;
+                    // when the clamp shrank the mass, take the same fraction of
+                    // the momentum back (== serial).
+                    if (swe && f != f_requested_swe && (swe_dqx != 0.0 || swe_dqy != 0.0)) {
+                        const double lam = (f_requested_swe != 0.0) ? f / f_requested_swe : 0.0;
+                        qcx(i) += swe_dqx * (lam - 1.0);
+                        qcy(i) += swe_dqy * (lam - 1.0);
+                    }
                     // Momentum matches applied mass (== serial rescale).
                     bc_q(kk) = (L > 1.0e-12) ? f / L : 0.0;
                     if (f != 0.0) {
@@ -1656,7 +2021,9 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const double dry = opts_->dry_depth;
         const double fr_max = opts_->froude_max;
-        const bool diffusive = diffusive_;
+        // DIFFUSIVE_WAVE and FULL_SWE publish their last face mass flux, already
+        // limited and scaled by the conveyance (== serial).
+        const bool diffusive = diffusive_ || swe_;
         Kokkos::parallel_for(
             "publish_flux", Kokkos::RangePolicy<ExecSpace>(0, ne), KOKKOS_LAMBDA(int e) {
                 const double hf =
@@ -1666,8 +2033,6 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
                 double qp = 0.0;
                 if (hf > dry)
                     qp = inertial::froudeCap(qv(e), hf, fr_max);
-                // DIFFUSIVE_WAVE publishes its last face discharge, already
-                // limited and scaled by the conveyance (== serial).
                 const double F = diffusive ? qv(e) * xi(e) : qp * xi(e) * conv(e);
                 ef(slotL(e)) = -F;
                 ef(slotR(e)) = +F;
@@ -1689,6 +2054,10 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
     hostRefresh(state_->head, d_head_);
     hostRefresh(state_->depth, d_depth_);
     hostRefresh(state_->edge_flux, d_edge_flux_);
+    if (swe_) {
+        hostRefresh(qcx_host_, d_qcx_);
+        hostRefresh(qcy_host_, d_qcy_);
+    }
     if (!exch_host_.empty())
         hostRefresh(exch_host_, d_exch_);
     exch_span_ = span; // == ExplicitInertialSolver::exch_tau_ at publication
@@ -1750,6 +2119,15 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
     refreshConveyance();
     pushForcings();
     pushNodeState();
+    if (swe_ && !bc_slot_host_.empty()) {
+        // Boundary slots are not interior faces: their conveyance is read per advance.
+        bc_conv_host_.resize(bc_slot_host_.size());
+        for (std::size_t k = 0; k < bc_slot_host_.size(); ++k)
+            bc_conv_host_[k] = mesh_->edge_conveyance[static_cast<std::size_t>(bc_slot_host_[k])];
+        if (d_bc_conv_.extent(0) != bc_conv_host_.size())
+            d_bc_conv_ = DView("bc_conv", bc_conv_host_.size());
+        devRefresh(d_bc_conv_, bc_conv_host_);
+    }
     Kokkos::deep_copy(d_bc_accum_, 0.0);
     Kokkos::deep_copy(d_exch_, 0.0);
     Kokkos::deep_copy(d_node_drawn_, 0.0);
@@ -1759,7 +2137,8 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
 
     Kokkos::Profiling::pushRegion("openswmm_2d_advance_march");
     while (t < t_target) {
-        if (cycles_since_rebuild >= kRebuildEveryCycles) {
+        if (cycles_since_rebuild >= kRebuildEveryCycles ||
+            (front_breach_ && cycles_since_rebuild > 0)) {
             syncAndRebuild(t);
             cycles_since_rebuild = 0;
         } else {
@@ -1840,10 +2219,33 @@ void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
     Kokkos::deep_copy(d_bc_q_, 0.0);
     Kokkos::deep_copy(d_faccL_, 0.0);
     Kokkos::deep_copy(d_faccR_, 0.0);
+    if (swe_) {
+        Kokkos::deep_copy(d_fmxL_, 0.0);
+        Kokkos::deep_copy(d_fmxR_, 0.0);
+        Kokkos::deep_copy(d_fmyL_, 0.0);
+        Kokkos::deep_copy(d_fmyR_, 0.0);
+        Kokkos::deep_copy(d_qcx_, 0.0);
+        Kokkos::deep_copy(d_qcy_, 0.0);
+        std::fill(qcx_host_.begin(), qcx_host_.end(), 0.0);
+        std::fill(qcy_host_.begin(), qcy_host_.end(), 0.0);
+    }
     reconstructAllDev();
     hostRefresh(state_->head, d_head_);
     hostRefresh(state_->depth, d_depth_);
     cycles_since_rebuild_ = 1000;
+}
+
+bool ExplicitKokkosSurfaceSolver::publishMomentumVelocity() {
+    if (!initialized_ || !swe_)
+        return false;
+    const double dry = opts_->dry_depth;
+    const int nt = mesh_->n_triangles();
+    for (int i = 0; i < nt; ++i) {
+        const double h = state_->depth[i];
+        state_->face_vx[i] = h > dry ? -qcx_host_[i] / h : 0;
+        state_->face_vy[i] = h > dry ? -qcy_host_[i] / h : 0;
+    }
+    return true;
 }
 
 void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double t0) {

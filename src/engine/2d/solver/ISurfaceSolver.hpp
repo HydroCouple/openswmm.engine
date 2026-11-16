@@ -151,6 +151,20 @@ public:
     virtual void syncPinnedVolumes(double t0) { (void)t0; }
 
     /**
+     * @brief Publish the cell velocity of a momentum-carrying closure into state.face_vx/face_vy.
+     *
+     * FULL_SWE owns cell momentum, so its velocity is that momentum over the depth; a
+     * reconstruction from face mass fluxes would turn wetting-front transfers into spurious
+     * speeds. Other closures have no cell momentum and return false, and the caller
+     * reconstructs the velocity from the published edge fluxes.
+     *
+     * @return True when face_vx/face_vy were written.
+     * @note Requires initialized retained model arrays and exclusive solver access. Uses the
+     * state's current depth; does not advance or change solver state.
+     */
+    virtual bool publishMomentumVelocity() { return false; }
+
+    /**
      * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
      *
      * @param[in] cells Valid zero-based surface cells; duplicates are harmless.

@@ -2076,8 +2076,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // any sync batch fires — e.g. a hotstart-restored wet state) already
     // carries a physically consistent field instead of the resize() zeros.
     if (options_.momentum == Momentum2D::FULL_SWE) {
-        if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
-            cpu->publishMomentumVelocity();
+        solver_->publishMomentumVelocity();
     } else {
         computeFaceVelocity(mesh_, state_, options_);
     }
@@ -2330,10 +2329,7 @@ void SurfaceRouter2D::refreshRenderFields() {
     // Output may be requested more often than the 30 s statistics cadence.
     // FULL_SWE owns cell momentum; reconstructing its velocity from Riemann
     // mass fluxes would turn wetting-front transfers into spurious cell speeds.
-    if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
-        cpu && options_.momentum == Momentum2D::FULL_SWE)
-        cpu->publishMomentumVelocity();
-    else
+    if (!(options_.momentum == Momentum2D::FULL_SWE && solver_->publishMomentumVelocity()))
         computeFaceVelocity(mesh_, state_, options_);
     reconstructVertexHeads(mesh_, state_, options_.num_threads);
     refreshOutputGradients(mesh_, state_, options_);
@@ -2932,10 +2928,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         // THIS batch, and the flux/source rates the residual is measured
         // against are this batch's end-of-step values.
         computeCellContinuity(mesh_, state_, options_, dt);
-        if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
-            cpu && options_.momentum == Momentum2D::FULL_SWE)
-            cpu->publishMomentumVelocity();
-        else
+        if (!(options_.momentum == Momentum2D::FULL_SWE && solver_->publishMomentumVelocity()))
             computeFaceVelocity(mesh_, state_, options_);
         // The cumulative envelopes DO integrate over the refresh span: this
         // sample stands for the whole window in stat_cum_volume.

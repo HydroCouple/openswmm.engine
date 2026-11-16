@@ -149,6 +149,13 @@ public:
      */
     void syncPinnedVolumes(double t0) override;
     /**
+     * @brief Publish FULL_SWE cell velocity from the momentum of the last publication.
+     * @return True under FULL_SWE after writing state.face_vx/face_vy; false otherwise.
+     * @note Host arithmetic on the momentum copied back at the last publication and the
+     * state's current depth, as ExplicitInertialSolver::publishMomentumVelocity.
+     */
+    bool publishMomentumVelocity() override;
+    /**
      * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
      * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
      * @throws std::out_of_range A cell outside the mesh; no pin is written then.
@@ -233,6 +240,11 @@ private:
     DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
     DView d_n_face_;   ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
+    // FULL_SWE: momentum side accumulators (m⁴/s), the positivity length, per-slot outward
+    // normals, WALL slots per cell (CSR), the halo's outer ring and per-boundary conveyance.
+    DView d_fmxL_, d_fmxR_, d_fmyL_, d_fmyR_;
+    DView d_lpos_, d_slot_nx_, d_slot_ny_, d_bc_conv_;
+    IView d_wall_ptr_, d_wall_slot_, d_frontier_;
     DView d_dw_slope_; ///< largest face |Δη|/Δx per cell (DIFFUSIVE_WAVE step bound)
 
     // ---- device state -----------------------------------------------------
@@ -307,6 +319,12 @@ private:
     int K_ = 1;
     bool have_perot_ = false;
     bool diffusive_ = false; ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
+    bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE (first order)
+    bool front_rebuild_ = false;              ///< widened halo and breach-triggered rebuild
+    bool front_breach_ = false;               ///< a wetting front reached the halo's outer ring
+    double h_on_front_ = 0.0;                 ///< activation depth the breach test uses, m
+    std::vector<double> qcx_host_, qcy_host_; ///< FULL_SWE cell momentum at publication
+    std::vector<double> bc_conv_host_;        ///< per-boundary edge conveyance
     double t_last_sync_ = 0.0;
     int cycles_since_rebuild_ = 1000;
     double last_dt_ = 0.0;
@@ -401,6 +419,18 @@ public:
      * only its own discharge and side accumulators. Called by fireFaces().
      */
     void fireFacesDiffusive(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief FULL_SWE face kernel: first-order Godunov flux with hydrostatic reconstruction.
+     * @param[in] lo First index into the compact edge list.
+     * @param[in] hi One past the last index into the compact edge list.
+     * @param[in] dt_f Finite positive face step, seconds.
+     * @param[in] global_step True for a tail step, where every face fires once.
+     * @throws std::runtime_error An active cell's pressure or momentum flux is not finite;
+     * nothing is booked.
+     * @note Mirrors ExplicitInertialSolver::fireFacesSwe face for face; each face writes only
+     * its own mass flux and its mass and momentum side accumulators. Called by fireFaces().
+     */
+    void fireFacesSwe(int lo, int hi, double dt_f, bool global_step);
     /**
      * @brief Refresh each active cell's largest face surface slope for the DIFFUSIVE_WAVE step
      * bound.

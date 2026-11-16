@@ -81,7 +81,8 @@ class ExplicitInertialSolver final : public ISurfaceSolver {
 public:
     /// Publish FULL_SWE velocity from accepted conserved momentum,
     /// using the internal negative-outflow display convention. No flux change.
-    void publishMomentumVelocity();
+    /// Returns false, writing nothing, under any other closure.
+    bool publishMomentumVelocity() override;
 
     /**
      * @brief Prepare the CPU finite-volume marcher from authoritative surface volume and

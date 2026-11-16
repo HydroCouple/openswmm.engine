@@ -18,8 +18,8 @@ Performance counters belong to each solver and are activated only during that so
 
 | Operator | Current execution contract |
 | --- | --- |
-| Triangle local-inertial and diffusive-wave surface water, FLAT/VFR | Kokkos surface path, subject to backend qualification |
-| Quadrilateral/mixed meshes, FULL_SWE | Built-in CPU; isolated device helper tests do not establish an integrated solver |
+| Triangle local-inertial, diffusive-wave and first-order FULL_SWE surface water, FLAT/VFR | Kokkos surface path, subject to backend qualification |
+| Quadrilateral/mixed meshes, second-order FULL_SWE, Coriolis/turbulence/wall drag | Built-in CPU; isolated device helper tests do not establish an integrated solver |
 | Surface pollutants, water age, temperature | Built-in CPU; the Kokkos surface solver rejects transport rows |
 | Coupled 2D groundwater and its canonical state | Built-in CPU surface/subsurface ownership |
 | CLOSED_FORM raw groundwater recharge | Optional explicitly requested Kokkos OpenMP operator; water stores, receipts, quality and heat remain host-owned |
@@ -43,3 +43,5 @@ Surface ABI 8 adds separate applied boundary inflow/outflow arrays. Kokkos accum
 The OpenMP end-to-end gates compare every 2D continuity report term with CPU results under FLAT, VFR, and nonzero evaporation, require both boundary directions and a closed ledger, and reject fallback. The direct alignment suite covers all non-wall boundary laws, a within-window reversal, and orifice/weir-orifice node drain/spill with shared pond budgets. These host checks do not qualify CUDA hardware.
 
 Surface ABI 12 adds a capability set to the probe. `requiredSurfaceCapabilities()` in `SurfaceCapabilities.hpp` turns a model (momentum closure, reconstruction order, quads, momentum physics, transport rows, groundwater, porous heat) into `OPENSWMM_GPU_CAP_*` bits. The router, the factory and the Kokkos marcher's own `initialize` all use that one function. A model that needs a bit outside `kKokkosSurfaceCapabilities` gets the CPU marcher before any plugin is loaded or probed, with a notice that names what is missing; a plugin whose probe lacks a required bit is skipped before its factory is called. Add a bit to `kKokkosSurfaceCapabilities` only in the change that implements the configuration and moves its refusal test to a parity test. ABI 12 also adds `ISurfaceSolver::syncPinnedVolumes()`: the router uses it for outfall transfers into pinned cells, which keeps the active set, while `resyncFromVolumes()` rebuilds the active set on every backend.
+
+Surface ABI 13 adds `ISurfaceSolver::publishMomentumVelocity()`. FULL_SWE owns cell momentum, so the router asks the solver for the cell velocity instead of casting to the CPU marcher; the Kokkos marcher answers from the momentum it copied back at the last publication.

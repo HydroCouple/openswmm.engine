@@ -93,7 +93,8 @@ extern "C" {
 /* v12: OpenSwmmGpuProbe gains capabilities (appended), the set of 2D configurations the plugin's
  * solver implements. The core refuses a plugin that lacks any capability the model requires.
  * ISurfaceSolver adds syncPinnedVolumes (vtable change). */
-#define OPENSWMM_GPU_ABI_VERSION 12
+/* v13: ISurfaceSolver adds publishMomentumVelocity (vtable change). */
+#define OPENSWMM_GPU_ABI_VERSION 13
 
 /**
  * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)

@@ -485,28 +485,27 @@ void frozenTier() {
 /**
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
- * Separately tries each configuration outside kKokkosSurfaceCapabilities (quads, FULL_SWE at
- * both orders, transport rows, FRONT_REBUILD YES, momentum physics), requiring
+ * Separately tries each configuration outside kKokkosSurfaceCapabilities (quads, second-order
+ * FULL_SWE, transport rows, FRONT_REBUILD YES, momentum physics), requiring
  * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
  * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
  * its capability and its parity check.
  */
 void unsupported() {
-    const char* names[] = {"quads",      "FULL_SWE",      "transport",
-                           "FULL_SWE 2", "FRONT_REBUILD", "wall drag"};
-    for (int kind = 0; kind < 6; ++kind) {
+    const char* names[] = {"quads", "transport", "FULL_SWE 2", "FRONT_REBUILD", "wall drag"};
+    for (int kind = 0; kind < 5; ++kind) {
         auto m = mesh(2, kind == 0 ? 1 : 0);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 1 || kind == 3 || kind == 5)
+        if (kind == 2 || kind == 4)
             o.momentum = Momentum2D::FULL_SWE;
-        if (kind == 2)
+        if (kind == 1)
             s.transport.resize(1, m.n_cells(), 0);
-        if (kind == 3)
+        if (kind == 2)
             o.reconstruction_order = 2;
-        if (kind == 4)
+        if (kind == 3)
             o.front_rebuild = 1;
-        if (kind == 5) {
+        if (kind == 4) {
             o.wall_drag_enabled = true;
             o.lts_tiers = 1;
         }
@@ -617,8 +616,8 @@ void exact(const std::vector<double>& a, const std::vector<double>& b, const std
  * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit under one momentum
  * closure.
  *
- * Runs a skewed, sloping triangle mesh through dam-break, source/sink, rain, infiltration and
- * every open-boundary law (each reversed mid-run), for both cell closures and face
+ * Runs a skewed, sloping triangle mesh through dam-break, source/sink, rain, infiltration,
+ * every open-boundary law (each reversed mid-run) and a dam break with initial velocity, for both cell closures and face
  * reconstructions and for one and four tiers, over three windows. Volume, head, depth, published
  * edge flux, applied infiltration/coupling and the step count must match exactly; the
  * evaporation total and the cumulative boundary receipts, sums folded in a different order, to
@@ -633,7 +632,7 @@ void modeParity(Momentum2D mode, const char* name) {
     int cases = 0;
     for (bool vfr : {false, true})
         for (int tiers : {1, 4})
-            for (int scenario = 0; scenario < 9; ++scenario) {
+            for (int scenario = 0; scenario < 10; ++scenario) {
                 auto m = mesh(8, 0, true, true);
                 auto a = state(m, .1), b = a;
                 auto o = options(tiers);
@@ -643,8 +642,12 @@ void modeParity(Momentum2D mode, const char* name) {
                     o.face_reconstruction = FaceDepth2D::VFR_FACE;
                 }
                 for (int i = 0; i < m.n_cells(); ++i) {
-                    if (scenario == 0 || scenario == 4)
+                    if (scenario == 0 || scenario == 4 || scenario == 9)
                         a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                    if (scenario == 9) { // [2D_INITIAL_VELOCITY]: the pool starts moving
+                        m.tri_init_u.set(static_cast<std::size_t>(i), m.tri_cx[i] < 4 ? .4 : 0.);
+                        m.tri_init_v.set(static_cast<std::size_t>(i), m.tri_cx[i] < 4 ? -.2 : 0.);
+                    }
                     if (scenario == 1) {
                         a.infil_rate[i] = .15;
                         a.evap_rate[i] = .1;
@@ -664,7 +667,7 @@ void modeParity(Momentum2D mode, const char* name) {
                 b = a;
                 BoundaryData ba;
                 std::vector<int> slots;
-                if (scenario >= 5) {
+                if (scenario >= 5 && scenario <= 8) {
                     ba.resize(m.n_cells() * kMaxCellVerts);
                     for (int i = 0; i < m.n_cells(); ++i)
                         for (int e = 0; e < m.cell_vertex_count(i); ++e)
@@ -675,7 +678,7 @@ void modeParity(Momentum2D mode, const char* name) {
                             }
                 }
                 auto bb = ba;
-                if (scenario >= 5) {
+                if (scenario >= 5 && scenario <= 8) {
                     a.boundary = &ba;
                     b.boundary = &bb;
                 }
@@ -706,6 +709,13 @@ void modeParity(Momentum2D mode, const char* name) {
                     exact(b.edge_flux, a.edge_flux, tag + "edge flux");
                     exact(b.infil_applied, a.infil_applied, tag + "infiltration");
                     exact(b.coupling_applied, a.coupling_applied, tag + "coupling");
+                    if (mode == Momentum2D::FULL_SWE) {
+                        // The cell momentum, through the velocity both marchers publish.
+                        require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                                (tag + "velocity publication").c_str());
+                        exact(b.face_vx, a.face_vx, tag + "velocity x");
+                        exact(b.face_vy, a.face_vy, tag + "velocity y");
+                    }
                     // A domain total: the two marchers fold it in different orders, so it
                     // agrees to rounding, not bit for bit. Every per-cell field is exact.
                     near(b.evap_loss_total, a.evap_loss_total, (tag + "evaporation").c_str(),
@@ -1306,6 +1316,7 @@ int main(int argc, char** argv) {
         marcher();
         modeParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
         modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
+        modeParity(Momentum2D::FULL_SWE, "FULL_SWE");
         edgeConveyance();
         boundaries();
         boundaryReversal();

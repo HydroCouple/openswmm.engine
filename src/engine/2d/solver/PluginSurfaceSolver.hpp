@@ -125,6 +125,14 @@ public:
         });
     }
     /**
+     * @brief Publish momentum-derived cell velocity from the plugin backend.
+     * @return True when the backend wrote state.face_vx/face_vy.
+     * @post Synchronously delegates to the plugin on the owner thread. Errors propagate.
+     */
+    bool publishMomentumVelocity() override {
+        return owner_->invoke([&] { return solver_->publishMomentumVelocity(); });
+    }
+    /**
      * @brief Pin external-transfer cells to tier zero in the plugin backend.
      * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
      * @post Synchronously delegates to the plugin on the owner thread. Errors propagate.
