@@ -742,7 +742,10 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
     const InertialEdges& E = *edges_;
     // Yield is unchanged throughout this tier. Reservations below remain live:
     // each preceding face may have promised more of the donor's water.
-    static thread_local std::vector<double> face_yield;
+    // Plain references bind these thread_local caches to the calling thread, so
+    // the lambdas below fill the same storage when run by worker threads.
+    static thread_local std::vector<double> tls_face_yield;
+    auto& face_yield = tls_face_yield;
     const double unset_yield = std::numeric_limits<double>::quiet_NaN();
     if (elapsed.empty() || list.size() * 2 >= std::size_t(state_.n_cells)) {
         face_yield.assign(state_.n_cells, unset_yield);
@@ -755,11 +758,19 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
     // Canonical heads and native masses do not change during a face tier.
     // Physical export reservations do change and are intentionally read below per face.
     const bool disperse = tr_.active() && tr_.dispersion_on;
-    static thread_local std::vector<double> face_concentration;
-    static thread_local std::vector<std::array<double, 2>> face_gradient, face_stencil;
-    static thread_local std::vector<dispersion::Tensor> face_coefficient;
-    static thread_local std::vector<unsigned char> concentration_valid, gradient_valid,
-        stencil_valid, coefficient_valid;
+    static thread_local std::vector<double> tls_face_concentration;
+    static thread_local std::vector<std::array<double, 2>> tls_face_gradient, tls_face_stencil;
+    static thread_local std::vector<dispersion::Tensor> tls_face_coefficient;
+    static thread_local std::vector<unsigned char> tls_concentration_valid, tls_gradient_valid,
+        tls_stencil_valid, tls_coefficient_valid;
+    auto& face_concentration = tls_face_concentration;
+    auto& face_gradient = tls_face_gradient;
+    auto& face_stencil = tls_face_stencil;
+    auto& face_coefficient = tls_face_coefficient;
+    auto& concentration_valid = tls_concentration_valid;
+    auto& gradient_valid = tls_gradient_valid;
+    auto& stencil_valid = tls_stencil_valid;
+    auto& coefficient_valid = tls_coefficient_valid;
     if (disperse) {
         const auto values = std::size_t(state_.n_cells) * (tr_.n_species + 1);
         face_concentration.resize(values);
@@ -839,6 +850,55 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
         }
         return face_stencil[k];
     };
+    const auto coefficient = [&](std::size_t cell, const std::array<double, 2>& head) {
+        if (coefficient_valid[cell])
+            return face_coefficient[cell];
+        const double theta = state_.theta_s[cell], factor = -state_.Ks[cell] / theta;
+        auto tensor = dispersion::tensor(factor * head[0], factor * head[1], tr_.alpha_L[cell],
+                                         tr_.alpha_T[cell], tr_.D_m[cell]);
+        const double section = theta * state_.hg[cell];
+        tensor.xx *= section;
+        tensor.xy *= section;
+        tensor.yy *= section;
+        face_coefficient[cell] = tensor;
+        coefficient_valid[cell] = 1;
+        return tensor;
+    };
+#if defined(SWMM_USE_OPENMP)
+    // Every cached quantity above (yield, dissolved concentration, head and
+    // species gradients, stencil range, dispersion tensor) is a pure function
+    // of state this face tier does not change. With several threads, fill the
+    // caches for the cells this list touches concurrently; the face loop below
+    // is unchanged and serial (its donor reservations are order-dependent), so
+    // it reads the same values it would have computed itself.
+    const int threads = opts_ ? opts_->num_threads : 1;
+    if (disperse && threads > 1 && list.size() >= 512 && !heat_.active()) {
+        static thread_local std::vector<unsigned char> tls_touched;
+        auto& touched = tls_touched;
+        touched.assign(std::size_t(state_.n_cells), 0);
+        for (const int e : list)
+            touched[E.cL[e]] = touched[E.cR[e]] = 1;
+        const int n = state_.n_cells, ns = tr_.n_species;
+        // Concentrations first, for every cell: gradients and stencils read
+        // their neighbors' values, and those neighbors may be untouched.
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (int c = 0; c < n; ++c)
+            for (int s = 0; s < ns; ++s)
+                concentration(c, s);
+#pragma omp parallel for schedule(dynamic, 256) num_threads(threads)
+        for (int c = 0; c < n; ++c) {
+            if (!touched[c])
+                continue;
+            if (std::isnan(face_yield[c]))
+                face_yield[c] = specificYieldOf(c);
+            coefficient(std::size_t(c), gradient(c, -1));
+            for (int s = 0; s < ns; ++s) {
+                gradient(c, s);
+                stencil(c, s);
+            }
+        }
+    }
+#endif
     for (std::size_t slot = 0; slot < list.size(); ++slot) {
         const int e = list[slot];
         const double dt = elapsed.empty() ? shared_dt : elapsed[slot];
@@ -961,21 +1021,6 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
                                                  E.my[eu] - mesh_->tri_cy[r]};
                 const double dl = armL[0] * nx + armL[1] * ny, dr = -armR[0] * nx - armR[1] * ny;
                 const auto headL = gradient(int(l), -1), headR = gradient(int(r), -1);
-                const auto coefficient = [&](std::size_t cell, const std::array<double, 2>& head) {
-                    if (coefficient_valid[cell])
-                        return face_coefficient[cell];
-                    const double theta = state_.theta_s[cell], factor = -state_.Ks[cell] / theta;
-                    auto tensor =
-                        dispersion::tensor(factor * head[0], factor * head[1], tr_.alpha_L[cell],
-                                           tr_.alpha_T[cell], tr_.D_m[cell]);
-                    const double section = theta * state_.hg[cell];
-                    tensor.xx *= section;
-                    tensor.xy *= section;
-                    tensor.yy *= section;
-                    face_coefficient[cell] = tensor;
-                    coefficient_valid[cell] = 1;
-                    return tensor;
-                };
                 {
                     const int nf_r = std::max(1, cell_nface_[r]);
                     const int nf_l = std::max(1, cell_nface_[l]);
