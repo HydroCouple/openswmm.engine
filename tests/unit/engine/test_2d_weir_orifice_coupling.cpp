@@ -276,6 +276,7 @@ std::string deck(const std::string& opts2d, const std::string& node_rows) {
 struct LiveRun {
     bool ok = false;
     double received_1d = 0.0, first_2min = 0.0, given_2d_net = 0.0, cont_2d = 0.0;
+    double reported_exchange = 0.0; ///< swmm_2d_get_total_exchange_flow summed over steps, m3
     std::string backend;
 };
 
@@ -291,7 +292,8 @@ struct LiveRun {
  * @param[in] opts2d Raw surface options passed to deck.
  * @param[in] node_rows Raw coupling rows passed to deck.
  * @return Owned integrated J1 lateral volume m3, first 120 s receipt m3, net2D-to-1D exchange m3,2D
- *     continuity fraction, backend text and ok flag.
+ *     continuity fraction, reported total exchange flow times step summed in m3, backend text
+ *     and ok flag.
  */
 LiveRun run(const std::string& tag, const std::string& opts2d, const std::string& node_rows) {
     LiveRun r;
@@ -326,6 +328,9 @@ LiveRun run(const std::string& tag, const std::string& opts2d, const std::string
             if (elapsed * 86400.0 <= 120.0 + 1e-6)
                 r.first_2min += lat * dt;
         }
+        double flow = 0.0;
+        if (dt > 0.0 && swmm_2d_get_total_exchange_flow(e, &flow) == SWMM_OK)
+            r.reported_exchange += flow * dt;
     }
     swmm_engine_end(e);
     double c12 = 0.0, c21 = 0.0;
@@ -436,4 +441,8 @@ TEST(WeirOrificeCoupling, KokkosBackendMatchesCpu) {
     ASSERT_GT(cpu.received_1d, 1.0);
     EXPECT_NEAR(omp.received_1d, cpu.received_1d, 1e-9 * cpu.received_1d);
     EXPECT_NEAR(omp.first_2min, cpu.first_2min, 1e-9 * std::max(1.0, cpu.first_2min));
+    // The reported exchange flow includes the live junction exchange on both backends.
+    ASSERT_GT(std::abs(cpu.reported_exchange), 1.0);
+    EXPECT_NEAR(omp.reported_exchange, cpu.reported_exchange,
+                1e-9 * std::abs(cpu.reported_exchange));
 }

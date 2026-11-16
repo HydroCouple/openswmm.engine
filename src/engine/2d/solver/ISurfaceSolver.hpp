@@ -191,6 +191,15 @@ public:
         return kEmpty;
     }
 
+    /**
+     * @brief Duration of the completed advance that last_coupling_exchange() covers.
+     *
+     * @return Seconds; zero (the default) when no live exchange has been published, so callers
+     * turn the exchange volumes into rates only when this is positive.
+     * @note Read only between solver mutations.
+     */
+    virtual double last_coupling_interval() const noexcept { return 0.0; }
+
     /// Cumulative marcher statistics over the whole run — the throughput
     /// numbers the "2D Solver Statistics" report block reads.
     struct RunStats {

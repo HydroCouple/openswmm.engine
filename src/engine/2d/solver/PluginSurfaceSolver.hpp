@@ -165,6 +165,12 @@ public:
         return exchange_;
     }
     /**
+     * @brief Read the interval cached with the last coupling-volume snapshot.
+     * @return Seconds the cached volumes cover; zero before any publication.
+     * @note No plugin dispatch; refreshed together with last_coupling_exchange().
+     */
+    double last_coupling_interval() const noexcept override { return interval_; }
+    /**
      * @brief Read the adapter's last synchronized backend status.
      * @return Value-owned copy of the last refreshed cumulative backend statistics.
      * @note No dispatch or allocation; cache may be stale after a failed backend call. Fields
@@ -194,6 +200,7 @@ private:
         completed_ = solver_->completedSourceTime();
         stats_ = solver_->run_stats();
         exchange_ = solver_->last_coupling_exchange();
+        interval_ = solver_->last_coupling_interval();
         initialized_ = solver_->is_initialized();
     }
     ISurfaceSolver* solver_;
@@ -204,5 +211,6 @@ private:
     bool initialized_ = false;
     RunStats stats_{};
     std::vector<double> exchange_;
+    double interval_ = 0;
 };
 }

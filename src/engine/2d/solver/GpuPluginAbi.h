@@ -89,7 +89,8 @@ extern "C" {
  * interval. Rebuild surface plugins to match the changed option layout. */
 /* v10: ISurfaceSolver adds pinExternalSourceCells, so the vtable changes.
  * Rebuild surface plugins. */
-#define OPENSWMM_GPU_ABI_VERSION 10
+/* v11: ISurfaceSolver adds last_coupling_interval (vtable change). */
+#define OPENSWMM_GPU_ABI_VERSION 11
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {

@@ -1551,6 +1551,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
     hostRefresh(state_->edge_flux, d_edge_flux_);
     if (!exch_host_.empty())
         hostRefresh(exch_host_, d_exch_);
+    exch_span_ = span; // == ExplicitInertialSolver::exch_tau_ at publication
 
     // Publish plain arrays across the plugin boundary; the engine owns and
     // updates the receipt map. Keep totals additive until the router consumes

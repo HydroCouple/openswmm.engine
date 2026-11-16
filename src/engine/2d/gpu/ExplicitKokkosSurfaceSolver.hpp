@@ -185,6 +185,11 @@ public:
         return exch_host_;
     }
     /**
+     * @brief Span of the advance whose exchange last_coupling_exchange() holds.
+     * @return Seconds, set when the exchange is copied back at publication; zero before.
+     */
+    double last_coupling_interval() const noexcept override { return exch_span_; }
+    /**
      * @brief Snapshot accumulated Kokkos marcher work and active-tier telemetry.
      * @return Value snapshot of cumulative substeps/face work, last duration, telemetry-sample
      * active fraction statistics and stored tier occupancy. Not a live device query; mean
@@ -283,6 +288,7 @@ private:
     DView d_node_head_, d_node_depth_, d_node_volume_;
     DView d_node_invert_, d_node_fulldepth_;
     std::vector<double> exch_host_;
+    double exch_span_ = 0.0; ///< advance span exch_host_ covers (s)
 
     // ---- host mirrors / control -------------------------------------------
     std::array<int, 9> tier_off_{};  ///< cells_compact_ segment offsets

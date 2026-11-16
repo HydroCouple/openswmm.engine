@@ -3862,11 +3862,10 @@ const std::vector<double>& SurfaceRouter2D::couplingExchangeVolumes() const noex
 
 double SurfaceRouter2D::couplingFlux(int cell) const noexcept {
     double rate = state_.coupling_flux[static_cast<std::size_t>(cell)];
-    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (!cpu || !(cpu->last_coupling_interval() > 0))
+    if (!solver_ || !(solver_->last_coupling_interval() > 0))
         return rate;
-    const auto& exchange = cpu->last_coupling_exchange();
-    const double scale = mesh_.tri_area[cell] * cpu->last_coupling_interval();
+    const auto& exchange = solver_->last_coupling_exchange();
+    const double scale = mesh_.tri_area[cell] * solver_->last_coupling_interval();
     if (!(scale > 0))
         return rate;
     for (std::size_t k = 0; k < std::min(exchange.size(), node_coupling_points_.size()); ++k)
@@ -3877,13 +3876,12 @@ double SurfaceRouter2D::couplingFlux(int cell) const noexcept {
 
 void SurfaceRouter2D::copyCouplingFluxes(double* values) const noexcept {
     std::copy(state_.coupling_flux.begin(), state_.coupling_flux.end(), values);
-    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (!cpu || !(cpu->last_coupling_interval() > 0))
+    if (!solver_ || !(solver_->last_coupling_interval() > 0))
         return;
-    const auto& exchange = cpu->last_coupling_exchange();
+    const auto& exchange = solver_->last_coupling_exchange();
     for (std::size_t k = 0; k < std::min(exchange.size(), node_coupling_points_.size()); ++k) {
         const int cell = node_coupling_points_[k].cell_idx;
-        const double scale = mesh_.tri_area[cell] * cpu->last_coupling_interval();
+        const double scale = mesh_.tri_area[cell] * solver_->last_coupling_interval();
         if (scale > 0)
             values[cell] -= exchange[k] / scale;
     }
@@ -3907,10 +3905,9 @@ double SurfaceRouter2D::totalExchangeFlow() const {
     for (int i = 0; i < nt; ++i) {
         flow += state_.coupling_flux[i] * mesh_.tri_area[i];
     }
-    const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (cpu && cpu->last_coupling_interval() > 0)
-        for (double volume : cpu->last_coupling_exchange())
-            flow -= volume / cpu->last_coupling_interval();
+    if (solver_ && solver_->last_coupling_interval() > 0)
+        for (double volume : solver_->last_coupling_exchange())
+            flow -= volume / solver_->last_coupling_interval();
     return flow;
 }
 
