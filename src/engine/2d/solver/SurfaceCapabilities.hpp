@@ -29,7 +29,8 @@ namespace openswmm::twoD {
  * gates a new configuration in ExplicitKokkosSurfaceSolver.
  */
 inline constexpr std::uint64_t kKokkosSurfaceCapabilities =
-    OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_FULL_SWE;
+    OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_FULL_SWE |
+    OPENSWMM_GPU_CAP_QUADS;
 
 /**
  * @brief Capabilities a model requires of a plugin surface solver.

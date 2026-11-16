@@ -292,8 +292,8 @@ face depths, cell-centred shoreline velocity and SSP-RK2 time stepping
 in global-step mode (§9.5.6, §9.5.10), and is refused with a notice when
 overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
-The Kokkos plugin backends serve all three closures on all-triangle
-meshes, `FULL_SWE` at first order; a second-order `FULL_SWE` model is
+The Kokkos plugin backends serve all three closures on triangle, quad
+and mixed meshes, `FULL_SWE` at first order; a second-order `FULL_SWE` model is
 announced and run on the CPU marcher (§9.11.1).
 
 `FULL_SWE` keeps every property of §9.5: the lake at rest is exact —
@@ -343,8 +343,8 @@ preceded `FULL_SWE`.
 | Closure | Prognostic state | Face law | Valid regime | Cost | Status |
 |---|---|---|---|---|---|
 | `LOCAL_INERTIAL` | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
-| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher; Kokkos plugins at first order on all-triangle meshes | \status{Implemented} |
-| `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher and Kokkos plugins (all-triangle meshes) | \status{Implemented} |
+| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher; Kokkos plugins at first order | \status{Implemented} |
+| `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher and Kokkos plugins | \status{Implemented} |
 | `ADVECTION YES` | as `LOCAL_INERTIAL` | (9-7) plus a staggered upwind convective term (Stelling and Duinmeijer, 2003) | — | — | \status{Retired} |
 
 *Table 9-2 Momentum closures of the 2D marcher*
@@ -548,8 +548,7 @@ Under `CELL_CLOSURE VFR` a quad uses the two-plane storage model of
 `Mesh2_face_nv` vertex-count array — and the edge datasets and the bulk
 C-API edge arrays use stride 4; an all-triangle mesh keeps the
 `[nFace, 3]`, stride-3 layout byte for byte. The Kokkos plugin backends
-serve all-triangle meshes only; a mixed mesh is announced and run on the
-CPU marcher (§9.11.1).
+serve mixed meshes with the same closures as the CPU marcher (§9.11.1).
 
 <!-- figure spec: a quad beside a triangle sharing one face: local edge numbering k = 0..3 with endpoints v[(k+1)%nv], v[(k+2)%nv]; the padded slot layout 4t + k with the unused fourth slot of the triangle greyed; the centroid-to-edge normal distance d_e of (9-33) drawn for both cells -->
 ![Figure 9-4](figures/png/hydraulics_ch9_mesh_stencil.png)
@@ -2814,13 +2813,14 @@ round trip, and the junction-exchange and boundary passes run serially),
 so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
 The plugins implement the local-inertial, diffusive-wave and first-order
-full shallow-water schemes on all-triangle meshes without transport. On
+full shallow-water schemes on triangle, quad and mixed meshes without
+transport. On
 the OpenMP plugin all three reproduce the CPU marcher's depths, heads,
 face fluxes and (under `FULL_SWE`) cell velocities bit for bit; a device
 backend agrees to its platform's rounding. Under `FULL_SWE` the front
 rebuild's tier pull-down (§9.5.7) is an edge-ordered sweep, so the
-plugin runs it on the host at each rebuild. A model that mixes in quads
-(§9.3.1) or carries species, age or temperature rows is
+plugin runs it on the host at each rebuild. A model that carries species,
+age or temperature rows is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
 served by the CPU marcher. There is no silent physics substitution. The
@@ -2896,7 +2896,7 @@ behaviour it once configured is now described.
   reactions/heat and borrowed owners remain guarded (§9.5.10). Long-period damping remains, and the
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
-- **The Kokkos backends serve all-triangle meshes without transport.**
+- **The Kokkos backends serve hydraulics without transport.**
   All three closures, `FULL_SWE` at first order and without the optional
   momentum physics; everything else runs on the CPU marcher (§9.11.1).
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D

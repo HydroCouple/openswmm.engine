@@ -754,7 +754,21 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     string(REPLACE "\n[2D_TRIANGLE_NODE_MAP]\n" "\n[2D_TRIANGLE_NODE_MAP]\n2 OUT1 0.60 10.0\n"
            _omp_outfall_inp "${_omp_outfall_inp}")
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp "${_omp_outfall_inp}")
-    foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr)
+    # A mixed mesh: the two NE triangles (T6, T7) become one quad, cell 6,
+    # which keeps the "vault" coupling tag and owns both of their boundary
+    # edges (east = local edge 0, north = local edge 1).
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_quad_inp)
+    string(REPLACE "   4   5   8    0.018  vault ;; T6 — NE lower (couples to ST1)\n   4   8   7    0.018        ;; T7 — NE upper\n"
+           "\n[2D_QUADS]\n   4   5   8   7    0.018  vault\n" _omp_quad_inp "${_omp_quad_inp}")
+    string(REPLACE "\n   7     0      SPECIFIED_FLOW " "\n   6     1      SPECIFIED_FLOW "
+           _omp_quad_inp "${_omp_quad_inp}")
+    string(FIND "${_omp_quad_inp}" "[2D_QUADS]" _omp_quad_at)
+    string(FIND "${_omp_quad_inp}" "   6     1      SPECIFIED_FLOW " _omp_quad_bc_at)
+    if(_omp_quad_at EQUAL -1 OR _omp_quad_bc_at EQUAL -1)
+        message(FATAL_ERROR "The mixed-mesh variant of 2d_complete_example.inp was not produced")
+    endif()
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp "${_omp_quad_inp}")
+    foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
@@ -773,6 +787,15 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         elseif(_case STREQUAL "swe_vfr")
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
             set(_extra --momentum FULL_SWE)
+        elseif(_case STREQUAL "quad")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --option "CELL_CLOSURE VFR" --option "FACE_RECONSTRUCTION VFR_FACE")
+        elseif(_case STREQUAL "quad_dw")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "quad_swe")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum FULL_SWE --option "CELL_CLOSURE VFR")
         endif()
         add_test(NAME test_engine_2d_omp_${_case}
             COMMAND ${Python3_EXECUTABLE}

@@ -52,6 +52,46 @@
 
 namespace openswmm::twoD::gpu {
 
+/// The cell volume ↔ free-surface closure on the device: the triangle relation, or the quad
+/// two-plane relation for a four-vertex cell under VFR. Same dispatch as inertial::cellEtaDepth
+/// and inertial::cellVolumeFromEta.
+struct CellClosure {
+    DView area, cz, vz, quad_z, quad_a;
+    IView cvv, nv;
+    bool vfr, quads;
+    double mwf;
+
+    /// Volume → (η, depth) for cell i.
+    KOKKOS_INLINE_FUNCTION void etaDepth(int i, double V, double& eta, double& depth) const {
+        if (vfr && quads && nv(i) == 4) {
+            inertial::etaDepthQuadScalar(area(i), cz(i), &quad_z(i * kQuadVfrZ), quad_a(i * 2),
+                                         quad_a(i * 2 + 1), true, mwf, V, eta, depth);
+            return;
+        }
+        inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
+                                 vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)),
+                                 vfr, mwf, V, eta, depth);
+    }
+    /// Free surface → volume for cell i.
+    KOKKOS_INLINE_FUNCTION double volumeFromEta(int i, double eta) const {
+        if (quads && nv(i) == 4)
+            return inertial::volumeFromEtaQuadScalar(area(i), cz(i), &quad_z(i * kQuadVfrZ),
+                                                     quad_a(i * 2), quad_a(i * 2 + 1), vfr, mwf,
+                                                     eta);
+        return inertial::volumeFromEtaScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
+                                             vz(cvv(i * kMaxCellVerts + 1)),
+                                             vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, eta);
+    }
+};
+
+CellClosure ExplicitKokkosSurfaceSolver::closure() const {
+    return CellClosure{d_tri_area_, d_tri_cz_,
+                       d_vz_,       d_quad_z_,
+                       d_quad_a_,   d_cell_v_,
+                       d_nv_,       opts_->cell_closure == CellClosure2D::VFR,
+                       has_quads_,  opts_->vfr_min_wet_frac};
+}
+
 namespace {
 
 /// Active-set / tier rebuild cadence in macro cycles (== serial marcher).
@@ -241,10 +281,16 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     d_vz_ = devCopy("vz", mesh.vz);
     d_vx_ = devCopy("vx", mesh.vx);
     d_vy_ = devCopy("vy", mesh.vy);
-    // Padded [cell*kMaxCellVerts + k] connectivity (MeshData). This plugin
-    // is gated to ALL-TRIANGLE meshes by SurfaceSolverFactory (R6), so the
-    // kernels below read slots 0..2 only.
+    // Padded [cell*kMaxCellVerts + k] connectivity (MeshData); a triangle's
+    // fourth slot is padding and is never read.
     d_cell_v_ = devCopy("cell_v", mesh.cell_v);
+    has_quads_ = has_quads;
+    d_nv_ = devCopy("cell_nv", std::vector<int>(mesh.cell_nv.begin(), mesh.cell_nv.end()));
+    // Quad two-plane closure tables and centroid-to-edge distances: read by
+    // four-vertex cells only.
+    d_quad_z_ = has_quads_ ? devCopy("quad_vfr_z", mesh.quad_vfr_z) : DView();
+    d_quad_a_ = has_quads_ ? devCopy("quad_vfr_a", mesh.quad_vfr_a) : DView();
+    d_slot_dist_ = has_quads_ ? devCopy("slot_dist", mesh.edge_dist_c_values()) : DView();
     d_vs_ptr_ = devCopy("vs_ptr", mesh.vert_stencil_ptr);
     d_vs_idx_ = devCopy("vs_idx", mesh.vert_stencil_idx);
     d_vs_wt_ = devCopy("vs_wt", mesh.vert_stencil_wt);
@@ -642,16 +688,11 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
 void ExplicitKokkosSurfaceSolver::reconstructAllDev() {
     const int nt = mesh_->n_triangles();
     auto vol = d_volume_, head = d_head_, depth = d_depth_;
-    auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto cvv = d_cell_v_;
-    const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
-    const double mwf = opts_->vfr_min_wet_frac;
+    const CellClosure cell = closure();
     Kokkos::parallel_for(
         "reconstructAll", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             double e, d;
-            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                                     vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)),
-                                     vfr, mwf, vol(i), e, d);
+            cell.etaDepth(i, vol(i), e, d);
             head(i) = e;
             depth(i) = d;
         });
@@ -670,6 +711,7 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
     auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     const bool swe = swe_;
+    const CellClosure cell = closure();
     Kokkos::parallel_for(
         "settle", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             double pending = 0.0;
@@ -712,9 +754,7 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
             double v = vol(i) + pending;
             vol(i) = (v > 0.0) ? v : 0.0;
             double e2, d2;
-            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                                     vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)),
-                                     vfr, mwf, vol(i), e2, d2);
+            cell.etaDepth(i, vol(i), e2, d2);
             head(i) = e2;
             depth(i) = d2;
         });
@@ -736,6 +776,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
     const double mwf = opts_->vfr_min_wet_frac;
     const double dry = opts_->dry_depth;
+    const CellClosure cell = closure();
     Kokkos::parallel_for(
         "lazySources", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             if (active(i))
@@ -749,9 +790,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
             evap_app(i) += budget.evaporation;
             vol(i) = budget.volume;
             double e2, d2;
-            inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                                     vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)),
-                                     vfr, mwf, vol(i), e2, d2);
+            cell.etaDepth(i, vol(i), e2, d2);
             head(i) = e2;
             depth(i) = d2;
         });
@@ -1142,7 +1181,7 @@ void ExplicitKokkosSurfaceSolver::refreshConveyance() {
             qcx(i) = sx / area(i);
             qcy(i) = sy / area(i);
         });
-    auto cells = d_bc_cell_, slots = d_bc_slot_, vertices = d_cell_v_;
+    auto cells = d_bc_cell_, slots = d_bc_slot_, vertices = d_cell_v_, nvv = d_nv_;
     auto bc_q = d_bc_q_, length = d_edge_length_, vx = d_vx_, vy = d_vy_;
     const int nbc = static_cast<int>(bc_cell_host_.size());
     // Serial perimeter pass: several boundary slots can belong to the same cell.
@@ -1150,8 +1189,8 @@ void ExplicitKokkosSurfaceSolver::refreshConveyance() {
         "refresh_boundary_discharge", Kokkos::RangePolicy<ExecSpace>(0, 1), KOKKOS_LAMBDA(int) {
             for (int k = 0; k < nbc; ++k) {
                 const int i = cells(k), slot = slots(k), edge = slot % kMaxCellVerts;
-                const int va = vertices(i * kMaxCellVerts + (edge + 1) % 3);
-                const int vb = vertices(i * kMaxCellVerts + (edge + 2) % 3);
+                const int va = vertices(i * kMaxCellVerts + (edge + 1) % nvv(i));
+                const int vb = vertices(i * kMaxCellVerts + (edge + 2) % nvv(i));
                 const double mx = 0.5 * (vx(va) + vx(vb)), my = 0.5 * (vy(va) + vy(vb));
                 const double fo = -bc_q(k) * length(slot), inv_a = 1.0 / area(i);
                 qcx(i) += fo * (mx - cx(i)) * inv_a;
@@ -1191,7 +1230,9 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     const double blend = inertial::momentumBlendFraction(theta, dt_f, opts_->theta_reference_step);
     const double dry = opts_->dry_depth;
     const double fr_max = opts_->froude_max;
-    const double beta_share = opts_->exchange_beta / 3.0;
+    const double beta3 = opts_->exchange_beta / 3.0, beta4 = opts_->exchange_beta / 4.0;
+    const bool quads = has_quads_;
+    auto nvv = d_nv_;
     const bool advect = opts_->advection;
     Kokkos::parallel_for(
         "fireFaces", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
@@ -1244,6 +1285,7 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
             const int exp_cell = (qn1 > 0.0) ? a : b;
             const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
             const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
+            const double beta_share = (quads && nvv(exp_cell) == 4) ? beta4 : beta3;
             const double budget = beta_share / refire * vmax;
             const double take = std::fabs(qn1) * width * dt_f;
             if (take > budget)
@@ -1270,7 +1312,9 @@ void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f
     auto tier = d_tier_, ftier = d_face_tier_;
     const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
     const double dry = opts_->dry_depth, dh_eps = opts_->flux_dh_eps;
-    const double beta_share = opts_->exchange_beta / 3.0;
+    const double beta3 = opts_->exchange_beta / 3.0, beta4 = opts_->exchange_beta / 4.0;
+    const bool quads = has_quads_;
+    auto nvv = d_nv_;
     Kokkos::parallel_for(
         "fireFacesDiffusive", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1293,6 +1337,7 @@ void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f
             const int exp_cell = (qn1 > 0.0) ? a : b;
             const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
             const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
+            const double beta_share = (quads && nvv(exp_cell) == 4) ? beta4 : beta3;
             const double budget = beta_share / refire * vmax;
             const double take = std::fabs(qn1) * xi(e) * dt_f;
             if (take > budget)
@@ -1341,7 +1386,9 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
     auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
     auto nxv = d_nx_, nyv = d_ny_, xi = d_xi_, conv = d_conveyance_;
     auto tier = d_tier_, ftier = d_face_tier_;
-    const double beta_share = opts_->exchange_beta / 3.0;
+    const double beta3 = opts_->exchange_beta / 3.0, beta4 = opts_->exchange_beta / 4.0;
+    const bool quads = has_quads_;
+    auto nvv = d_nv_;
     Kokkos::parallel_for(
         "fireFacesSwe", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1364,6 +1411,7 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
                 const int exp_cell = (fh > 0.0) ? a : b;
                 const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
                 const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
+                const double beta_share = (quads && nvv(exp_cell) == 4) ? beta4 : beta3;
                 const double budget = beta_share / refire * vmax;
                 const double take = std::fabs(fh) * xi(e) * dt_f;
                 if (take > budget) {
@@ -1430,6 +1478,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     const bool perot = have_perot_;
     const bool swe = swe_, li = !swe_ && !diffusive_;
     const double dry = opts_->dry_depth;
+    const CellClosure cell = closure();
+    auto nvv = d_nv_;
+    auto slot_dist = d_slot_dist_;
     auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
     auto wall_ptr = d_wall_ptr_, wall_slot = d_wall_slot_;
     auto slot_nx = d_slot_nx_, slot_ny = d_slot_ny_, slot_len = d_edge_length_;
@@ -1474,9 +1525,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                 evap_app(i) += budget.evaporation;
                 vol(i) = budget.volume;
                 double e2, d2;
-                inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                                         vz(cvv(i * kMaxCellVerts + 1)),
-                                         vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i), e2, d2);
+                cell.etaDepth(i, vol(i), e2, d2);
                 head(i) = e2;
                 depth(i) = d2;
                 if (perot) {
@@ -1615,12 +1664,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         const double S = bc_slope(kk);
                         double h_out = depth(i);
                         if (vfr_face) {
-                            const int e = idx % kMaxCellVerts;
-                            const int vv[3] = {cvv(i * kMaxCellVerts + 0),
-                                               cvv(i * kMaxCellVerts + 1),
-                                               cvv(i * kMaxCellVerts + 2)};
-                            const double za = vz(vv[(e + 1) % 3]);
-                            const double zb = vz(vv[(e + 2) % 3]);
+                            const int e = idx % kMaxCellVerts, nvi = nvv(i);
+                            const double za = vz(cvv(i * kMaxCellVerts + (e + 1) % nvi));
+                            const double zb = vz(cvv(i * kMaxCellVerts + (e + 2) % nvi));
                             h_out = inertial::faceDepthFromEta(head(i), (za < zb) ? za : zb,
                                                                (za < zb) ? zb : za);
                         }
@@ -1639,16 +1685,17 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         // boundaryEdgeFlux).
                         const double eta_bc = bc_head(kk);
                         const double dh = head(i) - eta_bc;
-                        const double dx_b = (L > 1.0e-12) ? (2.0 * area(i)) / (3.0 * L) : 0.0;
+                        // Triangle expression retained verbatim; a quad uses the
+                        // centroid-to-edge normal distance (== serial).
+                        const double dx_b =
+                            (nvv(i) == 3) ? ((L > 1.0e-12) ? (2.0 * area(i)) / (3.0 * L) : 0.0)
+                                          : slot_dist(idx);
                         if (n > 0.0 && dx_b > 1.0e-12) {
                             double h_up;
                             if (vfr_face) {
-                                const int e = idx % kMaxCellVerts;
-                                const int vv[3] = {cvv(i * kMaxCellVerts + 0),
-                                                   cvv(i * kMaxCellVerts + 1),
-                                                   cvv(i * kMaxCellVerts + 2)};
-                                const double za = vz(vv[(e + 1) % 3]);
-                                const double zb = vz(vv[(e + 2) % 3]);
+                                const int e = idx % kMaxCellVerts, nvi = nvv(i);
+                                const double za = vz(cvv(i * kMaxCellVerts + (e + 1) % nvi));
+                                const double zb = vz(cvv(i * kMaxCellVerts + (e + 2) % nvi));
                                 h_up = inertial::faceDepthFromEta((dh > 0.0) ? head(i) : eta_bc,
                                                                   (za < zb) ? za : zb,
                                                                   (za < zb) ? zb : za);
@@ -1666,12 +1713,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         const double eta_bc = bc_head(kk);
                         double hf;
                         if (vfr_face) {
-                            const int e = idx % kMaxCellVerts;
-                            const int vv[3] = {cvv(i * kMaxCellVerts + 0),
-                                               cvv(i * kMaxCellVerts + 1),
-                                               cvv(i * kMaxCellVerts + 2)};
-                            const double za = vz(vv[(e + 1) % 3]);
-                            const double zb = vz(vv[(e + 2) % 3]);
+                            const int e = idx % kMaxCellVerts, nvi = nvv(i);
+                            const double za = vz(cvv(i * kMaxCellVerts + (e + 1) % nvi));
+                            const double zb = vz(cvv(i * kMaxCellVerts + (e + 2) % nvi));
                             const double eta_hi = (head(i) > eta_bc) ? head(i) : eta_bc;
                             hf = inertial::faceDepthFromEta(eta_hi, (za < zb) ? za : zb,
                                                             (za < zb) ? zb : za);
@@ -1687,7 +1731,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                             deta = 0.0;
                         // Ghost across the edge at the centroid→edge
                         // distance 2A/(3L).
-                        const double slope = deta * (3.0 * L) / (2.0 * area(i));
+                        const double slope = (nvv(i) == 3) ? deta * (3.0 * L) / (2.0 * area(i))
+                                                           : deta / slot_dist(idx);
                         double qn1 = inertial::inertialFaceUpdate(
                             bc_q(kk), bc_q(kk), hf, dt_c, slope, n * n, std::fabs(bc_q(kk)));
                         qn1 = inertial::froudeCap(qn1, hf, fr_max);
@@ -1707,10 +1752,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         // Equilibrium clamp, kept as the tiny-cell /
                         // overshoot backstop: one substep moves the cell AT
                         // MOST to the prescribed stage.
-                        const double v_eq = inertial::volumeFromEtaScalar(
-                            area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                            vz(cvv(i * kMaxCellVerts + 1)), vz(cvv(i * kMaxCellVerts + 2)), vfr,
-                            mwf, bc_head(kk));
+                        const double v_eq = cell.volumeFromEta(i, bc_head(kk));
                         if (f < 0.0) {
                             const double lo = (v_old < v_eq) ? v_old : v_eq;
                             if (v_new < lo)
@@ -1744,21 +1786,16 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         else
                             bc_out(kk) -= applied;
                         double e2, d2;
-                        inertial::etaDepthScalar(area(i), cz(i), vz(cvv(i * kMaxCellVerts + 0)),
-                                                 vz(cvv(i * kMaxCellVerts + 1)),
-                                                 vz(cvv(i * kMaxCellVerts + 2)), vfr, mwf, vol(i),
-                                                 e2, d2);
+                        cell.etaDepth(i, vol(i), e2, d2);
                         head(i) = e2;
                         depth(i) = d2;
                     }
                     // Perot completion: add the boundary edge's contribution
                     // the interior-only rebuild missed (== serial marcher).
                     if (perot && bc_q(kk) != 0.0) {
-                        const int e = idx % kMaxCellVerts;
-                        const int vv[3] = {cvv(i * kMaxCellVerts + 0), cvv(i * kMaxCellVerts + 1),
-                                           cvv(i * kMaxCellVerts + 2)};
-                        const int va = vv[(e + 1) % 3];
-                        const int vb = vv[(e + 2) % 3];
+                        const int e = idx % kMaxCellVerts, nvi = nvv(i);
+                        const int va = cvv(i * kMaxCellVerts + (e + 1) % nvi);
+                        const int vb = cvv(i * kMaxCellVerts + (e + 2) % nvi);
                         const double mxb = 0.5 * (vxv(va) + vxv(vb));
                         const double myb = 0.5 * (vyv(va) + vyv(vb));
                         const double fo = -f; // outward flux (m³/s)
@@ -1926,10 +1963,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         vol(ci) = 0.0;
                     exch(kk) += Q * dt_c;
                     double e2, d2;
-                    inertial::etaDepthScalar(area(ci), cz(ci), vz(cvv(ci * kMaxCellVerts + 0)),
-                                             vz(cvv(ci * kMaxCellVerts + 1)),
-                                             vz(cvv(ci * kMaxCellVerts + 2)), vfr, mwf, vol(ci), e2,
-                                             d2);
+                    cell.etaDepth(ci, vol(ci), e2, d2);
                     head(ci) = e2;
                     depth(ci) = d2;
                 }

@@ -64,6 +64,8 @@
 
 namespace openswmm::twoD::gpu {
 
+struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
+
 class ExplicitKokkosSurfaceSolver final : public ISurfaceSolver {
 public:
     /**
@@ -240,6 +242,11 @@ private:
     DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
     DView d_n_face_;   ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
+    // Mixed meshes: vertex count per cell, the quad two-plane closure tables (six elevations
+    // and two sub-triangle areas per cell) and the centroid-to-edge distance per slot. The
+    // last three are empty on an all-triangle mesh.
+    IView d_nv_;
+    DView d_quad_z_, d_quad_a_, d_slot_dist_;
     // FULL_SWE: momentum side accumulators (m⁴/s), the positivity length, per-slot outward
     // normals, WALL slots per cell (CSR), the halo's outer ring and per-boundary conveyance.
     DView d_fmxL_, d_fmxR_, d_fmyL_, d_fmyR_;
@@ -319,6 +326,7 @@ private:
     int K_ = 1;
     bool have_perot_ = false;
     bool diffusive_ = false; ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
+    bool has_quads_ = false; ///< the mesh holds at least one quadrilateral cell
     bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE (first order)
     bool front_rebuild_ = false;              ///< widened halo and breach-triggered rebuild
     bool front_breach_ = false;               ///< a wetting front reached the halo's outer ring
@@ -419,6 +427,11 @@ public:
      * only its own discharge and side accumulators. Called by fireFaces().
      */
     void fireFacesDiffusive(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief Bundle the views and flags of the cell volume/free-surface closure for a kernel.
+     * @return A device-copyable value; capture it by value in a kernel lambda.
+     */
+    CellClosure closure() const;
     /**
      * @brief FULL_SWE face kernel: first-order Godunov flux with hydrostatic reconstruction.
      * @param[in] lo First index into the compact edge list.

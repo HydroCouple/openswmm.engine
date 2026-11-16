@@ -134,7 +134,6 @@ TEST(BackendSafety, ModelsBeyondTheKokkosCapabilitiesNeverProbe) {
     };
     const Case cases[] = {
         {"full SWE order 2", Momentum2D::FULL_SWE, 2, -1, 0},
-        {"quads", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_QUADS},
         {"front rebuild", Momentum2D::LOCAL_INERTIAL, 1, 1, 0},
         {"transport", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_TRANSPORT_LI},
         {"groundwater", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_GROUNDWATER},
