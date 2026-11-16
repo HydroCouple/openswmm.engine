@@ -381,3 +381,22 @@ cases the current code excludes). Acceptance gates as in the table.
   (258 member-steps) — a second mechanism (sunk member / class C), not the pond booking. Basins: G72R83B 2.995 →
   0.363 (MC 0.062), G72R150 3.445 → 0.991 (MC 0.454), G72UD11 0.916 → 0.228 (MC 1.105: now too narrow),
   G70F11P 0.038 → 0.138 (MC 0.733: still narrow).
+- 2026-11-15: O-8b (depth-1 admission closure; `RomAdmissionClosure.hpp`, uncommitted). The O-8 component rule is replaced, as
+  THE rule (no knob), by one hop: a non-admitted node is admitted when it is on the boundary (the far end of a ONE_WAY, RAISED
+  or FREE link whose other end is admitted; the engine floors those lines at both ends) AND its component of the free graph
+  among non-admitted nodes is ungrounded (no outfall, no grounded flag, no free link to the outside). Only the boundary node
+  is admitted; the interior inherits the floor through free conduits and the plane. Engine call site unchanged (once per growth
+  of the admitted set, sticky). **Tests** (member_ports 34): chain behind a pump admits only the node directly behind (the
+  component rule would admit U1 too; asserted), two basins via a raised pipe admit B2 not its lateral, a lateral behind a floored
+  line admits L1 not L2/X, decision (d) test (a node behind a one-way port WITH another free path to the outfall stays linear,
+  without one is admitted), random graphs (boundary only, ungrounded by independent walk, left-out boundary nodes grounded,
+  repeated application terminates). **Gates (Release)**: member_ports 34, port_graph_replay 2, additive_channel 12,
+  spectral_rom1d 101, storage gate A 0.889/0.958, B 0.727/0.960, R 0.952/0.880 (unchanged). **Release 1D smoke** (`ph_smoke1d`
+  to 07:00, 4 threads): 3,892 steps, wall **59 s** (O-8 component rule Debug: 5,968 s at step 3200), k_max **42** (827), Newton
+  298,626, Jacobi fallbacks 1 (all converged), not converged 0, admitted nodes 27 (closure added 17), store member-steps > 0.05 ft
+  below invert 95 (G80F11B 90, G72R33Bb 5; deepest -0.123 ft; O-7 smoke: G80F11B 92). **Not closed**: the any-node line
+  (non-admitted, linear nodes) is 1.99 M member-steps, deepest -2044.5 ft; closure OFF (`OPENSWMM_PH_NO_CLOSURE=1`) gives 2.02 M, same
+  deepest, and G71F06R_ovl (22,842) is the only node the closure removes from the list. G70F11P 21,466, G71O020 18,814, G80F13P,
+  G72R211, G73R45x remain. G71O020 has a free conduit to G71U02F, so decision (d) leaves it linear, yet it sinks: the reversed
+  one-way line from G71F12P (side orifice, kept as q* + d*z_up) out-drains the free path. Rule (d)'s premise does not hold for
+  that port; the fix is on the one-way line (treat a ONE_WAY port's far end as floored irrespective of other paths), not on depth.

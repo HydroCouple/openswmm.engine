@@ -27,6 +27,7 @@
 #include "uncertainty/RomStorePorts.hpp"
 #include "uncertainty/RomPortGraph.hpp"
 #include "uncertainty/RomAdditiveChannel.hpp"
+#include "uncertainty/RomAdmissionClosure.hpp"
 #include "rom_port_graph_full_reference.hpp"
 
 #ifdef OPENSWMM_HAS_2D
@@ -1091,6 +1092,137 @@ TEST(PortGraph, LinearFactorIsSharedByMembersAndRebuiltWhenTheGraphChanges) {
 // ===========================================================================
 // Step 3 — engine wiring (hook rom1dStorageMembersEnabled())
 // ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Admission closure (PORT_HAMILTONIAN O-8, uncertainty/RomAdmissionClosure.hpp)
+// ---------------------------------------------------------------------------
+namespace {
+using CL = ClosureLink;
+CL lk(int a, int b, CL::Kind k = CL::FREE) { CL l; l.a = a; l.b = b; l.kind = k; return l; }
+std::vector<char> flags(int n, std::initializer_list<int> on) {
+    std::vector<char> f(static_cast<std::size_t>(n), 0);
+    for (int t : on) f[static_cast<std::size_t>(t)] = 1;
+    return f;
+}
+/// Independent check: a non-admitted node is grounded when a breadth-first
+/// walk over free links between non-admitted nodes reaches the outside.
+bool groundedByWalk(int n, const std::vector<CL>& links, const std::vector<char>& adm, int start) {
+    std::vector<char> seen(static_cast<std::size_t>(n), 0);
+    std::vector<int> st{start};
+    seen[static_cast<std::size_t>(start)] = 1;
+    while (!st.empty()) {
+        const int x = st.back();
+        st.pop_back();
+        for (const CL& l : links) {
+            if (l.kind != CL::FREE || (l.a != x && l.b != x)) continue;
+            const int y = l.a == x ? l.b : l.a;
+            if (y < 0) return true;
+            if (adm[static_cast<std::size_t>(y)] || seen[static_cast<std::size_t>(y)]) continue;
+            seen[static_cast<std::size_t>(y)] = 1;
+            st.push_back(y);
+        }
+    }
+    return false;
+}
+}  // namespace
+
+// Depth-1 closure (O-8b). A wet well W (admitted: a pump leaves it) with the
+// chain U1 -> U2 -> W behind it: only U2, the node directly behind W, joins.
+// U1 stays linear, tied to U2 by a free conduit. Mutation: the component rule
+// (admit everything with no free path to the outfall) would return {0, 1}.
+TEST(AdmissionClosure, ChainBehindAPumpAdmitsOnlyTheNodeDirectlyBehindIt) {
+    // 0 U1, 1 U2, 2 W (admitted), 3 D
+    const std::vector<CL> links{lk(0, 1), lk(1, 2), lk(2, 3, CL::ONE_WAY), lk(3, -1)};
+    const auto add = admissionClosure(4, links, flags(4, {2}));
+    EXPECT_EQ(add, (std::vector<int>{1}));
+    EXPECT_TRUE(std::find(add.begin(), add.end(), 0) == add.end()) << "the component rule would admit U1 too";
+    // Mutation: an overflow pipe from U2 to the outfall grounds it.
+    auto with_free = links;
+    with_free.push_back(lk(1, -1));
+    EXPECT_TRUE(admissionClosure(4, with_free, flags(4, {2})).empty());
+}
+
+// Two basins joined by a raised-end pipe: B1 is admitted, B2 (the far end of
+// the RAISED link) joins; B2's lateral L does not (one hop). Both basins are
+// stores. A free conduit from B2 to the trunk grounds B2.
+TEST(AdmissionClosure, BasinBehindARaisedEndPipeIsAdmitted) {
+    // 0 B1 (admitted), 1 B2, 2 L, 3 T
+    const std::vector<CL> links{lk(0, 1, CL::RAISED), lk(2, 1), lk(0, 3, CL::ONE_WAY), lk(3, -1)};
+    EXPECT_EQ(admissionClosure(4, links, flags(4, {0})), (std::vector<int>{1}));
+    auto with_free = links;
+    with_free.push_back(lk(1, 3));
+    EXPECT_TRUE(admissionClosure(4, with_free, flags(4, {0})).empty());
+}
+
+// A lateral L1 whose only outlet is a floored line into admitted store A joins;
+// L2 behind L1 does not. X also drains into A but has a free conduit to the
+// plane node P, which reaches the outfall: X stays linear.
+TEST(AdmissionClosure, LateralBehindAFlooredLineJoinsAndAFreeConduitKeepsANodeLinear) {
+    // 0 A (admitted), 1 L1, 2 L2, 3 X, 4 P
+    const std::vector<CL> links{lk(2, 1), lk(1, 0), lk(3, 0), lk(3, 4), lk(4, -1), lk(0, 4, CL::ONE_WAY)};
+    const auto add = admissionClosure(5, links, flags(5, {0}));
+    EXPECT_EQ(add, (std::vector<int>{1}));
+    // A grounded flag (a node the caller holds at the main run) grounds its component.
+    EXPECT_TRUE(admissionClosure(5, links, flags(5, {0}), flags(5, {2})).empty());
+}
+
+// Decision (d): a node behind a one-way port (G71O020 behind G71F12P's orifice
+// line) with ANOTHER free path to the grounded plane is not admitted. Its deficit
+// is carried to the outfall by the linear response, and the engine's floored
+// line holds the dry factor at both ends, so the line cannot pull it below its
+// invert; the free path is the node's drain. Without that path it is admitted.
+TEST(AdmissionClosure, NodeWithAFreePathToTheOutfallStaysLinearEvenBehindAOneWayPort) {
+    // 0 W (admitted), 1 Y (one-way line from W, free conduit to P), 2 P, 3 Z (one-way from W, no free path)
+    const std::vector<CL> links{lk(0, 1, CL::ONE_WAY), lk(1, 2), lk(2, -1), lk(0, 3, CL::ONE_WAY)};
+    EXPECT_EQ(admissionClosure(4, links, flags(4, {0})), (std::vector<int>{3}));
+}
+
+// Random graphs: only boundary nodes are taken, each taken node is ungrounded
+// by an independent walk, each boundary node left out is grounded, and
+// repeating the closure terminates.
+TEST(AdmissionClosure, BoundaryOnlyUngroundedAndTerminatingOnRandomGraphs) {
+    std::mt19937 rng(8);
+    for (int trial = 0; trial < 300; ++trial) {
+        const int n = 5 + static_cast<int>(rng() % 60);
+        std::vector<CL> links;
+        for (int t = 1; t < n; ++t) links.push_back(lk(t, static_cast<int>(rng() % static_cast<unsigned>(t)),
+                                                      static_cast<CL::Kind>(rng() % 6 == 0 ? 1 + rng() % 2 : 0)));
+        const int extra = static_cast<int>(rng() % static_cast<unsigned>(n));
+        for (int e = 0; e < extra; ++e) {
+            const int a = static_cast<int>(rng() % static_cast<unsigned>(n));
+            const int b = rng() % 5 == 0 ? -1 : static_cast<int>(rng() % static_cast<unsigned>(n));
+            if (a != b) links.push_back(lk(a, b, static_cast<CL::Kind>(rng() % 4 == 0 ? 1 + rng() % 2 : 0)));
+        }
+        std::vector<char> adm(static_cast<std::size_t>(n), 0);
+        for (int t = 0; t < n; ++t) adm[static_cast<std::size_t>(t)] = rng() % 7 == 0;
+        auto isBoundary = [&](int t) {
+            for (const CL& l : links)
+                if ((l.a == t && l.b >= 0 && adm[static_cast<std::size_t>(l.b)]) || (l.b == t && l.a >= 0 && adm[static_cast<std::size_t>(l.a)])) return true;
+            return false;
+        };
+        const auto add = admissionClosure(n, links, adm);
+        std::vector<char> taken(static_cast<std::size_t>(n), 0);
+        for (int t : add) {
+            ASSERT_FALSE(adm[static_cast<std::size_t>(t)]);
+            EXPECT_TRUE(isBoundary(t)) << "trial " << trial << " node " << t;
+            EXPECT_FALSE(groundedByWalk(n, links, adm, t)) << "trial " << trial << " node " << t;
+            taken[static_cast<std::size_t>(t)] = 1;
+        }
+        for (int t = 0; t < n; ++t)
+            if (!adm[static_cast<std::size_t>(t)] && !taken[static_cast<std::size_t>(t)] && isBoundary(t))
+                EXPECT_TRUE(groundedByWalk(n, links, adm, t)) << "trial " << trial << " node " << t;
+        // Repeated application (sticky admission) reaches a fixed point.
+        auto cur = adm;
+        int rounds = 0;
+        for (; rounds <= n; ++rounds) {
+            const auto more = admissionClosure(n, links, cur);
+            if (more.empty()) break;
+            for (int t : more) { ASSERT_FALSE(cur[static_cast<std::size_t>(t)]); cur[static_cast<std::size_t>(t)] = 1; }
+        }
+        EXPECT_LE(rounds, n) << "trial " << trial;
+    }
+}
+
 #ifdef OPENSWMM_HAS_2D
 namespace {
 

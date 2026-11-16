@@ -8132,6 +8132,23 @@ int SWMMEngine::end() noexcept {
                             rom1d_pg_below_floor_node_[worst[k]]);
             std::printf("\n");
         }
+        // O-8: every active node, store or linear, and the deficits carried into admission.
+        auto byNode = [&](const char* what, const std::vector<long>& cnt) {
+            std::vector<std::size_t> w;
+            for (std::size_t a = 0; a < cnt.size(); ++a)
+                if (cnt[a] > 0) w.push_back(a);
+            std::sort(w.begin(), w.end(), [&](std::size_t x, std::size_t y) { return cnt[x] > cnt[y]; });
+            if (w.empty()) return;
+            std::printf("[PH-ports] %s by node:", what);
+            for (std::size_t k = 0; k < w.size() && k < 8; ++k)
+                std::printf(" %s %ld", ctx_.node_names.name_of(rom1d_active_map_[w[k]]).c_str(), cnt[w[k]]);
+            std::printf("\n");
+        };
+        std::printf("[PH-ports] admission closure added %ld nodes; any node: member-steps > 0.05 ft below invert %ld (deepest %.3f ft); "
+                    "members already below invert when admitted %ld\n",
+                    rom1d_cl_added_, rom1d_pg_below_all_, rom1d_pg_min_all_, rom1d_pg_admit_below_);
+        byNode("any node below invert", rom1d_pg_below_all_node_);
+        byNode("admitted below invert", rom1d_pg_admit_below_node_);
         for (int j : rom1d_pg_envelope_links_) std::printf("[PH-ports] monotone envelope on link %s\n", ctx_.link_names.name_of(j).c_str());
         std::fflush(stdout);
     }
@@ -12443,6 +12460,34 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 }
             }
         }
+        // The admission closure's link table (O-8): conduits are free two-way
+        // links, except the raised-end pipes above; pumps and structures are
+        // one-way. An end that is not an active node is an outfall (-1).
+        rom1d_cl_links_.clear();
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            const auto uj = static_cast<std::size_t>(j);
+            uncertainty::ClosureLink cl;
+            cl.a = act(ctx_.links.node1[uj]);
+            cl.b = act(ctx_.links.node2[uj]);
+            if (cl.a < 0 && cl.b < 0) continue;
+            const LinkType t = ctx_.links.type[uj];
+            if (t != LinkType::CONDUIT) {
+                cl.kind = uncertainty::ClosureLink::ONE_WAY;
+            } else {
+                for (int end = 0; end < 2; ++end) {
+                    const int nd = end == 0 ? ctx_.links.node1[uj] : ctx_.links.node2[uj];
+                    const int far = end == 0 ? ctx_.links.node2[uj] : ctx_.links.node1[uj];
+                    if (nd < 0 || far < 0 || act(nd) < 0) continue;
+                    if (ctx_.nodes.type[static_cast<std::size_t>(nd)] != NodeType::STORAGE) continue;
+                    const double off_far = end == 0 ? ctx_.links.offset2[uj] : ctx_.links.offset1[uj];
+                    const double z_far = ctx_.nodes.invert_elev[static_cast<std::size_t>(far)] + off_far;
+                    if (off_far > 0.1 && z_far > ctx_.nodes.invert_elev[static_cast<std::size_t>(nd)] + 0.1)
+                        cl.kind = uncertainty::ClosureLink::RAISED;
+                }
+            }
+            rom1d_cl_links_.push_back(cl);
+        }
+        rom1d_cl_count_ = static_cast<std::size_t>(-1);
         rom1d_nl_y_.clear();
         rom1d_corr_.assign(uM * un, 0.0);
         rom1d_mem_z_.clear();
@@ -12488,6 +12533,18 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     auto admit = [&](int a) {
         nl_of[static_cast<std::size_t>(a)] = static_cast<int>(rom1d_nl_nodes_.size());
         rom1d_nl_nodes_.push_back(a);
+        // Diagnostic (O-8): members that are already below the invert when
+        // their node becomes a store carry that deficit into it.
+        const auto uf = static_cast<std::size_t>(rom1d_active_map_[static_cast<std::size_t>(a)]);
+        const double d0 = ctx_.nodes.head[uf] - ctx_.nodes.invert_elev[uf];
+        long below = 0;
+        for (std::size_t i = 0; i < uM && (i + 1) * un <= rom1d_mem_z_.size(); ++i)
+            if (d0 + rom1d_mem_z_[i * un + static_cast<std::size_t>(a)] < -0.05) ++below;
+        if (below > 0) {
+            rom1d_pg_admit_below_ += below;
+            if (rom1d_pg_admit_below_node_.size() != un) rom1d_pg_admit_below_node_.assign(un, 0);
+            rom1d_pg_admit_below_node_[static_cast<std::size_t>(a)] += below;
+        }
     };
     // Storage nodes join when an outlet starts at a level: a structure, a pipe
     // that ends above the next node's water, or a pipe the main run leaves
@@ -12543,6 +12600,21 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
     }
 #endif
+    // Admission closure (O-8, uncertainty/RomAdmissionClosure.hpp): a node that
+    // exchanges water with the rest only through floored or one-way ports (a
+    // line into an admitted store, a raised end, a pump, a structure) has no
+    // linear path to an outfall, so a member's deficit there can only go below
+    // its invert; it becomes a store with a floor, recursively. Sticky, like
+    // every admission; re-run whenever the admitted set grew.
+    static const bool closure_off = [] { const char* e = std::getenv("OPENSWMM_PH_NO_CLOSURE"); return e && *e == '1'; }();   // diagnostic A/B only
+    if (!closure_off && rom1d_nl_nodes_.size() != rom1d_cl_count_) {
+        std::vector<char> adm(un, 0);
+        for (int a : rom1d_nl_nodes_) adm[static_cast<std::size_t>(a)] = 1;
+        const auto add = uncertainty::admissionClosure(na, rom1d_cl_links_, adm);
+        for (int a : add) admit(a);
+        rom1d_cl_added_ += static_cast<long>(add.size());
+        rom1d_cl_count_ = rom1d_nl_nodes_.size();
+    }
     // No admitted node: F is the plane system scaled by kappa_i, so C = 0
     // exactly (bit-identical to per-member off).
     if (rom1d_nl_nodes_.empty()) { rom1d_mem_z_ = u; rom1d_->setMemberAdditive(nullptr); return; }
@@ -13068,6 +13140,14 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         for (std::size_t t = 0; t < un; ++t) {
             rom1d_mem_z_[i * un + t] = z[t];
             c[t] = z[t] - u[i * un + t];
+            // Diagnostic (O-8): the member's depth at every node, store or linear.
+            const double dm = depthAt(static_cast<int>(t)) + z[t];
+            if (dm < -0.05) {
+                ++rom1d_pg_below_all_;
+                rom1d_pg_min_all_ = std::min(rom1d_pg_min_all_, dm);
+                if (rom1d_pg_below_all_node_.size() != un) rom1d_pg_below_all_node_.assign(un, 0);
+                ++rom1d_pg_below_all_node_[t];
+            }
         }
         for (std::size_t b = 0; b < nb; ++b) {
             const auto a = static_cast<std::size_t>(rom1d_nl_nodes_[b]);

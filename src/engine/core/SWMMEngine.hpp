@@ -91,6 +91,7 @@
 #include "../uncertainty/RomFlowResponse.hpp"
 #include "../uncertainty/RomAdditiveChannel.hpp"
 #include "../uncertainty/RomPortGraph.hpp"
+#include "../uncertainty/RomAdmissionClosure.hpp"
 #include "../uncertainty/UncertaintyEnsemble.hpp"
 #include "../uncertainty/SoftSpatialField.hpp"
 #include "../uncertainty/SpdeSpatialBasis.hpp"
@@ -776,6 +777,12 @@ public:
     bool& rom1dStorageMembersEnabled() noexcept { return rom1d_nl_enabled_; }
     /// Diagnostic: counters of the per-member port-graph solves (PH_STORES_AND_PORTS §3).
     const uncertainty::PortGraph::Stats& rom1dPortGraphStats() const noexcept { return rom1d_pg_.stats; }
+    /// O-8 diagnostics: member-steps any active node ended > 0.05 ft below its
+    /// invert, members already below when their node was admitted, nodes the
+    /// admission closure added.
+    long rom1dBelowInvertAllNodes() const noexcept { return rom1d_pg_below_all_; }
+    long rom1dAdmittedBelowInvert() const noexcept { return rom1d_pg_admit_below_; }
+    long rom1dClosureAdmitted() const noexcept { return rom1d_cl_added_; }
     /// Diagnostic (cost): per-member steps that reached the solve, and street-orifice law
     /// evaluations (the square-root law itself, wherever it is evaluated) over the run.
     long rom1dPortGraphSteps() const noexcept { return rom1d_pg_steps_; }
@@ -849,6 +856,14 @@ private:
     long rom1d_pg_steps_ = 0;                             ///< steps that ran the per-member solve
     long rom1d_pg_cpl_evals_ = 0;                         ///< street-orifice law evaluations (cost diagnostic)
     std::vector<double> rom1d_pg_street_vol_;             ///< Σ over routing steps of the per-member street exchange (m^3, cp × member)
+    std::vector<uncertainty::ClosureLink> rom1d_cl_links_; ///< link table of the admission closure (O-8; active ends, -1 = outfall)
+    std::size_t rom1d_cl_count_ = static_cast<std::size_t>(-1);   ///< admitted count the closure last ran on
+    long rom1d_cl_added_ = 0;                             ///< nodes admitted by the closure
+    long rom1d_pg_below_all_ = 0;                         ///< member-steps ANY active node ended > 0.05 ft below its invert (O-8 diagnostic)
+    std::vector<long> rom1d_pg_below_all_node_;           ///< the same, per active node
+    double rom1d_pg_min_all_ = 0.0;                       ///< deepest member depth below any node's invert (ft, <= 0)
+    long rom1d_pg_admit_below_ = 0;                       ///< members already > 0.05 ft below the invert when their node was admitted
+    std::vector<long> rom1d_pg_admit_below_node_;         ///< the same, per active node
     std::vector<double> rom1d_fs_relay_;   ///< H18: per-link head relay (1 - Froude gate) from the flow response
     std::vector<double> rom1d_h18_wsym_, rom1d_h18_diag_, rom1d_h18_S_, rom1d_h18_rates_, rom1d_h18_tmp_;
     uncertainty::CsrGraph rom1d_h18_Lc_;
