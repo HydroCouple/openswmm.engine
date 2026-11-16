@@ -1050,6 +1050,18 @@ The advective augmentation \f$\lvert\mathbf{u}_i\rvert = \lvert\mathbf{q}_i\rver
 the depth exceeds \f$10^{-6}\f$ m and \f$\theta < 1\f$, and taken as zero
 otherwise.
 
+Under the local-inertial law the augmentation is limited to
+\f$\lvert\mathbf{u}_i\rvert \le Fr_{max}\sqrt{g h_i}\f$, the clamp of (9-10) applied at
+the cell depth, so \f$\Delta t_i \ge \alpha L_{char,i} / \left((1 + Fr_{max})\sqrt{g h_i}\right)\f$.
+The limit is needed because \f$\mathbf{q}_i\f$ is built from face discharges that
+are clamped at the *face* depth while it is divided by the *cell mean*
+depth. A cell that holds a film while deeper neighbors feed it — an inlet
+cell draining to the 1D network, or a partly wet cell on a steep bank —
+then reports a quotient of hundreds to thousands of m/s that no water
+travels at, and without the limit that one cell collapses
+\f$\Delta t_0\f$ for the whole mesh. `FULL_SWE` and `DIFFUSIVE_WAVE` do not
+apply the limit.
+
 \f$L_{char}\f$ is the operator-derived length of (9-4) rather than a
 geometric proxy, and the difference matters. The face update couples cells through \f$g h \xi_f/(A\,d_{n,f})\f$;
 the worst (odd–even) mode of that operator has eigenvalue \f$\lambda = 2(gh/A)\sum_f \xi_f/d_{n,f}\f$, and the explicit update is linearly stable

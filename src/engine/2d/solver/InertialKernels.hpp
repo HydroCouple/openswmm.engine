@@ -542,6 +542,28 @@ OPENSWMM_KERNEL_FN double froudeCap(double q, double hf, double fr_max) noexcept
 }
 
 /**
+ * @brief Cell speed for the local-inertial CFL bound: |q⃗|/h, limited to fr_max·√(g·h).
+ *
+ * Face discharges already obey the Froude clamp at the face depth (froudeCap), but the cell
+ * speed divides the reconstructed discharge by the cell mean depth. A film cell beside deeper
+ * water then reports thousands of m/s, which collapses the global step without describing any
+ * water that moves that fast. The limit applies the same Froude bound at the cell depth.
+ *
+ * @param[in] qx Finite X unit-width discharge of the cell, m2/s.
+ * @param[in] qy Finite Y unit-width discharge of the cell, m2/s.
+ * @param[in] h Finite positive cell mean depth, m.
+ * @param[in] fr_max Finite nonnegative maximum Froude number.
+ * @return Cell speed in m/s, at most fr_max·√(g·h).
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double cflCellSpeed(double qx, double qy, double h, double fr_max) noexcept {
+    const double speed = qMagnitude(qx, qy) / h;
+    const double cap = fr_max * std::sqrt(kGravity * h);
+    return (speed < cap) ? speed : cap;
+}
+
+/**
  * @brief Per-cell CFL stable step: dt = α·L_char/(√(g·h) + |u|), with |u| = |q⃗|/h the cell
  * speed from the Perot reconstruction (pass 0 when unavailable — the gravity-wave celerity
  * dominates in the flows this scheme is valid for).

@@ -1543,7 +1543,9 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             const double h = state_->depth[i];
             double speed = 0.0;
             if (!qcx_.empty() && h > 1.0e-6)
-                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
+                speed = (mode_ == Momentum2D::LOCAL_INERTIAL)
+                            ? inertial::cflCellSpeed(qcx_[i], qcy_[i], h, opts_->froude_max)
+                            : inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
             double dt = (h > opts_->dry_depth) ? inertial::cellCflDt(opts_->cfl_number,
                                                                      (mode_ == Momentum2D::FULL_SWE)
                                                                          ? edges_.cell_lpos[i]
@@ -1782,7 +1784,9 @@ void ExplicitInertialSolver::refreshDt0() {
                 continue;
             double speed = 0.0;
             if (!qcx_.empty() && h > 1.0e-6)
-                speed = inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
+                speed = (mode_ == Momentum2D::LOCAL_INERTIAL)
+                            ? inertial::cflCellSpeed(qcx_[i], qcy_[i], h, opts_->froude_max)
+                            : inertial::qMagnitude(qcx_[i], qcy_[i]) / h;
             double dt = inertial::cellCflDt(opts_->cfl_number,
                                             (mode_ == Momentum2D::FULL_SWE) ? edges_.cell_lpos[i]
                                                                             : edges_.cell_lchar[i],

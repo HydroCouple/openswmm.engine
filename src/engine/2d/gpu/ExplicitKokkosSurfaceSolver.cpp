@@ -704,6 +704,7 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
     auto qcx = d_qcx_, qcy = d_qcy_;
     const bool perot = have_perot_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
+    const double fr_max = opts_->froude_max;
     const double dt_max = opts_->max_timestep;
     double dt0 = 1.0e30;
     Kokkos::parallel_reduce(
@@ -716,7 +717,7 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
             const double h = depth(i);
             double speed = 0.0;
             if (perot && h > 1.0e-6)
-                speed = inertial::qMagnitude(qcx(i), qcy(i)) / h;
+                speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
             double dt = (h > dry) ? inertial::cellCflDt(alpha, lchar(i), h, speed) : 1.0e30;
             dt = (dt < dt_max) ? dt : dt_max;
             dtcell(i) = dt;
@@ -826,6 +827,7 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
     auto qcx = d_qcx_, qcy = d_qcy_;
     const bool perot = have_perot_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
+    const double fr_max = opts_->froude_max;
     double fresh = 1.0e30;
     Kokkos::parallel_reduce(
         "cfl_refresh", Kokkos::RangePolicy<ExecSpace>(0, nt),
@@ -837,7 +839,7 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
                 return;
             double speed = 0.0;
             if (perot && h > 1.0e-6)
-                speed = inertial::qMagnitude(qcx(i), qcy(i)) / h;
+                speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
             const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed) / (1 << tier(i));
             if (dt < mn)
                 mn = dt;
