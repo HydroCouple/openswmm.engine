@@ -37,7 +37,11 @@
  *          Per-kernel `s=` is HOST-SIDE wall between the begin/end dispatch
  *          callbacks: on the OpenMP backend that is the kernel's execution
  *          time (dispatch blocks); on CUDA/HIP it is launch overhead only —
- *          device time lives in the fence/nsys numbers.
+ *          device time lives in the fence/nsys numbers, charged to whichever
+ *          later call blocks. Setting OPENSWMM_PERF_FENCE as well fences at
+ *          each end-of-dispatch callback, so `s=` becomes every kernel's own
+ *          device time. That serializes host and device, so use it only to
+ *          attribute time, not to measure the run.
  *
  *          Counters are plain (non-atomic) longs: the engine drives the
  *          solver from one thread, and Kokkos dispatch callbacks fire on the
@@ -168,6 +172,12 @@ inline void end_dispatch(std::uint64_t kID) {
     auto& g = *active;
     if (dispatch_t0.empty())
         return;
+    // OPENSWMM_PERF_FENCE=1: wait for the device before stopping the clock, so
+    // `s=` is this kernel's execution time on CUDA/HIP/SYCL instead of its
+    // launch overhead. Diagnostic only: it serializes host and device.
+    static const bool fence_each = std::getenv("OPENSWMM_PERF_FENCE") != nullptr;
+    if (fence_each)
+        Kokkos::fence();
     const double dt = std::chrono::duration<double>(clock::now() - dispatch_t0.back()).count();
     dispatch_t0.pop_back();
     if (kID < g.kernels.size()) {
