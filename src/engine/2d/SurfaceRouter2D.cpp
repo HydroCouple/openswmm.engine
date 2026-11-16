@@ -1385,7 +1385,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         throw std::runtime_error(
             "[2D heat] Water density and specific heat must give a finite positive capacity.");
     solver_->initialize(mesh_, state_, options_);
-    if (auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get())) {
+    // Outfall transfers land in these cells between advances; every backend
+    // keeps them active on tier zero. The GPU backend used to miss the pins,
+    // which put Bellinge's outfall and drain flows percent apart from the CPU.
+    {
         std::vector<int> cells;
         for (const auto& cp : coupling_points_) {
             if (!cp.is_outfall)
@@ -1397,7 +1400,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                      p < mesh_.vert_stencil_ptr[cp.vertex_idx + 1]; ++p)
                     cells.push_back(mesh_.vert_stencil_idx[p]);
         }
-        cpu->pinExternalSourceCells(cells);
+        solver_->pinExternalSourceCells(cells);
     }
 
     // G1: the two-zone groundwater kernel, if [2D_AQUIFER] was authored. It
@@ -2438,7 +2441,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
     // surface must also be published to plugin-owned state.
     if (outfall_state_changed_) {
         // CPU closures were updated only on the affected cells; those cells
-        // are permanently pinned, so its cached active set remains valid.
+        // are permanently pinned, so every backend's active set remains valid.
+        // A plugin backend only needs the edited volumes uploaded.
         if (!dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
             solver_->resyncFromVolumes(sim_time_);
         outfall_state_changed_ = false;

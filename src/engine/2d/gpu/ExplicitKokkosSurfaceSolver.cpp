@@ -1713,7 +1713,23 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
     reconstructAllDev();
     hostRefresh(state_->head, d_head_);
     hostRefresh(state_->depth, d_depth_);
-    // External outfall transfers can activate previously dry cells.
+    // No forced rebuild: outfall transfers land in pinned cells, which are
+    // always active on tier zero. The CPU marcher keeps its active set here
+    // too; rebuilding after every transfer changed the dt0 schedule.
+}
+
+void ExplicitKokkosSurfaceSolver::pinExternalSourceCells(const std::vector<int>& cells) {
+    kperf::Scope performance_scope(perf_counters_);
+    if (!initialized_)
+        return;
+    const int nt = mesh_->n_triangles();
+    for (const int c : cells)
+        if (c < 0 || c >= nt)
+            throw std::out_of_range("pinExternalSourceCells: cell outside the mesh");
+    auto pin = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), d_pin_t0_);
+    for (const int c : cells)
+        pin(c) = 1;
+    Kokkos::deep_copy(d_pin_t0_, pin);
     cycles_since_rebuild_ = 1000;
 }
 

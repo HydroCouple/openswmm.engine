@@ -136,6 +136,17 @@ public:
     virtual void resyncFromVolumes(double t0) { reinitialize(t0); }
 
     /**
+     * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
+     *
+     * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
+     * @note Call after initialize(). Pins persist for the run and force an active-set/tier
+     * rebuild on the next advance, so the transfers land in cells that always fire at the
+     * fastest cadence. The default is a no-op for backends without a local time-stepping ladder.
+     * Serialize with stepping.
+     */
+    virtual void pinExternalSourceCells(const std::vector<int>& cells) { (void)cells; }
+
+    /**
      * @brief Release all backend resources.
      *
      * @post Releases backend-owned buffers and invalidates initialization state; caller retains

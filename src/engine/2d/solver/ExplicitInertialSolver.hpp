@@ -174,7 +174,7 @@ public:
      * occurs during that rebuild, not here. Does not book water, clear pins, reconstruct state
      * or advance clocks; caller serializes configuration with all firings.
      */
-    void pinExternalSourceCells(const std::vector<int>& cells);
+    void pinExternalSourceCells(const std::vector<int>& cells) override;
     /**
      * @brief Internal qualification adapter; owned externally and attached at time zero.
      *

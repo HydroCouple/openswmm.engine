@@ -746,11 +746,21 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nCELL_CLOSURE           VFR"
            _omp_vfr_inp "${_omp_vfr_inp}")
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp "${_omp_vfr_inp}")
-    foreach(_case default vfr evaporation)
+    # Outfall OUT1 also discharges into triangle 2. Its cell must be pinned to
+    # tier zero on both backends; the plugin used to miss the pin and rebuild
+    # after every transfer instead (1D -> 2D spill 26,562 vs 40,489 m3).
+    # Anchored on the section line: the header comment names the section too.
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_outfall_inp)
+    string(REPLACE "\n[2D_TRIANGLE_NODE_MAP]\n" "\n[2D_TRIANGLE_NODE_MAP]\n2 OUT1 0.60 10.0\n"
+           _omp_outfall_inp "${_omp_outfall_inp}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp "${_omp_outfall_inp}")
+    foreach(_case default vfr evaporation outfall)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+        elseif(_case STREQUAL "outfall")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp")
         elseif(_case STREQUAL "evaporation")
             set(_extra --evaporation)
         endif()

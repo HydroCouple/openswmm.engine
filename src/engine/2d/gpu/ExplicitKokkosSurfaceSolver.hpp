@@ -133,13 +133,22 @@ public:
      * @brief Upload authoritative host volumes while retaining device momentum.
      * @param[in] t0 Retained interface time, ignored by this implementation.
      * @note If initialized, uploads authoritative host volumes while preserving
-     * interior/boundary momentum and side accumulators, reconstructs device head/depth and
-     * forces an active-set/tier rebuild on the next advance. Does not immediately copy
+     * interior/boundary momentum and side accumulators, and reconstructs device head/depth.
+     * Keeps the active set and tiers, as the CPU marcher does after an outfall transfer: the
+     * cells those transfers reach are pinned (pinExternalSourceCells). Does not immediately copy
      * reconstructed fields back or reset producer ledgers/cumulative counters. Requires
      * compatible shapes, initialized Kokkos and exclusive solver/host access; copy/kernel
      * failures are not rolled back.
      */
     void resyncFromVolumes(double t0) override;
+    /**
+     * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
+     * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
+     * @throws std::out_of_range A cell outside the mesh; no pin is written then.
+     * @note If initialized, sets the device pin flags and forces an active-set/tier rebuild on
+     * the next advance, matching ExplicitInertialSolver::pinExternalSourceCells.
+     */
+    void pinExternalSourceCells(const std::vector<int>& cells) override;
     /**
      * @brief Write optional telemetry and retire the marcher activation flag.
      * @note If initialized, dumps performance counters and optionally overwrites the configured

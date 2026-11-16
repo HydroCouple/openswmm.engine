@@ -113,6 +113,14 @@ public:
         });
     }
     /**
+     * @brief Pin external-transfer cells to tier zero in the plugin backend.
+     * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
+     * @post Synchronously delegates to the plugin on the owner thread. Errors propagate.
+     */
+    void pinExternalSourceCells(const std::vector<int>& cells) override {
+        owner_->invoke([&] { solver_->pinExternalSourceCells(cells); });
+    }
+    /**
      * @brief Release plugin backend resources on the execution-owner thread.
      * @post Synchronously finalizes plugin resources on the owner thread, then refreshes cached
      * status and receipts. The plugin object itself is still owned until adapter destruction.
