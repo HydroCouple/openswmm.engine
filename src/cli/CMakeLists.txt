@@ -63,12 +63,29 @@ add_custom_command(TARGET openswmm POST_BUILD
 # Stage runtime DLLs / dylibs next to the build-tree copy of the exe so
 # `./build/bin/<config>/openswmm` runs without LD/DYLD/PATH overrides.
 if(WIN32)
-    add_custom_command(TARGET openswmm POST_BUILD
+    # An always-run target rather than a POST_BUILD step on the CLI: the engine
+    # DLL can relink without the CLI relinking (unchanged import library), and
+    # a POST_BUILD copy would then leave a stale engine beside the exe.
+    #
+    # The 2D solver factory looks for the GPU plugin beside the engine DLL the
+    # process actually loaded. On Windows that is the copy staged here, not the
+    # engine target's own directory, so the plugin is staged with it. A missing
+    # plugin makes a build-tree `BACKEND CUDA` run fall back to the CPU marcher;
+    # one paired with a stale engine is rejected by the build-contract check.
+    set(_openswmm_cli_gpu_plugin "")
+    set(_openswmm_cli_gpu_plugin_file "")
+    if(OPENSWMM_BUILD_GPU_PLUGIN AND TARGET openswmm_gpu_${OPENSWMM_GPU_BACKEND})
+        set(_openswmm_cli_gpu_plugin openswmm_gpu_${OPENSWMM_GPU_BACKEND})
+        set(_openswmm_cli_gpu_plugin_file $<TARGET_FILE:${_openswmm_cli_gpu_plugin}>)
+    endif()
+    add_custom_target(openswmm_stage_runtime ALL
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_RUNTIME_DLLS:openswmm>
             $<TARGET_RUNTIME_DLLS:openswmm_engine>
             $<TARGET_RUNTIME_DLLS:openswmm_legacy_engine>
+            ${_openswmm_cli_gpu_plugin_file}
             $<TARGET_FILE_DIR:openswmm>
         COMMAND_EXPAND_LISTS
     )
+    add_dependencies(openswmm_stage_runtime openswmm ${_openswmm_cli_gpu_plugin})
 endif()
