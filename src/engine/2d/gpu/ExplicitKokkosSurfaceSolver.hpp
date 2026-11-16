@@ -198,7 +198,6 @@ private:
     MeshData* mesh_ = nullptr;
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D* opts_ = nullptr;
-    void refreshConveyance(); ///< Upload changed face factors and refresh LI cell discharge.
     InertialEdges edges_;     ///< host CSR build; mirrored below
     DView d_conveyance_;      ///< mutable ψ, separate from immutable edge geometry
 
@@ -287,6 +286,7 @@ private:
 
     // ---- internals (public for nvcc extended-lambda access) ----------------
 public:
+    void refreshConveyance(); ///< Upload changed face factors and refresh LI cell discharge.
     /**
      * @brief Launch reconstruction of every device cell head/depth from canonical device volume.
      * @note Uses prepared triangle geometry and selected FLAT/VFR closure. Changes only device
