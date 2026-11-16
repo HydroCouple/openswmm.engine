@@ -33,6 +33,10 @@
 #include "../edit/VirtualJunctionOps.hpp"
 #include "../../../include/openswmm/engine/openswmm_edit.h"
 
+#include "ErrorCodes.hpp"
+#include "../../../include/openswmm/engine/openswmm_infrastructure.h"
+#include <unordered_set>
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
 #include <memory>
@@ -110,6 +114,189 @@ static void conversion_to_c(const openswmm::edit::ConversionResult& res,
 // ============================================================================
 // extern "C" API
 // ============================================================================
+
+namespace {
+using namespace openswmm;
+
+struct IncidentLinks {
+    int count = 0;
+    int first = -1;
+    int second = -1;
+
+    void add(int link) {
+        if (count == 0)
+            first = link;
+        if (count == 1)
+            second = link;
+        ++count;
+    }
+};
+
+int link_conversion_rule(const SimulationContext& ctx, int link, bool hosts_inlet, int& blocker) {
+    if (ctx.links.type[link] != LinkType::CONDUIT)
+        return SWMM_OK;
+    for (int node : {ctx.links.node1[link], ctx.links.node2[link]}) {
+        if (node >= 0 && node < ctx.n_nodes() && ctx.nodes.is_virtual[node]) {
+            blocker = node;
+            return ERR_VJ_LINK_COUNT;
+        }
+    }
+    if (hosts_inlet)
+        return ERR_INLET_USAGE_SHAPE;
+    return SWMM_OK;
+}
+
+class ConversionBatch {
+public:
+    ConversionBatch(SimulationContext& ctx, bool nodes, int target, int design, int capture,
+                    int placement, bool apply)
+        : ctx(ctx), nodes(nodes), target(target), design(design), capture(capture),
+          placement(placement), apply(apply) {
+        const bool role = nodes && target >= SWMM_CONVERT_VIRTUAL;
+        if (role || !nodes) {
+            const auto& usages = ctx.inlet_usages;
+            for (int i = 0; i < usages.count(); ++i) {
+                if (usages.link_index[i] >= 0)
+                    hosted.insert(usages.link_index[i]);
+                receivers.insert(usages.node_index[i]);
+            }
+        }
+        if (role || (nodes && target == SWMM_NODE_DIVIDER)) {
+            incident.resize(ctx.n_nodes());
+            for (int i = 0; i < ctx.n_links(); ++i) {
+                const int a = ctx.links.node1[i], b = ctx.links.node2[i];
+                if (a >= 0 && a < ctx.n_nodes())
+                    incident[a].add(i);
+                // Divider warnings count distinct links. Virtual rules count attached ends.
+                if (b >= 0 && b < ctx.n_nodes() && (role || a != b))
+                    incident[b].add(i);
+            }
+        }
+        if (role)
+            coupled = edit::vj_coupled_nodes(ctx);
+        if (nodes && apply)
+            outfalls = std::count(ctx.nodes.type.begin(), ctx.nodes.type.end(), NodeType::OUTFALL);
+    }
+
+    void process(int idx, SWMM_TypeChange& row) {
+        row = {};
+        row.source_type = -1;
+        row.dependency_node = -1;
+        if (idx < 0 || idx >= (nodes ? ctx.n_nodes() : ctx.n_links())) {
+            row.status = SWMM_ERR_BADINDEX;
+            return;
+        }
+        if (!nodes) {
+            row.source_type = internal_to_c_link_type(ctx.links.type[idx]);
+            if (row.source_type == target)
+                return;
+            row.status = link_conversion_rule(ctx, idx, hosted.count(idx), row.dependency_node);
+            if (apply && !row.status) {
+                LinkType to;
+                c_to_internal_link_type(target, to);
+                conversion_to_c(edit::convert_link(ctx, idx, to), &row.details);
+            }
+            return;
+        }
+
+        const auto base = ctx.nodes.type[idx];
+        row.source_type = ctx.nodes.is_inlet[idx]     ? static_cast<int>(SWMM_CONVERT_INLET)
+                          : ctx.nodes.is_virtual[idx] ? static_cast<int>(SWMM_CONVERT_VIRTUAL)
+                                                      : internal_to_c_node_type(base);
+        if (row.source_type == target)
+            return;
+        if (target == SWMM_CONVERT_VIRTUAL && row.source_type == SWMM_CONVERT_INLET) {
+            if (apply) {
+                edit::ij_set_inlet(ctx, idx, false);
+                conversion_to_c({target, {"is_inlet", "inlet_usage"}, {}}, &row.details);
+            }
+            return;
+        }
+        if (target >= SWMM_CONVERT_VIRTUAL)
+            row.status = promotion_rule(idx);
+        if (row.status || !apply)
+            return;
+
+        // Every rejectable operation precedes this point. Indices, source type and
+        // owning stores stay stable throughout this synchronous engine call.
+        NodeType to = NodeType::JUNCTION;
+        if (target < SWMM_CONVERT_VIRTUAL)
+            c_to_internal_node_type(target, to);
+        edit::ConversionResult details{target, {}, {}};
+        if (base != to) {
+            const int degree = incident.empty() ? -1 : incident[idx].count;
+            details = edit::convert_node(ctx, idx, to, degree, outfalls);
+            if (base == NodeType::OUTFALL)
+                --outfalls;
+            if (to == NodeType::OUTFALL)
+                ++outfalls;
+            if (row.source_type == SWMM_CONVERT_INLET)
+                details.cleared_fields.push_back("inlet_usage");
+        } else if (target == SWMM_NODE_JUNCTION) {
+            edit::vj_clear_virtual(ctx, idx);
+            details.cleared_fields.push_back("is_virtual");
+            if (row.source_type == SWMM_CONVERT_INLET) {
+                details.cleared_fields.push_back("is_inlet");
+                details.cleared_fields.push_back("inlet_usage");
+            }
+        }
+        if (target >= SWMM_CONVERT_VIRTUAL && !ctx.nodes.is_virtual[idx])
+            edit::vj_promote_checked(ctx, idx, incident[idx].first);
+        if (target == SWMM_CONVERT_INLET) {
+            const int usage = ctx.inlet_usages.add_row(-1, idx, design, capture);
+            ctx.inlet_usages.placement[usage] = placement;
+            ctx.nodes.is_inlet[idx] = 1;
+        }
+        details.new_type = target;
+        conversion_to_c(details, &row.details);
+    }
+
+private:
+    int promotion_rule(int idx) const {
+        const auto& pair = incident[idx];
+        if (const int code = edit::vj_section_rule(ctx, idx, pair.count, pair.first, pair.second))
+            return code;
+        if (coupled[idx])
+            return ERR_VJ_LATERAL_INFLOW;
+        if (receivers.count(idx))
+            return ERR_IJ_CAPTURE_NODE;
+        const bool inlet = target == SWMM_CONVERT_INLET;
+        const auto routing = ctx.options.routing_model;
+        if (routing != RoutingModel::DYNWAVE && (inlet || routing != RoutingModel::FV))
+            return ERR_VJ_ROUTING_MODEL;
+        if (!inlet)
+            return SWMM_OK;
+        if (hosted.count(pair.first) || hosted.count(pair.second))
+            return ERR_IJ_USAGE_ON_PAIR;
+        if (design == -2 && !apply) {
+            if (edit::ij_conduit_shape_ok(ctx, pair.first, false) ||
+                edit::ij_conduit_shape_ok(ctx, pair.first, true))
+                return SWMM_OK;
+            return ERR_IJ_NOT_STREET;
+        }
+        if (design < 0 || design >= ctx.inlets.count())
+            return ERR_IJ_DESIGN;
+        if (capture < 0 || capture >= ctx.n_nodes() || capture == idx ||
+            ctx.nodes.is_virtual[capture])
+            return ERR_IJ_CAPTURE_NODE;
+        if (placement < SWMM_INLET_AUTOMATIC || placement > SWMM_INLET_ON_SAG)
+            return SWMM_ERR_BADPARAM;
+        // vj_section_rule already established identical shapes on both links.
+        if (!edit::ij_conduit_shape_ok(ctx, pair.first, edit::ij_design_is_drop(ctx, design)))
+            return ERR_IJ_NOT_STREET;
+        return SWMM_OK;
+    }
+
+    SimulationContext& ctx;
+    bool nodes;
+    int target, design, capture, placement;
+    bool apply;
+    int outfalls = 0;
+    std::vector<IncidentLinks> incident;
+    std::vector<bool> coupled;
+    std::unordered_set<int> hosted, receivers;
+};
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Recorded deletes — the handle pairs a record with the engine that made it.
@@ -701,6 +888,23 @@ SWMM_ENGINE_API int swmm_node_convert(SWMM_Engine engine, int idx, int new_type,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_convert_types(SWMM_Engine engine, int nodes, int target,
+                                       const int* indices, int count, int design, int capture,
+                                       int placement, int apply, SWMM_TypeChange* results) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    if ((nodes != 0 && nodes != 1) || target < 0 ||
+        target >
+            (nodes ? static_cast<int>(SWMM_CONVERT_INLET) : static_cast<int>(SWMM_LINK_OUTLET)) ||
+        count < 0 || (count && (!indices || !results)))
+        return SWMM_ERR_BADPARAM;
+    ConversionBatch batch(ctx, nodes != 0, target, design, capture, placement, apply != 0);
+    for (int i = 0; i < count; ++i)
+        batch.process(indices[i], results[i]);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
                                       SWMM_ConversionResult* result_out) {
     CHECK_HANDLE(engine);
@@ -716,6 +920,11 @@ SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
     if (ctx.links.type[ui] == internal_new)
         return SWMM_ERR_BADPARAM; // same type — no-op
 
+    int blocker = -1;
+    const int rule =
+        link_conversion_rule(ctx, idx, ctx.inlet_usages.find_by_link(idx) >= 0, blocker);
+    if (rule)
+        return rule;
     auto res = openswmm::edit::convert_link(ctx, idx, internal_new);
     conversion_to_c(res, result_out);
     return SWMM_OK;

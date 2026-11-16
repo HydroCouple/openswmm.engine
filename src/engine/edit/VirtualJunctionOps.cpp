@@ -116,13 +116,47 @@ double slope_from_ends(double e1, double e2, double length) {
 // vj_rule_violation
 // ============================================================================
 
-int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
-    if (node_idx < 0 || node_idx >= ctx.n_nodes())
-        return ERR_VJ_LINK_COUNT;
+template <typename Visitor>
+static bool visit_surface_nodes(const SimulationContext& ctx, Visitor visit) {
+    if (ctx.twod_io.mesh != nullptr) {
+        const auto& m = *ctx.twod_io.mesh;
+        // The [2D_*_NODE_MAP] handlers store the node NAME; the index is
+        // resolved only when the surface router initialises, so at post-parse
+        // validation the name is what identifies the coupling point.
+        const auto index = [&](int stored, const std::string& name) {
+            return stored >= 0 || name.empty() ? stored : ctx.node_names.find(name);
+        };
+        for (std::size_t v = 0; v < m.vert_coupled_node.size(); ++v) {
+            const std::string& nm =
+                (v < m.vert_coupled_node_name.size()) ? m.vert_coupled_node_name[v] : std::string{};
+            if (visit(index(m.vert_coupled_node[v], nm)))
+                return true;
+        }
+        for (std::size_t t = 0; t < m.tri_coupled_node.size(); ++t) {
+            const std::string& nm =
+                (t < m.tri_coupled_node_name.size()) ? m.tri_coupled_node_name[t] : std::string{};
+            if (visit(index(m.tri_coupled_node[t], nm)))
+                return true;
+        }
+        for (const auto& row : m.tri_couplings)
+            if (visit(index(row.node, row.node_name)))
+                return true;
+    }
 
-    int j1 = -1, j2 = -1;
-    const int touches = find_attached(ctx, node_idx, j1, j2);
+    return false;
+}
 
+std::vector<bool> vj_coupled_nodes(const SimulationContext& ctx) {
+    std::vector<bool> coupled(ctx.n_nodes(), false);
+    visit_surface_nodes(ctx, [&](int node) {
+        if (node >= 0 && node < ctx.n_nodes())
+            coupled[node] = true;
+        return false;
+    });
+    return coupled;
+}
+
+int vj_section_rule(const SimulationContext& ctx, int node_idx, int touches, int j1, int j2) {
     // Rule 1: exactly two attached links, both conduits.
     if (touches != 2 || ctx.links.type[static_cast<std::size_t>(j1)] != LinkType::CONDUIT ||
         ctx.links.type[static_cast<std::size_t>(j2)] != LinkType::CONDUIT)
@@ -152,6 +186,20 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
         std::fabs(offset_at_node(ctx, j2, node_idx)) > VJ_OFFSET_TOL)
         return ERR_VJ_OFFSET;
 
+    return 0;
+}
+
+int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
+    if (node_idx < 0 || node_idx >= ctx.n_nodes())
+        return ERR_VJ_LINK_COUNT;
+
+    int j1 = -1, j2 = -1;
+    const int touches = find_attached(ctx, node_idx, j1, j2);
+
+    const int section = vj_section_rule(ctx, node_idx, touches, j1, j2);
+    if (section)
+        return section;
+
     // Rule 5: no 2D surface coupling. A virtual junction has no opening —
     // its sealed head cannot pond against the overlying surface — so it
     // cannot be a coupling point. Every point lateral source ([INFLOWS],
@@ -159,44 +207,16 @@ int vj_rule_violation(const SimulationContext& ctx, int node_idx) {
     // runtime API) IS permitted: the dynamic-wave update integrates it at
     // the zero-storage node and the finite-volume solver splits it into the
     // two spliced cells (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md).
-    if (ctx.twod_io.mesh != nullptr) {
-        const auto& m = *ctx.twod_io.mesh;
-        // The [2D_*_NODE_MAP] handlers store the node NAME; the index is
-        // resolved only when the surface router initialises, so at post-parse
-        // validation the name is what identifies the coupling point.
-        const auto targets = [&](int stored, const std::string& name) {
-            if (stored >= 0)
-                return stored == node_idx;
-            return !name.empty() && ctx.node_names.find(name) == node_idx;
-        };
-        for (std::size_t v = 0; v < m.vert_coupled_node.size(); ++v) {
-            const std::string& nm =
-                (v < m.vert_coupled_node_name.size()) ? m.vert_coupled_node_name[v] : std::string{};
-            if (targets(m.vert_coupled_node[v], nm))
-                return ERR_VJ_LATERAL_INFLOW;
-        }
-        for (std::size_t t = 0; t < m.tri_coupled_node.size(); ++t) {
-            const std::string& nm =
-                (t < m.tri_coupled_node_name.size()) ? m.tri_coupled_node_name[t] : std::string{};
-            if (targets(m.tri_coupled_node[t], nm))
-                return ERR_VJ_LATERAL_INFLOW;
-        }
-        for (const auto& row : m.tri_couplings)
-            if (targets(row.node, row.node_name))
-                return ERR_VJ_LATERAL_INFLOW;
-    }
-
-    return 0;
+    return visit_surface_nodes(ctx, [node_idx](int mapped) { return mapped == node_idx; })
+               ? ERR_VJ_LATERAL_INFLOW
+               : 0;
 }
 
 // ============================================================================
 // vj_apply_derived_geometry
 // ============================================================================
 
-void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
-    int j1 = -1, j2 = -1;
-    if (find_attached(ctx, node_idx, j1, j2) < 1 || j1 < 0)
-        return;
+static void apply_pipe_geometry(SimulationContext& ctx, int node_idx, int j1) {
     const auto ui = static_cast<std::size_t>(node_idx);
     ctx.nodes.full_depth[ui] = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
     ctx.nodes.sur_depth[ui] = 0.0;
@@ -205,6 +225,13 @@ void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
     // rim_depth is deliberately NOT touched: it is user/split-supplied
     // rendering data, not derived geometry, and this runs on every load and
     // every set-virtual.
+}
+
+void vj_apply_derived_geometry(SimulationContext& ctx, int node_idx) {
+    int j1 = -1, j2 = -1;
+    if (find_attached(ctx, node_idx, j1, j2) < 1 || j1 < 0)
+        return;
+    apply_pipe_geometry(ctx, node_idx, j1);
 }
 
 // ============================================================================
@@ -237,6 +264,23 @@ void vj_clear_virtual(SimulationContext& ctx, int node_idx) {
     }
 }
 
+void vj_promote_checked(SimulationContext& ctx, int node_idx, int j1) {
+    const auto ui = static_cast<std::size_t>(node_idx);
+    // The full depth is about to be replaced by the derived pipe crown. When
+    // the node carried a taller max depth (a real manhole being converted),
+    // keep it as the rendering rim so the drawn ground surface doesn't drop.
+    // Only the INTERACTIVE path reaches here — an INP load applies the derived
+    // geometry directly, where full_depth is still 0.
+    if (ui < ctx.nodes.rim_depth.size() && ctx.nodes.rim_depth[ui] == 0.0) {
+        const double crown = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
+        if (ctx.nodes.full_depth[ui] > crown)
+            ctx.nodes.rim_depth[ui] = ctx.nodes.full_depth[ui];
+    }
+
+    ctx.nodes.is_virtual[ui] = 1;
+    apply_pipe_geometry(ctx, node_idx, j1);
+}
+
 int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
     if (node_idx < 0 || node_idx >= ctx.n_nodes())
         return -1;
@@ -253,21 +297,9 @@ int vj_set_virtual(SimulationContext& ctx, int node_idx, bool make_virtual) {
     if (code != 0)
         return code;
 
-    // The full depth is about to be replaced by the derived pipe crown. When
-    // the node carried a taller max depth (a real manhole being converted),
-    // keep it as the rendering rim so the drawn ground surface doesn't drop.
-    // Only the INTERACTIVE path reaches here — an INP load applies the derived
-    // geometry directly, where full_depth is still 0.
-    int j1 = -1, j2 = -1;
-    if (ui < ctx.nodes.rim_depth.size() && ctx.nodes.rim_depth[ui] == 0.0 &&
-        find_attached(ctx, node_idx, j1, j2) >= 1 && j1 >= 0) {
-        const double crown = ctx.links.xsect_y_full[static_cast<std::size_t>(j1)];
-        if (ctx.nodes.full_depth[ui] > crown)
-            ctx.nodes.rim_depth[ui] = ctx.nodes.full_depth[ui];
-    }
-
-    ctx.nodes.is_virtual[ui] = 1;
-    vj_apply_derived_geometry(ctx, node_idx);
+    int first = -1, second = -1;
+    find_attached(ctx, node_idx, first, second);
+    vj_promote_checked(ctx, node_idx, first);
     return 0;
 }
 
@@ -625,8 +657,6 @@ int vj_fuse(SimulationContext& ctx, int node_idx, int* surviving_link_out) {
 // Inlet junctions
 // ============================================================================
 
-namespace {
-
 /**
  * @brief Check a link cross-section against ordinary/drop inlet shape rules.
  *
@@ -657,8 +687,6 @@ bool ij_design_is_drop(const SimulationContext& ctx, int design_idx) {
     const std::string& t = ctx.inlets.inlet_type[static_cast<std::size_t>(design_idx)];
     return t == "DROP_GRATE" || t == "DROP_CURB";
 }
-
-} // namespace
 
 int ij_host_conduit(const SimulationContext& ctx, int host_kind, int host_idx) {
     if (host_kind == 0) {

@@ -82,6 +82,25 @@ class ImpactEntry:
         ...
 
 
+class TypeChange:
+    """One object's outcome in a batch conversion.
+
+    @ivar source_type: Type before the call (nodes: 4 virtual, 5 inlet; -1 bad index).
+    @ivar status: 0, or the engine error code of the refusal.
+    @ivar dependency_node: Related node index behind a refusal, or -1.
+    @ivar details: L{ConversionResult} of an applied conversion.
+    """
+
+    source_type: int
+    status: int
+    dependency_node: int
+    details: ConversionResult
+
+    def __init__(self, source_type: int, status: int, dependency_node: int,
+                 details: ConversionResult) -> None: ...
+    def __repr__(self) -> str: ...
+
+
 class ConversionResult:
     """Result of an in-place node or link type conversion.
 
@@ -535,6 +554,33 @@ class ModelEditor:
         @raise KeyError: If C{id_or_idx} is a name and the node is not found.
         @raise EngineError: On C API failure.
         @see: L{openswmm.engine.NodeType}
+        """
+        ...
+
+    def convert_types(self, nodes: bool, target: int, indices: Iterable[int],
+                      apply: bool = True, design: int = -1, capture: int = -1,
+                      placement: int = 0) -> list[TypeChange]:
+        """Preview or convert several nodes or links to one type.
+
+        @param nodes: C{True} to convert nodes, C{False} to convert links.
+        @type nodes: bool
+        @param target: Target type code; for nodes 4 is a virtual junction and
+            5 an inlet junction.
+        @type target: int
+        @param indices: Unique zero-based object indices.
+        @type indices: sequence of int
+        @param apply: C{False} only reports what would happen.
+        @type apply: bool
+        @param design: Inlet design index for target 5 (-2 previews topology).
+        @type design: int
+        @param capture: Capture node index for target 5.
+        @type capture: int
+        @param placement: Inlet placement code for target 5.
+        @type placement: int
+        @return: One L{TypeChange} per index, in order.
+        @rtype: list[L{TypeChange}]
+        @raise RuntimeError: If not in C{BUILDING} or C{OPENED} state.
+        @raise EngineError: On C API failure.
         """
         ...
 

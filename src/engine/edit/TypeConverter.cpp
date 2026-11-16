@@ -80,6 +80,11 @@ static void record_cleared_divider(std::vector<std::string>& cleared) {
 }
 
 ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type) {
+    return convert_node(ctx, idx, new_type, -1, -1);
+}
+
+ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type, int degree,
+                              int outfalls) {
     ConversionResult result;
     result.new_type = internal_to_c_node_type(new_type);
     const auto ui = static_cast<std::size_t>(idx);
@@ -129,11 +134,13 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
     // New-type warnings (new defaults are applied by set_node_type below).
     if (new_type == NodeType::DIVIDER) {
         // Count connecting links to warn if degree != 3
-        int degree = 0;
-        for (int i = 0; i < ctx.n_links(); ++i) {
-            const auto li = static_cast<std::size_t>(i);
-            if (ctx.links.node1[li] == idx || ctx.links.node2[li] == idx)
-                ++degree;
+        if (degree < 0) {
+            degree = 0;
+            for (int i = 0; i < ctx.n_links(); ++i) {
+                const auto li = static_cast<std::size_t>(i);
+                if (ctx.links.node1[li] == idx || ctx.links.node2[li] == idx)
+                    ++degree;
+            }
         }
         if (degree != 3)
             result.warnings.push_back(
@@ -143,12 +150,9 @@ ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type
 
     // Warn if we're converting the only OUTFALL away from OUTFALL
     if (old_type == NodeType::OUTFALL && new_type != NodeType::OUTFALL) {
-        int outfall_count = 0;
-        for (int i = 0; i < ctx.n_nodes(); ++i) {
-            if (i != idx && ctx.nodes.type[static_cast<std::size_t>(i)] == NodeType::OUTFALL)
-                ++outfall_count;
-        }
-        if (outfall_count == 0)
+        if (outfalls < 0)
+            outfalls = std::count(nd.type.begin(), nd.type.end(), NodeType::OUTFALL);
+        if (outfalls == 1)
             result.warnings.push_back("Model will have no outfall boundary after this conversion");
     }
 

@@ -985,6 +985,28 @@ SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
  * (refactored engine only; see openswmm_nodes.h swmm_node_set_virtual)
  * ========================================================================= */
 
+/** Junction roles accepted as node conversion targets in addition to the base enums. */
+enum { SWMM_CONVERT_VIRTUAL = 4, SWMM_CONVERT_INLET = 5 };
+
+/** One output per input index. A matching source_type is a no-op. A nonzero status
+ * is a refusal and dependency_node identifies a related node when available.
+ * Release each details member with swmm_conversion_result_free after use. */
+typedef struct SWMM_TypeChange {
+    int source_type;
+    int status;
+    int dependency_node;
+    SWMM_ConversionResult details;
+} SWMM_TypeChange;
+
+/** Preview (apply=0) or perform a same-family batch in order. Caller supplies
+ * unique object indices and count zero-initialized output records. On SWMM_OK
+ * inspect each status separately. A refused object incurs no changes.
+ * Inlet targets require a design, capture node and placement; design=-2
+ * previews topology only, before collecting the assignment. */
+SWMM_ENGINE_API int swmm_convert_types(SWMM_Engine engine, int nodes, int target,
+                                       const int* indices, int count, int design, int capture,
+                                       int placement, int apply, SWMM_TypeChange* results);
+
 /**
  * @brief Split a conduit at normalized position t, inserting a new node.
  *

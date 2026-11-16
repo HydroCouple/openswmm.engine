@@ -72,6 +72,8 @@ struct ConversionResult {
  *     warnings.
  */
 ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type);
+ConversionResult convert_node(SimulationContext& ctx, int idx, NodeType new_type, int degree,
+                              int outfalls);
 
 /**
  * @brief Replace one link subtype row and report cleared fields/warnings.

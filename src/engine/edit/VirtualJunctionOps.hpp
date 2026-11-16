@@ -40,6 +40,7 @@
 
 #include "../core/SimulationContext.hpp"
 #include <string>
+#include <vector>
 
 namespace openswmm::edit {
 
@@ -65,6 +66,12 @@ namespace openswmm::edit {
  * @note Invalid node indices return ERR_VJ_LINK_COUNT. Does not enforce JUNCTION type or engine lifecycle; geometric equality compares stored fields exactly except the 1e-9 internal-foot offset tolerance.
  */
 int vj_rule_violation(const SimulationContext& ctx, int node_idx);
+// Shared with bulk conversion, which indexes both incident links and surface mappings once.
+int vj_section_rule(const SimulationContext& ctx, int node_idx, int count, int first, int second);
+std::vector<bool> vj_coupled_nodes(const SimulationContext& ctx);
+void vj_promote_checked(SimulationContext& ctx, int node_idx, int first_link);
+bool ij_conduit_shape_ok(const SimulationContext& ctx, int link_idx, bool drop);
+bool ij_design_is_drop(const SimulationContext& ctx, int design_idx);
 
 /**
  * @brief Apply the derived-geometry contract to a validated virtual junction:

@@ -63,6 +63,7 @@ from ._exceptions import (
 from ._model import ModelBuilder as ModelBuilder
 from ._edit import (
     ConversionResult as ConversionResult,
+    TypeChange as TypeChange,
     DeleteRecord as DeleteRecord,
     ImpactEntry as ImpactEntry,
     ModelEditor as ModelEditor,

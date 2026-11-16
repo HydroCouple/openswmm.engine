@@ -73,6 +73,7 @@ from ._exceptions import ElementNotFoundError
 from datetime import datetime
 
 from ._common cimport *
+from libc.stdlib cimport malloc, calloc, free
 from ._dates import datetime_to_oadate, oadate_to_datetime
 
 # =============================================================================
@@ -202,6 +203,45 @@ cdef list _impact_report_to_list(SWMM_ImpactReport* report):
             ))
     swmm_impact_report_free(report)
     return result
+
+
+class TypeChange:
+    """One object's outcome in a batch conversion (L{ModelEditor.convert_types}).
+
+    @ivar source_type: The object's type before the call; for nodes 4 is a
+        virtual junction and 5 an inlet junction. -1 for an invalid index.
+    @ivar status: 0 when the object can be (or was) converted, otherwise the
+        engine error code of the refusal. A refused object is unchanged.
+    @ivar dependency_node: Index of a related node that causes a refusal, or -1.
+    @ivar details: L{ConversionResult} of an applied conversion; empty for a
+        preview, a refusal, or an object already of the target type.
+
+    @param source_type: Type before the call.
+    @type source_type: int
+    @param status: 0 or the refusal's engine error code.
+    @type status: int
+    @param dependency_node: Related node index or -1.
+    @type dependency_node: int
+    @param details: Result of the applied conversion.
+    @type details: L{ConversionResult}
+    """
+
+    __slots__ = ("source_type", "status", "dependency_node", "details")
+
+    def __init__(self, int source_type, int status, int dependency_node, details):
+        self.source_type     = source_type
+        self.status          = status
+        self.dependency_node = dependency_node
+        self.details         = details
+
+    def __repr__(self):
+        """Return a developer-readable representation.
+
+        @return: String with the source type, status and dependency node.
+        @rtype: str
+        """
+        return (f"TypeChange(source_type={self.source_type}, status={self.status}, "
+                f"dependency_node={self.dependency_node})")
 
 
 cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
@@ -1454,6 +1494,66 @@ cdef class ModelEditor:
         self._owner._bump_generation()
         _check(swmm_node_convert(self._h(), idx, new_type, &res))
         return _conversion_result_to_py(&res)
+
+    def convert_types(self, bint nodes, int target, indices, bint apply=True,
+                      int design=-1, int capture=-1, int placement=0) -> list:
+        """Preview or convert several nodes or links to one type.
+
+        Each object gets its own L{TypeChange}: an object the engine refuses
+        is left unchanged and the others are still converted. An object
+        already of the target type is a no-op.
+
+        @param nodes: C{True} to convert nodes, C{False} to convert links.
+        @type nodes: bool
+        @param target: Target type code. For nodes, 4 makes a virtual junction
+            and 5 an inlet junction.
+        @type target: int
+        @param indices: Unique zero-based object indices.
+        @type indices: sequence of int
+        @param apply: C{False} only reports what would happen.
+        @type apply: bool
+        @param design: Inlet design index for target 5; -2 previews the
+            topology alone, before a design is chosen.
+        @type design: int
+        @param capture: Capture node index for target 5.
+        @type capture: int
+        @param placement: Inlet placement code for target 5.
+        @type placement: int
+        @return: One L{TypeChange} per index, in order.
+        @rtype: list[L{TypeChange}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise EngineError: On C API failure (an invalid target).
+        @see: L{openswmm.engine.NodeType}, L{openswmm.engine.LinkType}
+        """
+        cdef list idx = [int(i) for i in indices]
+        cdef int n = len(idx)
+        cdef int i
+        cdef int* c_idx = NULL
+        cdef SWMM_TypeChange* rows = NULL
+        cdef list out = []
+        if n:
+            c_idx = <int*>malloc(n * sizeof(int))
+            rows = <SWMM_TypeChange*>calloc(n, sizeof(SWMM_TypeChange))
+            if c_idx == NULL or rows == NULL:
+                free(c_idx)
+                free(rows)
+                raise MemoryError()
+        try:
+            for i in range(n):
+                c_idx[i] = idx[i]
+            if apply:
+                self._owner._bump_generation()
+            _check(swmm_convert_types(self._h(), nodes, target, c_idx, n, design, capture,
+                                      placement, apply, rows))
+            for i in range(n):
+                out.append(TypeChange(rows[i].source_type, rows[i].status,
+                                      rows[i].dependency_node,
+                                      _conversion_result_to_py(&rows[i].details)))
+        finally:
+            free(c_idx)
+            free(rows)
+        return out
 
     def convert_link(self, id_or_idx, int new_type) -> ConversionResult:
         """Convert a link to a different type in place.

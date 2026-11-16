@@ -1311,6 +1311,16 @@ cdef extern from "openswmm_edit.h":
     cdef int swmm_link_convert(SWMM_Engine e, int idx, int new_type,
                                 SWMM_ConversionResult* out)
 
+    # Batch conversion with a preview; node targets 4 and 5 are the virtual and inlet roles
+    cdef struct SWMM_TypeChange:
+        int                   source_type
+        int                   status
+        int                   dependency_node
+        SWMM_ConversionResult details
+    cdef int swmm_convert_types(SWMM_Engine e, int nodes, int target, const int* indices,
+                                int count, int design, int capture, int placement, int apply,
+                                SWMM_TypeChange* results)
+
     # Conduit split / virtual-junction fusion (refactored engine only)
     cdef int swmm_conduit_split(SWMM_Engine e, int link_idx, double t,
                                 const char* new_node_name,
