@@ -54,6 +54,7 @@
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_SOLVER_FACTORY_HPP
 #define OPENSWMM_ENGINE_2D_SURFACE_SOLVER_FACTORY_HPP
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include "GwRechargeBackend.hpp"
@@ -82,8 +83,11 @@ class ISurfaceSolver;
  * @return An owned ISurfaceSolver. For a plugin-backed solver the owning shared library is kept
  * resident for the process lifetime.
  *
- * @param[in] plugin_capable Caller-established compatibility: false forces the built-in marcher
- * for mixed quads, non-local-inertial momentum, transport or other unsupported plugin physics.
+ * @param[in] model_capabilities OPENSWMM_GPU_CAP_* bits the model requires beyond those the
+ * options imply (quads, transport rows, coupled groundwater, porous heat); see
+ * requiredSurfaceCapabilities(). The options' own requirements are always added. A model that
+ * requires anything the in-tree Kokkos marcher lacks gets the built-in marcher without loading a
+ * plugin, and a plugin whose probe lacks a required bit is skipped.
  * @throws std::invalid_argument For an unknown OPENSWMM_2D_BACKEND override.
  * @note Plugin probing/construction failures are caught and fall back to CPU; allocations for
  * the selected solver/label may still throw. Solver is constructed but not initialized; caller
@@ -98,7 +102,7 @@ class ISurfaceSolver;
  */
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts,
                                                   std::string* chosen = nullptr, int n_cells = 0,
-                                                  bool plugin_capable = true);
+                                                  std::uint64_t model_capabilities = 0);
 
 /**
  * @brief Optional stateless host recharge operator. Surface/water/transfer ownership stays with

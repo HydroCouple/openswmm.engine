@@ -136,6 +136,21 @@ public:
     virtual void resyncFromVolumes(double t0) { reinitialize(t0); }
 
     /**
+     * @brief Take host edits to state.volume that touch only pinned cells.
+     *
+     * The router's outfall transfers edit the volume of cells pinned by
+     * pinExternalSourceCells(). Those cells are always active on tier zero, so the active set
+     * and tier ladder stay valid and are kept; resyncFromVolumes() would rebuild them and change
+     * the step schedule. The default suits a backend that reads state.volume directly.
+     *
+     * @param[in] t0 Finite elapsed simulation time, seconds.
+     * @note Requires initialized retained model arrays, exclusive solver access, and that every
+     * edited cell is pinned. A backend with its own copy of the volumes uploads them and
+     * refreshes head and depth. Backend errors may propagate.
+     */
+    virtual void syncPinnedVolumes(double t0) { (void)t0; }
+
+    /**
      * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
      *
      * @param[in] cells Valid zero-based surface cells; duplicates are harmless.

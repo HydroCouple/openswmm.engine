@@ -131,7 +131,7 @@ TEST(MomentumPhysics, BackgroundViscosityIsInactiveWithoutSmagorinsky) {
     o.cfl_number = .4;
     auto p = o;
     p.eddy_viscosity_background = .01;
-    EXPECT_NO_THROW(makeSurfaceSolver(p, nullptr, m.n_cells(), true));
+    EXPECT_NO_THROW(makeSurfaceSolver(p, nullptr, m.n_cells()));
     ExplicitInertialSolver x, y;
     x.initialize(m, a, o);
     y.initialize(m, b, p);
@@ -489,7 +489,7 @@ TEST(MomentumPhysics, SolverRejectsUnsupportedConfigurationsAndMissingLatitude) 
     o.coriolis = Coriolis2D::LATITUDE;
     ExplicitInertialSolver s;
     EXPECT_THROW(s.initialize(m, state, o), std::invalid_argument);
-    EXPECT_THROW(makeSurfaceSolver(o, nullptr, m.n_cells(), true), std::invalid_argument);
+    EXPECT_THROW(makeSurfaceSolver(o, nullptr, m.n_cells()), std::invalid_argument);
     o.momentum = Momentum2D::FULL_SWE;
     o.lts_tiers = 1;
     EXPECT_THROW(s.initialize(m, state, o), std::invalid_argument);

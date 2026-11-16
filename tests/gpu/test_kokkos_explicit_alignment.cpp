@@ -453,6 +453,8 @@ SurfaceStateData state(const MeshData& m, double depth) {
  */
 SolverOptions2D options(int tiers = 1) {
     SolverOptions2D o;
+    // The fixtures compare the local-inertial marchers; it is no longer the default closure.
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     o.lts_tiers = tiers;
     o.max_timestep = 1;
     o.cfl_number = .4;
@@ -483,19 +485,33 @@ void frozenTier() {
 /**
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
- * Separately tries a quad mesh, FULL_SWE mode and a nonempty transport state, requiring
- * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate and
- * missing rejection throws std::runtime_error.
+ * Separately tries each configuration outside kKokkosSurfaceCapabilities (quads, FULL_SWE at
+ * both orders, DIFFUSIVE_WAVE, transport rows, FRONT_REBUILD YES, momentum physics), requiring
+ * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
+ * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
+ * its capability and its parity check.
  */
 void unsupported() {
-    for (int kind = 0; kind < 3; ++kind) {
+    const char* names[] = {"quads",      "FULL_SWE",      "transport", "DIFFUSIVE_WAVE",
+                           "FULL_SWE 2", "FRONT_REBUILD", "wall drag"};
+    for (int kind = 0; kind < 7; ++kind) {
         auto m = mesh(2, kind == 0 ? 1 : 0);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 1)
+        if (kind == 1 || kind == 4 || kind == 6)
             o.momentum = Momentum2D::FULL_SWE;
         if (kind == 2)
             s.transport.resize(1, m.n_cells(), 0);
+        if (kind == 3)
+            o.momentum = Momentum2D::DIFFUSIVE_WAVE;
+        if (kind == 4)
+            o.reconstruction_order = 2;
+        if (kind == 5)
+            o.front_rebuild = 1;
+        if (kind == 6) {
+            o.wall_drag_enabled = true;
+            o.lts_tiers = 1;
+        }
         bool rejected = false;
         try {
             gpu::ExplicitKokkosSurfaceSolver solver;
@@ -503,7 +519,9 @@ void unsupported() {
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        require(rejected, "unsupported direct Kokkos initialization");
+        const std::string what =
+            std::string("unsupported direct Kokkos initialization: ") + names[kind];
+        require(rejected, what.c_str());
     }
 }
 /**
@@ -1021,7 +1039,7 @@ void edgeConveyance() {
                     auto a = state(m, 0.);
                     for (int c = 0; c < m.n_cells(); ++c) {
                         a.volume[c] = m.tri_cx[c] < 2 ? .2 * m.tri_area[c] : 0.;
-                        m.tri_init_u[c] = m.tri_cx[c] < 2 ? .1 : 0.;
+                        m.tri_init_u.set(static_cast<std::size_t>(c), m.tri_cx[c] < 2 ? .1 : 0.);
                     }
                     auto b = a;
                     auto o = options(tiers), ro = o;

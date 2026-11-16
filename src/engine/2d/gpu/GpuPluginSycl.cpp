@@ -51,6 +51,7 @@
  */
 
 #include "../solver/GpuPluginAbi.h"
+#include "../solver/SurfaceCapabilities.hpp"
 #include "../solver/ISurfaceSolver.hpp"
 #include "GpuPluginSupport.hpp"
 #include <mutex>
@@ -86,6 +87,7 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
         return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
+    out->capabilities = openswmm::twoD::kKokkosSurfaceCapabilities;
     out->vendor = OPENSWMM_GPU_VENDOR_SYCL;
 
     try {

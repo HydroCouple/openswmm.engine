@@ -45,6 +45,7 @@
 #include "../coupling/NodeCoupling.hpp" // CouplingPoint
 #include "../coupling/PondModel.hpp"
 #include "../solver/InertialKernels.hpp"
+#include "../solver/SurfaceCapabilities.hpp"
 #include "../../data/NodeData.hpp"
 
 namespace openswmm::twoD::gpu {
@@ -201,12 +202,16 @@ KOKKOS_INLINE_FUNCTION double devWetRamp(double d, double dry_depth) {
 void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                                              SolverOptions2D& opts) {
     kperf::Scope performance_scope(perf_counters_);
-    // Direct plugin users must receive the same restriction as the factory.
-    if (opts.momentum != Momentum2D::LOCAL_INERTIAL || state.transport.active())
-        throw std::invalid_argument("Kokkos marcher requires local-inertial water-only flow");
-    for (int i = 0; i < mesh.n_cells(); ++i)
-        if (mesh.cell_vertex_count(i) != 3)
-            throw std::invalid_argument("Kokkos marcher currently requires triangles");
+    // Direct plugin users receive the same restriction as the factory: one
+    // capability set (SurfaceCapabilities.hpp) decides both.
+    bool has_quads = false;
+    for (int i = 0; i < mesh.n_cells() && !has_quads; ++i)
+        has_quads = mesh.cell_vertex_count(i) != 3;
+    if (const std::uint64_t lacking =
+            requiredSurfaceCapabilities(opts, has_quads, state.transport.active()) &
+            ~kKokkosSurfaceCapabilities)
+        throw std::invalid_argument("Kokkos marcher does not implement: " +
+                                    surfaceCapabilityNames(lacking));
     mesh_ = &mesh;
     state_ = &state;
     opts_ = &opts;
@@ -1710,7 +1715,15 @@ void ExplicitKokkosSurfaceSolver::reinitialize(double /*t0*/) {
     cycles_since_rebuild_ = 1000;
 }
 
-void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
+void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double t0) {
+    syncPinnedVolumes(t0);
+    // An arbitrary volume edit can wet an inactive cell: rebuild the active
+    // set and tiers at the next advance, as the CPU marcher does.
+    if (initialized_)
+        cycles_since_rebuild_ = 1000;
+}
+
+void ExplicitKokkosSurfaceSolver::syncPinnedVolumes(double /*t0*/) {
     kperf::Scope performance_scope(perf_counters_);
     if (!initialized_)
         return;
@@ -1718,9 +1731,8 @@ void ExplicitKokkosSurfaceSolver::resyncFromVolumes(double /*t0*/) {
     reconstructAllDev();
     hostRefresh(state_->head, d_head_);
     hostRefresh(state_->depth, d_depth_);
-    // No forced rebuild: outfall transfers land in pinned cells, which are
-    // always active on tier zero. The CPU marcher keeps its active set here
-    // too; rebuilding after every transfer changed the dt0 schedule.
+    // No rebuild: the edited cells are pinned, so they are always active on
+    // tier zero. Rebuilding after every transfer changed the dt0 schedule.
 }
 
 void ExplicitKokkosSurfaceSolver::pinExternalSourceCells(const std::vector<int>& cells) {

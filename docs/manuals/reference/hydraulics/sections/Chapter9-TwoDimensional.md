@@ -2818,7 +2818,11 @@ transport. A model that mixes in quads (§9.3.1), selects `FULL_SWE` or
 `DIFFUSIVE_WAVE` (§9.2), or carries species, age or temperature rows is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
-served by the CPU marcher. There is no silent physics substitution.
+served by the CPU marcher. There is no silent physics substitution. The
+same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, second-order
+reconstruction, the optional momentum physics, coupled groundwater and
+porous heat. The run notice names each missing capability, and such a
+model loads no plugin at all.
 
 ### 9.11.2 Retired keys
 

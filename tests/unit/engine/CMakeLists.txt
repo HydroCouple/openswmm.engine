@@ -775,6 +775,28 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         set_tests_properties(test_engine_2d_omp_${_case} PROPERTIES
             LABELS "unit;gpu;parity" TIMEOUT 400)
     endforeach()
+    # Configurations outside the Kokkos marcher's capabilities
+    # (SurfaceCapabilities.hpp). Each must be refused by name and served by
+    # the CPU marcher. When a capability lands, its case moves to the parity
+    # loop above; a case left here then fails because the plugin is selected.
+    set(_refuse_dw --momentum DIFFUSIVE_WAVE --expect-refusal "does not implement DIFFUSIVE_WAVE")
+    set(_refuse_swe --momentum FULL_SWE --expect-refusal "does not implement FULL_SWE")
+    set(_refuse_swe_o2 --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
+        --expect-refusal "does not implement FULL_SWE, RECONSTRUCTION_ORDER 2")
+    set(_refuse_front_rebuild --option "FRONT_REBUILD YES"
+        --expect-refusal "does not implement FRONT_REBUILD YES")
+    foreach(_case dw swe swe_o2 front_rebuild)
+        add_test(NAME test_engine_2d_omp_refuses_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+                --output ${CMAKE_CURRENT_BINARY_DIR}/omp_refuses_${_case}
+                ${_refuse_${_case}})
+        set_tests_properties(test_engine_2d_omp_refuses_${_case} PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
 endif()
 
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a

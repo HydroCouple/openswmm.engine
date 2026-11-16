@@ -90,7 +90,31 @@ extern "C" {
 /* v10: ISurfaceSolver adds pinExternalSourceCells, so the vtable changes.
  * Rebuild surface plugins. */
 /* v11: ISurfaceSolver adds last_coupling_interval (vtable change). */
-#define OPENSWMM_GPU_ABI_VERSION 11
+/* v12: OpenSwmmGpuProbe gains capabilities (appended), the set of 2D configurations the plugin's
+ * solver implements. The core refuses a plugin that lacks any capability the model requires.
+ * ISurfaceSolver adds syncPinnedVolumes (vtable change). */
+#define OPENSWMM_GPU_ABI_VERSION 12
+
+/**
+ * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)
+ * One bit per 2D configuration a solver implements. The model's required set is computed by
+ * requiredSurfaceCapabilities() (SurfaceCapabilities.hpp); a plugin serves a model only when it
+ * advertises every required bit.
+ * @{
+ */
+#define OPENSWMM_GPU_CAP_LOCAL_INERTIAL (1ull << 0)   /**< MOMENTUM_EQUATION LOCAL_INERTIAL */
+#define OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE (1ull << 1)   /**< MOMENTUM_EQUATION DIFFUSIVE_WAVE */
+#define OPENSWMM_GPU_CAP_FULL_SWE (1ull << 2)         /**< MOMENTUM_EQUATION FULL_SWE, order 1 */
+#define OPENSWMM_GPU_CAP_SWE_ORDER2 (1ull << 3)       /**< FULL_SWE with RECONSTRUCTION_ORDER 2 */
+#define OPENSWMM_GPU_CAP_QUADS (1ull << 4)            /**< meshes with quadrilateral cells */
+#define OPENSWMM_GPU_CAP_MOMENTUM_PHYSICS (1ull << 5) /**< Coriolis, turbulence, wall drag */
+#define OPENSWMM_GPU_CAP_FRONT_REBUILD (1ull << 6)    /**< FRONT_REBUILD YES outside FULL_SWE */
+#define OPENSWMM_GPU_CAP_TRANSPORT_LI (1ull << 7)     /**< transport rows, LOCAL_INERTIAL */
+#define OPENSWMM_GPU_CAP_TRANSPORT_DW (1ull << 8)     /**< transport rows, DIFFUSIVE_WAVE */
+#define OPENSWMM_GPU_CAP_TRANSPORT_SWE (1ull << 9)    /**< transport rows, FULL_SWE */
+#define OPENSWMM_GPU_CAP_GROUNDWATER (1ull << 10)     /**< coupled 2D aquifer */
+#define OPENSWMM_GPU_CAP_POROUS_HEAT (1ull << 11)     /**< porous ground heat */
+/** @} */
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {
@@ -114,6 +138,7 @@ typedef struct OpenSwmmGpuProbe {
      * Device backends ignore it. The
      */
     int requested_threads;
+    unsigned long long capabilities; /**< OPENSWMM_GPU_CAP_* bits the solver implements (v12) */
 } OpenSwmmGpuProbe;
 
 /**

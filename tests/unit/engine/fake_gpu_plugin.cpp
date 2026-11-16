@@ -60,6 +60,8 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
                                                                 : OPENSWMM_GPU_ABI_VERSION;
     out->device_count = 1;
     out->vendor = OPENSWMM_GPU_VENDOR_CUDA;
+    out->capabilities =
+        std::getenv("OPENSWMM_TEST_GPU_NO_CAPABILITIES") ? 0 : OPENSWMM_GPU_CAP_LOCAL_INERTIAL;
     std::strcpy(out->device_name, "failure injection; no device used");
     return 0;
 }

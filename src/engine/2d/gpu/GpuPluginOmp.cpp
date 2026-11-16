@@ -37,6 +37,7 @@
  */
 
 #include "../solver/GpuPluginAbi.h"
+#include "../solver/SurfaceCapabilities.hpp"
 #include "../solver/GwRechargePluginAbi.h"
 #include "../subsurface/SoilCharacteristic.hpp"
 #include "../solver/ISurfaceSolver.hpp"
@@ -105,6 +106,7 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
         return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
+    out->capabilities = openswmm::twoD::kKokkosSurfaceCapabilities;
     out->device_count = 1; // the OpenMP host backend is always usable
     out->vendor = OPENSWMM_GPU_VENDOR_OPENMP;
     std::strncpy(out->device_name, "Kokkos OpenMP (CPU, Phase 1)", sizeof(out->device_name) - 1);

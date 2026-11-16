@@ -43,11 +43,19 @@ def main():
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--evaporation", action="store_true")
+    parser.add_argument("--momentum", default="LOCAL_INERTIAL",
+                        help="MOMENTUM_EQUATION pinned in the deck")
+    parser.add_argument("--option", action="append", default=[],
+                        help="extra [2D_OPTIONS] line, repeatable")
+    parser.add_argument("--expect-refusal", metavar="TEXT",
+                        help="the plugin must be refused with a notice containing TEXT, and the "
+                             "run must match the CPU run exactly because it is the CPU marcher")
     args = parser.parse_args()
     deck = args.input.read_text()
-    # The Kokkos plugin serves only LOCAL_INERTIAL, no longer the default.
+    # LOCAL_INERTIAL is no longer the default closure, so the closure is always pinned.
+    extra = "".join(line + "\n" for line in args.option)
     deck, pinned = re.subn(r"(?m)^\[2D_OPTIONS\]\s*$",
-                           "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL", deck)
+                           f"[2D_OPTIONS]\nMOMENTUM_EQUATION {args.momentum}\n{extra}", deck)
     if pinned != 1:
         raise AssertionError("expected one [2D_OPTIONS] section in the input")
     if args.evaporation:
@@ -77,7 +85,16 @@ def main():
         (work / "run.log").write_text(run.stdout)
         if run.returncode:
             raise AssertionError(f"{backend} exited {run.returncode}: {run.stdout[-4000:]}")
-        if backend == "omp" and "using GPU backend: omp" not in run.stdout:
+        selected = "using GPU backend: omp" in run.stdout
+        if backend == "omp" and args.expect_refusal:
+            # A configuration outside the plugin's capabilities: it must be refused by name
+            # before any plugin is selected. When the capability lands, this case becomes a
+            # parity case (drop --expect-refusal) and must then select the plugin.
+            if selected:
+                raise AssertionError("plugin was selected for a configuration it must refuse")
+            if args.expect_refusal not in run.stdout:
+                raise AssertionError(f"refusal notice lacks {args.expect_refusal!r}")
+        elif backend == "omp" and not selected:
             raise AssertionError("OpenMP plugin was not selected; CPU fallback cannot pass")
         results[backend] = continuity(report)
     cpu, omp = results["cpu"], results["omp"]

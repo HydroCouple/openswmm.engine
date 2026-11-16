@@ -27,6 +27,7 @@
 #include "subsurface/CommonSourceStage.hpp"
 #ifdef OPENSWMM_HAS_2D
 #include "solver/SurfaceSolverFactory.hpp"
+#include "solver/SurfaceCapabilities.hpp"
 #endif
 #include "../core/Constants.hpp"
 #include "../core/PolygonRings.hpp"
@@ -1330,15 +1331,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         options_.groundwater < 0 ? !aquifer_cfg_.empty() : options_.groundwater > 0;
     const bool groundwater_requested = gw_wanted && !aquifer_cfg_.empty();
     if (!solver_) {
-        // The Kokkos plugin covers all-triangle LOCAL_INERTIAL models only
-        // (SurfaceSolverFactory R6 gate); everything else runs on the CPU.
-        // S4b: the plugin also carries no transport rows (species, age,
-        // temperature) — a deck with TRANSPORT_* on runs the CPU marcher,
-        // loudly, rather than silently losing every row.
-        const bool plugin_ok =
-            mesh_.n_quads() == 0 && options_.momentum == Momentum2D::LOCAL_INERTIAL &&
-            !state_.transport.active() && !porous_heat_requested && !groundwater_requested;
-        solver_ = makeSurfaceSolver(options_, &backend_name_, mesh_.n_triangles(), plugin_ok);
+        // What this model needs of a plugin solver. Anything the Kokkos
+        // marcher lacks (SurfaceCapabilities.hpp) runs on the CPU marcher,
+        // loudly, rather than silently losing a process or a transport row.
+        const std::uint64_t required =
+            requiredSurfaceCapabilities(options_, mesh_.n_quads() != 0, state_.transport.active(),
+                                        groundwater_requested, porous_heat_requested);
+        solver_ = makeSurfaceSolver(options_, &backend_name_, mesh_.n_triangles(), required);
         // Say which solver this run is on. Rides the advisory-warning path
         // (code 0) with the thread notices, so it reaches the .rpt and the
         // GUI's warning callback — the backend choice used to be visible on
@@ -1346,21 +1345,20 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const char* closure = options_.momentum == Momentum2D::FULL_SWE         ? "FULL_SWE"
                               : options_.momentum == Momentum2D::DIFFUSIVE_WAVE ? "DIFFUSIVE_WAVE"
                                                                                 : "LOCAL_INERTIAL";
-        char buf[320];
+        const std::uint64_t lacking = required & ~kKokkosSurfaceCapabilities;
+        const std::string reason =
+            !lacking ? std::string()
+            : porous_heat_requested && !state_.transport.active()
+                ? std::string(" — porous-ground heat requires the CPU marcher")
+            : groundwater_requested ? std::string(" — 2D groundwater requires the CPU marcher")
+                                    : " — the GPU/Kokkos plugin does not implement " +
+                                          surfaceCapabilityNames(lacking) + "; CPU marcher used";
+        char buf[640];
         std::snprintf(buf, sizeof buf,
                       "2D solver: %s; MOMENTUM_EQUATION %s; LTS_TIERS %d; %d cells "
                       "(%d quads)%s",
                       backend_name_.c_str(), closure, options_.lts_tiers, mesh_.n_triangles(),
-                      mesh_.n_quads(),
-                      plugin_ok ? ""
-                      : porous_heat_requested && !state_.transport.active()
-                          ? " — porous-ground heat requires the CPU marcher"
-                      : groundwater_requested ? " — 2D groundwater requires the CPU marcher"
-                      : state_.transport.active()
-                          ? " — the GPU/Kokkos plugin carries no transport rows "
-                            "(species / age / temperature); CPU marcher used"
-                          : " — the GPU/Kokkos plugin serves all-triangle "
-                            "LOCAL_INERTIAL models only");
+                      mesh_.n_quads(), reason.c_str());
         thread_warnings_.emplace_back(buf);
         if (options_.momentumPhysics()) {
             std::snprintf(
@@ -2443,8 +2441,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         // CPU closures were updated only on the affected cells; those cells
         // are permanently pinned, so every backend's active set remains valid.
         // A plugin backend only needs the edited volumes uploaded.
-        if (!dynamic_cast<ExplicitInertialSolver*>(solver_.get()))
-            solver_->resyncFromVolumes(sim_time_);
+        solver_->syncPinnedVolumes(sim_time_);
         outfall_state_changed_ = false;
     }
     publishNodeRows(ctx);
@@ -2638,6 +2635,13 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             }
             ramp_prev_span_ = dt;
             m->setExchangeHeadSlopes(std::move(slopes));
+        } else {
+            static const bool told = [] {
+                std::fprintf(stderr, "[openswmm 2D] OPENSWMM_2D_HEAD_RAMP is implemented by the "
+                                     "CPU marcher only; this backend holds batch-start heads.\n");
+                return true;
+            }();
+            (void)told;
         }
     }
 

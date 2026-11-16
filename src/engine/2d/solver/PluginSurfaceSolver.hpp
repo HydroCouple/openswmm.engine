@@ -113,6 +113,18 @@ public:
         });
     }
     /**
+     * @brief Upload host volume edits of pinned cells to the plugin backend.
+     * @param[in] t Finite elapsed simulation time in seconds for the edited state.
+     * @post Synchronously delegates to the plugin on the owner thread, then refreshes cached
+     * telemetry/receipts. Errors propagate.
+     */
+    void syncPinnedVolumes(double t) override {
+        owner_->invoke([&] {
+            solver_->syncPinnedVolumes(t);
+            refresh();
+        });
+    }
+    /**
      * @brief Pin external-transfer cells to tier zero in the plugin backend.
      * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
      * @post Synchronously delegates to the plugin on the owner thread. Errors propagate.

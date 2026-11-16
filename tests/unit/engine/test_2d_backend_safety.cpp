@@ -15,6 +15,7 @@
 #include "2d/data/MeshData.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/solver/SurfaceSolverFactory.hpp"
+#include "2d/solver/SurfaceCapabilities.hpp"
 #include "2d/solver/PluginSurfaceSolver.hpp"
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -119,7 +120,80 @@ TEST(BackendSafety, InvalidEnvironmentFailsBeforeCapabilityFallback) {
     Env env("OPENSWMM_2D_BACKEND", "cudaa");
     SolverOptions2D o;
     o.momentum = Momentum2D::LOCAL_INERTIAL;
-    EXPECT_THROW(makeSurfaceSolver(o, nullptr, 1, false), std::invalid_argument);
+    EXPECT_THROW(makeSurfaceSolver(o, nullptr, 1), std::invalid_argument);
+}
+// A model that needs a configuration the Kokkos marcher lacks must get the CPU marcher without
+// any plugin being loaded or probed, even when an accelerator is requested by name.
+TEST(BackendSafety, ModelsBeyondTheKokkosCapabilitiesNeverProbe) {
+    Env env("OPENSWMM_2D_BACKEND", "cuda"), stale("OPENSWMM_TEST_STALE_GPU", nullptr);
+    struct Case {
+        const char* name;
+        Momentum2D momentum;
+        int order, front_rebuild;
+        std::uint64_t model;
+    };
+    const Case cases[] = {
+        {"diffusive wave", Momentum2D::DIFFUSIVE_WAVE, 1, -1, 0},
+        {"full SWE", Momentum2D::FULL_SWE, 1, -1, 0},
+        {"full SWE order 2", Momentum2D::FULL_SWE, 2, -1, 0},
+        {"quads", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_QUADS},
+        {"front rebuild", Momentum2D::LOCAL_INERTIAL, 1, 1, 0},
+        {"transport", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_TRANSPORT_LI},
+        {"groundwater", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_GROUNDWATER},
+        {"porous heat", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_POROUS_HEAT},
+    };
+    for (const Case& c : cases) {
+        SolverOptions2D o;
+        o.momentum = c.momentum;
+        o.reconstruction_order = c.order;
+        o.front_rebuild = c.front_rebuild;
+        std::string label;
+        const auto before = openswmm_test_probe_count();
+        auto s = makeSurfaceSolver(o, &label, 1, c.model);
+        ASSERT_TRUE(s) << c.name;
+        EXPECT_EQ(label, "cpu (explicit marcher; plugin not applicable)") << c.name;
+        EXPECT_EQ(openswmm_test_probe_count(), before) << c.name;
+    }
+}
+// A plugin whose probe does not advertise a capability the model requires is skipped before its
+// factory is called.
+TEST(BackendSafety, PluginLackingARequiredCapabilityIsSkipped) {
+    Env env("OPENSWMM_2D_BACKEND", "cuda"), stale("OPENSWMM_TEST_STALE_GPU", nullptr),
+        none("OPENSWMM_TEST_GPU_NO_CAPABILITIES", "1");
+    SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
+    std::string label;
+    const int factories = openswmm_test_factory_count(), probes = openswmm_test_probe_count();
+    auto s = makeSurfaceSolver(o, &label, 1);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(label.substr(0, 3), "cpu");
+    EXPECT_GT(openswmm_test_probe_count(), probes);
+    EXPECT_EQ(openswmm_test_factory_count(), factories);
+}
+TEST(BackendSafety, RequiredCapabilitiesFollowTheModel) {
+    SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
+    EXPECT_EQ(requiredSurfaceCapabilities(o, false, false), OPENSWMM_GPU_CAP_LOCAL_INERTIAL);
+    EXPECT_EQ(requiredSurfaceCapabilities(o, true, true), OPENSWMM_GPU_CAP_LOCAL_INERTIAL |
+                                                              OPENSWMM_GPU_CAP_QUADS |
+                                                              OPENSWMM_GPU_CAP_TRANSPORT_LI);
+    o.front_rebuild = 1;
+    EXPECT_EQ(requiredSurfaceCapabilities(o, false, false),
+              OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_FRONT_REBUILD);
+    o.momentum = Momentum2D::DIFFUSIVE_WAVE;
+    o.front_rebuild = -1;
+    EXPECT_EQ(requiredSurfaceCapabilities(o, false, true),
+              OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_TRANSPORT_DW);
+    o.momentum = Momentum2D::FULL_SWE;
+    o.front_rebuild = 1; // part of the scheme under FULL_SWE, not a separate capability
+    o.reconstruction_order = 2;
+    EXPECT_EQ(requiredSurfaceCapabilities(o, false, true, true, true),
+              OPENSWMM_GPU_CAP_FULL_SWE | OPENSWMM_GPU_CAP_SWE_ORDER2 |
+                  OPENSWMM_GPU_CAP_TRANSPORT_SWE | OPENSWMM_GPU_CAP_GROUNDWATER |
+                  OPENSWMM_GPU_CAP_POROUS_HEAT);
+    EXPECT_EQ(surfaceCapabilityNames(OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_QUADS),
+              "DIFFUSIVE_WAVE, quadrilateral cells");
+    EXPECT_EQ(surfaceCapabilityNames(0), "none");
 }
 TEST(BackendSafety, SessionPolicyRequiresMutableLifecycleAndRetainsAuthoredOption) {
     EXPECT_NE(swmm_2d_set_auto_backend_cpu(nullptr, 1), SWMM_OK);

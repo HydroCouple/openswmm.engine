@@ -27,6 +27,7 @@
 #include "ExplicitInertialSolver.hpp"
 #include "GpuPluginAbi.h"
 #include "PluginSurfaceSolver.hpp"
+#include "SurfaceCapabilities.hpp"
 #include <cstring>
 #include <stdexcept>
 #include "../data/SolverOptions2D.hpp"
@@ -303,6 +304,8 @@ bool compatible_plugin(void* handle, const std::string& path) {
  * successful raw construction and possibly before a later adapter allocation fails.
  * @param[in] requested_threads Model host thread preference, zero for automatic performance-core
  * selection; environment/plugin initialization may override it.
+ * @param[in] required OPENSWMM_GPU_CAP_* bits the model needs; a plugin whose probe lacks one is
+ * skipped with a diagnostic.
  * @return Owned core PluginSurfaceSolver adapter, or NULL when all candidates are
  * absent/incompatible/unusable.
  * @pre Runs on execution_owner()'s worker thread. Successful module handles stay resident;
@@ -312,7 +315,7 @@ bool compatible_plugin(void* handle, const std::string& path) {
  * count; no model arrays are initialized here.
  */
 std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, std::string* chosen,
-                                                    int requested_threads) {
+                                                    int requested_threads, std::uint64_t required) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -347,6 +350,11 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
                 continue;
             if (rc != 0 || info.device_count <= 0) {
                 // No usable device behind this plugin — try the next candidate.
+                continue;
+            }
+            if (const std::uint64_t lacking = required & ~info.capabilities) {
+                std::fprintf(stderr, "[openswmm 2D] plugin %s does not implement: %s\n",
+                             path.string().c_str(), surfaceCapabilityNames(lacking).c_str());
                 continue;
             }
 
@@ -412,16 +420,17 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
  * @param[out] chosen Optional label destination, forwarded only for the duration of this call;
  * may be changed before an exceptional late construction refusal.
  * @param[in] threads Requested model host thread count, zero automatic.
+ * @param[in] required OPENSWMM_GPU_CAP_* bits the plugin's probe must advertise.
  * @return Owned adapter on success, NULL after discovery failure or any caught exception; emits
  * stderr diagnostics for exceptional failures.
  * @note Borrows all inputs synchronously through GpuExecutionOwner::invoke(). Does not
  * initialize model state or unload modules.
  */
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend, std::string* chosen,
-                                           int threads) {
+                                           int threads, std::uint64_t required) {
     try {
         return execution_owner()->invoke(
-            [&] { return try_plugin_on_owner(backend, chosen, threads); });
+            [&] { return try_plugin_on_owner(backend, chosen, threads, required); });
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[openswmm 2D] plugin %s failed before initialization: %s\n",
                      backend.c_str(), e.what());
@@ -460,15 +469,13 @@ std::string backend_name(Backend2D b) {
 } // anonymous namespace
 
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, std::string* chosen,
-                                                  int n_cells, bool plugin_capable) {
-    if (opts.momentumPhysics()) {
-        if (opts.momentum != Momentum2D::FULL_SWE || opts.lts_tiers != 1)
-            throw std::invalid_argument(
-                "Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
-        // Never hand an enabled process to a plugin that has no such kernel,
-        // even when a direct factory caller incorrectly advertises eligibility.
-        plugin_capable = false;
-    }
+                                                  int n_cells, std::uint64_t model_capabilities) {
+    if (opts.momentumPhysics() && (opts.momentum != Momentum2D::FULL_SWE || opts.lts_tiers != 1))
+        throw std::invalid_argument(
+            "Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
+    // The options' own requirements always apply, whatever a direct caller passes.
+    const std::uint64_t required =
+        model_capabilities | requiredSurfaceCapabilities(opts, false, false);
     auto serial_marcher = [&](const char* label =
                                   "cpu (explicit marcher)") -> std::unique_ptr<ISurfaceSolver> {
         if (chosen)
@@ -490,29 +497,25 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
     if (mode == "cpu")
         return serial_marcher();
 
-    // R6 (2D_TRI_QUAD_MESH_PLAN / 2D_FULL_SWE plan): the Kokkos plugin
-    // implements the triangle-only LOCAL_INERTIAL scheme. A mixed tri-quad
-    // mesh or a non-LI momentum closure is refused LOUDLY and served by the
-    // CPU marcher — never a silent physics substitution. S4b: a model with
-    // transport rows (species / age / temperature) is refused the same way.
-    if (!plugin_capable) {
+    // R6 (2D_TRI_QUAD_MESH_PLAN / 2D_FULL_SWE plan): a model that needs a
+    // configuration the Kokkos marcher lacks is refused LOUDLY and served by
+    // the CPU marcher, never a silent physics substitution. The check uses
+    // the in-tree capability set, so such a model loads no plugin at all.
+    if (const std::uint64_t lacking = required & ~kKokkosSurfaceCapabilities) {
         // Say so under AUTO as well: a model that silently loses the plugin
         // (a DIFFUSIVE_WAVE deck on a 100k-cell mesh, say) looks like a
         // performance regression to the modeller.
-        std::fprintf(
-            stderr,
-            "[openswmm 2D] backend '%s': the GPU/Kokkos plugin serves only "
-            "all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with "
-            "no transport rows (species / age / temperature) or coupled groundwater/porous heat; "
-            "using the CPU marcher for this model.\n",
-            mode.empty() ? "auto" : mode.c_str());
+        std::fprintf(stderr,
+                     "[openswmm 2D] backend '%s': the GPU/Kokkos plugin does not implement %s; "
+                     "using the CPU marcher for this model.\n",
+                     mode.c_str(), surfaceCapabilityNames(lacking).c_str());
         return serial_marcher("cpu (explicit marcher; plugin not applicable)");
     }
 
     // Explicit backend request bypasses every mesh-size gate — the operator
     // asked for it by name (OPENSWMM_2D_BACKEND / BACKEND = omp|cuda|hip|sycl).
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-        if (auto s = try_plugin(mode, chosen, opts.requested_threads))
+        if (auto s = try_plugin(mode, chosen, opts.requested_threads, required))
             return s;
         std::fprintf(stderr,
                      "[openswmm 2D] backend '%s' requested but no usable plugin/device "
@@ -541,10 +544,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
 
     if (n_cells <= 0 || n_cells >= dev_floor)
         for (const char* b : {"cuda", "hip", "sycl"})
-            if (auto s = try_plugin(b, chosen, opts.requested_threads))
+            if (auto s = try_plugin(b, chosen, opts.requested_threads, required))
                 return s;
     if (n_cells <= 0 || n_cells >= omp_floor)
-        if (auto s = try_plugin("omp", chosen, opts.requested_threads))
+        if (auto s = try_plugin("omp", chosen, opts.requested_threads, required))
             return s;
 
     std::fprintf(stderr,
