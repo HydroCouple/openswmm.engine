@@ -26,6 +26,11 @@
  * admitted stores, ponds and their port neighbours). The iterates are those of
  * the full-network Newton; z_L is recovered with one L solve per member.
  *
+ * O-11: above `k_dense` N nodes the Newton system is not formed densely. The full
+ * (N ∪ L) Jacobian goes straight into a sparse LU (AdditiveSystem::refactor, pattern
+ * cached per graph; right-hand side −F on N and −c·F_L0 on L), whose solution is the
+ * same dz_N and boundary dz_L the Schur complement gives.
+ *
  * Solve: semismooth (active-set) Newton for piecewise-smooth monotone ports
  * (PORT_HAMILTONIAN O-4). Port slopes are one-sided differences on both sides;
  * a kink inside the difference step is resolved by the far differences (the
@@ -90,6 +95,18 @@ struct PortGraph {
 
     // ---- solver settings and counters ----
     int max_newton = 20;
+    /// O-11: the Newton linear system is solved on the dense k×k Schur complement
+    /// when the N set has at most `k_dense` nodes, and on the full network's sparse
+    /// LU (cached pattern, one numeric factorisation per pass) above it. Same
+    /// system, same iterates; only the factorisation differs. Not a user knob: the
+    /// engine never sets it. The value is the measured crossover (SparseNewton.
+    /// CrossoverMicroBenchmark, Release, chain-like network of 1,300 nodes, k stores
+    /// that drain out of the system), ms per Newton iteration, dense | sparse:
+    /// k 10 0.195 | 0.404, k 30 0.177 | 0.389, k 100 0.376 | 0.384, k 300 1.295 | 0.351,
+    /// k 1000 10.30 | 0.638. The sparse cost is the network (n), nearly flat in k; the
+    /// dense cost is k^3. They meet at k ~ 100 on that n; a smaller network only favours
+    /// sparse earlier. Tests set it to force a path.
+    std::size_t k_dense = 100;
     int max_jacobi = 500;
     bool floor_projection = false;         ///< mutation hook only: clamp z >= floor (creates water)
     std::vector<double> floor;             ///< used only with floor_projection
@@ -122,7 +139,7 @@ struct PortGraph {
     const std::vector<int>& nSet() const { return part_.Nn; }
     const std::vector<double>& schurBase() const { return part_.Jbase; }
 
-    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0, fp_floor_converged = 0, node_bounded = 0, l_factorisations = 0, l_solves = 0, k_max = 0; };
+    struct Stats { long solves = 0, newton_iters = 0, armijo_failures = 0, jacobi_fallbacks = 0, jacobi_failed = 0, zero_exits = 0, port_evals = 0, factorisations = 0, side_switches = 0, kink_bounded = 0, fp_floor_converged = 0, node_bounded = 0, l_factorisations = 0, l_solves = 0, k_max = 0, sparse_factorisations = 0; };
     mutable Stats stats;   ///< mutable: residual() (const) counts port evaluations
 
     void resize(int n_nodes) {
@@ -292,10 +309,12 @@ struct PortGraph {
         }
         const std::size_t k = pt.Nn.size(), nL = pt.Ln.size();
         stats.k_max = std::max(stats.k_max, static_cast<long>(k));
+        pt.sparse = k > k_dense;
+        pt.sig_kd = k_dense;
         auto cl = [&](int t) { return t < 0 ? 0 : pt.cls[static_cast<std::size_t>(t)]; };
         auto lc = [&](int t) { return static_cast<std::size_t>(pt.loc[static_cast<std::size_t>(t)]); };
         // Plane-edge Jacobian entries by block; the L block goes to the L system.
-        pt.Jbase.assign(k * k, 0.0);
+        pt.Jbase.assign(pt.sparse ? 0 : k * k, 0.0);
         pt.NL.clear(); pt.LN.clear(); pt.eN.clear();
         pt.edgeAbs.assign(un, 0.0);
         pt.bloc.assign(un, -1); pt.bnd.clear();
@@ -306,7 +325,7 @@ struct PortGraph {
         auto ent = [&](int r, int c, double v) {
             const int cr = cl(r), cc = cl(c);
             if (cr == 0 || cc == 0) return;
-            if (cr == 1 && cc == 1) pt.Jbase[lc(r) * k + lc(c)] += v;
+            if (cr == 1 && cc == 1) { if (!pt.sparse) pt.Jbase[lc(r) * k + lc(c)] += v; }
             else if (cr == 1) pt.NL.push_back({r, c, v});
             else if (cc == 1) pt.LN.push_back({r, c, v});
         };
@@ -343,10 +362,12 @@ struct PortGraph {
         diag_slope_.assign(un, 0.0);
         for (int t : pt.Ln) diag_slope_[static_cast<std::size_t>(t)] = op.Q[lc(t)] / dt + pt.edgeAbs[static_cast<std::size_t>(t)];
         const std::size_t nb = pt.bnd.size();
-        pt.Wb.assign(nb * k, 0.0);
+        pt.Wb.assign(pt.sparse ? 0 : nb * k, 0.0);
+        if (pt.sparse) prepareSparse_();
         if (nL == 0) return;
         pt.lsys.build(op, dt);
         ++stats.l_factorisations;
+        if (pt.sparse) return;
         // W = A_LL⁻¹ A_LN column by column (only N nodes with an L neighbour);
         // the Schur complement J_NN − A_NL W and W's boundary rows are kept.
         std::vector<std::vector<std::pair<int, double>>> col(k);
@@ -376,6 +397,12 @@ private:
         std::vector<double> Wb;               ///< bnd×k: rows of A_LL⁻¹ A_LN at the boundary L nodes
         std::vector<double> edgeAbs;          ///< per node: Σ |plane-edge slope| on its diagonal
         AdditiveSystem lsys;                  ///< A_LL (minimum-degree LU, no pivoting)
+        bool sparse = false;                  ///< O-11: the Newton system is solved on the full sparse LU
+        std::size_t sig_kd = 0;
+        AdditiveSystem fsys;                  ///< the full (N ∪ L) Jacobian, node indices; pattern cached
+        PHOperator fop;                       ///< its operator: plane-edge terms, then the ports' (refilled per pass)
+        std::size_t n_plane_terms = 0;
+        std::vector<std::uint8_t> pin8;
         // What the partition was built from.
         int sig_n = -1;
         double sig_dt = 0.0;
@@ -390,7 +417,7 @@ private:
 
     bool structureChanged_() const {
         const Part& pt = part_;
-        if (pt.sig_n != n || pt.sig_dt != dt || pt.sig_S != S || pt.sig_pinned != pinned) return true;
+        if (pt.sig_n != n || pt.sig_dt != dt || pt.sig_S != S || pt.sig_pinned != pinned || pt.sig_kd != k_dense) return true;
         if (pt.sig_edges.size() != edges.size() || pt.sig_ports.size() != ports.size()) return true;
         for (std::size_t t = 0; t < static_cast<std::size_t>(n); ++t)
             if (pt.sig_store[t] != (store_of[t] >= 0 ? 1 : 0)) return true;
@@ -401,6 +428,49 @@ private:
         for (std::size_t q = 0; q < ports.size(); ++q)
             if (pt.sig_ports[q].first != ports[q].up || pt.sig_ports[q].second != ports[q].dn) return true;
         return false;
+    }
+
+    /// O-11: the plane-edge part of the full Jacobian, and the pattern with the ports' pairs
+    /// registered (values 0), so the per-pass refactorisation only fills numbers.
+    void prepareSparse_() {
+        Part& pt = part_;
+        const auto un = static_cast<std::size_t>(n);
+        PHOperator& op = pt.fop;
+        op.n = n;
+        op.Q.assign(un, 1.0);
+        op.Rdiag.clear(); op.two_way.clear(); op.one_way.clear();
+        pt.pin8.assign(un, 0);
+        for (std::size_t t = 0; t < un; ++t) pt.pin8[t] = static_cast<std::uint8_t>(pinned[t]);
+        for (const auto& e : edges) {
+            if (!(e.up >= 0 && e.up < n)) continue;
+            const int dn = (e.dn >= 0 && e.dn < n) ? e.dn : -1;
+            if (e.conduit) {
+                op.one_way.push_back({e.up, dn, e.ju});
+                if (dn >= 0) op.one_way.push_back({dn, e.up, -e.jd});
+            } else {
+                op.one_way.push_back({e.up, dn, e.d});
+            }
+        }
+        pt.n_plane_terms = op.one_way.size();
+        fillPortTerms_(nullptr);
+        for (std::size_t t = 0; t < un; ++t) if (pt.pin8[t]) op.Q[t] = 1.0;
+        pt.fsys.build(op, dt, pt.pin8.data());   // registers every pair (port slopes still 0)
+    }
+
+    /// Replace the ports' terms of the full operator by this pass's slopes (ju >= 0, jd <= 0).
+    /// `ju`/`jd` null: all zero (pattern registration).
+    void fillPortTerms_(const std::vector<double>* ujd) {
+        Part& pt = part_;
+        PHOperator& op = pt.fop;
+        op.one_way.resize(pt.n_plane_terms);
+        for (std::size_t q = 0; q < ports.size(); ++q) {
+            const Port& p = ports[q];
+            const bool hu = p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)];
+            const bool hd = p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)];
+            const double ju = ujd ? (*ujd)[2 * q] : 0.0, jd = (ujd && p.dn >= 0) ? (*ujd)[2 * q + 1] : 0.0;
+            if (hu) op.one_way.push_back({p.up, hd ? p.dn : -1, ju});
+            if (hd) op.one_way.push_back({p.dn, hu ? p.up : -1, -jd});
+        }
     }
 
     /// x <- A_LL⁻¹ x (one forward and one backward pass on the L factor).
@@ -535,7 +605,7 @@ private:
         };
         std::vector<double> F = F0, mag(un, 0.0);
         std::vector<double> dz(un, 0.0), zt = z, Ft, Mt;
-        std::vector<double> J(k * k), dzN(k), capC(k, 1.0), capP(k, 1.0);
+        std::vector<double> J(pt.sparse ? 0 : k * k), dzN(k), capC(k, 1.0), capP(k, 1.0);
         // Difference step (relative to max(1, |z|)) for the port and store slopes.
         constexpr double kDiff = 1.0e-7;
         // Per port: value and both one-sided slopes in each argument at z.
@@ -582,7 +652,41 @@ private:
         // The k×k Schur system: the cached plane part plus this member's store
         // areas and port slopes; solved for dz_N, then dz at the boundary L nodes
         // (dz_L = −c·w0 − W dz_N; interior L nodes are recovered at the end).
+        std::vector<double> ujd, sol, rhsF;   // O-11 sparse path: slopes per port, solution and right-hand side on all nodes
+        auto assembleSparse = [&]() {
+            Part& wp = part_;
+            ujd.resize(2 * ports.size());
+            for (std::size_t q = 0; q < ports.size(); ++q) {
+                ujd[2 * q] = sl[q].ju;
+                ujd[2 * q + 1] = ports[q].dn >= 0 ? sl[q].jd : 0.0;
+            }
+            for (std::size_t t = 0; t < un; ++t) wp.fop.Q[t] = std::max(S[t], 1.0e-9);
+            for (std::size_t i = 0; i < k; ++i) {
+                const auto t = static_cast<std::size_t>(pt.Nn[i]);
+                const double A = std::max(st_[t].a, 1.0e-9);
+                wp.fop.Q[t] = A;
+                diag_slope_[t] = A / dt + pt.edgeAbs[t];
+            }
+            for (std::size_t t = 0; t < un; ++t) if (pinned[t]) wp.fop.Q[t] = 1.0;
+            for (std::size_t q = 0; q < ports.size(); ++q) {
+                const Port& p = ports[q];
+                if (p.up >= 0 && !pinned[static_cast<std::size_t>(p.up)]) diag_slope_[static_cast<std::size_t>(p.up)] += std::fabs(ujd[2 * q]);
+                if (p.dn >= 0 && !pinned[static_cast<std::size_t>(p.dn)]) diag_slope_[static_cast<std::size_t>(p.dn)] += std::fabs(ujd[2 * q + 1]);
+            }
+            fillPortTerms_(&ujd);
+            ++stats.sparse_factorisations;
+            wp.fsys.refactor(wp.fop, dt, wp.pin8.data());
+            rhsF.assign(un, 0.0);
+            sol.assign(un, 0.0);
+            for (std::size_t i = 0; i < k; ++i) { const auto t = static_cast<std::size_t>(pt.Nn[i]); rhsF[t] = -F[t]; }
+            for (std::size_t l = 0; l < nL; ++l) rhsF[static_cast<std::size_t>(pt.Ln[l])] = -c * FL0[l];
+            wp.fsys.step(rhsF.data(), sol.data());
+            ++stats.l_solves;
+            for (std::size_t i = 0; i < k; ++i) { dzN[i] = sol[static_cast<std::size_t>(pt.Nn[i])]; dz[static_cast<std::size_t>(pt.Nn[i])] = dzN[i]; }
+            for (std::size_t b2 = 0; b2 < nb; ++b2) dz[static_cast<std::size_t>(pt.bnd[b2])] = sol[static_cast<std::size_t>(pt.bnd[b2])];
+        };
         auto assemble = [&]() {
+            if (pt.sparse) { assembleSparse(); return; }
             J = pt.Jbase;
             for (std::size_t i = 0; i < k; ++i) {
                 const auto t = static_cast<std::size_t>(pt.Nn[i]);
@@ -760,6 +864,16 @@ private:
                     const auto t = static_cast<std::size_t>(pt.Nn[i]);
                     zt[t] = z[t] + cap[i] * dz[t];
                 }
+                if (pt.sparse) {
+                    // A_LL⁻¹ A_LN (cap ⊙ dz_N) by one L solve instead of the stored W rows.
+                    std::vector<double> x(nL, 0.0);
+                    for (const auto& e : pt.LN) x[lc(e.r)] += e.v * cap[lc(e.c)] * dzN[lc(e.c)];
+                    if (nL > 0) lsolve_(x);
+                    for (std::size_t b2 = 0; b2 < nb; ++b2) {
+                        const auto t = static_cast<std::size_t>(pt.bnd[b2]);
+                        zt[t] = z[t] - c * w0b[b2] - x[lc(pt.bnd[b2])];
+                    }
+                } else
                 for (std::size_t b2 = 0; b2 < nb; ++b2) {
                     double v = -c * w0b[b2];
                     const double* w = &pt.Wb[b2 * k];

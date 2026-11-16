@@ -148,57 +148,33 @@ struct AdditiveSystem {
         for (const auto& e : op.two_way)
             if (e.a != e.b) grew |= addPair_(e.a, e.b);
         if (grew) symbolic_();
-        // Numeric assembly: A x = rhs with A[i][i] = S/dt + outgoing slopes, and
-        // A[row][col] = -(dQ into row per unit head at col).
-        std::fill(D_.begin(), D_.end(), 0.0);
-        std::fill(L_.begin(), L_.end(), 0.0);
-        std::fill(U_.begin(), U_.end(), 0.0);
-        for (std::size_t i = 0; i < un; ++i) D_[i] = s_dt[i];
-        for (std::size_t i = 0; i < un && !op.Rdiag.empty(); ++i) D_[i] += op.Rdiag[i];
-        for (const auto& e : op.two_way) {
-            if (e.a == e.b) continue;
-            D_[static_cast<std::size_t>(e.a)] += e.w;
-            D_[static_cast<std::size_t>(e.b)] += e.w;
-            addEntry_(e.a, e.b, -e.w);
-            addEntry_(e.b, e.a, -e.w);
-        }
-        for (const auto& e : op.one_way) {
-            D_[static_cast<std::size_t>(e.from)] += e.d;
-            if (e.to >= 0) addEntry_(e.to, e.from, -e.d);
-        }
-        for (std::size_t k = 0; k < un; ++k) {
-            if (!pinned[k]) continue;
-            D_[k] = 1.0;
-            for (int m = off_[k]; m < off_[k + 1]; ++m) { L_[static_cast<std::size_t>(m)] = 0.0; U_[static_cast<std::size_t>(m)] = 0.0; }
-        }
-        // Rows and columns of pinned nodes held by an earlier-eliminated node.
-        for (std::size_t k = 0; k < un; ++k)
-            for (int m = off_[k]; m < off_[k + 1]; ++m)
-                if (pinned[static_cast<std::size_t>(later_[static_cast<std::size_t>(m)])]) {
-                    L_[static_cast<std::size_t>(m)] = 0.0;
-                    U_[static_cast<std::size_t>(m)] = 0.0;
-                }
-        // Factor in elimination order.
-        for (int k : order_) {
-            const auto uk = static_cast<std::size_t>(k);
-            const double piv = D_[uk];
-            if (!(piv > 0.0)) continue;   // cannot happen for S > 0; keeps a bad input finite
-            const int a0 = off_[uk], a1 = off_[uk + 1];
-            for (int ia = a0; ia < a1; ++ia) {
-                const double lik = L_[static_cast<std::size_t>(ia)];   // A[a][k]
-                if (lik == 0.0) continue;
-                const double f = lik / piv;
-                for (int ib = a0; ib < a1; ++ib) {
-                    const double ukb = U_[static_cast<std::size_t>(ib)];   // A[k][b]
-                    if (ukb == 0.0) continue;
-                    const Slot& t = upd_[static_cast<std::size_t>(updOff_[static_cast<std::size_t>(ia)] + (ib - a0))];
-                    if (t.idx < 0) continue;   // every fill entry exists by construction
-                    *target_(t) -= f * ukb;
-                }
-            }
-        }
+        assembleAndFactor_(op);
         last_sweeps = 0;
         built = true;
+        return true;
+    }
+
+    /// Numeric refactorisation on the cached pattern (PORT_HAMILTONIAN O-11): the
+    /// same system as build(), for an operator whose link PAIRS are already in the
+    /// pattern and whose values (and S) changed, e.g. a Newton iteration's Jacobian.
+    /// Skips the validation, the pattern growth and the symbolic step. A pair the
+    /// pattern does not hold (or a first call) falls back to build(), so the result
+    /// is always the factorisation of `op`. Same arithmetic as build() on a pattern
+    /// that already holds the pairs.
+    bool refactor(const PHOperator& op, double dt_s, const std::uint8_t* pinned_nodes = nullptr) {
+        const auto un = static_cast<std::size_t>(std::max(op.n, 0));
+        if (!built || op.n != n || sym_n_ != n || (order_.empty() && n > 0) || op.Q.size() != un ||
+            (!op.Rdiag.empty() && op.Rdiag.size() != un))
+            return build(op, dt_s, pinned_nodes);
+        for (const auto& e : op.one_way)
+            if (e.from < 0 || e.from >= op.n || e.to >= op.n) return build(op, dt_s, pinned_nodes);
+        dt = dt_s;
+        for (std::size_t i = 0; i < un; ++i) s_dt[i] = op.Q[i] / dt;
+        pinned.assign(un, 0);
+        if (pinned_nodes)
+            for (std::size_t i = 0; i < un; ++i) pinned[i] = static_cast<char>(pinned_nodes[i]);
+        if (!assembleAndFactor_(op)) return build(op, dt_s, pinned_nodes);
+        last_sweeps = 0;
         return true;
     }
 
@@ -231,6 +207,65 @@ struct AdditiveSystem {
     }
 
 private:
+    // Numeric assembly and factor of op on the current pattern. Returns false,
+    // before factoring, when op holds a pair the pattern does not (refactor() then
+    // rebuilds); build() has grown the pattern first, so it never returns false.
+    bool assembleAndFactor_(const PHOperator& op) {
+        const auto un = static_cast<std::size_t>(std::max(n, 0));
+        missing_ = false;
+        // Numeric assembly: A x = rhs with A[i][i] = S/dt + outgoing slopes, and
+        // A[row][col] = -(dQ into row per unit head at col).
+        std::fill(D_.begin(), D_.end(), 0.0);
+        std::fill(L_.begin(), L_.end(), 0.0);
+        std::fill(U_.begin(), U_.end(), 0.0);
+        for (std::size_t i = 0; i < un; ++i) D_[i] = s_dt[i];
+        for (std::size_t i = 0; i < un && !op.Rdiag.empty(); ++i) D_[i] += op.Rdiag[i];
+        for (const auto& e : op.two_way) {
+            if (e.a == e.b) continue;
+            D_[static_cast<std::size_t>(e.a)] += e.w;
+            D_[static_cast<std::size_t>(e.b)] += e.w;
+            addEntry_(e.a, e.b, -e.w);
+            addEntry_(e.b, e.a, -e.w);
+        }
+        for (const auto& e : op.one_way) {
+            D_[static_cast<std::size_t>(e.from)] += e.d;
+            if (e.to >= 0 && e.to != e.from) addEntry_(e.to, e.from, -e.d);
+        }
+        if (missing_) return false;
+        for (std::size_t k = 0; k < un; ++k) {
+            if (!pinned[k]) continue;
+            D_[k] = 1.0;
+            for (int m = off_[k]; m < off_[k + 1]; ++m) { L_[static_cast<std::size_t>(m)] = 0.0; U_[static_cast<std::size_t>(m)] = 0.0; }
+        }
+        // Rows and columns of pinned nodes held by an earlier-eliminated node.
+        for (std::size_t k = 0; k < un; ++k)
+            for (int m = off_[k]; m < off_[k + 1]; ++m)
+                if (pinned[static_cast<std::size_t>(later_[static_cast<std::size_t>(m)])]) {
+                    L_[static_cast<std::size_t>(m)] = 0.0;
+                    U_[static_cast<std::size_t>(m)] = 0.0;
+                }
+        // Factor in elimination order.
+        for (int k : order_) {
+            const auto uk = static_cast<std::size_t>(k);
+            const double piv = D_[uk];
+            if (!(piv > 0.0)) continue;   // cannot happen for S > 0; keeps a bad input finite
+            const int a0 = off_[uk], a1 = off_[uk + 1];
+            for (int ia = a0; ia < a1; ++ia) {
+                const double lik = L_[static_cast<std::size_t>(ia)];   // A[a][k]
+                if (lik == 0.0) continue;
+                const double f = lik / piv;
+                for (int ib = a0; ib < a1; ++ib) {
+                    const double ukb = U_[static_cast<std::size_t>(ib)];   // A[k][b]
+                    if (ukb == 0.0) continue;
+                    const Slot& t = upd_[static_cast<std::size_t>(updOff_[static_cast<std::size_t>(ia)] + (ib - a0))];
+                    if (t.idx < 0) continue;   // every fill entry exists by construction
+                    *target_(t) -= f * ukb;
+                }
+            }
+        }
+        return true;
+    }
+
     // Update target of eliminating node k on the pair (a, b) of its later
     // neighbours: the diagonal of a, or the L or U entry that holds A[a][b].
     struct Slot { int kind = 0; int idx = 0; };   // 0 = D[idx], 1 = U[idx], 2 = L[idx]
@@ -256,9 +291,11 @@ private:
         if (pos_[static_cast<std::size_t>(row)] < pos_[static_cast<std::size_t>(col)]) {
             const int m = find_(row, col);
             if (m >= 0) U_[static_cast<std::size_t>(m)] += v;   // A[row][col], row eliminated first
+            else missing_ = true;
         } else {
             const int m = find_(col, row);
             if (m >= 0) L_[static_cast<std::size_t>(m)] += v;   // A[row][col], col eliminated first
+            else missing_ = true;
         }
     }
     // Minimum-degree elimination order on the pattern, its fill, and the
@@ -319,6 +356,7 @@ private:
             }
     }
 
+    bool missing_ = false;                   ///< addEntry_ met a pair outside the pattern
     int sym_n_ = -1;
     std::vector<std::vector<int>> pattern_;  ///< undirected link pairs seen so far
     std::vector<int> order_, pos_;           ///< elimination order and its inverse

@@ -1522,6 +1522,209 @@ TEST(PortGraph, LinearFactorIsSharedByMembersAndRebuiltWhenTheGraphChanges) {
 }
 
 // ===========================================================================
+// O-11 — sparse Newton path (full-network LU, cached pattern) vs the dense Schur path
+// ===========================================================================
+namespace {
+
+// A tree-like plane network (chain with branches, conduit/structure edges, outfalls)
+// with `ns` nonlinear stores. Each store drains through a weir (to a downstream
+// neighbour, or out of the system when `to_outfall`), some through a raised-end
+// two-port, some carry a floored one-way structure, a few have a composite street
+// pond. Random pins. Returns the graph and the per-pond start-level slots.
+RandomGraph makeTreeStoreGraph(std::mt19937& rng, int n, int ns, bool to_outfall, bool extras) {
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    RandomGraph r;
+    PortGraph& g = r.g;
+    g.resize(n);
+    g.dt = 5.0 + 50.0 * U(rng);
+    for (int t = 0; t < n; ++t) {
+        g.S[static_cast<std::size_t>(t)] = std::pow(10.0, 1.0 + 3.0 * U(rng));
+        g.level[static_cast<std::size_t>(t)] = 90.0 + 20.0 * U(rng);
+    }
+    for (int t = 1; t < n; ++t) {
+        const int up = t - 1 - static_cast<int>(U(rng) * std::min(t, 3));
+        FlowEdge e; e.up = up; e.dn = t;
+        if (U(rng) < 0.85) { e.conduit = true; e.ju = 0.1 + 5.0 * U(rng); e.jd = -e.ju * U(rng); }
+        else { e.conduit = false; e.d = 0.05 + 2.0 * U(rng); }
+        g.edges.push_back(e);
+    }
+    for (int q = 0; q < n / 25; ++q) {   // a few loops
+        const int a = static_cast<int>(U(rng) * n), c = static_cast<int>(U(rng) * n);
+        if (a == c) continue;
+        FlowEdge e; e.up = std::min(a, c); e.dn = std::max(a, c); e.conduit = true; e.ju = 2.0 * U(rng); e.jd = -e.ju * U(rng);
+        g.edges.push_back(e);
+    }
+    for (int q = 0; q < 3; ++q) {
+        FlowEdge o; o.up = n - 1 - static_cast<int>(U(rng) * n / 3); o.dn = -1; o.conduit = false; o.d = 0.5 + 2.0 * U(rng);
+        g.edges.push_back(o);
+    }
+    std::vector<int> nodes(static_cast<std::size_t>(n));
+    for (int t = 0; t < n; ++t) nodes[static_cast<std::size_t>(t)] = t;
+    std::shuffle(nodes.begin(), nodes.end(), rng);
+    nodes.resize(static_cast<std::size_t>(std::min(ns, n)));
+    for (int t : nodes) {
+        const double S0 = g.S[static_cast<std::size_t>(t)], c3 = S0 * U(rng);
+        g.store_of[static_cast<std::size_t>(t)] = static_cast<int>(g.stores.size());
+        PortGraph::Store st;
+        st.dV = [S0, c3](double z, double* a) { if (a) *a = S0 + 3.0 * c3 * z * z; return S0 * z + c3 * z * z * z; };
+        g.stores.push_back(st);
+        const int dn = (to_outfall || t == n - 1) ? -1 : t + 1 + static_cast<int>(U(rng) * std::min(4, n - 1 - t));
+        if (!extras || U(rng) < 0.6) {
+            g.ports.push_back(weirPort(t, dn, 0.5 + 3.0 * U(rng), 0.05 + U(rng)));
+        } else {
+            const double zB = U(rng), zF = zB + 0.5 * U(rng);
+            g.ports.push_back(raisedPort(t, dn, 1.0 + 4.0 * U(rng), zB + 0.5 * U(rng), zB, zF + U(rng) - 0.5, zF));
+        }
+        if (extras && U(rng) < 0.3) {   // one-way structure to a downstream node, floored
+            const int c2 = std::min(n - 1, t + 1 + static_cast<int>(U(rng) * 5));
+            if (c2 != t) {
+                const double d_star = U(rng) < 0.25 ? 0.0 : 0.1 + U(rng);
+                const double cap = 0.5 + 3.0 * U(rng);
+                const double q_star = std::min(cap * d_star, cap) * U(rng);
+                if (U(rng) < 0.5) g.ports.push_back(ratedOneWayPort(t, c2, cap, d_star, q_star));
+                else g.ports.push_back(flooredOneWayLine(t, c2, q_star + 0.2 * U(rng), 0.5 + 4.0 * U(rng), d_star));
+            }
+        }
+        if (extras && U(rng) < 0.25) {   // composite street pond
+            const double z_or = 1.0 + 0.5 * U(rng);
+            addPondComposite(r, t, std::pow(10.0, 1.0 + 3.0 * U(rng)), 0.05 + 0.5 * U(rng), z_or + 0.6 * (U(rng) - 0.5), 0.5 + U(rng), z_or, U(rng) < 0.3 ? 0.0 : 0.4 * U(rng));
+        }
+    }
+    if (extras)
+        for (int q = 0, np = static_cast<int>(U(rng) * 4); q < np; ++q) g.pinned[static_cast<std::size_t>(U(rng) * n)] = 1;
+    g.dV_prev.assign(g.stores.size(), 0.0);
+    return r;
+}
+
+// Member data from a seed: sources, start levels, store volumes, pond start levels.
+void setRandomMember(RandomGraph& r, unsigned seed, double b_amp = 4.0) {
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    PortGraph& g = r.g;
+    for (int t = 0; t < g.n; ++t) {
+        g.b[static_cast<std::size_t>(t)] = b_amp * (U(rng) - 0.4);
+        g.z_prev[static_cast<std::size_t>(t)] = 0.6 * (U(rng) - 0.5);
+    }
+    for (int t = 0; t < g.n; ++t) {
+        const int s = g.store_of[static_cast<std::size_t>(t)];
+        if (s >= 0) g.dV_prev[static_cast<std::size_t>(s)] = g.volume(t, g.z_prev[static_cast<std::size_t>(t)], nullptr);
+    }
+    for (const auto& pd : r.ponds)
+        if (pd.node < 0) (*r.zpp)[pd.slot] = std::max(0.4 * (U(rng) - 0.4), -pd.po.p_det);
+}
+
+}  // namespace
+
+TEST(SparseNewton, MatchesTheDenseSchurPathOnRandomGraphs) {
+    // O-11: the same Newton system factored two ways (dense k×k Schur complement, or
+    // the full network's sparse LU with a cached pattern) gives the same iterates:
+    // 50 random graphs, N sets of 5 to ~400 nodes, composite ponds, floored one-way
+    // ports, pins, loops, 3 members each.
+    std::mt19937 seeds(1101);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    double worst = 0.0;
+    long it_d = 0, it_s = 0, fb_d = 0, fb_s = 0, kmax = 0, sparse_fact = 0, with_ponds = 0;
+    for (int trial = 0; trial < 50; ++trial) {
+        const unsigned sd = seeds();
+        std::mt19937 rng(sd);
+        RandomGraph rd;
+        if (trial < 20) {   // the generic random graphs (loops, weirs, raised ends)
+            rd = makeRandomGraph(rng, 6 + trial * 3, trial % 2 == 0, trial % 4 >= 2, 2);
+        } else {            // tree-like with many stores: k up to ~400
+            const int ns = 5 + (trial - 20) * 13;
+            rd = makeTreeStoreGraph(rng, std::max(60, ns + 40 + static_cast<int>(U(rng) * 80)), ns, trial % 3 == 0, true);
+        }
+        with_ponds += !rd.ponds.empty();
+        // Random pins on the generic graphs too.
+        if (trial < 20 && trial % 3 == 1) rd.g.pinned[static_cast<std::size_t>(U(rng) * rd.g.n)] = 1;
+        RandomGraph rs = rd;   // copy: shares the pond start-level slots (read only)
+        rd.g.k_dense = static_cast<std::size_t>(-1);   // always dense
+        rs.g.k_dense = 0;                              // always sparse
+        for (int m = 0; m < 3; ++m) {
+            setRandomMember(rd, sd * 31u + static_cast<unsigned>(m));
+            rs.g.b = rd.g.b; rs.g.z_prev = rd.g.z_prev; rs.g.dV_prev = rd.g.dV_prev;
+            rd.g.member = rs.g.member = m;
+            std::vector<double> zd = rd.g.z_prev, zs = rs.g.z_prev;
+            const bool okd = rd.g.solve(zd), oks = rs.g.solve(zs);
+            ASSERT_EQ(okd, oks) << "trial " << trial << " member " << m;
+            ASSERT_TRUE(okd) << "trial " << trial << " member " << m;
+            double zmax = 0.0, dmax = 0.0;
+            for (std::size_t t = 0; t < zd.size(); ++t) { zmax = std::max(zmax, std::fabs(zd[t])); dmax = std::max(dmax, std::fabs(zd[t] - zs[t])); }
+            const double rel = dmax / std::max(zmax, 1.0e-300);
+            worst = std::max(worst, rel);
+            EXPECT_LE(rel, 1.0e-10) << "trial " << trial << " (n " << rd.g.n << ", k " << rd.g.stats.k_max << ") member " << m;
+        }
+        EXPECT_EQ(rd.g.stats.sparse_factorisations, 0) << "trial " << trial;
+        if (rs.g.stats.newton_iters > 0) EXPECT_GT(rs.g.stats.sparse_factorisations, 0) << "trial " << trial;
+        EXPECT_EQ(rs.g.stats.factorisations, 0) << "trial " << trial << ": the sparse path forms no dense system";
+        EXPECT_EQ(rd.g.stats.l_factorisations, rs.g.stats.l_factorisations);
+        EXPECT_EQ(rd.g.stats.k_max, rs.g.stats.k_max);
+        it_d += rd.g.stats.newton_iters; it_s += rs.g.stats.newton_iters;
+        fb_d += rd.g.stats.jacobi_fallbacks; fb_s += rs.g.stats.jacobi_fallbacks;
+        kmax = std::max(kmax, rd.g.stats.k_max);
+        sparse_fact += rs.g.stats.sparse_factorisations;
+    }
+    EXPECT_GE(kmax, 300);
+    EXPECT_GE(with_ponds, 25);
+    EXPECT_EQ(fb_d, fb_s);
+    std::printf("[PH-O11] 50 random graphs x 3 members (k <= %ld): worst max|dz|/max|z| dense vs sparse %.2e; Newton iterations dense %ld / sparse %ld; "
+                "Jacobi fallbacks %ld / %ld; sparse factorisations %ld; graphs with ponds %ld\n",
+                kmax, worst, it_d, it_s, fb_d, fb_s, sparse_fact, with_ponds);
+}
+
+TEST(SparseNewton, CrossoverMicroBenchmark) {
+    // Per Newton iteration, the dense k×k Schur path against the sparse full-network
+    // path on a chain-like network of ~1,300 nodes whose N set is k stores (each
+    // drains through a weir out of the system). The time is prepare() plus 4 members,
+    // divided by the Newton iterations: the share of prepare() per member is what a
+    // step with ~4 members pays; the engine runs more members per step, which
+    // favours the dense path slightly at small k (its prepare is the k L-solves).
+    using clk = std::chrono::steady_clock;
+    const std::vector<int> ks = {10, 30, 100, 300,
+#ifdef NDEBUG
+                                 1000
+#endif
+    };
+    int crossover = -1;
+    double t_d_last = 0.0, t_s_last = 0.0;
+    int k_last = 0;
+    for (int ks_i : ks) {
+        double ms[2] = {0.0, 0.0};
+        long iters[2] = {0, 0};
+        for (int path = 0; path < 2; ++path) {   // 0 dense, 1 sparse
+            std::mt19937 rng(7000 + static_cast<unsigned>(ks_i));
+            RandomGraph r = makeTreeStoreGraph(rng, 1300, ks_i, true, false);
+            r.g.k_dense = path == 0 ? static_cast<std::size_t>(-1) : 0;
+            setRandomMember(r, 5u);
+            const auto t0 = clk::now();
+            r.g.prepare();
+            for (int m = 0; m < 4; ++m) {
+                setRandomMember(r, 5u + static_cast<unsigned>(m), 6.0);
+                r.g.member = m;
+                std::vector<double> z = r.g.z_prev;
+                EXPECT_TRUE(r.g.solve(z));
+            }
+            ms[path] = std::chrono::duration<double, std::milli>(clk::now() - t0).count();
+            iters[path] = r.g.stats.newton_iters;
+            EXPECT_EQ(r.g.stats.jacobi_fallbacks, 0);
+            EXPECT_EQ(r.g.stats.k_max, ks_i);
+        }
+        const double pd = ms[0] / std::max<long>(iters[0], 1), ps = ms[1] / std::max<long>(iters[1], 1);
+        std::printf("[PH-O11] k %4d: dense %9.3f ms (%ld Newton iterations, %.3f ms/iteration) | sparse %9.3f ms (%ld, %.3f ms/iteration)\n",
+                    ks_i, ms[0], iters[0], pd, ms[1], iters[1], ps);
+        if (crossover < 0 && ps <= pd) crossover = ks_i;
+        t_d_last = ms[0]; t_s_last = ms[1]; k_last = ks_i;
+    }
+    std::printf("[PH-O11] smallest measured k at which the sparse path is not slower: %d\n", crossover);
+#ifdef NDEBUG
+    EXPECT_EQ(k_last, 1000);
+    EXPECT_LT(t_s_last, t_d_last) << "at k = 1000 the sparse path must beat the dense Schur path";
+#else
+    (void)t_d_last; (void)t_s_last; (void)k_last;
+#endif
+}
+
+// ===========================================================================
 // Step 3 — engine wiring (hook rom1dStorageMembersEnabled())
 // ===========================================================================
 

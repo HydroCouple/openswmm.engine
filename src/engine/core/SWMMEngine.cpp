@@ -8112,11 +8112,11 @@ int SWMMEngine::end() noexcept {
         const auto& st = rom1d_pg_.stats;
         std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld (per node %ld), active-set re-solves %ld, fp-floor converged %ld), "
                     "Jacobi fallbacks %ld (anomaly; not converged %ld), "
-                    "zero-data exits %ld, k x k factorisations %ld (k <= %ld), L factorisations %ld, L solves %ld, "
+                    "zero-data exits %ld, k x k factorisations %ld (k <= %ld), sparse factorisations %ld, L factorisations %ld, L solves %ld, "
                     "admitted nodes %zu, links on a monotone envelope %zu, "
                     "store member-steps > 0.05 ft below invert %ld (deepest %.3f ft), largest storage rescale %.3g\n",
                     st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.node_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
-                    st.factorisations, st.k_max, st.l_factorisations, st.l_solves,
+                    st.factorisations, st.k_max, st.sparse_factorisations, st.l_factorisations, st.l_solves,
                     rom1d_nl_nodes_.size(), rom1d_pg_envelope_links_.size(), rom1d_pg_below_floor_, rom1d_pg_min_depth_, rom1d_pg_rescale_max_);
         // Where: a store drained below its invert through a linear (plane) edge,
         // which has no floor (the drowned-pipe line, note §1.2 kind 3).

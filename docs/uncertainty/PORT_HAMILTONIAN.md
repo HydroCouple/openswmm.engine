@@ -479,3 +479,43 @@ cases the current code excludes). Acceptance gates as in the table.
   factorisation falls to about 0.24 of its cost (1,000–1,100 is the range if E is nearer 0.5–0.8 S). That is not the ≤ 1.5× OFF
   line: k stays about S + E ≈ 1,000. The remaining levers are structural and not taken here: the `near` admission of coupled
   manholes (S itself), or a sparse Schur solve. Not run: the coupled Bellinge.
+- 2026-11-16: O-11 (sparse Newton path; `RomPortGraph.hpp`, `RomAdditiveChannel.hpp`, tests `SparseNewton.*`, uncommitted). The per-member
+  Newton system is the same linear system in two factorisations: the dense k×k Schur complement (O(k²) to form, O(k³) to factor per pass) or,
+  above `PortGraph::k_dense` N nodes, the FULL (N ∪ L) Jacobian in a sparse LU. `AdditiveSystem::refactor(op, dt, pinned)` is new: numeric
+  factorisation on the cached min-degree pattern (no validation, no pattern growth, no symbolic step; a pair the pattern lacks, or a first
+  call, falls back to `build()`); `build()` is the same code split into validation + pattern growth + `assembleAndFactor_` (the planes are
+  bit-identical, gates below). `prepare()` (once per graph) registers the pattern: plane-edge terms plus every port's pair (slopes 0); in
+  sparse mode it skips the Schur block (no Jbase, no W rows: `schurBase()` is empty above k_dense, dumps carry an empty Schur base, as with
+  `with_schur = false`). Per Newton pass: Q = store areas (N) / S (L), the ports' terms refilled from the pass's slopes (`ju >= 0`, `-jd >= 0`:
+  still a column-dominant M-matrix, so no pivoting), right-hand side −F on N and −c·F_L0 on L (the L residual scales by c along a step, as
+  before), one `refactor` + one forward/backward pass; dz_N and dz at the boundary L nodes are read off the solution. A capped (per-node
+  bounded) step gets its boundary-L response from one L solve instead of the stored W rows. Everything else (kink bound, active set, Armijo,
+  roundoff floor, Jacobi fallback, tolerances) is the same code. New counter `sparse_factorisations` (`factorisations` stays the k×k count).
+  **Crossover** (`SparseNewton.CrossoverMicroBenchmark`, Release, chain-like network of 1,300 nodes, k stores each draining out of the
+  system, prepare + 4 members, ms per Newton iteration, dense | sparse): k 10 0.20 | 0.39; k 30 0.17 | 0.35; k 100 0.33 | 0.37; k 300 1.27 | 0.33;
+  k 1000 10.3 | 0.56 (257 ms vs 14 ms for the 25 iterations). The sparse cost is the network, nearly flat in k; the dense cost is k³. They meet at
+  k ≈ 100: `k_dense = 100` (dense for k <= 100; the rule needs no n because a smaller network only favours sparse). The unit test asserts
+  sparse < dense at k = 1000 (Release only). **Equivalence** (`MatchesTheDenseSchurPathOnRandomGraphs`): 50 random graphs (generic random graphs
+  with loops, weirs, raised ends, composite ponds, floored one-way ports, pins; tree-like graphs with up to 453 stores/N nodes), 3 members each:
+  worst max|dz|/max|z| 8.5e-14, Newton iterations 1,265 = 1,265, Jacobi fallbacks 0 = 0, k <= 453, 39 graphs with ponds. Replay
+  (`CommittedBellingeDumpsConverge`) now runs every committed dump on both paths: both converge, 0 fallbacks. **Gates (Release)**: member_ports
+  43 (41 + 2), port_graph_replay 2, additive_channel 12, spectral_rom1d 101, storage gate A 0.889/0.958, B 0.727/0.960, R 0.952/0.880, SR-5
+  0.921/1.029, SR-7 0.922/0.969, CL-1e 0.941/1.026 (all identical). **Release 1D smoke** (ph_smoke1d to 07:00): 55 s (O-10 Release ref. 48 s, same
+  machine class, load from other work), k 43 (dense path), Newton 298,801, 0 Jacobi fallbacks, 0 not converged, k x k factorisations 413,968,
+  sparse factorisations 0.
+  **Coupled Bellinge (`demo_ph5`, Release, per-member ON, OMP 4, caffeinate)**: wall at step 1000/2000/3000/4000/5000/6000 = 455 / 865 / 1,124 /
+  1,709 / 2,144 / 2,530 s, done 6,816 steps in **2,879 s** (O-9 code 497 / 1,110 / 3,830; O-6 594 / 3,775 (throttled) / 3,998; steps 2000 -> 3000
+  took 259 s against 2,720 s). k_max 1,011. `[PH-ports]`: member solves 340,750, Newton 1,079,305 (Armijo rejected 21, kink-bounded 160,884 (per
+  node 102,138), active-set re-solves 1,129,236, fp-floor 1,114), **Jacobi fallbacks 126, not converged 10** (the counters step from 93/10 at
+  step 4000 to 106/10 at 5000 and stay there), zero-data exits 1,147, k x k factorisations 0, **sparse factorisations 2,208,541**, L factorisations
+  4,928, L solves 2,699,837, admitted nodes 1,011 (admission closure added 877), store member-steps > 0.05 ft below invert 21,968 (deepest -19.3 ft,
+  G72R52X 18,222 of them), any-node 87,974 (deepest -25.5 ft). The OFF wall is not recorded (`demo_v4.log` has progress lines without wall).
+  The solution is the dense path's (equivalence above), so none of the following is an O-11 effect; it is what O-8..O-10 produce at the storm peak.
+  **Scores vs mc_v3** (O-7 in brackets): 1D all manholes 0.937/1.247 (0.947/1.416); storage 0.750/0.585 (0.801/0.805), OFF 0.845/1.988; trunk
+  transect 0.788/1.152; P(>20 cm) Brier 0.0160 vs no-skill 0.1311 (0.0191 vs 0.1113; the no-skill term differs between the two scorings of the
+  same cells: not chased); 2D street 0.511/0.156 (0.620/0.158), by span 20-100 cm 0.310/0.156. Node bands (median 05-10 h, MC span / OFF / ON, m):
+  G72UD11 1.105 / 0.916 / 0.096, G72R83B 0.062 / 2.995 / 0.106, G72R150 0.454 / 3.445 / 0.399, G70F11P 0.733 / 0.038 / 0.170, G71O020 0.007 /
+  0.033 / 0.012, G70S213 0 / 0.100 / 0.069, G70S214 0 / 0.126 / 0.046, G62F012 0.019 / 0.088 / 0.054, G71F043 0.005 / 0.016 / 0.021. Reading: the
+  cost line is met (the full run is 48 min instead of the 4–11 h of O-6/O-7/O-9); the accuracy fell relative to O-7 (storage and 2D coverage),
+  and the 10 non-converged member solves plus the one deep store (G72R52X, -19 ft) are the open items; G72UD11's ON band (0.096 m) is 11 x narrower than the MC's (1.105 m;
+  OFF 0.916 m). The closure admitted 1,011 nodes (every node a store): that, not the Newton cost, is what to look at next.

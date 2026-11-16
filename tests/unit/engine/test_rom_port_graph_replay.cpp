@@ -96,8 +96,9 @@ std::string nameOf(const D::PortGraphDump& d, int t) {
 
 struct ReplayResult { bool ok = false; long newton = 0, fallbacks = 0, failed = 0; double r_end = 0.0; };
 
-ReplayResult replay(const D::PortGraphDump& d) {
+ReplayResult replay(const D::PortGraphDump& d, std::size_t k_dense = 150) {
     PortGraph g;
+    g.k_dense = k_dense;   // O-11: -1 forces the dense Schur path, 0 the sparse full-network path
     buildReplay(d, g);
     std::vector<double> z = d.z_start;
     ReplayResult r;
@@ -213,10 +214,13 @@ TEST(PortGraphDump, CommittedBellingeDumpsConverge) {
         D::PortGraphDump d;
         ASSERT_TRUE(D::readPortGraphDump(f, d)) << f;
         cleanTables(d);
-        const ReplayResult r = replay(d);
-        EXPECT_TRUE(r.ok) << f;
-        EXPECT_EQ(r.fallbacks, 0) << f;
-        EXPECT_LE(r.newton, 20) << f;
+        // O-11: both factorisations of the same Newton system converge on every dump.
+        for (const std::size_t kd : {static_cast<std::size_t>(-1), static_cast<std::size_t>(0)}) {
+            const ReplayResult r = replay(d, kd);
+            EXPECT_TRUE(r.ok) << f << (kd == 0 ? " (sparse)" : " (dense)");
+            EXPECT_EQ(r.fallbacks, 0) << f << (kd == 0 ? " (sparse)" : " (dense)");
+            EXPECT_LE(r.newton, 20) << f << (kd == 0 ? " (sparse)" : " (dense)");
+        }
     }
 }
 
