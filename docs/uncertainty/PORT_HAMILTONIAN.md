@@ -519,3 +519,32 @@ cases the current code excludes). Acceptance gates as in the table.
   cost line is met (the full run is 48 min instead of the 4–11 h of O-6/O-7/O-9); the accuracy fell relative to O-7 (storage and 2D coverage),
   and the 10 non-converged member solves plus the one deep store (G72R52X, -19 ft) are the open items; G72UD11's ON band (0.096 m) is 11 x narrower than the MC's (1.105 m;
   OFF 0.916 m). The closure admitted 1,011 nodes (every node a store): that, not the Newton cost, is what to look at next.
+- 2026-11-16: O-12 (the FREE clause removed from the admission closure; `RomAdmissionClosure.hpp`, tests `AdmissionClosure.*`, uncommitted).
+  **Decision, from the code**: in `stepRom1dStorageMembers` the plane-edge loop turns EVERY conduit that touches an admitted node into a
+  port floored at BOTH ends (`dryFactor(dU, zu)` and `dryFactor(dD, zd)` on any end that is an active node; O-6). So the far end of a
+  plain two-way conduit from an admitted store already has its own floor through that line, and the plane handles the rest; no distinct
+  FLOORED_LINE kind is needed (every FREE conduit touching an admitted node IS a floored line). Only ONE_WAY and RAISED far ends, where
+  water cannot come back, need a floor of their own. FREE links stay in the function as the grounding/component links. Cause of the
+  O-11 regression: with the FREE clause each admitted node made its free neighbours boundary nodes and sticky admission repeated it:
+  1,011 of 1,011 admitted. **Tests** (member_ports 44): (a) re-written (chain behind a pump admits nothing through the two-way
+  conduit; a ONE_WAY line into U2 admits U2 only), (c) re-written (lateral behind a floored two-way line stays linear, with or without a
+  grounded flag; a ONE_WAY far end still joins), NEW `TwoWayChainAroundOneAdmittedStoreAdmitsNothing` (20 junctions, two-way
+  everywhere, one store; mutation = FREE clause: admits both neighbours, the chain under repetition), random-graph test's boundary
+  definition restricted to non-FREE links. **Gates (Release)**: member_ports 44, port_graph_replay 2, additive_channel 12,
+  spectral_rom1d 101, storage gate A 0.889/0.958, B 0.727/0.960, R 0.952/0.880 (unchanged). **Release 1D smoke** (ph_smoke1d to 07:00):
+  48 s (O-11 55 s), k <= 33 (43), admitted 18 (27), closure added 7 (17), Jacobi fallbacks 1, not converged 0, store member-steps > 0.05 ft
+  below invert 96 (deepest -0.123 ft). **Coupled Bellinge (`demo_ph5`, Release, ON, OMP 4, caffeinate)**: wall at step 1000/2000/3000/4000 =
+  444 / 836 / 1,042 / 1,430 s (O-11 455 / 865 / 1,124 / 1,709), 5000 1,750, 6000 2,033, done 6,816 steps in **2,290 s** (O-11 2,879).
+  `[PH-ports]`: member solves 340,750, Newton 1,096,844, Jacobi fallbacks 218, **not converged 6** (O-11 126/10), k_max **574** (1,011),
+  sparse factorisations 2,174,908, **admitted nodes 407, closure added 16** (1,011 / 877), store member-steps > 0.05 ft below invert 3,153
+  (deepest -105.9 ft; G70F11P 1,630, G71O020 460, G71R090 317, G80F11B 113; O-11 21,968, deepest -19.3 ft, all G72R52X), any-node 400,083
+  (deepest -125.0 ft; O-11 87,974, -25.5 ft), monotone envelopes on 4 links. G72R52X no longer sinks (not in the store list; band 0.037 m vs MC
+  0.273). **Scores vs mc_v3** (O-7 / O-11 in brackets): 1D all manholes 0.945/1.416 (0.947/1.416 / 0.937/1.247); storage 0.795/0.795
+  (0.801/0.805 / 0.750/0.585); trunk transect 0.798/1.188 (- / 0.788/1.152); P(>20 cm) Brier 0.0202 vs no-skill 0.1112 (0.0191/0.1113 /
+  0.0160/0.1311); 2D street 0.620/0.158 (0.620/0.158 / 0.511/0.156), by span 20-100 cm 0.319/0.158. Node bands (median 05-10 h, MC / OFF /
+  ON, m): G72UD11 1.105 / 0.916 / 0.225 (O-7 0.228; O-11 0.096), G72R83B 0.062 / 2.995 / 0.393 (0.363), G72R150 0.454 / 3.445 / 0.966
+  (0.991), G70F11P 0.733 / 0.038 / 0.134 (0.138), G71O020 0.007 / 0.033 / 0.012, G70S213 0 / 0.100 / 1.624, G70S214 0 / 0.126 / 1.534,
+  G62F012 0.019 / 0.088 / 1.398, G71F043 0.005 / 0.016 / 1.152. Reading: the accuracy is back to O-7's; the cost is 2,290 s. **OFF (hook 0,
+  `demo_v4.inp`) wall 1,663 s (474 / 885 / 1,067 / 1,186 at 1000..4000 steps)**: ON/OFF = **1.38**, inside the 1.5 target.
+  Open: the ON bands at G70S213/G70S214/G62F012/G71F043 (MC 0-0.02 m, ON 1.1-1.6 m, OFF 0.01-0.13 m) are the largest widenings; 6 non-converged
+  member solves; 4 deep store sinks (G70F11P, G71O020, G71R090, G80F11B).

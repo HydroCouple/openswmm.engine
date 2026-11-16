@@ -3884,3 +3884,18 @@ trunk 0.811/1.200 vs 0.814/1.26; 2D street 0.665/0.155 vs 0.698/0.21 (both ranki
 0.0305 vs 0.041 (no-skill 0.0997). The per-member path does not improve the bands; it ships OFF. Known causes
 still open: admission closure (members at G71O020/G70F11P sink to −106 ft behind floored ports), the admitted
 set growing to 405 nodes (k = 986) at the peak, and the 26.
+
+### Phase 5 final (O-8…O-12, 2026-11-16): per-member ON on Bellinge — calibrated 1D, cost 1.38× OFF
+
+Per-member path (depth-1 admission closure on one-way/raised ends only; one-way structures as floored ports;
+pond eliminated into a composite monotone port; sparse full-network Newton above k = 100) vs `mc_v3`, 05–10 h:
+1D all manholes 0.945/1.416 CALIBRATED (OFF 0.957/1.40); storage 0.795/0.795 (OFF 0.845/1.988 conservative;
+coverage 0.005 under the floor → ranking only by the rule); trunk 0.798/1.188; P(>20 cm) Brier 0.0202 vs no-skill
+0.1112 (OFF 0.041/0.106); 2D street 0.620/0.158 ranking only (OFF 0.698/0.21). Wall, Release, OMP 4, same machine
+back to back: ON 2,290 s, OFF 1,663 s → **1.38×** (target ≤ 1.5×). Solver: 340,750 member solves, 218 Jacobi
+fallbacks, 6 non-converged, k_max 574, admitted 407 (closure 16). Basins: G72R83B 2.995 → 0.393 m (MC 0.062),
+G72R150 3.445 → 0.966 (MC 0.454), G72UD11 0.916 → 0.225 (MC 1.105, now narrow), G70F11P 0.038 → 0.134 (MC 0.733).
+Open: four shallow laterals 1.1–1.6 m wide with MC ≈ 0 (G70S213/214, G62F012, G71F043); four stores still sink
+(G70F11P, G71O020, G71R090, G80F11B — the shared linear plane's own level at junction wet wells, see
+PORT_HAMILTONIAN §6 O-9); the 2D street band. The hook `rom1dStorageMembersEnabled()` still defaults OFF pending
+the owner's default decision.

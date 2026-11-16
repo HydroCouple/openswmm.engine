@@ -1761,13 +1761,16 @@ bool groundedByWalk(int n, const std::vector<CL>& links, const std::vector<char>
 }
 }  // namespace
 
-// Depth-1 closure (O-8b). A wet well W (admitted: a pump leaves it) with the
-// chain U1 -> U2 -> W behind it: only U2, the node directly behind W, joins.
-// U1 stays linear, tied to U2 by a free conduit. Mutation: the component rule
-// (admit everything with no free path to the outfall) would return {0, 1}.
-TEST(AdmissionClosure, ChainBehindAPumpAdmitsOnlyTheNodeDirectlyBehindIt) {
+// Depth-1 closure (O-8b, O-12). A wet well W (admitted: a pump leaves it) with the
+// chain U1 -> U2 -> W behind it by two-way conduits: nothing joins (the conduit into
+// W is a floored line; O-12 dropped the FREE clause). A node behind W by a ONE_WAY
+// port joins, and only it: U1 behind it stays linear.
+TEST(AdmissionClosure, ChainBehindAPumpAdmitsOnlyOneWayFarEnds) {
     // 0 U1, 1 U2, 2 W (admitted), 3 D
-    const std::vector<CL> links{lk(0, 1), lk(1, 2), lk(2, 3, CL::ONE_WAY), lk(3, -1)};
+    std::vector<CL> links{lk(0, 1), lk(1, 2), lk(2, 3, CL::ONE_WAY), lk(3, -1)};
+    EXPECT_TRUE(admissionClosure(4, links, flags(4, {2})).empty());
+    // A one-way line from W into U2: U2 is the far end of a one-way link and joins.
+    links.push_back(lk(2, 1, CL::ONE_WAY));
     const auto add = admissionClosure(4, links, flags(4, {2}));
     EXPECT_EQ(add, (std::vector<int>{1}));
     EXPECT_TRUE(std::find(add.begin(), add.end(), 0) == add.end()) << "the component rule would admit U1 too";
@@ -1789,16 +1792,38 @@ TEST(AdmissionClosure, BasinBehindARaisedEndPipeIsAdmitted) {
     EXPECT_TRUE(admissionClosure(4, with_free, flags(4, {0})).empty());
 }
 
-// A lateral L1 whose only outlet is a floored line into admitted store A joins;
-// L2 behind L1 does not. X also drains into A but has a free conduit to the
-// plane node P, which reaches the outfall: X stays linear.
-TEST(AdmissionClosure, LateralBehindAFlooredLineJoinsAndAFreeConduitKeepsANodeLinear) {
+// O-12: a lateral behind a plain two-way (floored-line) conduit into an admitted
+// store is NOT admitted. The engine floors every conduit touching an admitted node
+// at both ends (the line's flow carries the dry factor of the end the water leaves),
+// so the lateral's deficit is bounded through the line; only ONE_WAY and RAISED
+// far ends need a floor of their own. A grounded flag changes nothing here.
+TEST(AdmissionClosure, LateralBehindAFlooredTwoWayLineStaysLinear) {
     // 0 A (admitted), 1 L1, 2 L2, 3 X, 4 P
     const std::vector<CL> links{lk(2, 1), lk(1, 0), lk(3, 0), lk(3, 4), lk(4, -1), lk(0, 4, CL::ONE_WAY)};
-    const auto add = admissionClosure(5, links, flags(5, {0}));
-    EXPECT_EQ(add, (std::vector<int>{1}));
-    // A grounded flag (a node the caller holds at the main run) grounds its component.
+    EXPECT_TRUE(admissionClosure(5, links, flags(5, {0})).empty());
     EXPECT_TRUE(admissionClosure(5, links, flags(5, {0}), flags(5, {2})).empty());
+    // The one-way far end still joins when it has no grounded path.
+    const std::vector<CL> ow{lk(1, 0, CL::ONE_WAY), lk(2, 1)};
+    EXPECT_EQ(admissionClosure(3, ow, flags(3, {0})), (std::vector<int>{1}));
+}
+
+// O-12 regression: 20 junctions in a chain, two-way conduits everywhere, one admitted
+// store in the middle, the far end open to the outside or not. Nothing joins.
+// Mutation: with the FREE clause the closure admitted both neighbours of the store
+// (and, applied again under sticky admission, the whole chain).
+TEST(AdmissionClosure, TwoWayChainAroundOneAdmittedStoreAdmitsNothing) {
+    const int n = 20;
+    std::vector<CL> links;
+    for (int t = 0; t + 1 < n; ++t) links.push_back(lk(t, t + 1));
+    for (const bool open_end : {false, true}) {
+        auto l = links;
+        if (open_end) l.push_back(lk(n - 1, -1));
+        std::vector<char> adm = flags(n, {10});
+        EXPECT_TRUE(admissionClosure(n, l, adm).empty()) << "open_end " << open_end;
+        // Repeated application (sticky admission) stays empty.
+        adm[3] = 1;
+        EXPECT_TRUE(admissionClosure(n, l, adm).empty());
+    }
 }
 
 // Decision (d): a node behind a one-way port (G71O020 behind G71F12P's orifice
@@ -1832,7 +1857,7 @@ TEST(AdmissionClosure, BoundaryOnlyUngroundedAndTerminatingOnRandomGraphs) {
         for (int t = 0; t < n; ++t) adm[static_cast<std::size_t>(t)] = rng() % 7 == 0;
         auto isBoundary = [&](int t) {
             for (const CL& l : links)
-                if ((l.a == t && l.b >= 0 && adm[static_cast<std::size_t>(l.b)]) || (l.b == t && l.a >= 0 && adm[static_cast<std::size_t>(l.a)])) return true;
+                if (l.kind != CL::FREE && ((l.a == t && l.b >= 0 && adm[static_cast<std::size_t>(l.b)]) || (l.b == t && l.a >= 0 && adm[static_cast<std::size_t>(l.a)]))) return true;
             return false;
         };
         const auto add = admissionClosure(n, links, adm);

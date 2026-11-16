@@ -22,12 +22,21 @@
  *
  * The rule (depth-1 closure, O-8b): remove the admitted nodes and keep only
  * FREE links between non-admitted nodes. A non-admitted node is admitted when
- *   (1) it is on the BOUNDARY: it is the far end of a ONE_WAY or RAISED link,
- *       or of a FREE conduit (the engine floors those at both ends), whose
- *       other end is admitted; and
+ *   (1) it is on the BOUNDARY: it is the far end of a ONE_WAY or RAISED link
+ *       whose other end is admitted (water cannot come back through such a
+ *       link, so nothing but the far end's own floor bounds its deficit); and
  *   (2) its component of the remaining free graph is ungrounded: it contains
  *       no grounded node (an outfall, or a node the caller marks grounded) and
  *       no free link to the outside (an end at -1).
+ * A plain FREE two-way conduit from an admitted store is NOT a boundary link
+ * (O-12). The engine floors every conduit that touches an admitted node at
+ * BOTH ends (the line's flow carries the dry factor of the end the water leaves,
+ * `stepRom1dStorageMembers`, the plane-edge loop, O-6), so the far end of such a
+ * conduit already has a floor through the line, and the plane handles the rest.
+ * With the FREE clause (O-8b..O-11) the closure cascaded under sticky admission:
+ * each newly admitted node made its free neighbours boundary nodes, and the whole
+ * Bellinge network (1,011 nodes) became stores. FREE links still matter below:
+ * they join non-admitted nodes into components and ground them.
  * Only the boundary nodes are admitted, never the rest of the component.
  * Why one hop: the boundary node is where the water leaves the component the
  * wrong way (the line into the empty store, the reversed one-way line), and
@@ -62,8 +71,8 @@ struct ClosureLink {
     Kind kind = FREE;   ///< FREE: a two-way conduit. ONE_WAY: pump, weir, orifice, outlet. RAISED: raised-end pipe.
 };
 
-/// Nodes (ascending) that must join the admitted set: boundary nodes (a link of
-/// any kind to an admitted node) of a component of non-admitted nodes, joined
+/// Nodes (ascending) that must join the admitted set: boundary nodes (a ONE_WAY
+/// or RAISED link to an admitted node; a FREE link does not count, O-12) of a component of non-admitted nodes, joined
 /// by FREE links between non-admitted nodes, that has no grounded node and no
 /// FREE link to the outside.
 /// admitted, grounded: size n (grounded may be empty = none).
@@ -105,7 +114,7 @@ inline std::vector<int> admissionClosure(int n, const std::vector<ClosureLink>& 
     std::vector<char> boundary(un, 0);
     for (const auto& l : links) {
         const bool va = l.a >= 0 && l.a < n, vb = l.b >= 0 && l.b < n;
-        if (va && vb) {
+        if (va && vb && l.kind != ClosureLink::FREE) {
             if (adm(l.a) && !adm(l.b)) boundary[static_cast<std::size_t>(l.b)] = 1;
             if (adm(l.b) && !adm(l.a)) boundary[static_cast<std::size_t>(l.a)] = 1;
         }
