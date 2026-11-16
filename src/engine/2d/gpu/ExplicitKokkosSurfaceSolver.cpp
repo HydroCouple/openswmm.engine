@@ -324,6 +324,44 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                          opts.cfl_number);
         opts.cfl_number = 0.5;
     }
+    second_order_ = false;
+    if (swe_ && opts.reconstruction_order == 2) {
+        if (opts.lts_tiers > 1) {
+            std::fprintf(stderr,
+                         "[openswmm 2D] RECONSTRUCTION_ORDER 2 runs in global-dt mode: "
+                         "LTS_TIERS %d reduced to 1.\n",
+                         opts.lts_tiers);
+            opts.lts_tiers = 1;
+        }
+        // The plugin cannot build the vertex stencils (that code lives in the
+        // core); the router and the CPU marcher build them before this point.
+        if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
+            throw std::invalid_argument(
+                "Kokkos marcher: RECONSTRUCTION_ORDER 2 requires built vertex stencils");
+        second_order_ = true;
+    }
+    muscl_ = second_order_ && std::getenv("OPENSWMM_2D_MUSCL_OFF") == nullptr;
+    {
+        const int nv2 = second_order_ ? mesh.n_vertices() : 0;
+        const int nt2 = second_order_ ? nt : 0;
+        d_gex_ = DView("gex", 2 * nt2);
+        d_gey_ = DView("gey", 2 * nt2);
+        d_gux_ = DView("gux", nt2);
+        d_guy_ = DView("guy", nt2);
+        d_gvx_ = DView("gvx", nt2);
+        d_gvy_ = DView("gvy", nt2);
+        d_vbounds_ = DView("vertex_bounds", 4 * nv2);
+        d_arm_x_ = second_order_ ? devCopy("cell_arm_x", edges_.cell_arm_x) : DView();
+        d_arm_y_ = second_order_ ? devCopy("cell_arm_y", edges_.cell_arm_y) : DView();
+        d_slot_mx_ = second_order_ ? devCopy("slot_mx", mesh.edge_mid_values(0)) : DView();
+        d_slot_my_ = second_order_ ? devCopy("slot_my", mesh.edge_mid_values(1)) : DView();
+        d_rk_v0_ = DView("rk_v0", nt2);
+        d_rk_qx0_ = DView("rk_qx0", nt2);
+        d_rk_qy0_ = DView("rk_qy0", nt2);
+        d_rk_inf0_ = DView("rk_inf0", nt2);
+        d_rk_cpl0_ = DView("rk_cpl0", nt2);
+        d_rk_evap0_ = DView("rk_evap0", nt2);
+    }
     // FRONT_REBUILD AUTO is on for FULL_SWE only (== serial marcher).
     front_rebuild_ = (opts.front_rebuild < 0) ? swe_ : (opts.front_rebuild != 0);
     front_breach_ = false;
@@ -1380,6 +1418,12 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
         throw std::runtime_error("FULL_SWE pressure or momentum exceeds finite range at cell " +
                                  std::to_string(bad));
 
+    if (second_order_)
+        computeLimitedGradientsSwe();
+    const bool so = muscl_;
+    auto gex = d_gex_, gey = d_gey_, gux = d_gux_, guy = d_guy_, gvx = d_gvx_, gvy = d_gvy_;
+    auto emx = d_mx_, emy = d_my_, ccx = d_tri_cx_, ccy = d_tri_cy_;
+
     auto list = d_edges_compact_;
     auto cLv = d_cL_, cRv = d_cR_;
     auto qv = d_q_, faccL = d_faccL_, faccR = d_faccR_;
@@ -1395,9 +1439,34 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
             const int a = cLv(e), b = cRv(e);
             swe::FaceFlux F;
             double cLx, cLy, cRx, cRy;
-            const bool wet =
-                swe::faceFlux(head(a), depth(a), qcx(a), qcy(a), head(b), depth(b), qcx(b), qcy(b),
-                              nxv(e), nyv(e), dry, F, cLx, cLy, cRx, cRy);
+            bool wet;
+            if (so) {
+                // MUSCL: extrapolate eta, depth and velocity to the face (== serial).
+                const double ha = depth(a), hb = depth(b);
+                const double za = head(a) - ha, zb = head(b) - hb;
+                const double axa = emx(e) - ccx(a), aya = emy(e) - ccy(a);
+                const double axb = emx(e) - ccx(b), ayb = emy(e) - ccy(b);
+                const double ua = (ha > dry) ? qcx(a) / ha : 0.0;
+                const double va = (ha > dry) ? qcy(a) / ha : 0.0;
+                const double ub = (hb > dry) ? qcx(b) / hb : 0.0;
+                const double vb = (hb > dry) ? qcy(b) / hb : 0.0;
+                const double etaLf = head(a) + gex(a) * axa + gey(a) * aya;
+                const double etaRf = head(b) + gex(b) * axb + gey(b) * ayb;
+                const double uLf = ua + gux(a) * axa + guy(a) * aya;
+                const double vLf = va + gvx(a) * axa + gvy(a) * aya;
+                const double uRf = ub + gux(b) * axb + guy(b) * ayb;
+                const double vRf = vb + gvx(b) * axb + gvy(b) * ayb;
+                const double hLr = ha + gex(nt + a) * axa + gey(nt + a) * aya;
+                const double hRr = hb + gex(nt + b) * axb + gey(nt + b) * ayb;
+                const double hLf = hLr > 0.0 ? hLr : 0.0;
+                const double hRf = hRr > 0.0 ? hRr : 0.0;
+                wet = swe::faceFluxReconBed(etaLf, uLf, vLf, za, ha, etaRf, uRf, vRf, zb, hb,
+                                            nxv(e), nyv(e), dry, F, cLx, cLy, cRx, cRy, etaLf - hLf,
+                                            etaRf - hRf);
+            } else {
+                wet = swe::faceFlux(head(a), depth(a), qcx(a), qcy(a), head(b), depth(b), qcx(b),
+                                    qcy(b), nxv(e), nyv(e), dry, F, cLx, cLy, cRx, cRy);
+            }
             // Dry-dry face: no flux and no correction, so nothing to book.
             if (!wet) {
                 qv(e) = 0.0;
@@ -1434,6 +1503,225 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
             fmyR(e) += (fmy + cRy) * xdt;
         });
     face_passes_ += (hi - lo);
+}
+
+// RECONSTRUCTION_ORDER 2: limited gradients. The arithmetic and its order
+// follow ExplicitInertialSolver::computeLimitedGradientsSwe.
+void ExplicitKokkosSurfaceSolver::computeLimitedGradientsSwe() {
+    const int nt = mesh_->n_triangles();
+    const int nv = mesh_->n_vertices();
+    auto active = d_active_;
+    auto head = d_head_, depth = d_depth_, qcx = d_qcx_, qcy = d_qcy_;
+    auto vz = d_vz_, vx = d_vx_, vy = d_vy_;
+    auto vs_ptr = d_vs_ptr_, vs_idx = d_vs_idx_;
+    auto bounds = d_vbounds_;
+    const double dry = opts_->dry_depth;
+    // Velocity bounds at each vertex over the wet active cells that reach it.
+    Kokkos::parallel_for(
+        "swe_vertex_bounds", Kokkos::RangePolicy<ExecSpace>(0, nv), KOKKOS_LAMBDA(int v) {
+            double ulo = 1e300, uhi = -1e300, vlo = 1e300, vhi = -1e300;
+            for (int p = vs_ptr(v); p < vs_ptr(v + 1); ++p) {
+                const int j = vs_idx(p);
+                const double h = depth(j);
+                if (!active(j) || h <= dry || head(j) - vz(v) <= dry)
+                    continue;
+                const double u = qcx(j) / h, w = qcy(j) / h;
+                ulo = (u < ulo) ? u : ulo;
+                uhi = (uhi < u) ? u : uhi;
+                vlo = (w < vlo) ? w : vlo;
+                vhi = (vhi < w) ? w : vhi;
+            }
+            bounds(4 * v) = ulo;
+            bounds(4 * v + 1) = uhi;
+            bounds(4 * v + 2) = vlo;
+            bounds(4 * v + 3) = vhi;
+        });
+    auto ptr = d_cell_ptr_, edge = d_cell_edge_, cLv = d_cL_, cRv = d_cR_;
+    auto cx = d_tri_cx_, cy = d_tri_cy_;
+    auto arm_x = d_arm_x_, arm_y = d_arm_y_;
+    auto cvv = d_cell_v_, nvv = d_nv_;
+    auto gex = d_gex_, gey = d_gey_, gux = d_gux_, guy = d_guy_, gvx = d_gvx_, gvy = d_gvy_;
+    Kokkos::parallel_for(
+        "swe_gradients", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+            if (!active(i))
+                return;
+            gex(nt + i) = gey(nt + i) = gex(i) = gey(i) = 0;
+            gux(i) = guy(i) = gvx(i) = gvy(i) = 0;
+            const double hi = depth(i);
+            if (hi <= 10 * dry)
+                return;
+            const double wi[4] = {head(i), qcx(i) / hi, qcy(i) / hi, hi};
+            double lo[4] = {wi[0], wi[1], wi[2], wi[3]}, hiw[4] = {wi[0], wi[1], wi[2], wi[3]};
+            double xx = 0, xy = 0, yy = 0, bx[4] = {0, 0, 0, 0}, by[4] = {0, 0, 0, 0};
+            unsigned connected = 0;
+            int count = 0;
+            bool shore = false;
+            const int begin = ptr(i), end = ptr(i + 1);
+            for (int p = begin; p < end; ++p) {
+                const int e = edge(p), j = cLv(e) == i ? cRv(e) : cLv(e);
+                const double hj = depth(j), ej = head(j);
+                const double si = wi[0] - hi, sj = ej - hj;
+                const double sill = (si < sj) ? sj : si;
+                if (hj <= dry || !active(j) || wi[0] - sill <= dry || ej - sill <= dry) {
+                    shore = true;
+                    continue;
+                }
+                connected |= 1u << (p - begin);
+                ++count;
+                const double dx = cx(j) - cx(i), dy = cy(j) - cy(i);
+                const double wt = 1 / (dx * dx + dy * dy);
+                xx += wt * dx * dx;
+                xy += wt * dx * dy;
+                yy += wt * dy * dy;
+                const double wj[4] = {ej, qcx(j) / hj, qcy(j) / hj, hj};
+                for (int m = 0; m < 4; ++m) {
+                    bx[m] += wt * dx * (wj[m] - wi[m]);
+                    by[m] += wt * dy * (wj[m] - wi[m]);
+                    lo[m] = (wj[m] < lo[m]) ? wj[m] : lo[m];
+                    hiw[m] = (hiw[m] < wj[m]) ? wj[m] : hiw[m];
+                }
+            }
+            if (count < 2)
+                return;
+            const double det = xx * yy - xy * xy;
+            // Shoreline conditioning bound (condition number < 98).
+            if (det <= 1e-2 * (xx + yy) * (xx + yy))
+                return;
+            double gx[4] = {0, 0, 0, 0}, gy[4] = {0, 0, 0, 0}, phi[4] = {1, 1, 1, 1};
+            for (int m = 0; m < 4; ++m) {
+                if (shore && (m == 1 || m == 2))
+                    continue;
+                gx[m] = (yy * bx[m] - xy * by[m]) / det;
+                gy[m] = (xx * by[m] - xy * bx[m]) / det;
+            }
+            for (int p = begin; p < end; ++p) {
+                if (!(connected & (1u << (p - begin))))
+                    continue;
+                for (int m = 0; m < 4; ++m) {
+                    const double wf = wi[m] + gx[m] * arm_x(p) + gy[m] * arm_y(p);
+                    const double lim = swe::bjLimiter(wi[m], wf, lo[m], hiw[m]);
+                    phi[m] = (lim < phi[m]) ? lim : phi[m];
+                }
+            }
+            const int nvc = nvv(i);
+            if (!shore) {
+                for (int k = 0; k < nvc; ++k) {
+                    const int v = cvv(i * kMaxCellVerts + k);
+                    if (head(i) - vz(v) <= dry) {
+                        phi[1] = phi[2] = 0;
+                        break;
+                    }
+                    const double ax = vx(v) - cx(i), ay = vy(v) - cy(i);
+                    const double b0 = bounds(4 * v), b1 = bounds(4 * v + 1);
+                    const double b2 = bounds(4 * v + 2), b3 = bounds(4 * v + 3);
+                    const double l1 =
+                        swe::bjLimiter(wi[1], wi[1] + gx[1] * ax + gy[1] * ay,
+                                       (b0 < wi[1]) ? b0 : wi[1], (wi[1] < b1) ? b1 : wi[1]);
+                    phi[1] = (l1 < phi[1]) ? l1 : phi[1];
+                    const double l2 =
+                        swe::bjLimiter(wi[2], wi[2] + gx[2] * ax + gy[2] * ay,
+                                       (b2 < wi[2]) ? b2 : wi[2], (wi[2] < b3) ? b3 : wi[2]);
+                    phi[2] = (l2 < phi[2]) ? l2 : phi[2];
+                }
+            }
+            if (count < nvc) {
+                double positive = 1;
+                for (int e = 0; e < nvc; ++e) {
+                    const int a = cvv(i * kMaxCellVerts + e);
+                    const int b = cvv(i * kMaxCellVerts + (e + 1) % nvc);
+                    const double ax = .5 * (vx(a) + vx(b)) - cx(i);
+                    const double ay = .5 * (vy(a) + vy(b)) - cy(i);
+                    const double dh = phi[3] * (gx[3] * ax + gy[3] * ay);
+                    if (dh < -hi) {
+                        const double r = -hi / dh;
+                        positive = (r < positive) ? r : positive;
+                    }
+                }
+                phi[0] *= positive;
+                phi[3] *= positive;
+            }
+            gex(i) = phi[0] * gx[0];
+            gey(i) = phi[0] * gy[0];
+            gex(nt + i) = phi[3] * gx[3];
+            gey(nt + i) = phi[3] * gy[3];
+            gux(i) = phi[1] * gx[1];
+            guy(i) = phi[1] * gy[1];
+            gvx(i) = phi[2] * gx[2];
+            gvy(i) = phi[2] * gy[2];
+        });
+}
+
+// RECONSTRUCTION_ORDER 2: one SSP-RK2 step. Two global Euler stages, then the
+// average with the beginning state (the surface-only path of
+// ExplicitInertialSolver::runRk2Step).
+void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
+    const int nt = mesh_->n_triangles();
+    Kokkos::deep_copy(d_rk_v0_, d_volume_);
+    Kokkos::deep_copy(d_rk_qx0_, d_qcx_);
+    Kokkos::deep_copy(d_rk_qy0_, d_qcy_);
+    Kokkos::deep_copy(d_rk_inf0_, d_infil_applied_);
+    Kokkos::deep_copy(d_rk_cpl0_, d_coupling_applied_);
+    Kokkos::deep_copy(d_rk_evap0_, d_evap_applied_);
+    auto snapshot = [](DView& keep, const DView& live) {
+        if (keep.extent(0) != live.extent(0))
+            keep = DView(Kokkos::view_alloc(Kokkos::WithoutInitializing, live.label() + "_rk0"),
+                         live.extent(0));
+        Kokkos::deep_copy(keep, live);
+    };
+    snapshot(d_rk_bc_accum0_, d_bc_accum_);
+    snapshot(d_rk_bc_in0_, d_bc_in_);
+    snapshot(d_rk_bc_out0_, d_bc_out_);
+    snapshot(d_rk_bc_req0_, d_bc_requested_);
+    snapshot(d_rk_ex0_, d_exch_);
+    snapshot(d_rk_drawn0_, d_node_drawn_);
+
+    for (int stage = 0; stage < 2; ++stage) {
+        fireFaces(0, dt, true);
+        fireCells(0, dt, true);
+    }
+
+    auto active = d_active_;
+    auto vol = d_volume_, head = d_head_, depth = d_depth_, qcx = d_qcx_, qcy = d_qcy_;
+    auto infil = d_infil_applied_, coupling = d_coupling_applied_, evap = d_evap_applied_;
+    auto v0 = d_rk_v0_, qx0 = d_rk_qx0_, qy0 = d_rk_qy0_;
+    auto inf0 = d_rk_inf0_, cpl0 = d_rk_cpl0_, evap0 = d_rk_evap0_;
+    const CellClosure cell = closure();
+    const double dry = opts_->dry_depth;
+    // An inactive cell was fired by neither stage, so its average is the
+    // identity; only the dry-momentum reset is evaluated for it.
+    Kokkos::parallel_for(
+        "rk2_average", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+            if (active(i)) {
+                vol(i) = 0.5 * (v0(i) + vol(i));
+                qcx(i) = 0.5 * (qx0(i) + qcx(i));
+                qcy(i) = 0.5 * (qy0(i) + qcy(i));
+                double e2, d2;
+                cell.etaDepth(i, vol(i), e2, d2);
+                head(i) = e2;
+                depth(i) = d2;
+                infil(i) = inf0(i) + 0.5 * (infil(i) - inf0(i));
+                coupling(i) = cpl0(i) + 0.5 * (coupling(i) - cpl0(i));
+            }
+            evap(i) = evap0(i) + 0.5 * (evap(i) - evap0(i));
+            if (depth(i) <= dry) {
+                qcx(i) = 0.0;
+                qcy(i) = 0.0;
+            }
+        });
+    auto average = [](const DView& live, const DView& before) {
+        const int n = static_cast<int>(live.extent(0));
+        Kokkos::parallel_for(
+            "rk2_average_ledger", Kokkos::RangePolicy<ExecSpace>(0, n),
+            KOKKOS_LAMBDA(int k) { live(k) = before(k) + 0.5 * (live(k) - before(k)); });
+    };
+    average(d_bc_accum_, d_rk_bc_accum0_);
+    average(d_bc_in_, d_rk_bc_in0_);
+    average(d_bc_out_, d_rk_bc_out0_);
+    average(d_bc_requested_, d_rk_bc_req0_);
+    average(d_exch_, d_rk_ex0_);
+    average(d_node_drawn_, d_rk_drawn0_);
+    substeps_run_ += 2;
+    last_steps_ += 2;
 }
 
 void ExplicitKokkosSurfaceSolver::refreshDiffusiveSlopes() {
@@ -1485,6 +1773,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     auto wall_ptr = d_wall_ptr_, wall_slot = d_wall_slot_;
     auto slot_nx = d_slot_nx_, slot_ny = d_slot_ny_, slot_len = d_edge_length_;
     auto manning = d_mannings_n_;
+    const bool so = muscl_;
+    const int ncell = mesh_->n_triangles();
+    auto gex = d_gex_, gey = d_gey_, gux = d_gux_, guy = d_guy_, gvx = d_gvx_, gvy = d_gvy_;
+    auto slot_mx = d_slot_mx_, slot_my = d_slot_my_;
     if (lo < hi) {
         Kokkos::parallel_for(
             "fireCells", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
@@ -1553,14 +1845,31 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         for (int w = wall_ptr(i); w < wall_ptr(i + 1); ++w) {
                             const int slot = wall_slot(w);
                             const double nx = slot_nx(slot), ny = slot_ny(slot);
-                            const double ux = qcx(i) / wall_h0, uy = qcy(i) / wall_h0;
+                            double eta = wall_eta0, hf = wall_h0;
+                            double ux = qcx(i) / wall_h0, uy = qcy(i) / wall_h0;
+                            if (so) {
+                                const double ax = slot_mx(slot) - cx(i), ay = slot_my(slot) - cy(i);
+                                eta += gex(i) * ax + gey(i) * ay;
+                                const double hr = hf + gex(ncell + i) * ax + gey(ncell + i) * ay;
+                                hf = hr > 0. ? hr : 0.;
+                                ux += gux(i) * ax + guy(i) * ay;
+                                uy += gvx(i) * ax + gvy(i) * ay;
+                            }
                             const double un = ux * nx + uy * ny, ut = -ux * ny + uy * nx;
                             const double ug = -un * nx - ut * ny, vg = -un * ny + ut * nx;
                             swe::FaceFlux F;
                             double cLx, cLy, cRx, cRy;
-                            const bool wet = swe::faceFlux(
-                                wall_eta0, wall_h0, qcx(i), qcy(i), wall_eta0, wall_h0,
-                                wall_h0 * ug, wall_h0 * vg, nx, ny, dry, F, cLx, cLy, cRx, cRy);
+                            bool wet;
+                            if (so) {
+                                const double z = wall_eta0 - wall_h0, zf = eta - hf;
+                                wet = swe::faceFluxReconBed(eta, ux, uy, z, wall_h0, eta, ug, vg, z,
+                                                            wall_h0, nx, ny, dry, F, cLx, cLy, cRx,
+                                                            cRy, zf, zf);
+                            } else {
+                                wet = swe::faceFlux(eta, wall_h0, qcx(i), qcy(i), eta, wall_h0,
+                                                    wall_h0 * ug, wall_h0 * vg, nx, ny, dry, F, cLx,
+                                                    cLy, cRx, cRy);
+                            }
                             if (wet) {
                                 const double xdt = slot_len(slot) * dt_c;
                                 dmx += (-F.mx + cLx) * xdt;
@@ -2189,7 +2498,10 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
         }
 
         if (nsub_full * dt0_ <= remaining) {
-            runMacroCycle(dt0_, nsub_full);
+            if (second_order_)
+                runRk2Step(dt0_); // K == 1: one global step
+            else
+                runMacroCycle(dt0_, nsub_full);
             t += nsub_full * dt0_;
             last_dt_ = dt0_;
             ++cycles_since_rebuild;
@@ -2210,6 +2522,10 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
         const int nt = std::max(1, static_cast<int>(std::ceil(remaining / dt0_)));
         const double dt_tail = remaining / nt;
         for (int step = 0; step < nt; ++step) {
+            if (second_order_) {
+                runRk2Step(dt_tail);
+                continue;
+            }
             fireFaces(0, dt_tail, true);
             fireCells(0, dt_tail, true);
             ++substeps_run_;

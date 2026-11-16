@@ -252,6 +252,13 @@ private:
     DView d_fmxL_, d_fmxR_, d_fmyL_, d_fmyR_;
     DView d_lpos_, d_slot_nx_, d_slot_ny_, d_bc_conv_;
     IView d_wall_ptr_, d_wall_slot_, d_frontier_;
+    // FULL_SWE second order: limited gradients (eta and depth share d_gex_/d_gey_, depth in the
+    // second half), per-vertex velocity bounds, CSR arms, slot midpoints, and the state the
+    // two-stage step blends with.
+    DView d_gex_, d_gey_, d_gux_, d_guy_, d_gvx_, d_gvy_, d_vbounds_;
+    DView d_arm_x_, d_arm_y_, d_slot_mx_, d_slot_my_;
+    DView d_rk_v0_, d_rk_qx0_, d_rk_qy0_, d_rk_inf0_, d_rk_cpl0_, d_rk_evap0_;
+    DView d_rk_bc_accum0_, d_rk_bc_in0_, d_rk_bc_out0_, d_rk_bc_req0_, d_rk_ex0_, d_rk_drawn0_;
     DView d_dw_slope_; ///< largest face |Δη|/Δx per cell (DIFFUSIVE_WAVE step bound)
 
     // ---- device state -----------------------------------------------------
@@ -327,7 +334,9 @@ private:
     bool have_perot_ = false;
     bool diffusive_ = false; ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
     bool has_quads_ = false; ///< the mesh holds at least one quadrilateral cell
-    bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE (first order)
+    bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE
+    bool second_order_ = false; ///< RECONSTRUCTION_ORDER 2 (MUSCL faces, SSP-RK2 step)
+    bool muscl_ = false;        ///< second order with the MUSCL reconstruction enabled
     bool front_rebuild_ = false;              ///< widened halo and breach-triggered rebuild
     bool front_breach_ = false;               ///< a wetting front reached the halo's outer ring
     double h_on_front_ = 0.0;                 ///< activation depth the breach test uses, m
@@ -444,6 +453,23 @@ public:
      * its own mass flux and its mass and momentum side accumulators. Called by fireFaces().
      */
     void fireFacesSwe(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief Limited gradients of free surface, velocity and depth for the active cells.
+     * @note Mirrors ExplicitInertialSolver::computeLimitedGradientsSwe: inverse-distance least
+     * squares over connected wet neighbors, Barth-Jespersen limiting at the faces, vertex bounds
+     * on the velocity and a positivity limit on the depth. Each cell writes only its own
+     * gradients.
+     */
+    void computeLimitedGradientsSwe();
+    /**
+     * @brief One SSP-RK2 (Heun) step of the whole active set: two global Euler stages, then the
+     * average with the beginning state.
+     * @param[in] dt Finite positive step, seconds.
+     * @note Mirrors the surface-only path of ExplicitInertialSolver::runRk2Step. Averages
+     * volume, momentum, the applied-source ledgers, boundary accumulators and exchange volumes,
+     * and counts two steps.
+     */
+    void runRk2Step(double dt);
     /**
      * @brief Refresh each active cell's largest face surface slope for the DIFFUSIVE_WAVE step
      * bound.

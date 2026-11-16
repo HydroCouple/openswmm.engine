@@ -30,7 +30,7 @@ namespace openswmm::twoD {
  */
 inline constexpr std::uint64_t kKokkosSurfaceCapabilities =
     OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_FULL_SWE |
-    OPENSWMM_GPU_CAP_QUADS;
+    OPENSWMM_GPU_CAP_QUADS | OPENSWMM_GPU_CAP_SWE_ORDER2;
 
 /**
  * @brief Capabilities a model requires of a plugin surface solver.

@@ -768,7 +768,8 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         message(FATAL_ERROR "The mixed-mesh variant of 2d_complete_example.inp was not produced")
     endif()
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp "${_omp_quad_inp}")
-    foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe)
+    foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe
+                  swe_o2 quad_swe_o2)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
@@ -796,6 +797,12 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         elseif(_case STREQUAL "quad_swe")
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
             set(_extra --momentum FULL_SWE --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "swe_o2")
+            set(_extra --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2")
+        elseif(_case STREQUAL "quad_swe_o2")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
+                --option "CELL_CLOSURE VFR")
         endif()
         add_test(NAME test_engine_2d_omp_${_case}
             COMMAND ${Python3_EXECUTABLE}
@@ -812,11 +819,9 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     # (SurfaceCapabilities.hpp). Each must be refused by name and served by
     # the CPU marcher. When a capability lands, its case moves to the parity
     # loop above; a case left here then fails because the plugin is selected.
-    set(_refuse_swe_o2 --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
-        --expect-refusal "does not implement RECONSTRUCTION_ORDER 2")
     set(_refuse_front_rebuild --option "FRONT_REBUILD YES"
         --expect-refusal "does not implement FRONT_REBUILD YES")
-    foreach(_case swe_o2 front_rebuild)
+    foreach(_case front_rebuild)
         add_test(NAME test_engine_2d_omp_refuses_${_case}
             COMMAND ${Python3_EXECUTABLE}
                 ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py

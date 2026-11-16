@@ -293,8 +293,7 @@ in global-step mode (§9.5.6, §9.5.10), and is refused with a notice when
 overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
 The Kokkos plugin backends serve all three closures on triangle, quad
-and mixed meshes, `FULL_SWE` at first order; a second-order `FULL_SWE` model is
-announced and run on the CPU marcher (§9.11.1).
+and mixed meshes, `FULL_SWE` at both reconstruction orders (§9.11.1).
 
 `FULL_SWE` keeps every property of §9.5: the lake at rest is exact —
 the Audusse correction cancels the \f$\tfrac{1}{2} g h^{*2}\f$ pressure flux
@@ -343,7 +342,7 @@ preceded `FULL_SWE`.
 | Closure | Prognostic state | Face law | Valid regime | Cost | Status |
 |---|---|---|---|---|---|
 | `LOCAL_INERTIAL` | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
-| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher; Kokkos plugins at first order | \status{Implemented} |
+| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher and Kokkos plugins | \status{Implemented} |
 | `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher and Kokkos plugins | \status{Implemented} |
 | `ADVECTION YES` | as `LOCAL_INERTIAL` | (9-7) plus a staggered upwind convective term (Stelling and Duinmeijer, 2003) | — | — | \status{Retired} |
 
@@ -2812,9 +2811,9 @@ likewise problem-dependent (§9.7.3: every routing step is a host↔device
 round trip, and the junction-exchange and boundary passes run serially),
 so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
-The plugins implement the local-inertial, diffusive-wave and first-order
-full shallow-water schemes on triangle, quad and mixed meshes without
-transport. On
+The plugins implement the local-inertial, diffusive-wave and full
+shallow-water schemes, the last at first and second order, on triangle,
+quad and mixed meshes without transport. On
 the OpenMP plugin all three reproduce the CPU marcher's depths, heads,
 face fluxes and (under `FULL_SWE`) cell velocities bit for bit; a device
 backend agrees to its platform's rounding. Under `FULL_SWE` the front
@@ -2824,8 +2823,8 @@ age or temperature rows is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
 served by the CPU marcher. There is no silent physics substitution. The
-same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, second-order
-reconstruction, the optional momentum physics, coupled groundwater and
+same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, the optional
+momentum physics, coupled groundwater and
 porous heat. The run notice names each missing capability, and such a
 model loads no plugin at all.
 
@@ -2897,8 +2896,8 @@ behaviour it once configured is now described.
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
 - **The Kokkos backends serve hydraulics without transport.**
-  All three closures, `FULL_SWE` at first order and without the optional
-  momentum physics; everything else runs on the CPU marcher (§9.11.1).
+  All three closures, `FULL_SWE` without the optional momentum physics;
+  everything else runs on the CPU marcher (§9.11.1).
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.

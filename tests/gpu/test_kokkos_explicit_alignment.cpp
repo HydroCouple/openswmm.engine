@@ -485,24 +485,22 @@ void frozenTier() {
 /**
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
- * Separately tries each configuration outside kKokkosSurfaceCapabilities (second-order
- * FULL_SWE, transport rows, FRONT_REBUILD YES, momentum physics), requiring
+ * Separately tries each configuration outside kKokkosSurfaceCapabilities (transport rows,
+ * FRONT_REBUILD YES, momentum physics), requiring
  * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
  * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
  * its capability and its parity check.
  */
 void unsupported() {
-    const char* names[] = {"", "transport", "FULL_SWE 2", "FRONT_REBUILD", "wall drag"};
-    for (int kind = 1; kind < 5; ++kind) {
+    const char* names[] = {"", "transport", "", "FRONT_REBUILD", "wall drag"};
+    for (int kind : {1, 3, 4}) {
         auto m = mesh(2);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 2 || kind == 4)
+        if (kind == 4)
             o.momentum = Momentum2D::FULL_SWE;
         if (kind == 1)
             s.transport.resize(1, m.n_cells(), 0);
-        if (kind == 2)
-            o.reconstruction_order = 2;
         if (kind == 3)
             o.front_rebuild = 1;
         if (kind == 4) {
@@ -625,8 +623,10 @@ void exact(const std::vector<double>& a, const std::vector<double>& b, const std
  *
  * @param[in] mode Momentum closure the Kokkos marcher implements.
  * @param[in] name Label used in messages.
+ * @param[in] order Reconstruction order, 1 or 2; 2 applies to FULL_SWE (MUSCL faces and the
+ * two-stage step, which runs on one tier whatever the tier count asked for).
  */
-void modeParity(Momentum2D mode, const char* name) {
+void modeParity(Momentum2D mode, const char* name, int order = 1) {
     const BoundaryType laws[] = {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
                                  BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE};
     int cases = 0;
@@ -638,6 +638,7 @@ void modeParity(Momentum2D mode, const char* name) {
                     auto a = state(m, .1), b = a;
                     auto o = options(tiers);
                     o.momentum = mode;
+                    o.reconstruction_order = order;
                     if (vfr) {
                         o.cell_closure = CellClosure2D::VFR;
                         o.face_reconstruction = FaceDepth2D::VFR_FACE;
@@ -1323,6 +1324,7 @@ int main(int argc, char** argv) {
         modeParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
         modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
         modeParity(Momentum2D::FULL_SWE, "FULL_SWE");
+        modeParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
         edgeConveyance();
         boundaries();
         boundaryReversal();
