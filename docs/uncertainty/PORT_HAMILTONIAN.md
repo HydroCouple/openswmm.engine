@@ -435,3 +435,10 @@ cases the current code excludes). Acceptance gates as in the table.
   only, with nearest admitted node)**: G72R211 (G72R410, 1 hop, free conduit into the admitted store), G72F020 and G72F030 (G72K020,
   1-2 hops; the line to K020 carries -28 cfs reversed), G72R210/190/180/170/165, G72R644 (G72R643), G71F147, G71F043/G71F044 (G71F68Y,
   4 hops through pumps); all behind conduit lines, not structures: a second mechanism, not touched here.
+- 2026-11-16: **first unthrottled coupled Bellinge run** (O-9 code, per-member ON, caffeinate, load ~4): step 1000 at
+  497 s, 2000 at 1,110 s, 3000 at 3,830 s; k_max 524 → 675 → **1,717** (O-6: 986; 1D smoke 43). Steps 2000→3000
+  took 2,720 s vs 215 s on O-6 code. Cause: on the coupled network the depth-1 closure admits the far end of every
+  street-pond orifice port, so N takes in the ~700 coupled manholes and their ponds, and the dense k×k Schur LU is
+  O(k³) per Newton iteration. The per-member cost line (≤ 1.5× OFF) is failed by construction with k ≈ 1,700; the
+  fix is structural, not a knob: either exclude pond-orifice far ends from closure (the pond store itself is already
+  floored, so the orifice cannot run backwards there) or make the Schur solve sparse. Run continuing for the score.
