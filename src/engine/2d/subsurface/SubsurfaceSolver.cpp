@@ -470,6 +470,21 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
     for (std::size_t b = 0; b < node_beds_.size(); ++b)
         if (node_beds_[b].cell >= 0)
             cell_beds_[node_beds_[b].cell].push_back(b);
+    // GW_BASE_STEP AUTO. A node bed exchanges with the 1D network at the
+    // hydraulic cadence, which a one-second check interval does not resolve:
+    // on the node-fill fixture the per-window exchange is 7.9% off SHARED at
+    // 1 s and exact at 0.125 s. Beds still holding a cell here exchange.
+    if (!options_.base_step_set) {
+        const auto exchanging = std::count_if(node_beds_.begin(), node_beds_.end(),
+                                              [](const auto& b) { return b.cell >= 0; });
+        options_.base_step =
+            exchanging > 0 ? GwOptions::kNodeBaseStep : GwOptions::kDefaultBaseStep;
+        if (exchanging > 0 && options_.independent_clock)
+            warnings.emplace_back("2D aquifer: GW_BASE_STEP AUTO uses 0.125 s because " +
+                                  std::to_string(exchanging) +
+                                  " node bed(s) exchange with the aquifer; set GW_BASE_STEP to "
+                                  "choose another interval.");
+    }
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
     source_owned_.assign(n, false);
     source_cell_end_.assign(n, 0);

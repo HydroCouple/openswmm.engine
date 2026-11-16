@@ -245,8 +245,16 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key, ch
     if (ieq(key, "GW_CLOCK"))
         v = o.independent_clock ? "INDEPENDENT" : "SHARED";
     else if (ieq(key, "GW_BASE_STEP"))
-        v = num(o.base_step);
-    else if (ieq(key, "GW_MAX_STEP"))
+        v = o.base_step_set ? num(o.base_step) : "AUTO";
+    else if (ieq(key, "GW_BASE_STEP_EFFECTIVE")) {
+        // AUTO depends on which node beds exchange, which initialize resolves.
+        // While the model is editable that resolution may be stale.
+        const auto& gw = eng->surfaceRouter2D().subsurface();
+        const auto state = eng->context().state;
+        const bool resolved = gw.active() && state != openswmm::EngineState::OPENED &&
+                              state != openswmm::EngineState::BUILDING;
+        v = o.base_step_set ? num(o.base_step) : resolved ? num(gw.options().base_step) : "AUTO";
+    } else if (ieq(key, "GW_MAX_STEP"))
         v = num(o.max_step);
     else if (ieq(key, "GW_BUDGET_FRACTION"))
         v = num(o.budget_fraction);

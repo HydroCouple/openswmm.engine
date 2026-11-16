@@ -1691,6 +1691,63 @@ TEST(Aquifer2D, ClockOptionsRoundTripAndSharedAlwaysBindsTheSurface) {
     finish(r);
 }
 
+TEST(Aquifer2D, AutoBaseStepIsFinerWhenANodeBedExchanges) {
+    // GW_BASE_STEP AUTO: 0.125 s with an exchanging node bed, 1 s otherwise,
+    // and an authored value always wins. Only the authored value is written.
+    struct Case {
+        const char* tag;
+        std::string options, nodes;
+        const char *authored, *effective;
+    };
+    const std::string independent = "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n";
+    const Case cases[] = {
+        {"base-auto-bed", independent, "J1 1\n", "AUTO", "0.125"},
+        {"base-auto-opted-out", independent, "J1 1 EXCHANGE NO\n", "AUTO", "1"},
+        {"base-auto-no-bed", independent, "", "AUTO", "1"},
+        {"base-authored-bed", independent + "GW_BASE_STEP 1\n", "J1 1\n", "1", "1"},
+    };
+    for (const auto& c : cases) {
+        auto r = openDeck(c.tag, deck(aquiferSection("", c.options, c.nodes)));
+        ASSERT_TRUE(r.opened) << c.tag;
+        char value[64]{};
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BASE_STEP", value, sizeof value), SWMM_OK);
+        EXPECT_STREQ(value, c.authored) << c.tag;
+        // Before initialize the beds are not resolved yet.
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BASE_STEP_EFFECTIVE", value, sizeof value),
+                  SWMM_OK);
+        EXPECT_STREQ(value, std::string(c.authored) == "AUTO" ? "AUTO" : c.authored) << c.tag;
+        const auto saved = kOutDir / (std::string(c.tag) + "-saved.inp");
+        ASSERT_EQ(swmm_model_write(r.e, saved.string().c_str()), SWMM_OK);
+        EXPECT_EQ(readAll(saved).find("GW_BASE_STEP") != std::string::npos,
+                  std::string(c.authored) != "AUTO")
+            << c.tag;
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << c.tag;
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BASE_STEP_EFFECTIVE", value, sizeof value),
+                  SWMM_OK);
+        EXPECT_STREQ(value, c.effective) << c.tag;
+        EXPECT_EQ(r.eng->surfaceRouter2D().subsurface().options().base_step, std::stod(c.effective))
+            << c.tag;
+        EXPECT_EQ(warnedAbout(r, "GW_BASE_STEP AUTO uses 0.125 s"),
+                  std::string(c.authored) == "AUTO" && std::string(c.effective) == "0.125")
+            << c.tag;
+        ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BASE_STEP", value, sizeof value), SWMM_OK);
+        EXPECT_STREQ(value, c.authored) << c.tag;
+        finish(r);
+    }
+    // AUTO clears an authored value.
+    auto r = openDeck("base-auto-reset",
+                      deck(aquiferSection("", independent + "GW_BASE_STEP 2\n", "J1 1\n")));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_gw2d_option_set(r.e, "GW_BASE_STEP", "auto"), SWMM_OK);
+    char value[64]{};
+    ASSERT_EQ(swmm_gw2d_option_get(r.e, "GW_BASE_STEP", value, sizeof value), SWMM_OK);
+    EXPECT_STREQ(value, "AUTO");
+    EXPECT_NE(swmm_gw2d_option_set(r.e, "GW_BASE_STEP", "0"), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    EXPECT_EQ(r.eng->surfaceRouter2D().subsurface().options().base_step, .125);
+    finish(r);
+}
+
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3
     DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
     ASSERT_TRUE(r.opened);

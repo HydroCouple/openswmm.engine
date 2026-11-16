@@ -38,13 +38,15 @@ def main():
     )
     parser.add_argument(
         "--gw-base-step",
-        type=float,
+        type=lambda v: "AUTO" if v.upper() == "AUTO" else float(v),
         default=1,
-        help="authored groundwater base cadence in seconds",
+        help="authored groundwater base cadence in seconds, or AUTO for the engine's choice",
     )
     args = parser.parse_args()
-    if not np.isfinite(args.gw_base_step) or args.gw_base_step <= 0:
-        parser.error("--gw-base-step must be finite and positive")
+    if args.gw_base_step != "AUTO" and (
+        not np.isfinite(args.gw_base_step) or args.gw_base_step <= 0
+    ):
+        parser.error("--gw-base-step must be AUTO or finite and positive")
     cli = args.engine.resolve()
     reference_cli = args.reference_engine.resolve() if args.reference_engine else cli
     reference = "REFERENCE" if args.reference_engine else "SHARED"
@@ -83,8 +85,11 @@ def main():
         if args.reference_engine:
             runs.append(("REFERENCE", reference_cli, "SHARED"))
         for mode, binary, clock_mode in runs:
+            # SHARED does not use the base step, and the separate reference
+            # engine predates GW_BASE_STEP AUTO.
+            base_step = 1 if mode == "REFERENCE" and args.gw_base_step == "AUTO" else args.gw_base_step
             rows[mode], stats[mode] = run(
-                binary, folder / mode, authored, mode=clock_mode, base_step=args.gw_base_step
+                binary, folder / mode, authored, mode=clock_mode, base_step=base_step
             )
             with h5py.File(folder / mode / "fields.2d.h5") as h:
                 # Positive into the cell; each report is one actual hydraulic

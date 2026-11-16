@@ -190,11 +190,22 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens, GwOp
         opts.independent_clock = iequals(v, "INDEPENDENT");
         return {};
     }
+    if (iequals(k, "GW_BASE_STEP") && iequals(v, "AUTO")) {
+        opts.base_step = GwOptions::kDefaultBaseStep;
+        opts.base_step_set = false;
+        return {};
+    }
     if (iequals(k, "GW_BASE_STEP") || iequals(k, "GW_MAX_STEP")) {
         double seconds = 0;
         if (!num(v, seconds) || seconds <= 0)
-            return k + " must be a finite positive duration in seconds: " + v;
-        (iequals(k, "GW_BASE_STEP") ? opts.base_step : opts.max_step) = seconds;
+            return k + " must be " + (iequals(k, "GW_BASE_STEP") ? "AUTO or " : "") +
+                   "a finite positive duration in seconds: " + v;
+        if (iequals(k, "GW_BASE_STEP")) {
+            opts.base_step = seconds;
+            opts.base_step_set = true;
+        } else {
+            opts.max_step = seconds;
+        }
         return {};
     }
     if (iequals(k, "GW_BINDS_SURFACE_DT")) {
@@ -1977,7 +1988,7 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             std::snprintf(text, sizeof(text), "%.17g", seconds);
             return std::string(text);
         };
-        if (cfg.options.base_step != d.base_step)
+        if (cfg.options.base_step_set)
             kv("GW_BASE_STEP", clock_seconds(cfg.options.base_step));
         if (cfg.options.max_step != d.max_step)
             kv("GW_MAX_STEP", clock_seconds(cfg.options.max_step));
