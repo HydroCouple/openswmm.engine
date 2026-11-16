@@ -28,7 +28,8 @@ namespace openswmm::twoD {
  * marcher cannot serve never probes an accelerator. Extend it in the same change that lands and
  * gates a new configuration in ExplicitKokkosSurfaceSolver.
  */
-inline constexpr std::uint64_t kKokkosSurfaceCapabilities = OPENSWMM_GPU_CAP_LOCAL_INERTIAL;
+inline constexpr std::uint64_t kKokkosSurfaceCapabilities =
+    OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE;
 
 /**
  * @brief Capabilities a model requires of a plugin surface solver.

@@ -232,6 +232,8 @@ private:
     IView d_cL_, d_cR_, d_slotL_, d_slotR_, d_cell_ptr_, d_cell_edge_;
     DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
+    DView d_n_face_;   ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
+    DView d_dw_slope_; ///< largest face |Δη|/Δx per cell (DIFFUSIVE_WAVE step bound)
 
     // ---- device state -----------------------------------------------------
     DView d_volume_, d_head_, d_depth_;
@@ -304,6 +306,7 @@ private:
     double dt0_ = 0.0;
     int K_ = 1;
     bool have_perot_ = false;
+    bool diffusive_ = false; ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
     double t_last_sync_ = 0.0;
     int cycles_since_rebuild_ = 1000;
     double last_dt_ = 0.0;
@@ -388,6 +391,23 @@ public:
      * host fields remain unchanged until publication.
      */
     void fireFaces(int tier, double dt_f, bool global_step = false);
+    /**
+     * @brief DIFFUSIVE_WAVE face kernel: Manning quasi-steady discharge with the positivity share.
+     * @param[in] lo First index into the compact edge list.
+     * @param[in] hi One past the last index into the compact edge list.
+     * @param[in] dt_f Finite positive face step, seconds.
+     * @param[in] global_step True for a tail step, where every face fires once.
+     * @note Mirrors ExplicitInertialSolver::fireFacesDiffusive face for face; each face writes
+     * only its own discharge and side accumulators. Called by fireFaces().
+     */
+    void fireFacesDiffusive(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief Refresh each active cell's largest face surface slope for the DIFFUSIVE_WAVE step
+     * bound.
+     * @note Mirrors ExplicitInertialSolver::refreshDiffusiveSlopes; inactive cells keep their
+     * previous value, which no reduction reads.
+     */
+    void refreshDiffusiveSlopes();
     /**
      * @brief Fire one device cell tier or a global tail selection.
      * @param[in] tier Valid tier index [0,K_), called k in the definition; unchecked.

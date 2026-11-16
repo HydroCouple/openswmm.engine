@@ -133,7 +133,6 @@ TEST(BackendSafety, ModelsBeyondTheKokkosCapabilitiesNeverProbe) {
         std::uint64_t model;
     };
     const Case cases[] = {
-        {"diffusive wave", Momentum2D::DIFFUSIVE_WAVE, 1, -1, 0},
         {"full SWE", Momentum2D::FULL_SWE, 1, -1, 0},
         {"full SWE order 2", Momentum2D::FULL_SWE, 2, -1, 0},
         {"quads", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_QUADS},

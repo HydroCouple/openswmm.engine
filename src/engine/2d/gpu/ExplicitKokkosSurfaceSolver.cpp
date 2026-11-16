@@ -45,6 +45,7 @@
 #include "../coupling/NodeCoupling.hpp" // CouplingPoint
 #include "../coupling/PondModel.hpp"
 #include "../solver/InertialKernels.hpp"
+#include "../solver/DiffusiveKernels.hpp"
 #include "../solver/SurfaceCapabilities.hpp"
 #include "../../data/NodeData.hpp"
 
@@ -263,6 +264,9 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     d_my_ = devCopy("my", edges_.my);
     d_n2_ = devCopy("n2_face", edges_.n2_face);
     d_lchar_ = devCopy("cell_lchar", edges_.cell_lchar);
+    diffusive_ = opts.momentum == Momentum2D::DIFFUSIVE_WAVE;
+    d_n_face_ = diffusive_ ? devCopy("n_face", edges_.n_face) : DView();
+    d_dw_slope_ = DView("dw_slope", diffusive_ ? nt : 0);
     d_cell_ptr_ = devCopy("cell_ptr", edges_.cell_ptr);
     d_cell_edge_ = devCopy("cell_edge", edges_.cell_edge);
     {
@@ -704,12 +708,15 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
     }
 
     // Per-cell CFL dt + exact min-reduce → dt0.
+    if (diffusive_)
+        refreshDiffusiveSlopes();
     auto dtcell = d_dtcell_;
     auto lchar = d_lchar_;
     auto qcx = d_qcx_, qcy = d_qcy_;
-    const bool perot = have_perot_;
+    auto mann = d_mannings_n_, dw_slope = d_dw_slope_;
+    const bool perot = have_perot_, diffusive = diffusive_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
-    const double fr_max = opts_->froude_max;
+    const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
     const double dt_max = opts_->max_timestep;
     double dt0 = 1.0e30;
     Kokkos::parallel_reduce(
@@ -720,10 +727,20 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
                 return;
             }
             const double h = depth(i);
-            double speed = 0.0;
-            if (perot && h > 1.0e-6)
-                speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
-            double dt = (h > dry) ? inertial::cellCflDt(alpha, lchar(i), h, speed) : 1.0e30;
+            double dt = 1.0e30;
+            if (h > dry) {
+                if (diffusive) {
+                    // The explicit-diffusion bound replaces the gravity-wave one (== serial).
+                    const double lc = lchar(i);
+                    dt = diffusive::cellDiffusiveDt(alpha, lc, h, mann(i), dw_slope(i),
+                                                    dh_eps / (lc > 1.0e-9 ? lc : 1.0e-9));
+                } else {
+                    double speed = 0.0;
+                    if (perot && h > 1.0e-6)
+                        speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
+                    dt = inertial::cellCflDt(alpha, lchar(i), h, speed);
+                }
+            }
             dt = (dt < dt_max) ? dt : dt_max;
             dtcell(i) = dt;
             if (dt < mn)
@@ -825,14 +842,17 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
     const int nt = mesh_->n_triangles();
     if (n_active_ == 0)
         return;
+    if (diffusive_)
+        refreshDiffusiveSlopes();
     auto active = d_active_;
     auto tier = d_tier_;
     auto depth = d_depth_;
     auto lchar = d_lchar_;
     auto qcx = d_qcx_, qcy = d_qcy_;
-    const bool perot = have_perot_;
+    auto mann = d_mannings_n_, dw_slope = d_dw_slope_;
+    const bool perot = have_perot_, diffusive = diffusive_;
     const double alpha = opts_->cfl_number, dry = opts_->dry_depth;
-    const double fr_max = opts_->froude_max;
+    const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
     double fresh = 1.0e30;
     Kokkos::parallel_reduce(
         "cfl_refresh", Kokkos::RangePolicy<ExecSpace>(0, nt),
@@ -842,10 +862,18 @@ void ExplicitKokkosSurfaceSolver::refreshDt0() {
             const double h = depth(i);
             if (h <= dry)
                 return;
-            double speed = 0.0;
-            if (perot && h > 1.0e-6)
-                speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
-            const double dt = inertial::cellCflDt(alpha, lchar(i), h, speed) / (1 << tier(i));
+            double dt;
+            if (diffusive) {
+                const double lc = lchar(i);
+                dt = diffusive::cellDiffusiveDt(alpha, lc, h, mann(i), dw_slope(i),
+                                                dh_eps / (lc > 1.0e-9 ? lc : 1.0e-9));
+            } else {
+                double speed = 0.0;
+                if (perot && h > 1.0e-6)
+                    speed = inertial::cflCellSpeed(qcx(i), qcy(i), h, fr_max);
+                dt = inertial::cellCflDt(alpha, lchar(i), h, speed);
+            }
+            dt /= (1 << tier(i));
             if (dt < mn)
                 mn = dt;
         },
@@ -964,6 +992,10 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     const int hi = global_step ? ftier_off_[K_] : ftier_off_[k + 1];
     if (lo >= hi)
         return;
+    if (diffusive_) {
+        fireFacesDiffusive(lo, hi, dt_f, global_step);
+        return;
+    }
     auto list = d_edges_compact_;
     auto cLv = d_cL_, cRv = d_cR_;
     auto head = d_head_, vol = d_volume_;
@@ -1046,6 +1078,75 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
             faccR(e) += dM;
         });
     face_passes_ += (hi - lo);
+}
+
+// MOMENTUM_EQUATION DIFFUSIVE_WAVE: Manning quasi-steady face discharge. The
+// arithmetic and its order follow ExplicitInertialSolver::fireFacesDiffusive.
+void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f,
+                                                     bool global_step) {
+    auto list = d_edges_compact_;
+    auto cLv = d_cL_, cRv = d_cR_;
+    auto head = d_head_, vol = d_volume_;
+    auto qv = d_q_, faccL = d_faccL_, faccR = d_faccR_;
+    auto zface = d_zface_, inv_dx = d_inv_dx_, nf = d_n_face_, xi = d_xi_, conv = d_conveyance_;
+    auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
+    auto tier = d_tier_, ftier = d_face_tier_;
+    const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
+    const double dry = opts_->dry_depth, dh_eps = opts_->flux_dh_eps;
+    const double beta_share = opts_->exchange_beta / 3.0;
+    Kokkos::parallel_for(
+        "fireFacesDiffusive", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
+            const int e = list(idx);
+            const int a = cLv(e), b = cRv(e);
+            const double hf = vfr_face
+                                  ? inertial::faceFlowDepthVfr(head(a), head(b), ze_lo(e), ze_hi(e))
+                                  : inertial::faceFlowDepth(head(a), head(b), zface(e));
+            if (hf <= dry) {
+                qv(e) = 0.0;
+                return;
+            }
+            double deta = head(b) - head(a);
+            if (std::fabs(deta) < inertial::kEtaDeadband)
+                deta = 0.0;
+            const double slope = deta * inv_dx(e);
+            const double s_eps = dh_eps * inv_dx(e);
+            double qn1 = diffusive::faceDischarge(hf, slope, nf(e), s_eps);
+            qn1 *= conv(e);
+
+            const int exp_cell = (qn1 > 0.0) ? a : b;
+            const int refire = global_step ? 1 : (1 << (tier(exp_cell) - ftier(e)));
+            const double vmax = vol(exp_cell) > 0.0 ? vol(exp_cell) : 0.0;
+            const double budget = beta_share / refire * vmax;
+            const double take = std::fabs(qn1) * xi(e) * dt_f;
+            if (take > budget)
+                qn1 *= (take > 0.0) ? budget / take : 0.0;
+            qv(e) = qn1;
+
+            const double dM = qn1 * xi(e) * dt_f;
+            faccL(e) -= dM;
+            faccR(e) += dM;
+        });
+    face_passes_ += (hi - lo);
+}
+
+void ExplicitKokkosSurfaceSolver::refreshDiffusiveSlopes() {
+    const int nt = mesh_->n_triangles();
+    auto active = d_active_;
+    auto ptr = d_cell_ptr_, edge = d_cell_edge_, cLv = d_cL_, cRv = d_cR_;
+    auto head = d_head_, inv_dx = d_inv_dx_, dw_slope = d_dw_slope_;
+    Kokkos::parallel_for(
+        "dw_slopes", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+            if (!active(i))
+                return;
+            double smax = 0.0;
+            for (int p = ptr(i); p < ptr(i + 1); ++p) {
+                const int e = edge(p);
+                const double sl = std::fabs((head(cRv(e)) - head(cLv(e))) * inv_dx(e));
+                if (sl > smax)
+                    smax = sl;
+            }
+            dw_slope(i) = smax;
+        });
 }
 
 void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step) {
@@ -1133,7 +1234,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         auto vxv = d_vx_, vyv = d_vy_;
         auto cxv = d_tri_cx_, cyv = d_tri_cy_;
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
-        const double fr_max = opts_->froude_max;
+        const bool diffusive = diffusive_;
+        const double fr_max = opts_->froude_max, dh_eps = opts_->flux_dh_eps;
         const int bt_wall = static_cast<int>(BoundaryType::WALL);
         const int bt_normal = static_cast<int>(BoundaryType::NORMAL_FLOW);
         const int bt_flow = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
@@ -1167,13 +1269,39 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         }
                         // Signed slope, as the two CPU marchers: positive
                         // drains the domain, negative feeds it.
-                        if (S != 0.0 && h_out > 0.0 && n > 0.0) {
+                        if (S != 0.0 && depth(i) > 0.0 && h_out > 0.0 && n > 0.0) {
                             const double sgnS = (S > 0.0) ? 1.0 : -1.0;
                             const double h53 = h_out * std::cbrt(h_out * h_out);
                             f = -sgnS * (h53 * std::sqrt(S < 0.0 ? -S : S) / n) * L;
                         }
                     } else if (ty == bt_flow || ty == bt_rating) {
                         f = -bc_flow(kk) * L;
+                    } else if (ty == bt_stage && diffusive) {
+                        // Diffusive-wave stage boundary: the collapsed Manning
+                        // conductance against the prescribed stage (== serial
+                        // boundaryEdgeFlux).
+                        const double eta_bc = bc_head(kk);
+                        const double dh = head(i) - eta_bc;
+                        const double dx_b = (L > 1.0e-12) ? (2.0 * area(i)) / (3.0 * L) : 0.0;
+                        if (n > 0.0 && dx_b > 1.0e-12) {
+                            double h_up;
+                            if (vfr_face) {
+                                const int e = idx % kMaxCellVerts;
+                                const int vv[3] = {cvv(i * kMaxCellVerts + 0),
+                                                   cvv(i * kMaxCellVerts + 1),
+                                                   cvv(i * kMaxCellVerts + 2)};
+                                const double za = vz(vv[(e + 1) % 3]);
+                                const double zb = vz(vv[(e + 2) % 3]);
+                                h_up = inertial::faceDepthFromEta((dh > 0.0) ? head(i) : eta_bc,
+                                                                  (za < zb) ? za : zb,
+                                                                  (za < zb) ? zb : za);
+                            } else {
+                                const double hb = eta_bc - cz(i);
+                                h_up = (dh > 0.0) ? depth(i) : (hb > 0.0 ? hb : 0.0);
+                            }
+                            if (h_up > 0.0)
+                                f = diffusive::stageBoundaryFlux(h_up, dh, n, dx_b, L, dh_eps);
+                        }
                     } else if (ty == bt_stage) {
                         // Inertial stage boundary (mirrors the serial
                         // marcher): the interior momentum law integrated
@@ -1528,6 +1656,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const double dry = opts_->dry_depth;
         const double fr_max = opts_->froude_max;
+        const bool diffusive = diffusive_;
         Kokkos::parallel_for(
             "publish_flux", Kokkos::RangePolicy<ExecSpace>(0, ne), KOKKOS_LAMBDA(int e) {
                 const double hf =
@@ -1537,7 +1666,9 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
                 double qp = 0.0;
                 if (hf > dry)
                     qp = inertial::froudeCap(qv(e), hf, fr_max);
-                const double F = qp * xi(e) * conv(e);
+                // DIFFUSIVE_WAVE publishes its last face discharge, already
+                // limited and scaled by the conveyance (== serial).
+                const double F = diffusive ? qv(e) * xi(e) : qp * xi(e) * conv(e);
                 ef(slotL(e)) = -F;
                 ef(slotR(e)) = +F;
             });

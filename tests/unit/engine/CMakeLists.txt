@@ -754,7 +754,7 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     string(REPLACE "\n[2D_TRIANGLE_NODE_MAP]\n" "\n[2D_TRIANGLE_NODE_MAP]\n2 OUT1 0.60 10.0\n"
            _omp_outfall_inp "${_omp_outfall_inp}")
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp "${_omp_outfall_inp}")
-    foreach(_case default vfr evaporation outfall)
+    foreach(_case default vfr evaporation outfall dw dw_vfr)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
@@ -763,6 +763,11 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp")
         elseif(_case STREQUAL "evaporation")
             set(_extra --evaporation)
+        elseif(_case STREQUAL "dw")
+            set(_extra --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "dw_vfr")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+            set(_extra --momentum DIFFUSIVE_WAVE --option "FACE_RECONSTRUCTION VFR_FACE")
         endif()
         add_test(NAME test_engine_2d_omp_${_case}
             COMMAND ${Python3_EXECUTABLE}
@@ -779,13 +784,12 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     # (SurfaceCapabilities.hpp). Each must be refused by name and served by
     # the CPU marcher. When a capability lands, its case moves to the parity
     # loop above; a case left here then fails because the plugin is selected.
-    set(_refuse_dw --momentum DIFFUSIVE_WAVE --expect-refusal "does not implement DIFFUSIVE_WAVE")
     set(_refuse_swe --momentum FULL_SWE --expect-refusal "does not implement FULL_SWE")
     set(_refuse_swe_o2 --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
         --expect-refusal "does not implement FULL_SWE, RECONSTRUCTION_ORDER 2")
     set(_refuse_front_rebuild --option "FRONT_REBUILD YES"
         --expect-refusal "does not implement FRONT_REBUILD YES")
-    foreach(_case dw swe swe_o2 front_rebuild)
+    foreach(_case swe swe_o2 front_rebuild)
         add_test(NAME test_engine_2d_omp_refuses_${_case}
             COMMAND ${Python3_EXECUTABLE}
                 ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py

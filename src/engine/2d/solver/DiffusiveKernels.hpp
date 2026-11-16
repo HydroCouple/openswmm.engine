@@ -98,6 +98,43 @@ OPENSWMM_KERNEL_FN double cellDiffusiveDt(double alpha, double lchar, double h, 
     return alpha * lchar * lchar * n * std::sqrt(s) / (4.0 * h53);
 }
 
+/**
+ * @brief Square root regularized near zero: √x for x ≥ eps, a C¹ quadratic below it.
+ *
+ * @param[in] x Finite nonnegative argument.
+ * @param[in] eps Regularization threshold; nonpositive selects the plain square root.
+ * @return √x at or above eps, otherwise (1.5/√eps)·x − (0.5/(√eps·eps))·x².
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double regSqrt(double x, double eps) noexcept {
+    if (eps <= 0.0 || x >= eps)
+        return std::sqrt(x);
+    const double inv = 1.0 / std::sqrt(eps);
+    return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
+}
+
+/**
+ * @brief Collapsed-Manning discharge of a SPECIFIED_STAGE boundary edge (m³/s, inflow positive):
+ * the interior diffusive operator with the ghost held at the prescribed stage.
+ *
+ * @param[in] h_up Finite positive upwind depth at the edge, m.
+ * @param[in] dh Cell free surface minus prescribed stage, m; positive drains the cell.
+ * @param[in] n Finite positive Manning coefficient, s/m^(1/3).
+ * @param[in] dx_b Finite positive centroid-to-edge normal distance, m.
+ * @param[in] length Finite nonnegative edge length, m.
+ * @param[in] dh_eps Head-difference regularization threshold, m (FLUX_DH_EPS).
+ * @return −h_up^{5/3}·sign(dh)·regSqrt(|dh|, dh_eps)·length / (n·√dx_b).
+ * @note Pure host/device arithmetic: no allocation, exceptions, retained pointers or model state
+ * mutation. Caller supplies finite valid physical inputs; no general validation.
+ */
+OPENSWMM_KERNEL_FN double stageBoundaryFlux(double h_up, double dh, double n, double dx_b,
+                                            double length, double dh_eps) noexcept {
+    const double h53 = h_up * std::cbrt(h_up * h_up);
+    const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
+    return -h53 * sign_dh * regSqrt(std::fabs(dh), dh_eps) * length / (n * std::sqrt(dx_b));
+}
+
 } // namespace openswmm::twoD::diffusive
 
 #endif // OPENSWMM_ENGINE_2D_DIFFUSIVE_KERNELS_HPP

@@ -12,6 +12,7 @@
 
 #include "SurfaceFluxCalculator.hpp"
 #include "InertialKernels.hpp"
+#include "DiffusiveKernels.hpp"
 #include "../data/BoundaryData.hpp"
 
 #include <cmath>
@@ -109,20 +110,7 @@ using inertial::faceDepthFromEta;
 // [2D_OPTIONS] FLUX_DH_EPS); the env var OPENSWMM_2D_FLUX_DH_EPS override is
 // folded into the options once per SurfaceRouter2D::initialize() — per-run,
 // not process-lifetime. 0 restores the bare √.
-/**
- * @brief Regularize a nonnegative head-difference square root near zero.
- * @param[in] x Finite nonnegative absolute head difference m.
- * @param[in] eps Finite regularization head m. Nonpositive disables regularization; positive
- * uses a quadratic below eps, matching square root value/slope there with finite slope at zero.
- * @return Regularized square root in sqrt(m), or sqrt(x) above the threshold. Negative x is
- * outside the physical precondition and is not validated; no state or allocation is involved.
- */
-inline double regSqrt(double x, double eps) noexcept {
-    if (eps <= 0.0 || x >= eps)
-        return std::sqrt(x);
-    const double inv = 1.0 / std::sqrt(eps);
-    return (1.5 * inv) * x - (0.5 * inv / eps) * x * x;
-}
+// The function is diffusive::regSqrt (DiffusiveKernels.hpp), shared with the device solver.
 
 // Boundary-edge flux: inflow-positive contribution to cell i across boundary
 // edge idx (outward discharge is negative — it leaves the cell). Returns 0 for
@@ -230,9 +218,7 @@ inline double boundaryEdgeFlux(const MeshData& mesh, const SurfaceStateData& sta
         }
         if (h_up <= 0.0)
             return 0.0;
-        const double h53 = h_up * std::cbrt(h_up * h_up);
-        const double sign_dh = (dh > 0.0) ? 1.0 : (dh < 0.0 ? -1.0 : 0.0);
-        return -h53 * sign_dh * regSqrt(std::abs(dh), dh_eps) * L / (n * std::sqrt(dx_b));
+        return diffusive::stageBoundaryFlux(h_up, dh, n, dx_b, L, dh_eps);
     }
     }
     return 0.0;

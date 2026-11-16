@@ -486,29 +486,27 @@ void frozenTier() {
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
  * Separately tries each configuration outside kKokkosSurfaceCapabilities (quads, FULL_SWE at
- * both orders, DIFFUSIVE_WAVE, transport rows, FRONT_REBUILD YES, momentum physics), requiring
+ * both orders, transport rows, FRONT_REBUILD YES, momentum physics), requiring
  * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
  * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
  * its capability and its parity check.
  */
 void unsupported() {
-    const char* names[] = {"quads",      "FULL_SWE",      "transport", "DIFFUSIVE_WAVE",
+    const char* names[] = {"quads",      "FULL_SWE",      "transport",
                            "FULL_SWE 2", "FRONT_REBUILD", "wall drag"};
-    for (int kind = 0; kind < 7; ++kind) {
+    for (int kind = 0; kind < 6; ++kind) {
         auto m = mesh(2, kind == 0 ? 1 : 0);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 1 || kind == 4 || kind == 6)
+        if (kind == 1 || kind == 3 || kind == 5)
             o.momentum = Momentum2D::FULL_SWE;
         if (kind == 2)
             s.transport.resize(1, m.n_cells(), 0);
         if (kind == 3)
-            o.momentum = Momentum2D::DIFFUSIVE_WAVE;
-        if (kind == 4)
             o.reconstruction_order = 2;
-        if (kind == 5)
+        if (kind == 4)
             o.front_rebuild = 1;
-        if (kind == 6) {
+        if (kind == 5) {
             o.wall_drag_enabled = true;
             o.lts_tiers = 1;
         }
@@ -598,6 +596,147 @@ void marcher() {
                     }
                     std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
                 }
+}
+/**
+ * @brief Require two arrays to hold the same values, element for element.
+ *
+ * Compares with ==, so a signed zero matches zero; anything else must agree in every bit. Throws
+ * std::runtime_error naming the first differing element.
+ */
+void exact(const std::vector<double>& a, const std::vector<double>& b, const std::string& what) {
+    require(a.size() == b.size(), (what + ": size").c_str());
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (!(a[i] == b[i])) {
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "%s: element %zu differs: %.17g != %.17g", what.c_str(),
+                          i, a[i], b[i]);
+            throw std::runtime_error(buf);
+        }
+}
+/**
+ * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit under one momentum
+ * closure.
+ *
+ * Runs a skewed, sloping triangle mesh through dam-break, source/sink, rain, infiltration and
+ * every open-boundary law (each reversed mid-run), for both cell closures and face
+ * reconstructions and for one and four tiers, over three windows. Volume, head, depth, published
+ * edge flux, applied infiltration/coupling and the step count must match exactly; the
+ * evaporation total and the cumulative boundary receipts, sums folded in a different order, to
+ * 1e-13. Requires initialized Kokkos; prints PASS or throws at the first mismatch.
+ *
+ * @param[in] mode Momentum closure the Kokkos marcher implements.
+ * @param[in] name Label used in messages.
+ */
+void modeParity(Momentum2D mode, const char* name) {
+    const BoundaryType laws[] = {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                                 BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE};
+    int cases = 0;
+    for (bool vfr : {false, true})
+        for (int tiers : {1, 4})
+            for (int scenario = 0; scenario < 9; ++scenario) {
+                auto m = mesh(8, 0, true, true);
+                auto a = state(m, .1), b = a;
+                auto o = options(tiers);
+                o.momentum = mode;
+                if (vfr) {
+                    o.cell_closure = CellClosure2D::VFR;
+                    o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                }
+                for (int i = 0; i < m.n_cells(); ++i) {
+                    if (scenario == 0 || scenario == 4)
+                        a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                    if (scenario == 1) {
+                        a.infil_rate[i] = .15;
+                        a.evap_rate[i] = .1;
+                        a.coupling_flux[i] = m.tri_cx[i] < 4 ? -.2 : .05;
+                    }
+                    if (scenario == 2) {
+                        a.volume[i] = 0;
+                        a.rainfall[i] = .02;
+                    }
+                    if (scenario == 3) {
+                        a.rainfall[i] = .1;
+                        a.infil_rate[i] = .1;
+                    }
+                    if (scenario == 4)
+                        a.infil_rate[i] = .2;
+                }
+                b = a;
+                BoundaryData ba;
+                std::vector<int> slots;
+                if (scenario >= 5) {
+                    ba.resize(m.n_cells() * kMaxCellVerts);
+                    for (int i = 0; i < m.n_cells(); ++i)
+                        for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                            if (m.cell_neighbour(i, e) < 0) {
+                                const int slot = MeshData::slot(i, e);
+                                slots.push_back(slot);
+                                ba.edge_bc_type[slot] = static_cast<int8_t>(laws[scenario - 5]);
+                            }
+                }
+                auto bb = ba;
+                if (scenario >= 5) {
+                    a.boundary = &ba;
+                    b.boundary = &bb;
+                }
+                auto oa = o, ob = o;
+                ExplicitInertialSolver cpu;
+                gpu::ExplicitKokkosSurfaceSolver kk;
+                cpu.initialize(m, a, oa);
+                kk.initialize(m, b, ob);
+                double t = 0;
+                int phase = 0;
+                for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                    const double sign = phase == 1 ? 1.0 : -1.0;
+                    for (int slot : slots) {
+                        ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                        ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                        ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                    }
+                    cpu.advance(t, end);
+                    kk.advance(t, end);
+                    const std::string tag = std::string(name) + (vfr ? " VFR" : " FLAT") +
+                                            " tiers=" + std::to_string(tiers) +
+                                            " scenario=" + std::to_string(scenario) +
+                                            " window=" + std::to_string(phase) + " ";
+                    require(cpu.last_num_steps() == kk.last_num_steps(), (tag + "steps").c_str());
+                    exact(b.volume, a.volume, tag + "volume");
+                    exact(b.head, a.head, tag + "head");
+                    exact(b.depth, a.depth, tag + "depth");
+                    exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                    exact(b.infil_applied, a.infil_applied, tag + "infiltration");
+                    exact(b.coupling_applied, a.coupling_applied, tag + "coupling");
+                    // A domain total: the two marchers fold it in different orders, so it
+                    // agrees to rounding, not bit for bit. Every per-cell field is exact.
+                    near(b.evap_loss_total, a.evap_loss_total, (tag + "evaporation").c_str(),
+                         1e-13);
+                    for (std::size_t k = 0; k < slots.size(); ++k) {
+                        const auto found = ba.receipts.find(slots[k]);
+                        const decltype(ba.receipts)::mapped_type none{};
+                        const auto& r = found == ba.receipts.end() ? none : found->second;
+                        // Cumulative gross receipts: the CPU adds each firing into the
+                        // running total, the device adds a window subtotal, so they
+                        // agree to rounding. The volumes they produce are exact above.
+                        near(b.boundary_in_applied[k], r.water_in, (tag + "boundary in").c_str(),
+                             1e-13);
+                        near(b.boundary_out_applied[k], r.water_out, (tag + "boundary out").c_str(),
+                             1e-13);
+                        near(b.boundary_requested[k], r.requested,
+                             (tag + "boundary requested").c_str(), 1e-13);
+                    }
+                    // The router drains the applied-depth ledgers at every mass-balance
+                    // read; left to accumulate, the two marchers add into them in a
+                    // different association and differ in the last bit.
+                    for (auto* st : {&a, &b}) {
+                        std::fill(st->infil_applied.begin(), st->infil_applied.end(), 0.0);
+                        std::fill(st->coupling_applied.begin(), st->coupling_applied.end(), 0.0);
+                    }
+                    t = end;
+                    ++phase;
+                }
+                ++cases;
+            }
+    std::cout << name << " CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
 }
 // All non-wall laws, in both directions and closures. Boundary values are
 // resolved by the router before advance; rating curves arrive as held flows.
@@ -1165,6 +1304,8 @@ int main(int argc, char** argv) {
         frozenTier();
         unsupported();
         marcher();
+        modeParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
+        modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
         edgeConveyance();
         boundaries();
         boundaryReversal();
