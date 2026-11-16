@@ -253,6 +253,9 @@ private:
     DView d_bc_q_; ///< prognostic boundary-edge discharge (m²/s, inflow-
                    ///< positive) — mirrors ExplicitInertialSolver::bc_q_
     std::vector<int> bc_cell_host_, bc_slot_host_;
+    IView d_bc_run_ptr_; ///< CSR over boundary entries: one run per boundary cell
+    int n_bc_runs_ = 0;
+    int bc_run_max_ = 0; ///< longest run (OPENSWMM_PERF report)
 
     // Live junction exchange (windowless coupling).
     IView d_cp_cell_, d_cp_vertex_, d_cp_node_;
@@ -261,6 +264,11 @@ private:
     // coefficients {c_w, c_sw, c_oi, c_oo, h_eps}; COUPLING_HEAD cell runs.
     IView d_cp_law_, d_cp_head_b_, d_cp_head_e_, d_head_cells_, d_cp_eq_;
     DView d_cp_geo_, d_cp_coef_;
+    /// Independent exchange-point groups (CSR): points sharing a cell or a
+    /// node stay in one group, in ascending point order.
+    IView d_cp_group_ptr_, d_cp_group_item_;
+    int n_cp_groups_ = 0;
+    int cp_group_max_ = 0;   ///< largest group (OPENSWMM_PERF report)
     DView d_node_pond_area_; ///< COUPLING_EQUALIZE 1D area per node (m²)
     DView d_exch_, d_node_drawn_;
     DView d_node_head_, d_node_depth_, d_node_volume_;

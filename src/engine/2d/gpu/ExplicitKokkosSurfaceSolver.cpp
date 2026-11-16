@@ -32,6 +32,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <numeric>
 
 #include "KokkosPerfCounters.hpp"
 #include "KokkosSourceKernels.hpp"
@@ -320,6 +322,21 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     const int nbc = static_cast<int>(bc_cell_host_.size());
     d_bc_cell_ = devCopy("bc_cell", bc_cell_host_);
     d_bc_slot_ = devCopy("bc_slot", bc_slot_host_);
+    // The scan above lists boundary edges cell by cell, so each cell's edges
+    // form one contiguous run. Runs touch disjoint cells and fire concurrently;
+    // the edges inside a run keep their serial order.
+    {
+        std::vector<int> run_ptr;
+        for (int k = 0; k < nbc; ++k)
+            if (k == 0 || bc_cell_host_[k] != bc_cell_host_[k - 1])
+                run_ptr.push_back(k);
+        n_bc_runs_ = static_cast<int>(run_ptr.size());
+        run_ptr.push_back(nbc);
+        bc_run_max_ = 0;
+        for (int r = 0; r < n_bc_runs_; ++r)
+            bc_run_max_ = std::max(bc_run_max_, run_ptr[r + 1] - run_ptr[r]);
+        d_bc_run_ptr_ = devCopy("bc_run_ptr", run_ptr);
+    }
     d_bc_type_ = IView("bc_type", nbc);
     d_bc_accum_ = DView("bc_accum", nbc);
     d_bc_in_ = DView("bc_in", nbc);
@@ -382,6 +399,68 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         const std::vector<int> head_cells =
             state.coupling_head_cells ? *state.coupling_head_cells : std::vector<int>{};
         d_head_cells_ = devCopy("head_cells", head_cells);
+
+        // Exchange points interact only through a cell one of them drains or
+        // fills (which another may also read through its head stencil) or
+        // through a shared node's spill budget. Points linked that way form a
+        // group that fires in serial point order; separate groups share no
+        // state and fire concurrently, so the result equals the serial sweep.
+        const int n_points = static_cast<int>(np);
+        std::vector<int> root(np);
+        std::iota(root.begin(), root.end(), 0);
+        auto find = [&](int a) {
+            while (root[a] != a)
+                a = root[a] = root[root[a]];
+            return a;
+        };
+        // The lower index becomes the root, so a group is keyed by its first point.
+        auto join = [&](int a, int b) {
+            a = find(a);
+            b = find(b);
+            if (a != b)
+                root[std::max(a, b)] = std::min(a, b);
+        };
+        std::vector<int> cell_writer(static_cast<std::size_t>(nt), -1);
+        std::map<int, int> node_user;
+        for (int k = 0; k < n_points; ++k) {
+            if (cell[k] < 0)
+                continue; // never fires
+            int& writer = cell_writer[cell[k]];
+            if (writer < 0)
+                writer = k;
+            else
+                join(k, writer);
+            const auto [it, fresh] = node_user.try_emplace(node[k], k);
+            if (!fresh)
+                join(k, it->second);
+        }
+        auto reads = [&](int k, int c) {
+            if (cell_writer[c] >= 0)
+                join(k, cell_writer[c]);
+        };
+        for (int k = 0; k < n_points; ++k) {
+            if (cell[k] < 0)
+                continue;
+            for (int p = hb[k]; p < he[k]; ++p)
+                reads(k, head_cells[p]);
+            if (vert[k] >= 0)
+                for (int p = mesh.vert_stencil_ptr[vert[k]]; p < mesh.vert_stencil_ptr[vert[k] + 1];
+                     ++p)
+                    reads(k, mesh.vert_stencil_idx[p]);
+        }
+        std::vector<int> item(np), group_ptr;
+        std::iota(item.begin(), item.end(), 0);
+        std::stable_sort(item.begin(), item.end(), [&](int a, int b) { return find(a) < find(b); });
+        for (int p = 0; p < n_points; ++p)
+            if (p == 0 || find(item[p]) != find(item[p - 1]))
+                group_ptr.push_back(p);
+        n_cp_groups_ = static_cast<int>(group_ptr.size());
+        group_ptr.push_back(n_points);
+        cp_group_max_ = 0;
+        for (int g = 0; g < n_cp_groups_; ++g)
+            cp_group_max_ = std::max(cp_group_max_, group_ptr[g + 1] - group_ptr[g]);
+        d_cp_group_ptr_ = devCopy("cp_group_ptr", group_ptr);
+        d_cp_group_item_ = devCopy("cp_group_item", item);
     }
     d_exch_ = DView("exch", np);
     exch_host_.assign(np, 0.0);
@@ -1026,10 +1105,11 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     if (k != 0)
         return;
 
-    // Boundary edges (tier-0 cadence; single-thread device kernel preserves
-    // the serial per-cell ordering for multi-edge cells).
+    // Boundary edges (tier-0 cadence). One thread per cell's run of edges
+    // preserves the serial per-cell ordering for multi-edge cells.
     const int nbc = static_cast<int>(bc_cell_host_.size());
     if (nbc > 0) {
+        auto run_ptr = d_bc_run_ptr_;
         auto bc_cell = d_bc_cell_, bc_slot = d_bc_slot_, bc_type = d_bc_type_;
         auto bc_accum = d_bc_accum_, bc_slope = d_bc_slope_;
         auto bc_in = d_bc_in_, bc_out = d_bc_out_;
@@ -1051,8 +1131,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         const int bt_rating = static_cast<int>(BoundaryType::RATING_CURVE);
         const int bt_stage = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
         Kokkos::parallel_for(
-            "fireBc", Kokkos::RangePolicy<ExecSpace>(0, 1), KOKKOS_LAMBDA(int) {
-                for (int kk = 0; kk < nbc; ++kk) {
+            "fireBc", Kokkos::RangePolicy<ExecSpace>(0, n_bc_runs_), KOKKOS_LAMBDA(int run) {
+                for (int kk = run_ptr(run); kk < run_ptr(run + 1); ++kk) {
                     const int i = bc_cell(kk);
                     if (tier(i) != 0 || !active(i))
                         continue;
@@ -1188,11 +1268,13 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
             });
     }
 
-    // Live junction exchange at tier-0 cadence — single-thread device kernel
-    // preserves the serial point ordering (shared-cell drains and shared-node
-    // spill budgets are order-dependent by contract).
+    // Live junction exchange at tier-0 cadence. Shared-cell drains and
+    // shared-node spill budgets are order-dependent by contract, so points
+    // that share either fire in serial point order on one thread; the groups
+    // built at initialize are mutually independent and fire concurrently.
     const int np = static_cast<int>(exch_host_.size());
     if (np > 0 && state_->nodes_1d) {
+        auto group_ptr = d_cp_group_ptr_, group_item = d_cp_group_item_;
         auto cp_cell = d_cp_cell_, cp_vertex = d_cp_vertex_, cp_node = d_cp_node_;
         auto cp_cd = d_cp_cd_, cp_area = d_cp_area_;
         auto cp_law = d_cp_law_, cp_hb = d_cp_head_b_, cp_he = d_cp_head_e_;
@@ -1214,8 +1296,10 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         const double vol12 = opts_->vol_1d_to_2d;
         const double beta = opts_->exchange_beta;
         Kokkos::parallel_for(
-            "fireExchange", Kokkos::RangePolicy<ExecSpace>(0, 1), KOKKOS_LAMBDA(int) {
-                for (int kk = 0; kk < np; ++kk) {
+            "fireExchange", Kokkos::RangePolicy<ExecSpace>(0, n_cp_groups_),
+            KOKKOS_LAMBDA(int group) {
+                for (int gi = group_ptr(group); gi < group_ptr(group + 1); ++gi) {
+                    const int kk = group_item(gi);
                     const int ci = cp_cell(kk);
                     if (ci < 0 || !active(ci))
                         continue;
@@ -1638,6 +1722,14 @@ void ExplicitKokkosSurfaceSolver::finalize() {
     if (!initialized_)
         return;
     kperf::dump();
+    // fireBc and fireExchange stay serial inside a run or group, so their
+    // device latency follows the longest one rather than the mesh size.
+    if (perf::enabled())
+        std::fprintf(stderr,
+                     "[PERF-2D-KOKKOS-SERIAL] bc_edges=%zu bc_runs=%d bc_run_max=%d "
+                     "exchange_points=%zu exchange_groups=%d exchange_group_max=%d\n",
+                     bc_cell_host_.size(), n_bc_runs_, bc_run_max_, exch_host_.size(), n_cp_groups_,
+                     cp_group_max_);
     if (!telemetry_path_.empty() && !telemetry_.empty()) {
         if (std::FILE* f = openswmm::io::fopen_utf8(telemetry_path_, "w")) {
             std::fprintf(f, "t_s,active_cells,active_frac\n");
