@@ -442,3 +442,40 @@ cases the current code excludes). Acceptance gates as in the table.
   O(k³) per Newton iteration. The per-member cost line (≤ 1.5× OFF) is failed by construction with k ≈ 1,700; the
   fix is structural, not a knob: either exclude pond-orifice far ends from closure (the pond store itself is already
   floored, so the orifice cannot run backwards there) or make the Schur solve sparse. Run continuing for the score.
+- 2026-11-16: O-10 (the street pond eliminated analytically: one composite port per coupled manhole;
+  `PondOrificePort` in `RomStorePorts.hpp`, `stepRom1dStorageMembers`, tests `CompositePondPort.*`, uncommitted).
+  **N composition, measured** on the 252 committed Bellinge failure dumps (`SWMM6/data/ph_dumps`, coupled storm peak, O-6 code; the
+  dumps carry node names and store flags; reader in the session scratchpad): mean k 380 (max 619) = 143 pond nodes + 143 admitted
+  stores + 94 linear port ends (max: 239 + 239 + 141). (a) admitted stores that are NOT coupled manholes: 0 of 143, every admitted
+  store in those dumps has a pond; (b) pond nodes: 143 = 38 % of k; (c) coupled manholes in N only as the near end of a pond orifice:
+  none, a manhole with a pond is always an admitted store itself (the `near` rule admits it; the pond port is created only for
+  admitted nodes); (d) closure/promotion far ends: the 94 linear port ends, none of them next to a pond only (0 of 94). **The O-9
+  log entry's cause ("the closure admits the far end of every pond orifice port") is not what the code does**: the closure's link
+  table has no pond links, so the ponds themselves are the extra half of k. **Law.** The pond has one port (the orifice), so its
+  level z_p* at the end of the step is a scalar function of the manhole's level z_m: a(z_p − z_p^n)/dt = E(z_m, z_p), E the orifice's
+  extra flow (the O-9 port law, unchanged). The left side minus the right is strictly increasing in z_p, one root, bracketed by z_p^n
+  and z_p^n + dt·E(z_m, z_p^n)/a; found to roundoff by a safeguarded regula falsi (bisection every fourth step), because Newton
+  differences the law at 1e-7 ft and its kink test compares slopes to 1e-6. The composite port is manhole -> street (dn = −1) with
+  Q(z_m) = E(z_m, z_p*(z_m)): nondecreasing in z_m, 0 at the main run, and the pond gains exactly dt·Q, so the booking
+  `ext_vol = −portVolume` is unchanged. Per-port state is only the member's pond start level (read from the 2D ROM per member,
+  into a slot vector); the pond is not an unknown, not a store, not a graph node. **Tests** (member_ports 37 → 41): the law solves
+  the pond equation to roundoff (4,000 draws, wet and dry ponds, both flow directions), is monotone, anchored (bit-exact 0),
+  |Q| <= |E(z_m, z_p^n)|; composite vs the O-9 two-unknown graph (kept as the test reference: `makeRandomGraph(..., pond_mode 1)`)
+  on 60 random graphs, 303 ponds, half with one-way ports: member levels worst 6.7e-11, pond level 6.0e-11 (relative to max(1, |z|)),
+  booked volume 1.1e-9 of the scale (the reference stops at its own pond residual 1e-10 ft·a, which the tolerance carries: the
+  composite is exact in that equation); conservation a·(z_p − z_p^n) = dt·Q; zero data exact with no pond node (n = 30); order
+  preservation and ℓ1 contraction of network plus pond water with composite ports (worst 0.9888). Mutation (composite flow
+  evaluated at the pond's start level): the law test and the equivalence test fail. Unchanged: `StreetExchangeIsBookedOnceUnderSyncBatches`
+  (2e-14 / 4e-16 m^3), `ZeroPerturbationAddsNothingThroughPerMemberPath`, `DeterministicRunBitIdenticalWithCoupledStores`.
+  **Gates (Debug)**: member_ports 41, port_graph_replay 2 (the dumps are self-contained tabulated graphs with the pond already a
+  linear node, so the reader and the test need no change), additive_channel 12, spectral_rom1d 101, 2d_spectral_rom 65, storage gate
+  A 0.889/0.958, B 0.727/0.960, R 0.952/0.880 (unchanged). **k on the coupled fixture**: 3 → 2 (k x k factorisations 21,146 → 15,953,
+  Newton iterations per step 44.4 → 37.9); ON/OFF wall 1.87 → 2.03 on that 1-manhole fixture (the root solve costs more than the
+  one removed unknown saves at k = 2). **Debug 1D smoke** (`ph_smoke1d` to 07:00, load from a Release run alongside): 3,892 steps,
+  wall 364 s, Newton 298,801, Jacobi fallbacks 0, not converged 0, k_max 43, admitted 27 (closure +17), store line 95 (deepest
+  −0.123 ft), any-node line 1,982,368 (−2044.5 ft): every counter equals O-9's (no pond in the 1D smoke). **Expected Bellinge k at
+  the coupled peak**: k = 2S + E before, S + E after, with S the admitted coupled manholes and E the linear port ends. With the
+  dumps' E/S = 0.66, O-9's k_max 1,717 means S ≈ 645, E ≈ 425, after ≈ 1,070 (−38 %); the dense Schur LU is O(k^3), so the
+  factorisation falls to about 0.24 of its cost (1,000–1,100 is the range if E is nearer 0.5–0.8 S). That is not the ≤ 1.5× OFF
+  line: k stays about S + E ≈ 1,000. The remaining levers are structural and not taken here: the `near` admission of coupled
+  manholes (S itself), or a sparse Schur solve. Not run: the coupled Bellinge.

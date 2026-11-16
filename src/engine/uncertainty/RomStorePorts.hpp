@@ -232,6 +232,83 @@ inline double orificePortFlow(double c, double two_g, double h_mh, double z_or, 
     return flooredFlow(orificeFlow(c, two_g, h_mh, z_or, p, d0), g_mh, g_pond);
 }
 
+/// The manhole–pond pair as ONE composite port on the manhole (O-10).
+///
+/// The pond is a linear store (volume a·z) whose only port is the orifice, so
+/// its level at the end of the step is a scalar function of the manhole's:
+///
+///   a·(z_p − z_p^n)/dt = E(z_m, z_p),   E = the orifice's extra flow manhole -> pond
+///
+/// E is nonincreasing in z_p, so the left side minus the right is strictly
+/// increasing: one root, z_p*(z_m), bracketed by z_p^n and z_p^n + dt·E(z_m, z_p^n)/a
+/// (the root lies on the side E points to, and no further than a full step of
+/// that flow). The composite law Q(z_m) = E(z_m, z_p*(z_m)) is nondecreasing in
+/// z_m (the root moves the same way as the manhole and E falls with it, never
+/// past the manhole's own effect: implicit-function monotonicity), 0 at the main
+/// run, and the water the pond gains is exactly dt·Q, so what leaves the
+/// manhole is what the booking hands to the 2D ROM. A nested store: eliminating
+/// it from the unknowns leaves the solution of the two-unknown step unchanged.
+/// The root is found to roundoff (a safeguarded regula falsi), because Newton
+/// differences the law at 1e-7 ft.
+///
+/// Lengths in ft inside the per-member graph; the orifice law runs in metres
+/// (ft_to_m converts; 1.0 for a law kept in ft), its flow in m^3/s, the extra
+/// flow handed back in cfs (cfs_per_cms; 1.0 for a law kept in cfs).
+struct PondOrificePort {
+    double c_or = 0.0, two_g = 0.0, d0 = kDelta0;   ///< orifice coefficient·area, 2g, regularisation length (law unit)
+    double ft_to_m = 1.0, cfs_per_cms = 1.0;
+    double h_det = 0.0, z_or = 0.0;                 ///< manhole head (ft), street ground (law unit)
+    double p_det = 0.0, d_mh = 0.0;                 ///< main run's pond depth (ft), manhole depth (ft)
+    double a = 0.0;                                 ///< pond footprint (ft^2)
+    double q_det = 0.0;                             ///< the law at the main run (law flow unit)
+
+    /// Fill q_det from the other fields (call once they are set).
+    void anchor() {
+        q_det = orificePortFlow(c_or, two_g, h_det * ft_to_m, z_or, p_det * ft_to_m, d0, ramp(d_mh), ramp(p_det));
+    }
+    /// The two-unknown port law (the O-9 form): extra flow manhole -> pond (cfs).
+    double extraFlow(double cd_mult, double zu, double zp) const {
+        if (zu == 0.0 && zp == 0.0 && cd_mult == 1.0) return 0.0;
+        const double qi = orificePortFlow(c_or * cd_mult, two_g, (h_det + zu) * ft_to_m, z_or, (p_det + zp) * ft_to_m, d0,
+                                          ramp(d_mh + zu), ramp(p_det + zp));
+        return (qi - q_det) * cfs_per_cms;
+    }
+    /// The pond's level deviation at the end of the step for a pond that starts at zp_prev.
+    double pondLevel(double cd_mult, double zu, double zp_prev, double dt) const {
+        const double s = a / dt;
+        auto g = [&](double zp) { return s * (zp - zp_prev) - extraFlow(cd_mult, zu, zp); };
+        const double e0 = extraFlow(cd_mult, zu, zp_prev);
+        if (e0 == 0.0 || !(s > 0.0) || !std::isfinite(e0)) return zp_prev;
+        double lo = zp_prev, hi = zp_prev + e0 / s;
+        if (hi < lo) std::swap(lo, hi);
+        double glo = g(lo), ghi = g(hi);
+        if (glo == 0.0) return lo;
+        if (ghi == 0.0) return hi;
+        if (!(glo < 0.0 && ghi > 0.0)) return glo * glo < ghi * ghi ? lo : hi;   // non-monotone law: not expected
+        constexpr double eps = 2.220446049250313e-16;
+        int side = 0;
+        double x_prev = lo;
+        for (int it = 0; it < 200; ++it) {
+            double x = (lo * ghi - hi * glo) / (ghi - glo);
+            if (!(x > lo && x < hi)) x = 0.5 * (lo + hi);
+            if (it % 4 == 3) x = 0.5 * (lo + hi);   // bisection every few steps: bounded worst case
+            const double gx = g(x);
+            if (gx == 0.0) return x;
+            if (gx > 0.0) { hi = x; ghi = gx; if (side == 1) glo *= 0.5; side = 1; }
+            else          { lo = x; glo = gx; if (side == -1) ghi *= 0.5; side = -1; }
+            const double scale = std::max({1.0, std::fabs(lo), std::fabs(hi)});
+            if (hi - lo <= 4.0 * eps * scale || std::fabs(x - x_prev) <= 2.0 * eps * scale) return x;
+            x_prev = x;
+        }
+        return 0.5 * (lo + hi);
+    }
+    /// The composite law: the extra flow manhole -> street at the pond's own level (cfs).
+    double compositeFlow(double cd_mult, double zu, double zp_prev, double dt) const {
+        if (zu == 0.0 && zp_prev == 0.0 && cd_mult == 1.0) return 0.0;
+        return extraFlow(cd_mult, zu, pondLevel(cd_mult, zu, zp_prev, dt));
+    }
+};
+
 }  // namespace openswmm::uncertainty::ports
 
 #endif  // OPENSWMM_ENGINE_UNCERTAINTY_ROM_STORE_PORTS_HPP

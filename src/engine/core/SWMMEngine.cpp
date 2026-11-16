@@ -13059,18 +13059,21 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         };
         g.ports.push_back(std::move(p));
     }
-    // Street exchange at coupled manholes (O-3): the member's street pond is a
-    // store of the solve, its unknown the pond depth's deviation from the main
-    // run's (ft), V = a_pond·p over the 2D ROM's footprint; the orifice is a
-    // monotone two-port manhole -> pond, the same law at the main run giving the
-    // reference flow. The pond's start level per member is the 2D ROM's member
-    // depth at the coupling cell; its only port in the step is the orifice, so
-    // its volume change is the exchange, booked by the 2D ROM
+    // Street exchange at coupled manholes (O-3, O-10): the member's street pond
+    // is a store of the 2D ROM's footprint (volume a_pond·p, its unknown the
+    // pond depth's deviation from the main run's) joined to the manhole by the
+    // orifice two-port. Its only port in the step is that orifice, so its level
+    // is a scalar function of the manhole's and it is eliminated here: ONE
+    // composite port manhole -> street whose law solves the pond's own
+    // backward-Euler equation (PondOrificePort::compositeFlow). The pond's start
+    // level per member is the 2D ROM's member depth at the coupling cell; its
+    // volume change is the exchange, booked by the 2D ROM
     // (addExternalCouplingVolume, summed over the routing steps of its sync
     // batch, then held per cell in its coupling residual).
     constexpr double kCfsPerCms = 1.0 / (0.3048 * 0.3048 * 0.3048);
-    struct Pond { int node = -1, cp = -1, store = -1; std::size_t port = 0; double a_ft2 = 0.0, p_det_ft = 0.0; };
+    struct Pond { int cp = -1; std::size_t port = 0, slot = 0; double p_det_ft = 0.0; };
     std::vector<Pond> ponds;
+    std::vector<double> pond_zp(nb * uM, 0.0);   // per pond slot × member: the pond's level deviation at the start of the step
 #ifdef OPENSWMM_HAS_2D
     std::vector<double> ext_vol;
     if (coupled) {
@@ -13089,35 +13092,34 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             if (!(a_pond > 0.0) || p_det < 0.0 || !(c_or > 0.0)) continue;
             Pond pd;
             pd.cp = kcp;
-            pd.a_ft2 = a_pond / (kFt * kFt);
             pd.p_det_ft = p_det / kFt;
-            pd.node = g.addNode(pd.a_ft2);
-            PP::PondStore ps;
-            ps.a = pd.a_ft2;
-            ps.p_star = pd.p_det_ft;
-            PortGraph::Store st;
-            st.dV = [ps](double z, double* ar) { return ps.dV(z, ar); };
-            pd.store = static_cast<int>(g.stores.size());
-            g.store_of[static_cast<std::size_t>(pd.node)] = pd.store;
-            g.stores.push_back(std::move(st));
+            pd.slot = ponds.size();
             std::vector<double> cd_mem(uM);
             for (std::size_t i = 0; i < uM; ++i) cd_mem[i] = i < rom2d->cd_mult.size() ? rom2d->cd_mult[i] : 1.0;
-            const double h_det = nodes.head[static_cast<std::size_t>(fullOf(a))];
-            const double dA = depthAt(a);
+            PP::PondOrificePort po;
+            po.c_or = c_or;
+            po.two_g = kTwoG;
+            po.d0 = d0_m;
+            po.ft_to_m = kFt;
+            po.cfs_per_cms = kCfsPerCms;
+            po.h_det = nodes.head[static_cast<std::size_t>(fullOf(a))];
+            po.z_or = z_or;
+            po.p_det = pd.p_det_ft;
+            po.d_mh = depthAt(a);
+            po.a = a_pond / (kFt * kFt);
+            po.anchor();
             long* cnt = &rom1d_pg_cpl_evals_;
             ++*cnt;
-            const double q_det = PP::orificePortFlow(c_or, kTwoG, h_det * kFt, z_or, p_det, d0_m,
-                                                     PP::ramp(dA), ps.dry(0.0));
+            const double* zp_start = pond_zp.data() + pd.slot * uM;
+            const double dt_step = dt;
             PortGraph::Port p;
             p.up = a;
-            p.dn = pd.node;
-            p.dq = [=](int i, double zu, double zp) {
+            p.dn = -1;
+            p.dq = [=](int i, double zu, double) {
                 const double cm = cd_mem[static_cast<std::size_t>(i)];
-                if (zu == 0.0 && zp == 0.0 && cm == 1.0) return 0.0;
+                if (zu == 0.0 && zp_start[i] == 0.0 && cm == 1.0) return 0.0;
                 ++*cnt;
-                const double qi = PP::orificePortFlow(c_or * cm, kTwoG, (h_det + zu) * kFt, z_or, (pd.p_det_ft + zp) * kFt,
-                                                      d0_m, PP::ramp(dA + zu), ps.dry(zp));
-                return (qi - q_det) * kCfsPerCms;   // extra flow manhole -> street (cfs)
+                return po.compositeFlow(cm, zu, zp_start[i], dt_step);   // extra flow manhole -> street (cfs)
             };
             pd.port = g.ports.size();
             g.ports.push_back(std::move(p));
@@ -13138,7 +13140,6 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     if (g.on_failure) {
         rom1d_pg_names_.assign(static_cast<std::size_t>(g.n), std::string());
         for (std::size_t t = 0; t < un; ++t) rom1d_pg_names_[t] = ctx_.node_names.name_of(rom1d_active_map_[t]);
-        for (const Pond& pd : ponds) rom1d_pg_names_[static_cast<std::size_t>(pd.node)] = "pond:" + ctx_.node_names.name_of(rom1d_active_map_[static_cast<std::size_t>(g.ports[pd.port].up)]);
         g.node_names = &rom1d_pg_names_;
         g.sim_time = ctx_.current_time;
     }
@@ -13163,9 +13164,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         // The member's pond at the start of the step, as the 2D ROM holds it.
         for (const Pond& pd : ponds) {
             const double pm = rom2d->memberCouplingDepth(static_cast<std::size_t>(pd.cp), static_cast<int>(i));
-            const double zp = pm >= 0.0 ? pm / kFt - pd.p_det_ft : 0.0;
-            g.z_prev[static_cast<std::size_t>(pd.node)] = zp;
-            g.dV_prev[static_cast<std::size_t>(pd.store)] = g.stores[static_cast<std::size_t>(pd.store)].dV(zp, nullptr);
+            pond_zp[pd.slot * uM + i] = pm >= 0.0 ? pm / kFt - pd.p_det_ft : 0.0;
         }
 #endif
         z = g.z_prev;

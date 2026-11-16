@@ -123,6 +123,12 @@ orifice; its volume change −a_pond·(z_p − z_p^n) is booked to the 2D ROM
 (`addExternalCouplingVolume`) and held there per cell (`coupling_resid_`/coupling
 volume over `pond_cells_`). It equals dt·(port flow) to the Newton tolerance on the
 pond equation (1e-10 ft of pond level), not to 1e-10 relative.
+*As built (O-10, PORT_HAMILTONIAN §6):* the pond is not an unknown. Its only port is the orifice, so
+its end-of-step level solves the scalar monotone equation a·(z_p − z_p^n)/dt = E(z_m, z_p) (one root, to
+roundoff) and the manhole carries ONE composite port to the street, Q(z_m) = E(z_m, z_p*(z_m)): monotone in
+z_m, anchored, conserving (the pond gains dt·Q, which is also what is booked to the 2D ROM). N loses every pond
+node; the solution equals the two-unknown step (test reference kept).
+
 *As built (O-7, PORT_HAMILTONIAN §6):* the 2D advances in sync batches of several
 routing steps, the per-member solve every routing step. The volumes handed over
 within a batch add up and the batch books their sum once; until then

@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <string>
@@ -57,6 +58,13 @@ namespace {
 struct RandomGraph {
     PortGraph g;
     std::vector<double> c3;   // cubic store coefficient per store
+    // Street ponds (O-10). pond_mode 1: a pond node + orifice two-port (the O-9
+    // formulation, kept as the reference); pond_mode 2: ONE composite port per
+    // manhole whose pond level is solved inside the law, the pond's start level
+    // read from *zpp.
+    struct Pond { int mh = -1, node = -1; std::size_t port = 0, slot = 0; P::PondOrificePort po; };
+    std::vector<Pond> ponds;
+    std::shared_ptr<std::vector<double>> zpp = std::make_shared<std::vector<double>>();
 };
 
 // A one-way weir-like port: Q = c·max(a + z, 0)^1.5, anchored.
@@ -110,6 +118,27 @@ int addPond(PortGraph& g, int mh, double a, double c, double h_mh, double d_mh, 
     return pn;
 }
 
+// The same manhole-pond pair as ONE composite port on the manhole (O-10): the
+// pond's start level is *zpp[slot], its level solved inside the law.
+void addPondComposite(RandomGraph& r, int mh, double a, double c, double h_mh, double d_mh, double z_or, double p_det) {
+    P::PondOrificePort po;
+    po.c_or = c; po.two_g = kTwoG; po.d0 = P::kDelta0; po.ft_to_m = 1.0; po.cfs_per_cms = 1.0;
+    po.h_det = h_mh; po.z_or = z_or; po.p_det = p_det; po.d_mh = d_mh; po.a = a;
+    po.anchor();
+    RandomGraph::Pond pd;
+    pd.mh = mh; pd.po = po; pd.slot = r.zpp->size();
+    r.zpp->push_back(0.0);
+    PortGraph::Port p;
+    p.up = mh; p.dn = -1;
+    const double dt = r.g.dt;
+    auto zpp = r.zpp;
+    const std::size_t slot = pd.slot;
+    p.dq = [po, dt, zpp, slot](int, double zu, double) { return po.compositeFlow(1.0, zu, (*zpp)[slot], dt); };
+    pd.port = r.g.ports.size();
+    r.g.ports.push_back(std::move(p));
+    r.ponds.push_back(pd);
+}
+
 // One-way structure ports with the engine's O-9 laws (SWMMEngine.cpp): a depth-rated
 // pump / structure table through P::anchoredRatedFlow (a rating T(y) = cap·max(d* + y, 0),
 // flow >= 0), and the floored fallback line max(q* + d·z_up, 0) for a structure whose
@@ -135,7 +164,7 @@ PortGraph::Port flooredOneWayLine(int up, int dn, double q_star, double d, doubl
     return p;
 }
 
-RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false, bool one_way = false) {
+RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false, bool one_way = false, int pond_mode = 1) {
     std::uniform_real_distribution<double> U(0.0, 1.0);
     RandomGraph r;
     PortGraph& g = r.g;
@@ -196,7 +225,15 @@ RandomGraph makeRandomGraph(std::mt19937& rng, int n, bool ponds = false, bool o
             const double z_or = 1.0 + 0.5 * U(rng);
             const double h_mh = z_or + 0.6 * (U(rng) - 0.5);
             const double p_det = U(rng) < 0.3 ? 0.0 : 0.4 * U(rng);
-            addPond(g, t, std::pow(10.0, 1.0 + 3.0 * U(rng)), 0.05 + 0.5 * U(rng), h_mh, 0.5 + U(rng), z_or, p_det);
+            if (pond_mode == 2) {
+                addPondComposite(r, t, std::pow(10.0, 1.0 + 3.0 * U(rng)), 0.05 + 0.5 * U(rng), h_mh, 0.5 + U(rng), z_or, p_det);
+            } else {
+                RandomGraph::Pond pd;
+                pd.mh = t;
+                pd.port = g.ports.size();
+                pd.node = addPond(g, t, std::pow(10.0, 1.0 + 3.0 * U(rng)), 0.05 + 0.5 * U(rng), h_mh, 0.5 + U(rng), z_or, p_det);
+                r.ponds.push_back(pd);
+            }
         }
     }
     g.dV_prev.assign(g.stores.size(), 0.0);
@@ -699,6 +736,220 @@ TEST(PortGraph, WithPondsIsL1Contractive) {
     }
     EXPECT_GT(with_ponds, 50);
     std::printf("[PH-ports] l1 contraction with street ponds: worst lhs/rhs %.4f over 80 random port graphs\n", worst);
+}
+
+// ---------------------------------------------------------------------------
+// O-10: the pond eliminated analytically -- one composite port on the manhole
+// ---------------------------------------------------------------------------
+TEST(CompositePondPort, LawSolvesThePondEquationAndIsMonotoneAnchoredAndConservative) {
+    std::mt19937 rng(101);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    int into = 0, outof = 0, dry = 0;
+    for (int k = 0; k < 4000; ++k) {
+        P::PondOrificePort po;
+        po.c_or = 0.05 + 0.5 * U(rng); po.two_g = kTwoG; po.d0 = P::kDelta0; po.ft_to_m = 1.0; po.cfs_per_cms = 1.0;
+        po.z_or = 1.0 + 0.5 * U(rng); po.h_det = po.z_or + 0.6 * (U(rng) - 0.5);
+        po.p_det = U(rng) < 0.3 ? 0.0 : 0.4 * U(rng); po.d_mh = 0.5 + U(rng);
+        po.a = std::pow(10.0, 1.0 + 3.0 * U(rng));
+        po.anchor();
+        const double dt = 5.0 + 55.0 * U(rng), cm = 0.6 + 0.8 * U(rng);
+        const double zu = 1.2 * (U(rng) - 0.5);
+        const double zpp = std::max(0.5 * (U(rng) - 0.4), -po.p_det);
+        const double zp = po.pondLevel(cm, zu, zpp, dt);
+        const double Q = po.compositeFlow(cm, zu, zpp, dt);
+        // The pond's backward-Euler equation, to roundoff, and the water it gains is dt·Q.
+        EXPECT_NEAR(po.a * (zp - zpp) / dt, Q, 1e-12 * (1.0 + std::fabs(Q)) + 1e-13 * po.a / dt * (1.0 + std::fabs(zp)));
+        EXPECT_NEAR(Q, po.extraFlow(cm, zu, zp), 0.0);
+        (Q > 0.0 ? into : outof) += std::fabs(Q) > 1e-9;
+        dry += (po.p_det + zp) <= 0.0;
+        // Nondecreasing in the manhole level (P1), and the pond rises with it.
+        const double h = 1e-5;
+        EXPECT_GE(po.compositeFlow(cm, zu + h, zpp, dt) - Q, -1e-10 * (1.0 + std::fabs(Q)));
+        EXPECT_GE(po.pondLevel(cm, zu + h, zpp, dt) - zp, -1e-12);
+        // A fuller pond to start with takes less.
+        EXPECT_LE(po.compositeFlow(cm, zu, zpp + h, dt) - Q, 1e-10 * (1.0 + std::fabs(Q)));
+        // A pond cannot gain more than a full step of the flow it started with.
+        const double e0 = po.extraFlow(cm, zu, zpp);
+        EXPECT_LE(std::fabs(Q), std::fabs(e0) * (1.0 + 1e-12) + 1e-12);
+        EXPECT_GE(Q * e0, -1e-12);
+    }
+    // Anchored at the main run: nothing at all, bit for bit.
+    P::PondOrificePort po;
+    po.c_or = 0.3; po.two_g = kTwoG; po.d0 = P::kDelta0; po.ft_to_m = 1.0; po.cfs_per_cms = 1.0;
+    po.z_or = 1.2; po.h_det = 1.3; po.p_det = 0.1; po.d_mh = 0.8; po.a = 200.0;
+    po.anchor();
+    EXPECT_EQ(po.compositeFlow(1.0, 0.0, 0.0, 30.0), 0.0);
+    EXPECT_EQ(po.pondLevel(1.0, 0.0, 0.0, 30.0), 0.0);
+    EXPECT_GT(into, 500);
+    EXPECT_GT(outof, 500);
+    EXPECT_GT(dry, 20);
+}
+
+TEST(CompositePondPort, CompositeSolveEqualsTheTwoUnknownSolveOnRandomGraphs) {
+    // The composite law is the pond store nested into the manhole's port: the
+    // member levels and the booked volumes must be those of the O-9 graph (a
+    // pond node and the orifice two-port) to 1e-9.
+    std::mt19937 seeds(211), draw(212);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    int with_ponds = 0, checked_ponds = 0;
+    double worst_z = 0.0, worst_v = 0.0, worst_zp = 0.0;
+    for (int trial = 0; trial < 60; ++trial) {
+        const unsigned sd = seeds();
+        const int nnet = 6 + static_cast<int>(U(draw) * 30);
+        const bool ow = trial % 2 == 1;
+        std::mt19937 r1(sd), r2(sd);
+        RandomGraph ref = makeRandomGraph(r1, nnet, true, ow, 1);
+        RandomGraph cmp = makeRandomGraph(r2, nnet, true, ow, 2);
+        ASSERT_EQ(ref.ponds.size(), cmp.ponds.size());
+        with_ponds += !ref.ponds.empty();
+        PortGraph &gr = ref.g, &gc = cmp.g;
+        ASSERT_EQ(gc.n, nnet);
+        ASSERT_EQ(gr.n, nnet + static_cast<int>(ref.ponds.size()));
+        std::vector<double> b(nnet), zp0(nnet);
+        for (int t = 0; t < nnet; ++t) { b[static_cast<std::size_t>(t)] = 4.0 * (U(draw) - 0.5); zp0[static_cast<std::size_t>(t)] = U(draw) - 0.5; }
+        for (int t = 0; t < nnet; ++t) {
+            const int s = gr.store_of[static_cast<std::size_t>(t)];
+            if (s >= 0) gr.dV_prev[static_cast<std::size_t>(s)] = gr.volume(t, zp0[static_cast<std::size_t>(t)], nullptr);
+        }
+        gr.b.assign(static_cast<std::size_t>(gr.n), 0.0);
+        gr.z_prev.assign(static_cast<std::size_t>(gr.n), 0.0);
+        for (int t = 0; t < nnet; ++t) { gr.b[static_cast<std::size_t>(t)] = b[static_cast<std::size_t>(t)]; gr.z_prev[static_cast<std::size_t>(t)] = zp0[static_cast<std::size_t>(t)]; }
+        gc.b = b; gc.z_prev = zp0;
+        for (int t = 0; t < nnet; ++t) {
+            const int s = gc.store_of[static_cast<std::size_t>(t)];
+            if (s >= 0) gc.dV_prev[static_cast<std::size_t>(s)] = gc.volume(t, zp0[static_cast<std::size_t>(t)], nullptr);
+        }
+        // Ponds start at or above empty, wet or dry.
+        for (std::size_t k = 0; k < ref.ponds.size(); ++k) {
+            const double zpp = std::max(0.4 * (U(draw) - 0.4), -cmp.ponds[k].po.p_det);
+            (*cmp.zpp)[cmp.ponds[k].slot] = zpp;
+            const auto un = static_cast<std::size_t>(ref.ponds[k].node);
+            gr.z_prev[un] = zpp;
+            gr.dV_prev[static_cast<std::size_t>(gr.store_of[un])] = gr.volume(ref.ponds[k].node, zpp, nullptr);
+        }
+        std::vector<double> zr = gr.z_prev, zc = gc.z_prev;
+        ASSERT_TRUE(gr.solve(zr)) << "trial " << trial;
+        ASSERT_TRUE(gc.solve(zc)) << "trial " << trial;
+        EXPECT_EQ(gc.stats.jacobi_fallbacks, 0);
+        for (int t = 0; t < nnet; ++t) {
+            const double a = zr[static_cast<std::size_t>(t)], c = zc[static_cast<std::size_t>(t)];
+            const double e = std::fabs(a - c) / std::max(1.0, std::fabs(a));
+            worst_z = std::max(worst_z, e);
+            EXPECT_LE(e, 1e-9) << "trial " << trial << " node " << t;
+        }
+        for (std::size_t k = 0; k < ref.ponds.size(); ++k) {
+            ++checked_ponds;
+            const double v1 = gr.portVolume(ref.ponds[k].port, zr), v2 = gc.portVolume(cmp.ponds[k].port, zc);
+            const double sc = std::max({std::fabs(v1), std::fabs(v2), gr.dt * 1.0e-3});
+            // The reference stops at its own residual tolerance on the pond
+            // equation (1e-10 ft of pond level: 1e-10·a of volume); the
+            // composite solves it to roundoff.
+            const double tol = 1e-9 * sc + 2e-10 * cmp.ponds[k].po.a;
+            worst_v = std::max(worst_v, std::fabs(v1 - v2) / sc);
+            EXPECT_LE(std::fabs(v1 - v2), tol) << "trial " << trial << " pond " << k;
+            // The pond's own level, recovered from the composite law, is the reference node's.
+            const double zpc = cmp.ponds[k].po.pondLevel(1.0, zc[static_cast<std::size_t>(cmp.ponds[k].mh)], (*cmp.zpp)[cmp.ponds[k].slot], gc.dt);
+            const double zpr = zr[static_cast<std::size_t>(ref.ponds[k].node)];
+            worst_zp = std::max(worst_zp, std::fabs(zpc - zpr) / std::max(1.0, std::fabs(zpr)));
+            EXPECT_LE(std::fabs(zpc - zpr) / std::max(1.0, std::fabs(zpr)), 1e-9) << "trial " << trial << " pond " << k;
+            // Conservation: the water the pond gained is the water the manhole sent.
+            EXPECT_NEAR(cmp.ponds[k].po.a * (zpc - (*cmp.zpp)[cmp.ponds[k].slot]), v2, 1e-9 * std::max(sc, 1.0e-3));
+        }
+    }
+    EXPECT_GE(with_ponds, 50);
+    EXPECT_GT(checked_ponds, 200);
+    std::printf("[PH-O10] composite vs two-unknown over 60 random graphs, %d ponds: worst member-level error %.2e, booked volume %.2e, pond level %.2e (relative)\n",
+                checked_ponds, worst_z, worst_v, worst_zp);
+}
+
+TEST(CompositePondPort, ZeroDataIsExactAndNoPondNodeInTheSystem) {
+    std::mt19937 rng(41);
+    RandomGraph r = makeRandomGraph(rng, 30, true, false, 2);
+    ASSERT_FALSE(r.ponds.empty());
+    EXPECT_EQ(r.g.n, 30);   // no pond node: the system has the network's nodes only
+    std::vector<double> z(30, 0.0);
+    ASSERT_TRUE(r.g.solve(z));
+    for (double v : z) EXPECT_EQ(v, 0.0);
+    EXPECT_EQ(r.g.stats.zero_exits, 1);
+}
+
+TEST(CompositePondPort, IsOrderPreservingAndL1ContractiveWithTheCompositeDefinition) {
+    // Order preservation (b <= b' => z <= z') and the l1 contraction of the
+    // water in the network AND in the ponds, with composite pond ports.
+    std::mt19937 rng(223);
+    std::uniform_real_distribution<double> U(0.0, 1.0);
+    int with_ponds = 0;
+    double worst = 0.0;
+    for (int trial = 0; trial < 60; ++trial) {
+        const int n = 6 + static_cast<int>(U(rng) * 30);
+        RandomGraph r = makeRandomGraph(rng, n, true, trial % 3 == 2, 2);
+        PortGraph& g = r.g;
+        with_ponds += !r.ponds.empty();
+        // order
+        {
+            std::vector<double> b(n), bp(n), zp(n);
+            for (int t = 0; t < n; ++t) {
+                b[static_cast<std::size_t>(t)] = 4.0 * (U(rng) - 0.5);
+                bp[static_cast<std::size_t>(t)] = b[static_cast<std::size_t>(t)] + 3.0 * U(rng) * (U(rng) < 0.5);
+                zp[static_cast<std::size_t>(t)] = U(rng) - 0.5;
+            }
+            for (auto& pd : r.ponds) (*r.zpp)[pd.slot] = std::max(0.4 * (U(rng) - 0.4), -pd.po.p_det);
+            for (int t = 0; t < n; ++t)
+                if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+                    g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
+            g.z_prev = zp; g.b = b;
+            std::vector<double> z = zp;
+            ASSERT_TRUE(g.solve(z));
+            g.b = bp;
+            std::vector<double> z2 = zp;
+            ASSERT_TRUE(g.solve(z2));
+            for (int t = 0; t < n; ++t) EXPECT_LE(z[static_cast<std::size_t>(t)], z2[static_cast<std::size_t>(t)] + 1e-9) << "trial " << trial << " node " << t;
+        }
+        // l1 contraction of the total water (network + ponds) for two members
+        {
+            std::vector<double> zA(n), zB(n), bA(n), bB(n);
+            for (int t = 0; t < n; ++t) {
+                zA[static_cast<std::size_t>(t)] = 1.5 * (U(rng) - 0.5); zB[static_cast<std::size_t>(t)] = 1.5 * (U(rng) - 0.5);
+                bA[static_cast<std::size_t>(t)] = 3.0 * (U(rng) - 0.5); bB[static_cast<std::size_t>(t)] = 3.0 * (U(rng) - 0.5);
+            }
+            std::vector<double> pA(r.ponds.size()), pB(r.ponds.size());
+            for (std::size_t k = 0; k < r.ponds.size(); ++k) {
+                pA[k] = std::max(0.5 * (U(rng) - 0.4), -r.ponds[k].po.p_det);
+                pB[k] = std::max(0.5 * (U(rng) - 0.4), -r.ponds[k].po.p_det);
+            }
+            auto run = [&](const std::vector<double>& zp, const std::vector<double>& bb, const std::vector<double>& pp, std::vector<double>& z, std::vector<double>& dVprev) {
+                g.z_prev = zp; g.b = bb;
+                for (int t = 0; t < n; ++t)
+                    if (g.store_of[static_cast<std::size_t>(t)] >= 0)
+                        g.dV_prev[static_cast<std::size_t>(g.store_of[static_cast<std::size_t>(t)])] = g.volume(t, zp[static_cast<std::size_t>(t)], nullptr);
+                for (std::size_t k = 0; k < r.ponds.size(); ++k) (*r.zpp)[r.ponds[k].slot] = pp[k];
+                z = zp;
+                dVprev.assign(static_cast<std::size_t>(n), 0.0);
+                for (int t = 0; t < n; ++t) dVprev[static_cast<std::size_t>(t)] = g.volumePrev(t);
+                EXPECT_TRUE(g.solve(z));
+            };
+            std::vector<double> z1, z2, d1, d2;
+            run(zA, bA, pA, z1, d1);
+            run(zB, bB, pB, z2, d2);
+            double lhs = 0.0, rhs = 0.0;
+            for (int t = 0; t < n; ++t) {
+                if (g.pinned[static_cast<std::size_t>(t)]) continue;
+                lhs += std::fabs(g.volume(t, z1[static_cast<std::size_t>(t)], nullptr) - g.volume(t, z2[static_cast<std::size_t>(t)], nullptr));
+                rhs += std::fabs(d1[static_cast<std::size_t>(t)] - d2[static_cast<std::size_t>(t)]) + g.dt * std::fabs(bA[static_cast<std::size_t>(t)] - bB[static_cast<std::size_t>(t)]);
+            }
+            for (std::size_t k = 0; k < r.ponds.size(); ++k) {
+                const auto& pd = r.ponds[k];
+                const double u1 = pd.po.a * pd.po.pondLevel(1.0, z1[static_cast<std::size_t>(pd.mh)], pA[k], g.dt);
+                const double u2 = pd.po.a * pd.po.pondLevel(1.0, z2[static_cast<std::size_t>(pd.mh)], pB[k], g.dt);
+                lhs += std::fabs(u1 - u2);
+                rhs += pd.po.a * std::fabs(pA[k] - pB[k]);
+            }
+            EXPECT_LE(lhs, rhs * (1.0 + 1e-9)) << "trial " << trial;
+            worst = std::max(worst, lhs / rhs);
+        }
+    }
+    EXPECT_GE(with_ponds, 50);
+    std::printf("[PH-O10] l1 contraction with composite pond ports: worst lhs/rhs %.4f over 60 random port graphs\n", worst);
 }
 
 TEST(PortGraph, ManholeToPondConservesWater) {
