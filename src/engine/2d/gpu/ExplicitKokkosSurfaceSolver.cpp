@@ -741,7 +741,9 @@ void ExplicitKokkosSurfaceSolver::syncAndRebuild(double t) {
             if (K > 1) {
                 const double ratio = dtcell(i) / dt0;
                 if (ratio >= 2.0) {
-                    int lg = (int)std::log2(ratio);
+                    // floor(log2(ratio)) exactly, == the CPU marcher's std::ilogb; a
+                    // truncated std::log2 can round up within an ulp of a power of two.
+                    const int lg = static_cast<int>(Kokkos::logb(ratio));
                     tk = (lg < K - 1) ? lg : (K - 1);
                 }
                 if (coup(i) != 0.0 || pin(i))
