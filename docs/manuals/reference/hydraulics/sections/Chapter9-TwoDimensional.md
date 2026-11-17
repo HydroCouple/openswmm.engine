@@ -1669,9 +1669,11 @@ must not count two complete time intervals. Friction is applied through
 the cell momentum update.
 
 Requested second order reduces `LTS_TIERS` to 1 with a notice. Active
-surface transport falls back to first order with a notice; the tier
-reduction occurs before that fallback, so request order 1 explicitly
-when transport should retain multiple tiers. Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA groundwater supports
+surface transport keeps second order: each of the two stages carries the
+rows on its own first-order upwind mass fluxes, and the stage results are
+averaged with the water, so the rows are second order in time and upwind
+in space (concentrations are not reconstructed). Request order 1
+explicitly when transport should retain multiple tiers. Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA groundwater supports
 the shared RK2 transaction, authored wells and HEAD/FLOW edges. Groundwater
 reactions/heat and network/catchment/runtime owners remain guarded; see
 Hydrology §9.11 and the groundwater transport design for the exact profile.
@@ -2922,8 +2924,8 @@ behaviour it once configured is now described.
   point can set the substep for the entire mesh — and under
   `DIFFUSIVE_WAVE` the penalty is quadratic in the cell size (9-43).
 - **Second-order feature limits.** `RECONSTRUCTION_ORDER 2` runs in
-  global-step mode and falls back to first order when overland transport
-  is active. Groundwater RK2 has a standalone CPU water-only profile;
+  global-step mode. Overland transport keeps it, with the rows carried
+  upwind in space. Groundwater RK2 has a standalone CPU water-only profile;
   reactions/heat and borrowed owners remain guarded (§9.5.10). Long-period damping remains, and the
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.

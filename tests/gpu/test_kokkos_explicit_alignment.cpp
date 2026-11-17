@@ -835,7 +835,7 @@ void rowsMatch(const SurfaceStateData& b, const SurfaceStateData& a, const std::
  * @param[in] mode Momentum closure.
  * @param[in] name Label used in messages.
  * @param[in] order Reconstruction order requested. With rows, order 2 blends them in the two-stage
- * step, except under GROUNDWATER NO, where both marchers fall back to first order.
+ * step under every GROUNDWATER setting (GROUNDWATER NO used to select first order).
  * @param[in] groundwater The [2D_OPTIONS] GROUNDWATER value: -1 automatic, 0 no.
  */
 void speciesParity(Momentum2D mode, const char* name, int order = 1, int groundwater = -1) {

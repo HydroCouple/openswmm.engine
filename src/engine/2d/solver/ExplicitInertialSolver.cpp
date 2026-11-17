@@ -300,12 +300,9 @@ void ExplicitInertialSolver::initialize(MeshData& mesh, SurfaceStateData& state,
                          opts.lts_tiers);
             opts.lts_tiers = 1;
         }
+        // Transport rows keep second order: each stage carries them on its
+        // own mass fluxes and the two-stage step blends them with the water.
         second_order_ = (opts.reconstruction_order == 2);
-        if (second_order_ && state.transport.active() && !opts.groundwater) {
-            std::fprintf(stderr, "[openswmm 2D] RECONSTRUCTION_ORDER 2 with overland transport "
-                                 "is not supported yet; using first order.\n");
-            second_order_ = false;
-        }
         if (second_order_) {
             if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
                 buildVertexStencils(mesh);

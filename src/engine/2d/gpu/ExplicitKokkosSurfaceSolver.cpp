@@ -365,19 +365,13 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                          opts.lts_tiers);
             opts.lts_tiers = 1;
         }
-        if (state.transport.active() && opts.groundwater == 0) {
-            // == serial marcher: with GROUNDWATER NO, transport rows run
-            // first order; the tier reduction above is kept.
-            std::fprintf(stderr, "[openswmm 2D] RECONSTRUCTION_ORDER 2 with overland transport "
-                                 "is not supported yet; using first order.\n");
-        } else {
-            // The plugin cannot build the vertex stencils (that code lives in the
-            // core); the router and the CPU marcher build them before this point.
-            if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
-                throw std::invalid_argument(
-                    "Kokkos marcher: RECONSTRUCTION_ORDER 2 requires built vertex stencils");
-            second_order_ = true;
-        }
+        // The plugin cannot build the vertex stencils (that code lives in the
+        // core); the router and the CPU marcher build them before this point.
+        // Transport rows keep second order, as on the serial marcher.
+        if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
+            throw std::invalid_argument(
+                "Kokkos marcher: RECONSTRUCTION_ORDER 2 requires built vertex stencils");
+        second_order_ = true;
     }
     muscl_ = second_order_ && std::getenv("OPENSWMM_2D_MUSCL_OFF") == nullptr;
     {
