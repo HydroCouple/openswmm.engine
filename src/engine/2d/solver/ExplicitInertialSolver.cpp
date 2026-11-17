@@ -3676,6 +3676,9 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
             const auto heat_water0 = latent_cooling ? state_->heat.water_j : std::vector<double>{};
             const double evap0 = state_->evap_loss_total;
             for (int stage = 0; stage < 2; ++stage) {
+                // Conduit seepage booked for this routing step is applied by both stages.
+                if (gw_ && stage == 1)
+                    gw_->restoreRk2LinkReceipt(part_ground ? *part_ground : *ground0);
                 if (gw_ && !forcing0.rows.empty())
                     for (int i = 0; i < mesh_->n_cells(); ++i) {
                         const double area_dt = mesh_->tri_area[i] * dt,
@@ -3766,6 +3769,11 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                             throw SurfaceLatentIntervalLimit(
                                 "RK2 latent cooling requires a smaller admissible coupled interval.");
                     }
+                // Aquifer-node beds: sampled against the held node heads from the table this
+                // stage starts from (the groundwater cells have not fired yet), then consumed
+                // by the stage's own firing.
+                if (gw_ && state_->nodes_1d)
+                    gw_->sampleNodeExchange(state_->nodes_1d, dt, time + dt);
                 if (gw_)
                     gw_->fireGwRk2Cells(dt, *state_, time);
                 if (rk_transport_stage_ && state_->transport.age_row >= 0) {

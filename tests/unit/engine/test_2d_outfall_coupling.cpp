@@ -130,6 +130,7 @@ struct RunResult {
     double final_surface = 0.0; // 2D ledger: final surface storage (m³)
     double to_2d = 0.0;         // 2D ledger: junction spill onto the mesh (m³)
     double to_1d = 0.0;         // 2D ledger: mesh drain into junctions (m³)
+    double gw_node = 0.0;       // aquifer ledger: net to 1D nodes through their beds (m³)
 };
 
 /**
@@ -217,6 +218,7 @@ RunResult run_outfall_model(const fs::path& dir, const std::string& model = buil
     swmm_gw2d_get_continuity_error(eng, &r.gw_cont);
     swmm_gw2d_get_ledger(eng, SWMM_GW2D_LED_INFIL_IN, &r.gw_infil);
     swmm_gw2d_get_ledger(eng, SWMM_GW2D_LED_STORAGE, &r.gw_storage);
+    swmm_gw2d_get_ledger(eng, SWMM_GW2D_LED_NODE, &r.gw_node);
 
     swmm_engine_report(eng);
     swmm_engine_close(eng);
@@ -447,6 +449,59 @@ TEST_F(OutfallCoupling2DTest, SecondOrderAquiferJunctionDrainAndSpillCloseEveryL
             EXPECT_NEAR(second.to_1d + second.gw_infil, first.to_1d + first.gw_infil,
                         1e-3 * first.to_1d);
     }
+}
+
+// G4: a junction enrolled in [2D_AQUIFER_NODE] also exchanges with the aquifer through its
+// bed. Each stage samples that exchange from the table it starts from, and the
+// step averages it with everything else.
+TEST_F(OutfallCoupling2DTest, SecondOrderAquiferNodeBedClosesEveryLedger) {
+    auto model = [](int order) {
+        auto text = build_outfall_model();
+        auto replace = [&](const std::string& a, const std::string& b) {
+            const auto at = text.find(a);
+            ASSERT_NE(at, std::string::npos) << a;
+            text.replace(at, a.size(), b);
+        };
+        replace("0         O1    0.7  2.5\n", "0         J1    0.7  0.2\n");
+        replace("[2D_OPTIONS]\n", "[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nLTS_TIERS 1\n"
+                                  "RECONSTRUCTION_ORDER " +
+                                      std::to_string(order) + "\n");
+        // A low, nearly empty junction under a dry pan with a high water table: the aquifer
+        // drains through the junction's bed and the pipe carries it away. (A ponded pan would
+        // flood this small junction and reverse the bed flow part of the time, which makes the
+        // net volume a poor quantity to compare between orders.)
+        replace("J1      1.0   5.0       0          0         0\n",
+                "J1      -2.0  2.0       0          0         0\n");
+        replace("O1      0.0   FREE  NO\n", "O1      -2.5  FREE  NO\n");
+        replace("1.0      1.0      0.05\n", "1.0      1.0      0.0\n");
+        return text + "\n[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n"
+                      "LINK_SEEPAGE NONE\n\n"
+                      "[2D_AQUIFER]\n*  36.0  3.0  0.45  0.10  2.0  HG0 2.5\n\n"
+                      "[2D_AQUIFER_NODE]\nJ1  1\n";
+    };
+    std::ofstream csv(dir_ / "node_bed_aquifer_order2.csv");
+    csv << std::setprecision(17)
+        << "order,to_1d_m3,aquifer_infiltration_m3,aquifer_to_nodes_m3,final_surface_m3,"
+           "continuity_2d,continuity_aquifer,continuity_routing\n";
+    RunResult runs[2];
+    for (int order : {2, 1}) {
+        auto& r = runs[2 - order];
+        ASSERT_NO_FATAL_FAILURE(r = run_outfall_model(dir_, model(order)));
+        ASSERT_TRUE(r.ok) << "order " << order;
+        csv << order << ',' << r.to_1d << ',' << r.gw_infil << ',' << r.gw_node << ','
+            << r.final_surface << ',' << r.cont_2d << ',' << r.gw_cont << ',' << r.cont_routing
+            << "\n";
+    }
+    const auto& second = runs[0];
+    const auto& first = runs[1];
+    EXPECT_NE(first.gw_node, 0) << "the deck does not exercise the node bed";
+    EXPECT_NE(second.gw_node, 0);
+    EXPECT_LT(std::abs(second.cont_2d), 1e-6) << second.cont_2d;
+    EXPECT_LT(std::abs(second.gw_cont), 1e-6) << second.gw_cont;
+    // The 1D side is the same solver at both orders and shows the same residual on this deck.
+    EXPECT_NEAR(second.cont_routing, first.cont_routing, 1e-3);
+    EXPECT_GT(second.gw_node, 0.1); // the aquifer drained into the junction
+    EXPECT_NEAR(second.gw_node, first.gw_node, 0.02 * std::abs(first.gw_node));
 }
 
 // ============================================================================

@@ -2014,7 +2014,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         // Outfall points are applied by the router between advances; junction points fire in
         // both of the marcher's stages and are averaged with the rest of the step.
-        if (options_.momentum != Momentum2D::FULL_SWE || !cpu || !aquifer_link_shares_.empty() ||
+        // Conduit seepage is a receipt both stages apply; its layered-contact form is not staged.
+        if (options_.momentum != Momentum2D::FULL_SWE || !cpu ||
+            (!aquifer_link_shares_.empty() && subsurface_.transport().n_layers > 0) ||
             !subcatch_recharge_.empty() || !aquiferConfig().surface_owners.empty())
             throw std::runtime_error(
                 "Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");

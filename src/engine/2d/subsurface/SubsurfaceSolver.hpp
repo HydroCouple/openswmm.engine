@@ -1416,6 +1416,15 @@ public:
      */
     void blendRk2Water(const SubsurfaceSolver& initial, double end);
     /**
+     * @brief Give the second stage of a two-stage step the conduit seepage receipt again.
+     * @param[in] initial The solver as the step started, holding the receipt the router booked.
+     * @note The router books a routing step's seepage once and a firing consumes it whole. In a
+     * two-stage step the first stage would consume it and the average would then deliver half.
+     * With the receipt restored both stages apply it and the average delivers it exactly once.
+     * Copies the water receipt and its species mass; nothing else changes.
+     */
+    void restoreRk2LinkReceipt(const SubsurfaceSolver& initial);
+    /**
      * @brief Publish the current coupled stage's bounded instantaneous intake capacity.
      * - Argument dt (in): Finite positive stage duration s.
      * - Argument time (in): Finite elapsed refresh time s.

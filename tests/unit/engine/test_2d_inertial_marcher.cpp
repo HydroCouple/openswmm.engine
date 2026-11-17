@@ -904,6 +904,7 @@ struct CoupledRkRig {
     openswmm::NodeData node;                           ///< One held 1D node for junction points.
     std::vector<openswmm::twoD::CouplingPoint> points; ///< Filled before init() to couple cells.
     double hg0 = .6;                                   ///< Initial saturated height, m.
+    std::vector<GwNodeBed> beds;                       ///< Filled before init() for node beds.
     /**
      * @brief Initialize the owned two-cell coupled RK2 water fixture.
      *
@@ -930,11 +931,12 @@ struct CoupledRkRig {
         opts.lts_tiers = 1;
         opts.max_timestep = dt;
         seedSurface(mesh, opts, state, pond);
-        if (!points.empty()) {
+        if (!points.empty() || !beds.empty()) {
             opts.len_1d_to_2d = opts.vol_1d_to_2d = opts.flow_2d_to_1d = 1;
             state.nodes_1d = &node;
-            state.node_coupling = &points;
         }
+        if (!points.empty())
+            state.node_coupling = &points;
         solver.initialize(mesh, state, opts);
         SubsurfaceConfig cfg;
         cfg.options.authored = true;
@@ -950,8 +952,11 @@ struct CoupledRkRig {
         row.hg0 = hg0;
         row.c_loss = deep;
         cfg.rows = {row};
+        cfg.node_beds = beds;
         std::vector<std::string> warnings;
-        ASSERT_EQ(gw.initialize(mesh, solver.inertialEdges(), opts, {}, 0, cfg, warnings), "");
+        ASSERT_EQ(gw.initialize(mesh, solver.inertialEdges(), opts, {},
+                                beds.empty() ? 0 : int(node.count()), cfg, warnings),
+                  "");
         ASSERT_TRUE(gw.rk2ProfileError().empty());
         solver.setSubsurface(&gw);
     }
@@ -1335,6 +1340,109 @@ TEST(CoupledGroundwaterRk2, JunctionFullStepAndTwoHalfStepsDifferAtThirdLocalOrd
         if (previous > 0 && dt <= .1)
             EXPECT_GT(previous / error, 7.) << dt;
         previous = error;
+    }
+}
+
+namespace {
+/// The coupled rig with one held 1D node whose bed exchanges with the aquifer under cell 0.
+/// The aquifer bottom is at -2 m and the initial table at -1.4 m.
+struct BedRkRig : CoupledRkRig {
+    /// @param[in] depth Node water depth above its -1.9 m invert, m.
+    /// @param[in] volume Node stored volume, m3 (the recharge budget of one advance).
+    explicit BedRkRig(double depth, double volume = 50) {
+        node.resize(1);
+        node.invert_elev[0] = -1.9;
+        node.depth[0] = depth;
+        node.head[0] = node.invert_elev[0] + depth;
+        node.volume[0] = volume;
+        GwNodeBed bed;
+        bed.node = 0;
+        bed.cell = 0;
+        bed.area = 2;
+        beds.push_back(bed);
+    }
+    /// One advance; returns the volume the aquifer gave the node (m3, negative = recharge).
+    double advance(double from, double to) {
+        gw.resetNodeExchangeVolumes();
+        solver.advance(from, to);
+        return gw.nodeExchangeVolumes()[0];
+    }
+};
+} // namespace
+
+TEST(CoupledGroundwaterRk2, NodeBedDrainAndRechargeCloseAquiferAndNodeWater) {
+    for (double depth : {.1, 1.3}) { // node head below the table, then above it
+        BedRkRig r(depth);
+        r.init(.05, .005, 0);
+        ASSERT_EQ(r.gw.nodeBeds().size(), 1u);
+        const double initial = r.total();
+        double given = 0;
+        for (int k = 0; k < 20; ++k) {
+            double moved = 0;
+            ASSERT_NO_THROW(moved = r.advance(.05 * k, .05 * (k + 1))) << k;
+            EXPECT_TRUE(depth < 1 ? moved > 0 : moved < 0) << k;
+            given += moved;
+        }
+        EXPECT_GT(std::abs(given), 1e-4);
+        // What the node received is what the surface and aquifer lost, and what the aquifer's
+        // own node ledger and the per-bed series booked.
+        EXPECT_NEAR(r.total() + given, initial, 1e-12 * initial) << depth;
+        EXPECT_NEAR(r.gw.state().led_node, given, 1e-12 * std::abs(given)) << depth;
+        EXPECT_NEAR(r.gw.bedExchangeCumulative()[0], given, 1e-12 * std::abs(given)) << depth;
+        EXPECT_EQ(r.gw.state().nacc[0], 0) << depth; // nothing left pending between steps
+    }
+}
+
+// The node's stored volume is the recharge budget of one advance; the two stages share it.
+TEST(CoupledGroundwaterRk2, NodeBedRechargeStaysWithinTheNodeVolume) {
+    const double held = 2e-4;
+    BedRkRig r(1.3, held);
+    r.init(.05, .005, 0);
+    double moved = 0;
+    ASSERT_NO_THROW(moved = r.advance(0, .2));
+    EXPECT_LT(moved, 0);
+    EXPECT_LE(-moved, held * (1 + 1e-12));
+    EXPECT_GT(-moved, .25 * held);
+}
+
+// Absolute check against the conductance law itself: over a short time the exchanged volume is
+// conductance x head difference x time, at the rate the bed starts with.
+TEST(CoupledGroundwaterRk2, NodeBedExchangeMatchesTheConductanceLaw) {
+    for (double depth : {.1, 1.3}) {
+        BedRkRig r(depth);
+        r.init(.01, .005, 0);
+        const auto& w = r.gw.state();
+        const double table = w.z_bed[0] + w.hg[0], pipe = r.node.invert_elev[0] + depth;
+        const double conductance = w.Ks[0] * r.gw.nodeBeds()[0].area / (.5 * w.zs[0]);
+        const double rate = conductance * (table - pipe); // m3/s, + out of the aquifer
+        double given = 0;
+        for (int k = 0; k < 10; ++k)
+            given += r.advance(.01 * k, .01 * (k + 1));
+        RecordProperty("bed_rate_" + std::to_string(int(depth * 10)), given / .1);
+        EXPECT_NEAR(given, rate * .1, .02 * std::abs(rate * .1)) << depth;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, NodeBedFullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
+    for (double depth : {.1, 1.3}) {
+        double previous = 0;
+        for (double dt : {.4, .2, .1, .05, .025}) {
+            BedRkRig full(depth), half(depth);
+            full.init(.4, .005, .0005);
+            half.init(.4, .005, .0005);
+            const double whole = full.advance(0, dt);
+            double parts = half.advance(0, dt / 2);
+            parts += half.advance(dt / 2, dt);
+            double error = std::abs(whole - parts);
+            for (int i = 0; i < 2; ++i)
+                error += std::abs(full.gw.state().hg[i] - half.gw.state().hg[i]);
+            RecordProperty("bed_difference_" + std::to_string(int(depth * 10)) + "_" +
+                               std::to_string(int(dt * 1000)),
+                           error);
+            if (previous > 0 && dt <= .1)
+                EXPECT_GT(previous / error, 7.) << depth << ' ' << dt;
+            previous = error;
+        }
     }
 }
 
@@ -2958,6 +3066,57 @@ void seedRkQuality(CoupledRkRig& r, double concentration, double kd = 0) {
                     (s == t.age_row ? 5 : concentration) * r.state.volume[i];
 }
 }
+// G5: the router books a routing step's conduit seepage once. Both stages apply the receipt,
+// so the averaged step delivers it exactly once (a single application would deliver half).
+TEST(CoupledGroundwaterRk2, LinkSeepageReceiptIsDeliveredExactlyOnce) {
+    for (double receipt : {.02, -.01}) { // a leaking conduit, then a gaining one
+        CoupledRkRig r;
+        r.init(.05, .005, 0);
+        const double initial = r.total();
+        r.gw.bookLinkSeepage(0, receipt);
+        ASSERT_NO_THROW(r.solver.advance(0, .2)); // four steps; the first consumes the receipt
+        EXPECT_NEAR(r.total() - initial, receipt, 1e-12 * initial) << receipt;
+        EXPECT_NEAR(r.gw.state().led_link, receipt, 1e-14) << receipt;
+        EXPECT_EQ(r.gw.state().lacc[0], 0) << receipt;
+        // A second routing step's receipt is delivered the same way.
+        r.gw.bookLinkSeepage(0, receipt);
+        ASSERT_NO_THROW(r.solver.advance(.2, .4));
+        EXPECT_NEAR(r.total() - initial, 2 * receipt, 1e-12 * initial) << receipt;
+    }
+}
+
+TEST(CoupledGroundwaterRk2, LinkSeepageCarriesItsSpeciesMassExactlyOnce) {
+    CoupledRkRig r;
+    r.init(.05, .005, 0);
+    initRkQuality(r, false);
+    seedRkQuality(r, 1);
+    auto& t = r.gw.transport();
+    const double initial = t.storage(0), water = .02, mass = water * 7;
+    r.gw.bookLinkSeepage(0, water);
+    r.gw.bookLinkSeepageMass(0, 0, mass);
+    ASSERT_NO_THROW(r.solver.advance(0, .2));
+    EXPECT_NEAR(t.storage(0) - initial, mass, 1e-12 * initial);
+    EXPECT_NEAR(t.gained_link[0], mass, 1e-14);
+    for (double pending : t.lacc_mass)
+        EXPECT_EQ(pending, 0);
+}
+
+// Layered contact transport books seepage through further slots that are not staged.
+TEST(CoupledGroundwaterRk2, LinkSeepageWithLayeredTransportIsRefusedByName) {
+    CoupledRkRig r;
+    r.init(.05, .005, 0, 0, "AUTO", GwClosure::SIGMA);
+    initRkQuality(r, true);
+    seedRkQuality(r, 1);
+    r.gw.bookLinkSeepage(0, .02);
+    try {
+        r.solver.advance(0, .05);
+        FAIL() << "accepted";
+    } catch (const std::exception& error) {
+        EXPECT_NE(std::string(error.what()).find("link seepage"), std::string::npos)
+            << error.what();
+    }
+}
+
 TEST(CoupledGroundwaterRk2, PassiveStirredAquiferMatchesAnalyticalRetardedMixing) {
     for (GwClosure closure : {GwClosure::CLOSED_FORM, GwClosure::ENSLAVED, GwClosure::SIGMA})
         for (bool layered : {false, true}) {

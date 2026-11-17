@@ -4867,7 +4867,17 @@ double SubsurfaceSolver::rawRecharge(int cell, const soil::Params& p,
 }
 
 std::string SubsurfaceSolver::rk2ProfileError() const {
-    if (!active() || options_.per_subcatch || !node_beds_.empty() || lid_receipts_enabled_ ||
+    // Ordinary aquifer-node beds are sampled in each stage (the marcher calls
+    // sampleNodeExchange before the stage's groundwater cells fire). Beds owned by a porous
+    // LID column, layered contact transport and porous heat book further receipts that the
+    // two-stage step does not stage yet.
+    if (!node_beds_.empty() &&
+        (tr_.n_layers > 0 || heat_.active() ||
+         std::any_of(richards_bed_owned_.begin(), richards_bed_owned_.end(),
+                     [](bool v) { return v; }) ||
+         std::any_of(mobile_lid_bed_.begin(), mobile_lid_bed_.end(), [](bool v) { return v; })))
+        return "Coupled RK2 node beds require BULK transport without porous heat or LID bed owners.";
+    if (!active() || options_.per_subcatch || lid_receipts_enabled_ ||
         std::any_of(source_owned_.begin(), source_owned_.end(), [](bool v) { return v; }) ||
         std::any_of(state_.closure.begin(), state_.closure.end(), [](int8_t v) {
             return v != int8_t(GwClosure::CLOSED_FORM) && v != int8_t(GwClosure::ENSLAVED) &&
@@ -5004,10 +5014,15 @@ std::string SubsurfaceSolver::rk2ProfileError() const {
             if (values->size() != std::size_t(tr_.n_species))
                 return "Coupled RK2 boundary receipt shape differs.";
     }
-    for (const auto* values : {&state_.nacc, &state_.lacc})
-        for (double v : *values)
+    for (double v : state_.nacc)
+        if (v != 0)
+            return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
+    // A conduit seepage receipt is staged: both stages apply it (see restoreRk2LinkReceipt).
+    // Layered contact transport and the independent clock book it through further slots.
+    if (tr_.n_layers > 0 || clock_state_ || heat_.active())
+        for (double v : state_.lacc)
             if (v != 0)
-                return "Coupled RK2 cannot consume an unstaged external node/link receipt.";
+                return "Coupled RK2 link seepage requires BULK transport on the shared clock without porous heat.";
     return {};
 }
 
@@ -5061,6 +5076,11 @@ void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface, double 
             state_.infil_interval[i] = dt;
             surface.infil_rate[i] = rate;
         }
+}
+
+void SubsurfaceSolver::restoreRk2LinkReceipt(const SubsurfaceSolver& initial) {
+    state_.lacc = initial.state_.lacc;
+    tr_.lacc_mass = initial.tr_.lacc_mass;
 }
 
 void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial, double end) {
@@ -5132,6 +5152,15 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial, double end
             s.hu[i] = .5 * (b.hu[i] + s.hu[i]);
         }
     }
+    // Node beds: each stage sampled its own exchange and its cells consumed it, so the
+    // network-side totals average like the aquifer's node ledger. The node draw kept its full
+    // stage value while the stages ran (the second stage saw all of the first stage's draw).
+    blend(node_exchange_vol_, initial.node_exchange_vol_);
+    blend(node_drawn_gw_, initial.node_drawn_gw_);
+    blend(bed_exchange_cum_, initial.bed_exchange_cum_);
+    // A step counts a drain-cap clamp once, whichever stages it bound in.
+    drain_cap_binds_ =
+        initial.drain_cap_binds_ + (drain_cap_binds_ - initial.drain_cap_binds_ + 1) / 2;
     blend(s.wetting_front, b.wetting_front);
     blend(s.eacc_L, b.eacc_L);
     blend(s.eacc_R, b.eacc_R);
@@ -5195,36 +5224,24 @@ void SubsurfaceSolver::blendRk2Water(const SubsurfaceSolver& initial, double end
         throw std::runtime_error(error);
     auto& t = tr_;
     const auto& old = initial.tr_;
-    for (auto member : {&SubsurfaceTransportState::sat_mass,
-                        &SubsurfaceTransportState::unsat_mass,
-                        &SubsurfaceTransportState::layer_mass,
-                        &SubsurfaceTransportState::sacc_L,
-                        &SubsurfaceTransportState::sacc_R,
-                        &SubsurfaceTransportState::xacc_from_surface,
-                        &SubsurfaceTransportState::xacc_to_surface,
-                        &SubsurfaceTransportState::nacc_mass,
-                        &SubsurfaceTransportState::lacc_mass,
-                        &SubsurfaceTransportState::lout_mass,
-                        &SubsurfaceTransportState::node_out_mass,
-                        &SubsurfaceTransportState::lost_deep,
-                        &SubsurfaceTransportState::lost_node,
-                        &SubsurfaceTransportState::lost_link,
-                        &SubsurfaceTransportState::lost_dunne,
-                        &SubsurfaceTransportState::lost_et,
-                        &SubsurfaceTransportState::gained_infil,
-                        &SubsurfaceTransportState::gained_node,
-                        &SubsurfaceTransportState::gained_link,
-                        &SubsurfaceTransportState::net_lateral,
-                        &SubsurfaceTransportState::gained_source,
-                        &SubsurfaceTransportState::lost_source,
-                        &SubsurfaceTransportState::boundary_in,
-                        &SubsurfaceTransportState::boundary_out,
-                        &SubsurfaceTransportState::boundary_flux_in,
-                        &SubsurfaceTransportState::boundary_flux_out,
-                        &SubsurfaceTransportState::lost_reaction,
-                        &SubsurfaceTransportState::generated_age,
-                        &SubsurfaceTransportState::gained_contact,
-                        &SubsurfaceTransportState::internal_recharge})
+    for (auto member :
+         {&SubsurfaceTransportState::sat_mass, &SubsurfaceTransportState::unsat_mass,
+          &SubsurfaceTransportState::layer_mass, &SubsurfaceTransportState::sacc_L,
+          &SubsurfaceTransportState::sacc_R, &SubsurfaceTransportState::xacc_from_surface,
+          &SubsurfaceTransportState::xacc_to_surface, &SubsurfaceTransportState::nacc_mass,
+          // lacc_mass is not averaged: both stages consumed the same staged
+          // seepage receipt, and what the second stage left is final.
+          &SubsurfaceTransportState::lout_mass, &SubsurfaceTransportState::node_out_mass,
+          &SubsurfaceTransportState::lost_deep, &SubsurfaceTransportState::lost_node,
+          &SubsurfaceTransportState::lost_link, &SubsurfaceTransportState::lost_dunne,
+          &SubsurfaceTransportState::lost_et, &SubsurfaceTransportState::gained_infil,
+          &SubsurfaceTransportState::gained_node, &SubsurfaceTransportState::gained_link,
+          &SubsurfaceTransportState::net_lateral, &SubsurfaceTransportState::gained_source,
+          &SubsurfaceTransportState::lost_source, &SubsurfaceTransportState::boundary_in,
+          &SubsurfaceTransportState::boundary_out, &SubsurfaceTransportState::boundary_flux_in,
+          &SubsurfaceTransportState::boundary_flux_out, &SubsurfaceTransportState::lost_reaction,
+          &SubsurfaceTransportState::generated_age, &SubsurfaceTransportState::gained_contact,
+          &SubsurfaceTransportState::internal_recharge})
         blend(t.*member, old.*member);
     for (int species = 0; species < t.n_species; ++species)
         for (int i = 0; i < t.n_cells; ++i)

@@ -1277,7 +1277,8 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile(bool for_advance) const
     if (!initialized_ || !second_order_ || !gw_ || common_stage_ || joint_checkpoint_ ||
         channel_ground_ || source_history_ || engine_source_history_ || engine_source_stream_ ||
         !checkpoint_ready_ || mode_ != Momentum2D::FULL_SWE || opts_->lts_tiers != 1 ||
-        (!for_advance && state_->node_coupling && !state_->node_coupling->empty()))
+        (!for_advance &&
+         ((state_->node_coupling && !state_->node_coupling->empty()) || !gw_->nodeBeds().empty())))
         return "RK2 checkpoint requires the standalone global transport/age coupled profile.";
     if (state_->snow.active() && state_->snow.completedEnd() != source_phase_end_)
         return "RK2 snow and numerical source clocks differ.";
