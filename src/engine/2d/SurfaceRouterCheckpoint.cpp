@@ -735,7 +735,7 @@ std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx
         !error.empty())
         return error;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(ctx, state_, true); !error.empty())
+        if (auto error = changingVolumeProfile(ctx, state_); !error.empty())
             return error;
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_)
@@ -937,7 +937,7 @@ void SurfaceRouter2D::validateMaterialCheckpoint(
     const auto& cpu = prepared ? prepared->cpu : *canonical;
     const auto& published = prepared ? prepared->published : node_row_conc_;
     snapshot.validate(*this, ctx, true);
-    if (auto error = changingVolumeProfile(ctx, surface); !error.empty())
+    if (auto error = changingVolumeProfile(ctx, surface, /*integrated=*/false); !error.empty())
         throw std::invalid_argument(error);
     if (auto error = validateLivePhysical(cpu, surface, snapshot.sim_time_, ctx.current_time,
                                           snapshot.pending_dt_);
@@ -1081,7 +1081,7 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(
     incoming.coupling_delivery_remaining = snapshot.delivery;
     surface.nodes_1d = &incoming.nodes;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(incoming, surface, true); !error.empty())
+        if (auto error = changingVolumeProfile(incoming, surface); !error.empty())
             return error;
     if (paired_water_checkpoint_)
         if (auto error = coupledWaterProfile(incoming, surface); !error.empty())

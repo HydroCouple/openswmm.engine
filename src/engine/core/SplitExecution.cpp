@@ -467,7 +467,8 @@ int SWMMEngine::bindMaterialPeer(SWMMEngine& peer, std::size_t capacity,
         quality::PeerPassiveStorageFunding::validateProfile(ctx_);
         quality::PeerPassiveStorageFunding::validateProfile(peer.ctx_);
         auto error =
-            peer.surface_router_.changingVolumeProfile(peer.ctx_, peer.surface_router_.state_);
+            peer.surface_router_.changingVolumeProfile(peer.ctx_, peer.surface_router_.state_,
+                                                       /*integrated=*/false);
         require(error.empty(), error.c_str());
         auto issuer = std::make_unique<quality::PeerPassiveStorageFunding>(
             ctx_, split_->identity, peer.split_->identity, split_->material_points,
@@ -651,7 +652,8 @@ int SWMMEngine::splitGeometry(SWMM_SplitFrame* output) noexcept {
         require(!split_->settled_reports || outfalls.empty(),
                 "Private settled reports exclude mapped outfalls");
         if (split_->material) {
-            auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+            auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_,
+                                                               /*integrated=*/false);
             require(error.empty(), error.c_str());
             split_->material_points.clear();
             for (std::size_t k = 0; k < surface_router_.node_coupling_points_.size(); ++k) {

@@ -1806,7 +1806,7 @@ private:
                        BatchPhase phase = BatchPhase::ADVANCE);
     std::string livePassiveProfile() const;
     std::string changingVolumeProfile(const SimulationContext& ctx, const SurfaceStateData& surface,
-                                      bool integrated = false) const;
+                                      bool integrated = true) const;
     quality::LivePassiveStorageExchange* live_passive_exchange_ = nullptr;
     quality::PeerPassiveStorageProducer* peer_passive_exchange_ = nullptr;
     quality::PeerPassiveStorageWindow* peer_window_ = nullptr;

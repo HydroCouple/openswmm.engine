@@ -2392,7 +2392,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
     if (peer_passive_exchange_) {
         if (peer_passive_exchange_->failed())
             throw std::runtime_error(peer_passive_exchange_->error());
-        if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) {
+        if (auto error = changingVolumeProfile(ctx, state_, /*integrated=*/false); !error.empty()) {
             peer_passive_exchange_->fail(
                 "Material surface profile changed before producer effects.");
             throw std::invalid_argument(error);
@@ -2686,7 +2686,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         if (live_passive_exchange_) {
             using Phase = quality::PassiveStorageExchange::Phase;
             if (live_passive_exchange_->receipts().changingVolume())
-                if (auto error = changingVolumeProfile(ctx, state_, true); !error.empty()) {
+                if (auto error = changingVolumeProfile(ctx, state_); !error.empty()) {
                     live_passive_exchange_->fail(
                         "Changing-volume physical profile changed before producer effects.");
                     throw std::runtime_error(error);
