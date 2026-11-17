@@ -363,8 +363,9 @@ SWMM_ENGINE_API int swmm_gw2d_get_species_ledger(SWMM_Engine engine, int species
  *  GW_BINDS_SURFACE_DT. Read-only keys: GW_ET_EFFECTIVE, LINK_SEEPAGE_EFFECTIVE,
  *  WILTING_SUCTION_EFFECTIVE, GW_BASE_STEP_EFFECTIVE, CONFIGURED and OPTIONS_AUTHORED.
  *  Legacy LINK_SEEPAGE AUTO means ONE_WAY. GW_BASE_STEP AUTO is 0.125 s when a node
- *  bed exchanges with the aquifer and 1 s otherwise; GW_BASE_STEP_EFFECTIVE reports
- *  the interval in use once a run is initialized, and AUTO before that.
+ *  bed exchanges with the aquifer and 1 s otherwise; with such a bed, cells without one
+ *  keep 1 s as their accuracy floor. GW_BASE_STEP_EFFECTIVE reports the base interval in
+ *  use once a run is initialized, and AUTO before that.
  *
  * @param[in] engine Borrowed live engine handle; not retained by this call.
  * @param[in] key Required case-insensitive null-terminated option key from the list above.

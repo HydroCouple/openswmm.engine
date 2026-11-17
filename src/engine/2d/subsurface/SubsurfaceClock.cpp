@@ -19,7 +19,13 @@ void SubsurfaceSolver::prepareClock(double epoch) {
     state.link_out.assign(state_.n_cells, 0.);
     state.receipt_limit.assign(state_.n_cells, 1e30);
     state.budget_active.assign(state_.n_cells, 0);
-    std::vector<double> bounds, accuracy;
+    std::vector<double> bounds, accuracy, accuracy_floor;
+    // GW_BASE_STEP AUTO refines the base step for the node beds only. Every
+    // other cell keeps the base step AUTO would choose without beds as its
+    // accuracy floor; on full-event Bellinge the mesh-wide 0.125 s held 36%
+    // of all cells there and made the clock half as fast as SHARED.
+    const bool bed_floor =
+        !options_.base_step_set && options_.base_step < GwOptions::kDefaultBaseStep;
     for (int i = 0; i < state_.n_cells; ++i) {
         if (!covers(i))
             continue;
@@ -27,6 +33,8 @@ void SubsurfaceSolver::prepareClock(double epoch) {
         state.cells.push_back(i);
         bounds.push_back(state_.dt_cell[i]);
         accuracy.push_back(clockAccuracyLimit(i));
+        accuracy_floor.push_back(bed_floor && cell_beds_[i].empty() ? GwOptions::kDefaultBaseStep
+                                                                    : options_.base_step);
     }
     std::vector<GwClock::Face> topology;
     for (int e = 0; e < static_cast<int>(state_.eacc_L.size()); ++e) {
@@ -38,7 +46,7 @@ void SubsurfaceSolver::prepareClock(double epoch) {
     }
     state.schedule.emplace(
         GwClock::Options{epoch, options_.base_step, options_.max_step, opts_->max_timestep}, bounds,
-        std::move(topology), accuracy);
+        std::move(topology), accuracy, accuracy_floor);
     // Keep the legacy kernel's topology lists valid for component archives.
     assignTiers(options_.base_step, 1);
     clock_state_.emplace(std::move(state));

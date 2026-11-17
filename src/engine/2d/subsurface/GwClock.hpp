@@ -38,8 +38,10 @@ public:
         virtual double accuracy(int) const { return 1e30; }
         virtual void early(double, std::vector<int>&) {}
     };
+    // accuracy_floor: per cell, the finest period accuracy alone may select
+    // (default the base step). Physical stability is never floored.
     GwClock(Options options, std::span<const double> bounds, std::vector<Face> faces,
-            std::span<const double> accuracy = {});
+            std::span<const double> accuracy = {}, std::span<const double> accuracy_floor = {});
 
     // Ordinary coupled deadlines wait at most margin() for a producer check.
     // A long surface interval contains numerical GW checks when necessary.
@@ -61,6 +63,8 @@ public:
     // subcycles alone retain the base producer cadence.
     double producerStep() const;
     int rung(int cell) const { return cells_.at(cell).rung; }
+    // The finest rung accuracy alone may select for this cell (0 = base step).
+    int floorRung(int cell) const { return floor_.empty() ? 0 : floor_.at(cell); }
     double committedBound(int cell) const { return cells_.at(cell).committed_bound; }
     double completed(int cell) const { return cells_.at(cell).last; }
     double completedFace(int face) const { return face_last_.at(face); }
@@ -80,8 +84,9 @@ private:
     std::vector<double> face_last_, due_, latest_;
     Queue fine_, coarse_, limits_;
     std::size_t base_cells_ = 0; // derived occupancy, rebuilt on restore
+    std::vector<int> floor_;     // per-cell accuracy floor rung; empty = base
 
-    int select(double bound, double accuracy = 1e30) const;
+    int select(double bound, double accuracy = 1e30, int floor = 0) const;
     double next(double after, int rung) const;
     void schedule(int id, int rung, double after);
     void event(double t, std::vector<int> ids, std::optional<double> external_through, Owner& owner,

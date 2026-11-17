@@ -36,7 +36,7 @@ double GwClock::producerStep() const {
     return std::min(options_.base_step, period(select(infinity, infinity)));
 }
 
-int GwClock::select(double bound, double accuracy) const {
+int GwClock::select(double bound, double accuracy, int floor) const {
     if (!(bound > 0))
         throw std::invalid_argument("GW clock: nonpositive or NaN stability bound");
     const auto quantize = [&](double limit) {
@@ -61,12 +61,13 @@ int GwClock::select(double bound, double accuracy) const {
     else if (bound < cap && period(k) > bound - margin())
         k = quantize(bound - margin());
     // Accuracy alone never creates stiff numerical subcycles. Its finest
-    // period is the authored base check; physical stability remains exact.
+    // period is the cell's floor (the authored base check unless the owner
+    // gave a coarser one); physical stability remains exact.
     if (!(accuracy > 0))
         throw std::invalid_argument("GW clock: invalid accuracy limit");
-    const double limit_accuracy = std::max(options_.base_step, accuracy - margin());
+    const double limit_accuracy = std::max(period(floor), accuracy - margin());
     if (accuracy < cap && period(k) > limit_accuracy)
-        k = std::min(k, std::max(0, quantize(limit_accuracy)));
+        k = std::min(k, std::max(floor, quantize(limit_accuracy)));
     return k;
 }
 
@@ -93,7 +94,7 @@ double GwClock::next(double after, int k) const {
 }
 
 GwClock::GwClock(Options options, std::span<const double> bounds, std::vector<Face> faces,
-                 std::span<const double> accuracy)
+                 std::span<const double> accuracy, std::span<const double> accuracy_floor)
     : options_(options), time_(options.epoch), faces_(std::move(faces)), incident_(bounds.size()),
       face_last_(faces_.size(), time_), due_(bounds.size(), infinity),
       latest_(bounds.size(), infinity) {
@@ -102,6 +103,15 @@ GwClock::GwClock(Options options, std::span<const double> bounds, std::vector<Fa
         throw std::invalid_argument("GW clock: invalid epoch or time-step options");
     if (!accuracy.empty() && accuracy.size() != bounds.size())
         throw std::invalid_argument("GW clock: accuracy shape differs");
+    if (!accuracy_floor.empty() && accuracy_floor.size() != bounds.size())
+        throw std::invalid_argument("GW clock: accuracy floor shape differs");
+    for (double seconds : accuracy_floor) {
+        // A dyadic multiple of the base step, so the floor is a rung.
+        int k = std::ilogb(seconds) - std::ilogb(options.base_step);
+        if (!positive(seconds) || k < 0 || std::ldexp(options.base_step, k) != seconds)
+            throw std::invalid_argument("GW clock: accuracy floor is not a base-step rung");
+        floor_.push_back(k);
+    }
     for (int e = 0; e < static_cast<int>(faces_.size()); ++e) {
         const auto [l, r] = faces_[e];
         if (l < 0 || r < 0 || std::size_t(l) >= bounds.size() || std::size_t(r) >= bounds.size() ||
@@ -111,8 +121,8 @@ GwClock::GwClock(Options options, std::span<const double> bounds, std::vector<Fa
         incident_[r].push_back(e);
     }
     for (int i = 0; i < static_cast<int>(bounds.size()); ++i) {
-        cells_.push_back(
-            {time_, bounds[i], select(bounds[i], accuracy.empty() ? 1e30 : accuracy[i])});
+        cells_.push_back({time_, bounds[i],
+                          select(bounds[i], accuracy.empty() ? 1e30 : accuracy[i], floorRung(i))});
         schedule(i, cells_.back().rung, time_);
     }
 }
@@ -175,7 +185,7 @@ void GwClock::event(double t, std::vector<int> ids, std::optional<double> extern
     for (int i : affected) {
         auto& c = cells_[i];
         const double bound = owner.stability(i);
-        int k = select(bound, owner.accuracy(i));
+        int k = select(bound, owner.accuracy(i), floorRung(i));
         if (c.last == t) {
             c.committed_bound = bound;
             // Loosen only when the nominal deadline is shared with the slower
@@ -265,7 +275,7 @@ void GwClock::refresh(Owner& owner) {
         const double bound = owner.stability(i);
         if (cells_[i].last == time_)
             cells_[i].committed_bound = bound;
-        const int k = select(bound, owner.accuracy(i));
+        const int k = select(bound, owner.accuracy(i), floorRung(i));
         // Rebuild the hard limit even when an edited bound leaves the rung
         // unchanged. Only tighten a held owner's selected period.
         schedule(i, std::min(k, cells_[i].rung), time_);

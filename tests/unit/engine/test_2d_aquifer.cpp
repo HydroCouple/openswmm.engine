@@ -1748,6 +1748,72 @@ TEST(Aquifer2D, AutoBaseStepIsFinerWhenANodeBedExchanges) {
     finish(r);
 }
 
+TEST(Aquifer2D, ClockAccuracyFloorIsPerCell) {
+    using openswmm::twoD::GwClock;
+    // Two cells whose accuracy alone asks for 10 ms, physically unbounded.
+    const std::vector<double> bounds{1e30, 1e30}, accuracy{.01, .01};
+    const GwClock::Options options{0., .125, 3600., 60.};
+    const GwClock base(options, bounds, {}, accuracy);
+    EXPECT_EQ(base.rung(0), 0);
+    EXPECT_EQ(base.rung(1), 0);
+    const std::vector<double> floors{.125, 1.};
+    const GwClock floored(options, bounds, {}, accuracy, floors);
+    EXPECT_EQ(floored.rung(0), 0);
+    EXPECT_EQ(floored.rung(1), 3); // 1 s = 0.125 s * 2^3
+    EXPECT_EQ(floored.floorRung(1), 3);
+    // Physical stability is never floored.
+    const std::vector<double> stiff{.05, .05};
+    const GwClock physical(options, stiff, {}, accuracy, floors);
+    EXPECT_LT(physical.rung(1), 0);
+    // A floor must be a rung of the ladder.
+    EXPECT_THROW(GwClock(options, bounds, {}, accuracy, std::vector<double>{.125, .3}),
+                 std::invalid_argument);
+    EXPECT_THROW(GwClock(options, bounds, {}, accuracy, std::vector<double>{.0625, 1.}),
+                 std::invalid_argument);
+}
+
+TEST(Aquifer2D, AutoBaseStepFloorsOnlyNodeBedCells) {
+    // Under AUTO with an exchanging bed, only the bed's cell may be checked
+    // every 0.125 s for accuracy; the rest keep the 1 s they would get with no
+    // bed. An authored base step and AUTO without beds keep one floor.
+    struct Case {
+        const char* tag;
+        std::string options, nodes;
+        int other;
+    };
+    const std::string independent = "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n";
+    const Case cases[] = {
+        {"floor-auto-bed", independent, "J1 1\n", 3},
+        {"floor-auto-no-bed", independent, "", 0},
+        {"floor-authored-bed", independent + "GW_BASE_STEP 0.125\n", "J1 1\n", 0},
+    };
+    for (const auto& c : cases) {
+        auto r = openDeck(c.tag, deck(aquiferSection("", c.options, c.nodes)));
+        ASSERT_TRUE(r.opened) << c.tag;
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << c.tag;
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK) << c.tag;
+        r.started = true;
+        double elapsed = 0;
+        ASSERT_EQ(swmm_engine_step(r.e, &elapsed), SWMM_OK) << c.tag;
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const auto* clock = gw.clockState();
+        ASSERT_TRUE(clock && clock->schedule) << c.tag;
+        std::vector<char> bed(gw.state().n_cells, 0);
+        for (const auto& b : gw.nodeBeds())
+            if (b.cell >= 0)
+                bed[b.cell] = 1;
+        int beds = 0, others = 0;
+        for (int cell : clock->cells) {
+            const int floor = clock->schedule->floorRung(clock->dense[cell]);
+            EXPECT_EQ(floor, bed[cell] ? 0 : c.other) << c.tag << " cell " << cell;
+            ++(bed[cell] ? beds : others);
+        }
+        EXPECT_EQ(beds, c.nodes.empty() ? 0 : 1) << c.tag;
+        EXPECT_GT(others, 0) << c.tag;
+        finish(r);
+    }
+}
+
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3
     DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
     ASSERT_TRUE(r.opened);

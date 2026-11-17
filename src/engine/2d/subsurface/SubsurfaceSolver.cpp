@@ -480,10 +480,11 @@ std::string SubsurfaceSolver::initialize(const MeshData& mesh, const InertialEdg
         options_.base_step =
             exchanging > 0 ? GwOptions::kNodeBaseStep : GwOptions::kDefaultBaseStep;
         if (exchanging > 0 && options_.independent_clock)
-            warnings.emplace_back("2D aquifer: GW_BASE_STEP AUTO uses 0.125 s because " +
+            warnings.emplace_back("2D aquifer: GW_BASE_STEP AUTO uses 0.125 s for the cells "
+                                  "under the " +
                                   std::to_string(exchanging) +
-                                  " node bed(s) exchange with the aquifer; set GW_BASE_STEP to "
-                                  "choose another interval.");
+                                  " node bed(s) that exchange with the aquifer and 1 s for the "
+                                  "other cells; set GW_BASE_STEP to use one interval everywhere.");
     }
     pending_flag_.assign(static_cast<std::size_t>(n), 0);
     source_owned_.assign(n, false);
