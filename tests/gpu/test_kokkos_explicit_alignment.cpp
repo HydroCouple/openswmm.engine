@@ -10,6 +10,9 @@
  */
 
 #include "2d/coupling/NodeCoupling.hpp"
+#include "core/SimulationContext.hpp"
+#include "transport/components/ReactionModule/ReactionArdBinding.hpp"
+#include "transport/components/ReactionModule/ReactionExpression.hpp"
 #include "2d/data/BoundaryData.hpp"
 #include "data/NodeData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
@@ -1040,6 +1043,212 @@ void speciesExchange() {
     std::cout << "Transport rows through node drain/spill PASS\n";
 }
 /**
+ * @brief Compile a three-species reaction system for the stage checks.
+ *
+ * A decays into B through a shared term and reacts with the pollutant; B decays at a rate that
+ * depends on the cell temperature; C is the FORMULA sum of the two (or an EQUIL species, to make a
+ * system outside the device subset).
+ *
+ * @param[in,out] rx Receives the compiled system.
+ * @param[in] solver Integrator.
+ * @param[in] full FULL coupling: project C inside every rate evaluation.
+ * @param[in] variant 0 regular; 1 declares C EQUIL; 2 gives B a rate that overflows inside the step,
+ *     so the step fails after trial values were written.
+ */
+void compileReactions(openswmm::ReactionData& rx, openswmm::ReactionSolverKind solver, bool full,
+                      int variant) {
+    using openswmm::ReactionExprForm;
+    rx = openswmm::ReactionData{};
+    rx.species_name = {"A", "B", "C"};
+    rx.species_is_wall = {0, 0, 0};
+    rx.species_units = {"MG", "MG", "MG"};
+    rx.species_atol = {0.0, 1.0e-9, 0.0};
+    rx.species_rtol = {0.0, 1.0e-7, 0.0};
+    rx.coef_name = {"k1", "k2"};
+    rx.coef_is_param = {0, 0};
+    rx.coef_value = {0.31, 0.007};
+    rx.term_name = {"T1"};
+    rx.term_expr_src = {"k1 * A"};
+    rx.solver = solver;
+    rx.coupling = full ? openswmm::ReactionCoupling::FULL : openswmm::ReactionCoupling::NONE;
+    rx.rate_units = openswmm::ReactionRateUnits::SEC;
+    const std::vector<std::string> pollutants = {"P"};
+    auto compile = [&](const std::string& source, int max_term) {
+        openswmm::transport::RxSymbols symbols{&rx.species_name, &rx.coef_name, &rx.term_name,
+                                               &pollutants, max_term};
+        openswmm::RxExprSpan span;
+        int column = 0;
+        const std::string error = openswmm::transport::compileReactionExpression(
+            source, symbols, rx.token_pool, span, column);
+        require(error.empty(), ("reaction fixture: " + error).c_str());
+        return span;
+    };
+    rx.term_expr = {compile(rx.term_expr_src[0], 0)};
+    rx.pipe_expr_src = {"-T1 - k2 * A * P",
+                        variant == 2 ? "1e300 * (1 + B)" : "T1 - 0.1 * B * EXP(-TEMP / 50)",
+                        variant == 1 ? "C - A - B" : "A + B + 0.5 * C * STEP(-1)"};
+    rx.pipe_form = {ReactionExprForm::RATE, ReactionExprForm::RATE,
+                    variant == 1 ? ReactionExprForm::EQUIL : ReactionExprForm::FORMULA};
+    for (const auto& source : rx.pipe_expr_src)
+        rx.pipe_expr.push_back(compile(source, 1));
+    rx.tank_form.assign(3, ReactionExprForm::NONE);
+    rx.tank_expr.assign(3, openswmm::RxExprSpan{});
+    rx.tank_expr_src.assign(3, "");
+    rx.compiled = true;
+    rx.configured = true;
+}
+/**
+ * @brief The host stage after an advance, as SurfaceRouter2D::applyAgingAndReactions runs it.
+ *
+ * @param[in,out] ctx Pollutant decay rates, the reaction system and the reacted ledger.
+ * @param[in] m Mesh.
+ * @param[in,out] s State whose rows age, decay and react.
+ * @param[in] o Options (dry depth, unit factor).
+ * @param[in] dt Stage interval, seconds.
+ */
+void hostStage(openswmm::SimulationContext& ctx, const MeshData& m, SurfaceStateData& s,
+               const SolverOptions2D& o, double dt) {
+    auto& tr = s.transport;
+    const auto nt = static_cast<std::size_t>(tr.n_cells);
+    if (tr.age_row >= 0)
+        for (std::size_t c = 0; c < nt; ++c)
+            tr.cell_mass[std::size_t(tr.age_row) * nt + c] += dt * s.volume[c];
+    bool any_decay = false;
+    for (int p = 0; p < tr.n_pollut; ++p)
+        any_decay = any_decay || ctx.pollutants.k_decay[std::size_t(p)] != 0.0;
+    if (!any_decay && tr.n_msx == 0)
+        return;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    std::vector<double> phi(ns * nt, 0.0), a(nt, 0.0), dx(nt, 1.0);
+    for (std::size_t c = 0; c < nt; ++c) {
+        const double v = s.volume[c];
+        if (!(v > o.dry_depth * m.tri_area[c]))
+            continue;
+        a[c] = v * o.flow_2d_to_1d;
+        for (std::size_t r = 0; r < ns; ++r)
+            phi[r * nt + c] = tr.cell_mass[r * nt + c] / v;
+    }
+    openswmm::transport::reactArdStage(ctx, dt, phi.data(), a.data(), dx.data(),
+                                       static_cast<int>(nt), nullptr, nullptr, 0, tr.n_pollut,
+                                       static_cast<int>(ns), 0.0, tr.temp_row);
+    for (std::size_t c = 0; c < nt; ++c) {
+        if (a[c] == 0.0)
+            continue;
+        for (std::size_t r = 0; r < std::size_t(tr.n_pollut + tr.n_msx); ++r)
+            tr.cell_mass[r * nt + c] = phi[r * nt + c] * s.volume[c];
+    }
+}
+/**
+ * @brief Require the device reaction stage to reproduce the host stage bit for bit.
+ *
+ * Six rows (a decaying pollutant, three reaction species, age, temperature) on a mixed mesh with a
+ * dam break and rain, so cells are wet, dry and wetting. The CPU marcher is followed by the host
+ * stage; the Kokkos marcher is offered the stage and must run it for EUL and RK5 systems with and
+ * without FULL coupling and for decay alone, decline it for an EQUIL system (the host then runs
+ * it), and leave failing cells unchanged while reporting them. Cell masses and the decayed-mass
+ * ledger must match exactly. Requires initialized Kokkos; prints PASS or throws.
+ */
+void reactionStage() {
+    using openswmm::ReactionSolverKind;
+    struct Case {
+        const char* name;
+        ReactionSolverKind solver;
+        bool full, reactions, device;
+        int variant;
+        double decay;
+    };
+    const Case cases[] = {
+        {"RK5", ReactionSolverKind::RK5, false, true, true, 0, 0.004},
+        {"RK5 FULL", ReactionSolverKind::RK5, true, true, true, 0, 0.004},
+        {"EUL", ReactionSolverKind::EUL, false, true, true, 0, 0.0},
+        {"EUL FULL", ReactionSolverKind::EUL, true, true, true, 0, 0.004},
+        {"decay only", ReactionSolverKind::RK5, false, false, true, 0, 0.004},
+        {"age only", ReactionSolverKind::RK5, false, false, true, 0, 0.0},
+        {"EQUIL on the host", ReactionSolverKind::RK5, false, true, false, 1, 0.004},
+        {"ROS2 on the host", ReactionSolverKind::ROS2, false, true, false, 0, 0.004},
+        {"failing rate", ReactionSolverKind::RK5, false, true, true, 2, 0.004},
+    };
+    for (const Case& c : cases)
+        for (Momentum2D mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE}) {
+            auto m = mesh(8, 2, true, true);
+            auto a = state(m, .1);
+            auto o = options(4);
+            o.momentum = mode;
+            o.dispersion = .05;
+            for (int i = 0; i < m.n_cells(); ++i) {
+                a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                a.rainfall[i] = m.tri_cy[i] > 6 ? .01 : 0;
+            }
+            auto& tr = a.transport;
+            const int nm = c.reactions ? 3 : 0;
+            tr.resize(3 + nm, m.n_cells(), 0);
+            tr.n_pollut = 1;
+            tr.n_msx = nm;
+            tr.age_row = 1 + nm;
+            tr.temp_row = 2 + nm;
+            for (int i = 0; i < m.n_cells(); ++i) {
+                tr.cell_mass[tr.idx(0, i)] = (1.0 + m.tri_cx[i]) * a.volume[i];
+                if (nm) {
+                    tr.cell_mass[tr.idx(1, i)] = (2.0 + .3 * m.tri_cy[i]) * a.volume[i];
+                    tr.cell_mass[tr.idx(2, i)] = .25 * a.volume[i];
+                }
+                tr.cell_mass[tr.idx(tr.age_row, i)] = 100.0 * a.volume[i];
+                tr.cell_mass[tr.idx(tr.temp_row, i)] = (8.0 + m.tri_cy[i]) * a.volume[i];
+            }
+            tr.rain_conc = {2.5};
+            openswmm::SimulationContext ca, cb;
+            for (auto* ctx : {&ca, &cb}) {
+                ctx->pollutants.k_decay = {c.decay};
+                ctx->mass_balance.qual_routing_reacted.assign(1, 0.0);
+                if (c.reactions)
+                    compileReactions(ctx->reactions, c.solver, c.full, c.variant);
+            }
+            auto b = a;
+            auto oa = o, ob = o;
+            ExplicitInertialSolver cpu;
+            gpu::ExplicitKokkosSurfaceSolver kk;
+            cpu.initialize(m, a, oa);
+            kk.initialize(m, b, ob);
+            double t = 0;
+            long failed = 0;
+            for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                const double dt = end - t;
+                auto& stage = b.transport.stage;
+                stage.requested = true;
+                stage.done = false;
+                stage.dt = dt;
+                stage.volume_to_1d = ob.flow_2d_to_1d;
+                stage.dry_depth = ob.dry_depth;
+                stage.decays = {static_cast<unsigned char>(c.decay != 0.0)};
+                stage.decay_factor = {c.decay != 0.0 ? std::exp(-c.decay * dt) : 1.0};
+                stage.reactions = c.reactions ? &cb.reactions : nullptr;
+                cpu.advance(t, end);
+                kk.advance(t, end);
+                hostStage(ca, m, a, oa, dt);
+                const std::string tag = std::string("reaction stage ") + c.name +
+                                        " mode=" + std::to_string(static_cast<int>(mode)) + " ";
+                require(stage.done == c.device, (tag + "device/host choice").c_str());
+                if (stage.done) {
+                    if (stage.decays[0])
+                        cb.mass_balance.qual_routing_reacted[0] += stage.removed[0];
+                    failed += stage.failed_cells;
+                } else {
+                    hostStage(cb, m, b, ob, dt);
+                }
+                exact(b.volume, a.volume, tag + "volume");
+                exact(b.transport.cell_mass, a.transport.cell_mass, tag + "cell mass");
+                exact(cb.mass_balance.qual_routing_reacted, ca.mass_balance.qual_routing_reacted,
+                      tag + "decayed mass");
+                t = end;
+            }
+            require((failed > 0) == (c.variant == 2), "reaction stage: failed cells reported");
+            if (c.decay != 0.0)
+                require(ca.mass_balance.qual_routing_reacted[0] > 0.0,
+                        "reaction stage: nothing decayed");
+        }
+    std::cout << "Device reaction stage (age, decay, EUL/RK5 reactions) bit identity PASS\n";
+}
+/**
  * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit with the optional
  * momentum physics enabled.
  *
@@ -1793,7 +2002,14 @@ int main(int argc, char** argv) {
             speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
             speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2, GROUNDWATER NO", 2, 0);
             speciesExchange();
+            reactionStage();
         };
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "stage") { // the reaction stage alone
+            reactionStage();
+            Kokkos::finalize();
+            return 0;
+        }
         if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
             only && std::string(only) == "rows") {
             rowChecks();

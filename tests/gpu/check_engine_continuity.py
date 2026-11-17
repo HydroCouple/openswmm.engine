@@ -70,6 +70,11 @@ def main():
     parser.add_argument("--quality", action="store_true",
                         help="add transport rows; the binary output and the quality continuity "
                              "tables must then be identical")
+    parser.add_argument("--reactions", action="store_true",
+                        help="with --quality: add a two-species reaction system (RK5, FULL "
+                             "coupling) whose species ride the 2D surface")
+    parser.add_argument("--expect-log", metavar="TEXT",
+                        help="the OpenMP run's log must contain TEXT")
     parser.add_argument("--expect-refusal", metavar="TEXT",
                         help="the plugin must be refused with a notice containing TEXT, and the "
                              "run must match the CPU run exactly because it is the CPU marcher")
@@ -103,6 +108,21 @@ def main():
         deck += ("\n[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\n"
                  "P1 MG/L 2.5 0 0 0.5\n"
                  "\n[2D_INITIAL_QUALITY]\n* P1 10\n")
+    reactions = None
+    if args.reactions:
+        if not args.quality:
+            raise AssertionError("--reactions requires --quality")
+        # A decays into B at a rate that depends on the pollutant; both start on the mesh.
+        reactions = ("[REACTION_OPTIONS]\nSOLVER RK5\nCOUPLING FULL\nRATE_UNITS HR\n"
+                     "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
+                     "[REACTION_COEFFICIENTS]\nPARAMETER k 0.3\n"
+                     "[REACTION_TERMS]\nloss k * A * (1 + 0.01 * P1)\n"
+                     "[REACTION_PIPES]\nRATE A -loss\nRATE B loss - 0.05 * B\n"
+                     "[REACTION_TANKS]\nRATE A -loss\nRATE B loss - 0.05 * B\n"
+                     "[REACTION_QUALITY]\nGLOBAL A 1\n")
+        deck += ("\n[PROCESS_COMPONENTS]\n"
+                 "org.hydrocouple.openswmm.reactions config=\"model.rxn\"\n"
+                 "\n[2D_INITIAL_QUALITY]\n* A 4\n* B 0.5\n")
     results = {}
     outputs = {}
     tables = {}
@@ -112,6 +132,8 @@ def main():
         inp = work / "model.inp"
         report = work / "model.rpt"
         inp.write_text(deck)
+        if reactions:
+            (work / "model.rxn").write_text(reactions)
         report.unlink(missing_ok=True)
         env = dict(os.environ, OPENSWMM_2D_BACKEND=backend,
                    OPENSWMM_GPU_PLUGIN_PATH=str(args.plugin_dir.resolve()),
@@ -138,6 +160,8 @@ def main():
                 raise AssertionError(f"refusal notice lacks {args.expect_refusal!r}")
         elif backend == "omp" and not selected:
             raise AssertionError("OpenMP plugin was not selected; CPU fallback cannot pass")
+        if backend == "omp" and args.expect_log and args.expect_log not in run.stdout:
+            raise AssertionError(f"OpenMP run log lacks {args.expect_log!r}")
         results[backend] = continuity(report)
         if args.quality:
             outputs[backend] = binary.read_bytes()

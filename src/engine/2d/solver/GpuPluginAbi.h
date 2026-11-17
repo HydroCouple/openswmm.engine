@@ -97,7 +97,9 @@ extern "C" {
 /* v14: SurfaceStateData adds the boundary species receipt arrays a plugin publishes
  * (boundary_requested_mass, boundary_applied_mass), so its layout changes. Capability bit 12
  * (surface heat exchange) is new. Rebuild surface plugins. */
-#define OPENSWMM_GPU_ABI_VERSION 14
+/* v15: SurfaceTransportState adds the reaction stage request (SurfaceReactionStage), so the
+ * SurfaceStateData layout changes. Rebuild surface plugins. */
+#define OPENSWMM_GPU_ABI_VERSION 15
 
 /**
  * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)

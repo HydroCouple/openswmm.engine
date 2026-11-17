@@ -65,7 +65,39 @@
 #include <vector>
 #include <map>
 
+namespace openswmm {
+struct ReactionData;
+}
+
 namespace openswmm::twoD {
+
+/**
+ * @brief The Lie-split stage after a surface advance (aging, first-order decay, reactions), as a
+ * request a solver may serve on its own state.
+ *
+ * @details The router fills the request before each advance. A solver that holds the rows on a
+ * device may run the stage there at the end of the advance and set @c done; the router then
+ * only books the results. A solver that leaves @c done false gets the host stage, so a solver
+ * that knows nothing of this struct stays correct.
+ */
+struct SurfaceReactionStage {
+    bool requested = false;    ///< router: run the stage after this advance if you can
+    bool done = false;         ///< solver: the stage ran; the host must not repeat it
+    double dt = 0.0;           ///< stage interval, seconds
+    double volume_to_1d = 1.0; ///< m3 to the 1D volume unit the reacted ledger uses
+    double dry_depth = 0.0;    ///< cells at or below this depth do not react, m
+    /// [n_pollut] exp(-k dt) and whether the pollutant decays (k != 0).
+    std::vector<double> decay_factor;
+    std::vector<unsigned char> decays;
+    /// Compiled reaction system whose species occupy the rows after the pollutants, or null.
+    const ReactionData* reactions = nullptr;
+    // ---- results, valid when done ------------------------------------------------------
+    std::vector<double> removed; ///< [n_pollut] decayed mass in 1D units, summed in cell order
+    long failed_cells = 0;       ///< wet cells whose reaction step failed (left unchanged)
+    int first_failed_cell = -1;
+    int first_failed_status = 0; ///< transport::rxk::Status of that cell
+    long clamped_cells = 0;      ///< wet cells where a negative RATE species was floored
+};
 
 struct SurfaceTransportState {
     int n_species = 0; ///< rows carried; 0 ⇒ transport is off everywhere
@@ -202,6 +234,9 @@ struct SurfaceTransportState {
     /// spill does NOT use this — it is booked live in the marcher from the
     /// node's concentration.
     std::vector<double> coupling_src;
+
+    /// The reaction stage request and its results (see SurfaceReactionStage).
+    SurfaceReactionStage stage;
 
     /**
      * @brief Test whether cell transport arrays have a nonempty layout.

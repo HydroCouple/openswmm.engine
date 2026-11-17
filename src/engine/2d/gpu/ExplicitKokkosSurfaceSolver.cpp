@@ -50,6 +50,8 @@
 #include "../solver/SweKernels.hpp"
 #include "../solver/SurfaceCapabilities.hpp"
 #include "../../data/NodeData.hpp"
+#include "../../data/ReactionData.hpp"
+#include "../../transport/components/ReactionModule/ReactionExplicitKernel.hpp"
 
 namespace openswmm::twoD::gpu {
 
@@ -3304,6 +3306,263 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
     publishSpecies();
 }
 
+void ExplicitKokkosSurfaceSolver::buildReactionProgram(const ReactionData& rx) {
+    namespace rxk = openswmm::transport::rxk;
+    rx_checked_ = true;
+    rx_device_ = false;
+    const int n = rx.n_species();
+    const char* reason = nullptr;
+    if (!rx.compiled || n <= 0 || n != state_->transport.n_msx ||
+        rx.pipe_form.size() != std::size_t(n) || rx.pipe_expr.size() != std::size_t(n))
+        reason = "the reaction system does not match the surface rows";
+    else if (rx.solver != ReactionSolverKind::EUL && rx.solver != ReactionSolverKind::RK5)
+        reason = "SOLVER is not EUL or RK5";
+    else if (n > rxk::kDeviceMaxSpecies || rx.term_expr.size() > std::size_t(rxk::kDeviceMaxTerms))
+        reason = "the system has more species or terms than the device kernel holds";
+    for (int s = 0; s < n && !reason; ++s)
+        if (rx.pipe_form[s] == ReactionExprForm::EQUIL)
+            reason = "a species is declared EQUIL";
+    if (reason) {
+        std::fprintf(stderr,
+                     "[openswmm 2D] surface reactions: device transport with host reactions "
+                     "(%s).\n",
+                     reason);
+        return;
+    }
+    // The terms an active expression reaches, directly or through another
+    // term (== ReactionIntegrator::step).
+    std::vector<unsigned char> needed(rx.term_expr.size(), 0);
+    std::vector<int> rate, formula;
+    for (int s = 0; s < n; ++s) {
+        if (rx.pipe_form[s] != ReactionExprForm::NONE)
+            rxk::markTerms(rx.token_pool.data(), rx.pipe_expr[s], needed.data());
+        if (rx.pipe_form[s] == ReactionExprForm::RATE)
+            rate.push_back(s);
+        else if (rx.pipe_form[s] == ReactionExprForm::FORMULA)
+            formula.push_back(s);
+    }
+    for (int term = int(rx.term_expr.size()) - 1; term >= 0; --term)
+        if (needed[term])
+            rxk::markTerms(rx.token_pool.data(), rx.term_expr[term], needed.data());
+    auto upload = [](auto& view, const char* name, const auto& values) {
+        using View = std::decay_t<decltype(view)>;
+        view =
+            View(Kokkos::view_alloc(Kokkos::WithoutInitializing, std::string(name)), values.size());
+        Kokkos::View<const typename View::value_type*, Kokkos::HostSpace,
+                     Kokkos::MemoryTraits<Kokkos::Unmanaged>>
+            host(values.data(), values.size());
+        Kokkos::deep_copy(view, host);
+    };
+    upload(d_rx_pool_, "rx_pool", rx.token_pool);
+    upload(d_rx_term_, "rx_term_expr", rx.term_expr);
+    upload(d_rx_expr_, "rx_species_expr", rx.pipe_expr);
+    upload(d_rx_needed_, "rx_term_needed", needed);
+    d_rx_rate_ = devCopy("rx_rate_idx", rate);
+    d_rx_formula_ = devCopy("rx_formula_idx", formula);
+    d_rx_atol_ = devCopy("rx_species_atol", rx.species_atol);
+    d_rx_rtol_ = devCopy("rx_species_rtol", rx.species_rtol);
+    d_rx_coef_ = devCopy("rx_coefficients", rx.coef_value);
+    rx_device_ = true;
+    std::fprintf(stderr,
+                 "[openswmm 2D] surface reactions: device transport with device reactions "
+                 "(%d species, %zu terms, %s).\n",
+                 n, rx.term_expr.size(), rx.solver == ReactionSolverKind::EUL ? "EUL" : "RK5");
+}
+
+void ExplicitKokkosSurfaceSolver::runReactionStage() {
+    namespace rxk = openswmm::transport::rxk;
+    if (!species_)
+        return;
+    auto& tr = state_->transport;
+    auto& stage = tr.stage;
+    if (!stage.requested)
+        return;
+    const int nt = mesh_->n_triangles();
+    const int np = tr.n_pollut, nm = tr.n_msx;
+    if (np > rxk::kDeviceMaxPollutants || stage.decay_factor.size() != std::size_t(np) ||
+        stage.decays.size() != std::size_t(np) || np + nm > ns_)
+        return; // the host runs the stage
+    const ReactionData* rx = stage.reactions;
+    bool react = false;
+    if (nm > 0 && rx) {
+        if (!rx_checked_)
+            buildReactionProgram(*rx);
+        if (!rx_device_)
+            return; // device transport, host reactions
+        react = true;
+    }
+    bool any_decay = false;
+    for (unsigned char d : stage.decays)
+        any_decay = any_decay || d != 0;
+    // The host stage converts wet cells to concentrations and back whenever
+    // a pollutant decays or reaction rows exist; that round trip is part of
+    // the result, so it is repeated here.
+    const bool round_trip = any_decay || nm != 0;
+
+    // Per pollutant: the factor, the loss fraction and whether it decays.
+    std::vector<double> decay(3 * std::size_t(np), 0.0);
+    for (int p = 0; p < np; ++p) {
+        decay[3 * p] = stage.decay_factor[p];
+        decay[3 * p + 1] = 1.0 - stage.decay_factor[p];
+        decay[3 * p + 2] = stage.decays[p] ? 1.0 : 0.0;
+    }
+    if (d_rx_decay_.extent(0) != decay.size())
+        d_rx_decay_ = DView("rx_decay", decay.size());
+    devRefresh(d_rx_decay_, decay);
+    if (round_trip && d_rx_removed_.extent(0) != std::size_t(np) * nt)
+        d_rx_removed_ = DView("rx_removed", std::size_t(np) * nt);
+    if (round_trip && d_rx_status_.extent(0) != std::size_t(nt))
+        d_rx_status_ = IView("rx_status", nt);
+
+    rxk::Program program;
+    double default_temp = 0.0;
+    if (react) {
+        program.pool = d_rx_pool_.data();
+        program.term_expr = d_rx_term_.data();
+        program.needed = d_rx_needed_.data();
+        program.expr = d_rx_expr_.data();
+        program.rate_idx = d_rx_rate_.data();
+        program.formula_idx = d_rx_formula_.data();
+        program.species_atol = d_rx_atol_.data();
+        program.species_rtol = d_rx_rtol_.data();
+        program.n_terms = static_cast<int>(d_rx_term_.extent(0));
+        program.n_species = nm;
+        program.n_rate = static_cast<int>(d_rx_rate_.extent(0));
+        program.n_formula = static_cast<int>(d_rx_formula_.extent(0));
+        program.solver =
+            rx->solver == ReactionSolverKind::EUL ? rxk::kSolverEuler : rxk::kSolverRk5;
+        program.full_coupling = rx->coupling == ReactionCoupling::FULL;
+        program.atol = rx->atol;
+        program.rtol = rx->rtol;
+        program.factor = rxk::rateUnitFactor(static_cast<int>(rx->rate_units));
+        default_temp = rx->default_temp_c;
+    }
+    auto mass = d_cmass_, vol = d_volume_, area = d_tri_area_;
+    auto decay_v = d_rx_decay_, removed = d_rx_removed_, coefs = d_rx_coef_;
+    auto status = d_rx_status_;
+    const int age_row = tr.age_row, temp_row = tr.temp_row;
+    const double dt = stage.dt, scale = stage.volume_to_1d, dry_h = stage.dry_depth;
+    Kokkos::parallel_for(
+        "reactionStage", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
+            const double v = vol(i);
+            // d(age)/dt = 1: the age row is an age-volume.
+            if (age_row >= 0)
+                mass(age_row * nt + i) += dt * v;
+            if (!round_trip)
+                return;
+            for (int p = 0; p < np; ++p)
+                removed(p * nt + i) = 0.0;
+            status(i) = 0;
+            if (!(v > dry_h * area(i)))
+                return;                 // dry: untouched
+            const double a = v * scale; // 1D volume units
+            double phi[rxk::kDeviceMaxPollutants + rxk::kDeviceMaxSpecies];
+            for (int s = 0; s < np + nm; ++s)
+                phi[s] = mass(s * nt + i) / v;
+            // Exact exponential decay; the removed mass is booked per cell.
+            for (int p = 0; p < np; ++p) {
+                if (decay_v(3 * p + 2) == 0.0)
+                    continue;
+                if (phi[p] > 0.0)
+                    removed(p * nt + i) = a * phi[p] * decay_v(3 * p + 1);
+                phi[p] *= decay_v(3 * p);
+                if (phi[p] < 0.0)
+                    phi[p] = 0.0;
+            }
+            if (react) {
+                double species[rxk::kDeviceMaxSpecies], hydvar[static_cast<int>(RxHydVar::COUNT_)];
+                double terms[rxk::kDeviceMaxTerms];
+                double y[rxk::kDeviceMaxSpecies], ytmp[rxk::kDeviceMaxSpecies];
+                double rates[rxk::kDeviceMaxSpecies], err[rxk::kDeviceMaxSpecies];
+                double k1[rxk::kDeviceMaxSpecies], k2[rxk::kDeviceMaxSpecies];
+                double k3[rxk::kDeviceMaxSpecies], k4[rxk::kDeviceMaxSpecies];
+                double k5[rxk::kDeviceMaxSpecies], k6[rxk::kDeviceMaxSpecies];
+                for (int m = 0; m < nm; ++m)
+                    species[m] = phi[np + m];
+                for (int h = 0; h < static_cast<int>(RxHydVar::COUNT_); ++h)
+                    hydvar[h] = 0.0;
+                hydvar[static_cast<int>(RxHydVar::DT)] = dt;
+                // The cell's own temperature row when the mesh carries one.
+                hydvar[static_cast<int>(RxHydVar::TEMP)] =
+                    temp_row >= 0 ? mass(temp_row * nt + i) / v : default_temp;
+                rxk::Work work;
+                work.terms = terms;
+                work.y = y;
+                work.ytmp = ytmp;
+                work.rates = rates;
+                work.err = err;
+                work.k1 = k1;
+                work.k2 = k2;
+                work.k3 = k3;
+                work.k4 = k4;
+                work.k5 = k5;
+                work.k6 = k6;
+                const rxk::Result done =
+                    rxk::explicitStep(program, dt, species, hydvar, phi, coefs.data(), work);
+                if (done.status == rxk::kOk) {
+                    // A negative RATE species is floored where it is produced.
+                    bool clamped = false;
+                    for (int k = 0; k < program.n_rate; ++k) {
+                        const int m = program.rate_idx[k];
+                        if (species[m] < 0.0) {
+                            species[m] = 0.0;
+                            clamped = true;
+                        }
+                    }
+                    if (clamped)
+                        status(i) = -1;
+                    for (int m = 0; m < nm; ++m)
+                        phi[np + m] = species[m];
+                } else {
+                    status(i) = done.status; // the cell keeps its state
+                }
+            }
+            for (int s = 0; s < np + nm; ++s)
+                mass(s * nt + i) = phi[s] * v;
+        });
+    stage.removed.assign(std::size_t(np), 0.0);
+    stage.failed_cells = stage.clamped_cells = 0;
+    stage.first_failed_cell = -1;
+    stage.first_failed_status = 0;
+    if (round_trip && any_decay) {
+        species_host_.resize(d_rx_removed_.extent(0));
+        hostRefresh(species_host_, d_rx_removed_);
+        for (int p = 0; p < np; ++p) {
+            double sum = 0.0;
+            const double* cells = species_host_.data() + std::size_t(p) * nt;
+            for (int i = 0; i < nt; ++i)
+                sum += cells[i];
+            stage.removed[p] = sum;
+        }
+    }
+    if (react) {
+        long failed = 0, clamped = 0;
+        int first = nt;
+        Kokkos::parallel_reduce(
+            "reactionStage_failed", Kokkos::RangePolicy<ExecSpace>(0, nt),
+            KOKKOS_LAMBDA(int i, long& n) { n += status(i) > 0 ? 1 : 0; }, failed);
+        Kokkos::parallel_reduce(
+            "reactionStage_clamped", Kokkos::RangePolicy<ExecSpace>(0, nt),
+            KOKKOS_LAMBDA(int i, long& n) { n += status(i) < 0 ? 1 : 0; }, clamped);
+        stage.failed_cells = failed;
+        stage.clamped_cells = clamped;
+        if (failed > 0) {
+            Kokkos::parallel_reduce(
+                "reactionStage_first", Kokkos::RangePolicy<ExecSpace>(0, nt),
+                KOKKOS_LAMBDA(int i, int& lowest) {
+                    if (status(i) > 0 && i < lowest)
+                        lowest = i;
+                },
+                Kokkos::Min<int>(first));
+            auto one = Kokkos::create_mirror_view_and_copy(
+                Kokkos::HostSpace(), Kokkos::subview(status, std::make_pair(first, first + 1)));
+            stage.first_failed_cell = first;
+            stage.first_failed_status = one(0);
+        }
+    }
+    stage.done = true;
+}
+
 void ExplicitKokkosSurfaceSolver::pushSpecies() {
     if (!species_)
         return;
@@ -3558,6 +3817,7 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
     Kokkos::Profiling::popRegion();
 
     Kokkos::Profiling::pushRegion("openswmm_2d_advance_publish");
+    runReactionStage();
     publishAndCopyBack(t_current, t_target);
     Kokkos::Profiling::popRegion();
     return t_target;

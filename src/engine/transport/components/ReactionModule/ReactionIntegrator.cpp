@@ -42,6 +42,7 @@
 #include <limits>
 
 #include "ReactionExpression.hpp"
+#include "ReactionExplicitKernel.hpp"
 
 namespace openswmm::transport {
 
@@ -62,16 +63,7 @@ constexpr int kJacMaxAge = 20;
  * @return 1,1/60,1/3600 or1/86400. Pure/allocation-free; no model time mutation.
  */
 double unitFactor(ReactionRateUnits u) {
-    switch (u) {
-    case ReactionRateUnits::SEC:
-        return 1.0;
-    case ReactionRateUnits::MIN:
-        return 1.0 / 60.0;
-    case ReactionRateUnits::HR:
-        return 1.0 / 3600.0;
-    default:
-        return 1.0 / 86400.0;
-    }
+    return rxk::rateUnitFactor(static_cast<int>(u));
 }
 
 /**
@@ -459,6 +451,54 @@ RxStepReport ReactionIntegrator::step(const ReactionData& rx,
     for (int term = int(rx.term_expr.size()) - 1; term >= 0; --term)
         if (ws.term_needed_[term])
             mark(rx.term_expr[term]);
+
+    // RATE and FORMULA species under Euler or RK5, with one rate context:
+    // the portable kernel the device marcher also runs. Everything else
+    // (EQUIL species, the implicit solvers, shared contexts) continues below.
+    if (contexts.empty() && ws.equil_idx_.empty() &&
+        (rx.solver == ReactionSolverKind::EUL || rx.solver == ReactionSolverKind::RK5)) {
+        ws.jac_valid_ = false;
+        ws.lu_valid_ = false;
+        rxk::Program program;
+        program.pool = rx.token_pool.data();
+        program.term_expr = rx.term_expr.data();
+        program.needed = ws.term_needed_.data();
+        program.expr = spans.data();
+        program.rate_idx = ws.rate_idx_.data();
+        program.formula_idx = ws.formula_idx_.data();
+        program.species_atol = rx.species_atol.data();
+        program.species_rtol = rx.species_rtol.data();
+        program.kinetic_scale = kinetic_scale;
+        program.n_terms = static_cast<int>(rx.term_expr.size());
+        program.n_species = n;
+        program.n_rate = static_cast<int>(ws.rate_idx_.size());
+        program.n_formula = static_cast<int>(ws.formula_idx_.size());
+        program.solver = rx.solver == ReactionSolverKind::EUL ? rxk::kSolverEuler : rxk::kSolverRk5;
+        program.full_coupling = rx.coupling == ReactionCoupling::FULL;
+        program.atol = rx.atol;
+        program.rtol = rx.rtol;
+        program.factor = factor;
+        rxk::Work work;
+        work.terms = ws.terms_.data();
+        work.y = ws.y_.data();
+        work.ytmp = ws.ytmp_.data();
+        work.rates = ws.rates_.data();
+        work.err = ws.err_.data();
+        work.k1 = ws.k1_.data();
+        work.k2 = ws.k2_.data();
+        work.k3 = ws.k3_.data();
+        work.k4 = ws.k4_.data();
+        work.k5 = ws.k5_.data();
+        work.k6 = ws.k6_.data();
+        const rxk::Result done =
+            rxk::explicitStep(program, dt, species, hydvar, pollutants, coefficients, work);
+        rep.ok = done.status == rxk::kOk;
+        rep.interval_limit = done.interval_limit;
+        rep.substeps = done.substeps;
+        if (!rep.ok)
+            rep.error = rxk::statusMessage(done.status);
+        return rep;
+    }
 
     // Build and factor I - scale*J into ws.lu_, reusing the existing
     // factorization when both the Jacobian and `scale` are unchanged. A

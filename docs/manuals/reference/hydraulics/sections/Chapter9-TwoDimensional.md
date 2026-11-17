@@ -2836,9 +2836,20 @@ the runoff volumes and the per-point drained mass match the CPU marcher
 bit for bit under every closure. Run totals (the mass ledgers) are summed
 on the host from one slot per cell, boundary edge or exchange point, so
 they do not depend on the thread count; they agree with the CPU marcher's
-to rounding, because the CPU marcher adds per-thread subtotals. Aging,
-first-order decay, reactions, buildup and washoff run on the host between
-advances, on the masses the plugin copies back.
+to rounding, because the CPU marcher adds per-thread subtotals.
+
+The stage that follows each advance also runs in the plugin: water
+aging, first-order pollutant decay and, for a reaction system of `RATE`
+and `FORMULA` species under `SOLVER EUL` or `RK5`, the reactions
+themselves, one wet cell per kernel thread. The host integrator and the
+plugin run the same kernel source, and the decayed mass is summed on the
+host in cell order, so the result matches the host stage bit for bit on
+OpenMP. A system with an `EQUIL` species, an implicit solver (`ROS2`,
+`BDF2`) or more than 16 species or 48 terms keeps its reactions on the
+host, on the masses the plugin copies back; the run log says which side
+runs them. A cell whose reaction step fails keeps its state and is
+reported, as on the host, except that the plugin does not integrate dry
+cells and so never reports one. Buildup and washoff run on the host.
 
 A model that exchanges heat between the surface water and the atmosphere
 or the bed (`HEAT_MODEL COUPLED`) is

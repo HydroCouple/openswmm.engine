@@ -59,6 +59,7 @@
 
 #include "../solver/ISurfaceSolver.hpp"
 #include "../solver/InertialEdges.hpp"
+#include "../../data/ReactionTokens.hpp"
 #include "KokkosTypes.hpp"
 #include "KokkosPerfCounters.hpp"
 
@@ -66,6 +67,11 @@ namespace openswmm::twoD::gpu {
 
 struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
 struct SpeciesRows; // device transport rows and their kernels (KokkosSpeciesKernels.hpp)
+} // namespace openswmm::twoD::gpu
+namespace openswmm {
+struct ReactionData;
+}
+namespace openswmm::twoD::gpu {
 
 class ExplicitKokkosSurfaceSolver final : public ISurfaceSolver {
 public:
@@ -353,6 +359,16 @@ private:
     DView d_rk_bcg0_, d_rk_bcl0_, d_rk_bcrm0_, d_rk_bcam0_, d_rk_cpg0_;
     std::vector<double> species_host_; ///< drain scratch
 
+    // The reaction stage on the device (SurfaceReactionStage): the compiled reaction system
+    // as device arrays, decided once, plus per-cell results the host folds.
+    bool rx_checked_ = false; ///< the reaction system was examined
+    bool rx_device_ = false;  ///< it is within the device subset and uploaded
+    Kokkos::View<RxToken*, MemSpace> d_rx_pool_;
+    Kokkos::View<RxExprSpan*, MemSpace> d_rx_term_, d_rx_expr_;
+    Kokkos::View<unsigned char*, MemSpace> d_rx_needed_;
+    IView d_rx_rate_, d_rx_formula_, d_rx_status_;
+    DView d_rx_atol_, d_rx_rtol_, d_rx_coef_, d_rx_decay_, d_rx_removed_;
+
     // ---- host mirrors / control -------------------------------------------
     std::array<int, 9> tier_off_{};  ///< cells_compact_ segment offsets
     std::array<int, 9> ftier_off_{}; ///< edges_compact_ segment offsets
@@ -497,6 +513,24 @@ public:
      * them. No-op for a water-only model.
      */
     void publishSpecies();
+    /**
+     * @brief Run the stage the router requested for the end of this advance on the device rows:
+     * aging, first-order decay and, for a reaction system within the device subset, its
+     * reactions.
+     * @note Follows SurfaceRouter2D::applyAgingAndReactions and transport::reactArdStage cell
+     * for cell: wet cells react on concentrations and write mass back; the decayed mass is
+     * written per cell and summed on the host in cell order. Sets the stage's @c done flag, or
+     * leaves it false so the host runs the stage (a reaction system outside the subset). Dry
+     * cells are skipped, so a failure the host would report for a dry cell is not reported.
+     */
+    void runReactionStage();
+    /**
+     * @brief Examine the reaction system once and upload it when the device can integrate it.
+     * @param[in] rx Compiled reaction system whose species are the rows after the pollutants.
+     * @note Device subset: RATE and FORMULA species under the EUL or RK5 solver, within the
+     * kDeviceMax* sizes. Prints which side runs the reactions.
+     */
+    void buildReactionProgram(const ReactionData& rx);
     /**
      * @brief FULL_SWE face kernel: first-order Godunov flux with hydrostatic reconstruction.
      * @param[in] lo First index into the compact edge list.

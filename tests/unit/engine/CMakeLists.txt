@@ -772,7 +772,8 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     # concentration, water age and dispersion. Their binary output and quality continuity
     # tables must match the CPU run exactly.
     foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe
-                  swe_o2 quad_swe_o2 species species_dw species_swe species_quad_swe_o2)
+                  swe_o2 quad_swe_o2 species species_dw species_swe species_quad_swe_o2
+                  reactions reactions_swe)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
@@ -816,6 +817,12 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
             set(_extra --quality --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
                 --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "reactions")
+            # The reaction species ride the surface and react in the plugin's own stage.
+            set(_extra --quality --reactions --expect-log "device transport with device reactions")
+        elseif(_case STREQUAL "reactions_swe")
+            set(_extra --quality --reactions --momentum FULL_SWE
+                --expect-log "device transport with device reactions")
         endif()
         add_test(NAME test_engine_2d_omp_${_case}
             COMMAND ${Python3_EXECUTABLE}

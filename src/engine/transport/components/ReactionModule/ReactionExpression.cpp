@@ -24,6 +24,7 @@
  */
 
 #include "ReactionExpression.hpp"
+#include "ReactionExplicitKernel.hpp"
 #include "../../../data/ReactionData.hpp"
 
 #include <cctype>
@@ -590,100 +591,9 @@ std::string compileReactionExpression(const std::string& src, const RxSymbols& s
  */
 double evalReactionExpression(const std::vector<RxToken>& pool, const RxExprSpan& span,
                               const RxEvalEnv& env) noexcept {
-    // D-R9: len == 0 is the documented "no expression" encoding — it must
-    // be safe regardless of caller discipline (the R2 validator caught the
-    // uninitialized-read alternative). Callers may ALSO skip empty spans;
-    // this branch is the contract, their skip is the optimization.
-    if (span.len <= 0)
-        return 0.0;
-    double st[kRxMaxStackDepth];
-    int sp = 0;
-    const RxToken* t = pool.data() + span.begin;
-    const RxToken* end = t + span.len;
-    for (; t != end; ++t) {
-        switch (t->op) {
-        case RxToken::PUSH_NUM:
-            st[sp++] = t->value;
-            break;
-        case RxToken::PUSH_SPECIES:
-            st[sp++] = env.species[t->idx];
-            break;
-        case RxToken::PUSH_COEF:
-            st[sp++] = env.coefs[t->idx];
-            break;
-        case RxToken::PUSH_TERM:
-            st[sp++] = env.terms[t->idx];
-            break;
-        case RxToken::PUSH_HYDVAR:
-            st[sp++] = env.hydvar[t->idx];
-            break;
-        case RxToken::PUSH_POLLUT:
-            st[sp++] = env.pollutants[t->idx];
-            break;
-        case RxToken::ADD:
-            --sp;
-            st[sp - 1] += st[sp];
-            break;
-        case RxToken::SUB:
-            --sp;
-            st[sp - 1] -= st[sp];
-            break;
-        case RxToken::MUL:
-            --sp;
-            st[sp - 1] *= st[sp];
-            break;
-        case RxToken::DIV:
-            --sp;
-            st[sp - 1] /= st[sp];
-            break;
-        case RxToken::POW:
-            --sp;
-            st[sp - 1] = std::pow(st[sp - 1], st[sp]);
-            break;
-        case RxToken::NEG:
-            st[sp - 1] = -st[sp - 1];
-            break;
-        case RxToken::F_EXP:
-            st[sp - 1] = std::exp(st[sp - 1]);
-            break;
-        case RxToken::F_LOG:
-            st[sp - 1] = std::log(st[sp - 1]);
-            break;
-        case RxToken::F_LOG10:
-            st[sp - 1] = std::log10(st[sp - 1]);
-            break;
-        case RxToken::F_SQRT:
-            st[sp - 1] = std::sqrt(st[sp - 1]);
-            break;
-        case RxToken::F_ABS:
-            st[sp - 1] = std::fabs(st[sp - 1]);
-            break;
-        case RxToken::F_SGN:
-            st[sp - 1] = (st[sp - 1] > 0.0) ? 1.0 : (st[sp - 1] < 0.0) ? -1.0 : 0.0;
-            break;
-        case RxToken::F_STEP:
-            st[sp - 1] = (st[sp - 1] > 0.0) ? 1.0 : 0.0;
-            break;
-        case RxToken::F_SIN:
-            st[sp - 1] = std::sin(st[sp - 1]);
-            break;
-        case RxToken::F_COS:
-            st[sp - 1] = std::cos(st[sp - 1]);
-            break;
-        case RxToken::F_TAN:
-            st[sp - 1] = std::tan(st[sp - 1]);
-            break;
-        case RxToken::F_MIN:
-            --sp;
-            st[sp - 1] = (st[sp - 1] < st[sp]) ? st[sp - 1] : st[sp];
-            break;
-        case RxToken::F_MAX:
-            --sp;
-            st[sp - 1] = (st[sp - 1] > st[sp]) ? st[sp - 1] : st[sp];
-            break;
-        }
-    }
-    return st[0];
+    // One evaluator for the host and the device kernels (ReactionExplicitKernel.hpp).
+    return rxk::evalExpr(pool.data(), span, env.species, env.coefs, env.terms, env.hydvar,
+                         env.pollutants);
 }
 
 // ---------------------------------------------------------------------------

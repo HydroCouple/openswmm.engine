@@ -42,6 +42,8 @@
 #include "../core/ThreadInfo.hpp"
 #include "../hydrology/Gage.hpp"
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp" // S4
+#include "../transport/components/ReactionModule/ReactionExplicitKernel.hpp"
+#include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
 #include "../transport/TransportPolicy.hpp"                              // E2
 #include "subsurface/SubsurfaceSections.hpp"                             // G1
 
@@ -2649,6 +2651,35 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         subsurface_.heat().prepare();
     publishEqualizeAreas(ctx, dt);
     {
+        // Offer the solver the Lie-split stage that follows this advance
+        // (aging, first-order decay, reactions). A solver that holds the rows
+        // on a device may run it there; applyAgingAndReactions() runs it on
+        // the host otherwise.
+        auto& tr = state_.transport;
+        auto& stage = tr.stage;
+        stage.done = false;
+        stage.requested = tr.active() && dt > 0.0 &&
+                          !(subsurface_.active() && options_.momentum == Momentum2D::FULL_SWE &&
+                            options_.reconstruction_order == 2);
+        if (stage.requested) {
+            stage.dt = dt;
+            stage.volume_to_1d = options_.flow_2d_to_1d;
+            stage.dry_depth = options_.dry_depth;
+            const auto np = static_cast<std::size_t>(tr.n_pollut);
+            stage.decay_factor.assign(np, 1.0);
+            stage.decays.assign(np, 0);
+            for (std::size_t p = 0; p < np; ++p) {
+                const double k = ctx.pollutants.k_decay[p];
+                if (k != 0.0) {
+                    stage.decays[p] = 1;
+                    stage.decay_factor[p] = std::exp(-k * dt);
+                }
+            }
+            stage.reactions =
+                tr.n_msx > 0 && transport::ardReactionsActive(ctx) ? &ctx.reactions : nullptr;
+        }
+    }
+    {
         perf::ScopedTimer tm_adv(perf::sec_2d_advance);
         if (live_passive_exchange_) {
             using Phase = quality::PassiveStorageExchange::Phase;
@@ -3693,6 +3724,29 @@ void SurfaceRouter2D::applyAgingAndReactions(SimulationContext& ctx, double dt) 
         return;
     }
 #endif
+
+    // The solver ran the stage on its own state (see SurfaceReactionStage):
+    // book what it reports and do not repeat it here.
+    if (tr.stage.done) {
+        auto& stage = tr.stage;
+        stage.done = false;
+        if (!ageLocalBedPorewater(state_.heat, dt))
+            throw std::runtime_error("Local bed porewater age overflow.");
+        auto& reacted = ctx.mass_balance.qual_routing_reacted;
+        for (std::size_t p = 0; p < stage.decays.size() && p < reacted.size(); ++p)
+            if (stage.decays[p])
+                reacted[p] += stage.removed[p];
+        if (stage.failed_cells > 0 && !ctx.reactions.warned_react_failure) {
+            ctx.reactions.warned_react_failure = true;
+            ctx.warnings.push_back(std::string("Reaction step failed at ARD cell index ") +
+                                   std::to_string(stage.first_failed_cell) +
+                                   " (element state left unchanged): " +
+                                   transport::rxk::statusMessage(stage.first_failed_status));
+        }
+        if (stage.clamped_cells > 0)
+            transport::noteNegativeClamp(ctx, "a transport cell");
+        return;
+    }
 
     // A1a on the surface: d(age)/dt = 1, exactly — the age row is an
     // age-VOLUME, so += dt·V advances the mean age of every cell's water by
