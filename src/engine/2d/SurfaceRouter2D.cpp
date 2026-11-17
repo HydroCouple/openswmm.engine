@@ -2036,8 +2036,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // instead of running a whole INFIL_STEP dry. The kernels are advanced
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
+        initializeFrozenGround(ctx);
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
-                           surface::infiltrationFactors(ctx, 0.0), options_.num_threads);
+                           surface::infiltrationFactors(ctx, 0.0), options_.num_threads,
+                           frost_open_.empty() ? nullptr : &frost_open_);
         if (subsurface_.active())
             subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -2398,6 +2400,43 @@ std::string SurfaceRouter2D::livePassiveProfile() const {
     return {};
 }
 
+void SurfaceRouter2D::initializeFrozenGround(const SimulationContext& ctx) {
+    frost_enthalpy_.clear();
+    frost_open_.clear();
+    const auto& rows = ctx.frozen_ground.mesh_rows;
+    if (rows.empty())
+        return;
+    if (rows.size() != 1 || rows[0].first != "*")
+        throw std::runtime_error("[2D_FROZEN_GROUND] takes one row named *.");
+    if (const std::string problem = frost::validate(rows[0].second); !problem.empty())
+        throw std::runtime_error("[2D_FROZEN_GROUND] *: " + problem + ".");
+    frost_slab_ = rows[0].second;
+    const auto n = static_cast<std::size_t>(mesh_.n_triangles());
+    const double start = frost::enthalpyAt(frost_slab_, frost_slab_.init_temp);
+    frost_enthalpy_.assign(n, start);
+    frost_open_.assign(n, frost::infiltrationFactor(frost_slab_, start));
+}
+
+void SurfaceRouter2D::advanceFrozenGround(const SimulationContext& ctx, double dt) {
+    if (dt <= 0.0)
+        return;
+    // Mesh cells see the air temperature at an open surface; a snow pack on the mesh is not
+    // yet given its insulating resistance here.
+    const double air = (ctx.climate_state.temperature - 32.0) / 1.8;
+    const frost::Slab& s = frost_slab_;
+    const double top = frost::halfSlabConductance(s), deep = frost::deepConductance(s);
+    const std::size_t n = std::min(frost_enthalpy_.size(), state_.infil_rate.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        // Water infiltrates at the held rate only while the cell has water to give.
+        const bool wet = state_.depth[i] > 0.0 || state_.liquidRainfall(static_cast<int>(i)) > 0.0;
+        const double rate = wet ? std::max(state_.infil_rate[i], 0.0) : 0.0;
+        const frost::Contact contacts[3] = {
+            {top, air}, {deep, s.deep_temp}, {frost::kWaterCapacity * rate, std::max(air, 0.0)}};
+        frost_enthalpy_[i] = frost::advance(s, frost_enthalpy_[i], contacts, 3, dt);
+        frost_open_[i] = frost::infiltrationFactor(s, frost_enthalpy_[i]);
+    }
+}
+
 void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase) {
     if (dt <= 0.0)
         return;
@@ -2609,7 +2648,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
-                               options_.num_threads);
+                               options_.num_threads, frost_open_.empty() ? nullptr : &frost_open_);
+            // The slabs then take this interval's heat; the factor they publish limits the
+            // next refresh.
+            if (!frost_open_.empty())
+                advanceFrozenGround(ctx, infil_elapsed_);
             if (subsurface_.active())
                 subsurface_.publishInfiltration(state_, infil_.stepSeconds(),
                                                 common_stage_ ? sim_time_ : t);

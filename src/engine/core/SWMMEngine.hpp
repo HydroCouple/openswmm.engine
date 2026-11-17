@@ -824,6 +824,8 @@ public:
      * @return Snow water equivalent depth (ft).
      */
     double subcatchSnowDepth(int idx) const noexcept;
+    /// Advance the [FROZEN_GROUND] slabs over one runoff step (snow state gathered here).
+    void advanceFrozenGround(double dt);
 
     /**
      * @brief Open a runoff interface stream for SAVE against current model dimensions.
@@ -1078,6 +1080,8 @@ private:
         gw_infil_rate_;             ///< (Vinfil + VlidInfil) / area / dt, legacy's `infil` (ft/s)
     std::vector<double> snow_rain_; ///< Per-subcatch rainfall into snow step (ft/sec)
     std::vector<double> snow_snow_; ///< Per-subcatch snowfall into snow step (ft/sec)
+    /// Frozen ground: pervious snow water (ft) and covered fraction handed to the slab step.
+    std::vector<double> frost_snow_water_, frost_snow_cover_;
     hydstruct::StructureSolver hydstruct_; ///< Pumps, orifices, weirs, outlets
     iface::InterfaceManager iface_;        ///< Routing interface file I/O
 

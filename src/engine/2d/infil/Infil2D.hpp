@@ -317,8 +317,12 @@ public:
     /// Same cell-local updates with a configured worker count. Distinct prepared
     /// bank entries may advance concurrently; source/configuration arrays stay
     /// stable and same-entry/lifecycle operations remain exclusive.
+    /// `open`, when given, holds one frozen-ground factor per cell: the share of the cell that
+    /// still infiltrates. A cell at 0 is not advanced (its model memory is held) and publishes
+    /// a zero rate; any other cell publishes its model rate times the factor.
     void updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
-                     surface::InfilBank::Factors factors, int num_threads);
+                     surface::InfilBank::Factors factors, int num_threads,
+                     const std::vector<double>* open = nullptr);
 
     /**
      * @brief Borrow the canonical mutable per-cell infiltration bank.

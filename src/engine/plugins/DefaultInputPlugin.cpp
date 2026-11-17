@@ -241,6 +241,8 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("FILES", input::handle_files);
     registry_.register_builtin("ADJUSTMENTS", input::handle_adjustments);
     registry_.register_builtin("EVENTS", input::handle_events);
+    registry_.register_builtin("FROZEN_GROUND", input::handle_frozen_ground);
+    registry_.register_builtin("2D_FROZEN_GROUND", input::handle_2d_frozen_ground);
 
     // Streets / inlets (legacy s_STREET, s_INLET, s_INLET_USAGE)
     registry_.register_builtin("STREETS", input::handle_streets);

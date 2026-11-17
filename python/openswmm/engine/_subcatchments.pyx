@@ -829,6 +829,21 @@ cdef class Subcatchment:
         return v
 
     @property
+    def frozen_ground(self):
+        """Frozen-ground state of the pervious area, or ``None`` without a ``[FROZEN_GROUND]`` row.
+
+        Returns ``(temperature_c, frozen_fraction, infiltration_factor)``: the ground slab
+        temperature in degrees Celsius, the frozen share of its freezable water (0 to 1) and the
+        multiplier applied to infiltration (0 to 1) after the last runoff step.
+        """
+        _check_fresh(self)
+        cdef int active = 0
+        cdef double t = 0.0, frozen = 0.0, factor = 1.0
+        _check(swmm_subcatch_get_frozen_ground(_h(self._solver), self._index, &active, &t,
+                                               &frozen, &factor))
+        return (t, frozen, factor) if active else None
+
+    @property
     def evap(self) -> float:
         _check_fresh(self)
         cdef double v = 0.0

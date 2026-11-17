@@ -557,6 +557,15 @@ cdef extern from "openswmm_subcatchments.h":
     cdef int swmm_subcatch_get_groundwater(SWMM_Engine e, int idx, double* gw)
     cdef int swmm_subcatch_get_rainfall(SWMM_Engine e, int idx, double* rainfall)
     cdef int swmm_subcatch_get_snow_depth(SWMM_Engine e, int idx, double* depth)
+    cdef int swmm_subcatch_get_frozen_ground(SWMM_Engine e, int idx, int* active,
+                                             double* temperature, double* frozen_fraction,
+                                             double* infiltration_factor)
+    cdef int swmm_frozen_ground_count(SWMM_Engine e, int target, int* count)
+    cdef int swmm_frozen_ground_get(SWMM_Engine e, int target, int idx, char* name,
+                                    int name_size, double* values)
+    cdef int swmm_frozen_ground_set(SWMM_Engine e, int target, const char* name,
+                                    const double* values)
+    cdef int swmm_frozen_ground_remove(SWMM_Engine e, int target, const char* name)
     cdef int swmm_subcatch_get_evap(SWMM_Engine e, int idx, double* evap)
     cdef int swmm_subcatch_get_infil(SWMM_Engine e, int idx, double* infil)
     # Runtime forcing

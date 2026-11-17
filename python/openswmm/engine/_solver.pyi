@@ -28,7 +28,7 @@ Engine Lifecycle (Pythonic v1 surface)
 Type stubs for :mod:`openswmm.engine._solver`.
 """
 
-from collections.abc import MutableMapping, MutableSequence
+from collections.abc import MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timedelta
 from os import PathLike
 from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional, Union
@@ -408,6 +408,9 @@ class Solver:
     def userflags(self) -> UserFlags: ...
     @property
     def events(self) -> EventsView: ...
+    def frozen_ground_rows(self, mesh: bool = ...) -> dict[str, tuple[float, ...]]: ...
+    def set_frozen_ground(self, name: str, values: Sequence[float], mesh: bool = ...) -> None: ...
+    def remove_frozen_ground(self, name: str, mesh: bool = ...) -> None: ...
 
     # ------------- Collection accessors (typed) -------------
     @property

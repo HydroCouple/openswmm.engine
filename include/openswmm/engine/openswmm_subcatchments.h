@@ -807,6 +807,75 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, doub
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, double* depth);
 
 /**
+ * @brief Get the frozen-ground state of a subcatchment's pervious area.
+ * @param[in] engine Engine handle.
+ * @param[in] idx Zero-based subcatchment index.
+ * @param[out] active Receives 1 when a [FROZEN_GROUND] row applies to the subcatchment, else 0.
+ * @param[out] temperature Receives the ground slab temperature in degrees Celsius.
+ * @param[out] frozen_fraction Receives the frozen share of the slab's freezable water, 0 to 1.
+ * @param[out] infiltration_factor Receives the multiplier applied to infiltration, 0 to 1.
+ * @returns SWMM_OK on success, or an error code.
+ *
+ * @note Any output may be NULL. Without a row the outputs are 0, 0, 0 and 1. The values are those
+ *     at the end of the last runoff step; the factor limits the next one. A null engine returns
+ *     SWMM_ERR_BADHANDLE and a failed index check returns SWMM_ERR_BADINDEX.
+ */
+SWMM_ENGINE_API int swmm_subcatch_get_frozen_ground(SWMM_Engine engine, int idx, int* active,
+                                                    double* temperature, double* frozen_fraction,
+                                                    double* infiltration_factor);
+
+/**
+ * @brief Count the authored frozen-ground rows of one section.
+ * @param[in] engine Engine handle.
+ * @param[in] target 0 for [FROZEN_GROUND] (subcatchments), 1 for [2D_FROZEN_GROUND] (mesh cells).
+ * @param[out] count Receives the row count; may be NULL.
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE for a null engine, or SWMM_ERR_BADPARAM for another target.
+ */
+SWMM_ENGINE_API int swmm_frozen_ground_count(SWMM_Engine engine, int target, int* count);
+
+/**
+ * @brief Read one authored frozen-ground row.
+ * @param[in] engine Engine handle.
+ * @param[in] target 0 for [FROZEN_GROUND], 1 for [2D_FROZEN_GROUND].
+ * @param[in] idx Zero-based row index in file order.
+ * @param[out] name Receives the row name (a subcatchment name or `*`), NUL-terminated and
+ *     truncated to name_size; may be NULL.
+ * @param[in] name_size Capacity of name in bytes.
+ * @param[out] values Receives ten doubles: thickness (m), conductivity (W/m/K), heat capacity
+ *     (J/m3/K), freezable water content, deep temperature (C), deep depth (m), initial
+ *     temperature (C), exponent, snow conductivity (W/m/K), snow density (kg/m3); may be NULL.
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM for another target, or
+ *     SWMM_ERR_BADINDEX for a row that does not exist.
+ */
+SWMM_ENGINE_API int swmm_frozen_ground_get(SWMM_Engine engine, int target, int idx, char* name,
+                                           int name_size, double* values);
+
+/**
+ * @brief Add a frozen-ground row, or replace the row that has the same name.
+ * @param[in] engine Engine handle.
+ * @param[in] target 0 for [FROZEN_GROUND], 1 for [2D_FROZEN_GROUND].
+ * @param[in] name Subcatchment name or `*`; the mesh section accepts only `*`.
+ * @param[in] values Ten doubles in the order swmm_frozen_ground_get() returns them.
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADPARAM for another target, a null or empty
+ *     name, null values, or a value outside its valid range.
+ *
+ * @note The row is authored input: it is saved with the model and takes effect the next time the
+ *     model is initialized. It does not change the slab state of a run in progress.
+ */
+SWMM_ENGINE_API int swmm_frozen_ground_set(SWMM_Engine engine, int target, const char* name,
+                                           const double* values);
+
+/**
+ * @brief Remove the frozen-ground row with a name.
+ * @param[in] engine Engine handle.
+ * @param[in] target 0 for [FROZEN_GROUND], 1 for [2D_FROZEN_GROUND].
+ * @param[in] name Row name.
+ * @returns SWMM_OK, SWMM_ERR_BADHANDLE, SWMM_ERR_BADPARAM for another target or a null name, or
+ *     SWMM_ERR_BADINDEX when no row has that name.
+ */
+SWMM_ENGINE_API int swmm_frozen_ground_remove(SWMM_Engine engine, int target, const char* name);
+
+/**
  * @brief Get the current evaporation rate at a subcatchment.
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based subcatchment index.

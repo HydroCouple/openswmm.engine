@@ -127,7 +127,7 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
     // A heat model with a full engine checkpoint attached writes the V15
     // file; without one it writes the record-based file like any other
     // model (which refuses coupled mesh/ground heat with a message).
-    bool full_continuation = ctx.options.heat_transport;
+    bool full_continuation = ctx.options.heat_transport || ctx.frozen_ground.enabled();
 #ifdef OPENSWMM_HAS_2D
     full_continuation |= eng->surfaceRouter2D().subsurface().independentClock();
 #endif

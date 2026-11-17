@@ -50,6 +50,7 @@
 #include "subsurface/SubsurfaceSolver.hpp" // G1: the two-zone GW kernel
 #include "heat/ChannelGround.hpp"
 #include "infil/Infil2D.hpp"
+#include "../hydrology/FrozenGround.hpp"
 #include "mesh/RainfallInterpolator.hpp"
 
 #include <memory>
@@ -1144,6 +1145,12 @@ public:
      * consumption, ownership transfer or synchronization occurs in this query.
      */
     const std::vector<double>& infilCumulative() const noexcept { return infil_cum_applied_; }
+    /// Frozen ground on the mesh ([2D_FROZEN_GROUND]): per-cell slab enthalpy (J/m2) and the
+    /// infiltration factor the held rates were scaled by. Both empty when the model is off.
+    const std::vector<double>& frozenGroundEnthalpy() const noexcept { return frost_enthalpy_; }
+    const std::vector<double>& frozenGroundFactor() const noexcept { return frost_open_; }
+    /// The slab every mesh cell uses; meaningful only while frozenGroundFactor() is nonempty.
+    const frost::Slab& frozenGroundSlab() const noexcept { return frost_slab_; }
 
     /*!
      * \brief Signed cumulative coupling exchange per cell (m³).
@@ -1616,6 +1623,16 @@ private:
     /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
     /// resolved.
     std::vector<double> infil_cum_applied_;
+
+    /// [2D_FROZEN_GROUND]: one slab for every cell that carries an ordinary infiltration
+    /// model. `frost_open_` is the factor handed to Infil2D::updateRates; both vectors are
+    /// empty (no per-step work) without the section. Not carried by surface checkpoints.
+    frost::Slab frost_slab_;
+    std::vector<double> frost_enthalpy_, frost_open_;
+    /// Seed the mesh slabs from ctx.frozen_ground.mesh_rows; throws on an invalid section.
+    void initializeFrozenGround(const SimulationContext& ctx);
+    /// Advance the mesh slabs over `dt` seconds with the held rates just published.
+    void advanceFrozenGround(const SimulationContext& ctx, double dt);
 
     /// C1: SIGNED cumulative coupling exchange volume per cell (m³).
     /// + = received from the 1D node, − = abstracted by it. Drained from

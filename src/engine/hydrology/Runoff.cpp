@@ -529,10 +529,20 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 }
 
                 infil_factor_used_[ui] = local_infil;
-                const double native =
-                    infilGetInfil(ctx, i, precip, runon,
-                                  spatial_fractions ? std::max(0.0, depth - surfEvap * dt) : depth,
-                                  dt, local_infil, recovery_factor);
+                // Frozen ground ([FROZEN_GROUND]): `open` is the fraction of the pervious
+                // surface that still takes water. Fully frozen ground skips the model, so its
+                // memory neither wets nor recovers; partly frozen ground infiltrates at the
+                // model's rate over the open fraction. Without the section `open` is 1.
+                const double open = ctx.frozen_ground.factorOf(ui);
+                double native = 0.0;
+                if (open > 0.0) {
+                    native = infilGetInfil(ctx, i, precip, runon,
+                                           spatial_fractions ? std::max(0.0, depth - surfEvap * dt)
+                                                             : depth,
+                                           dt, local_infil, recovery_factor);
+                    if (open < 1.0)
+                        native *= open;
+                }
                 soa_.native_infil_rate[ui] =
                     spatial_fractions ? std::min(native, available) : native;
                 infil = external ? spatial_fraction * spatial_rate +

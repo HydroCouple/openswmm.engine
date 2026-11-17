@@ -289,6 +289,15 @@ from the end-of-step depth, is what the ledger and the cumulative output read.
 
 <!-- source: src/engine/2d/infil/Infil2D.hpp:26-51 (D-I1..D-I6, units), :101-132 (row layout), :191-234 (resolve, updateRates contracts), :249-260 (cumulative vs applied); src/engine/2d/infil/Infil2D.cpp:72-133 (validateRow), :141-200 (tokens, parameter counts), :206-329 (resolve: cadence :219-221, precedence :223-273, kernel init :277-318, CONSTANT as Horton :290-298, CN drying time :306-311), :331-377 (updateRates: unit boundary :342-343, :373-375; CN run-on note :360-363); src/engine/2d/solver/SurfaceFluxCalculator.hpp:83-88 (evapSink), :91-116 (infilSink and D-I2); src/engine/2d/solver/ExplicitInertialSolver.cpp:495-534 (lazySourcesOnly), :546-580 (syncAndRebuild lazy pass), :1342-1360 (fireCellsImpl sources); src/engine/2d/SurfaceRouter2D.cpp:980-1015 (INFIL_DEFAULT_METHOD checks), :1130-1140 (INFILTRATION YES/NO warnings), :1208-1219 (initial updateRates), :1411-1424 (INFIL_STEP cadence); src/engine/2d/input/SectionHandlers2D.cpp:311-345 (INFILTRATION, INFIL_STEP, INFIL_DEFAULT_METHOD, INFIL_DESTINATION keys), :982-1020 (row tail grammar), :1054-1115 (section line parsers); src/engine/2d/data/SolverOptions2D.hpp:279-300 -->
 
+### 8.3.5 Frozen ground
+
+With a `[2D_FROZEN_GROUND]` section, each cell that carries one of these
+methods also carries a frozen-ground slab. At every infiltration step the
+held rate of a cell is multiplied by the slab's infiltration factor, and a
+fully frozen cell is not advanced by its method and holds a zero rate. The
+formulation and its mesh-specific limits are given in
+@ref hydrology_ref_frozen_ground (Section 4.7.5).
+
 ## 8.4 Infiltration destination
 
 Where infiltrated water goes is a per-row `DEST` column, defaulted for rows

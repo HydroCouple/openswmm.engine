@@ -127,6 +127,7 @@ class Subcatchment:
     groundwater: float
     rainfall: float
     snow_depth: float
+    frozen_ground: Optional[tuple[float, float, float]]
     evap: float
     infil: float
 

@@ -2144,6 +2144,60 @@ Remarks:
 The writer preserves the section spelling: rows read from [PROFILES] are written under [PROFILES], and rows read from [PROFILE] remain under [PROFILE]. Neither spelling changes the simulation.
 
  
+### Section: [FROZEN_GROUND] {#engine_manual_sect_FROZEN_GROUND}
+
+Purpose:
+Turns on the frozen-ground model for the pervious area of a subcatchment: a ground slab that conducts heat, freezes and thaws, and reduces infiltration to zero as it freezes.
+
+Format:
+    Subcatch  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
+
+Parameters:
+Subcatch    name of a subcatchment, or * for a row that applies to every subcatchment without a row of its own.
+Thickness    thickness of the frost-active ground layer (m). Default 0.15.
+Conductivity    bulk thermal conductivity of the ground (W/m·K). Default 1.5.
+HeatCapacity    bulk volumetric heat capacity of the ground (J/m³·K). Default 2.4e6.
+WaterContent    volume fraction of water in the layer that can freeze (0 to 1). Default 0.30.
+DeepTemp    ground temperature at DeepDepth (°C). Default 8.
+DeepDepth    depth below the surface at which DeepTemp holds (m); must exceed half of Thickness. Default 3.
+InitTemp    temperature of the layer at the start of the run (°C); a value below zero starts it fully frozen. Default 5.
+Exponent    exponent m of the infiltration factor (1 − frozen fraction)^m; at least 1. Default 11.
+SnowConductivity    thermal conductivity of snow (W/m·K). Default 0.25.
+SnowDensity    density of snow, used to turn snow water equivalent into depth (kg/m³). Default 250.
+
+Remarks:
+All values are in SI units and degrees Celsius whatever the project's FLOW_UNITS. Trailing values may be omitted and keep their defaults. A named row takes precedence over the * row in either order. The section applies to all infiltration methods; a subcatchment with no pervious area is unaffected. It does not change LID units, groundwater or the 2D mesh.
+
+The model reads the air temperature from the [TEMPERATURE] section; without one a warning is issued and the ground follows the default air temperature. A row naming an unknown subcatchment, or holding an out-of-range value, stops the run with a message naming it.
+
+A model with this section saves hot start files in the native full-state format, which requires FLOW_ROUTING DYNWAVE.
+
+See @ref hydrology_ref_frozen_ground for the formulation.
+
+This section has no counterpart in SWMM 5 and is omitted when a model is written in the SWMM 5 profile.
+
+ 
+### Section: [2D_FROZEN_GROUND] {#engine_manual_sect_2D_FROZEN_GROUND}
+
+Purpose:
+Turns on the frozen-ground model for the cells of the 2D mesh that carry a per-cell infiltration method.
+
+Format:
+    *  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
+
+Parameters:
+The values, units and defaults are those of the [FROZEN_GROUND] section (@ref engine_manual_sect_FROZEN_GROUND).
+
+Remarks:
+The section takes exactly one row, and its first token must be *; the row applies to every mesh cell with a [2D_INFILTRATION_DEFAULTS] or [2D_INFILTRATION] method. Any other row, or an out-of-range value, stops the run with a message.
+
+The ground is advanced once per INFIL_STEP. Snow on the mesh does not yet insulate the ground, the two snow values are read but unused, and cells whose infiltration is owned by a [2D_AQUIFER] are not limited. A surface checkpoint of a model with this section is refused.
+
+See @ref hydrology_ref_frozen_ground for the formulation.
+
+This section has no counterpart in SWMM 5 and is omitted when a model is written in the SWMM 5 profile.
+
+ 
 ### Section: [USER_FLAGS] {#engine_manual_sect_USER_FLAGS}
 
 Purpose:

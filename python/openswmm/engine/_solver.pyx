@@ -1027,6 +1027,52 @@ cdef class Solver:
             self._userflags = UserFlags(self)
         return self._userflags
 
+    def frozen_ground_rows(self, bint mesh=False) -> dict:
+        """Authored frozen-ground rows as ``{name: values}``.
+
+        ``mesh=False`` reads ``[FROZEN_GROUND]`` (names are subcatchments or ``*``);
+        ``mesh=True`` reads ``[2D_FROZEN_GROUND]``. Each value is a 10-tuple: thickness (m),
+        conductivity (W/m/K), heat capacity (J/m3/K), freezable water content, deep
+        temperature (C), deep depth (m), initial temperature (C), exponent, snow conductivity
+        (W/m/K) and snow density (kg/m3).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        cdef int n = 0, i
+        cdef double v[10]
+        cdef _TextBufs t
+        _check(swmm_frozen_ground_count(h, 1 if mesh else 0, &n))
+        rows = {}
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_frozen_ground_get(h, 1 if mesh else 0, i, t.p[0], t.size, v))
+                    if not _tb_retry(&t):
+                        break
+                rows[_tb_str(&t, 0)] = tuple(v[k] for k in range(10))
+        finally:
+            _tb_close(&t)
+        return rows
+
+    def set_frozen_ground(self, str name, values, bint mesh=False) -> None:
+        """Add or replace one frozen-ground row (see :meth:`frozen_ground_rows`).
+
+        The row is authored input and takes effect when the model is next initialized.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        cdef double v[10]
+        cdef int k
+        if len(values) != 10:
+            raise ValueError("a frozen-ground row has ten values")
+        for k in range(10):
+            v[k] = values[k]
+        _check(swmm_frozen_ground_set(h, 1 if mesh else 0, name.encode("utf-8"), v))
+
+    def remove_frozen_ground(self, str name, bint mesh=False) -> None:
+        """Remove the frozen-ground row with this name."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        _check(swmm_frozen_ground_remove(h, 1 if mesh else 0, name.encode("utf-8")))
+
     @property
     def events(self):
         """``solver.events`` — a :class:`EventsView` ``MutableSequence``.

@@ -1169,6 +1169,9 @@ struct SWMMEngine::RestartState {
     std::unique_ptr<transport::ArdEngine> prepared_ard;
     std::unique_ptr<lard::LagrangianSolver> prepared_lard;
     std::vector<double> snow_rain, snow_snow;
+    // Frozen-ground slab state; carried only when the model has a [FROZEN_GROUND] section.
+    bool frost_profile = false;
+    std::vector<double> frost_enthalpy, frost_initial, frost_surface, frost_deep, frost_water;
     std::array<double, 6> boundary;
     double controls_remaining;
     std::vector<TableCursor> cursors;
@@ -1244,6 +1247,15 @@ struct SWMMEngine::RestartState {
             snow = e.snow_;
             snow_rain = e.snow_rain_;
             snow_snow = e.snow_snow_;
+        }
+        frost_profile = e.ctx_.frozen_ground.enabled();
+        if (frost_profile) {
+            const auto& f = e.ctx_.frozen_ground;
+            frost_enthalpy = f.enthalpy;
+            frost_initial = f.initial_j;
+            frost_surface = f.surface_j;
+            frost_deep = f.deep_j;
+            frost_water = f.water_j;
         }
         int at = 0;
         for (const auto* row : {e.ctx_.max_courant_crit, e.ctx_.max_flow_turns,
@@ -1345,6 +1357,12 @@ struct SWMMEngine::RestartState {
                 require(error.empty(), error.c_str());
             }
             a(snow_rain, snow_snow);
+        }
+        if (frost_profile) {
+            std::string profile = "frozen ground slab state v1";
+            a(profile);
+            require(profile == "frozen ground slab state v1", "Unsupported frozen-ground record.");
+            a(frost_enthalpy, frost_initial, frost_surface, frost_deep, frost_water);
         }
 #define F(v) a(v);
         RUNOFF_ENGINE(F)
@@ -1541,6 +1559,12 @@ struct SWMMEngine::RestartState {
         require(runoff_interp >= 0 && runoff_interp <= 1 && std::isfinite(runoff_interp),
                 "Invalid engine runoff interpolation.");
         const auto ns = std::size_t(e.ctx_.n_subcatches());
+        if (frost_profile)
+            for (const auto* row :
+                 {&frost_enthalpy, &frost_initial, &frost_surface, &frost_deep, &frost_water}) {
+                require(row->size() == ns, "Invalid frozen-ground state shape.");
+                finite(*row);
+            }
         if (snow_context) {
             for (const auto* row : {&snow_rain, &snow_snow}) {
                 require(row->empty() || row->size() == ns, "Invalid snow forcing buffer shape.");
@@ -1824,6 +1848,17 @@ struct SWMMEngine::RestartState {
             e.ctx_.snowpacks.runtime = std::move(snow_context->snowpacks.runtime);
             e.snow_rain_ = std::move(snow_rain);
             e.snow_snow_ = std::move(snow_snow);
+        }
+        if (frost_profile) {
+            auto& f = e.ctx_.frozen_ground;
+            f.enthalpy = std::move(frost_enthalpy);
+            f.initial_j = std::move(frost_initial);
+            f.surface_j = std::move(frost_surface);
+            f.deep_j = std::move(frost_deep);
+            f.water_j = std::move(frost_water);
+            for (std::size_t i = 0; i < f.enthalpy.size(); ++i)
+                if (f.active[i])
+                    f.derive(i);
         }
         e.runoff_ = std::move(runoff);
         e.lid_ = std::move(lid);

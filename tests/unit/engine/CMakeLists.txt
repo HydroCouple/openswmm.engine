@@ -342,6 +342,7 @@ add_gtest_unit(test_engine_fv_linear_workspace test_fv_linear_workspace.cpp)
 add_gtest_unit(test_engine_fv_physical_storage test_fv_physical_storage.cpp)
 add_gtest_unit(test_engine_fv_wet_slot test_fv_wet_slot.cpp)
 
+add_gtest_unit(test_engine_frozen_ground    test_frozen_ground.cpp)
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""

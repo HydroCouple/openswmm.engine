@@ -109,6 +109,7 @@
 #include "../data/HydrologyData.hpp"
 #include "../data/ForcingData.hpp"
 #include "../hydrology/Climate.hpp"
+#include "../hydrology/FrozenGround.hpp"
 
 #include <algorithm>
 #include <array>
@@ -861,6 +862,8 @@ struct SimulationContext {
     // =========================================================================
 
     SnowpackStore snowpacks;
+    /// Frozen-ground slabs ([FROZEN_GROUND]); empty and inert without that section.
+    frost::FrozenGroundData frozen_ground;
     NameIndex snowpack_names;
     AquiferStore aquifers;
     NameIndex aquifer_names;

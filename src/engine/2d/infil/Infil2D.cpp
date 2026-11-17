@@ -413,7 +413,8 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
 }
 
 void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double dt,
-                          surface::InfilBank::Factors factors, int num_threads) {
+                          surface::InfilBank::Factors factors, int num_threads,
+                          const std::vector<double>* open) {
     (void)mesh;
     if (!active_ || dt <= 0.0)
         return;
@@ -429,9 +430,16 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
 
         if (bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL)
             return;
+        const double share = open && i < open->size() ? (*open)[i] : 1.0;
+        if (share <= 0.0) {
+            state.infil_rate[i] = 0.0; // fully frozen: no intake, model memory held
+            return;
+        }
         state.infil_rate[i] =
             bank_.rate(static_cast<int>(i), state.liquidRainfall(static_cast<int>(i)), 0.0,
                        state.depth[i], dt, factors);
+        if (share < 1.0)
+            state.infil_rate[i] *= share;
     };
     if (threads > 1 && n >= 512) {
         const auto count = static_cast<std::ptrdiff_t>(n);

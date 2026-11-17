@@ -715,6 +715,108 @@ SWMM_ENGINE_API int swmm_subcatch_get_rainfall(SWMM_Engine engine, int idx, doub
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_subcatch_get_frozen_ground(SWMM_Engine engine, int idx, int* active,
+                                                    double* temperature, double* frozen_fraction,
+                                                    double* infiltration_factor) {
+    CHECK_HANDLE(engine);
+    const auto& ctx = to_engine(engine)->context();
+    CHECK_INDEX(idx >= 0 && idx < ctx.n_subcatches());
+    const auto& f = ctx.frozen_ground;
+    const auto i = static_cast<std::size_t>(idx);
+    const bool on = i < f.active.size() && f.active[i];
+    if (active)
+        *active = on ? 1 : 0;
+    if (temperature)
+        *temperature = on ? f.temperature[i] : 0.0;
+    if (frozen_fraction)
+        *frozen_fraction = on ? f.frozen[i] : 0.0;
+    if (infiltration_factor)
+        *infiltration_factor = on ? f.factor[i] : 1.0;
+    return SWMM_OK;
+}
+
+namespace {
+using FrozenRows = std::vector<std::pair<std::string, openswmm::frost::Slab>>;
+FrozenRows* frozenRows(openswmm::SimulationContext& ctx, int target) {
+    return target == 0   ? &ctx.frozen_ground.rows
+           : target == 1 ? &ctx.frozen_ground.mesh_rows
+                         : nullptr;
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_frozen_ground_count(SWMM_Engine engine, int target, int* count) {
+    CHECK_HANDLE(engine);
+    const auto* rows = frozenRows(to_engine(engine)->context(), target);
+    if (!rows)
+        return SWMM_ERR_BADPARAM;
+    if (count)
+        *count = static_cast<int>(rows->size());
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_frozen_ground_get(SWMM_Engine engine, int target, int idx, char* name,
+                                           int name_size, double* values) {
+    CHECK_HANDLE(engine);
+    const auto* rows = frozenRows(to_engine(engine)->context(), target);
+    if (!rows)
+        return SWMM_ERR_BADPARAM;
+    if (idx < 0 || static_cast<std::size_t>(idx) >= rows->size())
+        return SWMM_ERR_BADINDEX;
+    const auto& [id, r] = (*rows)[static_cast<std::size_t>(idx)];
+    if (name && name_size > 0) {
+        std::strncpy(name, id.c_str(), static_cast<std::size_t>(name_size) - 1);
+        name[name_size - 1] = '\0';
+    }
+    if (values) {
+        const double v[openswmm::frost::kColumns] = {
+            r.thickness,  r.conductivity, r.heat_capacity, r.water_content,     r.deep_temp,
+            r.deep_depth, r.init_temp,    r.exponent,      r.snow_conductivity, r.snow_density};
+        std::memcpy(values, v, sizeof v);
+    }
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_frozen_ground_set(SWMM_Engine engine, int target, const char* name,
+                                           const double* values) {
+    CHECK_HANDLE(engine);
+    auto* rows = frozenRows(to_engine(engine)->context(), target);
+    if (!rows || !name || !*name || !values || (target == 1 && std::strcmp(name, "*") != 0))
+        return SWMM_ERR_BADPARAM;
+    openswmm::frost::Slab r;
+    r.thickness = values[0];
+    r.conductivity = values[1];
+    r.heat_capacity = values[2];
+    r.water_content = values[3];
+    r.deep_temp = values[4];
+    r.deep_depth = values[5];
+    r.init_temp = values[6];
+    r.exponent = values[7];
+    r.snow_conductivity = values[8];
+    r.snow_density = values[9];
+    if (!openswmm::frost::validate(r).empty())
+        return SWMM_ERR_BADPARAM;
+    for (auto& row : *rows)
+        if (row.first == name) {
+            row.second = r;
+            return SWMM_OK;
+        }
+    rows->emplace_back(name, r);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_frozen_ground_remove(SWMM_Engine engine, int target, const char* name) {
+    CHECK_HANDLE(engine);
+    auto* rows = frozenRows(to_engine(engine)->context(), target);
+    if (!rows || !name)
+        return SWMM_ERR_BADPARAM;
+    for (auto it = rows->begin(); it != rows->end(); ++it)
+        if (it->first == name) {
+            rows->erase(it);
+            return SWMM_OK;
+        }
+    return SWMM_ERR_BADINDEX;
+}
+
 SWMM_ENGINE_API int swmm_subcatch_get_snow_depth(SWMM_Engine engine, int idx, double* depth) {
     CHECK_HANDLE(engine);
     const auto* eng = to_engine(engine);

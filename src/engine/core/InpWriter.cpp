@@ -35,7 +35,7 @@
  *   LOADINGS, TREATMENT,
  *   INFLOWS, DWF, RDII, PATTERNS, TIMESERIES, CURVES,
  *   MAP, COORDINATES, VERTICES, Polygons, SYMBOLS,
- *   USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
+ *   FROZEN_GROUND, 2D_FROZEN_GROUND, USER_FLAGS, USER_FLAG_VALUES, PLUGINS,
  *   2D_OPTIONS, 2D_INFILTRATION_OPTIONS, 2D_INFILTRATION_DEFAULTS,
  *   2D_INFILTRATION, 2D_MESH_FILE (external mode) or 2D_VERTICES,
  *   2D_TRIANGLES, 2D_QUADS, 2D_VERTEX_NODE_MAP, 2D_TRIANGLE_NODE_MAP,
@@ -4867,6 +4867,38 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                                  ctx.subcatches.tags[u].c_str());
             }
         }
+    }
+
+    // [FROZEN_GROUND] and [2D_FROZEN_GROUND]
+    if (swmm5 && (!ctx.frozen_ground.rows.empty() || !ctx.frozen_ground.mesh_rows.empty()))
+        note("[FROZEN_GROUND] / [2D_FROZEN_GROUND] omitted (SWMM 5.x profile)");
+    if (!swmm5) {
+        const auto frozen = [&](const char* tag, const auto& rows) {
+            if (rows.empty())
+                return;
+            sec(f, tag);
+            std::fprintf(f, ";;%-14s %-10s %-12s %-12s %-12s %-8s %-9s %-8s %-8s %-16s %s\n",
+                         "Subcatchment", "Thickness", "Conductivity", "HeatCapacity",
+                         "WaterContent", "DeepTemp", "DeepDepth", "InitTemp", "Exponent",
+                         "SnowConductivity", "SnowDensity");
+            for (const auto& [name, r] : rows) {
+                std::fprintf(f, "%-16s", name.c_str());
+                for (double v :
+                     {r.thickness, r.conductivity, r.heat_capacity, r.water_content, r.deep_temp,
+                      r.deep_depth, r.init_temp, r.exponent, r.snow_conductivity, r.snow_density}) {
+                    char b[40]; // shortest form that reads back to exactly v
+                    for (int prec = 15; prec <= 17; ++prec) {
+                        std::snprintf(b, sizeof(b), "%.*g", prec, v);
+                        if (std::strtod(b, nullptr) == v)
+                            break;
+                    }
+                    std::fprintf(f, " %s", b);
+                }
+                std::fprintf(f, "\n");
+            }
+        };
+        frozen("FROZEN_GROUND", ctx.frozen_ground.rows);
+        frozen("2D_FROZEN_GROUND", ctx.frozen_ground.mesh_rows);
     }
 
     // [USER_FLAGS]

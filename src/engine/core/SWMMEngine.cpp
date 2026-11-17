@@ -2235,7 +2235,7 @@ int SWMMEngine::start(int save_results) noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
-    bool date_native_snapshot = ctx_.options.heat_transport;
+    bool date_native_snapshot = ctx_.options.heat_transport || !ctx_.frozen_ground.rows.empty();
 #ifdef OPENSWMM_HAS_2D
     date_native_snapshot |= surface_router_.subsurface().independentClock();
 #endif
@@ -3589,6 +3589,11 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // clock and pass their own dt; handing either the other's interval
         // would scale every flux wrongly.
         transport::routeSubcatchmentTemperature(ctx_, runoff_.soa(), dt_runoff);
+
+        // Frozen ground: advance the slabs with this step's infiltration and surface state.
+        // The factor they publish limits infiltration in the NEXT runoff step.
+        if (ctx_.frozen_ground.enabled())
+            advanceFrozenGround(dt_runoff);
 
         // Update persistent state flags for the NEXT step's timestep selection
         // (legacy runoff.c sets HasRunoff/HasSnow here, after computing runoff,
@@ -9545,7 +9550,8 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
-    bool full_continuation = ctx_.options.heat_transport;
+    // Frozen ground carries slab state that only the full checkpoint holds.
+    bool full_continuation = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
 #ifdef OPENSWMM_HAS_2D
     full_continuation |= surface_router_.subsurface().independentClock();
 #endif
@@ -9801,6 +9807,34 @@ int SWMMEngine::close() noexcept {
 // ============================================================================
 // subcatchSnowDepth — area-weighted snow pack SWE on a subcatchment (ft)
 // ============================================================================
+
+void SWMMEngine::advanceFrozenGround(double dt) {
+    // Pervious snow water equivalent (ft) and covered fraction per subcatchment.
+    const auto n = static_cast<std::size_t>(ctx_.n_subcatches());
+    frost_snow_water_.assign(n, 0.0);
+    frost_snow_cover_.assign(n, 0.0);
+    if (!ctx_.options.ignore_snow_melt) {
+        const auto& soa = snow_.state();
+        const auto& ueb = ctx_.snowpacks.runtime.last;
+        for (std::size_t i = 0; i < n; ++i) {
+            const int pack = ctx_.subcatches.snowpack[i];
+            if (pack < 0)
+                continue;
+            const std::size_t perv = i * snow::N_SUBAREAS + snow::SNOW_PERV;
+            if (ctx_.snowpacks.config.modelFor(pack) == surface::SnowKind::Ueb) {
+                // The energy-balance pack reports its cover; its water is the subcatchment's.
+                frost_snow_water_[i] = ctx_.subcatches.snow_depth[i];
+                frost_snow_cover_[i] =
+                    perv < ueb.size() ? ueb[perv].active_fraction : frost_snow_water_[i] > 0.0;
+            } else if (perv < soa.wsnow.size()) {
+                frost_snow_water_[i] = soa.wsnow[perv];
+                frost_snow_cover_[i] =
+                    soa.wsnow[perv] > 0.0 ? (perv < soa.asc.size() ? soa.asc[perv] : 1.0) : 0.0;
+            }
+        }
+    }
+    frost::advanceSubcatchments(ctx_, runoff_.soa(), dt, frost_snow_water_, frost_snow_cover_);
+}
 
 double SWMMEngine::subcatchSnowDepth(int idx) const noexcept {
     auto us = static_cast<std::size_t>(idx);
@@ -10928,6 +10962,14 @@ void SWMMEngine::initHydrology() noexcept {
 
     // 2. Runoff solver: populate RunoffSoA from subcatchment properties
     runoff_.init(ctx_);
+    if (const auto error = frost::initialize(ctx_); !error.empty()) {
+        ctx_.errors.push_back(error);
+        set_error(SWMM_ERR_PARSE, error.c_str());
+    } else if (ctx_.frozen_ground.enabled() && ctx_.options.temp_source == 0) {
+        ctx_.warnings.push_back("[FROZEN_GROUND] is set but no [TEMPERATURE] source is given; "
+                                "the ground follows the default air temperature unless one is "
+                                "forced at run time.");
+    }
 
     // 2b. Store base values for pattern-adjusted subcatchment parameters
     {

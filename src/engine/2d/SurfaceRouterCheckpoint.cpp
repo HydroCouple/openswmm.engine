@@ -330,6 +330,9 @@ struct SurfaceRouter2D::RestartState {
                   bool material = false) const {
         const auto n = static_cast<std::size_t>(r.mesh_.n_cells()),
                    ng = static_cast<std::size_t>(c.n_gages());
+        if (!r.frost_enthalpy_.empty())
+            throw std::runtime_error(
+                "Surface checkpoints do not carry [2D_FROZEN_GROUND] slab state.");
         for (const auto* row :
              {&coupling_cum_applied_, &rain_cum_, &report_old_depth_, &report_old_head_})
             if (row->size() != n)

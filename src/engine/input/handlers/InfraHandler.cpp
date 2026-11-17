@@ -37,7 +37,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstring>
+#include <limits>
 
 namespace openswmm::input {
 
@@ -590,6 +592,45 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
  * @param[in] lines Borrowed section rows, tokenized synchronously; stored strings copied and
  *     physical values retained in authored project units.
  */
+namespace {
+void parse_frozen_ground(SimulationContext& ctx, const std::vector<std::string>& lines,
+                         std::vector<std::pair<std::string, frost::Slab>>& rows) {
+    for (const auto& line : lines) {
+        const auto tok = Tokenizer::tokenize(line);
+        if (tok.empty())
+            continue;
+        if (tok.size() > 1 + frost::kColumns) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
+        frost::Slab row;
+        double* const column[frost::kColumns] = {
+            &row.thickness,         &row.conductivity, &row.heat_capacity, &row.water_content,
+            &row.deep_temp,         &row.deep_depth,   &row.init_temp,     &row.exponent,
+            &row.snow_conductivity, &row.snow_density};
+        bool ok = true;
+        for (std::size_t k = 1; k < tok.size() && ok; ++k) {
+            const double v = to_double(tok[k], std::numeric_limits<double>::quiet_NaN());
+            if (!std::isfinite(v)) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[k]));
+                ok = false;
+            }
+            *column[k - 1] = v;
+        }
+        if (ok)
+            rows.emplace_back(tok[0], row);
+    }
+}
+} // namespace
+
+void handle_frozen_ground(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    parse_frozen_ground(ctx, lines, ctx.frozen_ground.rows);
+}
+
+void handle_2d_frozen_ground(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    parse_frozen_ground(ctx, lines, ctx.frozen_ground.mesh_rows);
+}
+
 void handle_events(SimulationContext& ctx, const std::vector<std::string>& lines) {
     // Format: StartDate  StartTime  EndDate  EndTime
     for (const auto& line : lines) {
