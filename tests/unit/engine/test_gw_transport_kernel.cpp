@@ -65,6 +65,7 @@
 #include "core/CompletedSourceArchive.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
+#include "2d/subsurface/GroundwaterConcentration.hpp"
 #include "2d/subsurface/GroundwaterDispersion.hpp"
 #include "2d/subsurface/SubsurfaceSections.hpp"
 #include "2d/solver/SurfaceSolverFactory.hpp"
@@ -401,6 +402,72 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
     EXPECT_EQ(t.lost_et[0], 0.0) << "ET carried solute out of the aquifer" << ledgerDump(t, 0);
     EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * std::fabs(t.init_mass[0])) << ledgerDump(t, 0);
     finish(r);
+}
+
+// ---------------------------------------------------------------------------
+// A table that drains to its bed holds no solute. The upper of two cells on a
+// 10 m slope drains its saturated zone into the lower one. Its water decays
+// toward zero while the mass left behind is rounding residue; before the fix
+// mass over that water reported 4e8 mg/L (KS 3600) and inf (KS 36) from a
+// deck seeded at 25 mg/L at most, and dispersion carried the inf to the
+// neighbours as NaN (full-event Bellinge, 2026-11-17).
+// ---------------------------------------------------------------------------
+TEST(GwTransportKernel, DrainedTableHoldsNoSoluteAndConcentrationsStayBounded) {
+    for (const char* ks : {"3600", "36"}) {
+        std::ostringstream s;
+        s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 12:00:00\n"
+             "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "ALLOW_PONDING NO\n\n"
+             "[POLLUTANTS]\nTSS  MG/L  0.0  0.0  0.0  0.0  NO  *  0.0  0.0\n\n"
+             "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
+             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n\n"
+             "[TIMESERIES]\nRAIN  0:00  0.0\nRAIN  0:10  0.0\n\n"
+             "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\n"
+             "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
+             "RAINFALL_MODE SYSTEM\nEVAPORATION CLIMATE\n\n"
+             "[2D_VERTICES]\n0.0 0.0 10.0\n10.0 0.0 10.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+             "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+             "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+             "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
+             "[2D_AQUIFER]\n*  "
+          << ks
+          << "  1.0  0.45  0.10  2.0  HG0 0.2\n\n"
+             "[GW_INITIAL_QUALITY]\n*  SAT  TSS  5.0\n*  UNSAT  TSS  2.0\nCELL 1  SAT  TSS  25.0\n\n"
+             "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n[REPORT]\nINPUT NO\n";
+        const std::string tag = std::string("drained_table_ks") + ks;
+        Deck r = open(tag, s.str());
+        ASSERT_TRUE(r.opened) << tag;
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
+        ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK) << tag;
+        r.started = true;
+        const auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const auto& t = gw.transport();
+        ASSERT_TRUE(t.active()) << tag;
+        bool drained = false;
+        double elapsed = 0.0;
+        int status = SWMM_OK;
+        while ((status = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
+            for (int c = 0; c < t.n_cells; ++c) {
+                if (gw.state().hg[c] <= 1.0e-12) {
+                    drained = true;
+                    EXPECT_EQ(t.sat_mass[t.idx(0, c)], 0.0)
+                        << tag << " cell " << c << " hg " << gw.state().hg[c];
+                }
+                for (const bool sat : {true, false}) {
+                    const double conc = openswmm::twoD::groundwaterZoneConcentration(gw, c, 0, sat);
+                    ASSERT_TRUE(std::isfinite(conc) && conc >= 0.0 && conc <= 25.0 + 1.0e-9)
+                        << tag << " cell " << c << (sat ? " saturated " : " column ") << conc
+                        << " mg/L, hg " << gw.state().hg[c];
+                }
+            }
+        }
+        EXPECT_EQ(status, SWMM_OK) << tag;
+        EXPECT_TRUE(drained) << tag << ": the upper table never drained, the gate tested nothing";
+        EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * t.init_mass[0]) << tag << ledgerDump(t, 0);
+        finish(r);
+    }
 }
 
 // ---------------------------------------------------------------------------

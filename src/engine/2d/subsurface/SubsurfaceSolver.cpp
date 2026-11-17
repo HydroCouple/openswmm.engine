@@ -824,7 +824,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
         const double center = value(cell);
         for (int p = E.cell_ptr[cell]; p < E.cell_ptr[cell + 1]; ++p) {
             const int e = E.cell_edge[p], other = E.cL[e] == cell ? E.cR[e] : E.cL[e];
-            if (!covered_[other] || (species >= 0 && !(satVolume(other) > 0)))
+            if (!covered_[other] || (species >= 0 && !(state_.hg[other] > kTiny)))
                 continue;
             fit.add(mesh_->tri_cx[other] - mesh_->tri_cx[cell],
                     mesh_->tri_cy[other] - mesh_->tri_cy[cell], value(other) - center);
@@ -855,7 +855,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
                      -std::numeric_limits<double>::infinity()};
             for (int p = E.cell_ptr[cell]; p < E.cell_ptr[cell + 1]; ++p) {
                 const int e = E.cell_edge[p], other = E.cL[e] == cell ? E.cR[e] : E.cL[e];
-                if (!covered_[other] || !(satVolume(other) > 0))
+                if (!covered_[other] || !(state_.hg[other] > kTiny))
                     continue;
                 const double c = concentration(other, species);
                 range[0] = std::min(range[0], c);
@@ -4116,8 +4116,24 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         const double uns_scale =
             uns_request > old_uns && uns_request > 0 ? old_uns / uns_request : 1;
         double sat_remaining = sat_available, uns_remaining = old_uns;
-        auto take = [&](double& m, double vol, double v_store, double mob) -> double {
-            if (!(vol > 0.0) || !(v_store > 0.0) || m == 0.0)
+        // The water each store still holds as the channels below act in turn:
+        // a sink takes its water with it and a transfer across the table hands
+        // its water to the other store, so every channel reads the
+        // concentration the water actually has. Reading the post-arrival
+        // volume after earlier sinks had lowered only the mass under-removed
+        // by a second-order share that compounds as a table drains: 25 mg/L
+        // became 4e8 mg/L and then inf. The Euler stage keeps its fixed pair.
+        double w_sat = v_sat, w_uns = v_uns;
+        const auto hand = [&](double& water, double vol) {
+            if (!euler)
+                water = std::max(0.0, water + vol);
+        };
+        auto take = [&](double& m, double vol, double& water, double mob) -> double {
+            if (!(vol > 0.0) || !(water > 0.0))
+                return 0.0;
+            const double v_store = water;
+            hand(water, -vol);
+            if (m == 0.0)
                 return 0.0;
             double dm = vol * (m / v_store) * mob;
             if (euler) {
@@ -4202,19 +4218,22 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             }
             msat -= dm;
             book(tr_.lost_link[us], dm);
+            hand(w_sat, std::min(0.0, f.link));
         } else if (f.link < 0.0) {
-            book(tr_.lost_link[us], take(msat, -f.link, v_sat, mob_sat));
+            book(tr_.lost_link[us], take(msat, -f.link, w_sat, mob_sat));
         }
 
         // (4) recharge across the table, or capillary rise — internal to
         //     this cell, so it is informational only.
         if (f.recharge > 0.0) {
-            const double dm = take(muns, f.recharge, v_uns, mob_uns);
+            const double dm = take(muns, f.recharge, w_uns, mob_uns);
             msat += dm;
+            hand(w_sat, f.recharge);
             book(tr_.internal_recharge[us], dm);
         } else if (f.recharge < 0.0) {
-            const double dm = take(msat, -f.recharge, v_sat, mob_sat);
+            const double dm = take(msat, -f.recharge, w_sat, mob_sat);
             muns += dm;
+            hand(w_uns, -f.recharge);
             book(tr_.internal_recharge[us], -dm);
         }
 
@@ -4226,12 +4245,14 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             // The moving boundary carries the water's whole content across,
             // sorbed included: the grains themselves change zone when the
             // table passes them. `mob = 1`.
-            const double dm = take(msat, handover, v_sat, euler ? mob_sat : 1.0);
+            const double dm = take(msat, handover, w_sat, euler ? mob_sat : 1.0);
             muns += dm;
+            hand(w_uns, handover);
             book(tr_.internal_recharge[us], -dm);
         } else if (handover < 0.0) {
-            const double dm = take(muns, -handover, v_uns, euler ? mob_uns : 1.0);
+            const double dm = take(muns, -handover, w_uns, euler ? mob_uns : 1.0);
             msat += dm;
+            hand(w_sat, -handover);
             book(tr_.internal_recharge[us], dm);
         }
 
@@ -4247,8 +4268,9 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
             msat += node_in_m;
             book(tr_.gained_node[us], node_in_m);
         }
+        hand(w_sat, std::max(0.0, f.node_in) + std::max(0.0, -f.node_out));
         if (f.node_out > 0.0) {
-            const double dm = take(msat, f.node_out, v_sat, mob_sat);
+            const double dm = take(msat, f.node_out, w_sat, mob_sat);
             book(tr_.lost_node[us], dm);
             if (dm != 0.0 && !tr_.node_out_mass.empty()) {
                 // Split across the beds this cell serves, in proportion to
@@ -4268,11 +4290,11 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
                 }
             }
         }
-        book(tr_.lost_deep[us], take(msat, f.deep, v_sat, mob_sat));
+        book(tr_.lost_deep[us], take(msat, f.deep, w_sat, mob_sat));
         const double source_conc = euler && !runtime_sources_.rows.empty()
                                        ? (f.v_sat0 > 0 ? old_sat * mob_sat / f.v_sat0 : 0)
-                                       : (v_sat > 0.0 ? msat * mob_sat / v_sat : 0.0);
-        const double source_export = take(msat, f.source_out, v_sat, mob_sat);
+                                       : (w_sat > 0.0 ? msat * mob_sat / w_sat : 0.0);
+        const double source_export = take(msat, f.source_out, w_sat, mob_sat);
         book(tr_.lost_source[us], source_export);
         if (static_cast<std::size_t>(i) < runtime_sources_.cells.size())
             for (auto k : runtime_sources_.cells[i]) {
@@ -4311,7 +4333,7 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         }
 
         if (f.boundaries) {
-            const double export_mass = take(msat, f.boundary_out, v_sat, mob_sat);
+            const double export_mass = take(msat, f.boundary_out, w_sat, mob_sat);
             double wanted_flux = 0;
             for (const auto& pulse : *f.boundaries)
                 wanted_flux += pulse.flux_out[us];
@@ -4339,14 +4361,16 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
         //     marcher applies to evaporation, so a parcel's age is not
         //     changed by the act of evaporating part of it.
         if (f.et > 0.0 && (s == tr_.age_row || s == tr_.temp_row))
-            book(tr_.lost_et[us], take(muns, f.et, v_uns, 1.0));
+            book(tr_.lost_et[us], take(muns, f.et, w_uns, 1.0));
+        else if (f.et > 0.0)
+            hand(w_uns, -f.et);
 
         // (7) saturation excess back to the surface: the table's own water
         //     from the saturated zone, the column's rejection from the
         //     unsaturated one. Reviewed refunds bypass mixing and remain in
         //     paired source receipts; ordinary cells use takeToSurfaceMass.
-        const double top_mass = take(muns, f.reject - f.paired_refund, v_uns, mob_uns);
-        double return_store = v_sat;
+        const double top_mass = take(muns, f.reject - f.paired_refund, w_uns, mob_uns);
+        double return_store = w_sat;
         if (clock_state_ && state_.closure[uc] == static_cast<int8_t>(GwClosure::CLOSED_FORM) &&
             f.hg_final == state_.zs[uc]) {
             // The bulk column has disappeared. After paying its rejection,
@@ -4366,6 +4390,15 @@ void SubsurfaceSolver::fireCellSpecies(int i, const CellFlux& f) {
                 tr_.xacc_to_surface[k] += up;
         }
         book(tr_.lost_dunne[us], up);
+
+        // (7b) A table that has drained to the bed holds no solute. Its water
+        //      decays toward zero while the mass left behind is only rounding
+        //      residue, and mass over that water overflows to inf. The residue
+        //      stays in the cell, in the column the table left behind.
+        if (f.hg_final <= kTiny && msat != 0.0) {
+            book(tr_.internal_recharge[us], -msat);
+            muns += std::exchange(msat, 0.0);
+        }
 
         if (euler && s == tr_.age_row) {
             const double production = f.dt * (f.v_sat0 + f.v_uns0);
