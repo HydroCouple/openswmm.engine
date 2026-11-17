@@ -1959,6 +1959,59 @@ TEST(GwTransportKernel, CoupledGroundwaterRejectsUnsupportedRk2Route) {
     EXPECT_NE(swmm_engine_initialize(r.e), SWMM_OK);
     finish(r);
 }
+// A subcatchment that drains to the network and owns no mesh surface leaves the second-order
+// surface and aquifer trajectory unchanged, bit for bit.
+TEST(GwTransportKernel, CoupledGroundwaterRk2IgnoresSubcatchmentOffTheMesh) {
+    auto order2 = [](std::string body) {
+        const std::string li = "MOMENTUM_EQUATION LOCAL_INERTIAL\n";
+        const auto at = body.find(li);
+        body.replace(at, li.size(), "MOMENTUM_EQUATION FULL_SWE\nRECONSTRUCTION_ORDER 2\n");
+        return body;
+    };
+    const std::string catchment = "[SUBCATCHMENTS]\nS1 RG1 J1 1 50 100 0.5 0\n\n"
+                                  "[SUBAREAS]\nS1 0.01 0.1 0.05 0.05 25 OUTLET\n\n"
+                                  "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+                                  "[POLYGONS]\nS1 100 100\nS1 200 100\nS1 200 200\nS1 100 200\n\n";
+    Deck with = open("rk2_subcatchment_off_mesh", order2(deck(Mesh::Tri, catchment)));
+    Deck without = open("rk2_subcatchment_off_mesh_reference", order2(deck(Mesh::Tri)));
+    ASSERT_TRUE(with.opened && without.opened);
+    for (Deck* r : {&with, &without}) {
+        ASSERT_EQ(swmm_engine_initialize(r->e), SWMM_OK) << r->eng->context().error_message;
+        ASSERT_EQ(swmm_engine_start(r->e, 1), SWMM_OK);
+        r->started = true;
+    }
+    ASSERT_EQ(with.eng->context().n_subcatches(), 1);
+    for (Deck* r : {&with, &without}) {
+        const auto& w = r->eng->context().warnings;
+        ASSERT_TRUE(std::any_of(w.begin(), w.end(), [](const std::string& line) {
+            return line.find("Coupled groundwater SSP-RK2") != std::string::npos;
+        }));
+    }
+    double elapsed = 1, other = 1, runoff = 0;
+    int steps = 0;
+    while (elapsed > 0) {
+        ASSERT_EQ(swmm_engine_step(with.e, &elapsed), SWMM_OK) << with.eng->context().error_message;
+        ASSERT_EQ(swmm_engine_step(without.e, &other), SWMM_OK);
+        ASSERT_EQ(elapsed, other);
+        const auto& a = with.eng->surfaceRouter2D();
+        const auto& b = without.eng->surfaceRouter2D();
+        ASSERT_EQ(a.state().volume, b.state().volume) << steps;
+        ASSERT_EQ(a.state().transport.cell_mass, b.state().transport.cell_mass) << steps;
+        ASSERT_EQ(a.subsurface().state().hg, b.subsurface().state().hg) << steps;
+        ASSERT_EQ(a.subsurface().transportRestartState(), b.subsurface().transportRestartState())
+            << steps;
+        runoff = std::max(runoff, with.eng->context().subcatches.runoff[0]);
+        ++steps;
+    }
+    EXPECT_GT(steps, 100);
+    EXPECT_GT(runoff, 0); // the subcatchment is live, not inert
+    double wet = 0;
+    for (double v : with.eng->surfaceRouter2D().subsurface().state().hg)
+        wet = std::max(wet, v);
+    EXPECT_GT(wet, 0.5); // rain reached the aquifer
+    finish(with);
+    finish(without);
+}
 TEST(GwTransportKernel, AquiferOptionSnapshotsPreserveFullDoublePrecision) {
     Deck r = open("aquifer_option_precision", forcingDeck(""));
     ASSERT_TRUE(r.opened);

@@ -2013,7 +2013,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     if (subsurface_.active() && options_.reconstruction_order == 2) {
         auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
         if (options_.momentum != Momentum2D::FULL_SWE || !cpu || !coupling_points_.empty() ||
-            !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() || ctx.n_subcatches() != 0)
+            !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() ||
+            !aquiferConfig().surface_owners.empty())
             throw std::runtime_error(
                 "Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");
         if (auto error = cpu->configureRk2BoundarySignals(ctx, bc_stage_ts_scale_, bc_flow_scale_);

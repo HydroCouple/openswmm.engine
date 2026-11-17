@@ -23,6 +23,8 @@ retroactive.
 
 ## [Unreleased]
 
+- `RECONSTRUCTION_ORDER 2` with a `[2D_AQUIFER]` no longer refuses a model just because it contains subcatchments. Subcatchments that drain to the network and own no mesh surface are allowed, and the surface and aquifer results are identical with and without them. Authored surface ownership, node or outfall coupling points and link seepage are still refused at second order with an aquifer, and the managed checkpoint profile still requires a model without subcatchments.
+
 - The live storage-quality (passive) exchange now runs with any 2D thread count; it previously required `THREADS 1`. The exchange journal, its receipts, the surface water and the cell masses are identical at 1, 2, 4 and 8 threads. A checkpoint still loads only at the thread count it was saved with. The split-execution profile and the coupled water checkpoint keep `THREADS 1`, and the exchange still requires first order.
 
 - `RECONSTRUCTION_ORDER 2` with surface transport now always runs second order. It dropped to first order when `[2D_OPTIONS] GROUNDWATER NO` was set, and only then; the manual wrongly said it always did. A deck with `FULL_SWE`, `RECONSTRUCTION_ORDER 2`, transport rows and `GROUNDWATER NO` therefore changes results (second-order water, two stages per step) and takes longer. Transport rows are carried on each stage's mass fluxes, upwind in space, and averaged by the two-stage step. The CPU solver and the GPU (Kokkos) plugin behave the same way.
