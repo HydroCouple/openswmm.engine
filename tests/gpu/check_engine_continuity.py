@@ -112,13 +112,15 @@ def main():
     if args.reactions:
         if not args.quality:
             raise AssertionError("--reactions requires --quality")
-        # A decays into B at a rate that depends on the pollutant; both start on the mesh.
+        # A forms at a constant rate and from the pollutant, and turns into B at a rate that
+        # depends on the pollutant; B decays. The constant source keeps both nonzero on the
+        # surface (the initial rows below only seed cells that start wet).
         reactions = ("[REACTION_OPTIONS]\nSOLVER RK5\nCOUPLING FULL\nRATE_UNITS HR\n"
                      "[REACTION_SPECIES]\nBULK A MG\nBULK B MG\n"
                      "[REACTION_COEFFICIENTS]\nPARAMETER k 0.3\n"
                      "[REACTION_TERMS]\nloss k * A * (1 + 0.01 * P1)\n"
-                     "[REACTION_PIPES]\nRATE A -loss\nRATE B loss - 0.05 * B\n"
-                     "[REACTION_TANKS]\nRATE A -loss\nRATE B loss - 0.05 * B\n"
+                     "[REACTION_PIPES]\nRATE A 0.02 + 0.2 * P1 - loss\nRATE B loss - 0.05 * B\n"
+                     "[REACTION_TANKS]\nRATE A 0.02 + 0.2 * P1 - loss\nRATE B loss - 0.05 * B\n"
                      "[REACTION_QUALITY]\nGLOBAL A 1\n")
         deck += ("\n[PROCESS_COMPONENTS]\n"
                  "org.hydrocouple.openswmm.reactions config=\"model.rxn\"\n"
@@ -174,6 +176,32 @@ def main():
                                  "\n--- OpenMP ---\n" + "\n".join(tables["omp"]))
         print(f"binary output identical ({len(outputs['cpu'])} bytes); "
               f"{len(tables['cpu'])} quality continuity table(s) identical")
+        # Where h5py is available, also require every 2D dataset but the two boundary totals
+        # (summed in a different order) to hold the same bytes, and the rows to be nonzero.
+        try:
+            import h5py
+            import numpy
+        except ImportError:
+            print("h5py not available: the 2D datasets were not compared")
+        else:
+            files = {b: h5py.File(next((args.output / b).resolve().glob("*.h5")), "r")
+                     for b in ("cpu", "omp")}
+            names = []
+            files["cpu"].visititems(
+                lambda name, item: names.append(name) if isinstance(item, h5py.Dataset) else None)
+            differing = [n for n in names
+                         if files["cpu"][n].dtype.kind in "fiu" and
+                         numpy.asarray(files["cpu"][n]).tobytes() !=
+                         numpy.asarray(files["omp"][n]).tobytes()]
+            allowed = {"mass_balance_2d/boundary_in", "mass_balance_2d/boundary_out"}
+            if set(differing) - allowed:
+                raise AssertionError(f"2D datasets differ: {sorted(set(differing) - allowed)}")
+            conc = numpy.asarray(files["omp"]["Mesh2_face_species_conc"])
+            peaks = [float(numpy.nanmax(conc[:, row])) for row in range(conc.shape[1])]
+            if min(peaks) <= 0.0:
+                raise AssertionError(f"a transport row stayed zero on the surface: {peaks}")
+            print(f"{len(names)} 2D datasets compared, {len(differing)} boundary totals differ; "
+                  f"row peaks {peaks}")
     cpu, omp = results["cpu"], results["omp"]
     if cpu.keys() != omp.keys():
         raise AssertionError("CPU and plugin continuity rows differ")
