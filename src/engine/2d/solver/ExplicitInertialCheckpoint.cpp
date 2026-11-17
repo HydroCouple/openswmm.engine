@@ -1271,13 +1271,13 @@ void rk2SurfaceBoundaryArchive(Archive& a, BoundaryData& b,
  * ground/thermal/runtime profile checks. Read-only but allocation and checked lookups may throw.
  * Does not settle or repair invalid state.
  */
-std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
+std::string ExplicitInertialSolver::rk2CheckpointProfile(bool for_advance) const {
     if (opts_ && opts_->wall_drag_enabled)
         return "Wall drag checkpoint profile is not qualified.";
     if (!initialized_ || !second_order_ || !gw_ || common_stage_ || joint_checkpoint_ ||
         channel_ground_ || source_history_ || engine_source_history_ || engine_source_stream_ ||
         !checkpoint_ready_ || mode_ != Momentum2D::FULL_SWE || opts_->lts_tiers != 1 ||
-        (state_->node_coupling && !state_->node_coupling->empty()))
+        (!for_advance && state_->node_coupling && !state_->node_coupling->empty()))
         return "RK2 checkpoint requires the standalone global transport/age coupled profile.";
     if (state_->snow.active() && state_->snow.completedEnd() != source_phase_end_)
         return "RK2 snow and numerical source clocks differ.";
@@ -1412,10 +1412,13 @@ std::string ExplicitInertialSolver::rk2CheckpointProfile() const {
                 rk_reacted_reported_[row] > rk_reacted_[row])
                 return "RK2 surface reaction report receipt is inadmissible.";
     }
-    for (const auto* row : {&state_->coupling_flux, &state_->coupling_applied})
-        for (double v : *row)
-            if (v != 0)
-                return "RK2 checkpoint cannot recover external coupling receipts.";
+    // An advance copies the whole state for its rollback, so the router's outfall receipts are
+    // safe there; the checkpoint archive does not carry them.
+    if (!for_advance)
+        for (const auto* row : {&state_->coupling_flux, &state_->coupling_applied})
+            for (double v : *row)
+                if (v != 0)
+                    return "RK2 checkpoint cannot recover external coupling receipts.";
     if (source_phase_end_ != t_last_sync_ || accumulators_pending_)
         return "RK2 checkpoint requires a completed numerical boundary.";
     for (int i = 0; i < gw_->state_.n_cells; ++i)

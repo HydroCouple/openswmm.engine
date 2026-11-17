@@ -2845,8 +2845,12 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 continue;
             const double h_off =
                 (k < exch_head_slope_.size()) ? exch_head_slope_[k] * exch_tau_ : 0.0;
-            double Q = computeNodeCouplingQ(cp, *mesh_, *state_, *state_->nodes_1d, *opts_, nullptr,
-                                            h_off);
+            // A coupled groundwater stage evaluates the law at the state the stage started from,
+            // like its other sources; the caps below still act on the current water.
+            double Q = rk_exchange_stage_
+                           ? rk_exchange_q_[k]
+                           : computeNodeCouplingQ(cp, *mesh_, *state_, *state_->nodes_1d, *opts_,
+                                                  nullptr, h_off);
             if (Q == 0.0)
                 continue;
             double spill_take = 0.0, spill_shortfall = 0.0;
@@ -3496,8 +3500,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
         if (common_stage_ || channel_ground_ ||
             (gw_->transport().temp_row >= 0 &&
              (state_->transport.temp_row != gw_->transport().temp_row ||
-              (opts_->coupled_heat && !state_->heat.enabled))) ||
-            (state_->node_coupling && !state_->node_coupling->empty()))
+              (opts_->coupled_heat && !state_->heat.enabled))))
             throw std::runtime_error("Coupled RK2 has an unqualified surface/source owner.");
         // Capture every owned numerical field. Borrowed owners are refused
         // above; the boundary receipt map is the sole writable borrowed view.
@@ -3650,6 +3653,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
             rk_inf0_ = state_->infil_applied;
             rk_cpl0_ = state_->coupling_applied;
             rk_drawn0_ = node_drawn_;
+            const double spill_deficit0 = spill_deficit_, exch_tau0 = exch_tau_;
             const auto transport0 = state_->transport;
             const auto heat_evap0 = state_->heat.evaporated_m3;
             const bool latent_cooling = surfaceLatentCooling();
@@ -3703,6 +3707,19 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 if (gw_)
                     gw_->publishRk2Infiltration(*state_, dt, time);
                 resolveRk2BoundarySignals(time + stage * dt);
+                rk_exchange_stage_ =
+                    gw_ && !exch_.empty() && state_->node_coupling && state_->nodes_1d;
+                if (rk_exchange_stage_) {
+                    const auto& pts = *state_->node_coupling;
+                    rk_exchange_q_.assign(pts.size(), 0.0);
+                    for (std::size_t k = 0; k < pts.size(); ++k) {
+                        const double h_off =
+                            (k < exch_head_slope_.size()) ? exch_head_slope_[k] * exch_tau_ : 0.0;
+                        if (pts[k].cell_idx >= 0)
+                            rk_exchange_q_[k] = computeNodeCouplingQ(
+                                pts[k], *mesh_, *state_, *state_->nodes_1d, *opts_, nullptr, h_off);
+                    }
+                }
                 fireFaces(active_faces_, dt, /*global_step=*/true);
                 if (gw_)
                     gw_->fireGwFaces(0, dt);
@@ -3737,6 +3754,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                     tr.generated_age[tr.age_row] += generated;
                 }
                 rk_transport_stage_ = false;
+                rk_exchange_stage_ = false;
             }
             // Parallel over every cell. An INACTIVE cell was not fired by either
             // stage, so its average is the identity (volume, q⃗ and the infiltration
@@ -3848,6 +3866,10 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 exch_[k] = rk_ex0_[k] + 0.5 * (exch_[k] - rk_ex0_[k]);
             for (std::size_t k = 0; k < node_drawn_.size(); ++k)
                 node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
+            // Both stages booked their spill shortfall and advanced the head-ramp clock: the
+            // shortfall averages like every other accumulator and the clock moves one step.
+            spill_deficit_ = spill_deficit0 + 0.5 * (spill_deficit_ - spill_deficit0);
+            exch_tau_ = exch_tau0 + dt;
             state_->evap_loss_total = evap0 + 0.5 * (state_->evap_loss_total - evap0);
             if (gw_) {
                 gw_->blendRk2Water(part_ground ? *part_ground : *ground0, time + dt);
@@ -4318,7 +4340,7 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     }
     if (!(second_order_ && gw_))
         return advanceImpl(t_current, t_target);
-    if (auto error = rk2CheckpointProfile(); !error.empty())
+    if (auto error = rk2CheckpointProfile(/*for_advance=*/true); !error.empty())
         throw std::runtime_error(error);
     if (!std::isfinite(t_current) || !std::isfinite(t_target) || t_current != t_last_sync_ ||
         t_target < t_current)

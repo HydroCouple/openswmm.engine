@@ -2012,9 +2012,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     }
     if (subsurface_.active() && options_.reconstruction_order == 2) {
         auto* cpu = dynamic_cast<ExplicitInertialSolver*>(solver_.get());
-        if (options_.momentum != Momentum2D::FULL_SWE || !cpu || !coupling_points_.empty() ||
-            !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() ||
-            !aquiferConfig().surface_owners.empty())
+        // Outfall points are applied by the router between advances; junction points fire in
+        // both of the marcher's stages and are averaged with the rest of the step.
+        if (options_.momentum != Momentum2D::FULL_SWE || !cpu || !aquifer_link_shares_.empty() ||
+            !subcatch_recharge_.empty() || !aquiferConfig().surface_owners.empty())
             throw std::runtime_error(
                 "Coupled groundwater RK2 requires the standalone FULL_SWE transport/age profile; network and catchment owners remain unqualified.");
         if (auto error = cpu->configureRk2BoundarySignals(ctx, bc_stage_ts_scale_, bc_flow_scale_);
@@ -2022,7 +2023,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             throw std::runtime_error(error);
         if (auto error = cpu->configureRk2Reactions(ctx); !error.empty())
             throw std::runtime_error(error);
-        if (auto error = cpu->rk2CheckpointProfile(); !error.empty())
+        if (auto error = cpu->rk2CheckpointProfile(/*for_advance=*/true); !error.empty())
             throw std::runtime_error(error);
         ctx.warnings.push_back(
             "Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater/surface reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
@@ -4387,7 +4388,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
         double pending = 0.0;
         for (const double v : gws.xacc_to_surface)
             pending += v;
-        mb.aquifer_in = common_stage_ ? common_stage_->meshReturn() : gws.led_dunne - pending;
+        // Infiltration the top layer refused returns through the same accumulator as the
+        // saturation excess, so both ledgers count toward what the surface received.
+        mb.aquifer_in =
+            common_stage_ ? common_stage_->meshReturn() : gws.led_dunne + gws.led_reject - pending;
     }
 
     // Coupling and outfall exchange (m³, SI-native, already capped/clamped —

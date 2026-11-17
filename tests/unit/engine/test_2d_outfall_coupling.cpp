@@ -39,11 +39,13 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <string>
 #include <vector>
 
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_massbalance.h>
 #include <openswmm/engine/openswmm_nodes.h>
 
@@ -122,6 +124,12 @@ struct RunResult {
     double cont_routing = 0.0; // 1D routing continuity error (fraction)
     double outfall_in = 0.0;   // 2D ledger: 1D→2D outfall discharge (m³)
     double outfall_out = 0.0;  // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
+    double gw_cont = 0.0;      // aquifer continuity error (fraction)
+    double gw_infil = 0.0;     // aquifer ledger: infiltration received (m³)
+    double gw_storage = 0.0;   // aquifer ledger: final storage (m³)
+    double final_surface = 0.0; // 2D ledger: final surface storage (m³)
+    double to_2d = 0.0;         // 2D ledger: junction spill onto the mesh (m³)
+    double to_1d = 0.0;         // 2D ledger: mesh drain into junctions (m³)
 };
 
 /**
@@ -178,8 +186,13 @@ RunResult run_outfall_model(const fs::path& dir, const std::string& model = buil
 
     std::vector<double> depths(static_cast<std::size_t>(r.n_tri));
     double elapsed = 0.0;
+    bool step_failed = false;
     while (true) {
-        if (swmm_engine_step(eng, &elapsed) != SWMM_OK || elapsed <= 0.0)
+        if (swmm_engine_step(eng, &elapsed) != SWMM_OK) {
+            step_failed = true;
+            break;
+        }
+        if (elapsed <= 0.0)
             break;
         if (swmm_2d_get_depths_bulk(eng, depths.data()) == SWMM_OK) {
             for (double d : depths)
@@ -198,11 +211,17 @@ RunResult run_outfall_model(const fs::path& dir, const std::string& model = buil
                              &evap);
     r.outfall_in = ofin;
     r.outfall_out = ofout;
+    r.final_surface = final_s;
+    r.to_2d = c12;
+    r.to_1d = c21;
+    swmm_gw2d_get_continuity_error(eng, &r.gw_cont);
+    swmm_gw2d_get_ledger(eng, SWMM_GW2D_LED_INFIL_IN, &r.gw_infil);
+    swmm_gw2d_get_ledger(eng, SWMM_GW2D_LED_STORAGE, &r.gw_storage);
 
     swmm_engine_report(eng);
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
-    r.ok = true;
+    r.ok = !step_failed;
     return r;
 }
 
@@ -308,6 +327,126 @@ TEST_F(OutfallCoupling2DTest, OutfallDischargeReaches2DAndContinuityCloses) {
         << "outfall_out_m3," << r.outfall_out << "\n"
         << "continuity_2d_frac," << r.cont_2d << "\n"
         << "continuity_routing_frac," << r.cont_routing << "\n";
+}
+
+// A 2D aquifer under the pan at second order: the outfall operator runs between the marcher's
+// two-stage advances, so the discharge reaches the surface and the aquifer and every ledger closes.
+TEST_F(OutfallCoupling2DTest, SecondOrderAquiferAcceptsOutfallDischargeAndClosesEveryLedger) {
+    auto model = [](int order) {
+        auto text = build_outfall_model();
+        const std::string at = "[2D_OPTIONS]\n";
+        text.insert(text.find(at) + at.size(),
+                    "MOMENTUM_EQUATION FULL_SWE\nLTS_TIERS 1\nRECONSTRUCTION_ORDER " +
+                        std::to_string(order) + "\n");
+        return text + "\n[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+                      "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n"
+                      "LINK_SEEPAGE NONE\n\n"
+                      "[2D_AQUIFER]\n*  36.0  1.0  0.45  0.10  2.0  HG0 0.3\n";
+    };
+    const RunResult second = run_outfall_model(dir_, model(2));
+    const RunResult first = run_outfall_model(dir_, model(1));
+    ASSERT_TRUE(second.ok) << "second-order aquifer run with a coupled outfall failed";
+    ASSERT_TRUE(first.ok);
+    EXPECT_TRUE(std::any_of(second.warnings.begin(), second.warnings.end(), [](const auto& w) {
+        return w.find("Coupled groundwater SSP-RK2") != std::string::npos;
+    }));
+    EXPECT_GT(second.outfall_in, 1.0);
+    EXPECT_GT(second.gw_infil, 0.1);
+    EXPECT_LT(std::abs(second.cont_2d), 1e-6) << second.cont_2d;
+    EXPECT_LT(std::abs(second.gw_cont), 1e-6) << second.gw_cont;
+    EXPECT_LT(std::abs(second.cont_routing), 0.05) << second.cont_routing;
+    // The same deck at first order: the two orders agree on where the water went.
+    EXPECT_NEAR(second.outfall_in, first.outfall_in, 0.02 * first.outfall_in);
+    EXPECT_NEAR(second.gw_infil, first.gw_infil, 0.05 * first.gw_infil);
+    EXPECT_NEAR(second.final_surface, first.final_surface, 0.05 * first.final_surface + 1e-3);
+    std::ofstream csv(dir_ / "outfall_aquifer_order2.csv");
+    csv << std::setprecision(17) << "metric,order2,order1\n"
+        << "outfall_in_m3," << second.outfall_in << ',' << first.outfall_in << "\n"
+        << "aquifer_infiltration_m3," << second.gw_infil << ',' << first.gw_infil << "\n"
+        << "aquifer_storage_m3," << second.gw_storage << ',' << first.gw_storage << "\n"
+        << "final_surface_m3," << second.final_surface << ',' << first.final_surface << "\n"
+        << "continuity_2d_frac," << second.cont_2d << ',' << first.cont_2d << "\n"
+        << "continuity_aquifer_frac," << second.gw_cont << ',' << first.gw_cont << "\n"
+        << "continuity_routing_frac," << second.cont_routing << ',' << first.cont_routing << "\n";
+}
+
+// The same aquifer with the pan mapped to the junction: the junction exchange fires in both
+// stages of every step and is averaged with it. A ponded pan drains into the junction, and a
+// surcharged junction spills onto a dry pan.
+TEST_F(OutfallCoupling2DTest, SecondOrderAquiferJunctionDrainAndSpillCloseEveryLedger) {
+    auto model = [](int order, bool spill, bool aquifer = true) {
+        auto text = build_outfall_model();
+        auto replace = [&](const std::string& a, const std::string& b) {
+            const auto at = text.find(a);
+            ASSERT_NE(at, std::string::npos) << a;
+            text.replace(at, a.size(), b);
+        };
+        replace("0         O1    0.7  2.5\n", "0         J1    0.7  0.2\n");
+        replace("[2D_OPTIONS]\n", "[2D_OPTIONS]\nMOMENTUM_EQUATION FULL_SWE\nLTS_TIERS 1\n"
+                                  "RECONSTRUCTION_ORDER " +
+                                      std::to_string(order) + "\n");
+        if (spill) { // rim at the pan level, a pipe too small for the inflow
+            replace("J1      1.0   5.0       0          0         0\n",
+                    "J1      -2.0  2.0       0          0         0\n");
+            replace("O1      0.0   FREE  NO\n", "O1      -2.5  FREE  NO\n");
+            replace("C1      CIRCULAR  0.5 ", "C1      CIRCULAR  0.15");
+            replace("1.0      1.0      0.05\n", "1.0      1.0      0.2\n");
+        } else { // ponded pan above a low junction, no inflow
+            replace("J1      1.0   5.0       0          0         0\n",
+                    "J1      -2.0  2.0       0          0         0\n");
+            replace("O1      0.0   FREE  NO\n", "O1      -2.5  FREE  NO\n");
+            replace("1.0      1.0      0.05\n", "1.0      1.0      0.0\n");
+            replace("0     1   2   0.03\n0     2   3   0.03\n",
+                    "0     1   2   0.03  0.3\n0     2   3   0.03  0.3\n");
+        }
+        if (!aquifer)
+            return text;
+        return text + "\n[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+                      "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n"
+                      "LINK_SEEPAGE NONE\n\n"
+                      "[2D_AQUIFER]\n*  36.0  1.0  0.45  0.10  2.0  HG0 0.3\n";
+    };
+    std::ofstream csv(dir_ / "junction_aquifer_order2.csv");
+    csv << std::setprecision(17)
+        << "case,order,to_1d_m3,to_2d_m3,aquifer_infiltration_m3,final_surface_m3,"
+           "continuity_2d,continuity_aquifer,continuity_routing\n";
+    for (bool spill : {false, true}) {
+        RunResult runs[2];
+        for (int order : {2, 1}) {
+            auto& r = runs[2 - order];
+            ASSERT_NO_FATAL_FAILURE(r = run_outfall_model(dir_, model(order, spill)));
+            ASSERT_TRUE(r.ok) << (spill ? "spill" : "drain") << " order " << order;
+            csv << (spill ? "spill," : "drain,") << order << ',' << r.to_1d << ',' << r.to_2d << ','
+                << r.gw_infil << ',' << r.final_surface << ',' << r.cont_2d << ',' << r.gw_cont
+                << ',' << r.cont_routing << "\n";
+        }
+        const auto& second = runs[0];
+        const auto& first = runs[1];
+        const RunResult surface = run_outfall_model(dir_, model(2, spill, false));
+        ASSERT_TRUE(surface.ok);
+        csv << (spill ? "spill" : "drain") << "-no-aquifer,2," << surface.to_1d << ','
+            << surface.to_2d << ",0," << surface.final_surface << ',' << surface.cont_2d << ",0,"
+            << surface.cont_routing << "\n";
+        EXPECT_TRUE(std::any_of(second.warnings.begin(), second.warnings.end(), [](const auto& w) {
+            return w.find("Coupled groundwater SSP-RK2") != std::string::npos;
+        }));
+        EXPECT_LT(std::abs(second.cont_2d), 1e-6) << second.cont_2d;
+        EXPECT_LT(std::abs(second.gw_cont), 1e-6) << second.gw_cont;
+        // The 1D side is the same solver at both orders; the fast drain floods the small
+        // junction and strains its continuity equally in all three runs.
+        EXPECT_NEAR(second.cont_routing, first.cont_routing, 0.01);
+        EXPECT_GT(second.gw_infil, 0.1);
+        const double moved = spill ? second.to_2d : second.to_1d;
+        const double reference = spill ? first.to_2d : first.to_1d;
+        EXPECT_GT(moved, 1.0) << (spill ? "spill" : "drain");
+        EXPECT_NEAR(moved, reference, 0.05 * reference) << (spill ? "spill" : "drain");
+        // The pan empties within a few steps in the drain case, so the share that infiltrates
+        // first is sensitive to the time integration; the total leaving the surface is not.
+        EXPECT_NEAR(second.gw_infil, first.gw_infil, (spill ? 0.05 : 0.25) * first.gw_infil);
+        if (!spill)
+            EXPECT_NEAR(second.to_1d + second.gw_infil, first.to_1d + first.gw_infil,
+                        1e-3 * first.to_1d);
+    }
 }
 
 // ============================================================================

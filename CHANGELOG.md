@@ -23,6 +23,12 @@ retroactive.
 
 ## [Unreleased]
 
+- `RECONSTRUCTION_ORDER 2` with a `[2D_AQUIFER]` now accepts outfalls and junctions coupled to the mesh, so an ordinary network-coupled model can run second order with a 2D aquifer. Outfall exchange is applied between the two-stage advances (first order in time). Junction exchange fires in both stages from each stage's starting state and is averaged with the step (second order at held node heads). The surface, aquifer and routing ledgers close as they do at first order. Such a run cannot be checkpointed. Aquifer-node beds (`NODE_ENROLMENT` other than `ROWS` without rows) and link seepage are still refused in this configuration.
+
+- The 2D surface water balance now counts infiltration that a saturated aquifer refused as water returned to the surface. It was left out of the aquifer return term, which left a small continuity residual when the aquifer saturated under a junction spill at second order. The water itself was always conserved.
+
+- In the two-stage (second order) 2D step, the junction spill shortfall diagnostic is averaged over the two stages like every other accumulator, and the experimental head-ramp clock (`OPENSWMM_2D_HEAD_RAMP=1`) advances once per step instead of once per stage. Neither changes water or quality results of an ordinary run.
+
 - `RECONSTRUCTION_ORDER 2` with a `[2D_AQUIFER]` no longer refuses a model just because it contains subcatchments. Subcatchments that drain to the network and own no mesh surface are allowed, and the surface and aquifer results are identical with and without them. Authored surface ownership, node or outfall coupling points and link seepage are still refused at second order with an aquifer, and the managed checkpoint profile still requires a model without subcatchments.
 
 - The live storage-quality (passive) exchange now runs with any 2D thread count; it previously required `THREADS 1`. The exchange journal, its receipts, the surface water and the cell masses are identical at 1, 2, 4 and 8 threads. A checkpoint still loads only at the thread count it was saved with. The split-execution profile and the coupled water checkpoint keep `THREADS 1`, and the exchange still requires first order.

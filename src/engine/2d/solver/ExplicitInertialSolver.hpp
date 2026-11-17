@@ -391,7 +391,7 @@ private:
      * stable matching owners and does not settle or repair them. Definition details each
      * qualification.
      */
-    std::string rk2CheckpointProfile() const;
+    std::string rk2CheckpointProfile(bool for_advance = false) const;
     /**
      * @brief Serialize immutable current RK2 model and held forcing identity.
      * @return Binary identity string; may throw on allocation/archive/invalid prepared views.
@@ -766,6 +766,9 @@ private:
     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
     /// step allocates nothing.
     std::vector<double> rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_, rk_cpl0_;
+    /// Junction exchange rates a coupled groundwater stage evaluated at its starting state.
+    std::vector<double> rk_exchange_q_;
+    bool rk_exchange_stage_ = false;
     /**
      * @brief Rebuild limited active-cell MUSCL gradients of eta, depth and x/y velocity.
      * @note Requires FULL_SWE second-order-sized scratch and valid prepared SI

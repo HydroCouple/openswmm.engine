@@ -43,6 +43,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "2d/coupling/NodeCoupling.hpp"
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include <cmath>
 #include <array>
@@ -900,6 +901,9 @@ struct CoupledRkRig {
     }();
     ExplicitInertialSolver solver;
     SubsurfaceSolver gw;
+    openswmm::NodeData node;                           ///< One held 1D node for junction points.
+    std::vector<openswmm::twoD::CouplingPoint> points; ///< Filled before init() to couple cells.
+    double hg0 = .6;                                   ///< Initial saturated height, m.
     /**
      * @brief Initialize the owned two-cell coupled RK2 water fixture.
      *
@@ -926,6 +930,11 @@ struct CoupledRkRig {
         opts.lts_tiers = 1;
         opts.max_timestep = dt;
         seedSurface(mesh, opts, state, pond);
+        if (!points.empty()) {
+            opts.len_1d_to_2d = opts.vol_1d_to_2d = opts.flow_2d_to_1d = 1;
+            state.nodes_1d = &node;
+            state.node_coupling = &points;
+        }
         solver.initialize(mesh, state, opts);
         SubsurfaceConfig cfg;
         cfg.options.authored = true;
@@ -938,7 +947,7 @@ struct CoupledRkRig {
         GwAquiferRow row;
         row.Ks = ks;
         row.zs = 2;
-        row.hg0 = .6;
+        row.hg0 = hg0;
         row.c_loss = deep;
         cfg.rows = {row};
         std::vector<std::string> warnings;
@@ -1202,6 +1211,130 @@ TEST(CoupledGroundwaterRk2, SingularIntakeStartupAndBoundedWellsConserveThroughW
             EXPECT_GT(r.gw.state().led_source_out, 0);
             EXPECT_LT(r.gw.state().led_source_out, 50);
         }
+    }
+}
+
+namespace {
+/// A coupled rig whose first cell exchanges with one held node through an orifice point.
+struct JunctionRkRig : CoupledRkRig {
+    JunctionRkRig(double node_head, double ponded) {
+        node.resize(1);
+        node.head[0] = node_head;
+        node.depth[0] = 2;
+        node.full_volume[0] = 10;
+        node.volume[0] = 10 + ponded;
+        points.push_back({0, -1, 0, .7, .01, false, false});
+    }
+};
+} // namespace
+
+TEST(CoupledGroundwaterRk2, JunctionDrainClosesSurfaceAquiferAndNodeWater) {
+    JunctionRkRig r(-1, 0);
+    r.init(.05, .005, 0, .2);
+    const double initial = r.total();
+    double drained = 0;
+    for (int k = 0; k < 20; ++k) {
+        ASSERT_NO_THROW(r.solver.advance(.05 * k, .05 * (k + 1))) << k;
+        ASSERT_EQ(r.solver.last_coupling_exchange().size(), 1u);
+        EXPECT_GT(r.solver.last_coupling_exchange()[0], 0) << k;
+        drained += r.solver.last_coupling_exchange()[0];
+    }
+    EXPECT_GT(drained, .01);
+    EXPECT_NEAR(r.total() + drained, initial, 1e-12 * initial);
+    EXPECT_NEAR(-r.state.coupling_applied[0], drained, 1e-12 * drained);
+}
+
+TEST(CoupledGroundwaterRk2, JunctionSpillStaysWithinThePondedBudgetAndClosesWater) {
+    const double ponded = .004;
+    JunctionRkRig r(1, ponded);
+    r.init(.05, .005, 0, .2);
+    const double initial = r.total();
+    double spilled = 0;
+    for (int k = 0; k < 4; ++k) {
+        ASSERT_NO_THROW(r.solver.advance(.05 * k, .05 * (k + 1))) << k;
+        const double given = -r.solver.last_coupling_exchange()[0];
+        EXPECT_GT(given, 0) << k;
+        EXPECT_LE(given, ponded) << k; // the node is held, so each advance has the same budget
+        spilled += given;
+    }
+    EXPECT_NEAR(r.total() - spilled, initial, 1e-12 * initial);
+}
+
+TEST(CoupledGroundwaterRk2, JunctionSpillOntoADryCellClosesWater) {
+    for (double hg0_gap : {1.4, .02}) { // a deep table, then one that saturates under the spill
+        JunctionRkRig r(1, .05);
+        r.hg0 = 2 - hg0_gap;
+        r.init(.05, .005, 0, 0);
+        const double initial = r.total();
+        double spilled = 0, rejected = 0;
+        for (int k = 0; k < 200; ++k) {
+            try {
+                r.solver.advance(.05 * k, .05 * (k + 1));
+            } catch (const std::exception& e) {
+                FAIL() << k << ' ' << e.what();
+            }
+            spilled -= r.solver.last_coupling_exchange()[0];
+            ASSERT_NEAR(r.total() - spilled, initial, 1e-12 * initial) << hg0_gap << ' ' << k;
+            // The surface's own ledger: spill in, infiltration out, aquifer return in.
+            double surface = 0, infiltrated = 0, pending = 0;
+            for (int i = 0; i < r.mesh.n_cells(); ++i) {
+                surface += r.state.volume[i];
+                infiltrated += r.state.infil_applied[i] * r.mesh.tri_area[i];
+                pending += r.gw.state().xacc_to_surface[i];
+            }
+            const double returned = r.gw.state().led_dunne + r.gw.state().led_reject - pending;
+            ASSERT_NEAR(surface, spilled - infiltrated + returned, 1e-12 * initial)
+                << hg0_gap << ' ' << k;
+            rejected = std::max(rejected, r.gw.state().led_reject);
+        }
+        EXPECT_GT(spilled, .5);
+        EXPECT_EQ(rejected > 0, hg0_gap < 1); // the shallow table refuses part of the intake
+    }
+}
+
+// Both stages of a step see the node's ponded budget. The first takes all of it and books what
+// the orifice asked for beyond it; the second finds nothing left. The step is their average.
+TEST(CoupledGroundwaterRk2, JunctionSpillShortfallIsAveragedOverTheTwoStages) {
+    const double ponded = 1e-4, dt = .05;
+    JunctionRkRig r(1, ponded);
+    r.init(dt, .005, 0, .2);
+    const double want = -computeNodeCouplingQ(r.points[0], r.mesh, r.state, r.node, r.opts) * dt;
+    ASSERT_GT(want, 10 * ponded);
+    r.solver.advance(0, dt);
+    RecordProperty("steps", int(r.solver.last_num_steps()));
+    const double budget = r.node.volume[0] - r.node.full_volume[0];
+    EXPECT_DOUBLE_EQ(r.solver.last_coupling_exchange()[0], -.5 * budget);
+    EXPECT_NEAR(r.solver.spillDeficit(), .5 * (want - budget), 1e-2 * want);
+}
+
+TEST(CoupledGroundwaterRk2, JunctionFullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
+    double previous = 0;
+    for (double dt : {.4, .2, .1, .05, .025}) {
+        JunctionRkRig full(-1, 0), half(-1, 0);
+        full.init(.4, .005, .0005, .2);
+        half.init(.4, .005, .0005, .2);
+        for (auto* r : {&full, &half}) {
+            auto& w = r->gw.state();
+            for (int i = 0; i < w.n_cells; ++i) {
+                w.hu[i] = .35 * (w.zs[i] - w.hg[i]);
+                w.wetting_front[i] = .1;
+            }
+            w.led_init_storage = w.storage();
+        }
+        full.solver.advance(0, dt);
+        const double whole = full.solver.last_coupling_exchange()[0];
+        half.solver.advance(0, dt / 2);
+        double parts = half.solver.last_coupling_exchange()[0];
+        half.solver.advance(dt / 2, dt);
+        parts += half.solver.last_coupling_exchange()[0];
+        double error = std::abs(whole - parts);
+        for (int i = 0; i < 2; ++i)
+            error += std::abs(full.state.volume[i] - half.state.volume[i]) +
+                     std::abs(full.gw.state().hg[i] - half.gw.state().hg[i]);
+        RecordProperty("junction_difference_" + std::to_string(int(dt * 1000)), error);
+        if (previous > 0 && dt <= .1)
+            EXPECT_GT(previous / error, 7.) << dt;
+        previous = error;
     }
 }
 
