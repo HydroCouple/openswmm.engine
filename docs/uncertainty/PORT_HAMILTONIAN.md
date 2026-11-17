@@ -548,3 +548,14 @@ cases the current code excludes). Acceptance gates as in the table.
   `demo_v4.inp`) wall 1,663 s (474 / 885 / 1,067 / 1,186 at 1000..4000 steps)**: ON/OFF = **1.38**, inside the 1.5 target.
   Open: the ON bands at G70S213/G70S214/G62F012/G71F043 (MC 0-0.02 m, ON 1.1-1.6 m, OFF 0.01-0.13 m) are the largest widenings; 6 non-converged
   member solves; 4 deep store sinks (G70F11P, G71O020, G71R090, G80F11B).
+- 2026-11-16: **cross-vendor review received** (phases 2 and 5, source + tests + logged Release results; no rerun).
+  Phase 2: no blocker (A-orthonormality, generalized eigenrelation, null-area exactness, volume projection,
+  non-negative reduced energy all covered; relative-channel depth Gram coherent with its own trial space HP);
+  H15 corr20 stays the shipped-recipe result, the obsolete recipe is not restored as a switch. Phase 5 BLOCKER:
+  `PortGraph::solve()` returns false when Newton and the Jacobi fallback both fail, but
+  `stepRom1dStorageMembers` ignores it and publishes the failed levels/correction (6 member-steps in the final
+  run) → R-1: a failed member solve is rejected for that step (C_i = 0, member rides the shared plane, no per-member
+  exchange booked, pond slot unchanged, counted) + an engine test that forces a failure. Non-blocking: a focused
+  property test for the main-run volume-mismatch sharing (zero data, balance, order, clamp ≤ 1) → in R-1.
+  Default decision per the review: keep the hook OFF until R-1 lands and the owner accepts the residuals
+  (storage coverage 0.795 < 0.80; four shallow laterals 1.1–1.6 m vs MC ≈ 0; G72UD11 narrow).
