@@ -2845,7 +2845,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 continue;
             const double h_off =
                 (k < exch_head_slope_.size()) ? exch_head_slope_[k] * exch_tau_ : 0.0;
-            // A coupled groundwater stage evaluates the law at the state the stage started from,
+            // A second-order stage evaluates the law at the state the stage started from,
             // like its other sources; the caps below still act on the current water.
             double Q = rk_exchange_stage_
                            ? rk_exchange_q_[k]
@@ -2906,9 +2906,18 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                                  state_->volume[ci], exch_tau_, dt_c, spill_take))
                     throw std::runtime_error(live->error());
             }
+            // A second-order stage books half of its exchange: the step is the average of
+            // its two stages, and booking the halves directly (instead of averaging the
+            // totals afterwards) gives totals that the per-stage amounts sum to exactly.
+            // The node draw keeps its full stage value while the stages run, so the second
+            // stage still sees the budget reduced by all of the first stage's spill; the
+            // halves accumulate beside it and replace it after the step.
+            const double booked = rk_exchange_stage_ ? 0.5 : 1.0;
             if (Q < 0.0) {
                 spill_deficit_ += spill_shortfall;
                 node_drawn_[static_cast<std::size_t>(cp.node_idx)] += spill_take;
+                if (rk_exchange_stage_)
+                    rk_drawn_half_[static_cast<std::size_t>(cp.node_idx)] += 0.5 * spill_take;
             }
             // S1: a 2D→1D drain (Q > 0) leaves at the cell's concentration
             // and is booked per coupling point so S3's tuple can hand it to
@@ -2970,7 +2979,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
             state_->volume[ci] -= Q * dt_c;
             if (state_->volume[ci] < 0.0)
                 state_->volume[ci] = 0.0;
-            exch_[k] += Q * dt_c;
+            exch_[k] += booked * (Q * dt_c);
             inertial::cellEtaDepth(*mesh_, *opts_, ci, state_->volume[ci], state_->head[ci],
                                    state_->depth[ci]);
             if (live && Q != 0.0) {
@@ -3649,10 +3658,9 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
             rk_qx0_ = qcx_;
             rk_qy0_ = qcy_;
             rk_bc0_ = bc_accum_;
-            rk_ex0_ = exch_;
             rk_inf0_ = state_->infil_applied;
             rk_cpl0_ = state_->coupling_applied;
-            rk_drawn0_ = node_drawn_;
+            rk_drawn_half_ = node_drawn_;
             const double spill_deficit0 = spill_deficit_, exch_tau0 = exch_tau_;
             const auto transport0 = state_->transport;
             const auto heat_evap0 = state_->heat.evaporated_m3;
@@ -3707,8 +3715,10 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 if (gw_)
                     gw_->publishRk2Infiltration(*state_, dt, time);
                 resolveRk2BoundarySignals(time + stage * dt);
-                rk_exchange_stage_ =
-                    gw_ && !exch_.empty() && state_->node_coupling && state_->nodes_1d;
+                // The junction law is evaluated at the stage's starting state, which keeps
+                // the exchange second order in time (evaluating it after the stage's cell
+                // update is a first-order split). Each stage then books half of what it moved.
+                rk_exchange_stage_ = !exch_.empty() && state_->node_coupling && state_->nodes_1d;
                 if (rk_exchange_stage_) {
                     const auto& pts = *state_->node_coupling;
                     rk_exchange_q_.assign(pts.size(), 0.0);
@@ -3862,10 +3872,9 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 }
             for (std::size_t k = 0; k < bc_accum_.size(); ++k)
                 bc_accum_[k] = rk_bc0_[k] + 0.5 * (bc_accum_[k] - rk_bc0_[k]);
-            for (std::size_t k = 0; k < exch_.size(); ++k)
-                exch_[k] = rk_ex0_[k] + 0.5 * (exch_[k] - rk_ex0_[k]);
-            for (std::size_t k = 0; k < node_drawn_.size(); ++k)
-                node_drawn_[k] = rk_drawn0_[k] + 0.5 * (node_drawn_[k] - rk_drawn0_[k]);
+            // exch_ was booked at half weight in each stage; so was the node draw, beside
+            // the full stage value the spill budget used.
+            node_drawn_ = rk_drawn_half_;
             // Both stages booked their spill shortfall and advanced the head-ramp clock: the
             // shortfall averages like every other accumulator and the clock moves one step.
             spill_deficit_ = spill_deficit0 + 0.5 * (spill_deficit_ - spill_deficit0);

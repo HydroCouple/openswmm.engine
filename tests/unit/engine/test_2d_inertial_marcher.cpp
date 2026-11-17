@@ -1338,6 +1338,101 @@ TEST(CoupledGroundwaterRk2, JunctionFullStepAndTwoHalfStepsDifferAtThirdLocalOrd
     }
 }
 
+namespace {
+/// Two flat cells under FULL_SWE at order 2 with one held 1D node on cell 0 and no aquifer.
+struct SurfaceJunctionRig {
+    MeshData mesh = makeGridMesh(1, 1, 4., [](double, double) { return 0.; });
+    SurfaceStateData state = makeState(mesh);
+    SolverOptions2D opts;
+    ExplicitInertialSolver solver;
+    openswmm::NodeData node;
+    std::vector<openswmm::twoD::CouplingPoint> points;
+    /**
+     * @param[in] dt Maximum mesh time step, s.
+     * @param[in] pond Initial free surface over the flat zero bed, m.
+     * @param[in] node_head Held node head, m.
+     * @param[in] ponded Node volume above its full volume, m3 (the spill budget).
+     */
+    void init(double dt, double pond, double node_head, double ponded) {
+        opts.momentum = Momentum2D::FULL_SWE;
+        opts.reconstruction_order = 2;
+        opts.lts_tiers = 1;
+        opts.max_timestep = dt;
+        opts.len_1d_to_2d = opts.vol_1d_to_2d = opts.flow_2d_to_1d = 1;
+        seedSurface(mesh, opts, state, pond);
+        node.resize(1);
+        node.head[0] = node_head;
+        node.depth[0] = 2;
+        node.full_volume[0] = 10;
+        node.volume[0] = 10 + ponded;
+        points.push_back({0, -1, 0, .7, .01, false, false});
+        state.nodes_1d = &node;
+        state.node_coupling = &points;
+        solver.initialize(mesh, state, opts);
+    }
+};
+} // namespace
+
+// Evaluating the junction law after a stage's own cell update is a first-order split: a full
+// step and two half steps then differ at second local order (ratio 4 under step halving).
+// Evaluated at the stage's starting state they differ at third local order (ratio 8).
+TEST(SecondOrderJunction, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
+    double previous = 0;
+    for (double dt : {.4, .2, .1, .05, .025}) {
+        SurfaceJunctionRig full, half;
+        full.init(.4, .2, -1, 0);
+        half.init(.4, .2, -1, 0);
+        full.solver.advance(0, dt);
+        ASSERT_EQ(full.solver.last_num_steps(), 2) << dt; // one two-stage step
+        const double whole = full.solver.last_coupling_exchange()[0];
+        half.solver.advance(0, dt / 2);
+        double parts = half.solver.last_coupling_exchange()[0];
+        half.solver.advance(dt / 2, dt);
+        parts += half.solver.last_coupling_exchange()[0];
+        double error = std::abs(whole - parts);
+        for (int i = 0; i < 2; ++i)
+            error += std::abs(full.state.volume[i] - half.state.volume[i]);
+        RecordProperty("junction_difference_" + std::to_string(int(dt * 1000)), error);
+        if (previous > 0 && dt <= .1)
+            EXPECT_GT(previous / error, 7.) << dt;
+        previous = error;
+    }
+}
+
+TEST(SecondOrderJunction, DrainAndSpillBookExactlyWhatTheCellsReceive) {
+    for (double node_head : {-1., 1.}) {
+        SurfaceJunctionRig r;
+        r.init(.05, .2, node_head, .004);
+        const double initial = totalVolume(r.state, r.mesh.n_cells());
+        double exchanged = 0;
+        for (int k = 0; k < 8; ++k) {
+            r.solver.advance(.05 * k, .05 * (k + 1));
+            const double moved = r.solver.last_coupling_exchange()[0];
+            EXPECT_TRUE(node_head < 0 ? moved > 0 : moved < 0) << k;
+            if (node_head > 0)
+                EXPECT_LE(-moved, .004) << k; // the node is held: the same budget every advance
+            exchanged += moved;
+        }
+        const double final_volume = totalVolume(r.state, r.mesh.n_cells());
+        EXPECT_NEAR(final_volume + exchanged, initial, 1e-13 * initial) << node_head;
+        EXPECT_NEAR(-r.state.coupling_applied[0], exchanged, 1e-12 * std::abs(exchanged));
+    }
+}
+
+// The second stage sees the spill budget reduced by all of the first stage's draw, and the
+// step books half of each stage: a budget the first stage exhausts gives half of it.
+TEST(SecondOrderJunction, ExhaustedSpillBudgetGivesHalfOfItPerStep) {
+    const double ponded = 1e-4, dt = .05;
+    SurfaceJunctionRig r;
+    r.init(dt, .2, 1, ponded);
+    const double want = -computeNodeCouplingQ(r.points[0], r.mesh, r.state, r.node, r.opts) * dt;
+    ASSERT_GT(want, 10 * ponded);
+    r.solver.advance(0, dt);
+    const double budget = r.node.volume[0] - r.node.full_volume[0];
+    EXPECT_DOUBLE_EQ(r.solver.last_coupling_exchange()[0], -.5 * budget);
+    EXPECT_NEAR(r.solver.spillDeficit(), .5 * (want - budget), 1e-2 * want);
+}
+
 TEST(CoupledGroundwaterRk2, UnsupportedOwnersRefuseBeforeAnyNumericalMutation) {
     CoupledRkRig r;
     r.init(.05, .005, 0, .2);

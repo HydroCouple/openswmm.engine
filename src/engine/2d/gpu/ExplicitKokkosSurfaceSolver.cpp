@@ -759,6 +759,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         d_cp_group_item_ = devCopy("cp_group_item", item);
     }
     d_exch_ = DView("exch", np);
+    d_rk_exq_ = DView("rk_exchange_q", np);
     exch_host_.assign(np, 0.0);
     const std::size_t nn = state.nodes_1d ? state.nodes_1d->volume.size() : 0;
     d_node_drawn_ = DView("node_drawn", nn);
@@ -1918,8 +1919,6 @@ void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
     snapshot(d_rk_bc_in0_, d_bc_in_);
     snapshot(d_rk_bc_out0_, d_bc_out_);
     snapshot(d_rk_bc_req0_, d_bc_requested_);
-    snapshot(d_rk_ex0_, d_exch_);
-    snapshot(d_rk_drawn0_, d_node_drawn_);
     if (species_) {
         snapshot(d_rk_cmass0_, d_cmass_);
         snapshot(d_rk_exm0_, d_exch_mass_);
@@ -1934,9 +1933,15 @@ void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
         snapshot(d_rk_cpg0_, d_cp_gain_);
     }
 
+    const bool exchange = !exch_host_.empty() && state_->nodes_1d;
+    snapshot(d_rk_drawn_half_, d_node_drawn_);
     for (int stage = 0; stage < 2; ++stage) {
+        if (exchange)
+            fireExchange(dt, 1);
+        rk_exchange_stage_ = exchange;
         fireFaces(0, dt, true);
         fireCells(0, dt, true);
+        rk_exchange_stage_ = false;
     }
 
     auto active = d_active_;
@@ -1977,8 +1982,9 @@ void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
     average(d_bc_in_, d_rk_bc_in0_);
     average(d_bc_out_, d_rk_bc_out0_);
     average(d_bc_requested_, d_rk_bc_req0_);
-    average(d_exch_, d_rk_ex0_);
-    average(d_node_drawn_, d_rk_drawn0_);
+    // d_exch_ was booked at half weight in each stage; so was the node draw, beside the
+    // full stage value the spill budget used.
+    Kokkos::deep_copy(d_node_drawn_, d_rk_drawn_half_);
     if (species_) {
         // The serial marcher blends every row inventory and total as
         // one half of (before + after); the per-cell and per-point values
@@ -2440,6 +2446,26 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
             });
     }
 
+    fireExchange(dt_c, rk_exchange_stage_ ? 2 : 0);
+}
+
+// The junction exchange of one tier-0 pass. `pass` selects what it does:
+//   0  an ordinary pass: evaluate the law on the current state and apply it;
+//   1  evaluate the law only and keep each point's rate (the start of a second-order stage);
+//   2  apply the kept rates, booking half of what moves (the stage itself).
+// A second-order stage evaluates the law at the state the stage started from, which keeps the
+// exchange second order in time, and books half because the step is the average of its two
+// stages (== ExplicitInertialSolver, rk_exchange_stage_).
+void ExplicitKokkosSurfaceSolver::fireExchange(double dt_c, int pass) {
+    auto vol = d_volume_, head = d_head_, depth = d_depth_;
+    const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
+    const double dry = opts_->dry_depth;
+    const CellClosure cell = closure();
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
+    const int ns = ns_;
+    auto kept = d_rk_exq_, drawn_half = d_rk_drawn_half_;
+    const double booked = pass == 2 ? 0.5 : 1.0;
     // Live junction exchange at tier-0 cadence. Shared-cell drains and
     // shared-node spill budgets are order-dependent by contract, so points
     // that share either fire in serial point order on one thread; the groups
@@ -2476,95 +2502,103 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                 for (int gi = group_ptr(group); gi < group_ptr(group + 1); ++gi) {
                     const int kk = group_item(gi);
                     const int ci = cp_cell(kk);
-                    if (ci < 0 || !active(ci))
+                    if (ci < 0 || (pass != 1 && !active(ci)))
                         continue;
                     const int ni = cp_node(kk);
-                    const int vtx = cp_vertex(kk);
-
-                    // couplingHead2D: pseudo-Laplacian vertex head (FLAT) /
-                    // wet-masked depth-weighted η (VFR) / cell head.
-                    double h_2d;
-                    if (cp_he(kk) > cp_hb(kk)) {
-                        // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN (couplingHead2D).
-                        double num = 0.0, den = 0.0;
-                        for (int p = cp_hb(kk); p < cp_he(kk); ++p) {
-                            const int t = head_cells(p);
-                            const double h = depth(t);
-                            if (!(h >= dry))
-                                continue;
-                            num += h * head(t);
-                            den += h;
-                        }
-                        h_2d = (den > 0.0) ? num / den : head(ci);
-                    } else if (vtx < 0) {
-                        h_2d = head(ci);
-                    } else if (vfr) {
-                        double num = 0.0, den = 0.0;
-                        for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p) {
-                            const int t = vs_idx(p);
-                            const double h = depth(t);
-                            if (!(h >= dry))
-                                continue;
-                            num += h * head(t);
-                            den += h;
-                        }
-                        h_2d = (den > 0.0) ? num / den : vzv(vtx);
-                    } else {
-                        double h = 0.0;
-                        for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p)
-                            h += vs_wt(p) * head(vs_idx(p));
-                        h_2d = h;
-                    }
-                    const double h_1d = nh(ni) * len12;
-
-                    double depth_2d_avail;
-                    if (vtx >= 0) {
-                        depth_2d_avail = 0.0;
-                        for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p) {
-                            const double dpt = depth(vs_idx(p));
-                            if (dpt > depth_2d_avail)
-                                depth_2d_avail = dpt;
-                        }
-                    } else {
-                        depth_2d_avail = depth(ci);
-                    }
-                    const double depth_1d_avail = nd(ni) * len12;
-
                     double Q;
-                    if (cp_law(kk) == 1) {
-                        // WEIR_ORIFICE (computeNodeCouplingQ): no rim gate,
-                        // no area ramp — the law is zero below the crest.
-                        openswmm::twoD::exchange::Geometry g;
-                        g.z_crest = cp_geo(3 * kk + 0);
-                        g.l_weir = cp_geo(3 * kk + 1);
-                        g.a_orif = cp_geo(3 * kk + 2);
-                        openswmm::twoD::exchange::Coefficients c;
-                        c.c_w = cp_coef(5 * kk + 0);
-                        c.c_sw = cp_coef(5 * kk + 1);
-                        c.c_oi = cp_coef(5 * kk + 2);
-                        c.c_oo = cp_coef(5 * kk + 3);
-                        c.h_eps = cp_coef(5 * kk + 4);
-                        Q = openswmm::twoD::exchange::exchange(g, c, h_2d, h_1d).q;
+                    if (pass == 2) {
+                        Q = kept(kk);
                     } else {
-                        const double crown = (ninv(ni) + nfd(ni)) * len12;
-                        const double h_max = (h_1d > h_2d) ? h_1d : h_2d;
-                        const double A_eff =
-                            devEffectiveArea(h_max, crown, nfd(ni), cp_area(kk), cp_area(kk) * 2.0);
+                        const int vtx = cp_vertex(kk);
 
-                        Q = devOrificeFlow(h_2d - h_1d, cp_cd(kk), A_eff);
+                        // couplingHead2D: pseudo-Laplacian vertex head (FLAT) /
+                        // wet-masked depth-weighted η (VFR) / cell head.
+                        double h_2d;
+                        if (cp_he(kk) > cp_hb(kk)) {
+                            // COUPLING_HEAD VERTEX / STENCIL_WET_MEAN (couplingHead2D).
+                            double num = 0.0, den = 0.0;
+                            for (int p = cp_hb(kk); p < cp_he(kk); ++p) {
+                                const int t = head_cells(p);
+                                const double h = depth(t);
+                                if (!(h >= dry))
+                                    continue;
+                                num += h * head(t);
+                                den += h;
+                            }
+                            h_2d = (den > 0.0) ? num / den : head(ci);
+                        } else if (vtx < 0) {
+                            h_2d = head(ci);
+                        } else if (vfr) {
+                            double num = 0.0, den = 0.0;
+                            for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p) {
+                                const int t = vs_idx(p);
+                                const double h = depth(t);
+                                if (!(h >= dry))
+                                    continue;
+                                num += h * head(t);
+                                den += h;
+                            }
+                            h_2d = (den > 0.0) ? num / den : vzv(vtx);
+                        } else {
+                            double h = 0.0;
+                            for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p)
+                                h += vs_wt(p) * head(vs_idx(p));
+                            h_2d = h;
+                        }
+                        const double h_1d = nh(ni) * len12;
 
-                        const double CAP_BAND = 0.05;
-                        double ct = (h_max - crown) / CAP_BAND;
-                        ct = (ct < 0.0) ? 0.0 : (ct > 1.0 ? 1.0 : ct);
-                        Q *= ct * ct * (3.0 - 2.0 * ct);
+                        double depth_2d_avail;
+                        if (vtx >= 0) {
+                            depth_2d_avail = 0.0;
+                            for (int p = vs_ptr(vtx); p < vs_ptr(vtx + 1); ++p) {
+                                const double dpt = depth(vs_idx(p));
+                                if (dpt > depth_2d_avail)
+                                    depth_2d_avail = dpt;
+                            }
+                        } else {
+                            depth_2d_avail = depth(ci);
+                        }
+                        const double depth_1d_avail = nd(ni) * len12;
+
+                        if (cp_law(kk) == 1) {
+                            // WEIR_ORIFICE (computeNodeCouplingQ): no rim gate,
+                            // no area ramp — the law is zero below the crest.
+                            openswmm::twoD::exchange::Geometry g;
+                            g.z_crest = cp_geo(3 * kk + 0);
+                            g.l_weir = cp_geo(3 * kk + 1);
+                            g.a_orif = cp_geo(3 * kk + 2);
+                            openswmm::twoD::exchange::Coefficients c;
+                            c.c_w = cp_coef(5 * kk + 0);
+                            c.c_sw = cp_coef(5 * kk + 1);
+                            c.c_oi = cp_coef(5 * kk + 2);
+                            c.c_oo = cp_coef(5 * kk + 3);
+                            c.h_eps = cp_coef(5 * kk + 4);
+                            Q = openswmm::twoD::exchange::exchange(g, c, h_2d, h_1d).q;
+                        } else {
+                            const double crown = (ninv(ni) + nfd(ni)) * len12;
+                            const double h_max = (h_1d > h_2d) ? h_1d : h_2d;
+                            const double A_eff = devEffectiveArea(h_max, crown, nfd(ni),
+                                                                  cp_area(kk), cp_area(kk) * 2.0);
+
+                            Q = devOrificeFlow(h_2d - h_1d, cp_cd(kk), A_eff);
+
+                            const double CAP_BAND = 0.05;
+                            double ct = (h_max - crown) / CAP_BAND;
+                            ct = (ct < 0.0) ? 0.0 : (ct > 1.0 ? 1.0 : ct);
+                            Q *= ct * ct * (3.0 - 2.0 * ct);
+                        }
+
+                        Q *= (Q > 0.0) ? devWetRamp(depth_2d_avail, dry)
+                                       : devWetRamp(depth_1d_avail, dry);
+                        if (cp_eq(kk) && eq_window > 0.0) { // COUPLING_EQUALIZE
+                            const double cap =
+                                openswmm::twoD::pond::equalizeCap(h_2d - h_1d, eq_window, npa(ni));
+                            Q = (Q > cap) ? cap : ((Q < -cap) ? -cap : Q);
+                        }
                     }
-
-                    Q *= (Q > 0.0) ? devWetRamp(depth_2d_avail, dry)
-                                   : devWetRamp(depth_1d_avail, dry);
-                    if (cp_eq(kk) && eq_window > 0.0) { // COUPLING_EQUALIZE
-                        const double cap =
-                            openswmm::twoD::pond::equalizeCap(h_2d - h_1d, eq_window, npa(ni));
-                        Q = (Q > cap) ? cap : ((Q < -cap) ? -cap : Q);
+                    if (pass == 1) {
+                        kept(kk) = Q;
+                        continue;
                     }
                     if (Q == 0.0)
                         continue;
@@ -2587,6 +2621,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         const double want = -Q * dt_c;
                         const double take = (want < avail) ? want : avail;
                         node_drawn(ni) += take;
+                        if (pass == 2)
+                            drawn_half(ni) += 0.5 * take;
                         Q = -take / dt_c;
                     }
                     // C1: mirror of the CPU marcher — book the signed
@@ -2609,7 +2645,7 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     vol(ci) -= Q * dt_c;
                     if (vol(ci) < 0.0)
                         vol(ci) = 0.0;
-                    exch(kk) += Q * dt_c;
+                    exch(kk) += booked * (Q * dt_c);
                     double e2, d2;
                     cell.etaDepth(ci, vol(ci), e2, d2);
                     head(ci) = e2;

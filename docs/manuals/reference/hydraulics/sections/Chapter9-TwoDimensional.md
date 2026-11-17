@@ -294,6 +294,10 @@ overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
 The Kokkos plugin backends serve all three closures on triangle, quad
 and mixed meshes, `FULL_SWE` at both reconstruction orders (§9.11.1).
+At second order each stage of the two-stage step evaluates the junction
+exchange law (§9.7) at the state the stage starts from and books half of
+what it moved; node heads are held for the batch, so the exchange is
+second order in time at held network state.
 
 `FULL_SWE` keeps every property of §9.5: the lake at rest is exact —
 the Audusse correction cancels the \f$\tfrac{1}{2} g h^{*2}\f$ pressure flux

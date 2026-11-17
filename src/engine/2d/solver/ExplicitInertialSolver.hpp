@@ -765,8 +765,8 @@ private:
     std::vector<double> rk_v0_, rk_qx0_, rk_qy0_;
     /// Stage-0 copies of the per-advance ledgers (F6): members so the RK2
     /// step allocates nothing.
-    std::vector<double> rk_inf0_, rk_bc0_, rk_ex0_, rk_drawn0_, rk_cpl0_;
-    /// Junction exchange rates a coupled groundwater stage evaluated at its starting state.
+    std::vector<double> rk_inf0_, rk_bc0_, rk_cpl0_, rk_drawn_half_;
+    /// Junction exchange rates a second-order stage evaluated at its starting state.
     std::vector<double> rk_exchange_q_;
     bool rk_exchange_stage_ = false;
     /**

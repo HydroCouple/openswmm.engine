@@ -978,8 +978,11 @@ void speciesParity(Momentum2D mode, const char* name, int order = 1, int groundw
  * Requires initialized Kokkos; prints PASS or throws.
  */
 void speciesExchange() {
-    for (Momentum2D mode :
-         {Momentum2D::LOCAL_INERTIAL, Momentum2D::DIFFUSIVE_WAVE, Momentum2D::FULL_SWE})
+    // Order 2 (FULL_SWE only) evaluates the junction law at each stage's starting state and
+    // books half of every stage; both solvers must do so identically.
+    for (auto [mode, order] :
+         {std::pair{Momentum2D::LOCAL_INERTIAL, 1}, std::pair{Momentum2D::DIFFUSIVE_WAVE, 1},
+          std::pair{Momentum2D::FULL_SWE, 1}, std::pair{Momentum2D::FULL_SWE, 2}})
         for (bool vfr : {false, true})
             for (int law : {0, 1})
                 for (bool spill : {false, true}) {
@@ -987,6 +990,7 @@ void speciesExchange() {
                     auto a = state(m, .2);
                     auto o = options(4);
                     o.momentum = mode;
+                    o.reconstruction_order = order;
                     if (vfr)
                         o.cell_closure = CellClosure2D::VFR;
                     openswmm::NodeData nodes;
@@ -1028,7 +1032,8 @@ void speciesExchange() {
                         kk.advance(t, end);
                         const std::string tag =
                             std::string("exchange rows mode=") +
-                            std::to_string(static_cast<int>(mode)) + (vfr ? " VFR" : " FLAT") +
+                            std::to_string(static_cast<int>(mode)) +
+                            " order=" + std::to_string(order) + (vfr ? " VFR" : " FLAT") +
                             " law=" + std::to_string(law) + (spill ? " spill " : " drain ");
                         exact(b.volume, a.volume, tag + "volume");
                         exact(kk.last_coupling_exchange(), cpu.last_coupling_exchange(),

@@ -265,7 +265,12 @@ private:
     DView d_gex_, d_gey_, d_gux_, d_guy_, d_gvx_, d_gvy_, d_vbounds_;
     DView d_arm_x_, d_arm_y_, d_slot_mx_, d_slot_my_;
     DView d_rk_v0_, d_rk_qx0_, d_rk_qy0_, d_rk_inf0_, d_rk_cpl0_, d_rk_evap0_;
-    DView d_rk_bc_accum0_, d_rk_bc_in0_, d_rk_bc_out0_, d_rk_bc_req0_, d_rk_ex0_, d_rk_drawn0_;
+    DView d_rk_bc_accum0_, d_rk_bc_in0_, d_rk_bc_out0_, d_rk_bc_req0_;
+    /// Junction rates a second-order stage evaluated at its starting state (one per point).
+    DView d_rk_exq_;
+    /// Node draw of the step so far, accumulated at half weight per stage.
+    DView d_rk_drawn_half_;
+    bool rk_exchange_stage_ = false;
     // Optional momentum physics (Coriolis, turbulence, wall drag). Stress work arrays, the
     // least-squares stencil of each cell (five entries), the cells whose stencil must be
     // borrowed from a neighbor, each cell's edges in ascending edge order, the wall-drag slots
@@ -614,6 +619,14 @@ public:
      * fields remain unchanged until publication.
      */
     void fireCells(int tier, double dt_c, bool global_step = false);
+    /**
+     * @brief Junction exchange of one tier-0 pass, serial within a point group on device.
+     * @param[in] dt_c Finite positive duration s of the pass.
+     * @param[in] pass 0 evaluates the law on the current state and applies it; 1 only keeps
+     * each point's rate; 2 applies the kept rates and books half of what moves. A second-order
+     * stage runs pass 1 before its faces and pass 2 after its cells.
+     */
+    void fireExchange(double dt_c, int pass);
     /**
      * @brief Execute accepted binary local-time substeps using the current compact tier lists.
      * @param[in] dt0 Finite positive base duration s, already bounded by CFL.
