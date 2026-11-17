@@ -228,8 +228,8 @@ private:
     MeshData* mesh_ = nullptr;
     SurfaceStateData* state_ = nullptr;
     SolverOptions2D* opts_ = nullptr;
-    InertialEdges edges_;     ///< host CSR build; mirrored below
-    DView d_conveyance_;      ///< mutable ψ, separate from immutable edge geometry
+    InertialEdges edges_; ///< host CSR build; mirrored below
+    DView d_conveyance_;  ///< mutable ψ, separate from immutable edge geometry
 
     // ---- device geometry (const after initialize) -------------------------
     DView d_tri_area_, d_tri_cz_, d_tri_cx_, d_tri_cy_, d_vz_, d_vx_, d_vy_;
@@ -241,7 +241,7 @@ private:
     IView d_cL_, d_cR_, d_slotL_, d_slotR_, d_cell_ptr_, d_cell_edge_;
     DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
-    DView d_n_face_;   ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
+    DView d_n_face_; ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
     // Mixed meshes: vertex count per cell, the quad two-plane closure tables (six elevations
     // and two sub-triangle areas per cell) and the centroid-to-edge distance per slot. The
     // last three are empty on an all-triangle mesh.
@@ -343,19 +343,19 @@ private:
     double dt0_ = 0.0;
     int K_ = 1;
     bool have_perot_ = false;
-    bool diffusive_ = false; ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
-    bool has_quads_ = false; ///< the mesh holds at least one quadrilateral cell
-    bool swe_ = false;       ///< MOMENTUM_EQUATION FULL_SWE
+    bool diffusive_ = false;    ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
+    bool has_quads_ = false;    ///< the mesh holds at least one quadrilateral cell
+    bool swe_ = false;          ///< MOMENTUM_EQUATION FULL_SWE
     bool second_order_ = false; ///< RECONSTRUCTION_ORDER 2 (MUSCL faces, SSP-RK2 step)
     bool physics_ = false;      ///< Coriolis, turbulence or wall drag is enabled
     int n_wall_drag_ = 0, n_wall_groups_ = 0;
     double wall_drag_energy_ = 0.0; ///< kinetic energy removed by wall drag, per unit density
     double ph_last_limit_ = 0.0;    ///< last diffusion step bound, seconds
     unsigned long long ph_substeps_ = 0, ph_retries_ = 0;
-    bool muscl_ = false;        ///< second order with the MUSCL reconstruction enabled
-    bool front_rebuild_ = false;              ///< widened halo and breach-triggered rebuild
-    bool front_breach_ = false;               ///< a wetting front reached the halo's outer ring
-    double h_on_front_ = 0.0;                 ///< activation depth the breach test uses, m
+    bool muscl_ = false;         ///< second order with the MUSCL reconstruction enabled
+    bool front_rebuild_ = false; ///< widened halo and breach-triggered rebuild
+    bool front_breach_ = false;  ///< a wetting front reached the halo's outer ring
+    double h_on_front_ = 0.0;    ///< activation depth the breach test uses, m
     std::vector<double> qcx_host_, qcy_host_; ///< FULL_SWE cell momentum at publication
     std::vector<double> bc_conv_host_;        ///< per-boundary edge conveyance
     double t_last_sync_ = 0.0;
