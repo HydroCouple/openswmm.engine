@@ -51,6 +51,7 @@
 #include "../InputParseUtils.hpp"
 
 #include <charconv>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -665,10 +666,23 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         // section: dual-write the conduit side-table row if it exists (the
         // [CONDUITS] handler created it); no-op for non-conduit links.
         const int cr = ctx.link_subtypes.conduit_row(idx);
+        // Legacy link.c reads the count with atoi and stops with ERR_NUMBER when it
+        // is not positive (0, -3, "abc", 0.5); v6 used to keep the default 1
+        // without a message. Legacy never reads the item for IRREGULAR and STREET,
+        // so there a bad value keeps the default as before. The range test also
+        // keeps NaN, inf and values past INT_MAX away from the int conversion.
         if (tok.size() > 6 && cr >= 0) {
-            int barrels = static_cast<int>(to_double(tok[6]));
-            if (barrels > 0)
-                ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] = barrels;
+            const double barrels = to_double(tok[6]);
+            if (barrels >= 1.0 && barrels <= std::numeric_limits<int>::max()) {
+                ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] =
+                    static_cast<int>(barrels);
+            } else if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+                       ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[6],
+                                                  "for Barrels of link " + tok[0] +
+                                                      " in [XSECTIONS] (must be >= 1)"));
+                continue;
+            }
         }
 
         // Culvert code (optional, token 7)
