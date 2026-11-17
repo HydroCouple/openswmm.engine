@@ -863,10 +863,7 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
     auto faccL = d_faccL_, faccR = d_faccR_;
     auto ptr = d_cell_ptr_, edge = d_cell_edge_;
     auto sign = d_sign_;
-    auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto cvv = d_cell_v_;
-    const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
-    const double mwf = opts_->vfr_min_wet_frac;
+    auto area = d_tri_area_;
     auto fmxL = d_fmxL_, fmxR = d_fmxR_, fmyL = d_fmyL_, fmyR = d_fmyR_;
     auto qcx = d_qcx_, qcy = d_qcy_;
     const bool swe = swe_;
@@ -930,10 +927,7 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     auto infil_app = d_infil_applied_;
     auto coup_app = d_coupling_applied_;
     auto active = d_active_;
-    auto area = d_tri_area_, cz = d_tri_cz_, vz = d_vz_;
-    auto cvv = d_cell_v_;
-    const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
-    const double mwf = opts_->vfr_min_wet_frac;
+    auto area = d_tri_area_;
     const double dry = opts_->dry_depth;
     const CellClosure cell = closure();
     Kokkos::parallel_for(
@@ -1886,7 +1880,6 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     auto vz = d_vz_;
     auto cvv = d_cell_v_;
     const bool vfr = (opts_->cell_closure == CellClosure2D::VFR);
-    const double mwf = opts_->vfr_min_wet_frac;
     const bool perot = have_perot_;
     const bool swe = swe_, li = !swe_ && !diffusive_;
     const double dry = opts_->dry_depth;
