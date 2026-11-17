@@ -83,6 +83,7 @@ class PassiveLeg:
     duration_seconds: float
     remaining_water_ft3: float
     remaining_native_amount: float
+    stage: int = ...
 
 class PassiveExchange(EngineView):
     def __init__(self, owner: Solver) -> None: ...

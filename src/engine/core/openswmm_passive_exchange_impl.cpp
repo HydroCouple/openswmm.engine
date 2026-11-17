@@ -239,21 +239,32 @@ int swmm_passive_exchange_row_v1(SWMM_Engine h, uint64_t index, int remaining, u
         return SWMM_OK;
     });
 }
+#ifdef OPENSWMM_HAS_2D
+namespace {
+// One journal leg with its sealed remainders, or false for an unknown ordinal.
+bool journalLeg(const Owner& o, uint64_t index, SWMM_PassiveLegV1& v) {
+    if (index >= o.legCount())
+        return false;
+    v = leg(o.leg(static_cast<size_t>(index)));
+    auto relative = index;
+    for (const auto& r : o.receipts().receipts()) {
+        if (relative < r.proof.legs.size()) {
+            v.sealed = 1;
+            v.remaining_water_ft3 = r.remaining_water_legs[static_cast<size_t>(relative)];
+            v.remaining_native_amount = r.remaining_mass_legs[static_cast<size_t>(relative)];
+            break;
+        }
+        relative -= r.proof.legs.size();
+    }
+    return true;
+}
+}
+#endif
 int swmm_passive_exchange_leg_v1(SWMM_Engine h, uint64_t index, size_t n, SWMM_PassiveLegV1* out) {
     return read(h, n, out, [&](const auto&, const auto& o, auto* output) -> int {
-        if (index >= o.legCount())
+        SWMM_PassiveLegV1 v{};
+        if (!journalLeg(o, index, v))
             return failure(SWMM_ERR_BADINDEX, "Unknown journal leg ordinal.");
-        auto v = leg(o.leg(static_cast<size_t>(index)));
-        auto relative = index;
-        for (const auto& r : o.receipts().receipts()) {
-            if (relative < r.proof.legs.size()) {
-                v.sealed = 1;
-                v.remaining_water_ft3 = r.remaining_water_legs[static_cast<size_t>(relative)];
-                v.remaining_native_amount = r.remaining_mass_legs[static_cast<size_t>(relative)];
-                break;
-            }
-            relative -= r.proof.legs.size();
-        }
         *output = v;
         return SWMM_OK;
     });
@@ -261,6 +272,25 @@ int swmm_passive_exchange_leg_v1(SWMM_Engine h, uint64_t index, size_t n, SWMM_P
 int swmm_passive_exchange_attempt_v1(SWMM_Engine h, size_t n, SWMM_PassiveLegV1* out) {
     return read(h, n, out, [](const auto&, const auto& o, auto* output) -> int {
         *output = leg(o.attempted());
+        return SWMM_OK;
+    });
+}
+int swmm_passive_exchange_leg_v2(SWMM_Engine h, uint64_t index, size_t n, SWMM_PassiveLegV2* out) {
+    return read(h, n, out, [&](const auto&, const auto& o, auto* output) -> int {
+        SWMM_PassiveLegV2 v{};
+        if (!journalLeg(o, index, v.leg))
+            return failure(SWMM_ERR_BADINDEX, "Unknown journal leg ordinal.");
+        v.stage = o.leg(static_cast<size_t>(index)).stage;
+        *output = v;
+        return SWMM_OK;
+    });
+}
+int swmm_passive_exchange_attempt_v2(SWMM_Engine h, size_t n, SWMM_PassiveLegV2* out) {
+    return read(h, n, out, [](const auto&, const auto& o, auto* output) -> int {
+        SWMM_PassiveLegV2 v{};
+        v.leg = leg(o.attempted());
+        v.stage = o.attempted().stage;
+        *output = v;
         return SWMM_OK;
     });
 }

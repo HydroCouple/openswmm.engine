@@ -65,7 +65,7 @@ void row(Archive& a, PassiveStorageExchange::Row& r, std::uint32_t version) {
         check(r.drain_water_parts.empty() && r.spill_water_parts.empty(),
               "earlier format cannot omit water components");
 }
-void proof(Archive& a, PassiveStorageExchange::LiveProof& p, std::size_t& total) {
+void proof(Archive& a, PassiveStorageExchange::LiveProof& p, std::size_t& total, bool staged) {
     a(p.si_to_native);
     std::uint64_t count = p.points.size();
     a(count);
@@ -82,10 +82,17 @@ void proof(Archive& a, PassiveStorageExchange::LiveProof& p, std::size_t& total)
     total += count;
     if (a.reading())
         p.legs.resize(count);
-    for (auto& l : p.legs)
+    for (auto& l : p.legs) {
         a(l.point, l.cell, l.node, l.drain, l.applied, l.water_si, l.mass_si, l.water_native,
           l.mass_native, l.before, l.after, l.sample, l.batch_start_ms, l.batch_end_ms, l.phase,
           l.volume_before, l.volume_after, l.offset_s, l.duration_s, l.withdrawal_si);
+        // Version 10 adds the stage of each leg; earlier archives hold ordinary legs only.
+        if (staged) {
+            a(l.stage);
+            check(l.stage >= 0 && l.stage <= 2, "invalid proof leg stage");
+        } else
+            check(l.stage == 0, "earlier format cannot hold stage legs");
+    }
 }
 void receipt(Archive& a, PassiveStorageExchange::Receipt& r, std::size_t& total,
              std::uint32_t version, std::size_t& proof_total) {
@@ -111,7 +118,7 @@ void receipt(Archive& a, PassiveStorageExchange::Receipt& r, std::size_t& total,
     if (version >= 2) {
         a(r.authenticated);
         if (r.authenticated)
-            proof(a, r.proof, proof_total);
+            proof(a, r.proof, proof_total, version >= 10);
     } else
         check(!r.authenticated, "legacy owner cannot omit live proof");
     if (version >= 6) {
@@ -356,7 +363,7 @@ std::string PassiveStorageExchange::checkpointSealed(const SimulationContext& ct
     check(receipts_.size() <= maxRecords && pools_.size() <= maxRecords,
           "owner size exceeds profile");
     Archive a;
-    std::uint32_t version = changingVolume() ? (exactSlices()              ? 9
+    std::uint32_t version = changingVolume() ? (exactSlices()              ? (stagedLegs() ? 10 : 9)
                                                 : retainsWaterAggregates() ? 8
                                                                            : 7)
                             : arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_HALVES     ? 6
@@ -597,9 +604,8 @@ void PassiveStorageExchange::restoreSealed(const SimulationContext& ctx, const s
     check(
         (changingVolume()
              ? name == "OpenSWMM changing-volume storage receipt owner" &&
-                   version == (exactSlices()              ? 9u
-                               : retainsWaterAggregates() ? 8u
-                                                          : 7u)
+                   (exactSlices() ? (version == 9u || version == 10u)
+                                  : version == (retainsWaterAggregates() ? 8u : 7u))
              : name == magic &&
                    ((version <= 2 && version >= 1 &&
                      arithmetic_ == PassiveStorageArithmetic::EXACT) ||

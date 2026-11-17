@@ -581,6 +581,7 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx,
     std::map<int, ExactSum> hydraulic;
     std::uint64_t last_point = 0;
     double last_offset = -1, last_duration = 0;
+    int last_stage = 0;
     for (const auto& point : proof.points) {
         require(point.cell >= 0 && point.node >= 0 && point.node < ctx.n_nodes() &&
                     std::isfinite(point.exchange_si) && points.emplace(point.point, point).second,
@@ -600,10 +601,17 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx,
         require(l.water_si > 0 && l.water_native > 0 && (!l.drain || l.volume_before > 0) &&
                     l.duration_s > 0 &&
                     l.offset_s + l.duration_s <= (p.batch_end_ms - p.batch_start_ms) / 1000 &&
+                    l.stage >= 0 && l.stage <= 2 &&
+                    // The two stages of one step share its interval: stage 1 legs come first,
+                    // and an ordinary leg never shares an interval with a stage leg.
                     (l.offset_s == last_offset
-                         ? (l.point > last_point && l.duration_s == last_duration)
+                         ? (l.duration_s == last_duration &&
+                            (l.stage == last_stage ? l.point > last_point
+                                                   : (last_stage != 0 && l.stage > last_stage)))
                          : l.offset_s >= last_offset + last_duration),
                 "authenticated firing order/interval differs");
+        require(!l.stage || (changingVolume() && exactSlices()),
+                "stage legs require the exact-slice changing-volume law");
         require(l.sample == ctx.nodes.conc[l.node] &&
                     l.water_native == l.water_si * proof.si_to_native &&
                     l.mass_native == l.mass_si * proof.si_to_native &&
@@ -613,16 +621,20 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx,
                         : (l.withdrawal_si / l.duration_s) * l.duration_s == l.water_si,
                 "authenticated native water withdrawal differs");
         const double signed_water = l.drain ? l.water_si : -l.water_si;
-        const double delta = l.drain ? -l.mass_si : l.mass_si;
+        // The donor identities hold for what the stage itself moved (twice a stage leg's
+        // recorded half); everything summed below uses the recorded amounts.
+        const double moved_water = l.weight() * l.water_si, moved_mass = l.weight() * l.mass_si;
+        const double delta = l.drain ? -moved_mass : moved_mass;
         const double bound = 2 * std::numeric_limits<double>::epsilon() * std::abs(l.after);
         require(l.after == l.before + delta &&
-                    l.volume_after == std::max(0.0, l.volume_before - signed_water) &&
+                    l.volume_after ==
+                        std::max(0.0, l.volume_before - (l.drain ? moved_water : -moved_water)) &&
                     (l.mass_si == 0 ||
                      (l.after != l.before && std::abs((l.after - l.before) - delta) <= bound)),
                 "authenticated donor write differs");
-        require(l.mass_si == (l.drain
-                                  ? std::min(l.water_si * (l.before / l.volume_before), l.before)
-                                  : l.water_si * l.sample),
+        require(moved_mass == (l.drain
+                                   ? std::min(moved_water * (l.before / l.volume_before), l.before)
+                                   : moved_water * l.sample),
                 "authenticated material differs from native donor");
         auto& g = gross[l.point];
         g.signed_si.add(signed_water);
@@ -637,6 +649,7 @@ void PassiveStorageExchange::validateProof(const SimulationContext& ctx,
         last_point = l.point;
         last_offset = l.offset_s;
         last_duration = l.duration_s;
+        last_stage = l.stage;
     }
     require(rows.size() == gross.size(), "authenticated row/proof extent differs");
     for (const auto& r : rows) {

@@ -157,8 +157,11 @@ class PassiveLeg:
     duration_seconds: float
     remaining_water_ft3: float
     remaining_native_amount: float
+    #: 0 for an ordinary leg; 1 or 2 for one stage of a second-order step, whose water and
+    #: amounts are half of what that stage moved.
+    stage: int = 0
 
-cdef object _leg(SWMM_PassiveLegV1 value):
+cdef object _leg(SWMM_PassiveLegV1 value, int stage):
     return PassiveLeg(
         point=value.point,
         cell=value.cell,
@@ -182,6 +185,7 @@ cdef object _leg(SWMM_PassiveLegV1 value):
         duration_seconds=value.duration_seconds,
         remaining_water_ft3=value.remaining_water_ft3,
         remaining_native_amount=value.remaining_native_amount,
+        stage=stage,
     )
 
 class PassiveExchange(EngineView):
@@ -238,18 +242,18 @@ class PassiveExchange(EngineView):
         return _row(value)
 
     def leg(self, uint64_t leg):
-        """Copy the native V1 leg observation, preserving exact amount components."""
-        cdef SWMM_PassiveLegV1 value
+        """Copy the native leg observation with its stage, preserving exact amount components."""
+        cdef SWMM_PassiveLegV2 value
         (<Solver>self._owner)._access.require_idle()
         with self._owner._operation():
-            _check_passive(swmm_passive_exchange_leg_v1(<SWMM_Engine><size_t>self._address(), leg, sizeof(value), &value))
-        return _leg(value)
+            _check_passive(swmm_passive_exchange_leg_v2(<SWMM_Engine><size_t>self._address(), leg, sizeof(value), &value))
+        return _leg(value.leg, value.stage)
 
     def attempt(self):
-        """Copy the native V1 attempt observation, preserving exact amount components."""
-        cdef SWMM_PassiveLegV1 value
+        """Copy the native attempt observation with its stage, preserving exact amount components."""
+        cdef SWMM_PassiveLegV2 value
         (<Solver>self._owner)._access.require_idle()
         with self._owner._operation():
-            _check_passive(swmm_passive_exchange_attempt_v1(<SWMM_Engine><size_t>self._address(), sizeof(value), &value))
-        return _leg(value)
+            _check_passive(swmm_passive_exchange_attempt_v2(<SWMM_Engine><size_t>self._address(), sizeof(value), &value))
+        return _leg(value.leg, value.stage)
 

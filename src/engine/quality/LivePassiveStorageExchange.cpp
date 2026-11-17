@@ -271,9 +271,9 @@ bool LivePassiveStorageExchange::admit(std::size_t point, int cell, int node, do
                                        double withdrawal_si) noexcept {
     if (failed())
         return false;
-    attempted_ =
-        passiveStorageAttempt(point, cell, node, water, mass, before, volume_before, offset_s,
-                              duration_s, withdrawal_si, factor_, start_ms_, end_ms_, phase_);
+    attempted_ = passiveStorageAttempt(point, cell, node, water, mass, before, volume_before,
+                                       offset_s, duration_s, withdrawal_si, factor_, start_ms_,
+                                       end_ms_, phase_, stage_);
     auto reject = [&](const char* reason) {
         fail(reason);
         return false;
@@ -333,7 +333,8 @@ void LivePassiveStorageExchange::seal(const SimulationContext& ctx,
                                       const std::vector<double>& exchange) {
     requireReady();
     try {
-        require(open_ && !reserved_ && &ctx == context_ && exchange.size() == points_.size(),
+        require(open_ && !reserved_ && stage_ == 0 && &ctx == context_ &&
+                    exchange.size() == points_.size(),
                 "Live passive exchange has no complete hydraulic handoff.");
         std::vector<PassiveStorageExchange::Row> rows(points_.size());
         std::vector<double> hydraulic(budgets_.size(), 0), gross(budgets_.size(), 0);

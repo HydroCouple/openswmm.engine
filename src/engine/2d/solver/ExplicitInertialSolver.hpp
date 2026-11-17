@@ -769,6 +769,12 @@ private:
     /// Junction exchange rates a second-order stage evaluated at its starting state.
     std::vector<double> rk_exchange_q_;
     bool rk_exchange_stage_ = false;
+    /// A second-order stage with the live storage-quality exchange attached. Each stage
+    /// journals a half leg per point and books half of its coupling material straight into
+    /// the ledgers the journal reproduces (lost/gained coupling, per-point drain mass and
+    /// spill volume), which are then not averaged: the half legs sum to them bit for bit.
+    bool rk_live_stage_ = false;
+    double rk_live_offset_ = 0.0; ///< coupling clock at the start of the step (both stages)
     /**
      * @brief Rebuild limited active-cell MUSCL gradients of eta, depth and x/y velocity.
      * @note Requires FULL_SWE second-order-sized scratch and valid prepared SI

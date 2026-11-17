@@ -487,7 +487,15 @@ proof, with at most 65,536 proof records and the same bounded replay budget.
 An explicitly attached private C++ `LivePassiveStorageExchange` now owns the
 sealed book and a bounded, preallocated journal in `SWMMEngine`. The actual
 first-order CPU marcher (any thread count) authenticates each drain and admits each spill
-before its native donor, cell, water and diagnostic writes. Gross spill funding
+before its native donor, cell, water and diagnostic writes. Under `FULL_SWE` with
+`RECONSTRUCTION_ORDER 2` the exact-slice changing-volume owner journals the two-stage step
+as two half legs per point, one per stage: each is authenticated against its stage's own
+donor operands and recorded at half of what the stage moved, because the step is the average
+of its two stages. The marcher books the same halves into its exchange, node-draw and
+coupling-material ledgers, so the journal still reproduces them bit for bit and a journaled
+run's water equals an unjournaled run's. Archives that hold stage legs use book version 10
+and live versions 14/15; first-order archives keep their versions and bytes. The other laws,
+split execution and the material-pair sessions stay first order. Gross spill funding
 includes all sealed and open commitments across shared-node points; future drain
 mass is unavailable. Zero-concentration carrier legs are recorded. The engine
 freezes the prior cohort before lateral assembly, observes the real drain, and

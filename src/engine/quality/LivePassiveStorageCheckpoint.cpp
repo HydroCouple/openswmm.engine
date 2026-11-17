@@ -76,7 +76,7 @@ void LivePassiveStorageExchange::validateSurface(const twoD::SurfaceStateData& s
         const auto& l = legs_[i];
         if (previous && (l.batch_start_ms != previous->batch_start_ms ||
                          l.batch_end_ms != previous->batch_end_ms || l.phase != previous->phase ||
-                         l.offset_s != previous->offset_s)) {
+                         l.offset_s != previous->offset_s || l.stage != previous->stage)) {
             loss += group_loss;
             group_loss = 0;
         }
@@ -143,6 +143,9 @@ std::string LivePassiveStorageExchange::checkpoint(const SimulationContext& ctx,
         : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_AGGREGATES       ? 3
         : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_ROUNDOFF         ? 2
                                                                                   : 1;
+    // Versions 14 and 15 are 12 and 13 with stage legs of second-order steps in the journal.
+    if (book_.stagedLegs())
+        version += 2;
     std::uint32_t endian = 0x01020304, sum = crc(payload);
     Archive file;
     file(magic, version, endian, sum, payload);
@@ -176,7 +179,9 @@ LivePassiveStorageExchange::prepareRestore(const SimulationContext& ctx,
         : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_AGGREGATES       ? 3
         : book_.arithmetic() == PassiveStorageArithmetic::RETAIN_ROUNDOFF         ? 2
                                                                                   : 1;
-    check(magic == "OpenSWMM live passive owner" && version == expected_version &&
+    check(magic == "OpenSWMM live passive owner" &&
+              (version == expected_version ||
+               (book_.exactSlices() && version == expected_version + 2)) &&
               endian == 0x01020304 && sum == crc(payload),
           "Live owner checkpoint format/checksum differs.");
     Archive state(std::move(payload));

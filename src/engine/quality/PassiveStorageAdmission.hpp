@@ -16,6 +16,10 @@ public:
                        double actual_mass_si, double before, double volume_before, double offset_s,
                        double duration_s, double withdrawal_si = 0) noexcept = 0;
     virtual void applied(double actual_after, double volume_after) noexcept = 0;
+    /// The marcher announces which stage of a two-stage (second-order) step fires next: 1 or
+    /// 2, and 0 again after the step. An owner that records stage legs returns true; the
+    /// others accept only 0, which keeps them first order.
+    virtual bool beginStage(int stage) noexcept { return stage == 0; }
     virtual void fail(const char* reason) noexcept = 0;
     virtual bool failed() const noexcept = 0;
     virtual const char* error() const noexcept = 0;

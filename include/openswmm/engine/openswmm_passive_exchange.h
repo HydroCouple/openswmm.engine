@@ -17,7 +17,9 @@ extern "C" {
 
 /* Experimental integrated native reference, NOT a split/portable transfer.
  * Exactly one declared passive pollutant, isolated wet storage, closed flat
- * first-order CPU surface (LOCAL_INERTIAL or FULL_SWE, any thread count) and no other material/source/forcing owner.
+ * CPU surface (LOCAL_INERTIAL or FULL_SWE at first order, FULL_SWE at RECONSTRUCTION_ORDER 2;
+ * any thread count) and no other material/source/forcing owner. At second order each
+ * two-stage step journals one half leg per stage and point: see SWMM_PassiveLegV2.
  * Select once after ordinary initialize/start(0), before the first step.
  * Earlier native paths and water split schemas remain separate alternatives.
  * Positive partial legs must conserve represented slice + remainder exactly;
@@ -82,6 +84,17 @@ typedef struct SWMM_PassiveLegV1 {
     double remaining_water_ft3, remaining_native_amount;
 } SWMM_PassiveLegV1;
 
+/* A journal leg with the stage of a second-order (two-stage) step. stage is 0 for an
+ * ordinary leg. For 1 or 2 the leg is one stage of a RECONSTRUCTION_ORDER 2 step: its
+ * water and amounts are half of what that stage moved, because the step is the average of
+ * its two stages, while source_before/after and the volumes are the stage's own operands
+ * (so source_after - source_before is twice source_amount). Both stages of one step share
+ * its offset and duration; stage 1 legs precede stage 2 legs. */
+typedef struct SWMM_PassiveLegV2 {
+    SWMM_PassiveLegV1 leg;
+    int stage;
+} SWMM_PassiveLegV2;
+
 /* Read-only copies; no ownership/funding authority is copied. Caller serializes
  * all access on the engine owner thread and never calls from callbacks. Reads
  * during active advancement refuse. Terminal/open-window observations remain
@@ -106,6 +119,11 @@ SWMM_ENGINE_API int swmm_passive_exchange_row_v1(SWMM_Engine, uint64_t receipt, 
 SWMM_ENGINE_API int swmm_passive_exchange_leg_v1(SWMM_Engine, uint64_t leg, size_t,
                                                  SWMM_PassiveLegV1*);
 SWMM_ENGINE_API int swmm_passive_exchange_attempt_v1(SWMM_Engine, size_t, SWMM_PassiveLegV1*);
+/* The same records with the stage tag. Pass sizeof(SWMM_PassiveLegV2). The V1 getters keep
+ * working on a second-order journal and return the same recorded (half) amounts untagged. */
+SWMM_ENGINE_API int swmm_passive_exchange_leg_v2(SWMM_Engine, uint64_t leg, size_t,
+                                                 SWMM_PassiveLegV2*);
+SWMM_ENGINE_API int swmm_passive_exchange_attempt_v2(SWMM_Engine, size_t, SWMM_PassiveLegV2*);
 /* Thread-local UTF-8 diagnostic; overwritten by the next facade operation.
  * This getter does not clear it. It does not replace engine/checkpoint errors. */
 SWMM_ENGINE_API const char* swmm_passive_exchange_last_error(void);

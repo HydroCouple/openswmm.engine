@@ -2372,12 +2372,22 @@ void SurfaceRouter2D::refreshRenderFields() {
  * pending interval and serialize access.
  */
 std::string SurfaceRouter2D::livePassiveProfile() const {
+    // Second order (FULL_SWE only) journals one half leg per stage; only the exact-slice
+    // changing-volume owner records those.
+    const bool second_order =
+        options_.reconstruction_order == 2 && options_.momentum == Momentum2D::FULL_SWE;
     if (!active_ || !dynamic_cast<ExplicitInertialSolver*>(solver_.get()) ||
-        options_.reconstruction_order != 1)
-        return "Live passive exchange requires the first-order CPU marcher.";
-    if (common_stage_ || subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() ||
-        surface_quality_.active() || state_.transport.n_species != 1 ||
-        state_.transport.n_pollut != 1 || node_coupling_points_.empty() ||
+        (options_.reconstruction_order != 1 && !second_order))
+        return "Live passive exchange requires the CPU marcher at first order, or FULL_SWE at second order.";
+    if (second_order && live_passive_exchange_ &&
+        !(live_passive_exchange_->receipts().changingVolume() &&
+          live_passive_exchange_->receipts().exactSlices()))
+        return "Second-order live passive exchange requires the exact-slice changing-volume law.";
+    // (The standalone second-order checkpoint owner belongs to the aquifer profile, which
+    // subsurface_.active() already excludes; surface-only second order has no such owner.)
+    if (common_stage_ || subsurface_.active() || runtimeActive() || surface_quality_.active() ||
+        state_.transport.n_species != 1 || state_.transport.n_pollut != 1 ||
+        node_coupling_points_.empty() ||
         std::any_of(coupling_points_.begin(), coupling_points_.end(),
                     [](const auto& p) { return p.is_outfall; }) ||
         std::any_of(state_.coupling_native.begin(), state_.coupling_native.end(),

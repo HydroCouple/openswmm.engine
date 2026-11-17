@@ -82,4 +82,9 @@ cdef extern from "openswmm/engine/openswmm_passive_exchange.h":
     int swmm_passive_exchange_row_v1(SWMM_Engine, uint64_t, int, uint64_t, size_t, SWMM_PassiveRowV1*)
     int swmm_passive_exchange_leg_v1(SWMM_Engine, uint64_t, size_t, SWMM_PassiveLegV1*)
     int swmm_passive_exchange_attempt_v1(SWMM_Engine, size_t, SWMM_PassiveLegV1*)
+    ctypedef struct SWMM_PassiveLegV2:
+        SWMM_PassiveLegV1 leg
+        int stage
+    int swmm_passive_exchange_leg_v2(SWMM_Engine, uint64_t, size_t, SWMM_PassiveLegV2*)
+    int swmm_passive_exchange_attempt_v2(SWMM_Engine, size_t, SWMM_PassiveLegV2*)
     const char* swmm_passive_exchange_last_error()

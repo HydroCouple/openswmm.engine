@@ -688,11 +688,13 @@ std::string SurfaceRouter2D::liveCheckpointModel(const SimulationContext& ctx) c
 std::string SurfaceRouter2D::validateLivePhysical(const ExplicitInertialSolver& cpu,
                                                   const SurfaceStateData& surface, double completed,
                                                   double total, double pending) const {
-    if (!cpu.initialized_ || !cpu.checkpoint_ready_ || cpu.second_order_ || cpu.gw_ ||
-        cpu.common_stage_ || cpu.source_history_ || cpu.engine_source_history_ ||
-        cpu.engine_source_stream_ || cpu.t_last_sync_ != completed ||
-        cpu.source_phase_end_ != completed || cpu.accumulators_pending_ ||
-        surface.live_passive_exchange || pending < 0 || !close(total, completed + pending))
+    // A surface-only second-order marcher holds no state between steps that a first-order
+    // one does not: its stage copies are scratch.
+    if (!cpu.initialized_ || !cpu.checkpoint_ready_ || cpu.gw_ || cpu.common_stage_ ||
+        cpu.source_history_ || cpu.engine_source_history_ || cpu.engine_source_stream_ ||
+        cpu.t_last_sync_ != completed || cpu.source_phase_end_ != completed ||
+        cpu.accumulators_pending_ || surface.live_passive_exchange || pending < 0 ||
+        !close(total, completed + pending))
         return "Live checkpoint numerical owner/clock is incomplete.";
     for (const auto* values :
          {&surface.rainfall, &surface.evap_rate, &surface.infil_rate, &surface.infil_applied,
@@ -743,12 +745,12 @@ std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx
     if (mapped.size() != std::size_t(ctx.n_nodes()))
         return "Live checkpoint requires exclusive mapped storage pools.";
     const auto* cpu = dynamic_cast<const ExplicitInertialSolver*>(solver_.get());
-    if (!cpu || !cpu->initialized_ || !cpu->checkpoint_ready_ || cpu->second_order_ || cpu->gw_ ||
-        cpu->common_stage_ || cpu->state_ != &state_ || cpu->mesh_ != &mesh_ ||
-        cpu->opts_ != &options_ || cpu->source_history_ || cpu->engine_source_history_ ||
-        cpu->engine_source_stream_ || cpu->t_last_sync_ != sim_time_ ||
-        cpu->source_phase_end_ != sim_time_ || cpu->accumulators_pending_ ||
-        state_.live_passive_exchange || ctx.n_subcatches() || ctx.n_links() || ctx.n_gages() ||
+    if (!cpu || !cpu->initialized_ || !cpu->checkpoint_ready_ || cpu->gw_ || cpu->common_stage_ ||
+        cpu->state_ != &state_ || cpu->mesh_ != &mesh_ || cpu->opts_ != &options_ ||
+        cpu->source_history_ || cpu->engine_source_history_ || cpu->engine_source_stream_ ||
+        cpu->t_last_sync_ != sim_time_ || cpu->source_phase_end_ != sim_time_ ||
+        cpu->accumulators_pending_ || state_.live_passive_exchange || ctx.n_subcatches() ||
+        ctx.n_links() || ctx.n_gages() ||
         (options_.momentum != Momentum2D::LOCAL_INERTIAL &&
          options_.momentum != Momentum2D::FULL_SWE) ||
         options_.momentumPhysics() || options_.cell_closure != CellClosure2D::FLAT ||
@@ -756,7 +758,7 @@ std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx
         !ramp_prev_head_.empty() || !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() ||
         !cell_subcatch_.empty() || !close(ctx.current_time, sim_time_ + pending_dt_) ||
         pending_dt_ < 0)
-        return "Live checkpoint requires a completed isolated first-order CPU surface without source/forcing owners.";
+        return "Live checkpoint requires a completed isolated CPU surface without aquifer, source or forcing owners.";
     if (state_.node_row_conc != &node_row_conc_ ||
         node_row_conc_.size() != (paired_water_checkpoint_ ? 0 : std::size_t(ctx.n_nodes())) ||
         state_.nodes_1d != &ctx.nodes || state_.node_coupling != &node_coupling_points_ ||
@@ -980,7 +982,7 @@ void SurfaceRouter2D::validateMaterialCheckpoint(
         const auto& l = producer.legs_[i];
         if (previous && (l.batch_start_ms != previous->batch_start_ms ||
                          l.batch_end_ms != previous->batch_end_ms || l.phase != previous->phase ||
-                         l.offset_s != previous->offset_s)) {
+                         l.offset_s != previous->offset_s || l.stage != previous->stage)) {
             loss += group;
             group = 0;
         }

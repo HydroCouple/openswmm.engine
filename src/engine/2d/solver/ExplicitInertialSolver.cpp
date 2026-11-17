@@ -591,9 +591,11 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3, std::vector
         const auto kind = &ledger == &tr.lost_infiltration ? SourceLedger::Infiltration
                           : &ledger == &tr.lost_boundary   ? SourceLedger::Boundary
                                                            : SourceLedger::CouplingOut;
-        bookSourceLedger(kind, s, taken);
+        const double booked =
+            rk_live_stage_ && kind == SourceLedger::CouplingOut ? 0.5 * taken : taken;
+        bookSourceLedger(kind, s, booked);
         if (per_point_ledger)
-            per_point_ledger[s] += taken;
+            per_point_ledger[s] += booked;
     }
 }
 
@@ -2903,7 +2905,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                                           : (-Q * dt_c) * (*state_->node_row_conc)[cp.node_idx];
                 if (!live->admit(k, ci, cp.node_idx, dv, mass,
                                  state_->transport.cell_mass[state_->transport.idx(0, ci)],
-                                 state_->volume[ci], exch_tau_, dt_c, spill_take))
+                                 state_->volume[ci], rk_live_stage_ ? rk_live_offset_ : exch_tau_,
+                                 dt_c, spill_take))
                     throw std::runtime_error(live->error());
             }
             // A second-order stage books half of its exchange: the step is the average of
@@ -2955,7 +2958,7 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                             continue;
                         const double g = v_in * c;
                         tr.cell_mass[tr.idx(static_cast<int>(s), ci)] += g;
-                        tr.gained_coupling[s] += g;
+                        tr.gained_coupling[s] += rk_live_stage_ ? 0.5 * g : g;
                     }
                     // The spill VOLUME is tracked per point so the router can
                     // pair it against this window's drained mass — see
@@ -2965,7 +2968,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                     // to debit — and the check measured the residue; the
                     // pairing must be done at window granularity.)
                     if (static_cast<std::size_t>(k) < tr.exch_spill.size())
-                        tr.exch_spill[static_cast<std::size_t>(k)] += v_in;
+                        tr.exch_spill[static_cast<std::size_t>(k)] +=
+                            rk_live_stage_ ? 0.5 * v_in : v_in;
                 }
             }
             // C1: book the signed per-cell abstraction HERE, where the node
@@ -3719,6 +3723,17 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 // the exchange second order in time (evaluating it after the stage's cell
                 // update is a first-order split). Each stage then books half of what it moved.
                 rk_exchange_stage_ = !exch_.empty() && state_->node_coupling && state_->nodes_1d;
+                // With the live exchange attached each stage journals half legs, all at the
+                // step's starting clock (see rk_live_stage_).
+                auto* const live = state_->live_passive_exchange;
+                if (live) {
+                    if (!live->beginStage(stage + 1)) {
+                        live->fail("Passive admission does not record second-order stages.");
+                        throw std::runtime_error(live->error());
+                    }
+                    rk_live_stage_ = true;
+                    rk_live_offset_ = exch_tau0;
+                }
                 if (rk_exchange_stage_) {
                     const auto& pts = *state_->node_coupling;
                     rk_exchange_q_.assign(pts.size(), 0.0);
@@ -3765,7 +3780,17 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                 }
                 rk_transport_stage_ = false;
                 rk_exchange_stage_ = false;
+                if (live) {
+                    rk_live_stage_ = false;
+                    if (!live->beginStage(0)) {
+                        live->fail("Passive admission left a second-order stage open.");
+                        throw std::runtime_error(live->error());
+                    }
+                }
             }
+            // Ledgers the live exchange journal reproduces were booked at half weight in
+            // each stage and are final already.
+            const bool live_ledgers = state_->live_passive_exchange != nullptr;
             // Parallel over every cell. An INACTIVE cell was not fired by either
             // stage, so its average is the identity (volume, q⃗ and the infiltration
             // ledger are unchanged) and only the dry-momentum reset is evaluated —
@@ -3803,6 +3828,11 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                   &SurfaceTransportState::gained_exfiltration,
                   &SurfaceTransportState::gained_washoff, &SurfaceTransportState::cell_runoff_vol,
                   &SurfaceTransportState::generated_age}) {
+                if (live_ledgers && (member == &SurfaceTransportState::lost_coupling ||
+                                     member == &SurfaceTransportState::exch_mass ||
+                                     member == &SurfaceTransportState::exch_spill ||
+                                     member == &SurfaceTransportState::gained_coupling))
+                    continue;
                 auto& now = tr.*member;
                 const auto& before = transport0.*member;
                 if (now.size() != before.size())
@@ -4340,11 +4370,13 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     }
     if (state_->live_passive_exchange && state_->live_passive_exchange->failed())
         throw std::runtime_error(state_->live_passive_exchange->error());
+    // Second order journals half legs per stage (surface only); a reconstruction order
+    // that does not take the two-stage step stays refused, as before.
     if (state_->live_passive_exchange &&
-        (second_order_ || opts_->reconstruction_order != 1 || state_->transport.n_species != 1 ||
-         !state_->node_row_conc)) {
+        ((second_order_ ? gw_ != nullptr : opts_->reconstruction_order != 1) ||
+         state_->transport.n_species != 1 || !state_->node_row_conc)) {
         state_->live_passive_exchange->fail(
-            "Live passive exchange requires first-order CPU transport.");
+            "Live passive exchange requires first-order or surface-only second-order CPU transport.");
         throw std::runtime_error(state_->live_passive_exchange->error());
     }
     if (!(second_order_ && gw_))
@@ -4503,9 +4535,13 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
 
         if (nsub_full * dt0_ <= remaining) {
             // Full macro cycle fits (dt0_ <= remaining here, so no clamp).
-            if (second_order_)
+            if (second_order_) {
                 runRk2Step(dt0_, t); // K == 1: one global step
-            else
+                // The surface-only step keeps the completed-interval clock the first-order
+                // paths keep (the aquifer step sets its own); nothing reads it for physics.
+                if (!gw_)
+                    source_phase_end_ = t + nsub_full * dt0_;
+            } else
                 runMacroCycle(dt0_, nsub_full, t);
             t += nsub_full * dt0_;
             last_dt_ = dt0_;
@@ -4562,6 +4598,8 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
             for (int s = 0; s < nt; ++s) {
                 if (second_order_) {
                     runRk2Step(dt_tail, t + s * dt_tail);
+                    if (!gw_)
+                        source_phase_end_ = s + 1 == nt ? target : t + (s + 1) * dt_tail;
                     continue;
                 }
                 fireFaces(active_faces_, dt_tail, /*global_step=*/true);

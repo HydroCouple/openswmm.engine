@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Caleb Buahin
 #include <gtest/gtest.h>
+#include <openswmm/engine/openswmm_passive_exchange.h>
 #include "core/SWMMEngine.hpp"
 #include "core/FileIO.hpp"
 #include "core/CheckpointInspection.hpp"
@@ -1636,6 +1637,171 @@ TEST(ChangingVolumeExactSlices, AuthoredPositiveSuccessivePartialsRecover) {
 }
 TEST(ChangingVolumeExactSlices, AuthoredNegativeSuccessivePartialsRecover) {
     slicedRun(false);
+}
+namespace {
+// FULL_SWE at RECONSTRUCTION_ORDER 2 under the exact-slice law. A two-stage step journals one
+// half leg per stage and point. The delivery spans two routing steps, so every slice is an
+// exact half whatever the leg amounts are (the four-slice decks above need authored amounts).
+std::string staged(bool positive, int order, int threads, bool connected) {
+    // Eight groups keep four threads past the engine's small-mesh thread gate. Second order
+    // journals two legs per point and step, so the decks stay small enough for the
+    // checkpoint's bounded replay work.
+    auto input = model(positive, false, threads, threads == 1 ? 2 : 8, "FULL_SWE", connected);
+    const std::string key = "MOMENTUM_EQUATION FULL_SWE\n";
+    const auto at = input.find(key);
+    if (at == std::string::npos)
+        throw std::runtime_error("Missing momentum option.");
+    input.insert(at + key.size(), "RECONSTRUCTION_ORDER " + std::to_string(order) + "\n");
+    return input;
+}
+void startStaged(SWMMEngine& e, const std::string& tag, const std::string& input) {
+    ASSERT_NO_FATAL_FAILURE(start(e, tag, input, false, false));
+    auto error = e.attachLiveChangingVolumeSlicedExchange(4096, false);
+    ASSERT_TRUE(error.empty()) << error;
+    error = e.enableCheckpointing();
+    ASSERT_TRUE(error.empty()) << error;
+}
+void stagedRun(bool positive, int order = 2, int threads = 1, bool connected = false,
+               int steps = 7) {
+    const auto tag = std::string("staged-") + (positive ? "positive" : "negative") + "-order" +
+                     std::to_string(order) +
+                     (threads == 1 ? "" : "-threads" + std::to_string(threads)) +
+                     (connected ? "-connected" : "");
+    const auto input = staged(positive, order, threads, connected);
+    SWMMEngine source, ordinary;
+    ASSERT_NO_FATAL_FAILURE(startStaged(source, tag, input));
+    ASSERT_NO_FATAL_FAILURE(start(ordinary, tag + "-ordinary", input, false, false));
+    ASSERT_EQ(source.surfaceRouter2D().options().reconstruction_order, order);
+    ASSERT_EQ(source.surfaceRouter2D().options().num_threads, threads);
+    const double initial = source.context().nodes.volume[0] * source.context().nodes.conc[0];
+    std::vector<std::unique_ptr<SWMMEngine>> restored;
+    std::ofstream legs(evidence(tag + "-legs.txt"));
+    legs << "# step leg point drain stage water_si mass_si before after volume_before "
+            "volume_after offset_s duration_s\n"
+         << std::hexfloat;
+    double elapsed = 0;
+    std::size_t written = 0;
+    for (int step = 0; step <= steps; ++step) {
+        if (step) {
+            ASSERT_EQ(source.step(&elapsed), SWMM_OK) << source.context().error_message;
+            ASSERT_EQ(ordinary.step(&elapsed), SWMM_OK) << ordinary.context().error_message;
+            for (auto& e : restored)
+                ASSERT_EQ(e->step(&elapsed), SWMM_OK) << e->context().error_message;
+        }
+        // The journal observes: the journaled engine's water is the unjournaled engine's.
+        ASSERT_NO_FATAL_FAILURE(sameWater(source, ordinary));
+        const auto& n = source.context().nodes;
+        const auto& owner = *source.livePassiveExchange();
+        const auto& book = owner.receipts();
+        // Exact node material identity over everything accepted and still pending.
+        NativeAmountSum exact = book.storedRoundoff(0);
+        exact.add(n.volume[0] * n.conc[0]);
+        exact.add(-initial);
+        for (const auto& r : book.receipts()) {
+            for (const auto& row : r.accepted) {
+                for (double part : row.materialAmount(true).parts())
+                    exact.add(-part);
+                exact.add(row.materialAmount(false));
+            }
+            for (const auto& row : r.remaining) {
+                exact.add(row.materialAmount(true));
+                for (double part : row.materialAmount(false).parts())
+                    exact.add(-part);
+            }
+        }
+        EXPECT_TRUE(exact.zero()) << step;
+        for (; written < owner.legCount(); ++written) {
+            const auto& l = owner.leg(written);
+            legs << step << ' ' << written << ' ' << l.point << ' ' << l.drain << ' ' << l.stage
+                 << ' ' << l.water_si << ' ' << l.mass_si << ' ' << l.before << ' ' << l.after
+                 << ' ' << l.volume_before << ' ' << l.volume_after << ' ' << l.offset_s << ' '
+                 << l.duration_s << '\n';
+            EXPECT_EQ(l.stage != 0, order == 2) << written;
+            // A stage leg records half of what its stage moved against the stage's own donor.
+            const double moved = l.weight() * l.mass_si;
+            EXPECT_EQ(l.after, l.drain ? l.before - moved : l.before + moved) << written;
+            EXPECT_EQ(l.volume_after,
+                      std::max(0., l.volume_before + (l.drain ? -1 : 1) * l.weight() * l.water_si))
+                << written;
+            // The public record: V2 carries the stage, V1 the same recorded amounts.
+            SWMM_PassiveLegV1 v1{};
+            SWMM_PassiveLegV2 v2{};
+            const auto handle = static_cast<SWMM_Engine>(&source);
+            ASSERT_EQ(swmm_passive_exchange_leg_v1(handle, written, sizeof v1, &v1), SWMM_OK)
+                << swmm_passive_exchange_last_error();
+            ASSERT_EQ(swmm_passive_exchange_leg_v2(handle, written, sizeof v2, &v2), SWMM_OK)
+                << swmm_passive_exchange_last_error();
+            EXPECT_EQ(v2.stage, l.stage);
+            EXPECT_EQ(v2.leg.water_m3, l.water_si);
+            EXPECT_EQ(v2.leg.source_amount, l.mass_si);
+            EXPECT_EQ(v1.water_m3, v2.leg.water_m3);
+            EXPECT_EQ(v1.source_amount, v2.leg.source_amount);
+        }
+        if (step == 3) {
+            ASSERT_GT(owner.legCount(), 0u);
+            int first = 0, second = 0;
+            for (std::size_t i = 0; i < owner.legCount(); ++i) {
+                first += owner.leg(i).stage == 1;
+                second += owner.leg(i).stage == 2;
+            }
+            EXPECT_EQ(first > 0 && second > 0, order == 2);
+            EXPECT_EQ(n.volume[0] * n.conc[0] > initial, positive);
+        }
+        const auto saved = evidence(tag + "-" + std::to_string(step) + ".bin"),
+                   copy = evidence(tag + "-copy.bin");
+        auto error = source.saveCheckpoint(saved.string());
+        ASSERT_TRUE(error.empty()) << error;
+        for (auto& e : restored) {
+            error = e->saveCheckpoint(copy.string());
+            ASSERT_TRUE(error.empty()) << error;
+            EXPECT_EQ(read(saved), read(copy));
+        }
+        auto e = std::make_unique<SWMMEngine>();
+        ASSERT_NO_FATAL_FAILURE(startStaged(*e, tag + "-restore-" + std::to_string(step), input));
+        error = e->loadCheckpoint(saved.string());
+        ASSERT_TRUE(error.empty()) << error;
+        ASSERT_TRUE(e->saveCheckpoint(copy.string()).empty());
+        EXPECT_EQ(read(copy), read(saved));
+        restored.push_back(std::move(e));
+    }
+    if (connected) { // water moved between the pools, not only through the node
+        const auto& flux = source.surfaceRouter2D().state().edge_flux;
+        EXPECT_TRUE(std::any_of(flux.begin(), flux.end(), [](double q) { return q != 0; }));
+    }
+    for (auto& e : restored)
+        EXPECT_EQ(e->close(), SWMM_OK);
+    EXPECT_EQ(source.close(), SWMM_OK);
+    EXPECT_EQ(ordinary.close(), SWMM_OK);
+}
+}
+TEST(ChangingVolumeSecondOrder, FirstOrderControlOnTheSameDecksRecovers) {
+    stagedRun(true, 1);
+    stagedRun(false, 1, 1, true);
+}
+TEST(ChangingVolumeSecondOrder, PositiveStageLegsMaterialAndWaterRecover) {
+    stagedRun(true);
+}
+TEST(ChangingVolumeSecondOrder, NegativeStageLegsMaterialAndWaterRecover) {
+    stagedRun(false);
+}
+TEST(ChangingVolumeSecondOrder, ConnectedPoolsStageLegsMaterialAndWaterRecover) {
+    stagedRun(true, 2, 1, true);
+    stagedRun(false, 2, 1, true);
+}
+TEST(ChangingVolumeSecondOrder, FourThreadsStageLegsMaterialAndWaterRecover) {
+    stagedRun(true, 2, 4, true, 3);
+}
+// The half-leg journal needs the exact-slice law: the other laws stay first order.
+TEST(ChangingVolumeSecondOrder, OtherLawsRefuseTheFirstSecondOrderStepBeforeAnyLeg) {
+    SWMMEngine e;
+    ASSERT_NO_FATAL_FAILURE(start(e, "staged-other-law", staged(true, 2, 1, false), false));
+    const auto volume = e.surfaceRouter2D().state().volume;
+    double elapsed = 0;
+    EXPECT_NE(e.step(&elapsed), SWMM_OK);
+    EXPECT_EQ(e.livePassiveExchange()->legCount(), 0u);
+    EXPECT_EQ(e.surfaceRouter2D().state().volume, volume);
+    EXPECT_NE(std::string(e.context().error_message).find("exact-slice"), std::string::npos)
+        << e.context().error_message;
 }
 TEST(ChangingVolumeExactSlices, UnsupportedPartitionRetainsFundedLegsBeforeMixing) {
     for (bool positive : {true, false}) {

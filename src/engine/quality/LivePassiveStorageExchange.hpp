@@ -52,6 +52,14 @@ public:
                double withdrawal_si = 0) noexcept override;
     /// Called only after the native leg was applied. Allocation-free and nonthrowing.
     void applied(double actual_after, double volume_after) noexcept override;
+    /// Stage legs need the exact-slice changing-volume law (the public profile).
+    bool beginStage(int stage) noexcept override {
+        if (stage < 0 || stage > 2 || reserved_ ||
+            (stage && !(book_.changingVolume() && book_.exactSlices())))
+            return false;
+        stage_ = stage;
+        return true;
+    }
     void seal(const SimulationContext& ctx, const std::vector<double>& hydraulic_exchange_si);
     void observeWaterBooking(const SimulationContext& ctx);
     void fail(const char* reason) noexcept override;
@@ -98,6 +106,7 @@ private:
     std::size_t count_ = 0, first_ = 0;
     double factor_, start_ms_ = 0, end_ms_ = 0;
     Phase phase_ = Phase::ADVANCE;
+    int stage_ = 0; // transient: stage of the two-stage step now firing, 0 otherwise
     bool open_ = false, reserved_ = false, ever_opened_ = false;
     const char* failure_ = nullptr;
     Leg attempted_;

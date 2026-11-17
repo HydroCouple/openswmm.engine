@@ -116,6 +116,13 @@ public:
         double batch_start_ms = 0, batch_end_ms = 0;
         Phase phase = Phase::ADVANCE;
         double volume_before = 0, volume_after = 0, offset_s = 0, duration_s = 0, withdrawal_si = 0;
+        /// 0: an ordinary first-order leg. 1 or 2: one stage of a two-stage (second-order) step.
+        /// A stage leg carries half of what its stage moved (water, material and withdrawal),
+        /// because the step is the average of its two stages; before/after and the volumes
+        /// are the stage's own trial operands.
+        int stage = 0;
+        /// What the stage itself moved, per unit of the recorded amount.
+        double weight() const noexcept { return stage ? 2.0 : 1.0; }
         bool operator==(const AppliedLeg&) const = default;
     };
     struct HydraulicPoint {
@@ -225,6 +232,14 @@ public:
         return arithmetic_ == PassiveStorageArithmetic::RETAIN_EXACT_SLICES;
     }
     bool changingVolume() const noexcept { return law_ == PassiveStorageLaw::CHANGING_VOLUME; }
+    /// True once any authenticated receipt holds a stage leg of a second-order step.
+    bool stagedLegs() const noexcept {
+        for (const auto& receipt : receipts_)
+            for (const auto& leg : receipt.proof.legs)
+                if (leg.stage)
+                    return true;
+        return false;
+    }
     /// Bind every mapped pool before the first changing-volume delivery. Its
     /// settled inventory remains owned through empty cohorts and hydraulic tails.
     void bindChangingVolumePools(const SimulationContext& ctx, const std::vector<int>& nodes);
