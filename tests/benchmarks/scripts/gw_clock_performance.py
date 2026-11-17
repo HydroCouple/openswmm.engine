@@ -8,6 +8,7 @@ Performance targets are recorded as pass/fail observations, not accuracy waivers
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -26,7 +27,24 @@ ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = ROOT / "tests/benchmarks/generated/soa_review_2026-10"
 
 
+def finite(value, path, found):
+    """Return `value` with NaN/inf floats replaced by None, appending each one's path to `found`."""
+    if isinstance(value, float) and not math.isfinite(value):
+        found.append(f"{path}: {value}")
+        return None
+    if isinstance(value, dict):
+        return {key: finite(item, f"{path}/{key}", found) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite(item, f"{path}/{index}", found) for index, item in enumerate(value)]
+    return value
+
+
 def save(path, value):
+    # A non-finite budget is a result to report, not a reason to lose the run's results.
+    found = []
+    value = finite(value, "", found)
+    if found:
+        value["nonfinite"] = found
     pending = path.with_suffix(path.suffix + ".part")
     pending.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
     pending.replace(path)
