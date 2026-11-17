@@ -289,8 +289,10 @@ wall-clock of the default. Two further switches belong to it:
 \f$(\eta,h,u,v)\f$: Green–Gauss in connected wet interiors and a
 conditioned wet-neighbour depth/surface fit at shorelines, with limited
 face depths, cell-centred shoreline velocity and SSP-RK2 time stepping
-in global-step mode (§9.5.6, §9.5.10), and is refused with a notice when
-overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
+in global-step mode (§9.5.6, §9.5.10). Overland transport rows keep
+second order in time: each stage carries them on its own mass fluxes,
+upwind in space, and the two-stage step averages them with the water.
+`FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
 The Kokkos plugin backends serve all three closures on triangle, quad
 and mixed meshes, `FULL_SWE` at both reconstruction orders (§9.11.1).
