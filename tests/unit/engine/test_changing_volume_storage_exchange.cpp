@@ -1699,13 +1699,15 @@ void stagedRun(bool positive, int order = 2, int threads = 1, bool connected = f
         exact.add(-initial);
         for (const auto& r : book.receipts()) {
             for (const auto& row : r.accepted) {
-                for (double part : row.materialAmount(true).parts())
+                const NativeAmountSum drained = row.materialAmount(true);
+                for (double part : drained.parts())
                     exact.add(-part);
                 exact.add(row.materialAmount(false));
             }
             for (const auto& row : r.remaining) {
                 exact.add(row.materialAmount(true));
-                for (double part : row.materialAmount(false).parts())
+                const NativeAmountSum spilled = row.materialAmount(false);
+                for (double part : spilled.parts())
                     exact.add(-part);
             }
         }

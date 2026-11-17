@@ -109,6 +109,8 @@ KNOWN_UNBOUND = frozenset({
     "swmm_coupling_set_source", # scalar C convenience; Python uses identical atomic set_sources
     "swmm_coupling_advance_to", # C alias of swmm_engine_advance_to used by Solver.advance_to
     "swmm_lid_get_pavement",    # LIDs.get_pavement reads all seven values via the _ex form
+    "swmm_passive_exchange_leg_v1",     # PassiveExchange.leg reads the v2 record (adds stage)
+    "swmm_passive_exchange_attempt_v1", # PassiveExchange.attempt reads the v2 record (adds stage)
 })
 
 

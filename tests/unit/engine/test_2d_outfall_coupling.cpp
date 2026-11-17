@@ -119,14 +119,14 @@ struct RunResult {
     bool ok = false;
     std::vector<std::string> warnings;
     int n_tri = 0;
-    double peak_depth = 0.0;   // max per-cell 2D depth over the run (m)
-    double cont_2d = 0.0;      // 2D surface continuity error (fraction)
-    double cont_routing = 0.0; // 1D routing continuity error (fraction)
-    double outfall_in = 0.0;   // 2D ledger: 1D→2D outfall discharge (m³)
-    double outfall_out = 0.0;  // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
-    double gw_cont = 0.0;      // aquifer continuity error (fraction)
-    double gw_infil = 0.0;     // aquifer ledger: infiltration received (m³)
-    double gw_storage = 0.0;   // aquifer ledger: final storage (m³)
+    double peak_depth = 0.0;    // max per-cell 2D depth over the run (m)
+    double cont_2d = 0.0;       // 2D surface continuity error (fraction)
+    double cont_routing = 0.0;  // 1D routing continuity error (fraction)
+    double outfall_in = 0.0;    // 2D ledger: 1D→2D outfall discharge (m³)
+    double outfall_out = 0.0;   // 2D ledger: 2D→pipe withdrawal (m³, ~0 here)
+    double gw_cont = 0.0;       // aquifer continuity error (fraction)
+    double gw_infil = 0.0;      // aquifer ledger: infiltration received (m³)
+    double gw_storage = 0.0;    // aquifer ledger: final storage (m³)
     double final_surface = 0.0; // 2D ledger: final surface storage (m³)
     double to_2d = 0.0;         // 2D ledger: junction spill onto the mesh (m³)
     double to_1d = 0.0;         // 2D ledger: mesh drain into junctions (m³)

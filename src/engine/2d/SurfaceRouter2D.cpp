@@ -44,8 +44,8 @@
 #include "../transport/components/ReactionModule/ReactionArdBinding.hpp" // S4
 #include "../transport/components/ReactionModule/ReactionExplicitKernel.hpp"
 #include "../transport/components/ReactionModule/ReactionLegacyBinding.hpp"
-#include "../transport/TransportPolicy.hpp"                              // E2
-#include "subsurface/SubsurfaceSections.hpp"                             // G1
+#include "../transport/TransportPolicy.hpp"  // E2
+#include "subsurface/SubsurfaceSections.hpp" // G1
 
 #include <stdexcept>
 #include <cmath>
