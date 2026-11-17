@@ -17,7 +17,7 @@ extern "C" {
 
 /* Experimental integrated native reference, NOT a split/portable transfer.
  * Exactly one declared passive pollutant, isolated wet storage, closed flat
- * first-order serial CPU surface and no other material/source/forcing owner.
+ * first-order CPU surface (any thread count) and no other material/source/forcing owner.
  * Select once after ordinary initialize/start(0), before the first step.
  * Earlier native paths and water split schemas remain separate alternatives.
  * Positive partial legs must conserve represented slice + remainder exactly;

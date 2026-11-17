@@ -30,20 +30,20 @@ std::string read(const std::filesystem::path& p) {
 }
 // Same authored closed six-point geometry as the water-only qualification.
 // The pollutant and receiving law are the only additional physical ownership.
-std::string model(bool positive, bool tail) {
+std::string model(bool positive, bool tail, int threads = 1, int groups = 3) {
     std::ostringstream s;
     s << std::setprecision(17)
       << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
          "END_DATE 01/01/2026\nEND_TIME 00:00:01\nROUTING_STEP "
-      << (tail ? .125 : 1. / 1024)
-      << "\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS 1\nALLOW_PONDING YES\nIGNORE_QUALITY NO\n"
+      << (tail ? .125 : 1. / 1024) << "\nVARIABLE_STEP 0\nREPORT_STEP 00:00:01\nTHREADS " << threads
+      << "\nALLOW_PONDING YES\nIGNORE_QUALITY NO\n"
          "[STORAGE]\nTank -10 1 10 FUNCTIONAL 0 0 "
       << 2 * .02832 / (.3048 * .3048 * .3048) << ' ' << 2 * .02832 / (.3048 * .3048 * .3048)
       << " 0\n"
          "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP "
       << (tail ? .25 : 1. / 512) << "\nCOUPLING_SYNC " << (tail ? .25 : 1. / 512)
       << "\nREPORT_2D NO\n[2D_VERTICES]\n";
-    for (int k = 0; k < 3; ++k) {
+    for (int k = 0; k < groups; ++k) {
         const int x = 8 * k;
         s << x << " 0 -1.5\n"
           << x + 2 << " 0 -1.5\n"
@@ -53,14 +53,14 @@ std::string model(bool positive, bool tail) {
           << x + 2 << " -1 -1.5\n";
     }
     s << "[2D_TRIANGLES]\n";
-    for (int k = 0; k < 6; ++k) {
+    for (int k = 0; k < 2 * groups; ++k) {
         const double depth =
             tail ? 1.5 + (k % 2 ? -(positive ? 1 : 1.2) : (positive ? 1.2 : 1)) * 2e-12
                  : (k % 2 ? (positive ? 1.25 : 1.2) : (positive ? 1.8 : 1.75));
         s << 3 * k << ' ' << 3 * k + 1 << ' ' << 3 * k + 2 << " .03 " << depth << '\n';
     }
     s << "[2D_VERTEX_NODE_MAP]\n";
-    for (int k = 0; k < 6; ++k)
+    for (int k = 0; k < 2 * groups; ++k)
         s << 3 * k << " Tank .7 " << (tail ? .1 : .01) << '\n';
     s << "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 " << (positive ? 1 : 2)
       << "\n[2D_INITIAL_QUALITY]\n* Dye " << (positive ? 2 : 1) << "\n[REPORT]\nINPUT NO\n";
@@ -114,13 +114,15 @@ void sameWater(const SWMMEngine& a, const SWMMEngine& b) {
     EXPECT_EQ(a.surfaceRouter2D().couplingExchangeVolumes(),
               b.surfaceRouter2D().couplingExchangeVolumes());
 }
-void authored(bool positive, bool tail) {
-    const std::string tag =
-        std::string(tail ? "tail-" : "flow-") + (positive ? "positive" : "negative");
+void authored(bool positive, bool tail, int threads = 1, int groups = 3) {
+    const std::string tag = std::string(tail ? "tail-" : "flow-") +
+                            (positive ? "positive" : "negative") +
+                            (threads == 1 ? "" : "-threads" + std::to_string(threads));
     SWMMEngine source, ordinary;
-    const auto input = model(positive, tail);
+    const auto input = model(positive, tail, threads, groups);
     ASSERT_NO_FATAL_FAILURE(start(source, tag, input));
     ASSERT_NO_FATAL_FAILURE(start(ordinary, tag + "-ordinary", input, false, false));
+    ASSERT_EQ(source.surfaceRouter2D().options().num_threads, threads);
     const double initial = source.context().nodes.volume[0] * source.context().nodes.conc[0];
     std::vector<std::unique_ptr<SWMMEngine>> restored;
     std::ofstream trace(evidence(tag + "-material.txt"));
@@ -178,8 +180,8 @@ void authored(bool positive, bool tail) {
         if (step == 2) {
             EXPECT_EQ(n.coupling_queue[0] > 0, positive);
             const auto& points = source.surfaceRouter2D().couplingExchangeVolumes();
-            ASSERT_EQ(points.size(), 6u);
-            for (int k = 0; k < 6; ++k)
+            ASSERT_EQ(points.size(), std::size_t(2 * groups));
+            for (int k = 0; k < 2 * groups; ++k)
                 EXPECT_EQ(points[k] > 0, k % 2 == 0);
         }
         if (step == 3) {
@@ -231,6 +233,69 @@ TEST(ChangingVolumeExchange, AuthoredPositiveMaterialAndWaterRecover) {
 }
 TEST(ChangingVolumeExchange, AuthoredNegativeMaterialAndWaterRecover) {
     authored(false, false);
+}
+// The journal, the receipts and the native water do not depend on the 2D thread count.
+void threadInvariant(bool positive) {
+    const std::string tag = std::string("threads-") + (positive ? "positive" : "negative");
+    const int counts[] = {1, 2, 4};
+    SWMMEngine engines[3];
+    for (int k = 0; k < 3; ++k) {
+        ASSERT_NO_FATAL_FAILURE(start(engines[k], tag + "-" + std::to_string(counts[k]),
+                                      model(positive, false, counts[k], 8)));
+        ASSERT_EQ(engines[k].surfaceRouter2D().options().num_threads, counts[k]);
+    }
+    double elapsed = 0;
+    std::size_t legs = 0;
+    for (int step = 1; step <= 7; ++step) {
+        for (auto& e : engines)
+            ASSERT_EQ(e.step(&elapsed), SWMM_OK) << e.context().error_message;
+        const auto& first = engines[0].livePassiveExchange()->receipts().receipts();
+        for (int k = 1; k < 3; ++k) {
+            ASSERT_NO_FATAL_FAILURE(sameWater(engines[0], engines[k]));
+            EXPECT_EQ(engines[0].context().nodes.conc, engines[k].context().nodes.conc);
+            EXPECT_EQ(engines[0].surfaceRouter2D().state().transport.cell_mass,
+                      engines[k].surfaceRouter2D().state().transport.cell_mass);
+            const auto& other = engines[k].livePassiveExchange()->receipts().receipts();
+            ASSERT_EQ(first.size(), other.size());
+            for (std::size_t r = 0; r < first.size(); ++r) {
+                EXPECT_EQ(first[r].proof, other[r].proof) << step << ' ' << r;
+                EXPECT_EQ(first[r].half_state, other[r].half_state);
+            }
+        }
+        for (const auto& r : first)
+            legs += r.proof.legs.size();
+    }
+    EXPECT_GT(legs, 0u);
+    for (auto& e : engines)
+        EXPECT_EQ(e.close(), SWMM_OK);
+}
+TEST(ChangingVolumeExchange, ThreadCountDoesNotChangeJournalWaterOrMaterialPositive) {
+    threadInvariant(true);
+}
+TEST(ChangingVolumeExchange, ThreadCountDoesNotChangeJournalWaterOrMaterialNegative) {
+    threadInvariant(false);
+}
+TEST(ChangingVolumeExchange, CheckpointRefusesAnotherThreadCount) {
+    SWMMEngine four, one;
+    ASSERT_NO_FATAL_FAILURE(start(four, "threads-save-4", model(true, false, 4, 8)));
+    ASSERT_NO_FATAL_FAILURE(start(one, "threads-load-1", model(true, false, 1, 8)));
+    double elapsed = 0;
+    ASSERT_EQ(four.step(&elapsed), SWMM_OK) << four.context().error_message;
+    const auto saved = evidence("threads-save-4.bin"), before = evidence("threads-load-1.bin"),
+               after = evidence("threads-load-1-after.bin");
+    ASSERT_TRUE(four.saveCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(one.saveCheckpoint(before.string()).empty());
+    EXPECT_FALSE(one.loadCheckpoint(saved.string()).empty());
+    ASSERT_TRUE(one.saveCheckpoint(after.string()).empty());
+    EXPECT_EQ(read(before), read(after));
+    EXPECT_EQ(four.close(), SWMM_OK);
+    EXPECT_EQ(one.close(), SWMM_OK);
+}
+TEST(ChangingVolumeExchange, AuthoredPositiveFourThreadsMaterialAndWaterRecover) {
+    authored(true, false, 4, 8);
+}
+TEST(ChangingVolumeExchange, AuthoredNegativeFourThreadsMaterialAndWaterRecover) {
+    authored(false, false, 4, 8);
 }
 TEST(ChangingVolumeExchange, AuthoredPositiveEmptyQueueTailRenormalizesInventory) {
     authored(true, true);

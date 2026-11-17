@@ -4310,10 +4310,10 @@ double ExplicitInertialSolver::advance(double t_current, double t_target) {
     if (state_->live_passive_exchange && state_->live_passive_exchange->failed())
         throw std::runtime_error(state_->live_passive_exchange->error());
     if (state_->live_passive_exchange &&
-        (second_order_ || opts_->reconstruction_order != 1 || opts_->num_threads != 1 ||
-         state_->transport.n_species != 1 || !state_->node_row_conc)) {
+        (second_order_ || opts_->reconstruction_order != 1 || state_->transport.n_species != 1 ||
+         !state_->node_row_conc)) {
         state_->live_passive_exchange->fail(
-            "Live passive exchange requires first-order serial CPU transport.");
+            "Live passive exchange requires first-order CPU transport.");
         throw std::runtime_error(state_->live_passive_exchange->error());
     }
     if (!(second_order_ && gw_))

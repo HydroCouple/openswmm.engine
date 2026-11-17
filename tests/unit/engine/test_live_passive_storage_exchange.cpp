@@ -50,7 +50,7 @@ struct Marcher {
     explicit Marcher(
         double node_c = 1, double surface_c = 1, std::size_t capacity = 4096,
         quality::PassiveStorageArithmetic arithmetic = quality::PassiveStorageArithmetic::EXACT,
-        bool preflight = false, int pairs = 1, double initial_span = 0) {
+        bool preflight = false, int pairs = 1, double initial_span = 0, int threads = 1) {
         ctx.node_names.add("Tank");
         ctx.pollutant_names.add("Dye");
         ctx.allocate_objects();
@@ -96,6 +96,7 @@ struct Marcher {
         state.node_coupling = &points;
         options.backend = Backend2D::CPU;
         options.lts_tiers = 1;
+        options.num_threads = threads;
         options.max_timestep = dt;
         options.len_1d_to_2d = .3048;
         options.vol_1d_to_2d = ft3;
@@ -2414,6 +2415,33 @@ TEST(LivePassiveHalves, PreflightedPositiveNativeHalvesKeepReplayBudgetAndIdenti
 }
 TEST(LivePassiveHalves, PreflightedNegativeNativeHalvesKeepReplayBudgetAndIdentity) {
     halfNativeRecovery(false, true);
+}
+
+TEST(LivePassiveHalves, ThreadCountDoesNotChangeLegsReceiptsOrNativeState) {
+    std::vector<std::unique_ptr<Marcher>> runs;
+    for (int threads : {1, 4, 8}) {
+        runs.push_back(std::make_unique<Marcher>(
+            .3, .6, 4096, quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, false, 64, 4 * dt,
+            threads));
+        ASSERT_NO_FATAL_FAILURE(repeatMarcher(*runs.back())) << threads;
+    }
+    const auto& a = *runs[0];
+    ASSERT_GE(a.owner->legCount(), 128u);
+    ASSERT_EQ(a.owner->receipts().receipts().size(), 1u);
+    for (std::size_t k = 1; k < runs.size(); ++k) {
+        const auto& b = *runs[k];
+        ASSERT_EQ(a.owner->legCount(), b.owner->legCount());
+        for (std::size_t i = 0; i < a.owner->legCount(); ++i)
+            EXPECT_EQ(a.owner->leg(i), b.owner->leg(i)) << i;
+        ASSERT_EQ(b.owner->receipts().receipts().size(), 1u);
+        EXPECT_EQ(a.owner->receipts().receipts()[0].proof, b.owner->receipts().receipts()[0].proof);
+        EXPECT_EQ(a.state.volume, b.state.volume);
+        EXPECT_EQ(a.state.transport.cell_mass, b.state.transport.cell_mass);
+        EXPECT_EQ(a.state.transport.exch_mass, b.state.transport.exch_mass);
+        EXPECT_EQ(a.state.transport.exch_spill, b.state.transport.exch_spill);
+        EXPECT_EQ(a.solver.last_coupling_exchange(), b.solver.last_coupling_exchange());
+        EXPECT_EQ(a.ctx.nodes.coupling_qual_queue, b.ctx.nodes.coupling_qual_queue);
+    }
 }
 
 TEST(LivePassiveHalves, QuarterAndFurtherPartialRequestsRetainOriginalPendingState) {

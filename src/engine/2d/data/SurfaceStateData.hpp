@@ -86,7 +86,7 @@ struct SurfaceStateData {
     /// it self-limits) and accumulates the exact ∫Q dt per point.
     /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
     const NodeData* nodes_1d = nullptr;
-    /// Borrowed only during an explicitly owned first-order serial CPU advance.
+    /// Borrowed only during an explicitly owned first-order CPU advance.
     quality::PassiveStorageAdmission* live_passive_exchange = nullptr;
     /// S4: the 1D nodes' PUBLISHED row values, `[node * n_species + s]` in the
     /// 2D transport row order (pollutant conc, MSX conc, age, temperature),

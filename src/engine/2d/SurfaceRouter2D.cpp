@@ -2371,8 +2371,8 @@ void SurfaceRouter2D::refreshRenderFields() {
  */
 std::string SurfaceRouter2D::livePassiveProfile() const {
     if (!active_ || !dynamic_cast<ExplicitInertialSolver*>(solver_.get()) ||
-        options_.reconstruction_order != 1 || options_.num_threads != 1)
-        return "Live passive exchange requires the first-order serial CPU marcher.";
+        options_.reconstruction_order != 1)
+        return "Live passive exchange requires the first-order CPU marcher.";
     if (common_stage_ || subsurface_.active() || runtimeActive() || runtimeWaterCheckpointing() ||
         surface_quality_.active() || state_.transport.n_species != 1 ||
         state_.transport.n_pollut != 1 || node_coupling_points_.empty() ||

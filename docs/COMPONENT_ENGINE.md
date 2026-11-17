@@ -486,7 +486,7 @@ proof, with at most 65,536 proof records and the same bounded replay budget.
 
 An explicitly attached private C++ `LivePassiveStorageExchange` now owns the
 sealed book and a bounded, preallocated journal in `SWMMEngine`. The actual
-first-order serial CPU marcher authenticates each drain and admits each spill
+first-order CPU marcher (any thread count) authenticates each drain and admits each spill
 before its native donor, cell, water and diagnostic writes. Gross spill funding
 includes all sealed and open commitments across shared-node points; future drain
 mass is unavailable. Zero-concentration carrier legs are recorded. The engine
