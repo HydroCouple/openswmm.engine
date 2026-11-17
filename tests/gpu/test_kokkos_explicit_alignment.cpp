@@ -19,7 +19,9 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/solver/InertialKernels.hpp"
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
@@ -600,15 +602,15 @@ void marcher() {
                 }
 }
 /**
- * @brief Require two arrays to hold the same values, element for element.
+ * @brief Require two arrays to hold the same bits, element for element.
  *
- * Compares with ==, so a signed zero matches zero; anything else must agree in every bit. Throws
- * std::runtime_error naming the first differing element.
+ * Bitwise, so -0.0 and +0.0 differ: both marchers publish into the same output files, where a
+ * signed zero is a visible difference. Throws std::runtime_error naming the first differing element.
  */
 void exact(const std::vector<double>& a, const std::vector<double>& b, const std::string& what) {
     require(a.size() == b.size(), (what + ": size").c_str());
     for (std::size_t i = 0; i < a.size(); ++i)
-        if (!(a[i] == b[i])) {
+        if (std::bit_cast<std::uint64_t>(a[i]) != std::bit_cast<std::uint64_t>(b[i])) {
             char buf[256];
             std::snprintf(buf, sizeof buf, "%s: element %zu differs: %.17g != %.17g", what.c_str(),
                           i, a[i], b[i]);

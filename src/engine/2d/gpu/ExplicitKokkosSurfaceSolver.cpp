@@ -3001,6 +3001,7 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         auto cLv = d_cL_, cRv = d_cR_, slotL = d_slotL_, slotR = d_slotR_;
         auto head = d_head_, zface = d_zface_, qv = d_q_, xi = d_xi_, conv = d_conveyance_;
         auto ze_lo = d_ze_lo_, ze_hi = d_ze_hi_;
+        auto active = d_active_;
         const bool vfr_face = (opts_->face_reconstruction == FaceDepth2D::VFR_FACE);
         const double dry = opts_->dry_depth;
         const double fr_max = opts_->froude_max;
@@ -3009,6 +3010,11 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         const bool diffusive = diffusive_ || swe_;
         Kokkos::parallel_for(
             "publish_flux", Kokkos::RangePolicy<ExecSpace>(0, ne), KOKKOS_LAMBDA(int e) {
+                // Like the serial marcher, publish only faces with both cells
+                // active. An inactive face keeps the +0.0 fill; writing -F there
+                // would publish -0.0 into its left slot.
+                if (!active(cLv(e)) || !active(cRv(e)))
+                    return;
                 const double hf =
                     vfr_face
                         ? inertial::faceFlowDepthVfr(head(cLv(e)), head(cRv(e)), ze_lo(e), ze_hi(e))
