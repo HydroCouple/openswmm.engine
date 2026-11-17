@@ -786,6 +786,20 @@ public:
     /// Diagnostic (cost): per-member steps that reached the solve, and street-orifice law
     /// evaluations (the square-root law itself, wherever it is evaluated) over the run.
     long rom1dPortGraphSteps() const noexcept { return rom1d_pg_steps_; }
+    /// R-1: member-steps whose solve failed (Newton and Jacobi) and were rejected:
+    /// the member rode the shared plane that step (C_i = 0, no street exchange booked).
+    /// Diagnostics of the main-run volume-mismatch sharing (per admitted store, last step):
+    /// the factor the members' volume deviations were carried by (<= 1), the main run's water
+    /// before and after the step (ft^3), and the members' volume deviations (store x member, ft^3).
+    const std::vector<double>& rom1dStoreCarryScale() const noexcept { return rom1d_pg_scale_; }
+    const std::vector<double>& rom1dStoreWaterBefore() const noexcept { return rom1d_pg_wold_; }
+    const std::vector<double>& rom1dStoreWaterAfter() const noexcept { return rom1d_store_W_; }
+    const std::vector<double>& rom1dStoreCarriedVolumes() const noexcept { return rom1d_pg_carried_; }   ///< the dV each member's solve started from (store x member)
+    const std::vector<double>& rom1dMemberStoreVolumes() const noexcept { return rom1d_mem_dv_; }
+    long rom1dMemberSolvesRejected() const noexcept { return rom1d_pg_rejected_; }
+    /// TEST ONLY: starve one member's solve (no Newton, no Jacobi) at port-graph step `step`
+    /// (1-based count of rom1dPortGraphSteps()) so it fails for real. Not an input option.
+    void rom1dForceMemberSolveFailureForTest(int member, long step) noexcept { rom1d_pg_fail_member_ = member; rom1d_pg_fail_step_ = step; }
     long rom1dCouplingLawEvals() const noexcept { return rom1d_pg_cpl_evals_; }
     /// Diagnostic (O-7): street exchange each member's per-member solve moved through
     /// the orifice two-port, summed over every routing step (m^3, deviation from the
@@ -853,6 +867,10 @@ private:
     long rom1d_pg_below_floor_ = 0;                       ///< member-steps a store ended > 0.05 ft below its invert (counted, not projected)
     std::vector<long> rom1d_pg_below_floor_node_;         ///< the same, per active node
     double rom1d_pg_min_depth_ = 0.0;                     ///< deepest member depth below an admitted store's invert (ft, <= 0)
+    std::vector<double> rom1d_pg_scale_, rom1d_pg_wold_, rom1d_pg_carried_;  ///< last step's per-store carry factor / main-run water before it
+    long rom1d_pg_rejected_ = 0;                          ///< member-steps whose solve failed and were rejected (R-1)
+    int rom1d_pg_fail_member_ = -1;                       ///< test seam: member whose solve is starved
+    long rom1d_pg_fail_step_ = -1;                        ///< test seam: port-graph step it is starved at
     long rom1d_pg_steps_ = 0;                             ///< steps that ran the per-member solve
     long rom1d_pg_cpl_evals_ = 0;                         ///< street-orifice law evaluations (cost diagnostic)
     std::vector<double> rom1d_pg_street_vol_;             ///< Σ over routing steps of the per-member street exchange (m^3, cp × member)

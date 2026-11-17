@@ -8111,11 +8111,11 @@ int SWMMEngine::end() noexcept {
         // PH_STORES_AND_PORTS §3: a fallback that silently rescues a method is not allowed.
         const auto& st = rom1d_pg_.stats;
         std::printf("[PH-ports] member solves %ld, Newton iterations %ld (Armijo rejected %ld, kink-bounded %ld (per node %ld), active-set re-solves %ld, fp-floor converged %ld), "
-                    "Jacobi fallbacks %ld (anomaly; not converged %ld), "
+                    "Jacobi fallbacks %ld (anomaly; not converged %ld, member-steps rejected %ld), "
                     "zero-data exits %ld, k x k factorisations %ld (k <= %ld), sparse factorisations %ld, L factorisations %ld, L solves %ld, "
                     "admitted nodes %zu, links on a monotone envelope %zu, "
                     "store member-steps > 0.05 ft below invert %ld (deepest %.3f ft), largest storage rescale %.3g\n",
-                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.node_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, st.zero_exits,
+                    st.solves, st.newton_iters, st.armijo_failures, st.kink_bounded, st.node_bounded, st.side_switches, st.fp_floor_converged, st.jacobi_fallbacks, st.jacobi_failed, rom1d_pg_rejected_, st.zero_exits,
                     st.factorisations, st.k_max, st.sparse_factorisations, st.l_factorisations, st.l_solves,
                     rom1d_nl_nodes_.size(), rom1d_pg_envelope_links_.size(), rom1d_pg_below_floor_, rom1d_pg_min_depth_, rom1d_pg_rescale_max_);
         // Where: a store drained below its invert through a linear (plane) edge,
@@ -12666,6 +12666,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // Zero perturbation stays exact.
     std::vector<double> d_eff(un, std::numeric_limits<double>::quiet_NaN());
     std::vector<double> store_scale(nb, 1.0);
+    rom1d_pg_wold_.assign(nb, 0.0);
     {
         const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
         const double s_min = (ctx_.options.min_surf_area > 0.0) ? ctx_.options.min_surf_area : constants::MIN_SURFAREA;
@@ -12720,6 +12721,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 }
                 if (ufu < nodes.overflow.size()) net -= std::max(nodes.overflow[ufu], 0.0);
                 const double Wold = rom1d_store_W_[b];
+                rom1d_pg_wold_[b] = Wold;
                 if (Wold > Ag[0] * PP::kDeltaDry) scale = std::clamp((Wnew - dt * net) / Wold, 0.0, 1.0);
                 rom1d_store_W_[b] = Wnew;
                 rom1d_pg_rescale_max_ = std::max(rom1d_pg_rescale_max_, std::fabs(scale - 1.0));
@@ -12728,6 +12730,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             }
             store_scale[b] = scale;
             const double de = d_star;
+            if (b >= nW) rom1d_pg_wold_[b] = Wnew;
             d_eff[static_cast<std::size_t>(a)] = de;
             const double V0 = Vabs(de, nullptr);
             PortGraph::Store st;
@@ -13127,6 +13130,8 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
     }
 #endif
+    rom1d_pg_scale_ = store_scale;
+    rom1d_pg_carried_.assign(nb * uM, 0.0);
     // Failure dumps (diagnostic, PORT_HAMILTONIAN O-6): every member solve whose
     // Newton fails is written under OPENSWMM_PH_DUMP_DIR; unset, nothing changes.
     if (!rom1d_pg_dump_init_) {
@@ -13159,7 +13164,10 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             g.b[t] = bt;
             g.z_prev[t] = rom1d_mem_z_[i * un + t];
         }
-        for (std::size_t b = 0; b < nb; ++b) g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
+        for (std::size_t b = 0; b < nb; ++b) {
+            g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
+            rom1d_pg_carried_[b * uM + i] = g.dV_prev[b];
+        }
 #ifdef OPENSWMM_HAS_2D
         // The member's pond at the start of the step, as the 2D ROM holds it.
         for (const Pond& pd : ponds) {
@@ -13168,7 +13176,20 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
 #endif
         z = g.z_prev;
-        g.solve(z);
+        // Test-only seam (member_ports tests): starve this member's solve at one step so it fails for real.
+        const bool force_fail = rom1d_pg_fail_member_ == static_cast<int>(i) && rom1d_pg_fail_step_ == rom1d_pg_steps_;
+        const int keep_newton = g.max_newton, keep_jacobi = g.max_jacobi;
+        if (force_fail) { g.max_newton = 0; g.max_jacobi = 0; }
+        const bool solved = g.solve(z);
+        g.max_newton = keep_newton; g.max_jacobi = keep_jacobi;
+        if (!solved) {
+            // R-1: a failed member solve is REJECTED for this step. The member rides the
+            // shared plane (C_i = 0, level = plane level), books no street exchange (its
+            // ext_vol stays NaN, the 2D ROM's own path handles it as for a non-admitted
+            // point), and the next step starts from the plane level, not the iterate.
+            ++rom1d_pg_rejected_;
+            for (std::size_t t = 0; t < un; ++t) z[t] = u[i * un + t];
+        }
         double* c = &rom1d_corr_[i * un];
         for (std::size_t t = 0; t < un; ++t) {
             rom1d_mem_z_[i * un + t] = z[t];
@@ -13208,8 +13229,9 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         // The manhole store gained exactly this; the pond store (the unknown)
         // gained it up to the Newton tolerance. Booking the port flow makes the
         // 1D<->2D transfer exact by construction.
-        for (const Pond& pd : ponds)
-            ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -g.portVolume(pd.port, z) / kCfsPerCms;
+        if (solved)
+            for (const Pond& pd : ponds)
+                ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -g.portVolume(pd.port, z) / kCfsPerCms;
 #endif
     }
     rom1d_->setMemberAdditive(rom1d_corr_.data());

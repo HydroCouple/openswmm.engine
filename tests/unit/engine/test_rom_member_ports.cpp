@@ -2009,6 +2009,156 @@ TEST(PerMemberPortsEngine, AdmittedBasinChangesTheBandOnly) {
 }
 
 // ---------------------------------------------------------------------------
+// Main-run volume-mismatch sharing (SWMMEngine::stepRom1dStorageMembers, "store_scale"):
+// the main run's storage change V(d*_new) - V(d*_old) differs from dt*net* by an
+// unaccounted m. A loss (m < 0) is shared by members in proportion to their water:
+// every member's absolute water is multiplied by s = (V(d*_new) - dt*net*)/V(d*_old),
+// i.e. its deviation volume is carried as s*dV (s < 1); a gain is shared equally
+// (dV carried unchanged, s = 1). The clamp keeps s in [0, 1], so a deviation is never
+// scaled up. Identities asserted below, per step and store:
+//   carried_i = s * dV_old_i                         (what the solve started from)
+//   0 <= s <= 1, |carried_i| <= |dV_old_i|           (never scaled up)
+//   (V_old_i - V_carried_i) / V_old_i = 1 - s        with V_i = W + dV_i, V_carried_i = s*W_old + carried_i
+//                                                    (loss share is the same fraction for every member)
+//   dV_old_i <= dV_old_j  =>  carried_i <= carried_j (the sharing preserves member order)
+// The fixture: a basin behind a zero-crest weir (it drains to near empty, crossing the
+// 0.01 ft dry threshold), rain-only soft forcing, several members.
+// ---------------------------------------------------------------------------
+namespace {
+struct ShareStep {
+    std::vector<double> scale, wold, wafter, carried, dv, nly, corr;
+};
+std::vector<ShareStep> runSharing(const std::string& inp, const std::string& tag, std::size_t& M, std::size_t& nb) {
+    std::vector<ShareStep> out;
+    const std::string pfx = "rom_member_ports_share_" + std::to_string(getpid()) + "_" + tag;
+    const std::string ip = pfx + ".inp", rp = pfx + ".rpt";
+    { std::ofstream f(ip); f << inp; }
+    SWMM_Engine h = swmm_engine_create();
+    auto cleanup = [&]() {
+        swmm_engine_end(h); swmm_engine_close(h); swmm_engine_destroy(h);
+        for (const char* ext : {".inp", ".rpt", ".uncertainty.csv", ".rom_threshold.csv", ".rom_diag.csv", ".out"})
+            std::remove((pfx + ext).c_str());
+    };
+    if (swmm_engine_open(h, ip.c_str(), rp.c_str(), nullptr, nullptr) != 0) { cleanup(); return out; }
+    auto* eng = static_cast<openswmm::SWMMEngine*>(h);
+    eng->rom1dStorageMembersEnabled() = true;
+    if (swmm_engine_initialize(h) != 0 || swmm_engine_start(h, 0) != 0) { cleanup(); return out; }
+    double el = 1.0;
+    long seen = 0;
+    for (int guard = 0; el != 0.0 && guard < 200000; ++guard) {
+        if (swmm_engine_step(h, &el) != 0) break;
+        if (eng->rom1dPortGraphSteps() == seen) continue;
+        seen = eng->rom1dPortGraphSteps();
+        ShareStep st;
+        st.scale = eng->rom1dStoreCarryScale();
+        st.wold = eng->rom1dStoreWaterBefore();
+        st.wafter = eng->rom1dStoreWaterAfter();
+        st.carried = eng->rom1dStoreCarriedVolumes();
+        st.dv = eng->rom1dMemberStoreVolumes();
+        st.nly = eng->rom1dStorageMemberLevels();
+        st.corr = eng->rom1dMemberCorrection();
+        nb = eng->rom1dStorageMemberNodes().size();
+        M = nb ? st.dv.size() / nb : 0;
+        out.push_back(std::move(st));
+        if (el > 0.0 && el * 86400.0 >= 5400.0) break;
+    }
+    cleanup();
+    return out;
+}
+}  // namespace
+
+TEST(StoreVolumeMismatchSharing, ZeroDataGivesZeroCorrectionExactly) {
+    std::string inp = engineFixture(true, true, 0.0);
+    const auto pos = inp.find("CV 0.2");
+    ASSERT_NE(pos, std::string::npos);
+    inp.replace(pos, 6, "CV 0.0");
+    std::size_t M = 0, nb = 0;
+    const auto run = runSharing(inp, "zero", M, nb);
+    ASSERT_FALSE(run.empty());
+    ASSERT_GE(nb, 1u);
+    for (const auto& st : run) {
+        for (double c : st.corr) ASSERT_EQ(c, 0.0);
+        for (double v : st.dv) ASSERT_EQ(v, 0.0);
+        for (double v : st.nly) ASSERT_EQ(v, 0.0);
+    }
+}
+
+TEST(StoreVolumeMismatchSharing, LossSharedInProportionToWaterGainSharedEquallyOrderKept) {
+    std::size_t M = 0, nb = 0;
+    const auto run = runSharing(engineFixture(true, true, 0.0), "share", M, nb);
+    ASSERT_GE(run.size(), 100u);
+    ASSERT_GE(nb, 1u);
+    ASSERT_GE(M, 4u);
+    long loss_steps = 0, gain_steps = 0, dry_cross = 0, ordered_checks = 0;
+    double min_depth_w = 1e300;
+    for (std::size_t n = 1; n < run.size(); ++n) {
+        const ShareStep& cur = run[n];
+        const ShareStep& prev = run[n - 1];
+        ASSERT_EQ(cur.carried.size(), nb * M);
+        ASSERT_EQ(prev.dv.size(), nb * M);
+        for (std::size_t b = 0; b < nb; ++b) {
+            const double s = cur.scale[b];
+            ASSERT_GE(s, 0.0);
+            ASSERT_LE(s, 1.0) << "step " << n << ": a deviation was scaled up (the clamp)";
+            const double Wold = cur.wold[b];
+            if (s < 1.0) ++loss_steps; else ++gain_steps;
+            if (Wold < 0.05 * run[0].wafter[b] + 1e-9 || Wold < 1e-6) ++dry_cross;
+            min_depth_w = std::min(min_depth_w, Wold);
+            for (std::size_t i = 0; i < M; ++i) {
+                const double old_dv = prev.dv[b * M + i];
+                const double carried = cur.carried[b * M + i];
+                // newly admitted stores start from their own level: the identities hold from the second step
+                EXPECT_EQ(carried, s * old_dv) << "step " << n << " member " << i;
+                EXPECT_LE(std::fabs(carried), std::fabs(old_dv) + 0.0) << "never scaled up, step " << n;
+                if (Wold > 0.0 && s < 1.0) {
+                    const double Vold = Wold + old_dv;
+                    if (std::fabs(Vold) > 1e-6 * Wold) {
+                        const double Vcar = s * Wold + carried;
+                        EXPECT_NEAR((Vold - Vcar) / Vold, 1.0 - s, 1e-9) << "step " << n << " member " << i;
+                    }
+                }
+            }
+            // order preservation of the sharing, and of the levels the solve returns
+            for (std::size_t i = 0; i < M; ++i)
+                for (std::size_t j = 0; j < M; ++j)
+                    if (prev.dv[b * M + i] <= prev.dv[b * M + j]) {
+                        EXPECT_LE(cur.carried[b * M + i], cur.carried[b * M + j]) << "carried order, step " << n;
+                        ++ordered_checks;
+                    }
+        }
+    }
+    // Member order through the run: the rank of the levels by member, fixed at the first spread,
+    // must hold weakly (ties allowed) at every later step, through the dry threshold.
+    std::vector<std::size_t> rank;
+    int sign = 0;
+    long order_violations = 0, order_steps = 0;
+    for (std::size_t n = 0; n < run.size(); ++n) {
+        const auto& z = run[n].nly;   // store x member levels (ft deviation)
+        for (std::size_t b = 0; b < 1; ++b) {
+            std::vector<double> v(z.begin() + static_cast<std::ptrdiff_t>(b * M), z.begin() + static_cast<std::ptrdiff_t>((b + 1) * M));
+            const double spread = *std::max_element(v.begin(), v.end()) - *std::min_element(v.begin(), v.end());
+            if (rank.empty()) {
+                if (spread < 1e-4) continue;
+                rank.resize(M);
+                for (std::size_t i = 0; i < M; ++i) rank[i] = i;
+                std::sort(rank.begin(), rank.end(), [&](std::size_t a, std::size_t c) { return v[a] < v[c]; });
+                sign = 1;
+                continue;
+            }
+            ++order_steps;
+            for (std::size_t k = 0; k + 1 < M; ++k)
+                if (v[rank[k]] > v[rank[k + 1]] + 1e-12) ++order_violations;
+        }
+    }
+    std::printf("[R-1 sharing] steps %zu, loss steps %ld, gain steps %ld, near-dry steps %ld, min main water %.4g ft^3, order checks %ld, rank steps %ld\n",
+                run.size(), loss_steps, gain_steps, dry_cross, min_depth_w, ordered_checks, order_steps);
+    ASSERT_GT(order_steps, 20) << "the members never spread; the order check proves nothing";
+    EXPECT_EQ(order_violations, 0);
+    (void)sign;
+    EXPECT_GT(loss_steps + gain_steps, 0);
+}
+
+// ---------------------------------------------------------------------------
 // Coupled manhole (O-3): a 1D chain J1..J4 whose head manhole J1 sits under the
 // low corner of a sloped 2D patch. Rain on the patch ponds over J1; the
 // subcatchment overloads the 0.3 m pipes so J1 also surcharges to the street.
@@ -2233,5 +2383,139 @@ TEST(PerMemberPortsCoupled, StreetExchangeIsBookedOnceUnderSyncBatches) {
         EXPECT_GT(scale, 0.1) << "the members must reach the street, or the check proves nothing";
         EXPECT_LE(worst, 1.0e-9 * scale) << "sync " << sync;
     }
+}
+
+// ---------------------------------------------------------------------------
+// R-1: a failed member solve is rejected for the step; the member rides the
+// shared plane (C_i = 0, level = plane level, no street exchange booked, next
+// step starts from the plane level). The failure is real: the seam starves the
+// member's Newton and Jacobi iterations (max 0), so solve() returns false.
+// ---------------------------------------------------------------------------
+namespace {
+struct RejSnap {
+    std::vector<double> corr, nly, street, pending;
+    long rejected = 0, jfail = 0, pg_steps = 0, solves = 0;
+    std::size_t un = 0, nb = 0;
+};
+struct RejRun {
+    RejSnap before, at, after;
+    bool ok = false;
+};
+RejRun runWithFailure(int member, long K, const std::string& tag) {
+    RejRun r;
+    const std::string pfx = "rom_member_ports_rej_" + std::to_string(getpid()) + "_" + tag;
+    const std::string ip = pfx + ".inp", rp = pfx + ".rpt";
+    { std::ofstream f(ip); f << coupledFixture(0.2); }
+    SWMM_Engine h = swmm_engine_create();
+    auto cleanup = [&]() {
+        swmm_engine_end(h); swmm_engine_close(h); swmm_engine_destroy(h);
+        for (const char* ext : {".inp", ".rpt", ".uncertainty.csv", ".rom_threshold.csv", ".rom_diag.csv", ".out"})
+            std::remove((pfx + ext).c_str());
+    };
+    if (swmm_engine_open(h, ip.c_str(), rp.c_str(), nullptr, nullptr) != 0) { cleanup(); return r; }
+    auto* eng = static_cast<openswmm::SWMMEngine*>(h);
+    auto& o = eng->surfaceRouter2D().options();
+    o.enable_rom = true; o.rom_members = 20; o.rom_modes = 6;
+    o.rom_mannings_pert = 0.2; o.rom_rainfall_pert = 0.2; o.rom_cd_pert = 0.1;
+    eng->rom1dStorageMembersEnabled() = true;
+    if (member >= 0) eng->rom1dForceMemberSolveFailureForTest(member, K);
+    if (swmm_engine_initialize(h) != 0 || swmm_engine_start(h, 0) != 0) { cleanup(); return r; }
+    auto snap = [&](RejSnap& s) {
+        s.corr = eng->rom1dMemberCorrection();
+        s.nly = eng->rom1dStorageMemberLevels();
+        s.street = eng->rom1dStreetExchangeVolume();
+        s.rejected = eng->rom1dMemberSolvesRejected();
+        s.jfail = eng->rom1dPortGraphStats().jacobi_failed;
+        s.pg_steps = eng->rom1dPortGraphSteps();
+        s.solves = eng->rom1dPortGraphStats().solves;
+        s.nb = eng->rom1dStorageMemberNodes().size();
+        s.un = s.corr.size() / 20;
+        if (const auto* r2 = eng->surfaceRouter2D().rom())
+            for (std::size_t k = 0; k < eng->surfaceRouter2D().nodeCouplingPoints().size(); ++k)
+                for (int i = 0; i < r2->n_ensemble; ++i) s.pending.push_back(r2->pendingExternalCouplingVolume(k, i));
+    };
+    auto stepTo = [&](long target) {
+        double el = 1.0;
+        for (int guard = 0; guard < 200000 && eng->rom1dPortGraphSteps() < target; ++guard)
+            if (swmm_engine_step(h, &el) != 0 || el == 0.0) break;
+        return eng->rom1dPortGraphSteps() >= target;
+    };
+    if (stepTo(K - 1)) {
+        snap(r.before);
+        if (stepTo(K)) {
+            snap(r.at);
+            if (stepTo(K + 1)) { snap(r.after); r.ok = true; }
+        }
+    }
+    cleanup();
+    return r;
+}
+}  // namespace
+
+TEST(PerMemberPortsCoupled, FailedMemberSolveIsRejectedAndRidesThePlane) {
+    constexpr long K = 60;
+    const RejRun twin = runWithFailure(-1, K, "twin");
+    ASSERT_TRUE(twin.ok);
+    ASSERT_GE(twin.at.nb, 1u);
+    ASSERT_EQ(twin.at.rejected, 0);
+    // The member whose correction is largest at the step: the one whose failed iterate would show.
+    const std::size_t un = twin.at.un;
+    int m = 0;
+    double big = 0.0;
+    for (int i = 0; i < 20; ++i) {
+        double c = 0.0;
+        for (std::size_t t = 0; t < un; ++t) c = std::max(c, std::fabs(twin.at.corr[static_cast<std::size_t>(i) * un + t]));
+        if (c > big) { big = c; m = i; }
+    }
+    ASSERT_GT(big, 1e-6) << "the twin's members must differ from the plane, or the test proves nothing";
+    const auto um = static_cast<std::size_t>(m);
+
+    const RejRun run = runWithFailure(m, K, "fail");
+    ASSERT_TRUE(run.ok);
+    ASSERT_EQ(run.at.un, un);
+    // (counter) exactly one rejected member-step; the solver's own failure counter agrees.
+    EXPECT_EQ(run.before.rejected, 0);
+    EXPECT_EQ(run.at.rejected, 1);
+    EXPECT_EQ(run.at.jfail - run.before.jfail, 1);
+    // (i) C_i = 0 exactly; the other members are bit-identical to the twin's.
+    for (std::size_t t = 0; t < un; ++t) EXPECT_EQ(run.at.corr[um * un + t], 0.0) << "node " << t;
+    for (int i = 0; i < 20; ++i) {
+        if (i == m) continue;
+        for (std::size_t t = 0; t < un; ++t)
+            ASSERT_EQ(run.at.corr[static_cast<std::size_t>(i) * un + t], twin.at.corr[static_cast<std::size_t>(i) * un + t]) << "member " << i;
+    }
+    // (i) the published store level is the plane level: twin level minus the twin's correction at that node.
+    for (std::size_t b = 0; b < run.at.nb; ++b) {
+        double lvl_twin = twin.at.nly[b * 20 + um];
+        // the correction at the store node: find the node whose twin level matches z (z = u + corr)
+        double best = 1e300;
+        for (std::size_t t = 0; t < un; ++t) {
+            const double plane = lvl_twin - twin.at.corr[um * un + t];
+            best = std::min(best, std::fabs(run.at.nly[b * 20 + um] - plane));
+        }
+        EXPECT_LT(best, 1e-12) << "store " << b;
+    }
+    // (ii) no street exchange handed to the 2D ROM for the member this step (its ext_vol slot stays
+    // NaN, which addExternalCouplingVolume skips); the twin hands over some. (The 2D ROM's pending/booked
+    // totals also move with its sync flushes and its own law, so the cumulative hand-over is the measure.)
+    ASSERT_EQ(run.at.street.size(), twin.at.street.size());
+    ASSERT_FALSE(run.at.street.empty());
+    ASSERT_EQ(run.before.street.size(), run.at.street.size());
+    const std::size_t ncp = run.at.street.size() / 20;
+    double twin_move = 0.0;
+    for (std::size_t k = 0; k < ncp; ++k) {
+        const std::size_t ix = k * 20 + um;
+        EXPECT_EQ(run.at.street[ix] - run.before.street[ix], 0.0) << "cp " << k;
+        twin_move = std::max(twin_move, std::fabs(twin.at.street[ix] - twin.before.street[ix]));
+    }
+    EXPECT_GT(twin_move, 0.0) << "the unfailed member must exchange with the street, or (ii) proves nothing";
+    // (iii)/(iv)/(v) the next step solves normally from the plane level: no further rejection,
+    // no further solver failure, a finite correction and a booked exchange again.
+    EXPECT_EQ(run.after.rejected, 1);
+    EXPECT_EQ(run.after.jfail, run.at.jfail);
+    for (std::size_t t = 0; t < un; ++t) EXPECT_TRUE(std::isfinite(run.after.corr[um * un + t]));
+    double moved = 0.0;
+    for (std::size_t k = 0; k < ncp; ++k) moved = std::max(moved, std::fabs(run.after.street[k * 20 + um] - run.at.street[k * 20 + um]));
+    EXPECT_GT(moved, 0.0) << "the member must book its exchange again on the step after the rejection";
 }
 #endif  // OPENSWMM_HAS_2D

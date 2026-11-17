@@ -284,6 +284,20 @@ Do not split it into store bisection plus a separate correction solve.
   the whole step by the first kink anywhere; a kink is placed at t_c/(2 − t_c) when the law
   curves before it. Floored lines and raised ends carry the dry factor at both ends,
   admitted or not.
+  *As built (R-1, PORT_HAMILTONIAN §6):* when `solve()` returns false (Newton and the Jacobi
+  fallback both fail) the member's solve is REJECTED for that step; its iterate is never published.
+  The member rides the shared plane: (i) its correction C_i = z - u is exactly 0 and its published
+  level z_i is the plane level u_i; (ii) no street exchange is handed to the 2D ROM for it (its
+  `ext_vol` slot stays NaN, which `addExternalCouplingVolume` skips, so the 2D ROM's own coupling
+  path treats it as it treats a non-admitted point); (iii) the pond's start level is read from the
+  2D ROM at the start of each member step and is never written from a solve, so a failed solve
+  advances no pond state; (iv) the store state carried to the next step (`rom1d_mem_z_`, the
+  volume deviation `rom1d_mem_dv_`, `rom1d_nl_y_`) is the plane level's, not the failed iterate's, so
+  the next step starts from the plane level. (v) Counted: `stats.jacobi_failed` (solver failures) and
+  `rom1d_pg_rejected_` (member-steps rejected; `rom1dMemberSolvesRejected()`), printed in the
+  `[PH-ports]` line as "member-steps rejected". No retry, no knob. Test seam (test only):
+  `rom1dForceMemberSolveFailureForTest(member, step)` starves that member's Newton and Jacobi
+  iteration counts to 0 for one step so the solve fails for real.
 - **Damping.** Armijo on ‖F‖₁. Start from z^n. Stop at ‖F‖∞ < 1e-10·(S/Δt) or
   after 20 iterations.
 - **Fallback.** Monotone nonlinear Jacobi (each node solved for its own

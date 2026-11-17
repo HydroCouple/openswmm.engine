@@ -559,3 +559,23 @@ cases the current code excludes). Acceptance gates as in the table.
   property test for the main-run volume-mismatch sharing (zero data, balance, order, clamp ≤ 1) → in R-1.
   Default decision per the review: keep the hook OFF until R-1 lands and the owner accepts the residuals
   (storage coverage 0.795 < 0.80; four shallow laterals 1.1–1.6 m vs MC ≈ 0; G72UD11 narrow).
+- 2026-11-16: R-1 (review blocker: a failed member solve was published; uncommitted). **Outcome as implemented**: in `stepRom1dStorageMembers`
+  `solve()`'s return is used. A failed member-step (Newton and Jacobi both fail) is REJECTED: C_i = 0 and z_i = the plane level u_i (so the
+  store state `rom1d_mem_z_`, `rom1d_mem_dv_` and `rom1d_nl_y_` carried to the next step is the plane's, not the iterate's); no street exchange
+  is booked (its `ext_vol` slot stays NaN, skipped by `addExternalCouplingVolume`; the 2D ROM's own path handles it as for a non-admitted
+  point); the pond start level is read from the 2D ROM each step and is never written from a solve; counted in `rom1d_pg_rejected_`
+  (`[PH-ports]`: "member-steps rejected"). No retry, no knob. Documented in PH_STORES_AND_PORTS §3 "As built (R-1)".
+  **Tests** (member_ports 47): `PerMemberPortsCoupled.FailedMemberSolveIsRejectedAndRidesThePlane` (seam
+  `rom1dForceMemberSolveFailureForTest`, test only: starves one member's Newton/Jacobi at one step; asserts rejected counter 1 and
+  `jacobi_failed` +1, C_i exactly 0 at every node, other members bit-identical to an unfailed twin run, the published store level equals the
+  twin's level minus the twin's correction, no street hand-over for the member that step (the twin's is > 0), the next step books again, no
+  further rejection or failure). Mutation (publish the failed iterate and book its exchange): 5 failures. NEW `StoreVolumeMismatchSharing.*`
+  (the non-blocking gap; fixture basin behind a zero-crest weir draining to empty, rain-only soft forcing, 541 steps, 264 loss / 276 gain steps,
+  31 near-dry): (a) zero data => correction, volume deviation and level exactly 0; (b) per step and store, carried dV_i = s*dV_old_i exactly,
+  and for a loss the fraction (V_old_i - V_carried_i)/V_old_i = 1 - s is the same for every member (V_i = W + dV_i, V_carried_i = s*W_old + carried_i);
+  (c) carried order equals old-deviation order, and the rank of member levels fixed at the first spread holds with no violation through the
+  dry threshold; (d) 0 <= s <= 1 and |carried_i| <= |dV_old_i| (never scaled up). Mutation (drop the clamp's upper bound): (d) fails
+  (s = 1.00011 at step 91). New read-only diagnostics: `rom1dStoreCarryScale/WaterBefore/WaterAfter/CarriedVolumes/MemberStoreVolumes`.
+  **Gates (Release)**: member_ports 47, port_graph_replay 2, additive_channel 12, spectral_rom1d 101, 2d_spectral_rom 65, storage gate A 0.889/0.958,
+  B 0.727/0.960, R 0.952/0.880 (unchanged). **Release 1D smoke** (ph_smoke1d): 37 s (O-12 48 s; machine quieter), k <= 33, admitted 18, closure
+  added 7, 1 Jacobi fallback, not converged 0, member-steps rejected 0. Coupled Bellinge not run (as instructed).
