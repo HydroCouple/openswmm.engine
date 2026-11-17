@@ -235,6 +235,11 @@ struct SurfaceStateData {
     std::vector<double> boundary_requested; ///< signed cumulative request pending receipt drain
     std::vector<double> boundary_last_flow; ///< last applied substep flow (m³/s)
     std::vector<double> boundary_last_dt;   ///< last boundary substep duration (s)
+    /// Plugin boundary species transfers, [entry * n_species + row], in the rows' own units
+    /// (concentration x m3). Signed like boundary_requested (+ = into the mesh); additive until
+    /// the router drains them into its receipts. Empty without transport rows.
+    std::vector<double> boundary_requested_mass;
+    std::vector<double> boundary_applied_mass;
 
     std::vector<double> net_source; ///< Net source/sink per cell (m/s)
 
@@ -356,6 +361,8 @@ struct SurfaceStateData {
         boundary_requested.clear();
         boundary_last_flow.clear();
         boundary_last_dt.clear();
+        boundary_requested_mass.clear();
+        boundary_applied_mass.clear();
         coupling_flux.assign(nt, 0.0);
         coupling_native.clear();
         runtime_sources = {};

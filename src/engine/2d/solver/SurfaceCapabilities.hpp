@@ -30,7 +30,8 @@ namespace openswmm::twoD {
  */
 inline constexpr std::uint64_t kKokkosSurfaceCapabilities =
     OPENSWMM_GPU_CAP_LOCAL_INERTIAL | OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_FULL_SWE |
-    OPENSWMM_GPU_CAP_QUADS | OPENSWMM_GPU_CAP_SWE_ORDER2 | OPENSWMM_GPU_CAP_MOMENTUM_PHYSICS;
+    OPENSWMM_GPU_CAP_QUADS | OPENSWMM_GPU_CAP_SWE_ORDER2 | OPENSWMM_GPU_CAP_MOMENTUM_PHYSICS |
+    OPENSWMM_GPU_CAP_TRANSPORT_LI | OPENSWMM_GPU_CAP_TRANSPORT_DW | OPENSWMM_GPU_CAP_TRANSPORT_SWE;
 
 /**
  * @brief Capabilities a model requires of a plugin surface solver.
@@ -39,11 +40,13 @@ inline constexpr std::uint64_t kKokkosSurfaceCapabilities =
  * @param[in] transport Transport rows (species, age or temperature) are active.
  * @param[in] groundwater A 2D aquifer is coupled to the surface.
  * @param[in] porous_heat Porous ground heat is active.
+ * @param[in] surface_heat The temperature row exchanges heat with the atmosphere or the bed.
  * @return Bitwise OR of OPENSWMM_GPU_CAP_* values; never zero.
  */
 inline std::uint64_t requiredSurfaceCapabilities(const SolverOptions2D& opts, bool has_quads,
                                                  bool transport, bool groundwater = false,
-                                                 bool porous_heat = false) {
+                                                 bool porous_heat = false,
+                                                 bool surface_heat = false) {
     std::uint64_t need = 0;
     switch (opts.momentum) {
     case Momentum2D::LOCAL_INERTIAL:
@@ -75,6 +78,8 @@ inline std::uint64_t requiredSurfaceCapabilities(const SolverOptions2D& opts, bo
         need |= OPENSWMM_GPU_CAP_GROUNDWATER;
     if (porous_heat)
         need |= OPENSWMM_GPU_CAP_POROUS_HEAT;
+    if (surface_heat)
+        need |= OPENSWMM_GPU_CAP_SURFACE_HEAT;
     return need;
 }
 
@@ -95,14 +100,15 @@ inline std::string surfaceCapabilityNames(std::uint64_t mask) {
                                             "transport (DIFFUSIVE_WAVE)",
                                             "transport (FULL_SWE)",
                                             "coupled groundwater",
-                                            "porous ground heat"};
+                                            "porous ground heat",
+                                            "surface heat exchange"};
     std::string out;
     for (int bit = 0; bit < 64; ++bit) {
         if (!(mask & (1ull << bit)))
             continue;
         if (!out.empty())
             out += ", ";
-        out += bit < 12 ? names[bit] : "capability bit " + std::to_string(bit);
+        out += bit < 13 ? names[bit] : "capability bit " + std::to_string(bit);
     }
     return out.empty() ? "none" : out;
 }

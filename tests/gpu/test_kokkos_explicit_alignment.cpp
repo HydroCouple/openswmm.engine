@@ -498,20 +498,22 @@ void frozenTier() {
 /**
  * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
  *
- * Separately tries each configuration outside kKokkosSurfaceCapabilities (transport rows,
- * FRONT_REBUILD YES), requiring
+ * Separately tries each configuration outside kKokkosSurfaceCapabilities (transport rows with
+ * surface heat exchange, FRONT_REBUILD YES), requiring
  * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
  * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
  * its capability and its parity check.
  */
 void unsupported() {
-    const char* names[] = {"", "transport", "", "FRONT_REBUILD"};
+    const char* names[] = {"", "transport with surface heat", "", "FRONT_REBUILD"};
     for (int kind : {1, 3}) {
         auto m = mesh(2);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 1)
+        if (kind == 1) {
             s.transport.resize(1, m.n_cells(), 0);
+            s.heat.enabled = true;
+        }
         if (kind == 3)
             o.front_rebuild = 1;
         bool rejected = false;
@@ -761,6 +763,281 @@ void modeParity(Momentum2D mode, const char* name, int order = 1) {
                     ++cases;
                 }
     std::cout << name << " CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
+}
+/**
+ * @brief Seed three transport rows on a state: a pollutant, water age and a signed temperature.
+ *
+ * The pollutant concentration rises with x, the age is uniform and the temperature changes sign
+ * across the mesh, so the unsigned floors and the signed row are both exercised. Sizes the
+ * runoff volumes, so the marchers book them.
+ *
+ * @param[in] m Mesh the state was sized for.
+ * @param[in,out] s State with its water volumes set; receives the rows.
+ * @param[in] points Coupling points the per-point exchange totals are sized for.
+ */
+void seedRows(const MeshData& m, SurfaceStateData& s, int points = 0) {
+    auto& tr = s.transport;
+    tr.resize(3, m.n_cells(), points);
+    tr.n_pollut = 1;
+    tr.age_row = 1;
+    tr.temp_row = 2;
+    tr.row_names = {"P", "__WATER_AGE__", "__TEMPERATURE__"};
+    tr.cell_runoff_vol.assign(static_cast<std::size_t>(m.n_cells()), 0.0);
+    for (int i = 0; i < m.n_cells(); ++i) {
+        tr.cell_mass[tr.idx(0, i)] = (1.0 + m.tri_cx[i]) * s.volume[i];
+        tr.cell_mass[tr.idx(1, i)] = 100.0 * s.volume[i];
+        tr.cell_mass[tr.idx(2, i)] = (m.tri_cy[i] - 4.0) * s.volume[i];
+    }
+}
+/**
+ * @brief Require the transport rows of two marchers to agree: per-cell and per-point values bit
+ * for bit, run totals to rounding.
+ *
+ * @param[in] b Kokkos state.
+ * @param[in] a CPU state.
+ * @param[in] tag Case label for messages.
+ */
+void rowsMatch(const SurfaceStateData& b, const SurfaceStateData& a, const std::string& tag) {
+    const auto& tb = b.transport;
+    const auto& ta = a.transport;
+    exact(tb.cell_mass, ta.cell_mass, tag + "cell mass");
+    exact(tb.cell_runoff_vol, ta.cell_runoff_vol, tag + "runoff volume");
+    exact(tb.exch_mass, ta.exch_mass, tag + "drained mass per point");
+    exact(tb.exch_spill, ta.exch_spill, tag + "spill volume per point");
+    require(tb.dispersion_limiter_binds == ta.dispersion_limiter_binds,
+            (tag + "dispersion limiter binds").c_str());
+    // Run totals: the CPU folds per-thread subtotals, the device per-cell ones.
+    const std::pair<const std::vector<double>*, const std::vector<double>*> ledgers[] = {
+        {&tb.lost_infiltration, &ta.lost_infiltration}, {&tb.lost_boundary, &ta.lost_boundary},
+        {&tb.lost_coupling, &ta.lost_coupling},         {&tb.gained_rainfall, &ta.gained_rainfall},
+        {&tb.gained_boundary, &ta.gained_boundary},     {&tb.gained_coupling, &ta.gained_coupling}};
+    const char* names[] = {"lost infiltration", "lost boundary",   "lost coupling",
+                           "gained rainfall",   "gained boundary", "gained coupling"};
+    for (int k = 0; k < 6; ++k)
+        for (std::size_t r = 0; r < ledgers[k].first->size(); ++r)
+            near((*ledgers[k].first)[r], (*ledgers[k].second)[r],
+                 (tag + names[k] + " row " + std::to_string(r)).c_str(), 1e-12);
+}
+/**
+ * @brief Require the Kokkos marcher to carry transport rows exactly as the CPU marcher does under
+ * one momentum closure.
+ *
+ * Three rows (pollutant, age, signed temperature) on triangle, mixed and quadrilateral meshes, both
+ * closures, one and four tiers: a dam break, held sinks with a coupling source, rain on a dry bed
+ * at a rain concentration, dispersion below and above its limiter, and every open-boundary law
+ * with boundary concentrations, reversed mid-run. Between windows the host ages the water, as the
+ * router does. Water fields, cell mass, runoff volumes and the step count must match exactly; run
+ * totals and boundary receipts to 1e-12. Requires initialized Kokkos; prints PASS or throws.
+ *
+ * @param[in] mode Momentum closure.
+ * @param[in] name Label used in messages.
+ * @param[in] order Reconstruction order requested. With rows, order 2 blends them in the two-stage
+ * step, except under GROUNDWATER NO, where both marchers fall back to first order.
+ * @param[in] groundwater The [2D_OPTIONS] GROUNDWATER value: -1 automatic, 0 no.
+ */
+void speciesParity(Momentum2D mode, const char* name, int order = 1, int groundwater = -1) {
+    const BoundaryType laws[] = {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                                 BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE};
+    int cases = 0;
+    long binds = 0;
+    for (int shape : {0, 2, 1}) // triangles, mixed, quads
+        for (bool vfr : {false, true})
+            for (int tiers : {1, 4})
+                for (int scenario = 0; scenario < 9; ++scenario) {
+                    auto m = mesh(8, shape, true, true);
+                    auto a = state(m, .1);
+                    auto o = options(tiers);
+                    o.momentum = mode;
+                    o.reconstruction_order = order;
+                    o.groundwater = static_cast<int8_t>(groundwater);
+                    if (vfr) {
+                        o.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    if (scenario == 3)
+                        o.dispersion = .05;
+                    if (scenario == 4)
+                        o.dispersion = 20.;
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (scenario == 0 || scenario == 3 || scenario == 4)
+                            a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                        if (scenario == 1) {
+                            a.infil_rate[i] = .15;
+                            a.evap_rate[i] = .1;
+                            a.coupling_flux[i] = m.tri_cx[i] < 4 ? -.2 : .05;
+                        }
+                        if (scenario == 2) {
+                            a.volume[i] = 0;
+                            a.rainfall[i] = .02;
+                        }
+                        if (scenario == 4)
+                            a.infil_rate[i] = .2;
+                    }
+                    seedRows(m, a);
+                    a.transport.rain_conc = {2.5, 0.0, 12.0};
+                    if (scenario == 1) {
+                        auto& tr = a.transport;
+                        tr.coupling_src.assign(tr.cell_mass.size(), 0.0);
+                        for (int i = 0; i < m.n_cells(); ++i) {
+                            tr.coupling_src[tr.idx(0, i)] = .05 * 7.0;
+                            tr.coupling_src[tr.idx(2, i)] = .05 * -3.0;
+                        }
+                    }
+                    BoundaryData ba;
+                    std::vector<int> slots;
+                    if (scenario >= 5) {
+                        ba.resize(m.n_cells() * kMaxCellVerts);
+                        for (int i = 0; i < m.n_cells(); ++i)
+                            for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                                if (m.cell_neighbour(i, e) < 0) {
+                                    const int slot = MeshData::slot(i, e);
+                                    slots.push_back(slot);
+                                    ba.edge_bc_type[slot] = static_cast<int8_t>(laws[scenario - 5]);
+                                    a.transport.bc_quality_rows.push_back({slot, 0, 3.0});
+                                    a.transport.bc_quality_rows.push_back({slot, 2, 15.0});
+                                }
+                    }
+                    auto b = a;
+                    auto bb = ba;
+                    if (scenario >= 5) {
+                        a.boundary = &ba;
+                        b.boundary = &bb;
+                    }
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    int phase = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                        const double sign = phase == 1 ? 1.0 : -1.0;
+                        for (int slot : slots) {
+                            ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                            ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                            ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                        }
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string(name) + " rows shape=" + std::to_string(shape) +
+                            (vfr ? " VFR" : " FLAT") + " tiers=" + std::to_string(tiers) +
+                            " scenario=" + std::to_string(scenario) +
+                            " window=" + std::to_string(phase) + " ";
+                        require(cpu.last_num_steps() == kk.last_num_steps(),
+                                (tag + "steps").c_str());
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(b.head, a.head, tag + "head");
+                        exact(b.depth, a.depth, tag + "depth");
+                        exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                        exact(b.infil_applied, a.infil_applied, tag + "infiltration");
+                        exact(b.coupling_applied, a.coupling_applied, tag + "coupling");
+                        rowsMatch(b, a, tag);
+                        const std::size_t ns = 3;
+                        for (std::size_t k = 0; k < slots.size(); ++k) {
+                            const auto found = ba.receipts.find(slots[k]);
+                            if (found == ba.receipts.end())
+                                continue;
+                            for (std::size_t r = 0; r < ns; ++r) {
+                                near(b.boundary_requested_mass[k * ns + r],
+                                     found->second.requested_mass[r],
+                                     (tag + "boundary requested mass").c_str(), 1e-12);
+                                near(b.boundary_applied_mass[k * ns + r],
+                                     found->second.applied_mass[r],
+                                     (tag + "boundary applied mass").c_str(), 1e-12);
+                            }
+                        }
+                        // The host owns the rows between advances: age the water on both, as
+                        // the router does, and drain the applied-depth ledgers.
+                        for (auto* st : {&a, &b}) {
+                            auto& tr = st->transport;
+                            for (int i = 0; i < m.n_cells(); ++i)
+                                tr.cell_mass[tr.idx(1, i)] += (end - t) * st->volume[i];
+                            std::fill(st->infil_applied.begin(), st->infil_applied.end(), 0.0);
+                            std::fill(st->coupling_applied.begin(), st->coupling_applied.end(),
+                                      0.0);
+                        }
+                        t = end;
+                        ++phase;
+                    }
+                    binds += a.transport.dispersion_limiter_binds;
+                    ++cases;
+                }
+    require(binds > 0, "the dispersion limiter never bound: the fixture does not exercise it");
+    std::cout << name << " transport rows CPU/Kokkos bit identity (" << cases << " cases, " << binds
+              << " limiter binds) PASS\n";
+}
+/**
+ * @brief Require identical transport rows through the live junction exchange, drain and spill.
+ *
+ * The nodeExchange() fixture with three rows: two cells share one node whose published row values
+ * the spill carries in; the drain leaves at each cell's concentration and is booked per point.
+ * Requires initialized Kokkos; prints PASS or throws.
+ */
+void speciesExchange() {
+    for (Momentum2D mode :
+         {Momentum2D::LOCAL_INERTIAL, Momentum2D::DIFFUSIVE_WAVE, Momentum2D::FULL_SWE})
+        for (bool vfr : {false, true})
+            for (int law : {0, 1})
+                for (bool spill : {false, true}) {
+                    auto m = mesh(3, 0, false, vfr);
+                    auto a = state(m, .2);
+                    auto o = options(4);
+                    o.momentum = mode;
+                    if (vfr)
+                        o.cell_closure = CellClosure2D::VFR;
+                    openswmm::NodeData nodes;
+                    nodes.resize(1);
+                    nodes.invert_elev[0] = -.1;
+                    nodes.full_depth[0] = .1;
+                    nodes.full_volume[0] = 1.;
+                    nodes.volume[0] = 1.01;
+                    nodes.head[0] = spill ? .8 : -.05;
+                    nodes.depth[0] = nodes.head[0] - nodes.invert_elev[0];
+                    std::vector<CouplingPoint> points;
+                    for (int cell : {0, 1}) {
+                        CouplingPoint cp{};
+                        cp.cell_idx = cell;
+                        cp.vertex_idx = -1;
+                        cp.node_idx = 0;
+                        cp.cd = .6;
+                        cp.area = .1;
+                        cp.law = law;
+                        cp.geo.z_crest = 0;
+                        cp.geo.l_weir = .4;
+                        cp.geo.a_orif = .1;
+                        points.push_back(cp);
+                    }
+                    seedRows(m, a, 2);
+                    const std::vector<double> node_rows = {4.0, 250.0, -2.0};
+                    auto b = a;
+                    a.nodes_1d = b.nodes_1d = &nodes;
+                    a.node_coupling = b.node_coupling = &points;
+                    a.node_row_conc = b.node_row_conc = &node_rows;
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    for (double end : {.37, .91}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string("exchange rows mode=") +
+                            std::to_string(static_cast<int>(mode)) + (vfr ? " VFR" : " FLAT") +
+                            " law=" + std::to_string(law) + (spill ? " spill " : " drain ");
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(kk.last_coupling_exchange(), cpu.last_coupling_exchange(),
+                              tag + "exchange volume");
+                        rowsMatch(b, a, tag);
+                        const double moved =
+                            sum(a.transport.exch_mass) + sum(a.transport.exch_spill);
+                        require(moved != 0.0, (tag + "nothing was exchanged").c_str());
+                        t = end;
+                    }
+                }
+    std::cout << "Transport rows through node drain/spill PASS\n";
 }
 /**
  * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit with the optional
@@ -1500,11 +1777,26 @@ int main(int argc, char** argv) {
             require(gpu::ExecSpace().concurrency() == std::atoi(n),
                     "requested OpenMP concurrency was not active");
 #endif
-        // OPENSWMM_ALIGNMENT_ONLY=physics runs the momentum-physics parity alone (mutation checks).
+        // OPENSWMM_ALIGNMENT_ONLY=physics runs the momentum-physics parity alone and
+        // =rows the transport-row parity alone (mutation checks).
         if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
             only && std::string(only) == "physics") {
             physicsParity();
             wallDragOrder();
+            Kokkos::finalize();
+            return 0;
+        }
+        auto rowChecks = [] {
+            speciesParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
+            speciesParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE");
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2, GROUNDWATER NO", 2, 0);
+            speciesExchange();
+        };
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "rows") {
+            rowChecks();
             Kokkos::finalize();
             return 0;
         }
@@ -1516,6 +1808,7 @@ int main(int argc, char** argv) {
         modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
         modeParity(Momentum2D::FULL_SWE, "FULL_SWE");
         modeParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
+        rowChecks();
         physicsParity();
         wallDragOrder();
         edgeConveyance();

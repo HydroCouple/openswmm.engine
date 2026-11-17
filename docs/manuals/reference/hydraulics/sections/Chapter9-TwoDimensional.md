@@ -2813,7 +2813,7 @@ so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
 The plugins implement the local-inertial, diffusive-wave and full
 shallow-water schemes, the last at first and second order, on triangle,
-quad and mixed meshes without transport. On
+quad and mixed meshes, with or without transport rows. On
 the OpenMP plugin all three reproduce the CPU marcher's depths, heads,
 face fluxes and (under `FULL_SWE`) cell velocities bit for bit; a device
 backend agrees to its platform's rounding. Under `FULL_SWE` the front
@@ -2824,8 +2824,24 @@ as well: the face stresses are gathered per cell in face order, the few
 corner cells that borrow a neighbor's gradient stencil are processed in
 order on one thread, and the kinetic-energy total that accepts or rejects
 a mixing sub-step is summed on the host in cell order, so each decision
-matches the CPU marcher's. A model that carries species,
-age or temperature rows is
+matches the CPU marcher's.
+
+Transport rows (pollutants, reaction species, water age and a passive
+temperature row) ride the same kernels. Each face books its advective and
+dispersive transfers into its own two accumulator slots, each cell gathers
+its faces in the CPU marcher's order, and boundary edges and junction
+exchange points carry the rows inside the runs and groups that already
+keep their water in serial order. On the OpenMP plugin the cell masses,
+the runoff volumes and the per-point drained mass match the CPU marcher
+bit for bit under every closure. Run totals (the mass ledgers) are summed
+on the host from one slot per cell, boundary edge or exchange point, so
+they do not depend on the thread count; they agree with the CPU marcher's
+to rounding, because the CPU marcher adds per-thread subtotals. Aging,
+first-order decay, reactions, buildup and washoff run on the host between
+advances, on the masses the plugin copies back.
+
+A model that exchanges heat between the surface water and the atmosphere
+or the bed (`HEAT_MODEL COUPLED`) is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
 served by the CPU marcher. There is no silent physics substitution. The
@@ -2900,9 +2916,10 @@ behaviour it once configured is now described.
   reactions/heat and borrowed owners remain guarded (§9.5.10). Long-period damping remains, and the
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
-- **The Kokkos backends serve hydraulics without transport.**
-  All three closures, with the optional momentum physics; transport,
-  coupled groundwater and porous heat run on the CPU marcher (§9.11.1).
+- **The Kokkos backends do not serve heat exchange or groundwater.**
+  They run all three closures, the optional momentum physics and
+  transport rows; surface heat exchange, coupled groundwater and porous
+  heat run on the CPU marcher (§9.11.1).
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.

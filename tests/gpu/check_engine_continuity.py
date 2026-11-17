@@ -1,4 +1,9 @@
-"""Require the real OpenMP plugin and compare every 2D continuity report term."""
+"""Require the real OpenMP plugin and compare every 2D continuity report term.
+
+With --quality the deck also carries transport rows (a decaying pollutant with a rain
+concentration, water age) and the two runs must then write the same binary output and the same
+quality continuity tables.
+"""
 
 import argparse
 import math
@@ -36,6 +41,21 @@ def continuity(report):
     return rows
 
 
+def quality_tables(report):
+    """The report's quality continuity tables, each as its lines up to the next blank line."""
+    lines = report.read_text(errors="replace").splitlines()
+    blocks = []
+    for start, line in enumerate(lines):
+        if "Quality" in line and "Continuity" in line:
+            end = start
+            while end < len(lines) and lines[end].strip():
+                end += 1
+            blocks.append("\n".join(lines[start:end]))
+    if not blocks:
+        raise AssertionError(f"{report}: no quality continuity table")
+    return blocks
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--engine", type=Path, required=True)
@@ -47,6 +67,9 @@ def main():
                         help="MOMENTUM_EQUATION pinned in the deck")
     parser.add_argument("--option", action="append", default=[],
                         help="extra [2D_OPTIONS] line, repeatable")
+    parser.add_argument("--quality", action="store_true",
+                        help="add transport rows; the binary output and the quality continuity "
+                             "tables must then be identical")
     parser.add_argument("--expect-refusal", metavar="TEXT",
                         help="the plugin must be refused with a notice containing TEXT, and the "
                              "run must match the CPU run exactly because it is the CPU marcher")
@@ -68,7 +91,21 @@ def main():
                               "[2D_OPTIONS]\nEVAPORATION CLIMATE", deck)
         if count != 1:
             raise AssertionError("evaporation fixture requires one 2D options section")
+    if args.quality:
+        # A pollutant that rain carries and that decays (the host reaction stage), water age,
+        # an initial concentration on the mesh and dispersion.
+        deck, count = re.subn(r"(?m)^\[OPTIONS\]\s*$", "[OPTIONS]\nWATER_AGE YES", deck)
+        if count != 1:
+            raise AssertionError("quality fixture requires one [OPTIONS] section")
+        deck, count = re.subn(r"(?m)^\[2D_OPTIONS\]\s*$", "[2D_OPTIONS]\nDISPERSION 0.5", deck)
+        if count != 1:
+            raise AssertionError("quality fixture requires one 2D options section")
+        deck += ("\n[POLLUTANTS]\n;;Name Units Crain Cgw Crdii Kdecay\n"
+                 "P1 MG/L 2.5 0 0 0.5\n"
+                 "\n[2D_INITIAL_QUALITY]\n* P1 10\n")
     results = {}
+    outputs = {}
+    tables = {}
     for backend in ("cpu", "omp"):
         work = (args.output / backend).resolve()
         work.mkdir(parents=True, exist_ok=True)
@@ -79,7 +116,12 @@ def main():
         env = dict(os.environ, OPENSWMM_2D_BACKEND=backend,
                    OPENSWMM_GPU_PLUGIN_PATH=str(args.plugin_dir.resolve()),
                    OMP_NUM_THREADS="1", OMP_PROC_BIND="false", OPENSWMM_2D_HEAD_RAMP="0")
-        run = subprocess.run([str(args.engine.resolve()), str(inp), str(report)],
+        binary = work / "model.out"
+        binary.unlink(missing_ok=True)
+        command = [str(args.engine.resolve()), str(inp), str(report)]
+        if args.quality:
+            command.append(str(binary))
+        run = subprocess.run(command,
                              cwd=work, env=env, text=True, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, timeout=180)
         (work / "run.log").write_text(run.stdout)
@@ -97,6 +139,17 @@ def main():
         elif backend == "omp" and not selected:
             raise AssertionError("OpenMP plugin was not selected; CPU fallback cannot pass")
         results[backend] = continuity(report)
+        if args.quality:
+            outputs[backend] = binary.read_bytes()
+            tables[backend] = quality_tables(report)
+    if args.quality:
+        if outputs["cpu"] != outputs["omp"]:
+            raise AssertionError("binary output differs between the CPU and OpenMP runs")
+        if tables["cpu"] != tables["omp"]:
+            raise AssertionError("quality continuity tables differ:\n" + "\n".join(tables["cpu"]) +
+                                 "\n--- OpenMP ---\n" + "\n".join(tables["omp"]))
+        print(f"binary output identical ({len(outputs['cpu'])} bytes); "
+              f"{len(tables['cpu'])} quality continuity table(s) identical")
     cpu, omp = results["cpu"], results["omp"]
     if cpu.keys() != omp.keys():
         raise AssertionError("CPU and plugin continuity rows differ")

@@ -65,6 +65,7 @@
 namespace openswmm::twoD::gpu {
 
 struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
+struct SpeciesRows; // device transport rows and their kernels (KokkosSpeciesKernels.hpp)
 
 class ExplicitKokkosSurfaceSolver final : public ISurfaceSolver {
 public:
@@ -336,6 +337,22 @@ private:
     std::vector<double> exch_host_;
     double exch_span_ = 0.0; ///< advance span exch_host_ covers (s)
 
+    // ---- transport rows (species, age, temperature) -------------------------
+    // Empty for a water-only model. Layouts follow SurfaceTransportState: cell mass is
+    // [row * nt + cell], face accumulators [face * ns + row], per-entry arrays [entry * ns + row].
+    bool species_ = false; ///< the model carries transport rows
+    int ns_ = 0;           ///< rows carried
+    DView d_cmass_, d_saccL_, d_saccR_, d_rain_conc_, d_csrc_, d_runoff_;
+    DView d_species_ledger_; ///< per-cell rain, coupling and infiltration mass since publication
+    IView d_binds_;          ///< per-face dispersion limiter binds since publication
+    DView d_bc_conc_, d_bc_gain_, d_bc_loss_, d_bc_req_mass_, d_bc_app_mass_;
+    DView d_exch_mass_, d_exch_spill_, d_cp_gain_, d_node_conc_;
+    bool has_csrc_ = false, has_runoff_ = false, has_node_conc_ = false;
+    // What the two-stage step blends the rows and their totals with.
+    DView d_rk_cmass0_, d_rk_runoff0_, d_rk_exm0_, d_rk_exs0_, d_rk_led0_;
+    DView d_rk_bcg0_, d_rk_bcl0_, d_rk_bcrm0_, d_rk_bcam0_, d_rk_cpg0_;
+    std::vector<double> species_host_; ///< drain scratch
+
     // ---- host mirrors / control -------------------------------------------
     std::array<int, 9> tier_off_{};  ///< cells_compact_ segment offsets
     std::array<int, 9> ftier_off_{}; ///< edges_compact_ segment offsets
@@ -457,6 +474,29 @@ public:
      * @return A device-copyable value; capture it by value in a kernel lambda.
      */
     CellClosure closure() const;
+    /**
+     * @brief Bundle the transport-row views and constants for a kernel.
+     * @return A device-copyable value; capture it by value in a kernel lambda. Its views are
+     * empty for a water-only model.
+     */
+    SpeciesRows speciesRows() const;
+    /**
+     * @brief Upload the transport rows and their source concentrations for one advance.
+     * @throws std::runtime_error Surface heat exchange or a live passive exchange is attached;
+     * both need the CPU marcher.
+     * @note Uploads cell mass (the host edits it between advances: aging, reactions, washoff),
+     * rain, coupling, boundary and node concentrations and the runoff volumes, and zeroes the
+     * per-advance exchange totals. No-op for a water-only model.
+     */
+    void pushSpecies();
+    /**
+     * @brief Copy the transport rows back and fold their per-slot totals into the host ledgers.
+     * @note Cell mass, runoff volume and the per-point exchange totals are copied; rainfall,
+     * coupling, infiltration and boundary totals are folded in cell, entry and point order and
+     * added to the cumulative ledgers; boundary receipts stay additive until the router drains
+     * them. No-op for a water-only model.
+     */
+    void publishSpecies();
     /**
      * @brief FULL_SWE face kernel: first-order Godunov flux with hydrostatic reconstruction.
      * @param[in] lo First index into the compact edge list.

@@ -768,8 +768,11 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         message(FATAL_ERROR "The mixed-mesh variant of 2d_complete_example.inp was not produced")
     endif()
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp "${_omp_quad_inp}")
+    # The species cases add transport rows (--quality): a decaying pollutant with a rain
+    # concentration, water age and dispersion. Their binary output and quality continuity
+    # tables must match the CPU run exactly.
     foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe
-                  swe_o2 quad_swe_o2)
+                  swe_o2 quad_swe_o2 species species_dw species_swe species_quad_swe_o2)
         set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
         set(_extra)
         if(_case STREQUAL "vfr")
@@ -802,6 +805,16 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
         elseif(_case STREQUAL "quad_swe_o2")
             set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
             set(_extra --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
+                --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "species")
+            set(_extra --quality)
+        elseif(_case STREQUAL "species_dw")
+            set(_extra --quality --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "species_swe")
+            set(_extra --quality --momentum FULL_SWE)
+        elseif(_case STREQUAL "species_quad_swe_o2")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --quality --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
                 --option "CELL_CLOSURE VFR")
         endif()
         add_test(NAME test_engine_2d_omp_${_case}

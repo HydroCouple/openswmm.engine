@@ -1334,9 +1334,12 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // What this model needs of a plugin solver. Anything the Kokkos
         // marcher lacks (SurfaceCapabilities.hpp) runs on the CPU marcher,
         // loudly, rather than silently losing a process or a transport row.
-        const std::uint64_t required =
-            requiredSurfaceCapabilities(options_, mesh_.n_quads() != 0, state_.transport.active(),
-                                        groundwater_requested, porous_heat_requested);
+        // The condition initializeMeshHeat() enables surface heat exchange on.
+        const bool surface_heat_requested =
+            options_.coupled_heat && ctx.options.heat_transport && state_.transport.temp_row >= 0;
+        const std::uint64_t required = requiredSurfaceCapabilities(
+            options_, mesh_.n_quads() != 0, state_.transport.active(), groundwater_requested,
+            porous_heat_requested, surface_heat_requested);
         solver_ = makeSurfaceSolver(options_, &backend_name_, mesh_.n_triangles(), required);
         // Say which solver this run is on. Rides the advisory-warning path
         // (code 0) with the thread notices, so it reaches the .rpt and the
@@ -2717,6 +2720,20 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             receipt.requested += state_.boundary_requested[k];
             receipt.last_flow = state_.boundary_last_flow[k];
             receipt.last_dt = state_.boundary_last_dt[k];
+            // Species the boundary water carried, as the CPU marcher books them.
+            const auto ns = static_cast<std::size_t>(state_.transport.n_species);
+            if (state_.boundary_applied_mass.size() == state_.boundary_receipt_slots.size() * ns)
+                for (std::size_t r = 0; r < ns; ++r) {
+                    double& requested = state_.boundary_requested_mass[k * ns + r];
+                    double& applied = state_.boundary_applied_mass[k * ns + r];
+                    receipt.requested_mass[r] += requested;
+                    receipt.applied_mass[r] += applied;
+                    if (static_cast<int>(r) == state_.transport.temp_row) {
+                        receipt.heat_requested += requested * options_.water_heat_capacity;
+                        receipt.heat_applied += applied * options_.water_heat_capacity;
+                    }
+                    requested = applied = 0.0;
+                }
             state_.boundary_requested[k] = 0.0;
             state_.boundary_in_applied[k] = 0.0;
             state_.boundary_out_applied[k] = 0.0;

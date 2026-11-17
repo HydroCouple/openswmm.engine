@@ -94,7 +94,10 @@ extern "C" {
  * solver implements. The core refuses a plugin that lacks any capability the model requires.
  * ISurfaceSolver adds syncPinnedVolumes (vtable change). */
 /* v13: ISurfaceSolver adds publishMomentumVelocity (vtable change). */
-#define OPENSWMM_GPU_ABI_VERSION 13
+/* v14: SurfaceStateData adds the boundary species receipt arrays a plugin publishes
+ * (boundary_requested_mass, boundary_applied_mass), so its layout changes. Capability bit 12
+ * (surface heat exchange) is new. Rebuild surface plugins. */
+#define OPENSWMM_GPU_ABI_VERSION 14
 
 /**
  * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)
@@ -115,6 +118,7 @@ extern "C" {
 #define OPENSWMM_GPU_CAP_TRANSPORT_SWE (1ull << 9)    /**< transport rows, FULL_SWE */
 #define OPENSWMM_GPU_CAP_GROUNDWATER (1ull << 10)     /**< coupled 2D aquifer */
 #define OPENSWMM_GPU_CAP_POROUS_HEAT (1ull << 11)     /**< porous ground heat */
+#define OPENSWMM_GPU_CAP_SURFACE_HEAT (1ull << 12)    /**< surface heat exchange (COUPLED_HEAT) */
 /** @} */
 
 /** GPU vendor / backend identifier reported by a plugin. */

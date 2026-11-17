@@ -439,30 +439,28 @@ TEST(SurfaceTransportS4, RowsFollowThe1DLayoutAndAStillPanAgesExactly) {
 }
 
 // ---------------------------------------------------------------------------
-// 3b (S4b). The GPU/Kokkos plugin lacks the transport capability: a deck with any
-//     transported row must be served by the CPU marcher and SAY SO in the
-//     solver notice, whether or not a plugin is installed on this machine.
-//     A deck without transport keeps the plain notice.
+// 3b (S4b). The GPU/Kokkos plugin carries transport rows, so a deck with a
+//     transported row is no longer refused for them and the solver notice
+//     must not claim it, whether or not a plugin is installed on this
+//     machine. (Surface heat exchange is still refused: BackendSafety covers it.)
 // ---------------------------------------------------------------------------
-TEST(SurfaceTransportS4, TransportRowsRefuseTheKokkosPluginLoudly) {
+TEST(SurfaceTransportS4, TransportRowsDoNotRefuseTheKokkosPlugin) {
     CoupledRun r = runDeck("_s4_kokkos_tr",
                            deck("WATER_AGE            YES\n",
                                 "[2D_INITIAL_QUALITY]\n* __WATER_AGE__ 1\n\n", "O1", -10.0, 0.5),
                            false);
     ASSERT_TRUE(r.ok);
-    bool said = false;
     for (const auto& w : r.eng->surfaceRouter2D().threadWarnings())
-        if (w.find("does not implement transport (FULL_SWE)") != std::string::npos)
-            said = true;
-    EXPECT_TRUE(said) << "transport on: the notice must name the plugin refusal";
+        EXPECT_EQ(w.find("does not implement"), std::string::npos)
+            << "transport rows alone must not refuse the plugin: " << w;
     close(r);
 
     CoupledRun q =
         runDeck("_s4_kokkos_notr", deck("IGNORE_QUALITY       YES\n", "", "O1", -10.0, 0.5), false);
     ASSERT_TRUE(q.ok);
     for (const auto& w : q.eng->surfaceRouter2D().threadWarnings())
-        EXPECT_EQ(w.find("does not implement transport (FULL_SWE)"), std::string::npos)
-            << "no transport: the refusal must not be claimed";
+        EXPECT_EQ(w.find("does not implement"), std::string::npos)
+            << "no transport: no refusal may be claimed";
     close(q);
 }
 

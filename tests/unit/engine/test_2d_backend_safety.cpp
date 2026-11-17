@@ -134,7 +134,7 @@ TEST(BackendSafety, ModelsBeyondTheKokkosCapabilitiesNeverProbe) {
     };
     const Case cases[] = {
         {"front rebuild", Momentum2D::LOCAL_INERTIAL, 1, 1, 0},
-        {"transport", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_TRANSPORT_LI},
+        {"surface heat", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_SURFACE_HEAT},
         {"groundwater", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_GROUNDWATER},
         {"porous heat", Momentum2D::LOCAL_INERTIAL, 1, -1, OPENSWMM_GPU_CAP_POROUS_HEAT},
     };
@@ -183,10 +183,11 @@ TEST(BackendSafety, RequiredCapabilitiesFollowTheModel) {
     o.momentum = Momentum2D::FULL_SWE;
     o.front_rebuild = 1; // part of the scheme under FULL_SWE, not a separate capability
     o.reconstruction_order = 2;
-    EXPECT_EQ(requiredSurfaceCapabilities(o, false, true, true, true),
+    EXPECT_EQ(requiredSurfaceCapabilities(o, false, true, true, true, true),
               OPENSWMM_GPU_CAP_FULL_SWE | OPENSWMM_GPU_CAP_SWE_ORDER2 |
                   OPENSWMM_GPU_CAP_TRANSPORT_SWE | OPENSWMM_GPU_CAP_GROUNDWATER |
-                  OPENSWMM_GPU_CAP_POROUS_HEAT);
+                  OPENSWMM_GPU_CAP_POROUS_HEAT | OPENSWMM_GPU_CAP_SURFACE_HEAT);
+    EXPECT_EQ(surfaceCapabilityNames(OPENSWMM_GPU_CAP_SURFACE_HEAT), "surface heat exchange");
     EXPECT_EQ(surfaceCapabilityNames(OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE | OPENSWMM_GPU_CAP_QUADS),
               "DIFFUSIVE_WAVE, quadrilateral cells");
     EXPECT_EQ(surfaceCapabilityNames(0), "none");

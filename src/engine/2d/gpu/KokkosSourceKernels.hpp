@@ -19,6 +19,9 @@ namespace openswmm::twoD::gpu {
 struct SourceBudget {
     double volume, infiltration, evaporation, coupling;
     bool applied;
+    // What the transport rows mix and debit with (KokkosSpeciesKernels.hpp): accepted rain m3,
+    // the signed coupling request m3, the water the sinks shared and their satisfaction ratio.
+    double rain, coupling_request, available, scale;
 };
 /**
  * @brief Apply the cubic wet/dry ramp to a held nonnegative sink demand.
@@ -66,13 +69,20 @@ KOKKOS_INLINE_FUNCTION SourceBudget sourceBudget(double volume, double h, double
     const double inf = sourceSink(infil_rate, h, dry) * adt;
     const double evap = sourceSink(evap_rate, h, dry) * adt;
     if (rain == 0.0 && coupling == 0.0 && inf == 0.0 && evap == 0.0)
-        return {volume, 0.0, 0.0, 0.0, false};
+        return {volume, 0.0, 0.0, 0.0, false, 0.0, 0.0, 0.0, 1.0};
     const double incoming = rain + (coupling > 0.0 ? coupling : 0.0);
     const double available = volume + incoming > 0.0 ? volume + incoming : 0.0;
     const double out = coupling < 0.0 ? -coupling : 0.0;
     const double requested = inf + evap + out;
     const double scale = requested > available && requested > 0.0 ? available / requested : 1.0;
-    return {requested >= available ? 0.0 : available - requested, inf * scale, evap * scale,
-            (coupling > 0.0 ? coupling : 0.0) - out * scale, true};
+    return {requested >= available ? 0.0 : available - requested,
+            inf * scale,
+            evap * scale,
+            (coupling > 0.0 ? coupling : 0.0) - out * scale,
+            true,
+            rain,
+            coupling,
+            available,
+            scale};
 }
 } // namespace openswmm::twoD::gpu

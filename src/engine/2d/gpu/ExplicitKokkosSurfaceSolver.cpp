@@ -37,6 +37,7 @@
 
 #include "KokkosPerfCounters.hpp"
 #include "KokkosSourceKernels.hpp"
+#include "KokkosSpeciesKernels.hpp"
 #include <stdexcept>
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
@@ -90,6 +91,35 @@ CellClosure ExplicitKokkosSurfaceSolver::closure() const {
                        d_quad_a_,   d_cell_v_,
                        d_nv_,       opts_->cell_closure == CellClosure2D::VFR,
                        has_quads_,  opts_->vfr_min_wet_frac};
+}
+
+SpeciesRows ExplicitKokkosSurfaceSolver::speciesRows() const {
+    SpeciesRows r;
+    r.mass = d_cmass_;
+    r.saccL = d_saccL_;
+    r.saccR = d_saccR_;
+    r.vol = d_volume_;
+    r.rain_conc = d_rain_conc_;
+    r.csrc = d_csrc_;
+    r.runoff = d_runoff_;
+    r.ledger = d_species_ledger_;
+    r.binds = d_binds_;
+    r.ptr = d_cell_ptr_;
+    r.edge = d_cell_edge_;
+    r.sign = d_sign_;
+    r.tier = d_tier_;
+    r.ftier = d_face_tier_;
+    r.nv = d_nv_;
+    r.ns = ns_;
+    r.nt = mesh_ ? mesh_->n_triangles() : 0;
+    r.temp_row = species_ ? state_->transport.temp_row : -1;
+    r.age_row = species_ ? state_->transport.age_row : -1;
+    r.dispersion = species_ ? opts_->dispersion : 0.0;
+    r.beta3 = opts_ ? opts_->exchange_beta / 3.0 : 0.0;
+    r.beta4 = opts_ ? opts_->exchange_beta / 4.0 : 0.0;
+    r.has_csrc = has_csrc_;
+    r.has_runoff = has_runoff_;
+    return r;
 }
 
 namespace {
@@ -333,12 +363,19 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                          opts.lts_tiers);
             opts.lts_tiers = 1;
         }
-        // The plugin cannot build the vertex stencils (that code lives in the
-        // core); the router and the CPU marcher build them before this point.
-        if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
-            throw std::invalid_argument(
-                "Kokkos marcher: RECONSTRUCTION_ORDER 2 requires built vertex stencils");
-        second_order_ = true;
+        if (state.transport.active() && opts.groundwater == 0) {
+            // == serial marcher: with GROUNDWATER NO, transport rows run
+            // first order; the tier reduction above is kept.
+            std::fprintf(stderr, "[openswmm 2D] RECONSTRUCTION_ORDER 2 with overland transport "
+                                 "is not supported yet; using first order.\n");
+        } else {
+            // The plugin cannot build the vertex stencils (that code lives in the
+            // core); the router and the CPU marcher build them before this point.
+            if (mesh.vert_stencil_ptr.size() != std::size_t(mesh.n_vertices() + 1))
+                throw std::invalid_argument(
+                    "Kokkos marcher: RECONSTRUCTION_ORDER 2 requires built vertex stencils");
+            second_order_ = true;
+        }
     }
     muscl_ = second_order_ && std::getenv("OPENSWMM_2D_MUSCL_OFF") == nullptr;
     {
@@ -406,7 +443,7 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                 opts.mixing_length_coefficient < 0 || opts.smagorinsky_cs < 0 ||
                 !std::isfinite(opts.coriolis_latitude) || std::abs(opts.coriolis_latitude) > 90)
                 throw std::invalid_argument("Invalid Coriolis/Smagorinsky parameters.");
-            if (state.heat.enabled || state.snow.active() ||
+            if (state.transport.active() || state.heat.enabled || state.snow.active() ||
                 (state.node_coupling && !state.node_coupling->empty()))
                 throw std::invalid_argument("Coriolis/Smagorinsky/wall drag currently require "
                                             "uncoupled surface hydraulics.");
@@ -744,6 +781,67 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
                    state.node_pond_base ? *state.node_pond_base : state.nodes_1d->full_volume);
     }
 
+    // Transport rows: device state, face accumulators and the per-slot totals
+    // the host folds into the ledgers. Nothing is allocated for a water-only model.
+    species_ = state.transport.active();
+    ns_ = species_ ? state.transport.n_species : 0;
+    has_csrc_ = has_runoff_ = has_node_conc_ = false;
+    {
+        const std::size_t ns = static_cast<std::size_t>(ns_);
+        const std::size_t unt = static_cast<std::size_t>(nt), une = static_cast<std::size_t>(ne);
+        const std::size_t unbc = static_cast<std::size_t>(nbc);
+        if (species_) {
+            auto& tr = state.transport;
+            if (state.heat.enabled || state.live_passive_exchange)
+                throw std::invalid_argument("Kokkos marcher does not implement: surface heat "
+                                            "exchange or live passive exchange");
+            if (tr.cell_mass.size() != ns * unt)
+                throw std::invalid_argument("Kokkos marcher: transport rows are not sized to "
+                                            "the mesh");
+            // [2D_BOUNDARY_QUALITY] rows onto this solver's boundary entries
+            // (== serial marcher, including its refusals).
+            tr.bc_conc.assign(unbc * ns, 0.0);
+            for (const auto& row : tr.bc_quality_rows) {
+                std::size_t k = 0;
+                bool found = false;
+                for (; k < bc_slot_host_.size(); ++k)
+                    if (bc_slot_host_[k] == row.slot) {
+                        found = true;
+                        break;
+                    }
+                if (!found)
+                    throw std::runtime_error("[2D_BOUNDARY_QUALITY] edge slot " +
+                                             std::to_string(row.slot) +
+                                             " is not a non-WALL boundary edge, so its "
+                                             "concentration could never enter the mesh.");
+                if (row.species < 0 || static_cast<std::size_t>(row.species) >= ns)
+                    throw std::runtime_error("[2D_BOUNDARY_QUALITY] species index out of range.");
+                tr.bc_conc[k * ns + static_cast<std::size_t>(row.species)] = row.conc;
+            }
+            d_cmass_ = devCopy("cell_mass", tr.cell_mass);
+        } else {
+            d_cmass_ = DView();
+        }
+        d_saccL_ = DView("saccL", une * ns);
+        d_saccR_ = DView("saccR", une * ns);
+        d_rain_conc_ = DView("rain_conc", ns);
+        d_csrc_ = DView();
+        d_runoff_ = DView();
+        d_species_ledger_ = DView("species_ledger", kSpeciesLedgers * ns * unt);
+        d_binds_ = IView("dispersion_binds", species_ ? une : 0);
+        d_bc_conc_ = DView("bc_conc", unbc * ns);
+        d_bc_gain_ = DView("bc_gain", unbc * ns);
+        d_bc_loss_ = DView("bc_loss", unbc * ns);
+        d_bc_req_mass_ = DView("bc_requested_mass", unbc * ns);
+        d_bc_app_mass_ = DView("bc_applied_mass", unbc * ns);
+        d_exch_mass_ = DView("exch_mass", np * ns);
+        d_exch_spill_ = DView("exch_spill", species_ ? np : 0);
+        d_cp_gain_ = DView("cp_gain", np * ns);
+        d_node_conc_ = DView("node_row_conc", nn * ns);
+        state.boundary_requested_mass.assign(unbc * ns, 0.0);
+        state.boundary_applied_mass.assign(unbc * ns, 0.0);
+    }
+
     // Tier-0 pins: BC cells + coupling cells (fastest-changing forcing).
     {
         auto pin = d_pin_t0_;
@@ -868,6 +966,8 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
     auto qcx = d_qcx_, qcy = d_qcy_;
     const bool swe = swe_;
     const CellClosure cell = closure();
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
     Kokkos::parallel_for(
         "settle", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             double pending = 0.0;
@@ -881,6 +981,10 @@ void ExplicitKokkosSurfaceSolver::settleAccumulatorsDev() {
                     faccR(e) = 0.0;
                 }
             }
+            // The rows settle in the same sweep, or a re-tiered cell would
+            // strand their mass as it would the water (== serial).
+            if (species)
+                rows.settle(i);
             if (swe) {
                 // Settle the momentum of mass already applied, so a re-tiered
                 // or deactivated cell does not pick it up stale (== serial).
@@ -930,6 +1034,8 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
     auto area = d_tri_area_;
     const double dry = opts_->dry_depth;
     const CellClosure cell = closure();
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
     Kokkos::parallel_for(
         "lazySources", Kokkos::RangePolicy<ExecSpace>(0, nt), KOKKOS_LAMBDA(int i) {
             if (active(i))
@@ -938,6 +1044,8 @@ void ExplicitKokkosSurfaceSolver::lazySourcesDev(double t) {
                                              coup(i), infil(i), evap(i));
             if (!budget.applied)
                 return;
+            if (species)
+                rows.applySources(i, budget, area(i) * dt_lazy);
             infil_app(i) += budget.infiltration / area(i);
             coup_app(i) += budget.coupling;
             evap_app(i) += budget.evaporation;
@@ -1390,6 +1498,8 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
     const bool quads = has_quads_;
     auto nvv = d_nv_;
     const bool advect = opts_->advection;
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
     Kokkos::parallel_for(
         "fireFaces", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1451,6 +1561,8 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
             const double dM = qn1 * width * dt_f;
             faccL(e) -= dM;
             faccR(e) += dM;
+            if (species)
+                rows.bookFace(e, a, b, dM, hf, dt_f, global_step, xi(e), inv_dx(e), conv(e));
         });
     face_passes_ += (hi - lo);
 }
@@ -1471,6 +1583,8 @@ void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f
     const double beta3 = opts_->exchange_beta / 3.0, beta4 = opts_->exchange_beta / 4.0;
     const bool quads = has_quads_;
     auto nvv = d_nv_;
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
     Kokkos::parallel_for(
         "fireFacesDiffusive", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1503,6 +1617,8 @@ void ExplicitKokkosSurfaceSolver::fireFacesDiffusive(int lo, int hi, double dt_f
             const double dM = qn1 * xi(e) * dt_f;
             faccL(e) -= dM;
             faccR(e) += dM;
+            if (species)
+                rows.bookFace(e, a, b, dM, hf, dt_f, global_step, xi(e), inv_dx(e), 1.0);
         });
     face_passes_ += (hi - lo);
 }
@@ -1551,6 +1667,9 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
     const double beta3 = opts_->exchange_beta / 3.0, beta4 = opts_->exchange_beta / 4.0;
     const bool quads = has_quads_;
     auto nvv = d_nv_;
+    auto zface = d_zface_, inv_dx = d_inv_dx_;
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
     Kokkos::parallel_for(
         "fireFacesSwe", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1586,8 +1705,14 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
                                     qcy(b), nxv(e), nyv(e), dry, F, cLx, cLy, cRx, cRy);
             }
             // Dry-dry face: no flux and no correction, so nothing to book.
+            // Row dispersion still gets its call (== serial).
             if (!wet) {
                 qv(e) = 0.0;
+                if (species) {
+                    const double hf0 = hostMax(head(a), head(b)) - zface(e);
+                    rows.bookFace(e, a, b, 0.0, (hf0 > 0.0) ? hf0 : 0.0, dt_f, global_step, xi(e),
+                                  inv_dx(e), 1.0);
+                }
                 return;
             }
             // Face conveyance (leaky barriers) scales the whole flux vector.
@@ -1619,6 +1744,13 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
             fmyL(e) += (-fmy + cLy) * xdt;
             fmxR(e) += (fmx + cRx) * xdt;
             fmyR(e) += (fmy + cRy) * xdt;
+            // The rows ride the mass flux; the dispersive conductance uses
+            // the face depth the inertial law would have used (== serial).
+            if (species) {
+                const double hf = hostMax(head(a), head(b)) - zface(e);
+                rows.bookFace(e, a, b, dM, (hf > 0.0) ? hf : 0.0, dt_f, global_step, xi(e),
+                              inv_dx(e), 1.0);
+            }
         });
     face_passes_ += (hi - lo);
 }
@@ -1792,6 +1924,19 @@ void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
     snapshot(d_rk_bc_req0_, d_bc_requested_);
     snapshot(d_rk_ex0_, d_exch_);
     snapshot(d_rk_drawn0_, d_node_drawn_);
+    if (species_) {
+        snapshot(d_rk_cmass0_, d_cmass_);
+        snapshot(d_rk_exm0_, d_exch_mass_);
+        snapshot(d_rk_exs0_, d_exch_spill_);
+        if (has_runoff_)
+            snapshot(d_rk_runoff0_, d_runoff_);
+        snapshot(d_rk_led0_, d_species_ledger_);
+        snapshot(d_rk_bcg0_, d_bc_gain_);
+        snapshot(d_rk_bcl0_, d_bc_loss_);
+        snapshot(d_rk_bcrm0_, d_bc_req_mass_);
+        snapshot(d_rk_bcam0_, d_bc_app_mass_);
+        snapshot(d_rk_cpg0_, d_cp_gain_);
+    }
 
     for (int stage = 0; stage < 2; ++stage) {
         fireFaces(0, dt, true);
@@ -1838,6 +1983,28 @@ void ExplicitKokkosSurfaceSolver::runRk2Step(double dt) {
     average(d_bc_requested_, d_rk_bc_req0_);
     average(d_exch_, d_rk_ex0_);
     average(d_node_drawn_, d_rk_drawn0_);
+    if (species_) {
+        // The serial marcher blends every row inventory and total as
+        // one half of (before + after); the per-cell and per-point values
+        // must match it bit for bit, so they use that same form.
+        auto blend = [](const DView& live, const DView& before) {
+            const int n = static_cast<int>(live.extent(0));
+            Kokkos::parallel_for(
+                "rk2_average_rows", Kokkos::RangePolicy<ExecSpace>(0, n),
+                KOKKOS_LAMBDA(int k) { live(k) = .5 * (before(k) + live(k)); });
+        };
+        blend(d_cmass_, d_rk_cmass0_);
+        blend(d_exch_mass_, d_rk_exm0_);
+        blend(d_exch_spill_, d_rk_exs0_);
+        if (has_runoff_)
+            blend(d_runoff_, d_rk_runoff0_);
+        blend(d_species_ledger_, d_rk_led0_);
+        blend(d_bc_gain_, d_rk_bcg0_);
+        blend(d_bc_loss_, d_rk_bcl0_);
+        blend(d_bc_req_mass_, d_rk_bcrm0_);
+        blend(d_bc_app_mass_, d_rk_bcam0_);
+        blend(d_cp_gain_, d_rk_cpg0_);
+    }
     substeps_run_ += 2;
     last_steps_ += 2;
 }
@@ -1903,6 +2070,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
     const int ncell = mesh_->n_triangles();
     auto gex = d_gex_, gey = d_gey_, gux = d_gux_, guy = d_guy_, gvx = d_gvx_, gvy = d_gvy_;
     auto slot_mx = d_slot_mx_, slot_my = d_slot_my_;
+    const bool species = species_;
+    const SpeciesRows rows = speciesRows();
+    const int ns = ns_;
     if (lo < hi) {
         Kokkos::parallel_for(
             "fireCells", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
@@ -1935,9 +2105,15 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                         }
                     }
                 }
+                // Rows land with the water, then mix the accepted arrivals and
+                // pay the sinks at the mixed concentration (== serial).
+                if (species)
+                    rows.land(i, flux_m3);
                 const double landed = vol(i) + flux_m3;
                 const auto budget = sourceBudget(landed > 0.0 ? landed : 0.0, depth(i), area(i),
                                                  dt_c, dry, rain(i), coup(i), infil(i), evap(i));
+                if (species && budget.applied)
+                    rows.applySources(i, budget, area(i) * dt_c);
                 infil_app(i) += budget.infiltration / area(i);
                 coup_app(i) += budget.coupling;
                 evap_app(i) += budget.evaporation;
@@ -2062,6 +2238,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         const int bt_flow = static_cast<int>(BoundaryType::SPECIFIED_FLOW);
         const int bt_rating = static_cast<int>(BoundaryType::RATING_CURVE);
         const int bt_stage = static_cast<int>(BoundaryType::SPECIFIED_STAGE);
+        auto bc_conc = d_bc_conc_, bc_gain = d_bc_gain_, bc_loss = d_bc_loss_;
+        auto bc_req_mass = d_bc_req_mass_, bc_app_mass = d_bc_app_mass_;
         Kokkos::parallel_for(
             "fireBc", Kokkos::RangePolicy<ExecSpace>(0, n_bc_runs_), KOKKOS_LAMBDA(int run) {
                 for (int kk = run_ptr(run); kk < run_ptr(run + 1); ++kk) {
@@ -2186,7 +2364,8 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     }
                     // Volume-space clamp; booked flux re-derived from the
                     // applied change (mirrors ExplicitInertialSolver).
-                    bc_requested(kk) += dt_c * f;
+                    const double requested_volume = dt_c * f;
+                    bc_requested(kk) += requested_volume;
                     const double v_old = vol(i);
                     double v_new = v_old + dt_c * f;
                     if (ty == bt_stage && !swe) {
@@ -2218,7 +2397,24 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     }
                     // Momentum matches applied mass (== serial rescale).
                     bc_q(kk) = (L > 1.0e-12) ? f / L : 0.0;
+                    if (species) {
+                        // Receipts: outflow at the cell's concentration, inflow
+                        // at the edge's (== serial).
+                        const double applied_volume = v_new - v_old;
+                        for (int r = 0; r < ns; ++r) {
+                            const double c =
+                                requested_volume < 0.0 ? rows.conc(r, i) : bc_conc(kk * ns + r);
+                            bc_req_mass(kk * ns + r) += requested_volume * c;
+                            bc_app_mass(kk * ns + r) += applied_volume * c;
+                        }
+                    }
                     if (f != 0.0) {
+                        if (species) {
+                            if (v_new < v_old)
+                                rows.sink(i, v_old - v_new, bc_loss, kk * ns);
+                            else
+                                rows.arrive(i, v_new - v_old, bc_conc, kk * ns, bc_gain, kk * ns);
+                        }
                         vol(i) = v_new;
                         bc_accum(kk) += dt_c * f;
                         const double applied = v_new - v_old;
@@ -2275,6 +2471,9 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
         const double len12 = opts_->len_1d_to_2d;
         const double vol12 = opts_->vol_1d_to_2d;
         const double beta = opts_->exchange_beta;
+        auto exch_mass = d_exch_mass_, exch_spill = d_exch_spill_;
+        auto cp_gain = d_cp_gain_, node_conc = d_node_conc_;
+        const bool has_node_conc = has_node_conc_;
         Kokkos::parallel_for(
             "fireExchange", Kokkos::RangePolicy<ExecSpace>(0, n_cp_groups_),
             KOKKOS_LAMBDA(int group) {
@@ -2398,6 +2597,18 @@ void ExplicitKokkosSurfaceSolver::fireCells(int k, double dt_c, bool global_step
                     // per-cell abstraction where the node exchange actually
                     // moves water. The two sites above book `coup`, which
                     // only carries the FORCING API's prescribed rate.
+                    // A drain leaves at the cell's concentration, booked per
+                    // point for the node; a spill arrives at the node's
+                    // published row values, frozen for the advance (== serial).
+                    if (species) {
+                        if (Q > 0.0) {
+                            rows.sink(ci, Q * dt_c, exch_mass, kk * ns);
+                        } else if (has_node_conc) {
+                            const double v_in = -Q * dt_c;
+                            rows.arrive(ci, v_in, node_conc, ni * ns, cp_gain, kk * ns);
+                            exch_spill(kk) += v_in;
+                        }
+                    }
                     coup_app(ci) += -Q * dt_c;
                     vol(ci) -= Q * dt_c;
                     if (vol(ci) < 0.0)
@@ -3090,6 +3301,147 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
             state_->coupling_applied[i] += coupling_applied_host_[i];
         Kokkos::deep_copy(d_coupling_applied_, 0.0);
     }
+    publishSpecies();
+}
+
+void ExplicitKokkosSurfaceSolver::pushSpecies() {
+    if (!species_)
+        return;
+    auto& tr = state_->transport;
+    if (state_->heat.enabled || state_->live_passive_exchange)
+        throw std::runtime_error("Kokkos marcher: surface heat exchange and live passive "
+                                 "exchange require the CPU marcher.");
+    const std::size_t ns = static_cast<std::size_t>(ns_);
+    const std::size_t nt = static_cast<std::size_t>(mesh_->n_triangles());
+    devRefresh(d_cmass_, tr.cell_mass);
+    species_host_.assign(ns, 0.0);
+    for (std::size_t r = 0; r < ns && r < tr.rain_conc.size(); ++r)
+        species_host_[r] = tr.rain_conc[r];
+    devRefresh(d_rain_conc_, species_host_);
+    has_csrc_ = tr.coupling_src.size() == ns * nt;
+    if (has_csrc_) {
+        if (d_csrc_.extent(0) != ns * nt)
+            d_csrc_ =
+                DView(Kokkos::view_alloc(Kokkos::WithoutInitializing, "coupling_src"), ns * nt);
+        devRefresh(d_csrc_, tr.coupling_src);
+    }
+    has_runoff_ = tr.cell_runoff_vol.size() == nt;
+    if (has_runoff_) {
+        if (d_runoff_.extent(0) != nt)
+            d_runoff_ =
+                DView(Kokkos::view_alloc(Kokkos::WithoutInitializing, "cell_runoff_vol"), nt);
+        devRefresh(d_runoff_, tr.cell_runoff_vol);
+    }
+    if (tr.bc_conc.size() == d_bc_conc_.extent(0))
+        devRefresh(d_bc_conc_, tr.bc_conc);
+    else
+        Kokkos::deep_copy(d_bc_conc_, 0.0);
+    has_node_conc_ = state_->node_row_conc && d_node_conc_.extent(0) > 0 &&
+                     state_->node_row_conc->size() == d_node_conc_.extent(0);
+    if (has_node_conc_)
+        devRefresh(d_node_conc_, *state_->node_row_conc);
+    // Per-advance exchange totals (== the serial marcher's reset).
+    Kokkos::deep_copy(d_exch_mass_, 0.0);
+    Kokkos::deep_copy(d_exch_spill_, 0.0);
+}
+
+void ExplicitKokkosSurfaceSolver::publishSpecies() {
+    if (!species_)
+        return;
+    auto& tr = state_->transport;
+    const std::size_t ns = static_cast<std::size_t>(ns_);
+    const std::size_t nt = static_cast<std::size_t>(mesh_->n_triangles());
+    hostRefresh(tr.cell_mass, d_cmass_);
+    if (has_runoff_)
+        hostRefresh(tr.cell_runoff_vol, d_runoff_);
+
+    // Fold the per-slot totals on the host, in slot order, so a ledger does
+    // not depend on the thread count. `into` adds one row's fold to a ledger
+    // the model sized.
+    auto into = [](std::vector<double>& ledger, std::size_t row, double amount) {
+        if (row < ledger.size())
+            ledger[row] += amount;
+    };
+    auto pull = [this](const DView& view) -> const std::vector<double>& {
+        species_host_.resize(view.extent(0));
+        hostRefresh(species_host_, view);
+        return species_host_;
+    };
+    {
+        std::vector<double>* cell_ledgers[kSpeciesLedgers] = {
+            &tr.gained_rainfall, &tr.gained_coupling, &tr.lost_infiltration, &tr.lost_coupling};
+        const auto& host = pull(d_species_ledger_);
+        for (std::size_t k = 0; k < static_cast<std::size_t>(kSpeciesLedgers); ++k)
+            for (std::size_t r = 0; r < ns; ++r) {
+                double sum = 0.0;
+                const double* cells = host.data() + (k * ns + r) * nt;
+                for (std::size_t i = 0; i < nt; ++i)
+                    sum += cells[i];
+                into(*cell_ledgers[k], r, sum);
+            }
+        Kokkos::deep_copy(d_species_ledger_, 0.0);
+    }
+    const std::size_t nbc = bc_slot_host_.size();
+    if (nbc > 0) {
+        auto fold = [&](const DView& view, std::vector<double>& ledger) {
+            const auto& host = pull(view);
+            for (std::size_t r = 0; r < ns; ++r) {
+                double sum = 0.0;
+                for (std::size_t k = 0; k < nbc; ++k)
+                    sum += host[k * ns + r];
+                into(ledger, r, sum);
+            }
+            Kokkos::deep_copy(view, 0.0);
+        };
+        fold(d_bc_gain_, tr.gained_boundary);
+        fold(d_bc_loss_, tr.lost_boundary);
+        // Receipts stay additive until the router drains them.
+        auto receipts = [&](const DView& view, std::vector<double>& pending) {
+            const auto& host = pull(view);
+            for (std::size_t k = 0; k < host.size() && k < pending.size(); ++k)
+                pending[k] += host[k];
+            Kokkos::deep_copy(view, 0.0);
+        };
+        receipts(d_bc_req_mass_, state_->boundary_requested_mass);
+        receipts(d_bc_app_mass_, state_->boundary_applied_mass);
+    }
+    const std::size_t np = exch_host_.size();
+    if (np > 0) {
+        // Drained mass per point this advance: the router hands it to the node.
+        {
+            const auto& host = pull(d_exch_mass_);
+            for (std::size_t r = 0; r < ns; ++r) {
+                double sum = 0.0;
+                for (std::size_t k = 0; k < np; ++k)
+                    sum += host[k * ns + r];
+                into(tr.lost_coupling, r, sum);
+            }
+            if (tr.exch_mass.size() == host.size())
+                tr.exch_mass = host;
+        }
+        if (tr.exch_spill.size() == np)
+            hostRefresh(tr.exch_spill, d_exch_spill_);
+        {
+            const auto& host = pull(d_cp_gain_);
+            for (std::size_t r = 0; r < ns; ++r) {
+                double sum = 0.0;
+                for (std::size_t k = 0; k < np; ++k)
+                    sum += host[k * ns + r];
+                into(tr.gained_coupling, r, sum);
+            }
+            Kokkos::deep_copy(d_cp_gain_, 0.0);
+        }
+    }
+    if (opts_->dispersion > 0.0) {
+        // An integer count: the device sum is exact.
+        auto binds = d_binds_;
+        long count = 0;
+        Kokkos::parallel_reduce(
+            "dispersion_binds", Kokkos::RangePolicy<ExecSpace>(0, edges_.ne),
+            KOKKOS_LAMBDA(int e, long& n) { n += binds(e); }, count);
+        tr.dispersion_limiter_binds += count;
+        Kokkos::deep_copy(d_binds_, 0);
+    }
 }
 
 double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
@@ -3108,6 +3460,7 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
     refreshConveyance();
     pushForcings();
     pushNodeState();
+    pushSpecies();
     if (swe_ && !bc_slot_host_.empty()) {
         // Boundary slots are not interior faces: their conveyance is read per advance.
         bc_conv_host_.resize(bc_slot_host_.size());
