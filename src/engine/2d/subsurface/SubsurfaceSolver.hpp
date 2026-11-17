@@ -890,6 +890,15 @@ public:
      */
     double sourceInfiltrationCapacity(int cell, double pond_m, double interval_s) const noexcept;
     /**
+     * @brief Borrow the per-cell frozen-ground factor that limits surface intake.
+     * @param open One value in [0, 1] per mesh cell (the share of the cell that still takes
+     *     water), or null when no [2D_FROZEN_GROUND] model is active. The vector must outlive
+     *     every capacity query; it is read, never written.
+     * @note Scales sourceInfiltrationCapacity() and the second-order stage rate. Prescribed
+     *     runtime infiltration rows are not limited.
+     */
+    void setFrozenGroundFactor(const std::vector<double>* open) noexcept { frost_open_ = open; }
+    /**
      * @brief G-X3 (2026-09-19): the router books a conduit's seepage volume (m³, SI, its
      * length-weighted share for this cell) at the routing cadence; the GW cell gathers it at its
      * firing as a saturated-zone inflow.
@@ -1434,6 +1443,11 @@ public:
      * unchanged.
      */
     void publishRk2Infiltration(SurfaceStateData&, double dt, double time);
+    /// Frozen-ground factor for a cell: 1 when no factor is borrowed.
+    double frozenGroundOpen(std::size_t cell) const noexcept {
+        return frost_open_ && cell < frost_open_->size() ? (*frost_open_)[cell] : 1.0;
+    }
+    const std::vector<double>* frost_open_ = nullptr; ///< borrowed; see setFrozenGroundFactor()
     /**
      * @brief Test whether any scoped reactor or positive first-order native decay is configured.
      * @return True for nonempty reactors_ or any tr_.decay rate>0. Does not validate a live

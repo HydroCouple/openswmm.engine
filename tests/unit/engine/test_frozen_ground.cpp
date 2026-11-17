@@ -41,6 +41,7 @@
 
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_infil2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
@@ -883,6 +884,154 @@ TEST(FrozenGroundMesh, OnlyTheDefaultRowIsAccepted) {
     d.frozen_ground = "*  0.15  -1";
     r = runMesh("mesh_bad_value", d);
     EXPECT_FALSE(r.started);
+}
+
+// ---------------------------------------------------------------------------
+// Mesh cells over a 2D aquifer: the same factor limits the aquifer's intake
+// ---------------------------------------------------------------------------
+
+struct AquiferDeck {
+    std::string closure = "CLOSED_FORM";
+    bool cell_method = true;   // also author a per-cell CONSTANT method
+    double air = -8.0;         // C
+    std::string frozen_ground; // [2D_FROZEN_GROUND] rows
+    bool second_order = false; // FULL_SWE with RECONSTRUCTION_ORDER 2
+};
+
+std::string aquiferModel(const AquiferDeck& d) {
+    std::ostringstream m;
+    m << "[OPTIONS]\n"
+         "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
+         "START_DATE           01/10/2026\nSTART_TIME           00:00:00\n"
+         "END_DATE             01/10/2026\nEND_TIME             00:30:00\n"
+         "REPORT_STEP          00:01:00\nWET_STEP             00:01:00\n"
+         "DRY_STEP             00:01:00\nROUTING_STEP         5\n"
+         "ALLOW_PONDING        NO\n\n"
+         "[TEMPERATURE]\nTIMESERIES AIR\n\n"
+         "[TIMESERIES]\nAIR 01/10/2026 00:00 "
+      << d.air << "\nAIR 01/10/2026 01:00 " << d.air
+      << "\n\n"
+         "[JUNCTIONS]\nJ1 0.0 3.0 0 0 0\n\n"
+         "[OUTFALLS]\nO1 -1.0 FREE NO\n\n"
+         "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION "
+      << (d.second_order ? "FULL_SWE\nRECONSTRUCTION_ORDER 2" : "LOCAL_INERTIAL")
+      << "\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\n"
+         "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
+         "\n[2D_VERTICES]\n"
+         "0.0 0.0 -10.0\n10.0 0.0 -10.0\n10.0 10.0 -10.0\n0.0 10.0 -10.0\n\n"
+         "[2D_TRIANGLES]\n0 1 2 0.03 0.5\n0 2 3 0.03 0.5\n\n";
+    if (d.cell_method)
+        m << "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  50  -  -  -  -\n\n";
+    m << "[2D_AQUIFER_OPTIONS]\nCLOSURE " << d.closure
+      << "\n\n[2D_AQUIFER]\n*  36.0  4.0  0.45  0.10  2.0  HG0 1.0\n\n";
+    if (!d.frozen_ground.empty())
+        m << "[2D_FROZEN_GROUND]\n" << d.frozen_ground << "\n\n";
+    m << "[REPORT]\nINPUT NO\n";
+    return m.str();
+}
+
+struct AquiferResult {
+    bool started = false;
+    std::string error;
+    double infil_in = 0, storage = 0, continuity = 0; // aquifer ledger, m3
+    std::vector<double> depth, factor;
+};
+
+AquiferResult runAquifer(const std::string& tag, const AquiferDeck& deck) {
+    AquiferResult r;
+    fs::create_directories(kArtifactDir);
+    const auto inp = kArtifactDir / (tag + ".inp");
+    std::ofstream(inp, std::ios::trunc) << aquiferModel(deck);
+    SWMM_Engine engine = swmm_engine_create();
+    const auto fail = [&] {
+        r.error = swmm_get_last_error_msg(engine);
+        swmm_engine_destroy(engine);
+        return r;
+    };
+    if (swmm_engine_open(engine, inp.string().c_str(),
+                         (kArtifactDir / (tag + ".rpt")).string().c_str(),
+                         (kArtifactDir / (tag + ".out")).string().c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(engine) != SWMM_OK || swmm_engine_start(engine, 1) != SWMM_OK)
+        return fail();
+    r.started = true;
+    double elapsed = 0;
+    for (;;) {
+        if (swmm_engine_step(engine, &elapsed) != SWMM_OK)
+            return fail();
+        if (elapsed <= 0)
+            break;
+    }
+    swmm_gw2d_get_ledger(engine, SWMM_GW2D_LED_INFIL_IN, &r.infil_in);
+    swmm_gw2d_get_ledger(engine, SWMM_GW2D_LED_STORAGE, &r.storage);
+    swmm_gw2d_get_continuity_error(engine, &r.continuity);
+    r.depth.assign(2, 0.0);
+    swmm_2d_get_depths_bulk(engine, r.depth.data());
+    r.factor = static_cast<SWMMEngine*>(engine)->surfaceRouter2D().frozenGroundFactor();
+    swmm_engine_end(engine);
+    swmm_engine_destroy(engine);
+    return r;
+}
+
+TEST(FrozenGroundAquifer, FrozenCellsGiveTheAquiferNothingUnderEveryClosure) {
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"})
+        for (const bool cell_method : {true, false}) {
+            const std::string tag = std::string(closure) + (cell_method ? "_method" : "_owned");
+            AquiferDeck open;
+            open.closure = closure;
+            open.cell_method = cell_method;
+            AquiferDeck frozen = open;
+            frozen.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  -4  11";
+            const AquiferResult a = runAquifer("aquifer_open_" + tag, open);
+            const AquiferResult b = runAquifer("aquifer_frozen_" + tag, frozen);
+            ASSERT_TRUE(a.started) << tag << ": " << a.error;
+            ASSERT_TRUE(b.started) << tag << ": " << b.error;
+            EXPECT_GT(a.infil_in, 0.0) << tag;
+            EXPECT_EQ(b.infil_in, 0.0) << tag;
+            ASSERT_EQ(b.factor.size(), 2u) << tag;
+            EXPECT_EQ(b.factor[0], 0.0) << tag;
+            // The ponded water the open ground took is still on the frozen surface.
+            EXPECT_GT(b.depth[0], a.depth[0]) << tag;
+            EXPECT_LT(std::abs(b.continuity), 1e-9) << tag;
+        }
+}
+
+TEST(FrozenGroundAquifer, GroundThatNeverFreezesIsBitIdenticalToNoSection) {
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"}) {
+        AquiferDeck warm;
+        warm.closure = closure;
+        warm.cell_method = false;
+        warm.air = 12.0;
+        AquiferDeck with = warm;
+        with.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  5";
+        const AquiferResult a = runAquifer(std::string("aquifer_warm_off_") + closure, warm);
+        const AquiferResult b = runAquifer(std::string("aquifer_warm_on_") + closure, with);
+        ASSERT_TRUE(a.started && b.started) << closure << a.error << b.error;
+        EXPECT_GT(a.infil_in, 0.0) << closure;
+        EXPECT_EQ(a.infil_in, b.infil_in) << closure;
+        EXPECT_EQ(a.storage, b.storage) << closure;
+        EXPECT_EQ(a.depth, b.depth) << closure;
+    }
+}
+
+// The two-stage (second order) step publishes its own stage rates; they carry the factor too.
+TEST(FrozenGroundAquifer, TheSecondOrderStageRatesAreLimited) {
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"}) {
+        AquiferDeck open;
+        open.closure = closure;
+        open.cell_method = false;
+        open.second_order = true;
+        AquiferDeck frozen = open;
+        frozen.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  -4  11";
+        const AquiferResult a = runAquifer(std::string("aquifer_o2_open_") + closure, open);
+        const AquiferResult b = runAquifer(std::string("aquifer_o2_frozen_") + closure, frozen);
+        ASSERT_TRUE(a.started) << closure << ": " << a.error;
+        ASSERT_TRUE(b.started) << closure << ": " << b.error;
+        EXPECT_GT(a.infil_in, 0.0) << closure;
+        EXPECT_EQ(b.infil_in, 0.0) << closure;
+        EXPECT_LT(std::abs(b.continuity), 1e-9) << closure;
+    }
 }
 
 } // namespace

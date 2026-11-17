@@ -2117,7 +2117,12 @@ double SubsurfaceSolver::sourceInfiltrationCapacity(int i, double pond,
                    interval;
         }
     }
-    return std::isfinite(rate) ? std::max(0.0, rate) : 0.0;
+    if (!std::isfinite(rate) || rate <= 0.0)
+        return 0.0;
+    // Frozen ground: only the open share of the cell takes water. Fully frozen ground has no
+    // capacity, which every intake path already treats as "refuse".
+    const double open = frozenGroundOpen(u);
+    return open < 1.0 ? rate * std::max(0.0, open) : rate;
 }
 
 double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, bool prescribed) {
@@ -5065,6 +5070,9 @@ void SubsurfaceSolver::publishRk2Infiltration(SurfaceStateData& surface, double 
                 const double front = state_.wetting_front[i];
                 rate =
                     front > 0 ? p.Ks * (1 + drive / front) : frontIntake(0, drive, p.Ks, dt) / dt;
+                // The SIGMA branch above is already limited inside the capacity function.
+                if (const double open = frozenGroundOpen(std::size_t(i)); open < 1.0)
+                    rate *= std::max(0.0, open);
             }
             const double room = infiltrationHeadroom(i);
             rate = std::min(rate, room / (state_.area[i] * dt));

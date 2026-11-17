@@ -2031,12 +2031,16 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater/surface reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
     }
     infil_elapsed_ = 0.0;
+    frost_enthalpy_.clear();
+    frost_open_.clear();
+    subsurface_.setFrozenGroundFactor(nullptr);
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
         // instead of running a whole INFIL_STEP dry. The kernels are advanced
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
         initializeFrozenGround(ctx);
+        subsurface_.setFrozenGroundFactor(frost_open_.empty() ? nullptr : &frost_open_);
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
                            surface::infiltrationFactors(ctx, 0.0), options_.num_threads,
                            frost_open_.empty() ? nullptr : &frost_open_);
@@ -2649,13 +2653,14 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         if (infil_elapsed_ >= infil_.stepSeconds()) {
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
                                options_.num_threads, frost_open_.empty() ? nullptr : &frost_open_);
-            // The slabs then take this interval's heat; the factor they publish limits the
-            // next refresh.
-            if (!frost_open_.empty())
-                advanceFrozenGround(ctx, infil_elapsed_);
             if (subsurface_.active())
                 subsurface_.publishInfiltration(state_, infil_.stepSeconds(),
                                                 common_stage_ ? sim_time_ : t);
+            // The slabs then take this interval's heat from the rates just published (model
+            // cells and aquifer-owned cells alike); the factor they publish limits the next
+            // refresh.
+            if (!frost_open_.empty())
+                advanceFrozenGround(ctx, infil_elapsed_);
             infil_elapsed_ = 0.0;
         }
     }
