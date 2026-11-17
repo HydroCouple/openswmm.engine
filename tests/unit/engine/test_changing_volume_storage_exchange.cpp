@@ -30,7 +30,8 @@ std::string read(const std::filesystem::path& p) {
 }
 // Same authored closed six-point geometry as the water-only qualification.
 // The pollutant and receiving law are the only additional physical ownership.
-std::string model(bool positive, bool tail, int threads = 1, int groups = 3) {
+std::string model(bool positive, bool tail, int threads = 1, int groups = 3,
+                  const char* momentum = "LOCAL_INERTIAL", bool connected = false) {
     std::ostringstream s;
     s << std::setprecision(17)
       << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
@@ -40,28 +41,43 @@ std::string model(bool positive, bool tail, int threads = 1, int groups = 3) {
          "[STORAGE]\nTank -10 1 10 FUNCTIONAL 0 0 "
       << 2 * .02832 / (.3048 * .3048 * .3048) << ' ' << 2 * .02832 / (.3048 * .3048 * .3048)
       << " 0\n"
-         "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP "
+         "[2D_OPTIONS]\nMOMENTUM_EQUATION "
+      << momentum << "\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP "
       << (tail ? .25 : 1. / 512) << "\nCOUPLING_SYNC " << (tail ? .25 : 1. / 512)
       << "\nREPORT_2D NO\n[2D_VERTICES]\n";
+    // Connected pools share the diagonal of a square, so water also moves between the two cells.
+    const int per = connected ? 2 : 3; // vertices per triangle
     for (int k = 0; k < groups; ++k) {
         const int x = 8 * k;
-        s << x << " 0 -1.5\n"
-          << x + 2 << " 0 -1.5\n"
-          << x << " 1 -1.5\n"
-          << x << " -1 -1.5\n"
-          << x << " -2 -1.5\n"
-          << x + 2 << " -1 -1.5\n";
+        if (connected)
+            s << x << " 0 -1.5\n"
+              << x + 2 << " 0 -1.5\n"
+              << x + 2 << " 2 -1.5\n"
+              << x << " 2 -1.5\n";
+        else
+            s << x << " 0 -1.5\n"
+              << x + 2 << " 0 -1.5\n"
+              << x << " 1 -1.5\n"
+              << x << " -1 -1.5\n"
+              << x << " -2 -1.5\n"
+              << x + 2 << " -1 -1.5\n";
     }
     s << "[2D_TRIANGLES]\n";
     for (int k = 0; k < 2 * groups; ++k) {
         const double depth =
             tail ? 1.5 + (k % 2 ? -(positive ? 1 : 1.2) : (positive ? 1.2 : 1)) * 2e-12
                  : (k % 2 ? (positive ? 1.25 : 1.2) : (positive ? 1.8 : 1.75));
-        s << 3 * k << ' ' << 3 * k + 1 << ' ' << 3 * k + 2 << " .03 " << depth << '\n';
+        if (connected) {
+            const int v = 4 * (k / 2);
+            s << v << ' ' << v + (k % 2 ? 2 : 1) << ' ' << v + (k % 2 ? 3 : 2) << " .03 " << depth
+              << '\n';
+        } else
+            s << 3 * k << ' ' << 3 * k + 1 << ' ' << 3 * k + 2 << " .03 " << depth << '\n';
     }
     s << "[2D_VERTEX_NODE_MAP]\n";
     for (int k = 0; k < 2 * groups; ++k)
-        s << 3 * k << " Tank .7 " << (tail ? .1 : .01) << '\n';
+        s << (connected ? 4 * (k / 2) + (k % 2 ? 3 : 1) : per * k) << " Tank .7 "
+          << (tail ? .1 : .01) << '\n';
     s << "[POLLUTANTS]\nDye MG/L 0 0 0 0 NO * 0 0 " << (positive ? 1 : 2)
       << "\n[2D_INITIAL_QUALITY]\n* Dye " << (positive ? 2 : 1) << "\n[REPORT]\nINPUT NO\n";
     return s.str();
@@ -114,12 +130,14 @@ void sameWater(const SWMMEngine& a, const SWMMEngine& b) {
     EXPECT_EQ(a.surfaceRouter2D().couplingExchangeVolumes(),
               b.surfaceRouter2D().couplingExchangeVolumes());
 }
-void authored(bool positive, bool tail, int threads = 1, int groups = 3) {
-    const std::string tag = std::string(tail ? "tail-" : "flow-") +
-                            (positive ? "positive" : "negative") +
-                            (threads == 1 ? "" : "-threads" + std::to_string(threads));
+void authored(bool positive, bool tail, int threads = 1, int groups = 3,
+              const char* momentum = "LOCAL_INERTIAL", bool connected = false) {
+    const std::string tag =
+        std::string(tail ? "tail-" : "flow-") + (positive ? "positive" : "negative") +
+        (threads == 1 ? "" : "-threads" + std::to_string(threads)) +
+        (std::string(momentum) == "LOCAL_INERTIAL" ? "" : "-swe") + (connected ? "-connected" : "");
     SWMMEngine source, ordinary;
-    const auto input = model(positive, tail, threads, groups);
+    const auto input = model(positive, tail, threads, groups, momentum, connected);
     ASSERT_NO_FATAL_FAILURE(start(source, tag, input));
     ASSERT_NO_FATAL_FAILURE(start(ordinary, tag + "-ordinary", input, false, false));
     ASSERT_EQ(source.surfaceRouter2D().options().num_threads, threads);
@@ -222,6 +240,10 @@ void authored(bool positive, bool tail, int threads = 1, int groups = 3) {
         EXPECT_EQ(read(copy), read(saved));
         restored.push_back(std::move(e));
     }
+    if (connected) { // water moved between the pools, not only through the node
+        const auto& flux = source.surfaceRouter2D().state().edge_flux;
+        EXPECT_TRUE(std::any_of(flux.begin(), flux.end(), [](double q) { return q != 0; }));
+    }
     for (auto& e : restored)
         EXPECT_EQ(e->close(), SWMM_OK);
     EXPECT_EQ(source.close(), SWMM_OK);
@@ -296,6 +318,25 @@ TEST(ChangingVolumeExchange, AuthoredPositiveFourThreadsMaterialAndWaterRecover)
 }
 TEST(ChangingVolumeExchange, AuthoredNegativeFourThreadsMaterialAndWaterRecover) {
     authored(false, false, 4, 8);
+}
+// The integrated owner journals the same exchange legs under the full shallow-water closure.
+TEST(ChangingVolumeExchange, AuthoredPositiveFullSweMaterialAndWaterRecover) {
+    authored(true, false, 1, 3, "FULL_SWE");
+}
+TEST(ChangingVolumeExchange, AuthoredNegativeFullSweMaterialAndWaterRecover) {
+    authored(false, false, 1, 3, "FULL_SWE");
+}
+TEST(ChangingVolumeExchange, AuthoredPositiveFullSweFourThreadsMaterialAndWaterRecover) {
+    authored(true, false, 4, 8, "FULL_SWE");
+}
+// Unequal pools that share a face: the cells carry momentum, which every restored engine must
+// reproduce to keep its checkpoints identical to the source's.
+TEST(ChangingVolumeExchange, AuthoredConnectedPoolsFullSweMaterialAndWaterRecover) {
+    authored(true, false, 1, 3, "FULL_SWE", true);
+    authored(false, false, 1, 3, "FULL_SWE", true);
+}
+TEST(ChangingVolumeExchange, AuthoredConnectedPoolsLocalInertialMaterialAndWaterRecover) {
+    authored(true, false, 1, 3, "LOCAL_INERTIAL", true);
 }
 TEST(ChangingVolumeExchange, AuthoredPositiveEmptyQueueTailRenormalizesInventory) {
     authored(true, true);

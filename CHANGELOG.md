@@ -23,6 +23,8 @@ retroactive.
 
 ## [Unreleased]
 
+- The live storage-quality (passive) exchange of the integrated engine now accepts `MOMENTUM_EQUATION FULL_SWE` at first order; it previously required `LOCAL_INERTIAL`. The exchange journal, exact material accounting and checkpoint round trips are tested under both closures, with disconnected pools and with pools that exchange water across a shared face. Split execution and the material-pair sessions keep `LOCAL_INERTIAL`. `RECONSTRUCTION_ORDER 2` is still refused for this exchange.
+
 - `RECONSTRUCTION_ORDER 2` with a `[2D_AQUIFER]` now accepts outfalls and junctions coupled to the mesh, so an ordinary network-coupled model can run second order with a 2D aquifer. Outfall exchange is applied between the two-stage advances (first order in time). Junction exchange fires in both stages from each stage's starting state and is averaged with the step (second order at held node heads). The surface, aquifer and routing ledgers close as they do at first order. Such a run cannot be checkpointed. Aquifer-node beds (`NODE_ENROLMENT` other than `ROWS` without rows) and link seepage are still refused in this configuration.
 
 - The 2D surface water balance now counts infiltration that a saturated aquifer refused as water returned to the surface. It was left out of the aquifer return term, which left a small continuity residual when the aquifer saturated under a junction spill at second order. The water itself was always conserved.

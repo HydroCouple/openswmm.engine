@@ -224,7 +224,7 @@ void SWMMEngine::checkLivePassiveExchange(bool preflight_history) const {
     if (auto error = surface_router_.livePassiveProfile(); !error.empty())
         throw std::invalid_argument(error);
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_, true);
             !error.empty())
             throw std::invalid_argument(error);
     for (const auto& point : surface_router_.node_coupling_points_)
@@ -253,7 +253,7 @@ SWMMEngine::attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithme
             surface_router_.pending_dt_ != 0)
             return "Attach changing-volume exchange at an initial running boundary with no prior owner.";
         checkLivePassiveExchange(preflight_history);
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_, true);
             !error.empty())
             return error;
         auto owner = std::make_unique<quality::LivePassiveStorageExchange>(
@@ -276,7 +276,7 @@ std::string SWMMEngine::attachLiveChangingVolumeSlicedExchange(std::size_t capac
             surface_router_.pending_dt_ != 0)
             return "Attach changing-volume exchange at an initial running boundary with no prior owner.";
         checkLivePassiveExchange(preflight_history);
-        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_);
+        if (auto error = surface_router_.changingVolumeProfile(ctx_, surface_router_.state_, true);
             !error.empty())
             return error;
         auto owner = std::make_unique<quality::LivePassiveStorageExchange>(

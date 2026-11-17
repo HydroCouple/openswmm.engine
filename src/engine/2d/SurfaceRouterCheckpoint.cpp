@@ -607,17 +607,22 @@ std::string SurfaceRouter2D::coupledWaterProfile(const SimulationContext& ctx,
     return {};
 }
 std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx,
-                                                   const SurfaceStateData& surface) const {
+                                                   const SurfaceStateData& surface,
+                                                   bool integrated) const {
     if (auto error = livePassiveProfile(); !error.empty())
         return error;
     if (ctx.n_links() || ctx.n_subcatches() || ctx.n_gages() || !ctx.events.empty() ||
         ctx.ext_inflows.count() || ctx.dwf_inflows.count() || ctx.control_rules.count() ||
-        ctx.runtime_coupling_used || options_.momentum != Momentum2D::LOCAL_INERTIAL ||
+        ctx.runtime_coupling_used ||
+        // The integrated owner journals the marcher's exchange legs under either closure; the
+        // split and material sessions stay qualified for LOCAL_INERTIAL only.
+        (options_.momentum != Momentum2D::LOCAL_INERTIAL &&
+         !(integrated && options_.momentum == Momentum2D::FULL_SWE)) ||
         options_.momentumPhysics() || options_.cell_closure != CellClosure2D::FLAT ||
         surface.snow.active() || surface.heat.enabled || channel_ground_.active() ||
         !pond_track_ptr_.empty() || !ramp_prev_head_.empty() || !aquifer_link_shares_.empty() ||
         !subcatch_recharge_.empty() || !cell_subcatch_.empty())
-        return "Changing-volume exchange requires isolated flat local-inertial storage without other physical owners.";
+        return "Changing-volume exchange requires isolated flat storage (LOCAL_INERTIAL, or FULL_SWE for the integrated owner) without other physical owners.";
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_) {
         if (point.equalize)
@@ -730,7 +735,7 @@ std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx
         !error.empty())
         return error;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(ctx, state_); !error.empty())
+        if (auto error = changingVolumeProfile(ctx, state_, true); !error.empty())
             return error;
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_)
@@ -744,11 +749,13 @@ std::string SurfaceRouter2D::liveCheckpointBoundary(const SimulationContext& ctx
         cpu->engine_source_stream_ || cpu->t_last_sync_ != sim_time_ ||
         cpu->source_phase_end_ != sim_time_ || cpu->accumulators_pending_ ||
         state_.live_passive_exchange || ctx.n_subcatches() || ctx.n_links() || ctx.n_gages() ||
-        options_.momentum != Momentum2D::LOCAL_INERTIAL || options_.momentumPhysics() ||
-        options_.cell_closure != CellClosure2D::FLAT || state_.snow.active() ||
-        channel_ground_.active() || !pond_track_ptr_.empty() || !ramp_prev_head_.empty() ||
-        !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() || !cell_subcatch_.empty() ||
-        !close(ctx.current_time, sim_time_ + pending_dt_) || pending_dt_ < 0)
+        (options_.momentum != Momentum2D::LOCAL_INERTIAL &&
+         options_.momentum != Momentum2D::FULL_SWE) ||
+        options_.momentumPhysics() || options_.cell_closure != CellClosure2D::FLAT ||
+        state_.snow.active() || channel_ground_.active() || !pond_track_ptr_.empty() ||
+        !ramp_prev_head_.empty() || !aquifer_link_shares_.empty() || !subcatch_recharge_.empty() ||
+        !cell_subcatch_.empty() || !close(ctx.current_time, sim_time_ + pending_dt_) ||
+        pending_dt_ < 0)
         return "Live checkpoint requires a completed isolated first-order CPU surface without source/forcing owners.";
     if (state_.node_row_conc != &node_row_conc_ ||
         node_row_conc_.size() != (paired_water_checkpoint_ ? 0 : std::size_t(ctx.n_nodes())) ||
@@ -1074,7 +1081,7 @@ std::string SurfaceRouter2D::loadLiveCheckpointBytes(
     incoming.coupling_delivery_remaining = snapshot.delivery;
     surface.nodes_1d = &incoming.nodes;
     if (live_passive_exchange_ && live_passive_exchange_->receipts().changingVolume())
-        if (auto error = changingVolumeProfile(incoming, surface); !error.empty())
+        if (auto error = changingVolumeProfile(incoming, surface, true); !error.empty())
             return error;
     if (paired_water_checkpoint_)
         if (auto error = coupledWaterProfile(incoming, surface); !error.empty())
