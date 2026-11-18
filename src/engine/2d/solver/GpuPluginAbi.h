@@ -99,7 +99,10 @@ extern "C" {
  * (surface heat exchange) is new. Rebuild surface plugins. */
 /* v15: SurfaceTransportState adds the reaction stage request (SurfaceReactionStage), so the
  * SurfaceStateData layout changes. Rebuild surface plugins. */
-#define OPENSWMM_GPU_ABI_VERSION 15
+/* v16: plugins export the 1D network substep marcher factory
+ * (openswmm_make_gpu_network_marcher / openswmm_destroy_gpu_network_marcher). No existing
+ * layout changes; the bump keeps a core from attaching a marcher built against other headers. */
+#define OPENSWMM_GPU_ABI_VERSION 16
 
 /**
  * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)
@@ -228,6 +231,21 @@ OPENSWMM_GPU_ABI const char* openswmm_gpu_last_error(void);
  * backend. Read-only process-level query; no runtime is initialized by this call.
  */
 OPENSWMM_GPU_ABI int openswmm_gpu_host_threads(void);
+
+/**
+ * @brief (v16) Create the device substep marcher of the 1D finite volume network solver.
+ *
+ * @param[in] probe Probe record this plugin filled; requested_threads is honored by host backends.
+ * @return Owning openswmm::fv::IFvDeviceMarcher* as void*, or NULL with the reason available from
+ * openswmm_gpu_last_error. Destroy it with openswmm_destroy_gpu_network_marcher from this plugin.
+ */
+OPENSWMM_GPU_ABI void* openswmm_make_gpu_network_marcher(const OpenSwmmGpuProbe* probe);
+
+/**
+ * @brief (v16) Destroy a marcher through the plugin that allocated it; NULL is safe.
+ * @param[in] marcher Owned result of openswmm_make_gpu_network_marcher from this loaded plugin.
+ */
+OPENSWMM_GPU_ABI void openswmm_destroy_gpu_network_marcher(void* marcher);
 
 #ifdef __cplusplus
 } /* extern "C" */

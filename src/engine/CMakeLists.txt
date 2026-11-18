@@ -44,6 +44,9 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
     io/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
+# The Kokkos substep marcher of the 1D FV solver belongs to the GPU plugin
+# (2d/gpu/CMakeLists.txt), never to the engine library.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "hydraulics/fv/gpu/.*")
 # io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
 # The checkpoint VFD is compiled with the optional mesh HDF5 writer below.

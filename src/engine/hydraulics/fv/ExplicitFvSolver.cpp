@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
@@ -340,6 +341,365 @@ void ExplicitFvSolver::initialize(NetworkMeshData& mesh, NetworkStateData& state
             state.node_volume[n] = nodeVolumeFromDepth(
                 static_cast<int>(n), std::max(0.0, state.node_head[n] - mesh.node_invert[n]));
     }
+
+    {
+        const char* snap = std::getenv("OPENSWMM_FV_SETTLE_SNAPSHOT");
+        settle_snapshot_ = (snap && snap[0] == '1');
+    }
+    settle_snapshot_live_ = false;
+    device_bound_ = false;
+    device_note_printed_ = false;
+    device_advances_ = 0;
+    device_fallbacks_ = 0;
+    if (marcher_)
+        bindDevice();
+}
+
+// ===========================================================================
+// Device marcher (FvDeviceMarcher.hpp)
+// ===========================================================================
+
+bool ExplicitFvSolver::deviceSupports(const FvOptions& opts, int n_species, std::string* why) {
+    const char* reason = nullptr;
+    if (opts.order >= 2)
+        reason = "FV_ORDER 2";
+    else if (opts.time_integration != TimeIntegration::EULER)
+        reason = "FV_TIME_INTEGRATION RK2";
+    else if (opts.pressure_closure != 0)
+        reason = "the TPA pressure closure";
+    else if (opts.unsteady_friction != 0)
+        reason = "unsteady friction";
+    else if (opts.pressurized_implicit)
+        reason = "FV_PRESSURIZED_IMPLICIT";
+    else if (n_species > 0)
+        reason = "advected species";
+    else if (opts.cfl_census_interval > 1)
+        reason = "FV_CFL_CENSUS_INTERVAL above 1";
+    else if (opts.node_feedback_dt)
+        reason = "the node feedback step bound";
+    if (reason && why)
+        *why = reason;
+    return reason == nullptr;
+}
+
+void ExplicitFvSolver::bindDevice() {
+    const NetworkMeshData& m = *mesh_;
+    const int nc = m.n_cells(), nf = m.n_faces(), nn = m.n_nodes();
+    const int ncond = m.n_conduits();
+    const int ns = static_cast<int>(m.struct_link.size());
+
+    std::string why;
+    bool ok = deviceSupports(opts_, state_->n_species, &why);
+
+    // An array the kernels index unconditionally must cover its range; a
+    // hand-built mesh may leave optional ones short, and those stay null.
+    auto need = [&](std::size_t have, int want, const char* name) {
+        if (ok && have < static_cast<std::size_t>(want)) {
+            ok = false;
+            why = std::string("mesh array ") + name + " is not filled";
+        }
+    };
+    need(m.cell_geom.size(), nc, "cell_geom");
+    need(m.cell_conduit.size(), nc, "cell_conduit");
+    need(m.cell_face0.size(), nc, "cell_face0");
+    need(m.cell_face1.size(), nc, "cell_face1");
+    need(m.cell_side0.size(), nc, "cell_side0");
+    need(m.cell_side1.size(), nc, "cell_side1");
+    need(m.cell_zb.size(), nc, "cell_zb");
+    need(m.face_cr.size(), nf, "face_cr");
+    need(m.face_node.size(), nf, "face_node");
+    need(m.face_geom.size(), nf, "face_geom");
+    need(m.face_zb.size(), nf, "face_zb");
+    need(m.face_dir_l.size(), nf, "face_dir_l");
+    need(m.face_dir_r.size(), nf, "face_dir_r");
+    need(m.conduit_roughness.size(), ncond, "conduit_roughness");
+    need(m.conduit_rough_factor.size(), ncond, "conduit_rough_factor");
+    need(m.conduit_loss_inlet.size(), ncond, "conduit_loss_inlet");
+    need(m.conduit_loss_outlet.size(), ncond, "conduit_loss_outlet");
+    need(m.node_face_ptr.size(), nn + 1, "node_face_ptr");
+    need(m.node_full_depth.size(), nn, "node_full_depth");
+    need(m.node_ponded_area.size(), nn, "node_ponded_area");
+    need(m.node_kind.size(), nn, "node_kind");
+    need(m.node_vol_off.size(), nn, "node_vol_off");
+    need(m.struct_n1.size(), ns, "struct_n1");
+    need(m.struct_n2.size(), ns, "struct_n2");
+    bool culverts = false;
+    for (int f = 0; f < nf; ++f)
+        culverts = culverts || m.face_culvert[static_cast<std::size_t>(f)] >= 0;
+    if (culverts) {
+        need(m.conduit_section.size(), ncond, "conduit_section");
+        need(m.conduit_slope.size(), ncond, "conduit_slope");
+        need(m.conduit_culvert_curve.size(), ncond, "conduit_culvert_curve");
+        need(m.conduit_culvert_mitered.size(), ncond, "conduit_culvert_mitered");
+    }
+    bool tables = false;
+    for (int n = 0; ok && n < nn; ++n)
+        tables = tables || m.node_vol_off[static_cast<std::size_t>(n)] >= 0;
+    if (tables) {
+        need(m.node_vol_dmax.size(), nn, "node_vol_dmax");
+        need(m.node_vol_atop.size(), nn, "node_vol_atop");
+    }
+    if (!ok) {
+        std::fprintf(stderr, "[openswmm FV] %s backend not used: %s is outside its scope\n",
+                     marcher_->label(), why.c_str());
+        marcher_.reset();
+        return;
+    }
+
+    const int n_node_faces = m.node_face_ptr[static_cast<std::size_t>(nn)];
+
+    // Position of each boundary face in its node's row, and each row sorted by
+    // face index (the order limitPositivity's face loop sums a node's outflow).
+    dev_face_npos_.assign(static_cast<std::size_t>(nf), 0);
+    dev_node_face_sorted_.assign(m.node_face_idx.begin(), m.node_face_idx.begin() + n_node_faces);
+    for (int n = 0; n < nn; ++n) {
+        const int b = m.node_face_ptr[static_cast<std::size_t>(n)];
+        const int e = m.node_face_ptr[static_cast<std::size_t>(n) + 1];
+        for (int p = b; p < e; ++p)
+            dev_face_npos_[static_cast<std::size_t>(m.node_face_idx[static_cast<std::size_t>(p)])] =
+                p - b;
+        std::sort(dev_node_face_sorted_.begin() + b, dev_node_face_sorted_.begin() + e);
+    }
+
+    // Structures touching each node, ascending, so a per-node gather adds
+    // them in the order the structure loops do.
+    dev_node_struct_ptr_.assign(static_cast<std::size_t>(nn) + 1, 0);
+    for (int s = 0; s < ns; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        ++dev_node_struct_ptr_[static_cast<std::size_t>(m.struct_n1[us]) + 1];
+        if (m.struct_n2[us] != m.struct_n1[us])
+            ++dev_node_struct_ptr_[static_cast<std::size_t>(m.struct_n2[us]) + 1];
+    }
+    for (int n = 0; n < nn; ++n)
+        dev_node_struct_ptr_[static_cast<std::size_t>(n) + 1] +=
+            dev_node_struct_ptr_[static_cast<std::size_t>(n)];
+    dev_node_struct_idx_.assign(
+        static_cast<std::size_t>(dev_node_struct_ptr_[static_cast<std::size_t>(nn)]), 0);
+    {
+        std::vector<int> cursor(dev_node_struct_ptr_.begin(), dev_node_struct_ptr_.end() - 1);
+        for (int s = 0; s < ns; ++s) {
+            const auto us = static_cast<std::size_t>(s);
+            dev_node_struct_idx_[static_cast<std::size_t>(
+                cursor[static_cast<std::size_t>(m.struct_n1[us])]++)] = s;
+            if (m.struct_n2[us] != m.struct_n1[us])
+                dev_node_struct_idx_[static_cast<std::size_t>(
+                    cursor[static_cast<std::size_t>(m.struct_n2[us])]++)] = s;
+        }
+    }
+
+    dev_node_vj_face_.assign(static_cast<std::size_t>(nn), -1);
+    if (m.node_vj_face.size() >= static_cast<std::size_t>(nn))
+        dev_node_vj_face_ = m.node_vj_face;
+    dev_struct_q_.assign(static_cast<std::size_t>(ns), 0.0);
+    dev_struct_q_cap_.assign(static_cast<std::size_t>(ns), -1.0);
+    dev_fixed_nan_.assign(static_cast<std::size_t>(nn), std::numeric_limits<double>::quiet_NaN());
+    dev_node_qdummy_.assign(static_cast<std::size_t>(nn), 0.0);
+
+    auto opt = [](const auto& v, int want) {
+        return (want > 0 && v.size() >= static_cast<std::size_t>(want)) ? v.data() : nullptr;
+    };
+
+    substep::Arrays h{};
+    h.n_cells = nc;
+    h.n_faces = nf;
+    h.n_nodes = nn;
+    h.n_structs = ns;
+    h.cell_geom = m.cell_geom.data();
+    h.cell_conduit = m.cell_conduit.data();
+    h.cell_face0 = m.cell_face0.data();
+    h.cell_face1 = m.cell_face1.data();
+    h.cell_side0 = m.cell_side0.data();
+    h.cell_side1 = m.cell_side1.data();
+    h.cell_dx = m.cell_dx.data();
+    h.cell_zb = m.cell_zb.data();
+    h.face_cl = m.face_cl.data();
+    h.face_cr = m.face_cr.data();
+    h.face_node = m.face_node.data();
+    h.face_geom = m.face_geom.data();
+    h.face_culvert = m.face_culvert.data();
+    h.face_npos = dev_face_npos_.data();
+    h.face_gate = m.face_gate.data();
+    h.face_zb = m.face_zb.data();
+    h.face_dir_l = m.face_dir_l.data();
+    h.face_dir_r = m.face_dir_r.data();
+    h.face_a_rim = face_a_rim_.data();
+    h.conduit_section = opt(m.conduit_section, ncond);
+    h.conduit_roughness = m.conduit_roughness.data();
+    h.conduit_rough_factor = m.conduit_rough_factor.data();
+    h.conduit_loss_inlet = m.conduit_loss_inlet.data();
+    h.conduit_loss_outlet = m.conduit_loss_outlet.data();
+    h.conduit_slope = opt(m.conduit_slope, ncond);
+    h.conduit_culvert_curve = opt(m.conduit_culvert_curve, ncond);
+    h.conduit_culvert_mitered = opt(m.conduit_culvert_mitered, ncond);
+    h.node_face_ptr = m.node_face_ptr.data();
+    h.node_face_idx = m.node_face_idx.data();
+    h.node_face_sign = m.node_face_sign.data();
+    h.node_face_sorted = dev_node_face_sorted_.data();
+    h.node_struct_ptr = dev_node_struct_ptr_.data();
+    h.node_struct_idx = dev_node_struct_idx_.data();
+    h.node_invert = m.node_invert.data();
+    h.node_full_depth = m.node_full_depth.data();
+    h.node_ponded_area = m.node_ponded_area.data();
+    h.node_sur_depth = m.node_sur_depth.data();
+    h.node_vfull = node_vfull_.data();
+    h.node_vol_dmax = opt(m.node_vol_dmax, nn);
+    h.node_vol_atop = opt(m.node_vol_atop, nn);
+    h.node_vol_tbl = m.node_vol_tbl.empty() ? nullptr : m.node_vol_tbl.data();
+    h.node_vol_off = m.node_vol_off.data();
+    h.node_vj_face = dev_node_vj_face_.data();
+    h.node_can_pond = m.node_can_pond.data();
+    h.node_kind = m.node_kind.data();
+    h.node_alg = node_alg_.data();
+    h.node_pass_static = node_pass_static_.data();
+    h.node_dummy_drain = opt(m.node_dummy_drain, nn);
+    h.struct_n1 = m.struct_n1.data();
+    h.struct_n2 = m.struct_n2.data();
+    h.struct_is_dummy = opt(m.struct_is_dummy, ns);
+    h.geom = m.geom.data();
+    h.cfl = opts_.cfl;
+    h.mixed_wave = mixed_wave_;
+    h.mw_rh = mw_rh_;
+    h.deg1_guard_slot = deg1_guard_slot_;
+    h.census_pass_far = census_pass_far_;
+    h.have_dummy = !m.struct_is_dummy.empty();
+    dev_host_ = h;
+
+    FvDeviceMesh dm;
+    dm.n_conduits = ncond;
+    dm.n_geom = static_cast<int>(m.geom.size());
+    dm.n_node_faces = n_node_faces;
+    dm.n_node_structs = dev_node_struct_ptr_[static_cast<std::size_t>(nn)];
+    dm.n_vol_tbl = static_cast<int>(m.node_vol_tbl.size());
+    dm.host = h;
+    marcher_->bind(dm);
+    device_bound_ = true;
+
+    // The marcher steps globally with every cell and face active, and a step
+    // it cannot take must follow the same schedule, the same work lists and
+    // the same residual rule on the CPU.
+    opts_.lts = false;
+    opts_.compaction = false;
+    settle_snapshot_ = true;
+}
+
+bool ExplicitFvSolver::advanceOnDevice(double t_current, double t_target,
+                                       const FvStepForcing& forcing, double& t_reached,
+                                       long& steps) {
+    if (!marcher_ || !device_bound_)
+        return false;
+    const char* why = nullptr;
+    if (forcing.refresh && opts_.structure_coupling == StructureCoupling::SUBSTEP)
+        why = "FV_STRUCTURE_COUPLING SUBSTEP";
+    else if (water_tracking_)
+        why = "accepted-water tracking (quality, conduit losses or a receipt trace)";
+    else if (conservative_node_balance_)
+        why = "the conservative node balance";
+    else if (pressure_candidate_)
+        why = "the pressure-storage candidate";
+    else if (step_sink_)
+        why = "the conduit step record";
+    else if (forcing.node_source_max && forcing.n_nodes < mesh_->n_nodes())
+        why = "a short node_source_max array";
+    if (why) {
+        ++device_fallbacks_;
+        if (!device_note_printed_) {
+            device_note_printed_ = true;
+            std::fprintf(stderr,
+                         "[openswmm FV] %s backend not used for this step: %s is outside its "
+                         "scope; the CPU loop runs instead\n",
+                         marcher_->label(), why);
+        }
+        return false;
+    }
+
+    const int nn = mesh_->n_nodes();
+    const int ns = static_cast<int>(mesh_->struct_link.size());
+    for (int s = 0; s < ns; ++s) {
+        const auto us = static_cast<std::size_t>(s);
+        const auto link = static_cast<std::size_t>(mesh_->struct_link[us]);
+        if (forcing.structure_flow)
+            dev_struct_q_[us] = forcing.structure_flow[link];
+        if (forcing.link_q_cap)
+            dev_struct_q_cap_[us] = forcing.link_q_cap[link];
+    }
+    // node_qdummy_ is sized only when the mesh has DUMMY links.
+    double* qdummy = node_qdummy_.size() >= static_cast<std::size_t>(nn) ? node_qdummy_.data()
+                                                                         : dev_node_qdummy_.data();
+
+    FvDeviceAdvance a;
+    a.t_current = t_current;
+    a.t_target = t_target;
+    substep::Arrays& h = a.host;
+    h = dev_host_;
+    h.has_lateral = forcing.node_lateral != nullptr;
+    h.has_source_max = forcing.node_source_max != nullptr;
+    h.has_structure_flow = forcing.structure_flow != nullptr;
+    h.has_q_cap = forcing.link_q_cap != nullptr;
+    h.has_conduit_loss = forcing.conduit_loss != nullptr;
+    h.has_withdrawal = forcing.node_withdrawal != nullptr;
+    h.node_lateral = forcing.node_lateral;
+    h.node_fixed_head = forcing.node_fixed_head ? forcing.node_fixed_head : dev_fixed_nan_.data();
+    h.node_source_max = forcing.node_source_max;
+    h.node_withdrawal = forcing.node_withdrawal;
+    h.struct_q = dev_struct_q_.data();
+    h.struct_q_cap = dev_struct_q_cap_.data();
+    h.conduit_loss = forcing.conduit_loss;
+    h.cell_qlat = cell_qlat_.data();
+    h.node_pass = node_pass_.data();
+    h.node_lat_div = node_lat_div_.data();
+    h.node_surf_area = state_->node_surf_area.data();
+
+    h.cell_a = state_->cell_a.data();
+    h.cell_q = state_->cell_q.data();
+    h.cell_h = state_->cell_h.data();
+    h.cell_eta = cell_eta_.data();
+    h.cell_u = cell_u_.data();
+    h.cell_ah = cell_ah_.data();
+    h.cell_t = cell_t_.data();
+    h.cell_i1 = cell_i1_.data();
+    h.cell_q_int = cell_q_int_.data();
+    h.node_volume = state_->node_volume.data();
+    h.node_head = state_->node_head.data();
+    h.node_carry = node_carry_.data();
+    h.node_exch = node_exch_.data();
+    h.node_in = node_in_.data();
+    h.node_out = node_out_.data();
+    h.flood_vol = flood_vol_.data();
+    h.unmet = unmet_withdrawal_.data();
+    h.node_qstruct = node_qstruct_.data();
+    h.node_qdummy = qdummy;
+    h.f_mass = f_mass_.data();
+    h.f_mom = f_mom_.data();
+    h.f_corr_l = f_corr_l_.data();
+    h.f_corr_r = f_corr_r_.data();
+    h.relax_beta = relax_beta_.data();
+    h.face_lat_spill = face_lat_spill_.data();
+    h.f_state_l = f_state_l_.data();
+    h.f_state_r = f_state_r_.data();
+    h.struct_applied_vol = struct_applied_vol_.data();
+    h.dummy_vol = dummy_vol_.data();
+    h.inlet_control = inlet_control_.data();
+
+    const FvDeviceResult r = marcher_->advance(a);
+    if (!r.ok)
+        throw std::runtime_error(std::string("FV device backend failed: ") +
+                                 (r.error ? r.error : "no detail"));
+
+    ++device_advances_;
+    t_reached = r.t_reached;
+    steps = r.steps;
+    total_flux_ += r.flux_evals;
+    if (r.steps > 0) {
+        last_h_ = r.last_h;
+        min_h_ = (min_h_ <= 0.0) ? r.min_h : std::min(min_h_, r.min_h);
+        dt_cache_ = r.dt_cache;
+    }
+    // The device ran every face with every cell active; whatever the CPU loop
+    // cached about its own lists and census is stale.
+    all_faces_live_ = true;
+    lists_valid_ = false;
+    census_count_ = 0;
+    return true;
 }
 
 void ExplicitFvSolver::reinitialize(double /*t0*/) {
@@ -3211,6 +3571,18 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
     // node demoted by it integrates the bucket path in this same substep.
     bookLateralSpills(nullptr);
 
+    // Snapshot rule (settle_snapshot_ in the header): what settleAlgebraicNode
+    // asks about a pass-through junction's cells is answered from the cells as
+    // they stand here, before any junction of this loop has written to one.
+    if (settle_snapshot_) {
+        settle_press_.resize(static_cast<std::size_t>(nn));
+        for (int n = 0; n < nn; ++n) {
+            const auto un = static_cast<std::size_t>(n);
+            settle_press_[un] = (node_pass_[un] && incidentPressurized(un)) ? 1 : 0;
+        }
+        settle_snapshot_live_ = true;
+    }
+
     for (int n = 0; n < nn; ++n) {
         const auto un = static_cast<std::size_t>(n);
         if (mesh_->node_kind[un] == kNodeVirtual) {
@@ -3275,6 +3647,7 @@ void ExplicitFvSolver::updateNodes(double dt, const FvStepForcing& forcing) {
         state_->node_volume[un] = vol;
         state_->node_head[un] = mesh_->node_invert[un] + depth;
     }
+    settle_snapshot_live_ = false;
 }
 
 // Dispose of an algebraic junction's window residual — the balance the root
@@ -3338,7 +3711,9 @@ void ExplicitFvSolver::settleAlgebraicNode(int n, double carry) {
     // banked carry is also what hands the junction to the solved path at
     // the next refresh (refreshStructFlows), where the solve absorbs the
     // residual as forcing.
-    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0 && !incidentPressurized(un)) {
+    const bool pass_pressurized =
+        settle_snapshot_live_ ? settle_press_[un] != 0 : incidentPressurized(un);
+    if (!node_pass_.empty() && node_pass_[un] && carry != 0.0 && !pass_pressurized) {
         double left = carry;
         const int b = mesh_->node_face_ptr[un];
         const int e = mesh_->node_face_ptr[un + 1];
@@ -5042,7 +5417,11 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
     lists_valid_ = false;
     census_count_ = 0;
 
-    while (t < t_target) {
+    // With a device marcher attached the whole substep loop of this routing
+    // step runs there; the CPU loop below is then skipped.
+    const bool on_device = advanceOnDevice(t_current, t_target, forcing, t, steps);
+
+    while (!on_device && t < t_target) {
         // FV_STRUCTURE_COUPLING SUBSTEP: let the caller re-evaluate the
         // head-dependent boundary flows against where the solver has actually
         // got to. A routing step spans many substeps, across which a pump's

@@ -12,6 +12,8 @@
 #pragma once
 #include "../solver/GpuPluginAbi.h"
 #include "ExplicitKokkosSurfaceSolver.hpp"
+#include "../../hydraulics/fv/FvDeviceMarcher.hpp"
+#include "../../hydraulics/fv/gpu/KokkosNetworkMarcher.hpp"
 #include <cstdio>
 #include <exception>
 
@@ -43,6 +45,26 @@ template <class Initialize> void* make(Initialize initialize) noexcept {
     }
     return nullptr;
 }
+
+/**
+ * @brief Create the 1D network substep marcher after the backend runtime is initialized.
+ *
+ * @param[in] initialize Callable that initializes the backend's Kokkos runtime; may throw.
+ * @return Owning openswmm::fv::IFvDeviceMarcher* as void*, or nullptr with `error` set.
+ */
+template <class Initialize> void* makeNetworkMarcher(Initialize initialize) noexcept {
+    error[0] = '\0';
+    try {
+        initialize();
+        return static_cast<openswmm::fv::IFvDeviceMarcher*>(
+            openswmm::fv::gpu::makeKokkosNetworkMarcher());
+    } catch (const std::exception& e) {
+        std::snprintf(error, sizeof error, "%s", e.what());
+    } catch (...) {
+        std::snprintf(error, sizeof error, "Unknown plugin initialization failure");
+    }
+    return nullptr;
+}
 }
 extern "C" OPENSWMM_GPU_ABI const char* openswmm_gpu_build_contract() {
     return OPENSWMM_GPU_BUILD_CONTRACT;
@@ -52,4 +74,8 @@ extern "C" OPENSWMM_GPU_ABI const char* openswmm_gpu_last_error() {
 }
 extern "C" OPENSWMM_GPU_ABI void openswmm_destroy_gpu_explicit_solver(void* solver) {
     delete static_cast<openswmm::twoD::ISurfaceSolver*>(solver);
+}
+
+extern "C" OPENSWMM_GPU_ABI void openswmm_destroy_gpu_network_marcher(void* marcher) {
+    delete static_cast<openswmm::fv::IFvDeviceMarcher*>(marcher);
 }

@@ -18,6 +18,7 @@
 #include "NetworkSolverFactory.hpp"
 
 #include "ExplicitFvSolver.hpp"
+#include "FvDeviceMarcher.hpp"
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
 #include "../../2d/solver/GpuPluginAbi.h"
@@ -28,6 +29,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -210,23 +212,23 @@ void* load_cached(const std::string& path) {
 
 using ProbeFn = int (*)(OpenSwmmGpuProbe*);
 using MakeFn = void* (*)(const OpenSwmmGpuProbe*);
+using DestroyFn = void (*)(void*);
 
 /**
- * @brief Probe candidate modules and construct the first usable network solver for a backend.
+ * @brief Probe candidate modules and create the first usable network substep marcher.
  *
- * Requires openswmm_gpu_probe and openswmm_make_gpu_network_solver. A zero probe status, matching
- * ABI and positive device count are required. The returned object must support deletion through
- * INetworkSolver under the shared C++ ABI. Success prints a selection message to stderr; module
- * handles remain cached. This function does not catch allocation, filesystem-conversion, label or
- * plugin exceptions.
+ * Requires openswmm_gpu_probe, openswmm_make_gpu_network_marcher and
+ * openswmm_destroy_gpu_network_marcher. A zero probe status, matching ABI and positive device
+ * count are required. Module handles remain cached for the process lifetime, so the returned
+ * deleter stays valid. This function does not catch allocation, filesystem-conversion or label
+ * exceptions.
  *
  * @param[in] backend Recognized backend suffix used for filenames and the selection label.
- * @param[out] chosen Optional writable label; changed only after a plugin factory returns a
- *     non-null solver.
- * @return Owning solver pointer, or nullptr if every candidate fails the
+ * @param[out] label Optional; receives "<backend> (<device name>)" on success.
+ * @return Shared marcher released through its plugin, or null if every candidate fails the
  *     existence/load/export/ABI/device/factory checks.
  */
-std::unique_ptr<INetworkSolver> try_plugin(const std::string& backend, std::string* chosen) {
+std::shared_ptr<IFvDeviceMarcher> try_plugin(const std::string& backend, std::string* label) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -239,8 +241,10 @@ std::unique_ptr<INetworkSolver> try_plugin(const std::string& backend, std::stri
                 continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
             auto make =
-                reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_network_solver"));
-            if (!probe || !make)
+                reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_network_marcher"));
+            auto destroy = reinterpret_cast<DestroyFn>(
+                platform_sym(h, "openswmm_destroy_gpu_network_marcher"));
+            if (!probe || !make || !destroy)
                 continue;
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
@@ -251,12 +255,11 @@ std::unique_ptr<INetworkSolver> try_plugin(const std::string& backend, std::stri
             void* raw = make(&info);
             if (!raw)
                 continue;
-            auto* solver = static_cast<INetworkSolver*>(raw);
-            const std::string label = backend + " (" + info.device_name + ")";
-            if (chosen)
-                *chosen = label;
-            std::fprintf(stderr, "[openswmm FV] using GPU backend: %s\n", label.c_str());
-            return std::unique_ptr<INetworkSolver>(solver);
+            if (label)
+                *label = backend + " (" + info.device_name + ")";
+            return std::shared_ptr<IFvDeviceMarcher>(
+                static_cast<IFvDeviceMarcher*>(raw),
+                [destroy](IFvDeviceMarcher* m) { destroy(static_cast<void*>(m)); });
         }
     }
     return nullptr;
@@ -290,53 +293,36 @@ const char* backend_name(Backend b) {
 
 std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts, std::string* chosen,
                                                   int n_cells) {
-    auto cpu = [&]() -> std::unique_ptr<INetworkSolver> {
-        if (chosen)
-            *chosen = "cpu (explicit finite volume)";
-        return std::make_unique<ExplicitFvSolver>();
-    };
+    (void)n_cells;
+    auto solver = std::make_unique<ExplicitFvSolver>();
+    if (chosen)
+        *chosen = "cpu (explicit finite volume)";
 
     std::string mode = lower(env("OPENSWMM_FV_BACKEND"));
     if (mode.empty())
         mode = backend_name(opts.backend);
-    if (mode == "cpu")
-        return cpu();
 
-    // The implicit pressurized head update (FV_PRESSURIZED_IMPLICIT, slot
-    // program R2a) lives in the CPU reference solver only — a device plugin
-    // would silently run the pressurized subset explicitly at the edited
-    // (advective) census bound, which is exactly the instability the pass
-    // exists to remove. Honour the option over the backend request.
-    if (opts.pressurized_implicit)
-        return cpu();
+    // A device backend replaces the substep loop of the same solver object
+    // (FvDeviceMarcher.hpp), and only on an explicit request. AUTO stays on
+    // the CPU: the marcher steps globally and holds structure forcing over the
+    // routing step, so switching to it changes results against the default
+    // local-time-stepping path, and its crossover size has not been measured.
+    if (mode != "omp" && mode != "cuda" && mode != "hip" && mode != "sycl")
+        return solver;
 
-    // Small-problem gate. A Kokkos plugin pays a per-kernel launch overhead on
-    // EVERY substep, and the built-in solver is itself OpenMP-threaded, so the
-    // plugin only pays off once per-cell work amortizes the launches. Carried
-    // over from the 2D module, whose auto crossover was measured far above its
-    // original 20k default (plan §2 guardrails) — expect the same recalibration
-    // here once the Phase 5 benchmarks land. An explicit backend request
-    // bypasses the gate.
-    const bool gated = (mode == "auto") && [&] {
-        if (n_cells <= 0)
-            return false;
-        long min_par = opts.min_parallel_cells;
-        if (const char* s = std::getenv("OPENSWMM_FV_MIN_PARALLEL_CELLS"))
-            min_par = std::atol(s);
-        return static_cast<long>(n_cells) < min_par;
-    }();
-
-    if (!gated) {
-        if (mode == "auto") {
-            for (const char* b : {"cuda", "hip", "sycl", "omp"})
-                if (auto s = try_plugin(b, chosen))
-                    return s;
-        } else if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-            if (auto s = try_plugin(mode, chosen))
-                return s;
-        }
+    std::string label;
+    if (auto marcher = try_plugin(mode, &label)) {
+        solver->attachDeviceMarcher(std::move(marcher));
+        if (chosen)
+            *chosen = label + ", device substeps";
+        std::fprintf(stderr, "[openswmm FV] using device backend: %s\n", label.c_str());
+    } else {
+        std::fprintf(stderr,
+                     "[openswmm FV] backend '%s' requested but no usable plugin was found; "
+                     "using the CPU solver\n",
+                     mode.c_str());
     }
-    return cpu();
+    return solver;
 }
 
 } // namespace openswmm::fv

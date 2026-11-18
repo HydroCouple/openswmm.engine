@@ -856,6 +856,70 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     endforeach()
 endif()
 
+# 1D finite volume device backend (hydraulics/fv/gpu): the plugin's substep
+# loop must reproduce the CPU solver bit for bit on the configuration it
+# integrates, at one thread and at several, and must name what it does not
+# integrate and leave it to the CPU solver.
+if(OPENSWMM_BUILD_GPU_PLUGIN AND OPENSWMM_GPU_BACKEND STREQUAL "omp" AND TARGET openswmm
+        AND TARGET openswmm_gpu_omp)
+    set(_fv_device_corpus "${PROJECT_SOURCE_DIR}/tests/parity/corpus/decks")
+    set(_fv_device_slot "${PROJECT_SOURCE_DIR}/tests/parity/slot_program/decks")
+    set(_fv_device_own "${PROJECT_SOURCE_DIR}/tests/gpu/data/fv_device")
+    set(_fv_device_agree_pass "${_fv_device_corpus}/agree_pass.inp")
+    set(_fv_device_steep_pass "${_fv_device_corpus}/steep_pass.inp")
+    set(_fv_device_slot_capped "${_fv_device_corpus}/slot_capped.inp")
+    set(_fv_device_agree_vj "${_fv_device_corpus}/agree_vj.inp")
+    set(_fv_device_storage_bucket "${_fv_device_corpus}/storage_bucket_fv.inp")
+    set(_fv_device_vj_invert_collision "${_fv_device_corpus}/vj_fv_invert_collision.inp")
+    set(_fv_device_surcharged_tee "${_fv_device_slot}/surcharged_tee.inp")
+    set(_fv_device_transmission_main "${_fv_device_slot}/transmission_main.inp")
+    set(_fv_device_valve_closure "${_fv_device_slot}/valve_closure.inp")
+    # A junction ponding onto a 2D mesh, and a street inlet with a surcharged
+    # sewer: the node paths the pipe-only decks above do not reach.
+    set(_fv_device_coupled_chamber "${_fv_device_own}/coupled_chamber.inp")
+    set(_fv_device_street_pond "${_fv_device_own}/street_pond_surcharge.inp")
+    foreach(_case agree_pass steep_pass slot_capped agree_vj storage_bucket
+            vj_invert_collision surcharged_tee transmission_main valve_closure coupled_chamber
+            street_pond)
+        add_test(NAME test_engine_fv_device_${_case}_t1
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_fv_device_${_case}}
+                --threads 1
+                --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_${_case}_t1)
+        set_tests_properties(test_engine_fv_device_${_case}_t1 PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
+    # Several threads: the kernels write only the element they are called
+    # with, so the result may not depend on the thread count. Short decks only;
+    # a small mesh pays a team wake-up in every kernel of every substep.
+    foreach(_case agree_vj vj_invert_collision surcharged_tee)
+        add_test(NAME test_engine_fv_device_${_case}_t4
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_fv_device_${_case}}
+                --threads 4
+                --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_${_case}_t4)
+        set_tests_properties(test_engine_fv_device_${_case}_t4 PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 600 RUN_SERIAL TRUE)
+    endforeach()
+    add_test(NAME test_engine_fv_device_refuses_order2
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+            --engine $<TARGET_FILE:openswmm>
+            --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+            --input ${_fv_device_agree_pass}
+            --option FV_ORDER=2
+            --expect-refusal "FV_ORDER 2 is outside its scope"
+            --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_refuses_order2)
+    set_tests_properties(test_engine_fv_device_refuses_order2 PROPERTIES
+        LABELS "unit;gpu;parity" TIMEOUT 400)
+endif()
+
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a
 # 2D .inp → swmm_model_write → reopen → compare via swmm_2d_* accessors,
 # plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
