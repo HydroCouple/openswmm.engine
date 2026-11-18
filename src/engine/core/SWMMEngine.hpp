@@ -762,9 +762,13 @@ public:
     /// Diagnostic: node storage S (ft^2) of the last H18 assembly, active space.
     const std::vector<double>& rom1dStorage() const noexcept { return rom1d_h18_S_; }
     /// Diagnostics: the oriented flow-response edges (H17/H19) and the additive
-    /// channel state (P planes × active nodes) of the last step.
+    /// channel state handed to the ROM (P planes × active nodes, or 2P after the
+    /// O-16b sign split: the + halves, then the - halves) of the last step.
     const std::vector<uncertainty::FlowEdge>& rom1dFlowEdges() const noexcept { return rom1d_fs_edges_; }
     const std::vector<double>& rom1dAdditiveState() const noexcept { return rom1d_add_state_; }
+    /// Diagnostics (O-16b): the rain channel's edges of the last step, + and - half (aligned).
+    const std::vector<uncertainty::FlowEdge>& rom1dAdditiveEdges() const noexcept { return rom1d_add_edges_; }
+    const std::vector<uncertainty::FlowEdge>& rom1dAdditiveEdgesNeg() const noexcept { return rom1d_add_edges_neg_; }
     /// Diagnostic: the soft-rain plane A source of the last step (cfs per unit coefficient, active space).
     const std::vector<double>& rom1dSoftSource() const noexcept { return rom1d_add_qa_; }
     /// Diagnostics: the storage nodes whose members carry their own level
@@ -831,10 +835,9 @@ private:
     bool rom1d_qsr_ = true;   ///< H17 quasi-static residual (internal A/B hook)
     int rom1d_add_sweeps_ = 0;
     int rom1d_add_np_ = 0;
-    uncertainty::AdditiveSystem rom1d_add_sys_;
+    uncertainty::SignSplitPlanes rom1d_add_split_;   ///< O-16b: the planes' two halves (kappa > 0, kappa < 0)
     std::vector<double> rom1d_add_qa_, rom1d_add_qb_;           ///< soft-rain extra inflow per unit coefficient (cfs)
     std::vector<double> rom1d_add_state_, rom1d_add_kappa_, rom1d_add_q_;
-    std::vector<double> rom1d_add_S_prev_;   ///< O-14: storage of the planes' last step (they carry volume S*Psi)
     std::vector<double> rom1d_pg_S_prev_;    ///< O-14: storage of the member graph's last step (linear nodes carry volume S*z)
     std::vector<std::vector<double>> rom1d_vec_cols_;          ///< FORCING_VECTOR columns (theta) under H19
     std::vector<std::vector<double>> rom1d_fmult_cols_;        ///< FORCING_MULT columns (theta): scale the runoff plane
@@ -849,8 +852,19 @@ private:
      *  stepRom1dAdditiveChannel. */
     void stepRom1dStorageMembers(double dt, const std::vector<std::vector<double>>& q,
                                  const std::vector<std::vector<double>>& kap) noexcept;
-    std::vector<uncertainty::FlowEdge> rom1d_fs_dry_edges_;   ///< dry pipes with a member-range secant (rain channel only)
-    std::vector<uncertainty::FlowEdge> rom1d_add_edges_;      ///< the rain channel's edges: flowing links + dry pipes
+    std::vector<uncertainty::FlowEdge> rom1d_add_edges_;      ///< the rain channel's edges, + half: flowing links, structures, pumps, dry pipes
+    std::vector<uncertainty::FlowEdge> rom1d_add_edges_neg_;  ///< the same edges, - half (aligned; only d differs)
+    /// O-16b: the rain channel's edge lists built by computeRom1dFlowSource, one
+    /// per half of the member range (aligned edge for edge; conduits identical,
+    /// structures/pumps/dry pipes carry their one-sided secants d+ / d-).
+    std::vector<uncertainty::FlowEdge> rom1d_rain_pos_, rom1d_rain_neg_;
+    /// O-16 sink counter (diagnostic only, env OPENSWMM_ADD_SINK_REPORT=1): per
+    /// active node, member-steps whose unclamped level (main run + additive
+    /// deviation + correction) lies > 0.05 ft below the invert, the deepest such
+    /// depth, and the largest member deviation above the main run.
+    std::vector<long> rom1d_sink_cnt_;
+    std::vector<double> rom1d_sink_min_, rom1d_sink_max_;
+    void accumulateRom1dSinks() noexcept;
     bool rom1d_nl_init_ = false;
     bool rom1d_nl_enabled_ = false;  ///< per-member storage/rim levels: off until stable on Bellinge (ADDITIVE_CHANNEL.md §7)
     std::vector<int> rom1d_nl_nodes_;                     ///< active indices of storage nodes

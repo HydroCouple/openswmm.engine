@@ -36,6 +36,7 @@
 #include "openswmm/engine/openswmm_2d.h"
 #include "core/SWMMEngine.hpp"
 #include "uncertainty/SpectralROM1D.hpp"
+#include "uncertainty/LhsShuffle.hpp"
 #endif
 
 #if defined(_WIN32)
@@ -2803,5 +2804,246 @@ TEST(PlaneVolumeCarry, PlaneTracksTheMembersHeadOnTheRecession) {
     std::printf("[O-14] J1 drained recession: %d samples, plane / members' sensitivity %.3f\n", n, ratio);
     EXPECT_GT(ratio, 0.5) << "the plane lost the members' band on the recession";
     EXPECT_LT(ratio, 2.0) << "the plane holds a surcharge head the members no longer have";
+}
+// ---------------------------------------------------------------------------
+// O-16b — sign-split planes with one-sided secants
+// (docs/uncertainty/O16_PLANE_SINKS.md §4, §6). Rain-only soft forcing, per-member
+// path off (the shipped default). Two threshold outlets:
+//   J0 -> side orifice (crest above the main run's peak) -> J1 (junction, dry in
+//         the main run) -> 0.5 ft pipe -> O1;  J0 also drains by pipes via J2 to O3;
+//   W  (wet well, 300 ft^2) -> PUMP4 with a FLAT curve (dQ/dH = 0), off in the
+//         main run (startup depth above its peak, shutoff below it) -> O2; W also
+//         drains through small pipes via J3 to O4.
+// The Monte Carlo: 21 deterministic runs at rain x (1 + 0.2 c_k),
+// c_k = probit((k + 1/2)/21).
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr double kO16Crest = 0.85, kO16YOn = 1.0, kO16YOff = 0.7, kO16Cap = 3.0;
+
+std::string o16Fixture(double rain_scale, bool soft) {
+    std::ostringstream f;
+    f << std::setprecision(10);
+    f << "[TITLE]\nO-16b threshold outlets\n\n[OPTIONS]\n";
+    f << "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n";
+    f << "START_DATE 01/01/2025\nSTART_TIME 00:00:00\nREPORT_START_DATE 01/01/2025\nREPORT_START_TIME 00:00:00\n";
+    f << "END_DATE 01/01/2025\nEND_TIME 01:30:00\n";
+    f << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\nROUTING_STEP 00:00:05\n";
+    f << "MINIMUM_STEP 0.5\nTHREADS 1\n\n[EVAPORATION]\nCONSTANT 0.0\n\n";
+    f << "[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES TS0\n\n[TIMESERIES]\n";
+    for (int m = 0; m <= 90; m += 5) {
+        const double tri = (m <= 60) ? (1.0 - std::fabs(m - 30.0) / 30.0) : 0.0;
+        f << "TS0 01/01/2025 " << std::setfill('0') << std::setw(2) << m / 60 << ":" << std::setfill('0') << std::setw(2)
+          << m % 60 << " " << 1.0 * tri * rain_scale << "\n";
+    }
+    f << std::setfill(' ') << "\n";
+    f << "[SUBCATCHMENTS]\nS1 RG1 J0 2.0 300 100 1.0 0\nS2 RG1 W 0.5 300 100 1.0 0\n\n";
+    f << "[SUBAREAS]\nS1 0.015 0.20 0.00 0.00 100 OUTLET\nS2 0.015 0.20 0.00 0.00 100 OUTLET\n\n";
+    f << "[INFILTRATION]\nS1 0.0 0.0 0.0 0.0 0.0\nS2 0.0 0.0 0.0 0.0 0.0\n\n";
+    f << "[JUNCTIONS]\nJ0 100 10 0 0 0\nJ1 99 5 0 0 0\nJ2 99.5 5 0 0 0\nJ3 99.5 5 0 0 0\n\n";
+    f << "[OUTFALLS]\nO1 98.5 FREE NO\nO2 99 FREE NO\nO3 99 FREE NO\nO4 99 FREE NO\n\n";
+    f << "[STORAGE]\nW 100 10 0 FUNCTIONAL 0 0 300\n\n";
+    f << "[CONDUITS]\nC0 J0 J2 200 0.015 0 0 0 0\nC3 J2 O3 200 0.015 0 0 0 0\nC1 J1 O1 200 0.015 0 0 0 0\n";
+    f << "C2 W J3 200 0.015 0 0 0 0\nC4 J3 O4 200 0.015 0 0 0 0\n\n";
+    f << "[PUMPS]\nP1 W O2 PC1 OFF " << kO16YOn << " " << kO16YOff << "\n\n";
+    f << "[ORIFICES]\nOR1 J0 J1 SIDE " << kO16Crest << " 0.65 NO 0\n\n";
+    f << "[XSECTIONS]\nC0 CIRCULAR 1.0 0 0 0 1\nC3 CIRCULAR 1.0 0 0 0 1\nC1 CIRCULAR 0.5 0 0 0 1\nC2 CIRCULAR 0.5 0 0 0 1\n";
+    f << "C4 CIRCULAR 0.5 0 0 0 1\nOR1 RECT_CLOSED 0.5 1.0 0 0\n\n";
+    f << "[CURVES]\nPC1 PUMP4 0 " << kO16Cap << "\nPC1 10 " << kO16Cap << "\n\n";
+    f << "[REPORT]\nINPUT NO\nCONTINUITY YES\nNODES ALL\nLINKS ALL\n\n";
+    if (soft) f << "[SOFT_RAINGAGES]\nRG1 NORMAL CV 0.20\n";
+    return f.str();
+}
+
+struct O16Run {
+    std::vector<double> t, hJ0, hJ1, hW, qP;   // main run per step
+    std::vector<double> devJ1, devW;           // ROM: steps x M additive deviation (ft), unclamped
+    std::vector<double> c;                     // member coefficients
+    double invJ1 = 0.0, invW = 0.0;
+    int planes_max = 0;
+    bool pump_upper_line = false;              // the + half's pump edge carried a line (d+ > 0)
+    long pump_lower_line_while_off = 0;        // steps the - half's pump edge had d- > 0 while the main pump was off
+    bool ok = false;
+};
+
+O16Run runO16(double rain_scale, bool soft, const std::string& tag) {
+    O16Run r;
+    const std::string pfx = "rom_o16b_" + std::to_string(getpid()) + "_" + tag;
+    const std::string ip = pfx + ".inp", rp = pfx + ".rpt";
+    { std::ofstream f(ip); f << o16Fixture(rain_scale, soft); }
+    SWMM_Engine h = swmm_engine_create();
+    auto cleanup = [&]() {
+        swmm_engine_end(h); swmm_engine_close(h); swmm_engine_destroy(h);
+        for (const char* ext : {".inp", ".rpt", ".uncertainty.csv", ".rom_threshold.csv", ".rom_diag.csv", ".out"})
+            std::remove((pfx + ext).c_str());
+    };
+    if (const int rc = swmm_engine_open(h, ip.c_str(), rp.c_str(), nullptr, nullptr); rc != 0) {
+        std::printf("[O-16b] %s: open failed (%d)\n", tag.c_str(), rc);
+        cleanup();
+        return r;
+    }
+    auto* eng = static_cast<openswmm::SWMMEngine*>(h);
+    if (swmm_engine_initialize(h) != 0 || swmm_engine_start(h, 0) != 0) {
+        std::printf("[O-16b] %s: initialize/start failed\n", tag.c_str());
+        cleanup();
+        return r;
+    }
+    const auto& ctx = eng->context();
+    const int j0 = ctx.node_names.find("J0"), j1 = ctx.node_names.find("J1"), w = ctx.node_names.find("W");
+    const int p1 = ctx.link_names.find("P1");
+    r.invJ1 = ctx.nodes.invert_elev[static_cast<std::size_t>(j1)];
+    r.invW = ctx.nodes.invert_elev[static_cast<std::size_t>(w)];
+    double el = 1.0;
+    long not_ready = 0;
+    for (int guard = 0; el != 0.0 && guard < 200000; ++guard) {
+        if (const int rc = swmm_engine_step(h, &el); rc != 0) { std::printf("[O-16b] %s: step failed (%d)\n", tag.c_str(), rc); break; }
+        const double t = el * 86400.0;
+        const auto* rom = eng->rom1d();
+        const auto& st = eng->rom1dAdditiveState();
+        const int np = eng->rom1dAdditivePlanes();
+        if (soft && !(rom && rom->is_ready() && np > 0)) ++not_ready;
+        const std::size_t na = rom ? rom->full_to_active.size() : 0;
+        if (soft) {
+            if (!(rom && rom->is_ready() && np > 0)) continue;
+            const std::size_t nact = st.size() / static_cast<std::size_t>(np);
+            const int a1 = rom->full_to_active[static_cast<std::size_t>(j1)], aw = rom->full_to_active[static_cast<std::size_t>(w)];
+            if (na == 0 || a1 < 0 || aw < 0) continue;
+            if (r.c.empty()) r.c = rom->softCoefficients(openswmm::uncertainty::DistType::NORMAL);
+            r.planes_max = std::max(r.planes_max, np);
+            for (double ci : r.c) {
+                // np = 1: kappa = c; np = 2: kappa+ = max(c, 0) on plane 0, kappa- = min(c, 0) on plane 1.
+                auto dev = [&](int a) {
+                    if (np == 1) return ci * st[static_cast<std::size_t>(a)];
+                    return std::max(ci, 0.0) * st[static_cast<std::size_t>(a)] + std::min(ci, 0.0) * st[nact + static_cast<std::size_t>(a)];
+                };
+                r.devJ1.push_back(dev(a1));
+                r.devW.push_back(dev(aw));
+            }
+            const auto& ep = eng->rom1dAdditiveEdges();
+            const auto& em = eng->rom1dAdditiveEdgesNeg();
+            for (std::size_t k = 0; k < ep.size(); ++k) {
+                if (ep[k].link != p1) continue;
+                if (ep[k].d > 0.0) r.pump_upper_line = true;
+                if (k < em.size() && em[k].d > 0.0 && std::fabs(ctx.links.flow[static_cast<std::size_t>(p1)]) < 1.0e-6)
+                    ++r.pump_lower_line_while_off;
+            }
+        }
+        r.t.push_back(t);
+        r.hJ0.push_back(ctx.nodes.head[static_cast<std::size_t>(j0)]);
+        r.hJ1.push_back(ctx.nodes.head[static_cast<std::size_t>(j1)]);
+        r.hW.push_back(ctx.nodes.head[static_cast<std::size_t>(w)]);
+        r.qP.push_back(ctx.links.flow[static_cast<std::size_t>(p1)]);
+        if (el > 0.0 && t >= 5400.0) break;
+    }
+    r.ok = !r.t.empty();
+    if (!r.ok) std::printf("[O-16b] %s: no samples (steps without a ready ROM/plane: %ld)\n", tag.c_str(), not_ready);
+    cleanup();
+    return r;
+}
+
+double interpAt(const std::vector<double>& ts, const std::vector<double>& v, double t) {
+    if (ts.empty()) return 0.0;
+    if (t <= ts.front()) return v.front();
+    for (std::size_t k = 1; k < ts.size(); ++k)
+        if (ts[k] >= t) {
+            const double a = (t - ts[k - 1]) / std::max(ts[k] - ts[k - 1], 1.0e-12);
+            return (1.0 - a) * v[k - 1] + a * v[k];
+        }
+    return v.back();
+}
+
+// Hazen (midpoint) quantile of a sample.
+double hazen(std::vector<double> x, double p) {
+    std::sort(x.begin(), x.end());
+    const double r = p * static_cast<double>(x.size()) - 0.5;
+    if (r <= 0.0) return x.front();
+    if (r >= static_cast<double>(x.size() - 1)) return x.back();
+    const auto k = static_cast<std::size_t>(r);
+    return x[k] + (r - static_cast<double>(k)) * (x[k + 1] - x[k]);
+}
+
+}  // namespace
+
+TEST(AdditiveSignSplit, ThresholdOutletsDoNotDrainDryMembers) {
+    const O16Run rom = runO16(1.0, true, "rom");
+    ASSERT_TRUE(rom.ok);
+    ASSERT_FALSE(rom.c.empty()) << "the soft-rain plane should run";
+    const std::size_t M = rom.c.size();
+    ASSERT_EQ(rom.devJ1.size(), rom.t.size() * M);
+    std::vector<O16Run> mc;
+    const int K = 21;
+    for (int k = 0; k < K; ++k) {
+        const double ck = openswmm::uncertainty::probit((k + 0.5) / K);
+        mc.push_back(runO16(1.0 + 0.2 * ck, false, "mc" + std::to_string(k)));
+        ASSERT_TRUE(mc.back().ok);
+    }
+    double peakJ0 = 0.0, peakW = 0.0;
+    for (std::size_t s = 0; s < rom.t.size(); ++s) {
+        peakJ0 = std::max(peakJ0, rom.hJ0[s] - 100.0);
+        peakW = std::max(peakW, rom.hW[s] - rom.invW);
+    }
+    std::printf("[O-16b] main run: J0 peak depth %.3f ft (orifice crest %.2f), W peak depth %.3f ft (pump on %.2f / off %.2f), planes %d\n",
+                peakJ0, kO16Crest, peakW, kO16YOn, kO16YOff, rom.planes_max);
+    ASSERT_LT(peakJ0, kO16Crest) << "the orifice must be closed in the main run";
+    ASSERT_LT(peakW, kO16YOn) << "the pump must stay off in the main run";
+    ASSERT_GT(peakW, kO16YOff) << "the main run must rise above the pump's shutoff depth";
+
+    // (a) J1 (dry behind the closed orifice): no member below the main run is
+    // drained below the invert; the closed orifice has no lower line (d- = 0).
+    double low = 0.0, high = 0.0;
+    long below = 0;
+    for (std::size_t s = 0; s < rom.t.size(); ++s)
+        for (std::size_t i = 0; i < M; ++i) {
+            const double v = rom.devJ1[s * M + i];
+            high = std::max(high, v);
+            if (rom.c[i] >= 0.0) continue;
+            const double lev = rom.hJ1[s] + v - rom.invJ1;
+            low = std::min(low, lev);
+            if (lev < -1.0e-9) ++below;
+        }
+    double mc_hi_J1 = 0.0;
+    for (const auto& m : mc)
+        for (std::size_t s = 0; s < m.t.size(); ++s) mc_hi_J1 = std::max(mc_hi_J1, m.hJ1[s] - m.invJ1);
+    std::printf("[O-16b] J1: lowest member depth %.4f ft (member-steps below invert %ld); highest member deviation %.3f ft; MC highest depth %.3f ft\n",
+                low, below, high, mc_hi_J1);
+    EXPECT_EQ(below, 0) << "members below the main run drained through a closed orifice";
+
+    // (b) W while the main pump is below capacity (here: off): the band against
+    // the Monte Carlo's, over the samples where the Monte Carlo has a band.
+    std::vector<double> ratios, up_ratios;
+    double mc_w_max = 0.0, rom_w_max = 0.0;
+    for (std::size_t s = 0; s < rom.t.size(); ++s) {
+        if (rom.qP[s] >= kO16Cap * (1.0 - 1.0e-9)) continue;
+        std::vector<double> lev(M), ml(static_cast<std::size_t>(K));
+        for (std::size_t i = 0; i < M; ++i) lev[i] = std::max(rom.hW[s] + rom.devW[s * M + i], rom.invW);
+        for (int k = 0; k < K; ++k) ml[static_cast<std::size_t>(k)] = interpAt(mc[static_cast<std::size_t>(k)].t, mc[static_cast<std::size_t>(k)].hW, rom.t[s]);
+        const double wr = hazen(lev, 0.95) - hazen(lev, 0.05);
+        const double wm = hazen(ml, 0.95) - hazen(ml, 0.05);
+        mc_w_max = std::max(mc_w_max, wm);
+        rom_w_max = std::max(rom_w_max, wr);
+        if (wm > 0.05) ratios.push_back(wr / wm);
+        // The upper half alone (q95 - median): where the pump acts.
+        const double ur = hazen(lev, 0.95) - hazen(lev, 0.5), um = hazen(ml, 0.95) - hazen(ml, 0.5);
+        if (um > 0.05) up_ratios.push_back(ur / um);
+    }
+    ASSERT_GT(ratios.size(), 20u) << "the Monte Carlo should carry a band at W";
+    std::vector<double> rs = ratios;
+    std::sort(rs.begin(), rs.end());
+    const double med = rs[rs.size() / 2];
+    std::printf("[O-16b] W: %zu samples, width ratio ROM/MC min %.3f median %.3f max %.3f; widest band ROM %.3f ft, MC %.3f ft\n",
+                rs.size(), rs.front(), med, rs.back(), rom_w_max, mc_w_max);
+    EXPECT_GE(med, 0.5);
+    EXPECT_LE(med, 2.0) << "the wetter members did not pass their extra water through the pump";
+    ASSERT_GT(up_ratios.size(), 20u);
+    std::sort(up_ratios.begin(), up_ratios.end());
+    const double med_up = up_ratios[up_ratios.size() / 2];
+    std::printf("[O-16b] W upper half (q95 - q50): %zu samples, ratio ROM/MC median %.3f\n", up_ratios.size(), med_up);
+    EXPECT_GE(med_up, 0.5);
+    EXPECT_LE(med_up, 2.0) << "the wetter members did not pass their extra water through the pump";
+
+    // (c) the positive side passes extra water through the pump; the negative
+    // side has no pump line while the main pump is off (nothing to stop).
+    EXPECT_TRUE(rom.pump_upper_line) << "the pump never entered the upper half's edge list";
+    EXPECT_EQ(rom.pump_lower_line_while_off, 0);
 }
 #endif  // OPENSWMM_HAS_2D

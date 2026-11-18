@@ -8155,6 +8155,39 @@ int SWMMEngine::end() noexcept {
         for (int j : rom1d_pg_envelope_links_) std::printf("[PH-ports] monotone envelope on link %s\n", ctx_.link_names.name_of(j).c_str());
         std::fflush(stdout);
     }
+    if (!rom1d_sink_cnt_.empty()) {
+        // O-16 sink counter (OPENSWMM_ADD_SINK_REPORT=1): the plane's low side.
+        std::vector<std::size_t> w;
+        long tot = 0;
+        double deep = 0.0;
+        for (std::size_t a = 0; a < rom1d_sink_cnt_.size(); ++a) {
+            tot += rom1d_sink_cnt_[a];
+            deep = std::min(deep, rom1d_sink_min_[a]);
+            if (rom1d_sink_cnt_[a] > 0) w.push_back(a);
+        }
+        std::sort(w.begin(), w.end(), [&](std::size_t x, std::size_t y) { return rom1d_sink_cnt_[x] > rom1d_sink_cnt_[y]; });
+        std::printf("[ADD-sinks] member-steps > 0.05 ft below invert %ld (deepest %.3f ft) at %zu nodes\n", tot, deep, w.size());
+        for (std::size_t k = 0; k < w.size() && k < 12; ++k)
+            std::printf("[ADD-sinks] %s %ld deepest %.3f ft, highest member above main %.3f ft\n",
+                        ctx_.node_names.name_of(rom1d_active_map_[w[k]]).c_str(), rom1d_sink_cnt_[w[k]],
+                        rom1d_sink_min_[w[k]], rom1d_sink_max_[w[k]]);
+        if (const char* nl = std::getenv("OPENSWMM_ADD_SINK_NODES")) {
+            std::string all(nl), tok;
+            for (std::size_t k = 0; k <= all.size(); ++k) {
+                if (k == all.size() || all[k] == ',') {
+                    const int full = ctx_.node_names.find(tok);
+                    const int a = (full >= 0 && rom1d_ && full < static_cast<int>(rom1d_->full_to_active.size()))
+                                      ? rom1d_->full_to_active[static_cast<std::size_t>(full)] : -1;
+                    if (a >= 0 && static_cast<std::size_t>(a) < rom1d_sink_cnt_.size())
+                        std::printf("[ADD-sinks] node %s %ld deepest %.3f ft, highest member above main %.3f ft\n", tok.c_str(),
+                                    rom1d_sink_cnt_[static_cast<std::size_t>(a)], rom1d_sink_min_[static_cast<std::size_t>(a)],
+                                    rom1d_sink_max_[static_cast<std::size_t>(a)]);
+                    tok.clear();
+                } else tok.push_back(all[k]);
+            }
+        }
+        std::fflush(stdout);
+    }
     if (wq_csv_.is_open()) {
         wq_csv_.close();
     }
@@ -11716,6 +11749,8 @@ void SWMMEngine::buildROM1D() noexcept {
     rom1d_fmult_cols_.clear();
     rom1d_add_np_ = 0;
     rom1d_add_state_.clear();
+    rom1d_add_kappa_.clear();
+    rom1d_add_split_.reset();
 
     // Generic registered-parameter path (PARAMETER_REGISTRY.md §6). MANNINGS_N/
     // RAINFALL are the built-in path handled above; every other active 1D spec
@@ -11953,7 +11988,9 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
     ensureXspCache();
     auto& edges = rom1d_fs_edges_;
     edges.clear();
-    rom1d_fs_dry_edges_.clear();
+    rom1d_rain_pos_.clear();
+    rom1d_rain_neg_.clear();
+    std::vector<uncertainty::FlowEdge> dry_pos, dry_neg;   // the rain lists' dry pipes, appended last
     auto act = [&](int full) -> int {
         return (full >= 0 && full < static_cast<int>(f2a.size())) ? f2a[static_cast<std::size_t>(full)] : -1;
     };
@@ -12012,6 +12049,92 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
         const double sgn = (up_full == ctx_.links.node1[static_cast<std::size_t>(j)]) ? 1.0 : -1.0;
         return std::max(sgn * (qp - qm) / (2.0 * sig), 0.0);
     };
+    // O-16b (docs/uncertainty/O16_PLANE_SINKS.md §4): the rain channel carries
+    // two planes, one for the members above the main run (kappa > 0) and one
+    // for those below (kappa < 0), and each half sees a threshold outlet's
+    // rating over ITS half of the member range: sigma+ / sigma- = 1.645 x the
+    // RMS of the members' deviation at the node on that side (the members with
+    // positive / negative deviation). Without planes, the report band's upper /
+    // lower half.
+    auto memberRangeHalves = [&](int a, double& sp, double& sm) {
+        sp = sm = 0.0;
+        const auto ua = static_cast<std::size_t>(a);
+        const auto uP = static_cast<std::size_t>(std::max(rom1d_add_np_, 0));
+        const auto uM = static_cast<std::size_t>(rom1d_->n_ensemble);
+        const auto un = static_cast<std::size_t>(rom1d_active_map_.size());
+        if (uP > 0 && rom1d_add_state_.size() == uP * un && rom1d_add_kappa_.size() == uM * uP && uM > 0) {
+            const bool corr = rom1d_corr_.size() == uM * un;
+            double s2p = 0.0, s2m = 0.0;
+            std::size_t np = 0, nm = 0;
+            for (std::size_t i = 0; i < uM; ++i) {
+                double v = corr ? rom1d_corr_[i * un + ua] : 0.0;
+                for (std::size_t p = 0; p < uP; ++p) v += rom1d_add_kappa_[i * uP + p] * rom1d_add_state_[p * un + ua];
+                if (v > 0.0) { s2p += v * v; ++np; }
+                else if (v < 0.0) { s2m += v * v; ++nm; }
+            }
+            if (np > 0) sp = 1.645 * std::sqrt(s2p / static_cast<double>(np));
+            if (nm > 0) sm = 1.645 * std::sqrt(s2m / static_cast<double>(nm));
+            return;
+        }
+        if (rom1d_->q95.empty() || ua >= rom1d_->q95.size() || ua >= rom1d_->q50.size()) return;
+        sp = std::max(rom1d_->q95[ua] - rom1d_->q50[ua], 0.0);
+        sm = std::max(rom1d_->q50[ua] - rom1d_->q05[ua], 0.0);
+    };
+    // One-sided secants of a structure's rating at its upstream node:
+    //   d+ = (Q(h* + sigma+) - Q*) / sigma+,  d- = (Q* - Q(h* - sigma-)) / sigma-,
+    // floored at 0 (ratings rise with the upstream head). The low member's line
+    // Q* + d-·z is >= 0 at z = -sigma-: it never runs a closed outlet backwards.
+    auto structHalves = [&](int j, int up_full, double& dp, double& dm) {
+        dp = dm = 0.0;
+        const int a = act(up_full);
+        if (a < 0) return;
+        double sp = 0.0, sm = 0.0;
+        memberRangeHalves(a, sp, sm);
+        if (!(sp > 1.0e-6) && !(sm > 1.0e-6)) return;
+        const double sgn = (up_full == ctx_.links.node1[static_cast<std::size_t>(j)]) ? 1.0 : -1.0;
+        const double q0 = sgn * hydstruct_.flowAtShiftedDepth(ctx_, j, up_full, 0.0);
+        if (!std::isfinite(q0)) return;
+        if (sp > 1.0e-6) {
+            const double qp = sgn * hydstruct_.flowAtShiftedDepth(ctx_, j, up_full, +sp);
+            if (std::isfinite(qp)) dp = std::max((qp - q0) / sp, 0.0);
+        }
+        if (sm > 1.0e-6) {
+            const double qm = sgn * hydstruct_.flowAtShiftedDepth(ctx_, j, up_full, -sm);
+            if (std::isfinite(qm)) dm = std::max((q0 - qm) / sm, 0.0);
+        }
+    };
+    // The same for a depth-rated pump (PUMP2/PUMP4: StructureSolver::
+    // pumpFlowAtDepth, at the main run's setting, honouring y_on/y_off: the
+    // (b1) semantics), about the main run's actual flow Q*. A pump below its
+    // capacity (a junction wet well whose pump is limited to its inflow, or a
+    // pump about to start) passes a wetter member's extra water: d+ =
+    // (Q_cap - Q*)/sigma+. A flat curve has dQ/dH = 0, so its tangent alone left
+    // the well with no outlet (Bellinge G70F11P, O-16). Returns false for
+    // volume/head/ideal pumps (their flow is not a function of the inlet depth).
+    auto pumpHalves = [&](int j, int up_full, double q_star, double& dp, double& dm) -> bool {
+        dp = dm = 0.0;
+        const auto uu = static_cast<std::size_t>(up_full);
+        const double d_star = std::max(nodes.head[uu] - nodes.invert_elev[uu], 0.0);
+        const double q_rated = hydstruct_.pumpFlowAtDepth(ctx_, j, d_star);
+        if (!std::isfinite(q_rated)) return false;
+        const int a = act(up_full);
+        if (a < 0) return true;
+        double sp = 0.0, sm = 0.0;
+        memberRangeHalves(a, sp, sm);
+        if (sp > 1.0e-6) dp = std::max((hydstruct_.pumpFlowAtDepth(ctx_, j, d_star + sp) - q_star) / sp, 0.0);
+        if (sm > 1.0e-6) {
+            dm = std::max((q_star - hydstruct_.pumpFlowAtDepth(ctx_, j, std::max(d_star - sm, 0.0))) / sm, 0.0);
+            // A pump running below its curve at the main run's depth is held to
+            // its inflow (the wet-well limiter, legacy getModPumpFlow): a member
+            // with less inflow pumps less and its well holds, as the main run's
+            // does (Bellinge G70F11P: Monte Carlo spread 0.08 ft at 2 ft depth).
+            // Its lower line is the secant to zero flow at the bottom of the
+            // member range, q*/sigma-. BEYOND THE O-16 NOTE (O16_PLANE_SINKS.md §4):
+            // added in O-16b, owner to keep or drop (VALIDATION.md "O-16b").
+            if (q_star < q_rated - 1.0e-6) dm = std::max(dm, q_star / sm);
+        }
+        return true;
+    };
     for (int j = 0; j < ctx_.n_links(); ++j) {
         const auto uj = static_cast<std::size_t>(j);
         const double qs = links.flow[uj];
@@ -12034,7 +12157,11 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
             const int dn = (S0 >= 0.0) ? links.node2[uj] : links.node1[uj];
             const int a = act(up);
             if (a < 0 || static_cast<std::size_t>(a) >= rom1d_->q95.size()) continue;
-            const double sig = memberRange(a);
+            // The upper half of the member range only (O-16b): a member below
+            // the main run puts nothing into a pipe the main run leaves dry, so
+            // the dry pipe's line in the lower half is d- = 0.
+            double sig = 0.0, sig_lo = 0.0;
+            memberRangeHalves(a, sig, sig_lo);
             if (!(sig > 1.0e-6)) continue;
             const XSectParams& xs = xsp_cache_[uj];
             const double off = (up == links.node1[uj]) ? links.offset1[uj] : links.offset2[uj];
@@ -12052,10 +12179,13 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
             e.link = j;
             e.conduit = false;
             e.d = qn / sig;
-            rom1d_fs_dry_edges_.push_back(e);   // rain channel only: the roughness response is unchanged
+            dry_pos.push_back(e);   // rain channel only: the roughness response is unchanged
+            e.d = 0.0;
+            dry_neg.push_back(e);
             continue;
         }
-        if (q < 1.0e-6 && !is_struct) continue;
+        const bool is_pump = links.type[uj] == LinkType::PUMP;
+        if (q < 1.0e-6 && !is_struct && !is_pump) continue;   // a still pump: rain channel only (below)
         const bool fwd = q < 1.0e-6 ? true : qs >= 0.0;   // a still structure: its own direction
         const int up = fwd ? links.node1[uj] : links.node2[uj];
         const int dn = fwd ? links.node2[uj] : links.node1[uj];
@@ -12066,7 +12196,28 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
         if (e.up < 0) continue;   // flow leaves an outfall: nothing to solve
         if (links.type[uj] != LinkType::CONDUIT) {
             e.conduit = false;
-            e.d = std::fabs(links.dqdh[uj]);
+            const double tangent = std::fabs(links.dqdh[uj]);
+            // Rain channel (O-16b): one-sided secants per half. A closed
+            // structure or a stopped pump (Q* = 0) has no line in the lower
+            // half (d- = 0): a member below the main run cannot run it backwards.
+            uncertainty::FlowEdge ep = e, em = e;
+            ep.d = em.d = tangent;
+            bool rated = true;
+            double dp = 0.0, dm = 0.0;
+            if (is_struct) structHalves(j, up, dp, dm);
+            else rated = pumpHalves(j, up, std::max(qs, 0.0), dp, dm);
+            if (rated) {
+                ep.d = std::max(tangent, dp);
+                em.d = (q < 1.0e-6) ? 0.0 : std::max(tangent, dm);
+            }
+            if ((q >= 1.0e-6 || ep.d > 0.0 || em.d > 0.0) && (rated || q >= 1.0e-6)) {
+                rom1d_rain_pos_.push_back(ep);
+                rom1d_rain_neg_.push_back(em);
+            }
+            // Roughness response: unchanged (symmetric secant for structures,
+            // the tangent for pumps; a still pump is not an edge).
+            if (is_pump && q < 1.0e-6) continue;
+            e.d = tangent;
             if (is_struct) e.d = std::max(e.d, secant(j, up));
             if (q < 1.0e-6 && !(e.d > 0.0)) continue;
             edges.push_back(e);
@@ -12132,7 +12283,11 @@ bool SWMMEngine::computeRom1dFlowSource() noexcept {
             e.jd = -j_full;
         }
         edges.push_back(e);
+        rom1d_rain_pos_.push_back(e);   // a flowing conduit: the same line in both halves
+        rom1d_rain_neg_.push_back(e);
     }
+    rom1d_rain_pos_.insert(rom1d_rain_pos_.end(), dry_pos.begin(), dry_pos.end());
+    rom1d_rain_neg_.insert(rom1d_rain_neg_.end(), dry_neg.begin(), dry_neg.end());
     // A node overflowing at its rim has its head pinned by the spill: no
     // roughness change can raise it (2026-10-13: Bellinge G70F143 at its rim
     // with zero Monte Carlo spread read 2x the drop below it, up to 106 ft).
@@ -12344,14 +12499,18 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
     }
 
     const int P = static_cast<int>(q.size());
-    if (P != rom1d_add_np_ || rom1d_add_state_.size() != static_cast<std::size_t>(P) * un) {
-        rom1d_add_np_ = P;
-        rom1d_add_state_.assign(static_cast<std::size_t>(P) * un, 0.0);   // (re)start at zero deviation
+    if (P == 0) {
+        rom1d_add_split_.step(na, rom1d_rain_pos_, rom1d_rain_neg_, rom1d_h18_S_.data(), dt, &rom1d_fs_pinned_, q, kap, M);
+        rom1d_add_np_ = 0;
+        rom1d_add_state_.clear();
+        rom1d_add_kappa_.clear();
+        rom1d_->setAdditivePlanes(0, nullptr, nullptr);
+        rom1d_->setMemberAdditive(nullptr);
+        return;
     }
-    if (P == 0) { rom1d_->setAdditivePlanes(0, nullptr, nullptr); rom1d_->setMemberAdditive(nullptr); return; }
 
-    rom1d_add_edges_ = rom1d_fs_edges_;
-    rom1d_add_edges_.insert(rom1d_add_edges_.end(), rom1d_fs_dry_edges_.begin(), rom1d_fs_dry_edges_.end());
+    rom1d_add_edges_ = rom1d_rain_pos_;
+    rom1d_add_edges_neg_ = rom1d_rain_neg_;
     // O-14: the planes carry the members' extra VOLUME, not their extra head.
     // Member i's balance is d[V(h + Psi_i) - V(h)]/dt = dq_i - dQ_out,i, whose
     // first-order form is d(S Psi)/dt = -J Psi + dq with S = dV/dh of the main
@@ -12365,19 +12524,17 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
     // 290,000 ft^3 per unit coefficient while the sources added 31,000 and the
     // Monte Carlo's extra network storage per +20 % rain was 12,000-47,000 ft^3;
     // carried as volume, the plane holds 25,000-60,000.
-    if (rom1d_add_S_prev_.size() == un) {
-        for (int p = 0; p < P; ++p)
-            for (std::size_t t = 0; t < un; ++t)
-                rom1d_add_state_[static_cast<std::size_t>(p) * un + t] *= rom1d_add_S_prev_[t] / rom1d_h18_S_[t];
-    }
-    rom1d_add_S_prev_ = rom1d_h18_S_;
-    rom1d_add_sys_.build(na, rom1d_add_edges_, rom1d_h18_S_.data(), dt, &rom1d_fs_pinned_);
-    rom1d_add_sweeps_ = 0;
-    for (int p = 0; p < P; ++p) {
-        const int sw = rom1d_add_sys_.step(q[static_cast<std::size_t>(p)].data(),
-                                           &rom1d_add_state_[static_cast<std::size_t>(p) * un]);
-        rom1d_add_sweeps_ = std::max(rom1d_add_sweeps_, sw);
-    }
+    // O-16b (docs/uncertainty/O16_PLANE_SINKS.md): every plane is carried in two
+    // halves, Psi+ for kappa > 0 and Psi- for kappa < 0, each on its own edge
+    // list (one-sided secants of threshold outlets and pumps, d- = 0 for a
+    // closed outlet or dry pipe). Where the lists coincide and the halves never
+    // differed this is the single-plane channel bit for bit (SignSplitPlanes).
+    const int np = rom1d_add_split_.step(na, rom1d_add_edges_, rom1d_add_edges_neg_, rom1d_h18_S_.data(), dt,
+                                         &rom1d_fs_pinned_, q, kap, M);
+    rom1d_add_sweeps_ = rom1d_add_split_.sweeps;
+    rom1d_add_np_ = np;
+    rom1d_add_state_ = rom1d_add_split_.state;
+    rom1d_add_kappa_ = rom1d_add_split_.kappa;
     // Plane trace (diagnostic only, PORT_HAMILTONIAN O-14): with
     // OPENSWMM_ADD_DUMP_NODES=name,... and OPENSWMM_PH_DUMP_DIR set, every
     // routing step writes one row per named node to <dir>/plane_trace.csv:
@@ -12413,7 +12570,7 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
                 std::error_code ec;
                 std::filesystem::create_directories(dd, ec);
                 pf = std::fopen((std::string(dd) + "/plane_trace.csv").c_str(), "w");
-                if (pf) std::fprintf(pf, "t_s,node,head,depth,rim,overflow,pinned,S,dq,runoff,psi,edges\n");
+                if (pf) std::fprintf(pf, "t_s,node,head,depth,rim,overflow,pinned,S,dq,runoff,psi,psi_neg,edges\n");
             }
         }
         static const double pt1 = std::getenv("OPENSWMM_PH_DUMP_T1") ? std::atof(std::getenv("OPENSWMM_PH_DUMP_T1")) : 1.0e300;
@@ -12427,28 +12584,79 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
                         const int sidx = rom1d_soft_sub_[static_cast<std::size_t>(k)];
                         if (sidx >= 0) ro += ctx_.subcatches.runoff[static_cast<std::size_t>(sidx)];
                     }
-                std::fprintf(pf, "%.1f,%s,%.4f,%.4f,%.4f,%.4g,%d,%.4g,%.5g,%.5g,%.5g,", ctx_.current_time, name.c_str(),
+                // psi_neg: plane 0's lower half after the O-16b split (= psi before it).
+                const double psi_neg = (rom1d_add_np_ == 2 * rom1d_add_split_.n_src && rom1d_add_split_.n_src > 0)
+                                           ? rom1d_add_state_[static_cast<std::size_t>(rom1d_add_split_.n_src) * rom1d_active_map_.size() + ua]
+                                           : rom1d_add_state_[ua];
+                std::fprintf(pf, "%.1f,%s,%.4f,%.4f,%.4f,%.4g,%d,%.4g,%.5g,%.5g,%.5g,%.5g,", ctx_.current_time, name.c_str(),
                              ctx_.nodes.head[ui], ctx_.nodes.depth[ui],
                              ctx_.nodes.invert_elev[ui] + ctx_.nodes.full_depth[ui], ctx_.nodes.overflow[ui],
                              (ua < rom1d_fs_pinned_.size() && rom1d_fs_pinned_[ua]) ? 1 : 0, rom1d_h18_S_[ua],
-                             q[0][ua], ro, rom1d_add_state_[ua]);
-                for (const auto& e : rom1d_add_edges_) {
+                             q[0][ua], ro, rom1d_add_state_[ua], psi_neg);
+                for (std::size_t ke = 0; ke < rom1d_add_edges_.size(); ++ke) {
+                    const auto& e = rom1d_add_edges_[ke];
                     if (e.up != a && e.dn != a) continue;
-                    std::fprintf(pf, "%s%s:q%.4g:u%.4g:d%.4g:k%.4g;", e.up == a ? ">" : "<",
-                                 ctx_.link_names.name_of(e.link).c_str(), e.q, e.ju, e.jd, e.d);
+                    const double dm = ke < rom1d_add_edges_neg_.size() ? rom1d_add_edges_neg_[ke].d : e.d;
+                    std::fprintf(pf, "%s%s:q%.4g:u%.4g:d%.4g:k%.4g:m%.4g;", e.up == a ? ">" : "<",
+                                 ctx_.link_names.name_of(e.link).c_str(), e.q, e.ju, e.jd, e.d, dm);
                 }
                 std::fputc('\n', pf);
             }
         }
     }
-    stepRom1dStorageMembers(dt, q, kap);
-    rom1d_add_kappa_.assign(uM * static_cast<std::size_t>(P), 0.0);
-    for (std::size_t i = 0; i < uM; ++i)
-        for (int p = 0; p < P; ++p) {
-            const auto& k = kap[static_cast<std::size_t>(p)];
-            rom1d_add_kappa_[i * static_cast<std::size_t>(P) + static_cast<std::size_t>(p)] = (i < k.size()) ? k[i] : 0.0;
+    // The per-member path reads the planes as handed to the ROM: with the split,
+    // 2P planes (each source twice, kappa+ then kappa-), so its linear nodes'
+    // plane level is u_i = sum_p kappa+_ip Psi+_p + kappa-_ip Psi-_p.
+    if (np == P) {
+        stepRom1dStorageMembers(dt, q, kap);
+    } else {
+        std::vector<std::vector<double>> q2(q), kap2;
+        q2.insert(q2.end(), q.begin(), q.end());
+        kap2.reserve(static_cast<std::size_t>(np));
+        for (int h = 0; h < 2; ++h)
+            for (int p = 0; p < P; ++p) {
+                std::vector<double> k(uM, 0.0);
+                for (std::size_t i = 0; i < uM; ++i) k[i] = rom1d_add_kappa_[i * static_cast<std::size_t>(np) + static_cast<std::size_t>(h * P + p)];
+                kap2.push_back(std::move(k));
+            }
+        stepRom1dStorageMembers(dt, q2, kap2);
+    }
+    rom1d_->setAdditivePlanes(np, rom1d_add_state_.data(), rom1d_add_kappa_.data());
+    accumulateRom1dSinks();
+}
+
+// O-16 sink counter (diagnostic only): with OPENSWMM_ADD_SINK_REPORT=1, every
+// routing step counts, per active node, the members whose unclamped level
+// (main run + sum_p kappa_ip Psi_p + per-member correction) lies more than
+// 0.05 ft below the invert, and keeps the deepest such depth and the largest
+// member deviation above the main run. Printed by end(). Unset, nothing runs.
+void SWMMEngine::accumulateRom1dSinks() noexcept {
+    static const bool on = [] { const char* e = std::getenv("OPENSWMM_ADD_SINK_REPORT"); return e && *e == '1'; }();
+    if (!on || !rom1d_) return;
+    const auto un = rom1d_active_map_.size();
+    const auto uM = static_cast<std::size_t>(rom1d_->n_ensemble);
+    const auto uP = static_cast<std::size_t>(std::max(rom1d_add_np_, 0));
+    if (uP == 0 || rom1d_add_state_.size() != uP * un || rom1d_add_kappa_.size() != uM * uP) return;
+    if (rom1d_sink_cnt_.size() != un) {
+        rom1d_sink_cnt_.assign(un, 0);
+        rom1d_sink_min_.assign(un, 0.0);
+        rom1d_sink_max_.assign(un, 0.0);
+    }
+    const bool corr = rom1d_nl_enabled_ && rom1d_corr_.size() == uM * un;
+    for (std::size_t a = 0; a < un; ++a) {
+        const auto ui = static_cast<std::size_t>(rom1d_active_map_[a]);
+        const double d0 = ctx_.nodes.head[ui] - ctx_.nodes.invert_elev[ui];
+        for (std::size_t i = 0; i < uM; ++i) {
+            double v = corr ? rom1d_corr_[i * un + a] : 0.0;
+            for (std::size_t p = 0; p < uP; ++p) v += rom1d_add_kappa_[i * uP + p] * rom1d_add_state_[p * un + a];
+            const double d = d0 + v;
+            if (d < -0.05) {
+                ++rom1d_sink_cnt_[a];
+                rom1d_sink_min_[a] = std::min(rom1d_sink_min_[a], d);
+            }
+            rom1d_sink_max_[a] = std::max(rom1d_sink_max_[a], v);
         }
-    rom1d_->setAdditivePlanes(P, rom1d_add_state_.data(), rom1d_add_kappa_.data());
+    }
 }
 
 // ============================================================================
@@ -12606,8 +12814,10 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
     }
     // Member state z^n: the planes restart at zero when their count changes, and so do the members.
-    if (rom1d_mem_np_ != static_cast<int>(P) || rom1d_mem_z_.size() != uM * un) {
-        rom1d_mem_np_ = static_cast<int>(P);
+    // (The O-16b split doubles the planes handed over without restarting them:
+    // the state belongs to the source count.)
+    if (rom1d_mem_np_ != rom1d_add_split_.n_src || rom1d_mem_z_.size() != uM * un) {
+        rom1d_mem_np_ = rom1d_add_split_.n_src;
         rom1d_mem_z_.assign(uM * un, 0.0);
         rom1d_mem_dv_.clear();
         rom1d_store_W_.clear();
@@ -13100,13 +13310,19 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // and the line q* + ju·z_up + jd·z_dn pulled it toward the store's deficit
     // (Bellinge G71F06R_ovl -> the empty wet well G71F68Y, members 95–117 ft
     // below the main run, 2026-11-04; residual 1e4 cfs at the storm peak).
-    for (const auto& ed : rom1d_add_edges_) {
+    const bool neg_aligned = rom1d_add_edges_neg_.size() == rom1d_add_edges_.size();
+    for (std::size_t ke = 0; ke < rom1d_add_edges_.size(); ++ke) {
+        const auto& ed = rom1d_add_edges_[ke];
         if (ed.link >= 0 && is_port[static_cast<std::size_t>(ed.link)]) continue;
         const bool fu = isA(ed.up), fd = isA(ed.dn);
+        // O-16b: a one-way edge's line is d+ for a member above the main run and
+        // d- below it (aligned lists). In the member graph's linear part the
+        // planes' edge is the + half's: those nodes ride the planes anyway.
         if (!fu && !fd) { g.edges.push_back(ed); continue; }
         const bool gu = ed.up >= 0, gd = ed.dn >= 0;
         const double q_star = ed.conduit ? ed.q : std::fabs(links.flow[static_cast<std::size_t>(ed.link)]);
-        const double ju = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
+        const double ju_p = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
+        const double ju_m = ed.conduit ? ed.ju : (neg_aligned ? rom1d_add_edges_neg_[ke].d : ed.d);
         const double dU = depthAt(ed.up), dD = depthAt(ed.dn);
         const bool one_way = !ed.conduit;   // structure, pump or dry pipe the tables above did not take: never backwards (O-9)
         const bool is_conduit = ed.link >= 0 && links.type[static_cast<std::size_t>(ed.link)] == LinkType::CONDUIT;
@@ -13117,7 +13333,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         p.dn = ed.dn;
         p.dq = [=](int, double zu, double zd) {
             if (zu == 0.0 && zd == 0.0) return 0.0;
-            double qm = hb.apply(q_star + ju * zu + jd * zd, zu, zd);
+            double qm = hb.apply(q_star + (zu >= 0.0 ? ju_p : ju_m) * zu + jd * zd, zu, zd);
             if (one_way) qm = std::max(qm, 0.0);
             return PP::flooredFlow(qm, gu ? PP::dryFactor(dU, zu) : 1.0, gd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
         };
