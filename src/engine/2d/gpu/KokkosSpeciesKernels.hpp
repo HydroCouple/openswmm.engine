@@ -37,6 +37,7 @@
 
 #include <Kokkos_Core.hpp>
 #include <cmath>
+#include <cstddef>
 
 #include "KokkosSourceKernels.hpp"
 #include "KokkosTypes.hpp"
@@ -60,6 +61,10 @@ enum SpeciesLedger : int {
     kLedgerCouplingOut = 3,
     kSpeciesLedgers = 4
 };
+
+/// Cells summed by one kernel thread when the per-cell ledgers are folded for publication.
+/// Fixed, so a ledger total does not depend on the thread count or the device.
+inline constexpr std::size_t kSpeciesLedgerRun = 64;
 
 /**
  * @brief Views and constants of the transport rows, captured by value in a kernel.

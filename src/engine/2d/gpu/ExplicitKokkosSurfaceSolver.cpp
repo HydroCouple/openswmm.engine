@@ -3657,18 +3657,42 @@ void ExplicitKokkosSurfaceSolver::publishSpecies() {
         return species_host_;
     };
     {
+        // Fold each ledger row on the device in fixed runs of cells, one kernel thread per
+        // run in cell order, and finish on the host in run order. The totals do not depend
+        // on the thread count, and one value per run crosses to the host instead of one per
+        // cell. The kernel also clears the slots it has read.
         std::vector<double>* cell_ledgers[kSpeciesLedgers] = {
             &tr.gained_rainfall, &tr.gained_coupling, &tr.lost_infiltration, &tr.lost_coupling};
-        const auto& host = pull(d_species_ledger_);
+        const std::size_t rows = static_cast<std::size_t>(kSpeciesLedgers) * ns;
+        const std::size_t runs = (nt + kSpeciesLedgerRun - 1) / kSpeciesLedgerRun;
+        if (d_species_ledger_runs_.extent(0) != rows * runs)
+            d_species_ledger_runs_ =
+                DView(Kokkos::view_alloc(Kokkos::WithoutInitializing, "species_ledger_runs"),
+                      rows * runs);
+        auto ledger = d_species_ledger_, sums = d_species_ledger_runs_;
+        Kokkos::parallel_for(
+            "species_ledger_fold", Kokkos::RangePolicy<ExecSpace>(0, static_cast<int>(rows * runs)),
+            KOKKOS_LAMBDA(int j) {
+                const std::size_t row = static_cast<std::size_t>(j) / runs;
+                const std::size_t first = (static_cast<std::size_t>(j) % runs) * kSpeciesLedgerRun;
+                const std::size_t last =
+                    first + kSpeciesLedgerRun < nt ? first + kSpeciesLedgerRun : nt;
+                double sum = 0.0;
+                for (std::size_t i = first; i < last; ++i) {
+                    sum += ledger(row * nt + i);
+                    ledger(row * nt + i) = 0.0;
+                }
+                sums(j) = sum;
+            });
+        const auto& host = pull(d_species_ledger_runs_);
         for (std::size_t k = 0; k < static_cast<std::size_t>(kSpeciesLedgers); ++k)
             for (std::size_t r = 0; r < ns; ++r) {
                 double sum = 0.0;
-                const double* cells = host.data() + (k * ns + r) * nt;
-                for (std::size_t i = 0; i < nt; ++i)
-                    sum += cells[i];
+                const double* run_sums = host.data() + (k * ns + r) * runs;
+                for (std::size_t i = 0; i < runs; ++i)
+                    sum += run_sums[i];
                 into(*cell_ledgers[k], r, sum);
             }
-        Kokkos::deep_copy(d_species_ledger_, 0.0);
     }
     const std::size_t nbc = bc_slot_host_.size();
     if (nbc > 0) {
