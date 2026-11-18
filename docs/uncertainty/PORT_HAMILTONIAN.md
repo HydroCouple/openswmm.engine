@@ -5,6 +5,21 @@ Owner principle: one behaviour, no tuning switches; one internal A/B hook per ph
 Calibration rule: coverage ≥ 0.80 AND width ≤ 1.5 = calibrated; ≥ 0.80 wider = conservative; else ranking only.
 No tolerance is tuned to green a spread test. Statistics-bearing phases get a cross-vendor review.
 
+## 0. Outcome (2026-11-18)
+
+**Shipped on the branch** (phases 0–4, three conservation/law fixes found and landed in H19): area-orthonormal 2D basis from generalized eigenrelation; `PHOperator` core with two stability contracts (ℓ2 reduced, ℓ1 full-order one-way); H19 additive channel assembled through it, bit-identical to the shipped form; 1D per-mode rates pinned J−R property (test + docs); three fixes discovered on Bellinge (O-7 sync-batch street-pond booking across routing steps within coupling windows, O-9 one-way structures/pumps floored at both ends so linear nodes stay correct, O-14 plane carries volume across S jumps at crown entry/exit).
+
+**Per-member storage path (phase 5)** ships behind `rom1dStorageMembersEnabled()` default OFF. Reason in one sentence: equals OFF at the basins after the three fixes, better only on flood-probability Brier skill, produces 1.4–3.9 m near-rim spill bands at six shallow laterals and costs 1.35× wall time, so remains diagnostic infrastructure for the owner to toggle.
+
+| Metric | 1D all | Storage | 2D street | Brier / no-skill | Wall |
+|--------|--------|---------|-----------|------------------|------|
+| **OFF (shipped)** | 0.949/1.261 | 0.811/0.948 | 0.659/0.181 | 0.032 / 0.112 | 1,955 s |
+| **ON (O-15)** | 0.947/1.574 | 0.818/0.957 | 0.663/0.158 | 0.023 / 0.103 | 2,632 s |
+
+**Open items on the shipped path**: G71O020 plane level −206 ft (not reachable by per-member mechanism); G72UD11 OFF 0.099 m vs MC 1.105 m (symmetric width loss persists on the alternating-sign carry ratchet, O-15 diagnosis); 2D street coverage 0.66 (ranking only, no contribution to the 2D sidewalk solution); H15 corr20 0.785 at shipped recipe (owner decision per 2026-11-01 notes).
+
+**Cross-vendor review** 2026-11-16 — phase 2 clean (area-orthonormal basis, generalized eigenrelation, volume projection, no blocker); phase 5 blocker closed by R-1 (a failed member solve is now rejected and rides the shared plane, no invalid data published).
+
 ## 1. The idea
 
 Every deviation operator is written as
