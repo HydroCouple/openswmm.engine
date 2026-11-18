@@ -579,3 +579,57 @@ cases the current code excludes). Acceptance gates as in the table.
   **Gates (Release)**: member_ports 47, port_graph_replay 2, additive_channel 12, spectral_rom1d 101, 2d_spectral_rom 65, storage gate A 0.889/0.958,
   B 0.727/0.960, R 0.952/0.880 (unchanged). **Release 1D smoke** (ph_smoke1d): 37 s (O-12 48 s; machine quieter), k <= 33, admitted 18, closure
   added 7, 1 Jacobi fallback, not converged 0, member-steps rejected 0. Coupled Bellinge not run (as instructed).
+- 2026-11-18: O-13 (the four wide shallow laterals and the narrow G72UD11; `RomStorePorts.hpp` `HeadBound`, `stepRom1dStorageMembers`,
+  per-node trace, tests `HeadBound.*`, uncommitted). **Data first** (O-12 CSVs, mc_v3, demo_v4.inp, 2D h5): at G70S213, G70S214, G62F012,
+  G71F043 the ON band is one-sided upward (q95 +4…+9 ft for hours, q05 at the main run), q50 is NOT protected (G70S213 08:00 +1.6 ft,
+  downstream G70F212 +2 ft for 2 h); no admitted store, structure, pump or raised end within 3 hops of G70S213/G62F012 (plain 0.15–0.28 m
+  laterals); every one has an ON 2D pond within 25 m (q95 0.2–0.6 m, decaying over hours; OFF 0 after 07:00; main run dry). MC at 06:30:
+  G62F012 +0.46 m, G71F043 ±0.65 m, G70S213/S214 ~0 — the shared plane at 06:30 gives +1.5 m (OFF and ON alike).
+  G72UD11 is a JUNCTION (sump behind G72R83B's raised pipe end, 30.48 m), with the adverse chain G72R580/570/560 behind it; MC is
+  one-sided DOWNWARD there (members that the basin's 4–6 cm spill has not yet filled: −1.1 m at 08–09 h, +0.04 above the crest).
+  **Per-node trace** (new, diagnostic only: `OPENSWMM_PH_DUMP_NODES=a,b,..` + `OPENSWMM_PH_DUMP_DIR` [+ `OPENSWMM_PH_DUMP_T0`] writes
+  `node_trace.csv`, one row per member solve and named node: class store/port end/linear, d*, S, b, plane level u, z_prev, z, C, and the
+  extra flow on every incident edge and port at the solved levels, plus the store's carry scale and water; and ≤ 40 full graph dumps
+  (RomPortGraphDump format) of solves lifting a traced node > 1 ft). Coupled Bellinge Release to 07:46, 13 nodes, 530k rows
+  (`SWMM6/data/o13_diag`). **Classification**: (A) G70S213 is a LINEAR node (port end, not admitted until 07:00), its band is the
+  correction C (u = 0), not κΨ: the store G70S214 above it (dry main run, member held at its rim by its pond: 100–200 cfs in from the
+  street, the same out over the rim) drains through the dry pipe's port, whose law Q_n(y_up) ignores the downstream level — it delivered
+  the pipe's full bore, 0.99274 cfs, constant, for 1,000+ s into G70S213 while G70S213 rose to +89 ft (no rim port on a linear node);
+  at 07:00 G70S213 is admitted and its pond is filled by the 2D ROM's own exchange from that absurd head (the 23 m q95 cell). G71F043:
+  admitted store fed 1.3 cfs by G71F044 (a straight line, ju 0.9–1.3, jd −0.16…−0.5) while standing 1.8 ft ABOVE G71F044 in member head;
+  the plane under it reached u = 67 ft at 06:37. (B) G62F012 (and the persistent part at all four): before admission both G62F014 and
+  G62F012 are linear (C = 0) and the plane carries them +3 ft in the 06:25 surcharge (S = MIN_SURFAREA, rain-channel source 0.3–0.9 cfs);
+  admitted as near-rim manholes the members spill into the street; afterwards the member pond drains back through the manhole at the
+  pipe's capacity (pond port −1.0…−1.4 cfs in, pipe ~1 cfs out, manhole held at street level for hours) — physical given the pond, but the
+  pond is the plane's 3× surcharge overshoot made into real water. (C) G72UD11: plane deficit u q05 −1.2…−1.6 ft vs MC −3.6 ft; the
+  solve halves it again: 1D-smoke trace of the store's carry scale s (loss shared in proportion, gain equally) shows 526 loss / 317 gain
+  steps with cumulative product of s = 0.51 — the alternating-sign main-run mismatch ratchets every member deviation down. Candidates
+  (a) empty-store accounting, (c) the G71F68Y pump law, (d) dry-main-run pond port: not the cause at these nodes (G72UD11's members are
+  at the floor only in the deficit tail; G71F043's inflow is the line from G71F044, not the pumps; ponds are wet in members because of
+  (A)/(B), the composite law itself books correctly). **Fix taken: (A), as a law**: every conduit law in a member (dry-pipe rating, free
+  end, the floored straight line) is bounded by the full-bore friction flow at the member's own head over the downstream control,
+  Q ≤ K_b·s(h_up − max(h_dn, z_dn,end)), K_b = PHI/n·max(A·R^(2/3))·nbar/sqrt(L) raised to q*/s(H0) where the main run carries more
+  (anchor exact), off where the main run's own H0 < δ0. Q = min(law, bound): monotone, 0 once the member's downstream water reaches its
+  upstream water. No knob, no tolerance. **Tests** (member_ports 47 → 49): `HeadBound.AnchoredMonotoneAndZeroAgainstTheMembersHead`
+  (anchor exact for q* below and above the full-bore flow, off when drowned/adverse, zero at h_dn ≥ h_up, monotone on a 350×390 grid),
+  `HeadBound.DryPipeIntoALinearNodeNeverDeliversUphill` (G70S214 → G70S213 fixture: pond-fed store with a rim, dry pipe into a linear
+  node with no outlet, 2,000 steps: max h_B − h_A = −1.4e-11 ft, B fills to A's level 10.9 ft; without the bound 3.3e3 ft; zero data
+  exact). Mutation (bound returns the law): both fail. **Gates (Release)**: member_ports 49, port_graph_replay 2, additive_channel 12,
+  spectral_rom1d 101, 2d_spectral_rom 65, storage gate A 0.889/0.958, B 0.727/0.960 (unchanged), R 0.952/0.880 → 0.952/0.889 (median width; not A/B-separated, the only change in the tree is the bound). **Release 1D smoke**
+  (ph_o13): 44 s, k ≤ 33, admitted 18, closure +7, Jacobi 0, not converged 0, rejected 0, store below invert 100 (G80F11B 95, G72R33Bb 5,
+  deepest −0.123 ft), any-node 1,956,222 (−2044.5 ft), correction-only 137,514 (R-1: 1 fallback, 96 / 136,902). **Coupled Bellinge
+  (`demo_ph5`, Release, ON)**: wall 1000/2000/3000/4000 = 445 / 845 / 1,069 / 1,571 s, total **2,516 s** (O-12 2,290). `[PH-ports]`:
+  solves 340,750, Newton 1,236,941, Jacobi fallbacks 309, **not converged 19 = rejected 19** (O-12 6), k_max 558, admitted 388 (closure
+  +16), store member-steps below invert **10,151, deepest −399.8 ft** (O-12 3,153 / −105.9; new: G80F13P 806, G73F041 603, G71F043 341,
+  G71F044 341, G73F301 341), any-node 686,330 (400,083), correction-only 88,312 (35,356). **Scores vs mc_v3** (O-12 in brackets): 1D all
+  0.949/1.645 CONSERVATIVE (0.945/1.416); storage 0.807/0.914 **CALIBRATED** (0.795/0.795); trunk 0.828/1.267 (0.798/1.188); far from rim
+  0.958/1.704 (0.956/1.447); Brier 0.0198 vs 0.1039 (0.0202/0.1112); 2D street 0.657/0.160 (0.620/0.158). Nodes (MC / OFF / ON, m):
+  G72UD11 1.105 / 0.916 / **1.298** (0.225), G72R83B 0.062 / 2.995 / 0.167 (0.393), G72R150 0.454 / 3.445 / 1.220 (0.966), G70F11P 0.733 /
+  0.038 / 0.181, G71O020 0.007 / 0.033 / 0.030, G70S213 0 / 0.100 / 1.666 (1.624), G70S214 0 / 0.126 / 1.555 (1.534), G62F012 0.019 /
+  0.088 / 1.529 (1.398), G71F043 0.005 / 0.016 / 1.060 (1.152), G72R52X 0.273 / 0.088 / 0.037. **Reading**: the bound removes the uphill
+  delivery (G70S213 07:00 q95 +93 → +9.6 ft) and moves G72UD11 from 5× narrow to 1.2× wide and storage to calibrated, but the four
+  laterals' median band is unchanged — their persistent band is (B), the plane's surcharge overshoot turned into member pond water — and
+  new far laterals widen (G73F430/420/410 3.4/3.2/2.9 m, G62F113–118 ~1.8 m vs MC ≤ 0.08), with 19 rejected solves and deeper store sinks.
+  Net: not better than O-12 on the 1D aggregate; owner decision whether to keep it (law is right; what it exposes is (B) and the
+  G71F043/G71F044 sinks). Open: (B) admission of a near-rim manhole whose members are at the rim only through the plane's surcharge
+  burst; (C) the loss/gain-asymmetric carry ratchet at G72UD11.

@@ -138,6 +138,41 @@ inline double freeEndFlow(double q0, double K_y, double K_0, double H, double H0
     return q0 * f;
 }
 
+/// A conduit cannot carry a member's water against that member's own head (O-13).
+/// The member laws of a pipe are anchored on the main run's regime: a dry pipe's
+/// normal-flow rating Q_n(y_up), a supercritical free end (relay off), a straight
+/// line q* + ju·z_up + jd·z_dn with |jd| < ju. Each holds while the member's
+/// downstream water stays below its upstream water; none of them sees a member
+/// whose downstream has risen above its upstream, and each keeps pushing water
+/// uphill there (Bellinge 2026-11-17: G70S214 -> G70S213 delivered the dry pipe's
+/// full capacity, 0.99 cfs, into a node standing 89 ft above it; G71F044 ->
+/// G71F043 1.3 cfs against 1.8 ft of adverse member head). The bound is the
+/// pipe's full-bore friction flow at the member's head over the downstream
+/// control,
+///     Q <= K_b · s(h_up − max(h_dn, z_dn_end)),   s = sqrtReg,
+/// with K_b the full-bore conveyance factor PHI/n·max(A·R^(2/3))·n_barrels/sqrt(L),
+/// raised to q*/s(H0) where the main run carries more than that at its own head H0
+/// (so the bound never binds at the main run: Q(0,0) = q* exactly). Where the main
+/// run's own head over the downstream control is below δ0 (a drowned or adverse
+/// main run) the bound is off: the straight line with its jd is the law there.
+/// Q = min(law, bound): nondecreasing in z_up, nonincreasing in z_dn when the law
+/// is; zero once the member's downstream water reaches its upstream water.
+struct HeadBound {
+    double K = 0.0, hu = 0.0, hd = 0.0, z_end = 0.0;
+    bool active = false;
+    static HeadBound make(double K_full, double q_star, double hu, double hd, double z_end) {
+        HeadBound b;
+        const double H0 = hu - std::max(hd, z_end);
+        if (!(H0 > kDelta0) || !(K_full > 0.0) || !std::isfinite(K_full)) return b;
+        b.K = std::max(K_full, std::max(q_star, 0.0) / sqrtReg(H0));
+        b.hu = hu; b.hd = hd; b.z_end = z_end;
+        b.active = true;
+        return b;
+    }
+    double cap(double zu, double zd) const { return K * sqrtReg(hu + zu - std::max(hd + zd, z_end)); }
+    double apply(double q, double zu, double zd) const { return active ? std::min(q, cap(zu, zd)) : q; }
+};
+
 /// Raised-end pipe between B (pipe end z_B) and F (pipe end z_F), positive B -> F
 /// (note §1.3, corrected): water leaves a node only if it stands above that
 /// node's pipe end, and drives against the higher of the far water and the far

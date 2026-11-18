@@ -12780,6 +12780,23 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         for (int m = 0; m <= G; ++m) { run = std::max(run, conveyance1d(*e.xs, m * e.dy)); e.km[static_cast<std::size_t>(m)] = run; }
         return e;
     };
+    // The bound every conduit law carries in a member (RomStorePorts.hpp HeadBound, O-13):
+    // no flow against the member's own head. fu/fd: full node indices of the main-run
+    // up and down ends; q_star: the main run's flow up -> dn.
+    auto headBound = [&](int j, int fu, int fd, double q_star) {
+        const auto uj = static_cast<std::size_t>(j);
+        const int crow = ctx_.link_subtypes.conduit_row(j);
+        if (crow < 0 || fu < 0 || fd < 0 || uj >= xsp_cache_.size()) return PP::HeadBound{};
+        const auto ucr = static_cast<std::size_t>(crow);
+        const double n = ctx_.link_subtypes.conduits.roughness[ucr];
+        const double Lc = ctx_.link_subtypes.conduits.length[ucr];
+        const int nbar = std::max(ctx_.link_subtypes.conduits.barrels[ucr], 1);
+        const KEnv K = kenv(uj);
+        if (!(n > 0.0 && Lc > 0.0) || K.km.empty()) return PP::HeadBound{};
+        const double Kf = constants::PHI / n * K.km.back() * nbar / std::sqrt(Lc);
+        const double z_end = nodes.invert_elev[static_cast<std::size_t>(fd)] + offAt(uj, fd);
+        return PP::HeadBound::make(Kf, q_star, nodes.head[static_cast<std::size_t>(fu)], nodes.head[static_cast<std::size_t>(fd)], z_end);
+    };
     std::vector<char> is_port(static_cast<std::size_t>(ctx_.n_links()), 0), has_edge(is_port.size(), 0);
     for (const auto& ed : rom1d_add_edges_) if (ed.link >= 0) has_edge[static_cast<std::size_t>(ed.link)] = 1;
     // One-way rated port: a table of the rating at the member's level (the
@@ -12883,12 +12900,13 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         const KEnv K = kenv(uj);
         auto Qn = [K, coef](double y) { return y > 0.0 ? coef * K.eval(y) : 0.0; };
         const double T0 = Qn(y0), q_star = std::fabs(links.flow[uj]), d_star = std::max(y0, 0.0);
+        const PP::HeadBound hb = headBound(e.link, fu, otherEnd(uj, fu), q_star);
         PortGraph::Port p;
         p.up = e.up;
         p.dn = act(otherEnd(uj, fu));
-        p.dq = [=](int, double zu, double) {
-            if (zu == 0.0) return 0.0;
-            return PP::anchoredRatedFlow(Qn(y0 + zu), T0, q_star, d_star, zu) - q_star;
+        p.dq = [=](int, double zu, double zd) {
+            if (zu == 0.0 && zd == 0.0) return 0.0;
+            return hb.apply(PP::anchoredRatedFlow(Qn(y0 + zu), T0, q_star, d_star, zu), zu, zd) - q_star;
         };
         g.ports.push_back(std::move(p));
         is_port[uj] = 1;
@@ -12911,13 +12929,14 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         const bool use_dn = uj < rom1d_fs_relay_.size() ? rom1d_fs_relay_[uj] >= 0.5 : true;
         if (e.q > 0.0 && K0 > 0.0 && free_end && H0 > PP::kDelta0) {
             const double q0 = e.q;
+            const PP::HeadBound hb = headBound(e.link, fu, fd, q0);
             PortGraph::Port p;
             p.up = e.up;
             p.dn = act(fd);
             p.dq = [=](int, double zu, double zd) {
                 if (zu == 0.0 && zd == 0.0) return 0.0;
                 const double H = hu + zu - std::max(hd + zd, z_end);
-                return PP::freeEndFlow(q0, K.eval(y0 + zu), K0, H, H0, use_dn) - q0;
+                return hb.apply(PP::freeEndFlow(q0, K.eval(y0 + zu), K0, H, H0, use_dn), zu, zd) - q0;
             };
             g.ports.push_back(std::move(p));
             is_port[uj] = 1;
@@ -13006,12 +13025,15 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         const double ju = ed.conduit ? ed.ju : ed.d, jd = ed.conduit ? ed.jd : 0.0;
         const double dU = depthAt(ed.up), dD = depthAt(ed.dn);
         const bool one_way = !ed.conduit;   // structure, pump or dry pipe the tables above did not take: never backwards (O-9)
+        const bool is_conduit = ed.link >= 0 && links.type[static_cast<std::size_t>(ed.link)] == LinkType::CONDUIT;
+        const PP::HeadBound hb = is_conduit ? headBound(ed.link, fullOf(ed.up), ed.dn >= 0 ? fullOf(ed.dn) : otherEnd(static_cast<std::size_t>(ed.link), fullOf(ed.up)), q_star)
+                                            : PP::HeadBound{};
         PortGraph::Port p;
         p.up = ed.up;
         p.dn = ed.dn;
         p.dq = [=](int, double zu, double zd) {
             if (zu == 0.0 && zd == 0.0) return 0.0;
-            double qm = q_star + ju * zu + jd * zd;
+            double qm = hb.apply(q_star + ju * zu + jd * zd, zu, zd);
             if (one_way) qm = std::max(qm, 0.0);
             return PP::flooredFlow(qm, gu ? PP::dryFactor(dU, zu) : 1.0, gd ? PP::dryFactor(dD, zd) : 1.0) - q_star;
         };
@@ -13148,6 +13170,54 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         g.node_names = &rom1d_pg_names_;
         g.sim_time = ctx_.current_time;
     }
+    // Per-node trace (diagnostic only, PORT_HAMILTONIAN O-13): with
+    // OPENSWMM_PH_DUMP_NODES=name,name,... and OPENSWMM_PH_DUMP_DIR set, every
+    // member's solve writes one row per named node to <dir>/node_trace.csv: the
+    // node's class this step (store / port end / linear), main-run depth, the
+    // plane level u_i, start and solved level, correction, source, and the extra
+    // flow on every incident edge and port at the solved levels (the node's own
+    // balance row, linear nodes included: the L recovery). From
+    // OPENSWMM_PH_DUMP_T0 (s, default 0) on; rows with every level below 0.01 ft
+    // are skipped. Unset, nothing changes.
+    struct TraceNode { int a = -1; std::string name; std::vector<std::size_t> e, p; };
+    static std::vector<TraceNode> trace_nodes;
+    static std::FILE* trace_f = nullptr;
+    static double trace_t0 = 0.0;
+    static bool trace_init = false;
+    if (!trace_init) {
+        trace_init = true;
+        const char* nl = std::getenv("OPENSWMM_PH_DUMP_NODES");
+        const char* dd = std::getenv("OPENSWMM_PH_DUMP_DIR");
+        if (nl && *nl && dd && *dd) {
+            if (const char* t0 = std::getenv("OPENSWMM_PH_DUMP_T0")) trace_t0 = std::atof(t0);
+            std::string all(nl), tok;
+            for (std::size_t k = 0; k <= all.size(); ++k) {
+                if (k == all.size() || all[k] == ',') {
+                    const int full = ctx_.node_names.find(tok);
+                    if (full >= 0 && act(full) >= 0) { TraceNode tn; tn.a = act(full); tn.name = tok; trace_nodes.push_back(tn); }
+                    tok.clear();
+                } else tok.push_back(all[k]);
+            }
+            std::error_code ec;
+            std::filesystem::create_directories(dd, ec);
+            trace_f = std::fopen((std::string(dd) + "/node_trace.csv").c_str(), "w");
+            if (trace_f) std::fprintf(trace_f, "t_s,member,node,cls,d_star,S,b,u,z_prev,z,C,solved,flows\n");
+        }
+    }
+    const double t_now_s = ctx_.current_time;   // elapsed s
+    const bool tracing = trace_f && !trace_nodes.empty() && t_now_s >= trace_t0;
+    if (tracing && !g.node_names) {
+        rom1d_pg_names_.assign(static_cast<std::size_t>(g.n), std::string());
+        for (std::size_t t = 0; t < un; ++t) rom1d_pg_names_[t] = ctx_.node_names.name_of(rom1d_active_map_[t]);
+        g.node_names = &rom1d_pg_names_;
+    }
+    if (tracing) g.sim_time = ctx_.current_time;
+    if (tracing)
+        for (auto& tn : trace_nodes) {
+            tn.e.clear(); tn.p.clear();
+            for (std::size_t q = 0; q < g.edges.size(); ++q) if (g.edges[q].up == tn.a || g.edges[q].dn == tn.a) tn.e.push_back(q);
+            for (std::size_t q = 0; q < g.ports.size(); ++q) if (g.ports[q].up == tn.a || g.ports[q].dn == tn.a) tn.p.push_back(q);
+        }
     // ---- one solve per member ----
     // The linear part (every node no port touches) is the same for all members:
     // factored once here, with its Schur complement on the port/store nodes (O-5).
@@ -13221,6 +13291,60 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 ++rom1d_pg_below_floor_;
                 if (rom1d_pg_below_floor_node_.size() != un) rom1d_pg_below_floor_node_.assign(un, 0);
                 ++rom1d_pg_below_floor_node_[a];
+            }
+        }
+        if (tracing) {
+            auto nm = [&](int t) { return t < 0 ? std::string("OUT") : rom1d_pg_names_.size() > static_cast<std::size_t>(t) && !rom1d_pg_names_[static_cast<std::size_t>(t)].empty()
+                                                                         ? rom1d_pg_names_[static_cast<std::size_t>(t)] : ctx_.node_names.name_of(fullOf(t)); };
+            auto zz = [&](int t) { return (t < 0 || g.pinned[static_cast<std::size_t>(t)]) ? 0.0 : z[static_cast<std::size_t>(t)]; };
+            for (const auto& tn : trace_nodes) {
+                const auto ua = static_cast<std::size_t>(tn.a);
+                if (std::fabs(z[ua]) < 0.01 && std::fabs(u[i * un + ua]) < 0.01 && std::fabs(g.z_prev[ua]) < 0.01) continue;
+                bool port_end = false;
+                for (std::size_t q : tn.p) port_end |= g.ports[q].up >= 0 || g.ports[q].dn >= 0;
+                const int cls = g.store_of[ua] >= 0 ? 2 : (port_end ? 1 : 0);
+                std::string fl;
+                char buf[160];
+                for (std::size_t q : tn.e) {
+                    const auto& e = g.edges[q];
+                    const double f = e.conduit ? e.ju * zz(e.up) + (e.dn >= 0 ? e.jd * zz(e.dn) : 0.0) : e.d * zz(e.up);
+                    const int other = e.up == tn.a ? e.dn : e.up;
+                    std::snprintf(buf, sizeof buf, "E%s%s:%.5g:%s%.4g/%.4g;", e.up == tn.a ? ">" : "<", nm(other).c_str(), f,
+                                  e.conduit ? "c" : "d", e.conduit ? e.ju : e.d, e.jd);
+                    fl += buf;
+                }
+                for (std::size_t q : tn.p) {
+                    const auto& pt = g.ports[q];
+                    const double f = g.evalPort(pt, zz(pt.up), zz(pt.dn));
+                    const int other = pt.up == tn.a ? pt.dn : pt.up;
+                    std::snprintf(buf, sizeof buf, "P%s%s#%zu:%.5g;", pt.up == tn.a ? ">" : "<", nm(other).c_str(), q, f);
+                    fl += buf;
+                }
+                if (g.store_of[ua] >= 0) {   // store: the carry scale, main-run water before/after, carried and solved volume deviation
+                    const auto sb = static_cast<std::size_t>(g.store_of[ua]);
+                    std::snprintf(buf, sizeof buf, "ST:s=%.9g:Wold=%.6g:Wnew=%.6g:carried=%.6g:dv=%.6g;", store_scale[sb], rom1d_pg_wold_[sb],
+                                  rom1d_store_W_[sb], g.dV_prev[sb], g.stores[sb].dV(z[ua], nullptr));
+                    fl += buf;
+                }
+                std::fprintf(trace_f, "%.1f,%zu,%s,%d,%.4f,%.4g,%.5g,%.5f,%.5f,%.5f,%.5f,%d,%s\n", t_now_s, i, tn.name.c_str(), cls, depthAt(tn.a),
+                             g.S[ua], g.b[ua], u[i * un + ua], g.z_prev[ua], z[ua], z[ua] - u[i * un + ua], solved ? 1 : 0, fl.c_str());
+                // A full graph dump (RomPortGraphDump format) of a solve that lifts the node
+                // more than 1 ft while it is an unknown, at most one per node per 900 s, 40 in all.
+                static std::vector<double> last_dump;
+                static int n_dumps = 0;
+                if (last_dump.size() != trace_nodes.size()) last_dump.assign(trace_nodes.size(), -1.0e30);
+                const auto kk = static_cast<std::size_t>(&tn - trace_nodes.data());
+                if (cls >= 1 && z[ua] > 1.0 && n_dumps < 40 && t_now_s - last_dump[kk] >= 900.0) {
+                    last_dump[kk] = t_now_s;
+                    ++n_dumps;
+                    PortGraph::FailureInfo info;
+                    info.converged = solved;
+                    info.z_start = g.z_prev;
+                    info.z_newton = z;
+                    char path[200];
+                    std::snprintf(path, sizeof path, "%s/trace_%s_t%.0f_m%02zu.bin", std::getenv("OPENSWMM_PH_DUMP_DIR"), tn.name.c_str(), t_now_s, i);
+                    uncertainty::dump::writePortGraphDump(path, g, info, z);
+                }
             }
         }
 #ifdef OPENSWMM_HAS_2D

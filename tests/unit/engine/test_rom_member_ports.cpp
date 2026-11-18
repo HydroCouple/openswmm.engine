@@ -1159,6 +1159,98 @@ TEST(PortGraph, StraightLineOutletOfAStoreStopsAtItsFloor) {
 }
 
 // ---------------------------------------------------------------------------
+// O-13: a conduit carries no member water against the member's own head
+// (RomStorePorts.hpp HeadBound). Bellinge 2026-11-17: the dry pipe G70S214 ->
+// G70S213 kept delivering its full normal-flow capacity (0.99 cfs) into a linear
+// node standing 89 ft above the store it drained; G71F044 -> G71F043 (a straight
+// line with |jd| < ju) pushed 1.3 cfs against 1.8 ft of adverse member head.
+// ---------------------------------------------------------------------------
+TEST(HeadBound, AnchoredMonotoneAndZeroAgainstTheMembersHead) {
+    const double hu = 88.58, hd = 84.32, z_end = 84.32, Kf = 0.445;
+    // q* below the full-bore flow at the main run's head: K stays K_full
+    const P::HeadBound b = P::HeadBound::make(Kf, 0.3, hu, hd, z_end);
+    ASSERT_TRUE(b.active);
+    EXPECT_EQ(b.K, Kf);
+    EXPECT_EQ(b.apply(0.3, 0.0, 0.0), 0.3);                     // anchor exact
+    // q* above it: K raised so the bound never binds at the main run
+    const P::HeadBound c = P::HeadBound::make(Kf, 5.0, hu, hd, z_end);
+    EXPECT_GE(c.cap(0.0, 0.0), 5.0 - 1e-12);
+    EXPECT_EQ(c.apply(5.0, 0.0, 0.0), 5.0);
+    // a drowned / adverse main run: off (the straight line keeps its own jd)
+    EXPECT_FALSE(P::HeadBound::make(Kf, 0.3, 84.33, 84.32, 84.0).active);
+    EXPECT_FALSE(P::HeadBound::make(Kf, 0.3, 84.0, 84.5, 84.0).active);
+    EXPECT_EQ(P::HeadBound{}.apply(7.0, 1.0, 50.0), 7.0);
+    // zero once the member's downstream water reaches its upstream water
+    for (double zu = -2.0; zu <= 10.0; zu += 0.5) {
+        const double zd = hu + zu - hd;                           // h_dn = h_up
+        EXPECT_EQ(b.apply(0.99, zu, zd), 0.0);
+        EXPECT_EQ(b.apply(0.99, zu, zd + 3.0), 0.0);
+    }
+    // monotone: nondecreasing in z_up, nonincreasing in z_dn (law: a capped rating of z_up)
+    auto law = [&](double zu, double zd) { return b.apply(std::min(0.99, std::max(0.0, 0.2 * zu)), zu, zd); };
+    for (double zu = -1.0; zu < 12.0; zu += 0.037)
+        for (double zd = -1.0; zd < 15.0; zd += 0.041) {
+            EXPECT_LE(law(zu, zd), law(zu + 0.037, zd) + 1e-15);
+            EXPECT_GE(law(zu, zd), law(zu, zd + 0.041) - 1e-15);
+        }
+}
+
+namespace {
+// A dry main-run manhole A (store held near its rim by its member pond: inflow b)
+// drains through a dry pipe (one-way normal-flow rating of A's depth, capped at
+// full bore) into a linear manhole B that has no other outlet (Bellinge G70S214 ->
+// G70S213). Returns the largest member head excess h_B - h_A over the run (ft).
+double uphillExcess(bool bounded, double b_in, double* zB_end = nullptr) {
+    const double hu = 88.58, hd = 84.32, z_end = 84.32, z_rimA = 6.56;
+    const double coef = 0.6, Qfull = 0.92, Kf = 0.445, dt = 10.0;
+    const P::HeadBound hb = bounded ? P::HeadBound::make(Kf, 0.0, hu, hd, z_end) : P::HeadBound{};
+    PortGraph g;
+    g.resize(2);
+    g.dt = dt;
+    g.S = {1.17, 5.5};
+    PortGraph::Port pipe;
+    pipe.up = 0; pipe.dn = 1;
+    pipe.dq = [=](int, double zu, double zd) {
+        if (zu == 0.0 && zd == 0.0) return 0.0;
+        const double Qn = zu > 0.0 ? std::min(coef * std::pow(zu, 5.0 / 3.0), Qfull) : 0.0;
+        return hb.apply(P::anchoredRatedFlow(Qn, 0.0, 0.0, 0.0, zu), zu, zd);
+    };
+    g.ports.push_back(pipe);
+    PortGraph::Port rim;   // A's rim overflow: a loss above its rim
+    rim.up = 0; rim.dn = -1;
+    const double k = 100.0 * 1.17 / dt;
+    rim.dq = [=](int, double zu, double) { return zu == 0.0 ? 0.0 : P::overflowFlow(0.0, k, z_rimA, zu); };
+    g.ports.push_back(rim);
+    g.b = {b_in, 0.0};
+    std::vector<double> z = {0.0, 0.0};
+    double worst = -1e300;
+    for (int step = 0; step < 2000; ++step) {
+        g.z_prev = z;
+        if (!g.solve(z)) return 1e300;
+        worst = std::max(worst, (hd + z[1]) - (hu + z[0]));
+    }
+    if (zB_end) *zB_end = z[1];
+    return worst;
+}
+}  // namespace
+
+TEST(HeadBound, DryPipeIntoALinearNodeNeverDeliversUphill) {
+    double zB = 0.0;
+    const double excess = uphillExcess(true, 1.0, &zB);
+    std::printf("[O-13] bounded: max h_B - h_A %.3g ft, z_B end %.3f ft\n", excess, zB);
+    EXPECT_LE(excess, 1e-6);
+    EXPECT_GT(zB, 4.0);            // B fills to A's level: the water is there, not lost
+    double zB0 = 0.0;
+    const double excess0 = uphillExcess(false, 1.0, &zB0);
+    std::printf("[O-13] unbounded (the law before O-13): max h_B - h_A %.3g ft, z_B end %.1f ft\n", excess0, zB0);
+    EXPECT_GT(excess0, 100.0);     // the defect: B climbs without limit above A
+    // zero data is exact
+    double zz = 1.0;
+    EXPECT_LE(uphillExcess(true, 0.0, &zz), -4.26 + 1e-12);
+    EXPECT_EQ(zz, 0.0);
+}
+
+// ---------------------------------------------------------------------------
 // Piecewise-smooth solve (PORT_HAMILTONIAN O-4): kinks in monotone port laws
 // ---------------------------------------------------------------------------
 namespace {

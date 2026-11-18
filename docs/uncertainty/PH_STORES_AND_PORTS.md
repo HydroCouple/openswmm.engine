@@ -68,6 +68,15 @@ port's "up" end. Every port used at an admitted node must have three properties:
 | Street exchange (coupled manhole) | the orifice c·sqrt(2g)·sign(Δ)·s(\|Δ\|), s regularised below δ0, between the manhole store and its member pond store a_pond·p (§1.5, O-3) | `orificePortFlow` + `PondStore` (was `couplingOrificeQ`, deleted) |
 | Rim overflow | Q_ovf(h) = 0 below rim + sur; above it, flooding loss (or ponding) | the clamp `y_ceil` |
 
+*As built (O-13, PORT_HAMILTONIAN §6):* every conduit law in a member (dry-pipe rating, free end, the
+floored straight line) carries the head bound Q ≤ K_b·s(h_up − max(h_dn, z_dn,end)) (`ports::HeadBound`):
+the full-bore friction flow at the member's own head over the downstream control, K_b the full-bore
+conveyance factor raised to q*/s(H0) where the main run carries more (anchor exact), off where the
+main run's own head H0 < δ0 (drowned/adverse main run: the line's jd is the law). Q = min(law, bound)
+stays monotone and is 0 once the member's downstream water reaches its upstream water. Without it a dry
+pipe's normal-flow rating, a supercritical free end and a line with |jd| < ju pushed water uphill
+(Bellinge G70S214 → G70S213: 0.99 cfs into a node 89 ft above the store it drained).
+
 ### 1.3 Raised-end pipe (corrected)
 B has its pipe end at z_B; F has its pipe end at z_F > z_B (raised). With
 s(x) = sqrt(max(x, 0)) and K = PHI/n · A_f · R_f^{2/3} · nbar / sqrt(L):
