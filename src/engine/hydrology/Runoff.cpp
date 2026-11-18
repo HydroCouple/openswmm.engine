@@ -287,7 +287,14 @@ double RunoffSolver::nativeInfilFullLid(SimulationContext& ctx, int i, double dt
     const double rain = ctx.subcatches.rainfall[ui];
     const double runon = ctx.subcatches.runon_rate[ui]; // legacy Subcatch.runon
     const double depth = soa_.depth_perv[ui];
-    return infilGetInfil(ctx, i, rain, runon, depth, dt, infil_factor_used_[ui], recovery_factor);
+    // Frozen ground limits this native rate exactly as it limits the pervious subarea's:
+    // fully frozen ground skips the model, partly frozen ground takes the open share.
+    const double open = ctx.frozen_ground.factorOf(ui);
+    if (open <= 0.0)
+        return 0.0;
+    const double native =
+        infilGetInfil(ctx, i, rain, runon, depth, dt, infil_factor_used_[ui], recovery_factor);
+    return open < 1.0 ? native * open : native;
 }
 
 std::vector<std::pair<int, double>> RunoffSolver::reviewedAreas() const {

@@ -336,6 +336,8 @@ public:
         double native_infil = 0.0, max_native_infil = 1.0e10, infil_factor = 1.0;
         // Negative fraction retains ordinary completed-kernel arithmetic.
         double spatial_fraction = -1.0, spatial_max_infil = 1.0e10;
+        // Frozen-ground factor of the unit's subcatchment: the open share of the ground.
+        double frost_open = 1.0;
     };
     /**
      * @brief Copy water parameters, runtime state and ledgers for an independent trial.

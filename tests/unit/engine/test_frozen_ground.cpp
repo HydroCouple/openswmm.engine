@@ -48,6 +48,7 @@
 #include <openswmm/engine/openswmm_subcatchments.h>
 
 #include "core/SWMMEngine.hpp"
+#include "hydrology/LID.hpp"
 #include "hydrology/FrozenGround.hpp"
 
 namespace fs = std::filesystem;
@@ -1121,6 +1122,10 @@ TEST(FrozenGroundAquifer, ACheckpointMidFreezeContinuesBitIdentically) {
         d.frozen_ground = "*  0.05  1.5  2.4e6  0.02  8  3  0.2  11";
         fs::create_directories(kArtifactDir);
         const std::string stem = second_order ? "mesh_checkpoint_o2" : "mesh_checkpoint";
+        // A managed session refuses to overwrite the outputs of an earlier run.
+        for (const auto& entry : fs::directory_iterator(kArtifactDir))
+            if (entry.path().filename().string().rfind(stem, 0) == 0)
+                fs::remove_all(entry.path());
         const auto inp = kArtifactDir / (stem + ".inp");
         std::ofstream(inp, std::ios::trunc) << aquiferModel(d);
         SWMMEngine a, b;
@@ -1164,6 +1169,233 @@ TEST(FrozenGroundAquifer, ACheckpointMidFreezeContinuesBitIdentically) {
         EXPECT_EQ(oa[0], 0.0) << stem; // frozen by the end
         EXPECT_EQ(oa, ob);
         EXPECT_EQ(a.surfaceRouter2D().state().depth, b.surfaceRouter2D().state().depth);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LID units take the frozen factor of the subcatchment they sit in
+// ---------------------------------------------------------------------------
+
+struct LidDeck {
+    std::string control;       // [LID_CONTROLS] rows for a control named L
+    double unit_area = 43560;  // ft2; the subcatchment is 5 acres (217800 ft2)
+    int imperv = 50;           // subcatchment percent impervious
+    double air_f = 14.0;       // deg F
+    std::string frozen_ground; // [FROZEN_GROUND] rows (SI)
+};
+
+std::string lidModel(const LidDeck& d) {
+    std::ostringstream f;
+    f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
+         "START_DATE 01/10/2026\nSTART_TIME 00:00:00\nEND_DATE 01/10/2026\nEND_TIME 03:00:00\n"
+         "WET_STEP 00:01:00\nDRY_STEP 00:05:00\nROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
+         "[TEMPERATURE]\nTIMESERIES AIR\n\n"
+         "[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES RAIN\n\n"
+         "[TIMESERIES]\nRAIN 01/10/2026 00:00 1.0\nRAIN 01/10/2026 01:00 1.0\n"
+         "RAIN 01/10/2026 02:00 0\n"
+         "AIR 01/10/2026 00:00 "
+      << d.air_f << "\nAIR 01/10/2026 04:00 " << d.air_f << "\n\n[SUBCATCHMENTS]\nS1 RG1 J1 5 "
+      << d.imperv
+      << " 500 0.5 0\n\n"
+         "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
+         "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+         "[LID_CONTROLS]\n"
+      << d.control << "\n[LID_USAGE]\nS1 L 1 " << d.unit_area
+      << " 500 0 100 0\n\n"
+         "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n[OUTFALLS]\nOUT 9.0 FREE NO\n\n"
+         "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n";
+    if (!d.frozen_ground.empty())
+        f << "[FROZEN_GROUND]\n" << d.frozen_ground << "\n\n";
+    f << "[REPORT]\nINPUT NO\n";
+    return f.str();
+}
+
+struct LidResult {
+    bool started = false;
+    std::string error;
+    double inflow = 0, exfiltration = 0, surface_flow = 0, drain_flow = 0, evaporation = 0;
+    double soil_moisture = 0;                    // at the end
+    double below_surface = 0;                    // pavement plus storage depth at the end, ft
+    double initial_volume = 0, final_volume = 0; // water held by the unit, ft over its area
+    double factor = 1;
+};
+
+LidResult runLid(const std::string& tag, const LidDeck& deck, lid::LIDType type) {
+    LidResult r;
+    fs::create_directories(kArtifactDir);
+    const auto inp = kArtifactDir / (tag + ".inp");
+    std::ofstream(inp, std::ios::trunc) << lidModel(deck);
+    SWMM_Engine engine = swmm_engine_create();
+    const auto fail = [&] {
+        r.error = swmm_get_last_error_msg(engine);
+        swmm_engine_destroy(engine);
+        return r;
+    };
+    if (swmm_engine_open(engine, inp.string().c_str(),
+                         (kArtifactDir / (tag + ".rpt")).string().c_str(),
+                         (kArtifactDir / (tag + ".out")).string().c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(engine) != SWMM_OK || swmm_engine_start(engine, 1) != SWMM_OK)
+        return fail();
+    r.started = true;
+    double elapsed = 0;
+    for (;;) {
+        if (swmm_engine_step(engine, &elapsed) != SWMM_OK)
+            return fail();
+        if (elapsed <= 0)
+            break;
+    }
+    auto* e = static_cast<SWMMEngine*>(engine);
+    const auto& g = e->lid().group(static_cast<int>(type));
+    if (!g.wb_inflow.empty()) {
+        r.inflow = g.wb_inflow[0];
+        r.exfiltration = g.wb_infil[0];
+        r.surface_flow = g.wb_surf_flow[0];
+        r.drain_flow = g.wb_drain_flow[0];
+        r.evaporation = g.wb_evap[0];
+        r.soil_moisture = g.soil_moist[0];
+        r.below_surface = g.pave_depth[0] + g.stor_depth[0];
+        r.initial_volume = g.wb_init_vol[0];
+        r.final_volume = g.wb_final_vol[0];
+    }
+    r.factor = e->context().frozen_ground.factorOf(0);
+    swmm_engine_end(engine);
+    swmm_engine_destroy(engine);
+    return r;
+}
+
+const char* const kFrozenLidRow = "S1  0.15  1.5  2.4e6  0.30  8  3  -4  11";
+const char* const kBioCell = "L BC\nL SURFACE 6 0 0.1 1 5\nL SOIL 6 0.5 0.2 0.1 5 10 3.5\n"
+                             "L STORAGE 12 0.75 0.5 0\n";
+const char* const kPavement = "L PP\nL SURFACE 0.1 0 0.1 1 5\nL PAVEMENT 6 0.15 0 100 0 0\n"
+                              "L STORAGE 12 0.75 0.5 0\n";
+const char* const kTrench = "L IT\nL SURFACE 6 0 0.1 1 5\nL STORAGE 12 0.75 0.5 0\n";
+const char* const kSwale = "L VS\nL SURFACE 12 0 0.1 1 5\n";
+const char* const kGreenRoof = "L GR\nL SURFACE 1 0 0.1 1 5\nL SOIL 4 0.5 0.2 0.1 0.5 10 3.5\n"
+                               "L DRAINMAT 3 0.5 0.1\n";
+const char* const kRainBarrel = "L RB\nL STORAGE 48 0.75 0 0\nL DRAIN 1 0.5 0 0\n";
+
+TEST(FrozenGroundLid, NothingEntersFrozenGroundFromAUnit) {
+    const struct {
+        const char* name;
+        const char* control;
+        lid::LIDType type;
+    } units[] = {{"bio_cell", kBioCell, lid::LIDType::BIO_CELL},
+                 {"pavement", kPavement, lid::LIDType::PERM_PAVEMENT},
+                 {"trench", kTrench, lid::LIDType::INFIL_TRENCH},
+                 {"swale", kSwale, lid::LIDType::VEG_SWALE}};
+    for (const auto& u : units) {
+        LidDeck open;
+        open.control = u.control;
+        LidDeck frozen = open;
+        frozen.frozen_ground = kFrozenLidRow;
+        const LidResult a = runLid(std::string("lid_open_") + u.name, open, u.type);
+        const LidResult b = runLid(std::string("lid_frozen_") + u.name, frozen, u.type);
+        ASSERT_TRUE(a.started) << u.name << ": " << a.error;
+        ASSERT_TRUE(b.started) << u.name << ": " << b.error;
+        EXPECT_EQ(b.factor, 0.0) << u.name;
+        EXPECT_GT(a.inflow, 0.0) << u.name;
+        EXPECT_GT(a.exfiltration, 0.0)
+            << u.name << " inflow " << a.inflow << " surface " << a.surface_flow << " drain "
+            << a.drain_flow << " soil " << a.soil_moisture << " held " << a.final_volume;
+        EXPECT_EQ(b.exfiltration, 0.0) << u.name;
+        // The unit's water balance closes with nothing lost to the ground: what the open
+        // ground took now leaves over the surface, by the drain, or stays in the unit.
+        for (const LidResult* r : {&a, &b})
+            EXPECT_NEAR(r->inflow + r->initial_volume,
+                        r->evaporation + r->exfiltration + r->surface_flow + r->drain_flow +
+                            r->final_volume,
+                        5e-3 * r->inflow)
+                << u.name; // the unit ledger closes to the layer solver's tolerance, frozen or not
+        EXPECT_GT(b.surface_flow + b.final_volume, a.surface_flow + a.final_volume) << u.name;
+    }
+}
+
+// Frozen pavement is closed at its surface: nothing reaches the pavement or storage layers.
+TEST(FrozenGroundLid, FrozenPavementLetsNothingThrough) {
+    LidDeck open;
+    open.control = kPavement;
+    LidDeck frozen = open;
+    frozen.frozen_ground = kFrozenLidRow;
+    const LidResult a = runLid("lid_pave_open", open, lid::LIDType::PERM_PAVEMENT);
+    const LidResult b = runLid("lid_pave_frozen", frozen, lid::LIDType::PERM_PAVEMENT);
+    ASSERT_TRUE(a.started && b.started) << a.error << b.error;
+    EXPECT_GT(a.below_surface, 0.0);
+    EXPECT_EQ(b.below_surface, 0.0);
+    EXPECT_GT(b.surface_flow, a.surface_flow);
+}
+
+// A bio-retention cell on frozen ground takes no water into its soil either.
+TEST(FrozenGroundLid, TheSoilLayerOfAFrozenUnitStaysDry) {
+    LidDeck open;
+    open.control = kBioCell;
+    LidDeck frozen = open;
+    frozen.frozen_ground = kFrozenLidRow;
+    const LidResult a = runLid("lid_soil_open", open, lid::LIDType::BIO_CELL);
+    const LidResult b = runLid("lid_soil_frozen", frozen, lid::LIDType::BIO_CELL);
+    ASSERT_TRUE(a.started && b.started) << a.error << b.error;
+    EXPECT_GT(a.soil_moisture, b.soil_moisture);
+}
+
+// Units that put no water into the ground are untouched, bit for bit.
+TEST(FrozenGroundLid, GreenRoofsAndRainBarrelsAreUnchanged) {
+    const struct {
+        const char* name;
+        const char* control;
+        lid::LIDType type;
+    } units[] = {{"green_roof", kGreenRoof, lid::LIDType::GREEN_ROOF},
+                 {"rain_barrel", kRainBarrel, lid::LIDType::RAIN_BARREL}};
+    for (const auto& u : units) {
+        LidDeck open;
+        open.control = u.control;
+        LidDeck frozen = open;
+        frozen.frozen_ground = kFrozenLidRow;
+        const LidResult a = runLid(std::string("lid_same_open_") + u.name, open, u.type);
+        const LidResult b = runLid(std::string("lid_same_frozen_") + u.name, frozen, u.type);
+        ASSERT_TRUE(a.started && b.started) << u.name << a.error << b.error;
+        EXPECT_EQ(b.factor, 0.0) << u.name;
+        EXPECT_GT(a.inflow, 0.0) << u.name;
+        EXPECT_EQ(a.inflow, b.inflow) << u.name;
+        EXPECT_EQ(a.surface_flow, b.surface_flow) << u.name;
+        EXPECT_EQ(a.drain_flow, b.drain_flow) << u.name;
+        EXPECT_EQ(a.evaporation, b.evaporation) << u.name;
+        EXPECT_EQ(a.soil_moisture, b.soil_moisture) << u.name;
+    }
+}
+
+// A swale that fills the whole subcatchment infiltrates at the native soil rate, which the
+// engine evaluates on a separate path; frozen ground closes that path too.
+TEST(FrozenGroundLid, AUnitCoveringTheWholeSubcatchmentIsLimited) {
+    LidDeck open;
+    open.control = kSwale;
+    open.unit_area = 217800;
+    open.imperv = 0;
+    LidDeck frozen = open;
+    frozen.frozen_ground = kFrozenLidRow;
+    const LidResult a = runLid("lid_full_open", open, lid::LIDType::VEG_SWALE);
+    const LidResult b = runLid("lid_full_frozen", frozen, lid::LIDType::VEG_SWALE);
+    ASSERT_TRUE(a.started && b.started) << a.error << b.error;
+    EXPECT_GT(a.exfiltration, 0.0);
+    EXPECT_EQ(b.exfiltration, 0.0);
+}
+
+TEST(FrozenGroundLid, GroundThatNeverFreezesIsBitIdenticalToNoSection) {
+    for (const char* control : {kBioCell, kPavement, kSwale}) {
+        LidDeck warm;
+        warm.control = control;
+        warm.air_f = 55.0;
+        LidDeck with = warm;
+        with.frozen_ground = "S1  0.15  1.5  2.4e6  0.30  8  3  5";
+        const lid::LIDType type = control == kBioCell    ? lid::LIDType::BIO_CELL
+                                  : control == kPavement ? lid::LIDType::PERM_PAVEMENT
+                                                         : lid::LIDType::VEG_SWALE;
+        const LidResult a = runLid("lid_warm_off", warm, type),
+                        b = runLid("lid_warm_on", with, type);
+        ASSERT_TRUE(a.started && b.started) << a.error << b.error;
+        EXPECT_EQ(b.factor, 1.0);
+        EXPECT_GT(a.exfiltration, 0.0);
+        EXPECT_EQ(a.exfiltration, b.exfiltration);
+        EXPECT_EQ(a.surface_flow, b.surface_flow);
+        EXPECT_EQ(a.soil_moisture, b.soil_moisture);
     }
 }
 

@@ -898,7 +898,8 @@ void SourceWaterDriver::advance(State& s, const SourceForcingInterval& f,
         inputs.push_back(
             {t, u, (captured + returned) / dt / g.area[u] + rain + c.subcatches.runon_rate[sc],
              weather->rain, weather->pet, native[sc], s.partitioned ? 1.0e10 : bottom,
-             factor(c, sc, f), s.partitioned ? s.inside[sc] : -1.0, bottom});
+             factor(c, sc, f), s.partitioned ? s.inside[sc] : -1.0, bottom,
+             c.frozen_ground.factorOf(static_cast<std::size_t>(sc))});
     }
     std::sort(inputs.begin(), inputs.end(), [](const auto& a, const auto& b) {
         return std::pair{a.type, a.unit} < std::pair{b.type, b.unit};

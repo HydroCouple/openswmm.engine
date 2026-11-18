@@ -671,6 +671,11 @@ class LegacyLidKernel {
 public:
     // legacy file-scope shared variables (lidproc.c)
     double Tstep = 0.0, EvapRate = 0.0, MaxNativeInfil = L_BIG;
+    // Frozen ground: the share of the parent subcatchment's ground that still takes water.
+    // It limits what enters ground from the unit (surface infiltration into its soil, pavement
+    // permeability, exfiltration to native soil); flows inside the unit and its drains do not
+    // see it.
+    double FrostOpen = 1.0;
     double SpatialFraction = -1.0, SpatialLimit = L_BIG, SpatialExfilRatio = 0.0;
     bool Completed = false;
     double SurfaceInflow = 0, SurfaceInfil = 0, SurfaceEvap = 0, SurfaceOutflow = 0;
@@ -747,7 +752,7 @@ public:
             permReduction = G->vol_treated[U] / clogFactor;
             permReduction = std::min(permReduction, 1.0);
         }
-        return P->pave_ksat * (1.0 - permReduction);
+        return P->pave_ksat * (1.0 - permReduction) * FrostOpen;
     }
 
     // ---- legacy getSoilPercRate
@@ -789,7 +794,7 @@ public:
             clogFactor = G->wb_inflow[U] / clogFactor;
             clogFactor = std::min(clogFactor, 1.0);
         }
-        infil = P->stor_ksat * (1.0 - clogFactor);
+        infil = P->stor_ksat * (1.0 - clogFactor) * FrostOpen;
         const double native = std::min(infil, MaxNativeInfil);
         if (SpatialFraction < 0)
             return native;
@@ -1640,9 +1645,15 @@ public:
             SurfaceInfil = 0.0;
         else if (G->soil_infil[U].Ks > 0.0 &&
                  !(SpatialFraction == 1 && P->type == LIDType::VEG_SWALE)) {
-            SurfaceInfil =
-                infil::grnampt_getInfil(G->soil_infil[U], SurfaceInflow, G->surf_depth[U], Tstep,
-                                        InfilModel::MOD_GREEN_AMPT, infil_factor, recovery_factor);
+            // Fully frozen ground skips the model, so its wetting front is held.
+            SurfaceInfil = 0.0;
+            if (FrostOpen > 0.0) {
+                SurfaceInfil = infil::grnampt_getInfil(
+                    G->soil_infil[U], SurfaceInflow, G->surf_depth[U], Tstep,
+                    InfilModel::MOD_GREEN_AMPT, infil_factor, recovery_factor);
+                if (FrostOpen < 1.0)
+                    SurfaceInfil *= FrostOpen;
+            }
         } else
             SurfaceInfil = infil;
         if (SpatialFraction >= 0 && P->type == LIDType::VEG_SWALE) {
@@ -1775,9 +1786,11 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
                           double native_infil, double max_native_infil, double dt,
                           double old_runoff_sec, double infil_factor, double recovery_factor,
                           double spatial_fraction = -1.0, double spatial_limit = L_BIG,
-                          bool completed = false) {
+                          bool completed = false, double frost_open = 1.0) {
     LidProcView view = makeView(g, u);
     LegacyLidKernel k;
+    // A green roof's soil sits on a roof, not on the ground: it is not limited.
+    k.FrostOpen = view.type == LIDType::GREEN_ROOF ? 1.0 : frost_open;
     k.P = &view;
     k.G = &g;
     k.U = u;
@@ -2010,7 +2023,7 @@ void LIDSolver::executeCompleted(double dt, double start, double recovery_factor
         g.evap_rate_unit[u] = in.pet;
         runUnitLegacy(g, u, in.inflow, in.pet, in.native_infil, in.max_native_infil, dt, start,
                       in.infil_factor, recovery_factor, in.spatial_fraction, in.spatial_max_infil,
-                      true);
+                      true, in.frost_open);
         if (in.rain > MIN_RUNOFF)
             g.dry_time[u] = 0.0;
         else
@@ -2052,8 +2065,9 @@ void LIDSolver::execute(SimulationContext& ctx, double dt, double rainfall, doub
                 (sc >= 0 && usc < max_native_infil_.size()) ? max_native_infil_[usc] : L_BIG;
             const double infil_factor =
                 (sc >= 0 && usc < infil_factor_.size()) ? infil_factor_[usc] : 1.0;
+            const double frost_open = sc >= 0 ? ctx.frozen_ground.factorOf(usc) : 1.0;
             runUnitLegacy(g, uu, g.inflow[uu], evap, native, max_native, dt, old_runoff_sec_,
-                          infil_factor, recovery_factor_);
+                          infil_factor, recovery_factor_, -1.0, L_BIG, false, frost_open);
             // legacy evalLidUnit: the dry clock for the rain-barrel drain
             // delay, updated AFTER the unit ran (it reads the clock as it
             // stood before this step); reset by the parent subcatchment's
