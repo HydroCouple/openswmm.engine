@@ -232,6 +232,45 @@ TEST(SurfaceROMRouterOperator, DefaultPathInstallsReducedOperatorOnUndepthWeight
     swmm_engine_destroy(eng);
 }
 
+namespace {
+int countMomentumWarnings(SWMM_Engine eng) {
+    int n = 0;
+    const int total = swmm_get_warning_count(eng);
+    for (int i = 0; i < total; ++i) {
+        const char* w = swmm_get_warning_at(eng, i);
+        if (w && std::string(w).find("validated for MOMENTUM_EQUATION LOCAL_INERTIAL") !=
+                     std::string::npos)
+            ++n;
+    }
+    return n;
+}
+}  // namespace
+
+TEST(SurfaceROMRouterOperator, WarnsUnlessMomentumIsLocalInertial) {
+    // The 2D bands are derived/calibrated for the local-inertial marcher; any
+    // other closure (upstream default FULL_SWE since ebdd4d04) must say so.
+    const fs::path dir = fs::current_path() / "rom_router_operator_out";
+    fs::create_directories(dir);
+    { std::ofstream f(dir / "momwarn.inp"); f << buildModel(/*open=*/false); }
+    using openswmm::twoD::Momentum2D;
+    for (bool pinned : {false, true}) {
+        auto eng = driveRun(dir / "momwarn.inp", dir / "momwarn.rpt", dir / "momwarn.out",
+                            [pinned](openswmm::twoD::SolverOptions2D& o) {
+                                o.enable_rom  = true;
+                                o.rom_members = 12;
+                                o.rom_modes   = 6;
+                                if (pinned) o.momentum = Momentum2D::LOCAL_INERTIAL;
+                                else        o.momentum = Momentum2D::FULL_SWE;
+                            });
+        ASSERT_NE(eng, nullptr);
+        EXPECT_EQ(countMomentumWarnings(eng), pinned ? 0 : 1);
+        swmm_engine_end(eng);
+        swmm_engine_report(eng);
+        swmm_engine_close(eng);
+        swmm_engine_destroy(eng);
+    }
+}
+
 TEST(SurfaceROMRouterOperator, SpatialManningFieldInstallsPerMemberOperators) {
     // PR H15: MANNINGS_CORR_LEN > 0 generates a per-member spatial Manning
     // field, which used to drop the ROM onto the diagonal path silently. The

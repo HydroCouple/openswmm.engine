@@ -3914,3 +3914,13 @@ The per-member path stays behind `rom1dStorageMembersEnabled()` (default OFF).
 Per-member ON on the O-15 code (final): 1D 0.947/1.574 conservative, storage 0.818/0.957 calibrated, 2D
 0.663/0.158, Brier 0.0231/0.1025, wall 2,632 s (1.35× OFF). ON equals OFF at the basins and is better only on
 flood-probability skill; the six shallow laterals remain 1.4–3.9 m wide (per-member near-rim spill loop). Hook OFF.
+
+### Merged line (2026-11-18): upstream's 2D momentum default is now FULL_SWE; the sidecar pins LOCAL_INERTIAL
+Upstream ebdd4d04 made `[2D_OPTIONS] MOMENTUM_EQUATION FULL_SWE` the default. The 2D ROM operator is derived and
+calibrated for the local-inertial marcher (LOCAL_INERTIAL_DEVIATION_OPERATOR.md), and no sidecar fixture named the
+mode, so after the merge the W3/W4 gates and the Bellinge demo ran under FULL_SWE. What an un-pinned model sees:
+W4 channel comonotone Manning 0.953/8.846 (pinned: 0.818/1.308), W3 adv width 1.429 (pinned 1.319), Bellinge OFF
+2D street 0.669/0.281 and 2D->1D drain 489 m3 (pinned 3,647 m3; pre-merge 2,538 m3). Both W harnesses and
+`demo_off.inp` now pin LOCAL_INERTIAL; with the pin W3 adv is 0.856/1.319 and the W4 plane/channel cells match
+the pre-merge record. The router now records a report warning when the 2D ROM is enabled under any other closure
+(bands are a ranking there). Test: `SurfaceROMRouterOperator.WarnsUnlessMomentumIsLocalInertial`.

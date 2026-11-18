@@ -242,6 +242,8 @@ std::vector<std::vector<double>> driveMarcher(const Surface& sf,
             mesh.mannings_n[static_cast<std::size_t>(i)] = n_field[i];
     SolverOptions2D opts;
     opts.cell_closure = CellClosure2D::FLAT;
+    // the 2D ROM operator is derived and calibrated for the local-inertial marcher (LOCAL_INERTIAL_DEVIATION_OPERATOR.md); upstream's default is FULL_SWE since ebdd4d04
+    opts.momentum = Momentum2D::LOCAL_INERTIAL;
     SurfaceStateData state;
     seedSteady(mesh, state);
     BoundaryData b;

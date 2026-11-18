@@ -3556,12 +3556,17 @@ void SurfaceRouter2D::computeGroundWeights() {
 
 
 void SurfaceRouter2D::initROM(SimulationContext& ctx) {
-    (void)ctx;
     rom_.reset();
     rom_basis_.reset();
     rom_seeded_ = false;
     rom_ground_w_.clear();
     if (!options_.enable_rom) return;
+    if (options_.momentum != Momentum2D::LOCAL_INERTIAL)
+        ctx.warnings.push_back(
+            "WARNING: the 2D uncertainty bands are validated for MOMENTUM_EQUATION "
+            "LOCAL_INERTIAL only; under other momentum closures (upstream's default is "
+            "FULL_SWE) they are a ranking, not calibrated intervals "
+            "(docs/uncertainty/LOCAL_INERTIAL_DEVIATION_OPERATOR.md).");
 
     // The eigenbasis comes from mesh geometry alone, so it is built once here
     // and never re-solved — only its depth weighting is refitted at seed time
