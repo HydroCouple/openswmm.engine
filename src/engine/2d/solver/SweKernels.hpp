@@ -57,6 +57,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 #ifndef OPENSWMM_KERNEL_FN
 #define OPENSWMM_KERNEL_FN inline
@@ -65,6 +66,13 @@
 namespace openswmm::twoD::swe {
 
 inline constexpr double kGravity = 9.80665;
+
+/// True when @p x is neither NaN nor infinite.
+/// @note Not std::isfinite: with the MSVC standard library it is a host-only template, and
+/// nvcc then treats the device call as unreachable and prunes everything after it.
+OPENSWMM_KERNEL_FN bool isFinite(double x) noexcept {
+    return std::fabs(x) <= std::numeric_limits<double>::max();
+}
 
 /// One side of a face in the face-normal frame after hydrostatic
 /// reconstruction. `h` is the reconstructed depth h*, (un, ut) the normal and
@@ -479,19 +487,19 @@ OPENSWMM_KERNEL_FN double depthFromInvariantAndDischarge(double r, double q,
         if (!(std::fabs(df) > 1.0e-12))
             break;
         const double s1 = s - f / df;
-        if (!(s1 > 0.0) || !std::isfinite(s1))
+        if (!(s1 > 0.0) || !isFinite(s1))
             break;
         const double step = std::fabs(s1 - s);
         s = s1;
         if (step < 1.0e-12 * (1.0 + s)) {
             const double h = s * s;
-            return (h > 0.0 && std::isfinite(h)) ? h : h_interior;
+            return (h > 0.0 && isFinite(h)) ? h : h_interior;
         }
     }
     const double h = s * s;
     // Accept only a converged, physical root; otherwise keep the interior
     // depth (transmissive), which is what the pre-invariant code did.
-    return (h > 0.0 && std::isfinite(h) &&
+    return (h > 0.0 && isFinite(h) &&
             std::fabs(2.0 * rg * s * s * s - r * s * s + q) < 1.0e-6 * (1.0 + std::fabs(q)))
                ? h
                : h_interior;

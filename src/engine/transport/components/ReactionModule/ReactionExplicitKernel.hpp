@@ -239,9 +239,11 @@ inline void markTerms(const RxToken* pool, const RxExprSpan& expression, unsigne
 }
 
 /// True when every entry is finite; an empty tuple is finite.
+/// @note Not std::isfinite: with the MSVC standard library it is a host-only template, and
+/// nvcc then treats the device call as unreachable and prunes everything after it.
 OPENSWMM_KERNEL_FN bool finiteAll(const double* v, int n) {
     for (int i = 0; i < n; ++i)
-        if (!std::isfinite(v[i]))
+        if (!(std::fabs(v[i]) <= std::numeric_limits<double>::max()))
             return false;
     return true;
 }
