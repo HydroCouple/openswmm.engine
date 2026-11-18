@@ -87,6 +87,7 @@ struct Counters {
     double sec_fence = 0.0;
     long n_deep_copy = 0;
     unsigned long long bytes_h2d = 0, bytes_d2h = 0, bytes_same = 0;
+    unsigned long long bytes_fill = 0; ///< scalar fills of a view: no host array crosses
     std::vector<KernelEntry> kernels; ///< indexed by kernel id
     std::map<std::string, std::uint64_t> label_id;
 };
@@ -226,13 +227,16 @@ inline void end_fence(std::uint64_t /*handle*/) {
  * host.
  * @param[in] src Source memory-space handle, classified by the same prefix rule.
  * @param[in] size Bytes transferred, accumulated without overflow checks.
- * @par Unnamed callback arguments Destination/source label strings and raw pointers are ignored;
- * pointers are neither dereferenced nor retained.
- * @post Active counters increment deep-copy count and H2D, D2H or same-space bytes. No
+ * @param[in] src_label Source label. Kokkos reports a scalar fill of a view as a copy from the
+ * host space with the label "Scalar" and the whole view's size; those bytes are counted as fills,
+ * not as host-to-device traffic.
+ * @par Unnamed callback arguments The destination label and raw pointers are ignored; pointers
+ * are neither dereferenced nor retained.
+ * @post Active counters increment deep-copy count and fill, H2D, D2H or same-space bytes. No
  * fence/timing/allocation occurs. Same counter object requires serialized callback access.
  */
 inline void begin_deep_copy(Kokkos_Profiling_SpaceHandle dst, const char*, const void*,
-                            Kokkos_Profiling_SpaceHandle src, const char*, const void*,
+                            Kokkos_Profiling_SpaceHandle src, const char* src_label, const void*,
                             std::uint64_t size) {
     if (!active)
         return;
@@ -240,7 +244,9 @@ inline void begin_deep_copy(Kokkos_Profiling_SpaceHandle dst, const char*, const
     ++g.n_deep_copy;
     const bool dst_host = std::strncmp(dst.name, "Host", 4) == 0;
     const bool src_host = std::strncmp(src.name, "Host", 4) == 0;
-    if (src_host && !dst_host)
+    if (src_label != nullptr && std::strcmp(src_label, "Scalar") == 0)
+        g.bytes_fill += size;
+    else if (src_host && !dst_host)
         g.bytes_h2d += size;
     else if (dst_host && !src_host)
         g.bytes_d2h += size;
@@ -330,10 +336,11 @@ inline void dump() {
     std::fprintf(stderr,
                  "[PERF-2D-KOKKOS] advances=%ld launches=%ld launches_per_advance=%.1f "
                  "fences=%ld fence_s=%.4f deep_copies=%ld "
-                 "h2d_bytes=%llu d2h_bytes=%llu samespace_bytes=%llu "
+                 "h2d_bytes=%llu d2h_bytes=%llu samespace_bytes=%llu fill_bytes=%llu "
                  "h2d_bytes_per_advance=%.0f d2h_bytes_per_advance=%.0f\n",
                  g.n_advance, g.n_launch, g.n_launch / adv, g.n_fence, g.sec_fence, g.n_deep_copy,
-                 g.bytes_h2d, g.bytes_d2h, g.bytes_same, g.bytes_h2d / adv, g.bytes_d2h / adv);
+                 g.bytes_h2d, g.bytes_d2h, g.bytes_same, g.bytes_fill, g.bytes_h2d / adv,
+                 g.bytes_d2h / adv);
     std::vector<const KernelEntry*> order;
     order.reserve(g.kernels.size());
     for (const auto& k : g.kernels)
