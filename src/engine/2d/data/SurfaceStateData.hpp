@@ -157,6 +157,9 @@ struct SurfaceStateData {
     surface::MeshSnow snow;
     SimulationContext* snow_context = nullptr;
     std::vector<double> snow_catch;
+    /// Frozen ground ([2D_FROZEN_GROUND]): slab enthalpy (J/m2) and infiltration factor per
+    /// cell. Both empty without the section; a cell no row covers holds 0 and 1.
+    std::vector<double> frost_enthalpy, frost_open;
     /**
      * @brief Resolve the liquid-water precipitation source for one cell.
      * @param[in] i Valid zero-based mesh cell; rainfall and snow/runtime gather arrays must be

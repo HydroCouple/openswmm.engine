@@ -2031,8 +2031,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             "Coupled groundwater SSP-RK2: CLOSED_FORM/ENSLAVED/SIGMA transport/age CPU profile with symmetric groundwater/surface reactions, global stepping and knot-aligned wells and aquifer HEAD/FLOW edges. Singular wetting-front startup is bounded without a second-order claim.");
     }
     infil_elapsed_ = 0.0;
-    frost_enthalpy_.clear();
-    frost_open_.clear();
+    frost_slabs_.clear();
+    frost_slab_of_.clear();
+    state_.frost_enthalpy.clear();
+    state_.frost_open.clear();
     subsurface_.setFrozenGroundFactor(nullptr);
     if (infil_.active()) {
         // Publish an initial held rate so the very first substep infiltrates
@@ -2040,10 +2042,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // by one cadence step here, matching how the runoff module evaluates
         // at the start of a wet step.
         initializeFrozenGround(ctx);
-        subsurface_.setFrozenGroundFactor(frost_open_.empty() ? nullptr : &frost_open_);
+        subsurface_.setFrozenGroundFactor(state_.frost_open.empty() ? nullptr : &state_.frost_open);
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
                            surface::infiltrationFactors(ctx, 0.0), options_.num_threads,
-                           frost_open_.empty() ? nullptr : &frost_open_);
+                           state_.frost_open.empty() ? nullptr : &state_.frost_open);
         if (subsurface_.active())
             subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
@@ -2405,39 +2407,84 @@ std::string SurfaceRouter2D::livePassiveProfile() const {
 }
 
 void SurfaceRouter2D::initializeFrozenGround(const SimulationContext& ctx) {
-    frost_enthalpy_.clear();
-    frost_open_.clear();
+    frost_slabs_.clear();
+    frost_slab_of_.clear();
+    state_.frost_enthalpy.clear();
+    state_.frost_open.clear();
     const auto& rows = ctx.frozen_ground.mesh_rows;
     if (rows.empty())
         return;
-    if (rows.size() != 1 || rows[0].first != "*")
-        throw std::runtime_error("[2D_FROZEN_GROUND] takes one row named *.");
-    if (const std::string problem = frost::validate(rows[0].second); !problem.empty())
-        throw std::runtime_error("[2D_FROZEN_GROUND] *: " + problem + ".");
-    frost_slab_ = rows[0].second;
     const auto n = static_cast<std::size_t>(mesh_.n_triangles());
-    const double start = frost::enthalpyAt(frost_slab_, frost_slab_.init_temp);
-    frost_enthalpy_.assign(n, start);
-    frost_open_.assign(n, frost::infiltrationFactor(frost_slab_, start));
+    std::vector<int> slab_of(n, -1);
+    // The `*` row first, then tag rows, so a tag wins wherever both apply (the precedence of
+    // [2D_INFILTRATION_DEFAULTS]).
+    const std::size_t n_tagged = std::min(n, mesh_.tri_tag.size());
+    for (const bool tagged : {false, true})
+        for (std::size_t k = 0; k < rows.size(); ++k) {
+            const auto& [name, row] = rows[k];
+            if ((name != "*") != tagged)
+                continue;
+            if (const std::string problem = frost::validate(row); !problem.empty())
+                throw std::runtime_error("[2D_FROZEN_GROUND] " + name + ": " + problem + ".");
+            if (!tagged) {
+                std::fill(slab_of.begin(), slab_of.end(), static_cast<int>(k));
+                continue;
+            }
+            bool found = false;
+            for (std::size_t i = 0; i < n_tagged; ++i)
+                if (mesh_.tri_tag[i] == name) {
+                    slab_of[i] = static_cast<int>(k);
+                    found = true;
+                }
+            if (!found)
+                throw std::runtime_error(
+                    "[2D_FROZEN_GROUND] names a tag no mesh cell carries: " + name + ".");
+        }
+    frost_slabs_.reserve(rows.size());
+    for (const auto& row : rows)
+        frost_slabs_.push_back(row.second);
+    frost_slab_of_ = std::move(slab_of);
+    state_.frost_enthalpy.assign(n, 0.0);
+    state_.frost_open.assign(n, 1.0);
+    for (std::size_t i = 0; i < n; ++i)
+        if (const frost::Slab* s = frozenGroundSlab(i)) {
+            state_.frost_enthalpy[i] = frost::enthalpyAt(*s, s->init_temp);
+            state_.frost_open[i] = frost::infiltrationFactor(*s, state_.frost_enthalpy[i]);
+        }
 }
 
 void SurfaceRouter2D::advanceFrozenGround(const SimulationContext& ctx, double dt) {
     if (dt <= 0.0)
         return;
-    // Mesh cells see the air temperature at an open surface; a snow pack on the mesh is not
-    // yet given its insulating resistance here.
-    const double air = (ctx.climate_state.temperature - 32.0) / 1.8;
-    const frost::Slab& s = frost_slab_;
-    const double top = frost::halfSlabConductance(s), deep = frost::deepConductance(s);
-    const std::size_t n = std::min(frost_enthalpy_.size(), state_.infil_rate.size());
+    const auto& snow = state_.snow.outputs();
+    const std::size_t n = std::min(state_.frost_enthalpy.size(), state_.infil_rate.size());
     for (std::size_t i = 0; i < n; ++i) {
+        const frost::Slab* const slab = frozenGroundSlab(i);
+        if (!slab)
+            continue;
+        const frost::Slab& s = *slab;
+        const int cell = static_cast<int>(i);
+        // Each cell's own air temperature, as the mesh heat exchange reads it.
+        const double air =
+            (ctx.forcing.elementAirTempF(HeatElement::cell2d(cell), ctx.climate_state.temperature) -
+             32.0) /
+            1.8;
+        // Snow on the cell insulates the covered share of the ground.
+        double cover = 0.0, swe = 0.0;
+        if (state_.snow.owns(cell) && i < snow.size()) {
+            cover = std::clamp(snow[i].cover_frac, 0.0, 1.0);
+            swe = std::max(snow[i].swe_m, 0.0);
+        }
         // Water infiltrates at the held rate only while the cell has water to give.
-        const bool wet = state_.depth[i] > 0.0 || state_.liquidRainfall(static_cast<int>(i)) > 0.0;
+        const bool wet = state_.depth[i] > 0.0 || state_.liquidRainfall(cell) > 0.0;
         const double rate = wet ? std::max(state_.infil_rate[i], 0.0) : 0.0;
-        const frost::Contact contacts[3] = {
-            {top, air}, {deep, s.deep_temp}, {frost::kWaterCapacity * rate, std::max(air, 0.0)}};
-        frost_enthalpy_[i] = frost::advance(s, frost_enthalpy_[i], contacts, 3, dt);
-        frost_open_[i] = frost::infiltrationFactor(s, frost_enthalpy_[i]);
+        const frost::Contact contacts[4] = {
+            {(1.0 - cover) * frost::halfSlabConductance(s), air},
+            {cover * frost::snowContactConductance(s, swe), std::min(air, 0.0)},
+            {frost::deepConductance(s), s.deep_temp},
+            {frost::kWaterCapacity * rate, std::max(air, 0.0)}};
+        state_.frost_enthalpy[i] = frost::advance(s, state_.frost_enthalpy[i], contacts, 4, dt);
+        state_.frost_open[i] = frost::infiltrationFactor(s, state_.frost_enthalpy[i]);
     }
 }
 
@@ -2652,14 +2699,15 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
-                               options_.num_threads, frost_open_.empty() ? nullptr : &frost_open_);
+                               options_.num_threads,
+                               state_.frost_open.empty() ? nullptr : &state_.frost_open);
             if (subsurface_.active())
                 subsurface_.publishInfiltration(state_, infil_.stepSeconds(),
                                                 common_stage_ ? sim_time_ : t);
             // The slabs then take this interval's heat from the rates just published (model
             // cells and aquifer-owned cells alike); the factor they publish limits the next
             // refresh.
-            if (!frost_open_.empty())
+            if (!state_.frost_open.empty())
                 advanceFrozenGround(ctx, infil_elapsed_);
             infil_elapsed_ = 0.0;
         }

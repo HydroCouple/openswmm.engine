@@ -83,11 +83,12 @@ def test_rows_are_authored_and_read_back(solver):
         solver.set_frozen_ground("S1", (-1.0,) + FROZEN[1:])
     with pytest.raises(ValueError):
         solver.set_frozen_ground("S1", FROZEN[:4])
-    # The mesh section takes only the default row.
-    with pytest.raises(EngineError):
-        solver.set_frozen_ground("S1", FROZEN, mesh=True)
+    # The mesh section takes the default row and rows named after mesh tags.
     solver.set_frozen_ground("*", FROZEN, mesh=True)
-    assert solver.frozen_ground_rows(mesh=True) == {"*": FROZEN}
+    solver.set_frozen_ground("LAWN", FROZEN, mesh=True)
+    assert solver.frozen_ground_rows(mesh=True) == {"*": FROZEN, "LAWN": FROZEN}
+    with pytest.raises(EngineError):
+        solver.set_frozen_ground("", FROZEN, mesh=True)
 
 
 def test_a_subcatchment_without_a_row_reports_none(solver):

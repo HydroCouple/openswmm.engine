@@ -40,6 +40,7 @@
 #include <vector>
 
 #include <openswmm/engine/openswmm_2d.h>
+#include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_infil2d.h>
@@ -668,7 +669,7 @@ TEST(FrozenGroundDeck, TheRowsCanBeAuthoredThroughTheApi) {
     v[0] = -1.0;
     EXPECT_EQ(swmm_frozen_ground_set(engine, 0, "S1", v), SWMM_ERR_BADPARAM);
     v[0] = 0.25;
-    EXPECT_EQ(swmm_frozen_ground_set(engine, 1, "S1", v), SWMM_ERR_BADPARAM); // mesh takes only *
+    EXPECT_EQ(swmm_frozen_ground_set(engine, 1, "", v), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_frozen_ground_set(engine, 1, "*", v), SWMM_OK);
     ASSERT_EQ(swmm_frozen_ground_count(engine, 1, &count), SWMM_OK);
     EXPECT_EQ(count, 1);
@@ -696,6 +697,7 @@ struct MeshDeck {
     std::string frozen_ground; // [2D_FROZEN_GROUND] rows, empty = no section
     int hours = 2;
     double rain_hours = 1.0; // 20 mm/h from the start
+    bool snow = false;       // a degree-day pack with 100 mm of water on every cell
 };
 
 std::string meshModel(const MeshDeck& d) {
@@ -742,11 +744,14 @@ std::string meshModel(const MeshDeck& d) {
          "10.0   10.0   10.0\n"
          "\n[2D_TRIANGLES]\n"
          "0     1   4   0.03        0.0         LAWN\n"
-         "1     2   4   0.03        0.0         LAWN\n"
+         "1     2   4   0.03        0.0         WOODS\n"
          "2     3   4   0.03        0.0         LAWN\n"
-         "3     0   4   0.03        0.0         LAWN\n"
+         "3     0   4   0.03        0.0         WOODS\n"
          "\n[2D_INFILTRATION_DEFAULTS]\n"
          "*       CONSTANT   10.0   -     -     -    -    LOST\n";
+    if (d.snow)
+        s << "\n[SNOWPACKS]\nSP PERVIOUS 0.001 0.001 0 0.1 100 0 0\n"
+             "\n[2D_SNOW_DEFAULTS]\n* SNOWPACK SP\n";
     if (!d.frozen_ground.empty())
         s << "\n[2D_FROZEN_GROUND]\n" << d.frozen_ground << "\n";
     return s.str();
@@ -797,7 +802,8 @@ MeshResult runMesh(const std::string& tag, const MeshDeck& deck) {
     swmm_infil2d_get_cum_bulk(engine, r.infiltration.data(), cells);
     r.factor = router.frozenGroundFactor();
     r.enthalpy = router.frozenGroundEnthalpy();
-    r.slab = router.frozenGroundSlab();
+    if (const frost::Slab* slab = router.frozenGroundSlab(0))
+        r.slab = *slab;
     swmm_engine_end(engine);
     swmm_engine_destroy(engine);
     return r;
@@ -876,11 +882,80 @@ TEST(FrozenGroundMesh, TheSlabAdvancesOncePerInfiltrationInterval) {
     }
 }
 
-TEST(FrozenGroundMesh, OnlyTheDefaultRowIsAccepted) {
+// A tag row wins over the default row in either order; cells 1 and 3 carry the WOODS tag.
+TEST(FrozenGroundMesh, ATagRowOverridesTheDefaultRow) {
+    const MeshResult open = runMesh("mesh_tag_open", MeshDeck{});
+    ASSERT_TRUE(open.started) << open.error;
+    for (const char* rows :
+         {"*      0.15  1.5  2.4e6  0.30  8  3  5\nWOODS  0.15  1.5  2.4e6  0.30  8  3  -4",
+          "WOODS  0.15  1.5  2.4e6  0.30  8  3  -4\n*      0.15  1.5  2.4e6  0.30  8  3  5"}) {
+        MeshDeck d;
+        d.air = 3.0; // the default-row cells stay open, the frozen ones do not thaw in two hours
+        d.frozen_ground = rows;
+        MeshDeck control = d;
+        control.frozen_ground.clear();
+        const MeshResult r = runMesh("mesh_tag", d), c = runMesh("mesh_tag_control", control);
+        ASSERT_TRUE(r.started && c.started) << r.error << c.error;
+        ASSERT_EQ(r.factor.size(), 4u);
+        for (std::size_t i = 0; i < 4; ++i) {
+            const bool woods = i % 2 == 1;
+            EXPECT_EQ(r.first_factor[i], woods ? 0.0 : 1.0) << i;
+            if (woods)
+                EXPECT_LT(r.infiltration[i], 0.05 * c.infiltration[i]) << i;
+            else
+                EXPECT_GT(r.infiltration[i], 0.0) << i;
+        }
+    }
+}
+
+// With only a tag row, the other cells have no slab and behave as if the section were absent.
+TEST(FrozenGroundMesh, CellsWithoutARowAreNotLimited) {
     MeshDeck d;
-    d.frozen_ground = "LAWN  0.15";
+    d.frozen_ground = "WOODS  0.15  1.5  2.4e6  0.30  8  3  -4";
+    MeshDeck control = d;
+    control.frozen_ground.clear();
+    const MeshResult r = runMesh("mesh_partial", d), c = runMesh("mesh_partial_control", control);
+    ASSERT_TRUE(r.started && c.started) << r.error << c.error;
+    ASSERT_EQ(r.factor.size(), 4u);
+    for (std::size_t i = 0; i < 4; ++i) {
+        const bool woods = i % 2 == 1;
+        EXPECT_EQ(r.factor[i], woods ? 0.0 : 1.0) << i;
+        EXPECT_EQ(r.enthalpy[i] == 0.0, !woods) << i;
+        if (woods)
+            EXPECT_EQ(r.infiltration[i], 0.0) << i;
+        else
+            EXPECT_GT(r.infiltration[i], 0.0) << i;
+    }
+}
+
+// Same deck twice; the second gives the snow a very large conductivity, which removes the
+// pack's resistance and nothing else.
+TEST(FrozenGroundMesh, ASnowPackInsulatesTheCells) {
+    MeshDeck d;
+    d.snow = true;
+    d.air = -10.0;
+    d.hours = 12;
+    d.rain_hours = 0.0;
+    d.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  2  11  0.25  250";
+    MeshDeck bare = d;
+    bare.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  2  11  1e9  250";
+    const MeshResult insulated = runMesh("mesh_snow_insulated", d),
+                     exposed = runMesh("mesh_snow_exposed", bare);
+    ASSERT_TRUE(insulated.started && exposed.started) << insulated.error << exposed.error;
+    ASSERT_EQ(insulated.enthalpy.size(), 4u);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_LT(exposed.factor[i], 1.0) << i; // the exposed ground starts to freeze
+        EXPECT_GT(insulated.enthalpy[i], exposed.enthalpy[i]) << i;
+        EXPECT_GT(insulated.factor[i], exposed.factor[i]) << i;
+    }
+}
+
+TEST(FrozenGroundMesh, BadRowsAreRefused) {
+    MeshDeck d;
+    d.frozen_ground = "NO_SUCH_TAG  0.15";
     MeshResult r = runMesh("mesh_bad_name", d);
     EXPECT_FALSE(r.started);
+    EXPECT_NE(r.error.find("NO_SUCH_TAG"), std::string::npos) << r.error;
     d.frozen_ground = "*  0.15  -1";
     r = runMesh("mesh_bad_value", d);
     EXPECT_FALSE(r.started);
@@ -1031,6 +1106,64 @@ TEST(FrozenGroundAquifer, TheSecondOrderStageRatesAreLimited) {
         EXPECT_GT(a.infil_in, 0.0) << closure;
         EXPECT_EQ(b.infil_in, 0.0) << closure;
         EXPECT_LT(std::abs(b.continuity), 1e-9) << closure;
+    }
+}
+
+// A surface checkpoint taken while mesh cells are freezing carries the slabs: the restored
+// session finishes bit-identically to the one that never stopped. Managed sessions need the
+// mesh aquifer profile, so the deck is the aquifer one.
+TEST(FrozenGroundAquifer, ACheckpointMidFreezeContinuesBitIdentically) {
+    for (const bool second_order : {true}) { // sessions take the second-order aquifer profile
+        AquiferDeck d;
+        d.cell_method = false;
+        d.second_order = second_order;
+        // Thin slab with little water: it freezes within the half-hour run.
+        d.frozen_ground = "*  0.05  1.5  2.4e6  0.02  8  3  0.2  11";
+        fs::create_directories(kArtifactDir);
+        const std::string stem = second_order ? "mesh_checkpoint_o2" : "mesh_checkpoint";
+        const auto inp = kArtifactDir / (stem + ".inp");
+        std::ofstream(inp, std::ios::trunc) << aquiferModel(d);
+        SWMMEngine a, b;
+        for (SWMMEngine* e : {&a, &b}) {
+            const std::string tag = stem + (e == &a ? "_a" : "_b");
+            ASSERT_EQ(e->open(inp.string().c_str(),
+                              (kArtifactDir / (tag + ".rpt")).string().c_str(), nullptr),
+                      SWMM_OK);
+            const std::string error =
+                e->startCheckpointSession(SWMM_CHECKPOINT_OUTPUT_NONE, "", false, "");
+            ASSERT_TRUE(error.empty()) << stem << ": " << error;
+        }
+        const auto& fa = a.surfaceRouter2D().frozenGroundEnthalpy();
+        const auto& fb = b.surfaceRouter2D().frozenGroundEnthalpy();
+        const auto& oa = a.surfaceRouter2D().frozenGroundFactor();
+        const auto& ob = b.surfaceRouter2D().frozenGroundFactor();
+        ASSERT_EQ(fa.size(), 2u);
+        double elapsed = 0;
+        int guard = 0;
+        while (oa[0] > 0.5) { // run the source until the cells are partly frozen
+            ASSERT_EQ(a.step(&elapsed), SWMM_OK);
+            ASSERT_GT(elapsed, 0.0) << stem;
+            ASSERT_LT(++guard, 100000);
+        }
+        ASSERT_GT(oa[0], 0.0) << stem;
+        ASSERT_NE(fa, fb);
+        const auto path = kArtifactDir / (stem + ".bin");
+        ASSERT_EQ(a.saveCheckpoint(path.string()), "") << stem;
+        ASSERT_EQ(b.loadCheckpoint(path.string()), "") << stem;
+        EXPECT_EQ(fa, fb);
+        EXPECT_EQ(oa, ob);
+        for (;;) {
+            double ea = 0, eb = 0;
+            ASSERT_EQ(a.step(&ea), SWMM_OK);
+            ASSERT_EQ(b.step(&eb), SWMM_OK);
+            ASSERT_EQ(ea, eb);
+            ASSERT_EQ(fa, fb) << stem;
+            if (ea <= 0)
+                break;
+        }
+        EXPECT_EQ(oa[0], 0.0) << stem; // frozen by the end
+        EXPECT_EQ(oa, ob);
+        EXPECT_EQ(a.surfaceRouter2D().state().depth, b.surfaceRouter2D().state().depth);
     }
 }
 

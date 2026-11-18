@@ -133,6 +133,19 @@ void meshStateImpl(Archive& a, SurfaceStateData& s) {
             if (auto error = s.snow.restoreCheckpoint(bytes); !error.empty())
                 throw std::runtime_error(error);
     }
+    if (!s.frost_enthalpy.empty()) {
+        std::string profile = a.reading() ? std::string{} : "mesh frozen ground slab state v1";
+        a(profile);
+        if (a.reading() && profile != "mesh frozen ground slab state v1")
+            throw std::runtime_error("Unsupported mesh frozen-ground checkpoint profile.");
+        a.fixed(s.frost_enthalpy, s.frost_open);
+        if (s.frost_open.size() != s.frost_enthalpy.size())
+            throw std::runtime_error("Mesh frozen-ground checkpoint shape differs.");
+        for (std::size_t i = 0; i < s.frost_enthalpy.size(); ++i)
+            if (!std::isfinite(s.frost_enthalpy[i]) || !(s.frost_open[i] >= 0.0) ||
+                !(s.frost_open[i] <= 1.0))
+                throw std::runtime_error("Invalid mesh frozen-ground checkpoint value.");
+    }
     auto& t = s.transport;
     if (s.heat.enabled) {
         std::string profile =

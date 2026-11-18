@@ -1147,10 +1147,16 @@ public:
     const std::vector<double>& infilCumulative() const noexcept { return infil_cum_applied_; }
     /// Frozen ground on the mesh ([2D_FROZEN_GROUND]): per-cell slab enthalpy (J/m2) and the
     /// infiltration factor the held rates were scaled by. Both empty when the model is off.
-    const std::vector<double>& frozenGroundEnthalpy() const noexcept { return frost_enthalpy_; }
-    const std::vector<double>& frozenGroundFactor() const noexcept { return frost_open_; }
-    /// The slab every mesh cell uses; meaningful only while frozenGroundFactor() is nonempty.
-    const frost::Slab& frozenGroundSlab() const noexcept { return frost_slab_; }
+    const std::vector<double>& frozenGroundEnthalpy() const noexcept {
+        return state_.frost_enthalpy;
+    }
+    const std::vector<double>& frozenGroundFactor() const noexcept { return state_.frost_open; }
+    /// The slab a cell uses, or null for a cell that no [2D_FROZEN_GROUND] row covers.
+    const frost::Slab* frozenGroundSlab(std::size_t cell) const noexcept {
+        return cell < frost_slab_of_.size() && frost_slab_of_[cell] >= 0
+                   ? &frost_slabs_[static_cast<std::size_t>(frost_slab_of_[cell])]
+                   : nullptr;
+    }
 
     /*!
      * \brief Signed cumulative coupling exchange per cell (m³).
@@ -1624,11 +1630,13 @@ private:
     /// resolved.
     std::vector<double> infil_cum_applied_;
 
-    /// [2D_FROZEN_GROUND]: one slab for every cell that carries an ordinary infiltration
-    /// model. `frost_open_` is the factor handed to Infil2D::updateRates; both vectors are
-    /// empty (no per-step work) without the section. Not carried by surface checkpoints.
-    frost::Slab frost_slab_;
-    std::vector<double> frost_enthalpy_, frost_open_;
+    /// [2D_FROZEN_GROUND]: the authored rows (`*` and mesh tags) and, per cell, the row it
+    /// resolved to (-1 for none). The slab enthalpy and the factor handed to
+    /// Infil2D::updateRates and to the aquifer's intake capacity live in the surface state
+    /// (`frost_enthalpy`, `frost_open`) so the mesh checkpoint carries them. Everything is
+    /// empty (no per-step work) without the section.
+    std::vector<frost::Slab> frost_slabs_;
+    std::vector<int> frost_slab_of_;
     /// Seed the mesh slabs from ctx.frozen_ground.mesh_rows; throws on an invalid section.
     void initializeFrozenGround(const SimulationContext& ctx);
     /// Advance the mesh slabs over `dt` seconds with the held rates just published.

@@ -854,7 +854,7 @@ SWMM_ENGINE_API int swmm_frozen_ground_get(SWMM_Engine engine, int target, int i
  * @brief Add a frozen-ground row, or replace the row that has the same name.
  * @param[in] engine Engine handle.
  * @param[in] target 0 for [FROZEN_GROUND], 1 for [2D_FROZEN_GROUND].
- * @param[in] name Subcatchment name or `*`; the mesh section accepts only `*`.
+ * @param[in] name Subcatchment name or `*`; for the mesh section a mesh tag or `*`.
  * @param[in] values Ten doubles in the order swmm_frozen_ground_get() returns them.
  * @returns SWMM_OK, SWMM_ERR_BADHANDLE, or SWMM_ERR_BADPARAM for another target, a null or empty
  *     name, null values, or a value outside its valid range.

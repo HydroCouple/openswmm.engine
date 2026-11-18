@@ -780,7 +780,7 @@ SWMM_ENGINE_API int swmm_frozen_ground_set(SWMM_Engine engine, int target, const
                                            const double* values) {
     CHECK_HANDLE(engine);
     auto* rows = frozenRows(to_engine(engine)->context(), target);
-    if (!rows || !name || !*name || !values || (target == 1 && std::strcmp(name, "*") != 0))
+    if (!rows || !name || !*name || !values)
         return SWMM_ERR_BADPARAM;
     openswmm::frost::Slab r;
     r.thickness = values[0];
