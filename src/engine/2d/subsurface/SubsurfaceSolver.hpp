@@ -1538,6 +1538,25 @@ private:
                            bool peek);
     double infiltrationStorageDeficit(int cell) const noexcept;
     double infiltrationHeadroom(int cell, double deficit) const noexcept;
+    /**
+     * @brief Test whether a cell passes surface intake straight to its table.
+     * @param[in] cell Zero-based mesh cell.
+     * @return True for a covered CLOSED_FORM cell on the independent clock whose unsaturated
+     * column is thinner than soil::kRechargeLengthFloor. Its own column law (A5) leaves a
+     * saturated sub-millimetre column with no drainage and no storage room, so the firing
+     * passes intake to the table instead (fireCell) and intake admission counts the table's
+     * pending losses as room (intakeHeadroom).
+     */
+    bool passesIntakeToTable(int cell) const noexcept;
+    /**
+     * @brief Surface intake room for one cell, m3.
+     * @param[in] cell Prepared covered cell.
+     * @param[in] deficit The cell's current column storage deficit, m3.
+     * @return infiltrationHeadroom(cell, deficit), or for a cell that passes intake to its table
+     * the deficit plus the table's pending saturated outflow (node, lateral, conduit, LID) less
+     * every pending inflow including booked intake; never negative. Read-only.
+     */
+    double intakeHeadroom(int cell, double deficit) const;
     friend class CommonSourceStage;
     friend class ExplicitInertialSolver;
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,

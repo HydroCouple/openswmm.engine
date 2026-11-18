@@ -1814,6 +1814,46 @@ TEST(Aquifer2D, AutoBaseStepFloorsOnlyNodeBedCells) {
     }
 }
 
+TEST(Aquifer2D, PondedThinColumnKeepsTheTableUnderANodeDraw) {
+    // A full aquifer cell under 1 m of ponding; a storage node on the aquifer
+    // bottom draws about 2.3e-4 m3/s (0.45 Ks A) through its bed. SHARED keeps
+    // the table at the ground. On the independent clock the thin-column law
+    // left the saturated sub-millimetre column with no drainage and no room,
+    // so the table could not take the pond and drained under it (empty after
+    // 30 min). Intake must pass through the thin column to the table.
+    const std::string body =
+        "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+        "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:30:00\nREPORT_STEP 00:01:00\n"
+        "WET_STEP 00:00:30\nDRY_STEP 00:00:30\nROUTING_STEP 1\nVARIABLE_STEP 0\n"
+        "[JUNCTIONS]\nJ1 -3.4 1 0 0 0\n[OUTFALLS]\nO1 -3.5 FREE NO\n"
+        "[STORAGE]\nST1 -3 4 0 FUNCTIONAL 0 0 50 0 0\n"
+        "[CONDUITS]\nC1 ST1 J1 10 .013 0 0 0\nC2 J1 O1 10 .013 0 0 0\n"
+        "[XSECTIONS]\nC1 CIRCULAR .5 0 0 0 1\nC2 CIRCULAR .5 0 0 0 1\n"
+        "[COORDINATES]\nST1 6 3\nJ1 30 30\nO1 40 40\n"
+        "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 1\nEVAPORATION NO\n"
+        "[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n"
+        "[2D_TRIANGLES]\n0 1 2 .03 1.0\n"
+        "[2D_AQUIFER_OPTIONS]\nNODE_ENROLMENT ROWS\nCLOSURE CLOSED_FORM\nGW_CLOCK ";
+    const std::string rest = "\n[2D_AQUIFER]\n* 36 3 .40 .05 2 HG0 3\n"
+                             "[2D_AQUIFER_NODE]\nST1 1 KC 270 DC 1 AREA 1\n"
+                             "[REPORT]\nINPUT NO\n";
+    for (const char* clock : {"SHARED", "INDEPENDENT"}) {
+        auto r = openDeck(std::string("ponded-bed-draw-") + clock, body + clock + rest);
+        ASSERT_TRUE(r.opened) << clock;
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << clock;
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK) << clock;
+        r.started = true;
+        double elapsed = 0;
+        while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0) {
+        }
+        const auto& s = r.eng->surfaceRouter2D().subsurface().state();
+        EXPECT_GT(s.hg[0], s.zs[0] - 1e-3) << clock;
+        EXPECT_GT(s.led_node, .3) << clock; // 2.3e-4 m3/s for 30 min is 0.41 m3
+        EXPECT_NEAR(s.continuityResidual(), 0., 1e-9) << clock;
+        finish(r);
+    }
+}
+
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3
     DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
     ASSERT_TRUE(r.opened);

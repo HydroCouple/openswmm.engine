@@ -2034,6 +2034,23 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell, double deficit) const no
     return std::max(0.0, deficit - pending);
 }
 
+bool SubsurfaceSolver::passesIntakeToTable(int cell) const noexcept {
+    const auto u = static_cast<std::size_t>(cell);
+    return independentClock() && covers(cell) &&
+           state_.closure[u] == int8_t(GwClosure::CLOSED_FORM) &&
+           state_.zs[u] - state_.hg[u] < soil::kRechargeLengthFloor;
+}
+
+double SubsurfaceSolver::intakeHeadroom(int cell, double deficit) const {
+    if (!passesIntakeToTable(cell))
+        return infiltrationHeadroom(cell, deficit);
+    // What the table has promised away since its last firing is room as well:
+    // the firing passes intake through the thin column to replace it.
+    const auto [incoming, outgoing] = pendingClockWater(cell);
+    const double et = clockAmount(cell, GwSlot::et, state_.et_pending, cell, 1e30);
+    return std::max(0.0, deficit - incoming + outgoing - et);
+}
+
 void SubsurfaceSolver::publishInfiltration(SurfaceStateData& surf, double interval, double time) {
     if (time > 0 && independentClock())
         return; // absolute producer-check crossings publish the independent capacity
@@ -2065,11 +2082,18 @@ void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, do
                                                double time) {
     const auto u = static_cast<std::size_t>(i);
     const double A = state_.area[u];
-    const double remaining = infiltrationHeadroom(i);
+    const bool through = passesIntakeToTable(i);
+    const double remaining =
+        through ? intakeHeadroom(i, infiltrationStorageDeficit(i)) : infiltrationHeadroom(i);
     state_.infil_remaining[u] = remaining;
     const double pond = u < surf.depth.size() ? std::max(0.0, surf.depth[u]) : 0.0;
     double rate = remaining > 0.0 ? sourceInfiltrationCapacity(i, pond, interval) : 0.0;
-    if (A > 0.0)
+    if (through)
+        // The table's losses over the interval are not known yet; each booking is
+        // limited by intakeHeadroom() instead. A saturated column still conducts Ks.
+        rate = std::max(sourceInfiltrationCapacity(i, pond, interval),
+                        state_.Ks[u] * std::max(0.0, frozenGroundOpen(u)));
+    else if (A > 0.0)
         rate = std::min(rate, remaining / (A * interval));
     state_.infil_capacity[u] = rate;
     state_.infil_refresh[u] = time;
@@ -2134,10 +2158,10 @@ double SubsurfaceSolver::acceptSurfaceInfiltration(int cell, double requested, b
         return 0.0;
     // Booking changes pending receipts, but not this firing's physical storage.
     const double deficit = infiltrationStorageDeficit(cell);
-    const double take = std::min(requested, infiltrationHeadroom(cell, deficit));
+    const double take = std::min(requested, intakeHeadroom(cell, deficit));
     bookClockAmount(cell, GwSlot::surface, state_.xacc_from_surface, u, take);
     state_.wetting_front[u] += take / state_.area[u];
-    state_.infil_remaining[u] = infiltrationHeadroom(cell, deficit);
+    state_.infil_remaining[u] = intakeHeadroom(cell, deficit);
     return take;
 }
 
@@ -2567,6 +2591,19 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                              : q_in * dt + (lat_vol - node_vol + link_vol - future_lid_up) / A));
         q_et = std::min(q_et, donor / dt);
         q0 = q_in - q_et;
+    }
+    // Under the thin-column law a saturated sub-millimetre column is at
+    // equilibrium and passes nothing down, so a ponded table that loses water
+    // could not take the pond and drained under it. Such a column is a
+    // conduit: the table draws what it loses this firing, plus its room to the
+    // surface, from this firing's intake and the column's water above residual.
+    if (passesIntakeToTable(i) && (q_in > 0.0 || (u < surf.depth.size() && surf.depth[u] > 0.0))) {
+        const double lost =
+            (state_.c_loss[u] * hg0 / std::max(zs, kTiny) - q0) * dt - saturated_exchange / A;
+        const double held = state_.hu[u] - state_.theta_r[u] * L0 - (q_et + std::max(0.0, q0)) * dt;
+        const double pass = std::min(lost + Sy * L0, std::max(0.0, held) + q_in * dt);
+        if (pass > 0.0)
+            q0 += pass / dt;
     }
     state_.q0_last[u] = q0;
 
