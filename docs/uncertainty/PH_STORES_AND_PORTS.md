@@ -114,6 +114,22 @@ edge (§5). Write the whole system as
 where 𝒱 is the vector of volume deviations (strictly increasing in each
 component) and G_t is the net extra outflow at t.
 
+*As built (O-15, PORT_HAMILTONIAN §6):* the bracket's main-run volume change V(h*^{n+1}) − V(h*^n)
+is not exactly Δt × the main run's net link inflow (dynamic-wave conduit storage, lagged areas,
+flap/surcharge weir terms); the unaccounted m is shared by the members in proportion to their water:
+the carried deviation volume is s·dV with s = (V(h*^{n+1}) − Δt·net*) / V(h*^n) = 1 + m/V(h*^n), on a
+loss **and** on a gain (1 while the main run's water is at the dry threshold), then bounded below by
+−V(h*^{n+1}) (a member cannot hold negative water; monotone, zero stays zero). The first version
+clamped s ≤ 1, so a loss shrank every deviation and a gain left it: an alternating mismatch ratcheted
+the band narrower (G72UD11, cumulative s = 0.51 over 526 loss / 317 gain steps). With s on both sides
+the product over any cycle that returns the main run's water is 1 (loss m, gain m: (W−m)/W · W/(W−m)),
+and no step needs a clamp from above. The alternative that is tempting because the mismatch is main-run
+bookkeeping — carry dV unchanged and add m to every member alike — was measured and rejected: the
+raised-end basin gate R falls 0.952 → 0.624 (members' deviations do not move with the main run's
+water there). Pure functions `storeCarryScale`, `carryStoreVolume` (`RomStorePorts.hpp`); property tests
+`StoreVolumeMismatchSharing.*` incl. a 100-cycle alternating-mismatch test (old rule decays to
+≈0.017, new rule returns each deviation to 1e-10).
+
 ### 1.5 Street pond and orifice (O-3, 2026-11-02)
 The street pond over a coupled manhole is a store of the per-member solve, not
 integrated inside the port law. Unknown: the pond depth's deviation z_p from the

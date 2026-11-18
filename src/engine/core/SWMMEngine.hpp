@@ -794,6 +794,7 @@ public:
     /// the factor the members' volume deviations were carried by (<= 1), the main run's water
     /// before and after the step (ft^3), and the members' volume deviations (store x member, ft^3).
     const std::vector<double>& rom1dStoreCarryScale() const noexcept { return rom1d_pg_scale_; }
+    const std::vector<double>& rom1dStoreCarryFloor() const noexcept { return rom1d_pg_floor_; }
     const std::vector<double>& rom1dStoreWaterBefore() const noexcept { return rom1d_pg_wold_; }
     const std::vector<double>& rom1dStoreWaterAfter() const noexcept { return rom1d_store_W_; }
     const std::vector<double>& rom1dStoreCarriedVolumes() const noexcept { return rom1d_pg_carried_; }   ///< the dV each member's solve started from (store x member)
@@ -871,7 +872,7 @@ private:
     long rom1d_pg_below_floor_ = 0;                       ///< member-steps a store ended > 0.05 ft below its invert (counted, not projected)
     std::vector<long> rom1d_pg_below_floor_node_;         ///< the same, per active node
     double rom1d_pg_min_depth_ = 0.0;                     ///< deepest member depth below an admitted store's invert (ft, <= 0)
-    std::vector<double> rom1d_pg_scale_, rom1d_pg_wold_, rom1d_pg_carried_;  ///< last step's per-store carry factor / main-run water before it
+    std::vector<double> rom1d_pg_scale_, rom1d_pg_floor_, rom1d_pg_wold_, rom1d_pg_carried_;  ///< last step's per-store lower bound of the carried dV / main-run water before it
     long rom1d_pg_rejected_ = 0;                          ///< member-steps whose solve failed and were rejected (R-1)
     int rom1d_pg_fail_member_ = -1;                       ///< test seam: member whose solve is starved
     long rom1d_pg_fail_step_ = -1;                        ///< test seam: port-graph step it is starved at

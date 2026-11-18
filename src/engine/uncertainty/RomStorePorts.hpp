@@ -344,6 +344,19 @@ struct PondOrificePort {
     }
 };
 
+/// O-15: the share of the main run's unaccounted store volume change that a member's deviation
+/// volume carries across a step: s = W_pred / W_old with W_pred = V(d*_new) - dt*net* (so s = 1 + m/W_old
+/// for the mismatch m). Applied on a loss AND on a gain, so over any cycle that returns the main run's
+/// water the product of s is 1 (the former loss-only clamp s <= 1 ratcheted deviations down: PORT_HAMILTONIAN §6 O-13 C).
+/// 1 while the main run's water is at or below `dry` (no divisor); never negative.
+inline double storeCarryScale(double W_old, double W_pred, double dry) {
+    return W_old > dry ? std::max(W_pred / W_old, 0.0) : 1.0;
+}
+
+/// The carried deviation volume is also bounded below by floor_dv = -V(d*_new): a member cannot
+/// hold negative water. Monotone in dV (order kept) and the identity above the floor (zero stays zero).
+inline double carryStoreVolume(double dV, double floor_dv) { return dV < floor_dv ? floor_dv : dV; }
+
 }  // namespace openswmm::uncertainty::ports
 
 #endif  // OPENSWMM_ENGINE_UNCERTAINTY_ROM_STORE_PORTS_HPP

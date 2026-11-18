@@ -12736,18 +12736,22 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // The main run's own volume change over a step, V(d*_new) − V(d*_old), is
     // not exactly dt × its net inflow through the links the ports are anchored
     // on (the dynamic-wave level carries the conduits' own storage, lagged
-    // areas, flap/surcharge weir terms). Carried unchanged, that difference
-    // accumulates in every member's dV and drains members through their floor
-    // with every outlet at zero (Bellinge 1D smoke, 2026-11-01: G72R83B members
-    // 134 ft below the invert). The unaccounted change m = V(d*_new) − V(d*_old)
-    // − dt·net* belongs to the storage function. A loss (m < 0) is shared by
-    // members in proportion to their water, so none is drained below empty:
-    // dV is carried scaled by (V(d*_new) − dt·net*) / V(d*_old) < 1. A gain is
-    // shared equally (dV unchanged, the deviation form's own rule): scaling it
-    // up would widen member differences (seen up to ×7.6 near-empty stores).
-    // Zero perturbation stays exact.
+    // areas, flap/surcharge weir terms). The unaccounted change m belongs to the
+    // storage function: it is shared by every member in proportion to its water,
+    // i.e. dV is carried scaled by s = (V(d*_new) − dt·net*) / V(d*_old) = 1 + m/V(d*_old),
+    // on a loss AND on a gain (O-15). The earlier rule clamped s ≤ 1: a loss shrank
+    // every deviation, a gain left it, so an alternating mismatch ratcheted the
+    // band narrower (G72UD11: product 0.51 over 526 loss / 317 gain steps). With
+    // s on both sides the product over a cycle that returns the main run's water
+    // is exactly 1 (loss m then gain m: (W−m)/W · W/(W−m)). Measured against the
+    // additive alternative (dV unchanged, mismatch added to every member alike):
+    // the raised-end basin gate R falls 0.952 → 0.624, so the proportional share
+    // stays. A member cannot hold negative water: the carried dV is bounded below
+    // by −V(d*_new) (carryStoreVolume; monotone, zero stays zero). s is 1 while the
+    // main run's water is below the dry threshold, where V(d*_old) is not a divisor.
     std::vector<double> d_eff(un, std::numeric_limits<double>::quiet_NaN());
-    std::vector<double> store_scale(nb, 1.0);
+    std::vector<double> store_sc(nb, 1.0);
+    std::vector<double> store_floor(nb, 0.0);   // lower bound of the carried dV: minus the main run's water after the step
     rom1d_pg_wold_.assign(nb, 0.0);
     {
         const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
@@ -12793,8 +12797,8 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 return Vg[k] + slope * (d - static_cast<double>(k) * hd);
             };
             const double Wnew = Vabs(d_star, nullptr);
-            double scale = 1.0;
             if (b < nW) {
+                rom1d_pg_wold_[b] = rom1d_store_W_[b];
                 double net = ufu < nodes.lat_flow.size() ? nodes.lat_flow[ufu] : 0.0;
                 for (int j : rom1d_node_links_[ufu]) {
                     const auto uj = static_cast<std::size_t>(j);
@@ -12802,15 +12806,13 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                     if (links.node1[uj] == fu) net -= links.flow[uj];
                 }
                 if (ufu < nodes.overflow.size()) net -= std::max(nodes.overflow[ufu], 0.0);
-                const double Wold = rom1d_store_W_[b];
-                rom1d_pg_wold_[b] = Wold;
-                if (Wold > Ag[0] * PP::kDeltaDry) scale = std::clamp((Wnew - dt * net) / Wold, 0.0, 1.0);
+                store_sc[b] = PP::storeCarryScale(rom1d_store_W_[b], Wnew - dt * net, Ag[0] * PP::kDeltaDry);
+                rom1d_pg_rescale_max_ = std::max(rom1d_pg_rescale_max_, std::fabs(store_sc[b] - 1.0));
                 rom1d_store_W_[b] = Wnew;
-                rom1d_pg_rescale_max_ = std::max(rom1d_pg_rescale_max_, std::fabs(scale - 1.0));
             } else {
                 rom1d_store_W_.push_back(Wnew);
             }
-            store_scale[b] = scale;
+            store_floor[b] = -std::max(Wnew, 0.0);
             const double de = d_star;
             if (b >= nW) rom1d_pg_wold_[b] = Wnew;
             d_eff[static_cast<std::size_t>(a)] = de;
@@ -13234,7 +13236,8 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
         }
     }
 #endif
-    rom1d_pg_scale_ = store_scale;
+    rom1d_pg_scale_ = store_sc;
+    rom1d_pg_floor_ = store_floor;
     rom1d_pg_carried_.assign(nb * uM, 0.0);
     // Failure dumps (diagnostic, PORT_HAMILTONIAN O-6): every member solve whose
     // Newton fails is written under OPENSWMM_PH_DUMP_DIR; unset, nothing changes.
@@ -13322,7 +13325,9 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             g.z_prev[t] = rom1d_mem_z_[i * un + t] * (lin ? rom1d_pg_S_prev_[t] / g.S[t] : 1.0);
         }
         for (std::size_t b = 0; b < nb; ++b) {
-            g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
+            g.dV_prev[b] = PP::carryStoreVolume(store_sc[b] * rom1d_mem_dv_[b * uM + i], store_floor[b]);
+            if (rom1d_mem_dv_[b * uM + i] != g.dV_prev[b])
+                rom1d_pg_rescale_max_ = std::max(rom1d_pg_rescale_max_, std::fabs(g.dV_prev[b] - rom1d_mem_dv_[b * uM + i]) / std::max(-store_floor[b], 1e-30));
             rom1d_pg_carried_[b * uM + i] = g.dV_prev[b];
         }
 #ifdef OPENSWMM_HAS_2D
@@ -13409,7 +13414,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 }
                 if (g.store_of[ua] >= 0) {   // store: the carry scale, main-run water before/after, carried and solved volume deviation
                     const auto sb = static_cast<std::size_t>(g.store_of[ua]);
-                    std::snprintf(buf, sizeof buf, "ST:s=%.9g:Wold=%.6g:Wnew=%.6g:carried=%.6g:dv=%.6g;", store_scale[sb], rom1d_pg_wold_[sb],
+                    std::snprintf(buf, sizeof buf, "ST:s=%.9g:floor=%.9g:Wold=%.6g:Wnew=%.6g:carried=%.6g:dv=%.6g;", store_sc[sb], store_floor[sb], rom1d_pg_wold_[sb],
                                   rom1d_store_W_[sb], g.dV_prev[sb], g.stores[sb].dV(z[ua], nullptr));
                     fl += buf;
                 }

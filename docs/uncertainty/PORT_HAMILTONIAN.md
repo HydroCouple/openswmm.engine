@@ -683,3 +683,23 @@ cases the current code excludes). Acceptance gates as in the table.
   across the crown — per-member, not a plane law); (c) the rim of the G73R45x cluster; (d) the Manning channel's own 06:31
   overshoot (G62F012 +0.92 m vs MC +0.10); (e) Bellinge scoring of OFF as `demo_off` needs `demo_off.inp` (demo_v4.inp writes
   `OUTPUT_FILE demo_v4.2d.h5`; the O-12 OFF run overwrote demo_v4.2d.h5 on 11-16) — copy demo_v4.inp with OUTPUT_FILE demo_off.2d.h5.
+- 2026-11-18: O-15 (mechanism C, the loss/gain-asymmetric carry ratchet; `stepRom1dStorageMembers` sharing block, `RomStorePorts.hpp`
+  `storeCarryScale`/`carryStoreVolume`, tests `StoreVolumeMismatchSharing.*`, uncommitted). **Accounting as found**: the main run's
+  ΔV* = V(d*_new) − V(d*_old) differs from dt·net* (conduit storage, lagged areas, flap/surcharge weirs); m = ΔV* − dt·net*. Loss
+  (m < 0): s = (V(d*_new) − dt·net*)/V(d*_old) = 1 + m/V(d*_old) < 1 scaled every |dV_i|; gain: s clamped to 1. Product over an
+  alternating sequence decays (100 cycles of ±40 ft³ on 1000 ft³: 0.017). **Rule chosen**: s on BOTH sides (unclamped above, ≥ 0, 1
+  below the dry threshold), then dV ≥ −V(d*_new) (member water ≥ 0; the only clamp). Over a cycle returning the main run's water the
+  product is exactly 1. **The additive alternative (dV unchanged, the mismatch is main-run bookkeeping) was tried first, as the
+  task's first reading, and REJECTED on the gate**: R 0.952/0.887 → 0.624/0.894 (B1 per-member; A, B unchanged), so members'
+  deviations do scale with the main run's water at the raised-end basin; symmetric proportional share gives R 0.952/0.902.
+  **Tests** (Debug): member_ports 52 (51 + the ratchet test; share test rewritten to `carried == max(s·dV_prev, −V_after)`, order kept,
+  member water ≥ 0; ratchet test: new rule returns 5 deviations to 1e-10 after 100 cycles, old rule asserted as the mutation fails),
+  port_graph_replay 2, additive_channel 12, spectral_rom1d 101. **Storage gate** A 0.889/0.958 → 0.891/0.961, B 0.727/0.960 →
+  0.728/0.962, R 0.952/0.887 → 0.952/0.902 (floors untouched). **Debug 1D smoke** (ph_o15, 418 s): k 33, admitted 18, Jacobi/not
+  converged/rejected 0/0/0, closure +7, Newton 274,485 (ph_o14 258,039); **store below-invert 118 → 638 member-steps (G72R33Bb 5 → 522,
+  G80F11B 113 → 116)**; any-node 801,586 (798,159), correction-only 18,063 (15,063; deepest −4.26 ft vs −3.21). Band widths vs ph_o14
+  (max / mean over time): G72UD11 4.28/0.47 → 6.38/0.79 ft, G72R83B 4.68/0.90 → 4.72/0.95, G72R150 1.32 → 1.30, G72R33Bb 0.29 → 0.31.
+  **Open**: (a) the ratchet was masking part of G72UD11's over-width (MC 1.2 m one-sided): removing it widens that node, so mechanism
+  C is closed but G72UD11 is not (its band needs the downstream-pipe nonlinearity, O-13 open item); (b) G72R33Bb below-invert rose
+  (a gain scales a near-empty store's deficit up; s has no cap beyond the dry threshold) — owner call whether a floor on the solved
+  level, not just the carried volume, is wanted; (c) Bellinge not run, per instruction.

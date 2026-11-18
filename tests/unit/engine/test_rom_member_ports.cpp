@@ -2118,7 +2118,7 @@ TEST(PerMemberPortsEngine, AdmittedBasinChangesTheBandOnly) {
 // ---------------------------------------------------------------------------
 namespace {
 struct ShareStep {
-    std::vector<double> scale, wold, wafter, carried, dv, nly, corr;
+    std::vector<double> scale, scale_, wold, wafter, carried, dv, nly, corr;
 };
 std::vector<ShareStep> runSharing(const std::string& inp, const std::string& tag, std::size_t& M, std::size_t& nb) {
     std::vector<ShareStep> out;
@@ -2142,7 +2142,8 @@ std::vector<ShareStep> runSharing(const std::string& inp, const std::string& tag
         if (eng->rom1dPortGraphSteps() == seen) continue;
         seen = eng->rom1dPortGraphSteps();
         ShareStep st;
-        st.scale = eng->rom1dStoreCarryScale();
+        st.scale = eng->rom1dStoreCarryFloor();   // lower bound of the carried dV
+        st.scale_ = eng->rom1dStoreCarryScale();
         st.wold = eng->rom1dStoreWaterBefore();
         st.wafter = eng->rom1dStoreWaterAfter();
         st.carried = eng->rom1dStoreCarriedVolumes();
@@ -2175,7 +2176,7 @@ TEST(StoreVolumeMismatchSharing, ZeroDataGivesZeroCorrectionExactly) {
     }
 }
 
-TEST(StoreVolumeMismatchSharing, LossSharedInProportionToWaterGainSharedEquallyOrderKept) {
+TEST(StoreVolumeMismatchSharing, MismatchSharedBothSidesFlooredAtEmptyOrderKept) {
     std::size_t M = 0, nb = 0;
     const auto run = runSharing(engineFixture(true, true, 0.0), "share", M, nb);
     ASSERT_GE(run.size(), 100u);
@@ -2189,26 +2190,21 @@ TEST(StoreVolumeMismatchSharing, LossSharedInProportionToWaterGainSharedEquallyO
         ASSERT_EQ(cur.carried.size(), nb * M);
         ASSERT_EQ(prev.dv.size(), nb * M);
         for (std::size_t b = 0; b < nb; ++b) {
-            const double s = cur.scale[b];
-            ASSERT_GE(s, 0.0);
-            ASSERT_LE(s, 1.0) << "step " << n << ": a deviation was scaled up (the clamp)";
+            const double sc = cur.scale_[b];
+            const double floor_dv = cur.scale[b];
+            ASSERT_GE(sc, 0.0);
+            ASSERT_LE(floor_dv, 0.0);
             const double Wold = cur.wold[b];
-            if (s < 1.0) ++loss_steps; else ++gain_steps;
+            const double Wnew = -floor_dv;
+            if (sc < 1.0) ++loss_steps; else ++gain_steps;
             if (Wold < 0.05 * run[0].wafter[b] + 1e-9 || Wold < 1e-6) ++dry_cross;
             min_depth_w = std::min(min_depth_w, Wold);
             for (std::size_t i = 0; i < M; ++i) {
                 const double old_dv = prev.dv[b * M + i];
                 const double carried = cur.carried[b * M + i];
-                // newly admitted stores start from their own level: the identities hold from the second step
-                EXPECT_EQ(carried, s * old_dv) << "step " << n << " member " << i;
-                EXPECT_LE(std::fabs(carried), std::fabs(old_dv) + 0.0) << "never scaled up, step " << n;
-                if (Wold > 0.0 && s < 1.0) {
-                    const double Vold = Wold + old_dv;
-                    if (std::fabs(Vold) > 1e-6 * Wold) {
-                        const double Vcar = s * Wold + carried;
-                        EXPECT_NEAR((Vold - Vcar) / Vold, 1.0 - s, 1e-9) << "step " << n << " member " << i;
-                    }
-                }
+                // O-15: the share s applies on a loss and on a gain; bounded below by empty.
+                EXPECT_EQ(carried, std::max(sc * old_dv, floor_dv)) << "step " << n << " member " << i;
+                EXPECT_GE(Wnew + carried, -1e-9 * std::max(Wnew, 1.0)) << "member water negative, step " << n;
             }
             // order preservation of the sharing, and of the levels the solve returns
             for (std::size_t i = 0; i < M; ++i)
@@ -2242,12 +2238,51 @@ TEST(StoreVolumeMismatchSharing, LossSharedInProportionToWaterGainSharedEquallyO
                 if (v[rank[k]] > v[rank[k + 1]] + 1e-12) ++order_violations;
         }
     }
-    std::printf("[R-1 sharing] steps %zu, loss steps %ld, gain steps %ld, near-dry steps %ld, min main water %.4g ft^3, order checks %ld, rank steps %ld\n",
+    std::printf("[O-15 sharing] steps %zu, loss steps %ld, gain steps %ld, near-dry steps %ld, min main water %.4g ft^3, order checks %ld, rank steps %ld\n",
                 run.size(), loss_steps, gain_steps, dry_cross, min_depth_w, ordered_checks, order_steps);
     ASSERT_GT(order_steps, 20) << "the members never spread; the order check proves nothing";
     EXPECT_EQ(order_violations, 0);
     (void)sign;
     EXPECT_GT(loss_steps + gain_steps, 0);
+}
+
+// O-15 (e): the carry cannot ratchet. A store whose main run alternates a loss and a gain of
+// equal size (so its water returns every cycle) must hand each member back its deviation volume.
+// The earlier rule (s clamped <= 1: a loss shrinks every deviation, a gain leaves it) decays it
+// geometrically; asserted as the mutation.
+TEST(StoreVolumeMismatchSharing, AlternatingMismatchDoesNotRatchetTheDeviation) {
+    namespace PP = openswmm::uncertainty::ports;
+    const double W0 = 1000.0, m = 40.0, dry = 1e-6;     // main water, mismatch size (ft^3)
+    const std::vector<double> dv0 = {-120.0, -30.0, 0.0, 15.0, 90.0};
+    std::vector<double> now = dv0, old_rule = dv0;
+    double W = W0;
+    for (int cycle = 0; cycle < 100; ++cycle) {
+        for (double sign : {-1.0, 1.0}) {
+            const double Wn = W + sign * m;             // the mismatch lands on the main run's water (net* = 0)
+            for (std::size_t i = 0; i < now.size(); ++i) {
+                now[i] = PP::carryStoreVolume(PP::storeCarryScale(W, Wn, dry) * now[i], -Wn);
+                old_rule[i] *= std::min(PP::storeCarryScale(W, Wn, dry), 1.0);
+            }
+            W = Wn;
+        }
+    }
+    double worst_old = 0.0;
+    for (std::size_t i = 0; i < dv0.size(); ++i) {
+        EXPECT_NEAR(now[i], dv0[i], 1e-10) << "member " << i;
+        if (dv0[i] != 0.0) worst_old = std::max(worst_old, 1.0 - std::fabs(old_rule[i] / dv0[i]));
+    }
+    EXPECT_GT(worst_old, 0.3) << "mutation: the old rule must visibly ratchet";
+    // order kept and zero exact, with the floor engaged
+    for (double fl : {-50.0, -100.0}) {
+        double prev = PP::carryStoreVolume(dv0[0], fl);
+        for (std::size_t i = 1; i < dv0.size(); ++i) {
+            const double c = PP::carryStoreVolume(dv0[i], fl);
+            EXPECT_GE(c, prev);
+            prev = c;
+        }
+        EXPECT_EQ(PP::carryStoreVolume(0.0, fl), 0.0);
+    }
+    EXPECT_EQ(PP::storeCarryScale(0.0, 5.0, dry), 1.0);   // near-empty main run: no divisor
 }
 
 // ---------------------------------------------------------------------------
