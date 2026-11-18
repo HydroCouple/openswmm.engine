@@ -765,6 +765,8 @@ public:
     /// channel state (P planes × active nodes) of the last step.
     const std::vector<uncertainty::FlowEdge>& rom1dFlowEdges() const noexcept { return rom1d_fs_edges_; }
     const std::vector<double>& rom1dAdditiveState() const noexcept { return rom1d_add_state_; }
+    /// Diagnostic: the soft-rain plane A source of the last step (cfs per unit coefficient, active space).
+    const std::vector<double>& rom1dSoftSource() const noexcept { return rom1d_add_qa_; }
     /// Diagnostics: the storage nodes whose members carry their own level
     /// (active indices), and those levels relative to the main run
     /// (nodes x members, ft) after the last step. ADDITIVE_CHANNEL.md §7.
@@ -831,6 +833,8 @@ private:
     uncertainty::AdditiveSystem rom1d_add_sys_;
     std::vector<double> rom1d_add_qa_, rom1d_add_qb_;           ///< soft-rain extra inflow per unit coefficient (cfs)
     std::vector<double> rom1d_add_state_, rom1d_add_kappa_, rom1d_add_q_;
+    std::vector<double> rom1d_add_S_prev_;   ///< O-14: storage of the planes' last step (they carry volume S*Psi)
+    std::vector<double> rom1d_pg_S_prev_;    ///< O-14: storage of the member graph's last step (linear nodes carry volume S*z)
     std::vector<std::vector<double>> rom1d_vec_cols_;          ///< FORCING_VECTOR columns (theta) under H19
     std::vector<std::vector<double>> rom1d_fmult_cols_;        ///< FORCING_MULT columns (theta): scale the runoff plane
     /** @brief Node storage S (ft^2, active space) into rom1d_h18_S_. */

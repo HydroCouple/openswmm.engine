@@ -47,7 +47,18 @@ next to the Manning deviation:
 - runoff multiplier: κ = scale_i − 1;
 - forcing vectors: κ = θ_i − 1.
 
-**Time step.** Backward Euler, (S/dt + J)·Ψ_new = (S/dt)·Ψ_old + δq. The
+**What is carried (O-14, 2026-11-18; accepted as a conservation fix, gate moves last-digit/spin-up only).** A plane
+carries the members' extra *volume*: member i's balance is
+d[V(h + Ψ_i) − V(h)]/dt = δq_i − δQ_out,i, whose first-order form is
+d(SΨ)/dt = −JΨ + δq with S the main run's storage at the time. Until O-14 the
+step held Ψ across a change of S (S dΨ/dt), which books (S_new − S_old)·Ψ_old
+of water no member has; at a pipe crown S jumps between MIN_SURFAREA and half
+the top-width area of the attached pipes, so every receding surcharge burst
+created water (Bellinge 1D smoke 06:19–06:50: plane volume 120,000 → 290,000
+ft³ per unit coefficient for 31,000 ft³ of source; PORT_HAMILTONIAN §6 O-14).
+
+**Time step.** Backward Euler, (S_new/dt + J)·Ψ_new = (S_old/dt)·Ψ_old + δq
+(before O-14: S_new on both sides). The
 matrix is a strictly column-diagonally-dominant M-matrix: each column's
 off-diagonal sum is exactly its diagonal minus S/dt, and the column sums are
 volume conservation. So it is nonsingular and the step is unconditionally

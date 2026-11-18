@@ -12352,12 +12352,94 @@ void SWMMEngine::stepRom1dAdditiveChannel(double dt) noexcept {
 
     rom1d_add_edges_ = rom1d_fs_edges_;
     rom1d_add_edges_.insert(rom1d_add_edges_.end(), rom1d_fs_dry_edges_.begin(), rom1d_fs_dry_edges_.end());
+    // O-14: the planes carry the members' extra VOLUME, not their extra head.
+    // Member i's balance is d[V(h + Psi_i) - V(h)]/dt = dq_i - dQ_out,i, whose
+    // first-order form is d(S Psi)/dt = -J Psi + dq with S = dV/dh of the main
+    // run AT THE TIME, so backward Euler is
+    //   (S_new/dt + J) Psi_new = (S_old/dt) Psi_old + dq.
+    // Holding Psi across a change of S (S dPsi/dt) books (S_new - S_old) Psi_old
+    // of water that no member has: at a pipe crown S jumps between MIN_SURFAREA
+    // and half the top-width area of the attached pipes, so every surcharge
+    // burst that recedes creates extra water out of nothing. Bellinge 1D smoke,
+    // 06:19-06:50 (2026-11-18, PORT_HAMILTONIAN O-14): plane volume 120,000 ->
+    // 290,000 ft^3 per unit coefficient while the sources added 31,000 and the
+    // Monte Carlo's extra network storage per +20 % rain was 12,000-47,000 ft^3;
+    // carried as volume, the plane holds 25,000-60,000.
+    if (rom1d_add_S_prev_.size() == un) {
+        for (int p = 0; p < P; ++p)
+            for (std::size_t t = 0; t < un; ++t)
+                rom1d_add_state_[static_cast<std::size_t>(p) * un + t] *= rom1d_add_S_prev_[t] / rom1d_h18_S_[t];
+    }
+    rom1d_add_S_prev_ = rom1d_h18_S_;
     rom1d_add_sys_.build(na, rom1d_add_edges_, rom1d_h18_S_.data(), dt, &rom1d_fs_pinned_);
     rom1d_add_sweeps_ = 0;
     for (int p = 0; p < P; ++p) {
         const int sw = rom1d_add_sys_.step(q[static_cast<std::size_t>(p)].data(),
                                            &rom1d_add_state_[static_cast<std::size_t>(p) * un]);
         rom1d_add_sweeps_ = std::max(rom1d_add_sweeps_, sw);
+    }
+    // Plane trace (diagnostic only, PORT_HAMILTONIAN O-14): with
+    // OPENSWMM_ADD_DUMP_NODES=name,... and OPENSWMM_PH_DUMP_DIR set, every
+    // routing step writes one row per named node to <dir>/plane_trace.csv:
+    // main-run head, depth and rim, overflow, pinned flag, storage S, the
+    // plane-0 source dq (cfs per unit coefficient), the summed runoff of the
+    // node's soft-rain contributions, plane 0's level Psi after the step, and
+    // every incident flow-response edge (link, role, q, ju, jd, d). From
+    // OPENSWMM_PH_DUMP_T0 (s) on. Unset, nothing changes.
+    {
+        static std::FILE* pf = nullptr;
+        static std::vector<std::pair<int, std::string>> pn;
+        static double pt0 = 0.0;
+        static bool pinit = false;
+        if (!pinit) {
+            pinit = true;
+            const char* nl = std::getenv("OPENSWMM_ADD_DUMP_NODES");
+            const char* dd = std::getenv("OPENSWMM_PH_DUMP_DIR");
+            if (nl && *nl && dd && *dd) {
+                if (const char* t0 = std::getenv("OPENSWMM_PH_DUMP_T0")) pt0 = std::atof(t0);
+                const auto& f2a = rom1d_->full_to_active;
+                std::string all(nl), tok;
+                for (std::size_t k = 0; k <= all.size(); ++k) {
+                    if (k == all.size() || all[k] == ',') {
+                        const int full = ctx_.node_names.find(tok);
+                        const int a = (full >= 0 && full < static_cast<int>(f2a.size())) ? f2a[static_cast<std::size_t>(full)] : -1;
+                        if (a >= 0) pn.emplace_back(a, tok);
+                        if (tok == "*")
+                            for (int b = 0; b < static_cast<int>(rom1d_active_map_.size()); ++b)
+                                pn.emplace_back(b, ctx_.node_names.name_of(rom1d_active_map_[static_cast<std::size_t>(b)]));
+                        tok.clear();
+                    } else tok.push_back(all[k]);
+                }
+                std::error_code ec;
+                std::filesystem::create_directories(dd, ec);
+                pf = std::fopen((std::string(dd) + "/plane_trace.csv").c_str(), "w");
+                if (pf) std::fprintf(pf, "t_s,node,head,depth,rim,overflow,pinned,S,dq,runoff,psi,edges\n");
+            }
+        }
+        static const double pt1 = std::getenv("OPENSWMM_PH_DUMP_T1") ? std::atof(std::getenv("OPENSWMM_PH_DUMP_T1")) : 1.0e300;
+        if (pf && ctx_.current_time >= pt0 && ctx_.current_time <= pt1) {
+            for (const auto& [a, name] : pn) {
+                const auto ua = static_cast<std::size_t>(a);
+                const auto ui = static_cast<std::size_t>(rom1d_active_map_[ua]);
+                double ro = 0.0;
+                if (ua + 1 < rom1d_soft_off_.size())
+                    for (int k = rom1d_soft_off_[ua]; k < rom1d_soft_off_[ua + 1]; ++k) {
+                        const int sidx = rom1d_soft_sub_[static_cast<std::size_t>(k)];
+                        if (sidx >= 0) ro += ctx_.subcatches.runoff[static_cast<std::size_t>(sidx)];
+                    }
+                std::fprintf(pf, "%.1f,%s,%.4f,%.4f,%.4f,%.4g,%d,%.4g,%.5g,%.5g,%.5g,", ctx_.current_time, name.c_str(),
+                             ctx_.nodes.head[ui], ctx_.nodes.depth[ui],
+                             ctx_.nodes.invert_elev[ui] + ctx_.nodes.full_depth[ui], ctx_.nodes.overflow[ui],
+                             (ua < rom1d_fs_pinned_.size() && rom1d_fs_pinned_[ua]) ? 1 : 0, rom1d_h18_S_[ua],
+                             q[0][ua], ro, rom1d_add_state_[ua]);
+                for (const auto& e : rom1d_add_edges_) {
+                    if (e.up != a && e.dn != a) continue;
+                    std::fprintf(pf, "%s%s:q%.4g:u%.4g:d%.4g:k%.4g;", e.up == a ? ">" : "<",
+                                 ctx_.link_names.name_of(e.link).c_str(), e.q, e.ju, e.jd, e.d);
+                }
+                std::fputc('\n', pf);
+            }
+        }
     }
     stepRom1dStorageMembers(dt, q, kap);
     rom1d_add_kappa_.assign(uM * static_cast<std::size_t>(P), 0.0);
@@ -12620,7 +12702,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     }
     // No admitted node: F is the plane system scaled by kappa_i, so C = 0
     // exactly (bit-identical to per-member off).
-    if (rom1d_nl_nodes_.empty()) { rom1d_mem_z_ = u; rom1d_->setMemberAdditive(nullptr); return; }
+    if (rom1d_nl_nodes_.empty()) { rom1d_mem_z_ = u; rom1d_pg_S_prev_ = rom1d_h18_S_; rom1d_->setMemberAdditive(nullptr); return; }
     const auto nb = rom1d_nl_nodes_.size();
     const auto& nodes = ctx_.nodes;
     const auto& links = ctx_.links;
@@ -13223,6 +13305,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
     // factored once here, with its Schur complement on the port/store nodes (O-5).
     g.prepare();
     ++rom1d_pg_steps_;
+    const bool pg_S_prev_ok = rom1d_pg_S_prev_.size() == un;
     g.dV_prev.assign(g.stores.size(), 0.0);
     rom1d_nl_y_.assign(nb * uM, 0.0);
     std::vector<double> z(static_cast<std::size_t>(g.n));
@@ -13232,7 +13315,11 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
             double bt = 0.0;
             for (std::size_t p = 0; p < P; ++p) bt += (i < kap[p].size() ? kap[p][i] : 0.0) * q[p][t];
             g.b[t] = bt;
-            g.z_prev[t] = rom1d_mem_z_[i * un + t];
+            // O-14: a linear node carries the member's extra volume S*z, as the
+            // planes do (stepRom1dAdditiveChannel): its start level is last
+            // step's volume over this step's storage. Stores carry dV themselves.
+            const bool lin = nl_of[t] < 0 && pg_S_prev_ok;
+            g.z_prev[t] = rom1d_mem_z_[i * un + t] * (lin ? rom1d_pg_S_prev_[t] / g.S[t] : 1.0);
         }
         for (std::size_t b = 0; b < nb; ++b) {
             g.dV_prev[b] = store_scale[b] * rom1d_mem_dv_[b * uM + i];
@@ -13358,6 +13445,7 @@ void SWMMEngine::stepRom1dStorageMembers(double dt, const std::vector<std::vecto
                 ext_vol[static_cast<std::size_t>(pd.cp) * uM + i] = -g.portVolume(pd.port, z) / kCfsPerCms;
 #endif
     }
+    rom1d_pg_S_prev_.assign(g.S.begin(), g.S.begin() + static_cast<std::ptrdiff_t>(un));
     rom1d_->setMemberAdditive(rom1d_corr_.data());
     // Per-member nodes carry their own level, spilling or not: they are not
     // pinned to the main run's head in the ROM's reconstruction.

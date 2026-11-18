@@ -3499,6 +3499,8 @@ hook: `rom1dAdditiveFullOrder()`; harness knob: `H19_FULL_ORDER=1`.
 | CL-1e soft rain CORR_LEN, DW | 0.827 / 0.804 | **0.941 / 1.026** |
 | CL-1e soft rain CORR_LEN, FV | 0.846 / 0.815 | **0.938 / 1.018** |
 | **SR-7 steady rain on steady flow** (new) | 0.973 / 1.370 (J1 2.5×, J5 0.73×, shrinking) | **0.922 / 0.969** (every node 0.96–0.97) |
+
+Since O-14 (2026-11-18) these DW cells read SR-5 0.921 / 1.028, CL-1e 0.941 / 1.025, SR-7 0.917 / 0.969, and the storage gate's raised-end basin R 0.952 / 0.887 (was 0.889) (O-14 volume carry, 2026-11-18: −0.001 width / −0.005 SR-7 spin-up coverage; conservation fix, floors unchanged).
 | surcharged filling variant (0.5 ft pipes) | 0.262 / 0.011 | 0.990 / 1.455 |
 | Manning gates (chains, Example 8) | — | identical with the hook on or off (no additive source) |
 
@@ -3579,9 +3581,9 @@ bit-exact engine.
 | Example 8 (steady flag) | 0.825 / 0.985 (0.851 / 0.990) | calibrated |
 | FV free-surface / surcharged | 0.905 / 1.204, 0.850 / 1.174 | calibrated |
 | FV front passage | 0.925 / 7.83 | conservative (H11 timing under FV) |
-| SR-5 soft rain, DW / FV | 0.921 / 1.029, 0.917 / 1.006 | calibrated |
-| CL-1e CORR_LEN, DW / FV | 0.941 / 1.026, 0.938 / 1.018 | calibrated |
-| SR-7 steady rain on steady flow | 0.922 / 0.969 | calibrated |
+| SR-5 soft rain, DW / FV | 0.921 / 1.028, 0.917 / 1.006 | calibrated (O-14 volume carry, 2026-11-18: −0.001 width / −0.005 SR-7 spin-up coverage; conservation fix, floors unchanged) |
+| CL-1e CORR_LEN, DW / FV | 0.941 / 1.025, 0.938 / 1.018 | calibrated (O-14 volume carry, 2026-11-18: −0.001 width / −0.005 SR-7 spin-up coverage; conservation fix, floors unchanged) |
+| SR-7 steady rain on steady flow | 0.917 / 0.969 | calibrated (O-14 volume carry, 2026-11-18: −0.001 width / −0.005 SR-7 spin-up coverage; conservation fix, floors unchanged) |
 | **PR-10's original fixture** (100 m, 1 h window) | **0.914 / 1.005** | calibrated |
 
 The last row is the fixture P4 diagnosed in August. Its slowest mode took

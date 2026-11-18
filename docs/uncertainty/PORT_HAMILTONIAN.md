@@ -633,3 +633,53 @@ cases the current code excludes). Acceptance gates as in the table.
   Net: not better than O-12 on the 1D aggregate; owner decision whether to keep it (law is right; what it exposes is (B) and the
   G71F043/G71F044 sinks). Open: (B) admission of a near-rim manhole whose members are at the rim only through the plane's surcharge
   burst; (C) the loss/gain-asymmetric carry ratchet at G72UD11.
+- 2026-11-18: O-14 (mechanism B, the shared plane's overshoot at the 06:25 burst; `stepRom1dAdditiveChannel`,
+  `stepRom1dStorageMembers`, tests `PlaneVolumeCarry.*`, uncommitted; **STOPPED before Bellinge**: the law moves SR-5/SR-7/CL-1e and
+  storage gate R at the printed digit, see Gates). **Data first** (OFF CSVs, mc_v3 heads/link flows/system storage regressed on the
+  members' rain and Manning multipliers, new env-gated plane trace `OPENSWMM_ADD_DUMP_NODES=a,b|*` [+ `OPENSWMM_PH_DUMP_DIR`,
+  `_T0`, `_T1`] → `plane_trace.csv`: head, depth, rim, overflow, pinned, S, plane-0 source dq, summed runoff, Psi, incident ju/jd/d;
+  1D smoke, OFF, whole network 06:19–06:50, `SWMM6/data/o14_diag`). The OFF overshoot at 06:31 is half rain plane, half Manning
+  channel (smoke rain-only vs Manning-only: G62F012 +0.90 / +0.92 m; MC: rain +0.36, Manning +0.10 m); this entry is the plane.
+  **Ranking.** (2') **the plane carried HEAD across a change of S** — cause. The step was (S_new/dt + J)Psi_new = (S_new/dt)Psi_old
+  + dq; the member balance d[V(h+Psi)−V(h)]/dt = dq − dQ linearises to d(S Psi)/dt, so every step booked (S_new − S_old)·Psi_old of
+  water no member has. At a crown S jumps MIN_SURFAREA ↔ ½W·L of the attached pipes, so each receding surcharge creates water.
+  Network budget, 06:19–06:50 per unit coefficient: sources 31,000 ft³, created by rising S 194,000, destroyed by falling S 39,000;
+  plane volume 120,000 → 253,000 (06:31) → 290,000 (06:51) against the MC's extra network storage per +20 % rain (system storage
+  regressed on rain) 31,600 / 47,500 / 36,900 / 28,500 ft³ at 06:21 / :31 / :41 / :51. Local maxima of Psi are free-surface nodes
+  with no source of their own (G73F070 131 ft, G72R290 80 ft per unit c at 06:31: S rose 1.2 → 100 ft² under Psi 20–48 ft). Shallow
+  laterals: G62F012's Psi rises on the recession with its source gone (1.4 → 2.6 ft), following its downstream node. Plane / MC
+  rain sensitivity, network median 1.10 / 1.50 / 2.36 at 06:21 / :31 / :41 (grows after the burst). (1) E: 1.2–1.47 on the burst onset
+  (22,860–22,970 s), 0.92 at the 06:21 frame (MC ln-ln slope 0.92), 0.44–0.62 on the recession (MC 0.52–0.66); the clamp 3 is never
+  approached: at most 1.4× for two minutes, excluded. (2) as posed (DW's Σdqdh·dt in S): that term is the implicit Picard treatment
+  of the outflows, already the J of the backward-Euler step; adding it double-counts, excluded. (4) H17 full-pipe ju: friction
+  from geometry equals the main run's head drop (G73F430→420: hf 4.13 ft vs dh 4.1; G71F043→041: 0.99 vs 0.985), excluded. (3) rim:
+  in the G62F/G71F04 clusters the MC is 1.5–2.6 m below the rim (not capped); it is the mechanism of ONE cluster, G73R451–455 /
+  G73F430–410 (lowest rim 0.07 m above the main run; the MC's flow through the 0.2 m bottleneck G73F430→420 changes −2 … +2 % with
+  rain while the plane passes +7 … +21 % per c; MC flooding per unit c 5 cfs at 06:21, 31 cfs at 06:41). Secondary, not fixed here.
+  **Law** (no knob): the planes carry volume — (S_new/dt + J)Psi_new = (S_old/dt)Psi_old + dq, i.e. Psi_old ×= S_prev/S_now before
+  the step (`rom1d_add_S_prev_`); the per-member graph's LINEAR nodes the same (z_prev ×= S_prev/S_now, `rom1d_pg_S_prev_`; stores
+  already carry dV). Docs: ADDITIVE_CHANNEL §2 "What is carried". **Tried, not adopted**: S as the secant of the node's volume over
+  the member range ±σ (σ = 1.645 RMS, as the structure secants): no better on the network (smoke 1.095/3.20/13.2 vs 1.092/3.14/11.6)
+  and worse at G73F430 (06:21 15.9 m vs 8.95): once σ ≫ the pipe, S_sec ∝ 1/σ feeds back.
+  **Effect, 1D smoke vs mc_v3 05–07 h (1D-only vs coupled MC: indicative)**, cov / width med / p90 / p99 / nodes×frames > 3×:
+  OFF 0.956/1.171/3.61/18.4/1131 → 0.945/1.092/3.14/11.6/931; ON (O-13) 0.956/1.157/3.59/17.1/1106 → 0.944/1.092/3.09/11.6/912.
+  Nodes with median ratio > 3: 30 → 10 of 958. Plane volume now 47,800 / 60,300 / 41,700 / 25,000 ft³ (MC 31,600 / 47,500 /
+  36,900 / 28,500). Rain plane q95 vs MC rain part at the six (m, head carry → volume carry, MC): G62F012 06:31 0.91 → 0.57 (0.36),
+  06:41 0.37 → 0.07 (0.05); G62F113 06:41 6.50 → 0.51 (0.46); G71F043 06:21 2.16 → 4.79 (0.54), 06:31 0.85 → 0.19 (0.61), 06:41
+  0.21 → 0.01 (0.29); G73F430 06:21 2.10 → 8.95 (0.71), 06:31 4.76 → 8.15 (0.88). So: the recession overshoot is gone; on the
+  RISING limb a node whose S falls (entering surcharge) now spikes (the volume it held is real, the members it belongs to were
+  already full) and G73F430's rim cluster is worse; G71F043 is narrow after 06:31. Network-wide plane/MC 06:31 / :41 median 0.74 / 0.63.
+  **Tests** (member_ports 49 → 51): `PlaneVolumeCarry.BurstIntoASmallStorageJunctionCreatesNoWater` (J0→J1 small pipe→J2→J3→O1,
+  10-min burst, J1's S 12.6 → 224 ft²; plane volume ΣS·Psi never above the cumulative source; max ratio 1.0000, mutation = head
+  carry 2.389) and `PlaneVolumeCarry.PlaneTracksTheMembersHeadOnTheRecession` (two deterministic members at rain ×1.2/×0.8; on the
+  drained recession plane / members' sensitivity 0.776, mutation 2.313; bounds 0.5–2.0). **Gates (Release)**: additive_channel 12,
+  spectral_rom1d 101, member_ports 51, port_graph_replay 2; storage gate A 0.889/0.958, B 0.727/0.960 (unchanged), **R 0.952/0.889 →
+  0.952/0.887**; **SR-5 0.921/1.029 → 0.921/1.028, SR-7 0.922/0.969 → 0.917/0.969, CL-1e 0.941/1.026 → 0.941/1.025** (spin-up: S
+  of filling pipes varies; SR-7's change is in the early-window member coverage, its late width is identical). Per the task card
+  this is a STOP: Bellinge OFF/ON not run, pending owner. **Release 1D smoke** (ph_o14, ON): 39 s, k ≤ 33, admitted 18, closure +7,
+  Jacobi 0, not converged 0, rejected 0, Newton 258,039 (O-13 298,365), store below invert 118 (deepest −0.125 ft), any-node 798,159
+  (O-13 1,956,222; deepest −359 ft vs −2044.5), correction-only 15,063 (137,514; deepest −3.2 ft vs −134). **Open**: (a) owner:
+  accept the SR/R digit moves; (b) rising-limb spike at nodes entering surcharge with plane volume (needs the members' own storage
+  across the crown — per-member, not a plane law); (c) the rim of the G73R45x cluster; (d) the Manning channel's own 06:31
+  overshoot (G62F012 +0.92 m vs MC +0.10); (e) Bellinge scoring of OFF as `demo_off` needs `demo_off.inp` (demo_v4.inp writes
+  `OUTPUT_FILE demo_v4.2d.h5`; the O-12 OFF run overwrote demo_v4.2d.h5 on 11-16) — copy demo_v4.inp with OUTPUT_FILE demo_off.2d.h5.

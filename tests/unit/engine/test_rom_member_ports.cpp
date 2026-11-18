@@ -2610,4 +2610,163 @@ TEST(PerMemberPortsCoupled, FailedMemberSolveIsRejectedAndRidesThePlane) {
     for (std::size_t k = 0; k < ncp; ++k) moved = std::max(moved, std::fabs(run.after.street[k * 20 + um] - run.at.street[k * 20 + um]));
     EXPECT_GT(moved, 0.0) << "the member must book its exchange again on the step after the rejection";
 }
+
+// ---------------------------------------------------------------------------
+// O-14: the additive planes carry the members' extra VOLUME (PORT_HAMILTONIAN
+// §6 O-14). A small-storage junction behind an undersized pipe takes a sharp
+// rain burst: the pipe runs full, the junction and its inflow pipe surcharge
+// (S falls to MIN_SURFAREA), then drain on the recession (S rises to half the
+// top-width area of the pipes again). Carrying head across that rise booked
+// (S_new - S_old)·Psi of water no member has.
+// ---------------------------------------------------------------------------
+namespace {
+
+std::string burstFixture(double rain_scale, bool soft) {
+    std::ostringstream f;
+    f << std::setprecision(10);
+    f << "[TITLE]\nO-14 burst into a small-storage junction\n\n[OPTIONS]\n";
+    f << "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n";
+    f << "START_DATE 01/01/2025\nSTART_TIME 00:00:00\nREPORT_START_DATE 01/01/2025\nREPORT_START_TIME 00:00:00\n";
+    f << "END_DATE 01/01/2025\nEND_TIME 01:30:00\n";
+    f << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\nROUTING_STEP 00:00:05\n";
+    f << "MINIMUM_STEP 0.5\nTHREADS 1\n\n[EVAPORATION]\nCONSTANT 0.0\n\n";
+    f << "[RAINGAGES]\nRG1 INTENSITY 0:01 1.0 TIMESERIES TS0\n\n[TIMESERIES]\n";
+    for (int m = 0; m <= 90; ++m) {   // a 10-minute triangular burst, 6 in/hr peak at 0:25
+        const double tri = (m >= 20 && m <= 30) ? (1.0 - std::fabs(m - 25.0) / 5.0) : 0.0;
+        f << "TS0 01/01/2025 " << std::setfill('0') << std::setw(2) << m / 60 << ":" << std::setfill('0') << std::setw(2)
+          << m % 60 << " " << 6.0 * tri * rain_scale << "\n";
+    }
+    f << std::setfill(' ') << "\n";
+    f << "[SUBCATCHMENTS]\nS1 RG1 J0 4.0 100 600 1.0 0\n\n[SUBAREAS]\nS1 0.015 0.20 0.00 0.00 100 OUTLET\n\n";
+    f << "[INFILTRATION]\nS1 0.0 0.0 0.0 0.0 0.0\n\n";
+    f << "[JUNCTIONS]\nJ0 101 12 0 0 0\nJ1 100 12 0 0 0\nJ2 99 10 0 0 0\nJ3 98 10 0 0 0\n\n";
+    f << "[OUTFALLS]\nO1 97 FREE NO\n\n";
+    f << "[CONDUITS]\nC0 J0 J1 200 0.013 0 0 0 0\nC1 J1 J2 200 0.013 0 0 0 0\nC2 J2 J3 200 0.013 0 0 0 0\nC3 J3 O1 200 0.013 0 0 0 0\n\n";
+    f << "[XSECTIONS]\nC0 CIRCULAR 1.5 0 0 0 1\nC1 CIRCULAR 0.75 0 0 0 1\nC2 CIRCULAR 3 0 0 0 1\nC3 CIRCULAR 3 0 0 0 1\n\n";
+    f << "[REPORT]\nINPUT NO\nCONTINUITY YES\nNODES ALL\nLINKS ALL\n\n";
+    if (soft) f << "[SOFT_RAINGAGES]\nRG1 NORMAL CV 0.20\n";
+    return f.str();
+}
+
+struct BurstRun {
+    std::vector<double> t, h1;                 // elapsed s, head at J1 (ft)
+    std::vector<double> psi1, S1, vol, src;    // plane 0 at J1, S at J1, plane volume, cumulative source (ft^3)
+    double S1_min = 1.0e300, S1_max = 0.0;
+    bool ok = false;
+};
+
+BurstRun runBurst(double rain_scale, bool soft, const std::string& tag) {
+    BurstRun r;
+    const std::string pfx = "rom_o14_" + std::to_string(getpid()) + "_" + tag;
+    const std::string ip = pfx + ".inp", rp = pfx + ".rpt";
+    { std::ofstream f(ip); f << burstFixture(rain_scale, soft); }
+    SWMM_Engine h = swmm_engine_create();
+    auto cleanup = [&]() {
+        swmm_engine_end(h); swmm_engine_close(h); swmm_engine_destroy(h);
+        for (const char* ext : {".inp", ".rpt", ".uncertainty.csv", ".rom_threshold.csv", ".rom_diag.csv", ".out"})
+            std::remove((pfx + ext).c_str());
+    };
+    if (swmm_engine_open(h, ip.c_str(), rp.c_str(), nullptr, nullptr) != 0) { cleanup(); return r; }
+    auto* eng = static_cast<openswmm::SWMMEngine*>(h);
+    if (swmm_engine_initialize(h) != 0 || swmm_engine_start(h, 0) != 0) { cleanup(); return r; }
+    const auto& ctx = eng->context();
+    const int j1 = ctx.node_names.find("J1");
+    double el = 1.0, t_prev = 0.0, src = 0.0;
+    for (int guard = 0; el != 0.0 && guard < 200000; ++guard) {
+        if (swmm_engine_step(h, &el) != 0) break;
+        const double t = el * 86400.0;
+        r.t.push_back(t);
+        r.h1.push_back(ctx.nodes.head[static_cast<std::size_t>(j1)]);
+        const auto* rom = eng->rom1d();
+        const auto& st = eng->rom1dAdditiveState();
+        const auto& S = eng->rom1dStorage();
+        const auto& qa = eng->rom1dSoftSource();
+        const std::size_t na = S.size();
+        if (soft && rom && rom->is_ready() && na > 0 && st.size() >= na && qa.size() == na) {
+            const int a1 = rom->full_to_active[static_cast<std::size_t>(j1)];
+            double v = 0.0, qs = 0.0;
+            for (std::size_t a = 0; a < na; ++a) { v += S[a] * st[a]; qs += qa[a]; }
+            src += qs * (t - t_prev);
+            r.psi1.push_back(st[static_cast<std::size_t>(a1)]);
+            r.S1.push_back(S[static_cast<std::size_t>(a1)]);
+            r.S1_min = std::min(r.S1_min, S[static_cast<std::size_t>(a1)]);
+            r.S1_max = std::max(r.S1_max, S[static_cast<std::size_t>(a1)]);
+            r.vol.push_back(v);
+            r.src.push_back(src);
+        }
+        t_prev = t;
+        if (el > 0.0 && t >= 5400.0) break;
+    }
+    r.ok = !r.t.empty();
+    cleanup();
+    return r;
+}
+
+double headAt(const BurstRun& r, double t) {
+    if (r.t.empty()) return 0.0;
+    if (t <= r.t.front()) return r.h1.front();
+    for (std::size_t k = 1; k < r.t.size(); ++k)
+        if (r.t[k] >= t) {
+            const double w = (t - r.t[k - 1]) / std::max(r.t[k] - r.t[k - 1], 1.0e-12);
+            return (1.0 - w) * r.h1[k - 1] + w * r.h1[k];
+        }
+    return r.h1.back();
+}
+
+}  // namespace
+
+TEST(PlaneVolumeCarry, BurstIntoASmallStorageJunctionCreatesNoWater) {
+    const BurstRun r = runBurst(1.0, true, "vol");
+    ASSERT_TRUE(r.ok);
+    ASSERT_FALSE(r.vol.empty()) << "the soft-rain plane should run";
+    // The fixture does what it is for: J1's storage falls to MIN_SURFAREA while
+    // the pipes run full and rises again on the recession.
+    EXPECT_LT(r.S1_min, 1.0e-3 * r.S1_max + 13.0) << "J1 never surcharged";
+    EXPECT_GT(r.S1_max, 10.0 * r.S1_min) << "J1's storage never rose again";
+    // With positive sources and an M-matrix step every plane level is >= 0, and
+    // the plane's volume sum S·Psi can only lose water (through the outfall):
+    // it never exceeds what the sources put in.
+    double worst = 0.0;
+    for (std::size_t k = 0; k < r.vol.size(); ++k) {
+        EXPECT_GE(r.psi1[k], -1.0e-12) << "step " << k;
+        worst = std::max(worst, r.vol[k] / std::max(r.src[k], 1.0e-9));
+        EXPECT_LE(r.vol[k], r.src[k] * (1.0 + 1.0e-9) + 1.0e-9) << "step " << k << ": plane volume above its sources";
+    }
+    std::printf("[O-14] plane volume / cumulative source, max over the run: %.4f\n", worst);
+}
+
+TEST(PlaneVolumeCarry, PlaneTracksTheMembersHeadOnTheRecession) {
+    // Two deterministic members at rain x1.2 and x0.8 (c = +-1 at CV 0.20) give
+    // the head sensitivity per unit coefficient at J1. Once J1 has drained (its
+    // storage back above half its largest value, after the members' peak), the
+    // plane's level must follow that sensitivity, not hold the surcharge head
+    // it had while J1 was full (the shape of Bellinge's shallow laterals after
+    // the 06:25 burst). Measured 2026-11-18: the plane over the members on the
+    // drained recession, 0.78 (volume carried) against 2.31 (head carried).
+    const BurstRun rom = runBurst(1.0, true, "rom");
+    const BurstRun wet = runBurst(1.2, false, "wet");
+    const BurstRun dry = runBurst(0.8, false, "dry");
+    ASSERT_TRUE(rom.ok && wet.ok && dry.ok);
+    ASSERT_EQ(rom.psi1.size(), rom.t.size());
+    auto fdAt = [&](double t) { return 0.5 * (headAt(wet, t) - headAt(dry, t)); };
+    double fd_max = 0.0;
+    std::size_t k_peak = 0;
+    for (std::size_t k = 0; k < rom.t.size(); ++k)
+        if (fdAt(rom.t[k]) > fd_max) { fd_max = fdAt(rom.t[k]); k_peak = k; }
+    ASSERT_GT(fd_max, 1.0) << "the burst should surcharge J1 differently in the two members";
+    double sum_psi = 0.0, sum_fd = 0.0;
+    int n = 0;
+    for (std::size_t k = k_peak; k < rom.t.size(); ++k) {
+        const double fd = fdAt(rom.t[k]);
+        if (rom.S1[k] < 0.5 * rom.S1_max || fd < 0.05) continue;
+        sum_psi += rom.psi1[k];
+        sum_fd += fd;
+        ++n;
+    }
+    ASSERT_GT(n, 20) << "no drained recession samples";
+    const double ratio = sum_psi / sum_fd;
+    std::printf("[O-14] J1 drained recession: %d samples, plane / members' sensitivity %.3f\n", n, ratio);
+    EXPECT_GT(ratio, 0.5) << "the plane lost the members' band on the recession";
+    EXPECT_LT(ratio, 2.0) << "the plane holds a surcharge head the members no longer have";
+}
 #endif  // OPENSWMM_HAS_2D
