@@ -40,6 +40,26 @@ _OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 _AGE_COMPONENT = "org.hydrocouple.openswmm.waterage"
 
 
+class TestAuthoredProcessArguments(EngineSolverCase):
+    def test_extra_arguments_preserve_order_long_values_and_removal(self):
+        solver = self.opened_solver()
+        components = solver.process_components
+        components.register("receiving", "host.json")
+        library = "x" * 5000 + "/receiver-λ.so"
+        components.set_argument("receiving", "library", library)
+        components.set_argument("receiving", "component", "example.receiving")
+        self.assertEqual(components.arguments("receiving"),
+                         (("library", library), ("component", "example.receiving")))
+        components.set_argument("receiving", "library", "updated.so")
+        self.assertEqual(components.arguments("receiving")[0], ("library", "updated.so"))
+        components.set_argument("receiving", "component", None)
+        self.assertEqual(components.arguments("receiving"), (("library", "updated.so"),))
+        with self.assertRaises(BadParamError):
+            components.set_argument("receiving", "Config", "wrong")
+        with self.assertRaises(ValueError):
+            components.set_argument("receiving", "library", "bad\x00path")
+
+
 def _process_components_model(tag):
     """Write an ``.inp`` with one ``[PROCESS_COMPONENTS]`` row plus its config.
 
@@ -197,6 +217,13 @@ class TestProcessComponentsRegister(_ProcessComponentsCase):
         row = s.process_components.register("test.component.later", missing)
         self.assertEqual(row.config, missing)
         self.assertEqual(row.resolved, "")
+
+    def test_long_utf8_config_path_is_read_in_full(self):
+        s = self.opened_solver()
+        config = "configs/" + "雪" * 3000 + ".rxn"
+        row = s.process_components.register("test.component.longpath", config)
+        self.assertEqual(row.config, config)
+        self.assertEqual(s.process_components["test.component.longpath"].config, config)
 
     def test_register_without_a_config_path(self):
         s = self.opened_solver()

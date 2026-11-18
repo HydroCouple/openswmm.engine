@@ -175,7 +175,7 @@ void addOutlet(const MeshData& mesh, BoundaryData& b) {
         for (int e = 0; e < mesh.cell_vertex_count(static_cast<int>(ui)); ++e) {
             const int idx = openswmm::twoD::MeshData::slot(static_cast<int>(i), e);
             if (mesh.cell_neighbour(static_cast<int>(ui), e) >= 0) continue;
-            if (mesh.edge_mx[static_cast<std::size_t>(idx)] < 1e-9) {
+            if (mesh.edge_mx(static_cast<std::size_t>(idx)) < 1e-9) {
                 b.edge_bc_type[static_cast<std::size_t>(idx)] =
                     static_cast<int8_t>(BoundaryType::NORMAL_FLOW);
                 b.edge_bed_slope[static_cast<std::size_t>(idx)] = kS;
@@ -193,9 +193,9 @@ std::vector<double> groundWeights(const MeshData& mesh) {
         for (int e = 0; e < mesh.cell_vertex_count(static_cast<int>(ui)); ++e) {
             const auto idx = static_cast<std::size_t>(openswmm::twoD::MeshData::slot(static_cast<int>(i), e));
             if (mesh.cell_neighbour(static_cast<int>(ui), e) >= 0) continue;
-            if (mesh.edge_mx[idx] >= 1e-9) continue;   // outlet = x = 0 faces
-            const double dx = mesh.edge_mx[idx] - mesh.tri_cx[ui];
-            const double dy = mesh.edge_my[idx] - mesh.tri_cy[ui];
+            if (mesh.edge_mx(idx) >= 1e-9) continue;   // outlet = x = 0 faces
+            const double dx = mesh.edge_mx(idx) - mesh.tri_cx[ui];
+            const double dy = mesh.edge_my(idx) - mesh.tri_cy[ui];
             const double d  = 2.0 * std::sqrt(dx * dx + dy * dy);
             if (d < 1e-12) continue;
             g[ui] += kGroundScale * mesh.edge_length[idx] / d;

@@ -14,11 +14,62 @@ pending surface and groundwater work before returning.
 
 Use ``solver.coupling.capabilities`` to inspect the active model. Transport rows
 must be enabled before initialization. Runtime inputs do not create species,
-change the mesh, or enable disabled physics. Groundwater heat here is sensible
-heat in water; soil thermal storage/conduction and thermal Dirichlet/Neumann
-conditions are future solver work. Groundwater sources address the saturated
-zone; layer targeting and top recharge are not exposed by this interface.
-FULL_SWE runtime coupling is explicitly unavailable in capabilities and setters.
+change the mesh, or enable disabled physics. Groundwater sources address the
+saturated zone; layer targeting and top recharge are not exposed by this interface.
+Heat power enters through water and can feed the configured porous thermal
+owner; it does not prescribe a soil temperature or thermal boundary.
+
+The standalone CPU FULL_SWE reconstruction-order-2 groundwater profile accepts
+copied surface and groundwater sources, including optional transported heat,
+and rain/quality, evaporation demand and paired infiltration.
+Source expiry splits the shared transaction, and beginning donors bound each
+Euler stage. Runtime aquifer HEAD/FLOW edges require an exterior hydraulic
+binding and retain accepted water, species and sensible-heat receipts. HEAD is
+an absolute elevation; runtime FLOW is outward-positive total m³/s. Copied surface STAGE/FLOW overrides also qualify with exterior binding,
+constant overrides, explicit quality and wall or authored STAGE/FLOW, normal-flow or rating fallback.
+Authored inflow quality defaults to clean water, with optional explicit rows. FLOW is total
+outward-positive m³/s; accepted receipt amounts are inward-positive. All outgoing
+edges share the beginning donor budget; clear restores authored values/quality and
+preserves receipts. Authored TS_STAGE/TS_FLOW supports single-column in-memory
+series, actual Euler times and shared knot/reversal cuts, with exact restart
+of the evaluated boundary values. NORMAL_FLOW uses beginning-stage depth, and
+in-memory RATING curves use beginning-stage elevation with the existing
+extrapolation rules. Accepted curve diagnostics and hidden fallback quality
+are checked on restore. File-based surface signals and borrowed network/catchment owners
+remain unavailable in this profile. Check capabilities for the active model.
+Component checkpoints bind copied prescriptions and retain accepted receipts.
+With the qualified finite COUPLED/GROUND_COLUMN thermal owner, copied evaporation
+also removes latent joules from actual accepted water loss. Native project demand
+uses ``EVAPORATION CLIMATE``; ``EVAPORATION YES`` uses forcing-only demand.
+Sensible exported heat remains separate. Thermal inadmissibility requests bounded
+whole-interval retries; exhaustion refuses atomically without clipping temperature.
+Managed standalone RK2 checkpoint sessions additionally own the engine calendar,
+native in-memory weather, pending coupling batches and copied prescriptions.
+Numerical (``0``), binary (``1``), mesh-HDF5 (``2``) and combined (``3``) modes qualify, including
+matching chemistry/age and the supported thermal owners. Restore into a fresh
+session with no existing runtime prescriptions. Active and cleared surface
+boundary histories are included. Earlier managed RK2 router snapshots without
+the boundary receipt/fallback record are refused safely. Scientific HDF5 values,
+attributes and schema continue exactly; file allocation addresses may differ.
+Water-only networks without shared exchanges additionally use the existing
+hydraulic checkpoint owner alongside RK2 mesh/aquifer state. Node/link stores
+and native calendars resume together. Network quality and shared
+network/catchment owners, source journals and external
+provider programs remain outside this managed profile. Immutable hourly
+``MET_FILE`` caches qualify: initialize both sessions with identical weather
+rows; every cached value is bound, including future hours. Later file removal
+or edits cannot change an initialized session. Native weather cadence is retained.
+Binary output retains the native 1D/system format. Select combined output
+for both native binary and mesh/GW chemical or thermal histories. Both writer
+prefixes and physical state validate before restore publishes any output.
+Owned water-only mesh snow (degree-day or UEB) also supports these four modes.
+The actual point state, accepted cover, signed vapor and liquid/energy ledgers
+resume with the numerical clock, including pending batches and cached weather
+changes at midnight. This profile requires zero surface/GW transport rows,
+native heat disabled and no reciprocal soil contact. Copied weather frames
+are refused before publication. Native weather retains its own cadence;
+snow heat, meltwater chemistry/age/temperature and borrowed owners remain guarded.
+See the engine groundwater transport profile for activation and thermal limits.
 
 Direct sources
 ==============

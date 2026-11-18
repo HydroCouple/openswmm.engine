@@ -1,0 +1,8 @@
+/runs/
+/*.log
+/*.rpt
+/*.out
+/*.inp
+!/reported.inp
+/stage-selected.patch
+/commit-message.txt

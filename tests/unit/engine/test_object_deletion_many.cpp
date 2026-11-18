@@ -15,11 +15,15 @@
 // limitations under the License.
 
 /**
- * @file test_object_deletion_many.cpp
- * @brief swmm_*_delete_many (perf plan Phase A1): the batch APIs must be
+ * @file      test_object_deletion_many.cpp
+ * @brief     swmm_*_delete_many (perf plan Phase A1): the batch APIs must be
  *        observably IDENTICAL to sequential per-object deletes in descending
  *        index order — final state, name index, cross-references and cascade
  *        entry set — while rebuilding the name→index map once per batch.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -48,21 +52,37 @@ namespace {
 struct NetworkState {
     std::vector<std::string> nodes, links, subcatches, gages;
     std::vector<std::pair<std::string, std::string>> link_ends;
-    std::vector<std::string> subcatch_outlets;   // "" = none
+    std::vector<std::string> subcatch_outlets; // "" = none
 
+    /**
+     * @brief Compare the selected captured network identifiers and connectivity.
+     *
+     * Does not compare all engine attributes, physical values or impact-report rows.
+     *
+     * @param[in] o Other owned capture, unchanged.
+     * @return True when node/link/subcatch/gage ID ordering and endpoint/outlet names match exactly.
+     */
     bool operator==(const NetworkState& o) const {
-        return nodes == o.nodes && links == o.links
-            && subcatches == o.subcatches && gages == o.gages
-            && link_ends == o.link_ends
-            && subcatch_outlets == o.subcatch_outlets;
+        return nodes == o.nodes && links == o.links && subcatches == o.subcatches &&
+               gages == o.gages && link_ends == o.link_ends &&
+               subcatch_outlets == o.subcatch_outlets;
     }
 };
 
-NetworkState capture(SWMM_Engine e)
-{
+/**
+ * @brief Copy the identifier/connectivity subset used by batch-deletion parity checks.
+ *
+ * Getter statuses are ignored; negative connectivity indices produce empty names. Caller retains
+ * engine ownership; no model mutation or borrowed ID pointer escapes.
+ *
+ * @param[in] e Live opened/editable engine with valid IDs and consistent connectivity.
+ * @return Owned node/link/subcatch/gage names and link endpoints/subcatch node-outlet names.
+ */
+NetworkState capture(SWMM_Engine e) {
     NetworkState s;
     const int nn = swmm_node_count(e);
-    for (int i = 0; i < nn; ++i) s.nodes.emplace_back(swmm_node_id(e, i));
+    for (int i = 0; i < nn; ++i)
+        s.nodes.emplace_back(swmm_node_id(e, i));
     const int nl = swmm_link_count(e);
     for (int i = 0; i < nl; ++i) {
         s.links.emplace_back(swmm_link_id(e, i));
@@ -80,7 +100,8 @@ NetworkState capture(SWMM_Engine e)
         s.subcatch_outlets.emplace_back(out >= 0 ? swmm_node_id(e, out) : "");
     }
     const int ng = swmm_gage_count(e);
-    for (int i = 0; i < ng; ++i) s.gages.emplace_back(swmm_gage_id(e, i));
+    for (int i = 0; i < ng; ++i)
+        s.gages.emplace_back(swmm_gage_id(e, i));
     return s;
 }
 
@@ -88,21 +109,35 @@ NetworkState capture(SWMM_Engine e)
 // cascaded) — the batch aggregates per-object reports, whose relative order
 // within one delete is fixed but whose concatenation order across deletes is
 // the descending sequence.
-std::multiset<std::tuple<int, int, std::string, int>>
-entrySet(const SWMM_ImpactReport& r)
-{
+/**
+ * @brief Copy impact-report rows into an order-independent multiset.
+ *
+ * Caller retains report allocation; no index remapping, filtering or mutation occurs.
+ *
+ * @param[in] r Stable impact report with n_entries readable records.
+ * @return Owned tuples of object type/index, copied field string (empty if null) and cascade flag,
+ *     preserving duplicates.
+ */
+std::multiset<std::tuple<int, int, std::string, int>> entrySet(const SWMM_ImpactReport& r) {
     std::multiset<std::tuple<int, int, std::string, int>> out;
     for (int i = 0; i < r.n_entries; ++i)
         out.insert({r.entries[i].obj_type, r.entries[i].obj_idx,
-                    r.entries[i].field ? r.entries[i].field : "",
-                    r.entries[i].cascaded});
+                    r.entries[i].field ? r.entries[i].field : "", r.entries[i].cascaded});
     return out;
 }
 
-/// Chain of `n` junctions J0..J(n-1) linked in sequence, one subcatchment
-/// draining to every 4th node, one gage per 8 nodes.
-void buildChain(SWMM_Engine e, int n)
-{
+/**
+ * @brief Add a named linear network and sparse subcatchment/gage objects.
+ *
+ * Adds n junctions, max(n-1,0) conduits, floor(n/4) subcatchments and floor(n/8) gages, then wires
+ * link nodes and each subcatchment to node 4*i. Gages are created but not assigned. Fatal
+ * assertions can leave partial objects and return only from this helper; no hydraulic geometry,
+ * validation or run is provided.
+ *
+ * @param[in,out] e Live editable empty engine, owned by caller.
+ * @param[in] n Nonnegative node count fitting indices and generated 32-byte ID buffers.
+ */
+void buildChain(SWMM_Engine e, int n) {
     for (int i = 0; i < n; ++i) {
         char id[32];
         std::snprintf(id, sizeof(id), "J%d", i);
@@ -134,8 +169,7 @@ void buildChain(SWMM_Engine e, int n)
 
 // ---------------------------------------------------------------------------
 
-TEST(DeleteManyTest, NodesMatchSequentialDescending)
-{
+TEST(DeleteManyTest, NodesMatchSequentialDescending) {
     // Batch on engine A, sequential DESCENDING per-object on engine B; the
     // observable state and the cascade entry sets must be identical.
     SWMM_Engine a = swmm_engine_new();
@@ -149,9 +183,7 @@ TEST(DeleteManyTest, NodesMatchSequentialDescending)
     const std::vector<int> victims{3, 17, 8, 3, 12, 0};
 
     SWMM_ImpactReport batchRep{};
-    ASSERT_EQ(swmm_node_delete_many(a, victims.data(),
-                                    static_cast<int>(victims.size()),
-                                    &batchRep),
+    ASSERT_EQ(swmm_node_delete_many(a, victims.data(), static_cast<int>(victims.size()), &batchRep),
               SWMM_OK);
 
     std::vector<int> seq = victims;
@@ -161,7 +193,8 @@ TEST(DeleteManyTest, NodesMatchSequentialDescending)
     for (int idx : seq) {
         SWMM_ImpactReport r{};
         ASSERT_EQ(swmm_node_delete(b, idx, &r), SWMM_OK);
-        for (auto& t : entrySet(r)) seqEntries.insert(t);
+        for (auto& t : entrySet(r))
+            seqEntries.insert(t);
         swmm_impact_report_free(&r);
     }
 
@@ -182,8 +215,7 @@ TEST(DeleteManyTest, NodesMatchSequentialDescending)
     swmm_engine_destroy(b);
 }
 
-TEST(DeleteManyTest, LinksSubcatchesGagesMatchSequential)
-{
+TEST(DeleteManyTest, LinksSubcatchesGagesMatchSequential) {
     SWMM_Engine a = swmm_engine_new();
     SWMM_Engine b = swmm_engine_new();
     ASSERT_NE(a, nullptr);
@@ -216,8 +248,7 @@ TEST(DeleteManyTest, LinksSubcatchesGagesMatchSequential)
     swmm_engine_destroy(b);
 }
 
-TEST(DeleteManyTest, ValidatesEveryIndexBeforeMutating)
-{
+TEST(DeleteManyTest, ValidatesEveryIndexBeforeMutating) {
     SWMM_Engine e = swmm_engine_new();
     ASSERT_NE(e, nullptr);
     buildChain(e, 8);
@@ -225,18 +256,15 @@ TEST(DeleteManyTest, ValidatesEveryIndexBeforeMutating)
 
     // One bad index anywhere fails the whole call with no changes.
     const std::vector<int> bad{2, 5, 99};
-    EXPECT_EQ(swmm_node_delete_many(e, bad.data(), 3, nullptr),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_node_delete_many(e, bad.data(), 3, nullptr), SWMM_ERR_BADINDEX);
     EXPECT_TRUE(capture(e) == before);
 
     const std::vector<int> neg{2, -1};
-    EXPECT_EQ(swmm_node_delete_many(e, neg.data(), 2, nullptr),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_node_delete_many(e, neg.data(), 2, nullptr), SWMM_ERR_BADINDEX);
     EXPECT_TRUE(capture(e) == before);
 
     // NULL array with n > 0 is a parameter error; n == 0 is a clean no-op.
-    EXPECT_EQ(swmm_node_delete_many(e, nullptr, 3, nullptr),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_node_delete_many(e, nullptr, 3, nullptr), SWMM_ERR_BADPARAM);
     SWMM_ImpactReport rep{};
     EXPECT_EQ(swmm_node_delete_many(e, nullptr, 0, &rep), SWMM_OK);
     EXPECT_EQ(rep.n_entries, 0);
@@ -246,12 +274,11 @@ TEST(DeleteManyTest, ValidatesEveryIndexBeforeMutating)
     swmm_engine_destroy(e);
 }
 
-TEST(DeleteManyTest, BatchScalesWhereSequentialRehashes)
-{
+TEST(DeleteManyTest, BatchScalesWhereSequentialRehashes) {
     // Not a timing assertion (CI noise) — a scale smoke test that also
     // PRINTS the batch-vs-sequential wall times so perf regressions are
     // visible in the log. 2000 deletes from a 6000-node chain.
-    constexpr int kNodes  = 6000;
+    constexpr int kNodes = 6000;
     constexpr int kDelete = 2000;
 
     SWMM_Engine a = swmm_engine_new();
@@ -263,12 +290,12 @@ TEST(DeleteManyTest, BatchScalesWhereSequentialRehashes)
 
     std::vector<int> victims;
     victims.reserve(kDelete);
-    for (int i = 0; i < kDelete; ++i) victims.push_back(i * 3 + 1);
+    for (int i = 0; i < kDelete; ++i)
+        victims.push_back(i * 3 + 1);
 
     using clock = std::chrono::steady_clock;
     const auto t0 = clock::now();
-    ASSERT_EQ(swmm_node_delete_many(a, victims.data(), kDelete, nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_node_delete_many(a, victims.data(), kDelete, nullptr), SWMM_OK);
     const auto t1 = clock::now();
 
     std::vector<int> seq = victims;
@@ -282,8 +309,8 @@ TEST(DeleteManyTest, BatchScalesWhereSequentialRehashes)
     };
     std::printf("[delete_many perf] batch %lld ms, sequential %lld ms "
                 "(%d of %d nodes)\n",
-                static_cast<long long>(ms(t1 - t0)),
-                static_cast<long long>(ms(t2 - t1)), kDelete, kNodes);
+                static_cast<long long>(ms(t1 - t0)), static_cast<long long>(ms(t2 - t1)), kDelete,
+                kNodes);
 
     EXPECT_TRUE(capture(a) == capture(b));
     for (int i = 0; i < swmm_node_count(a); ++i)

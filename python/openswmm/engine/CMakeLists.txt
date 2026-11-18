@@ -37,11 +37,21 @@ set(_engine_modules
     _process_components
     _statistics
     _output_reader
+    _output2d
     _trace
     _spatial
     _forcing
     _climate
+    _snow
+    _checkpoint
+    _split
+    _passive_exchange
 )
+
+if(OPENSWMM_ENGINE_ABI_MANIFEST)
+    install(FILES "${OPENSWMM_ENGINE_ABI_MANIFEST}"
+        DESTINATION openswmm/engine RENAME _abi.json)
+endif()
 
 foreach(_mod IN LISTS _engine_modules)
     add_cython_extension(
@@ -55,6 +65,8 @@ endforeach()
 
 # Optional 2-D module (off by default).
 if(OPENSWMM_BUILD_2D)
+    add_cython_extension(NAME _snow2d TARGET engine__snow2d SOURCE _snow2d.pyx
+        INSTALL_DIR openswmm/engine LIBS openswmm::engine)
     add_cython_extension(NAME _coupling TARGET engine__coupling SOURCE _coupling.pyx
         INSTALL_DIR openswmm/engine LIBS openswmm::engine)
     add_cython_extension(NAME _surface_quality TARGET engine__surface_quality SOURCE _surface_quality.pyx

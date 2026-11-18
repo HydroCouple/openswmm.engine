@@ -34,9 +34,10 @@ OpenSWMM 6 — refactored engine
 The :mod:`openswmm.engine` subpackage exposes the **new, refactored
 OpenSWMM 6 engine** — the recommended API for all new work.
 
-All domain access is class-based: each class takes an active
+Runtime domain access is class-based: each class takes an active
 :class:`~openswmm.engine._solver.Solver` in its constructor and may only be
 called when the solver is in an appropriate :class:`EngineState`.
+Saved result readers operate independently of a solver; see :doc:`guide/results`.
 
 .. seealso::
 
@@ -285,6 +286,17 @@ Output reader  (binary ``.out`` file)
    :members:
    :undoc-members:
    :show-inheritance:
+
+Saved 1D/2D results
+-------------------
+
+.. automodule:: openswmm.engine._results
+   :members: Results, ResultField, SeriesField, SurfaceField, SurfaceResults, ResultMesh
+   :undoc-members:
+
+.. automodule:: openswmm.engine._output2d
+   :members:
+   :undoc-members:
 
 Spatial  (CRS, coordinates, vertices, polygons)
 -----------------------------------------------

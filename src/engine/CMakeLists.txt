@@ -27,7 +27,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Collect all source files (excluding geopackage — built as a separate library)
-file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
+file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     core/*.cpp
     data/*.cpp
@@ -46,6 +46,8 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
 # io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
+# The checkpoint VFD is compiled with the optional mesh HDF5 writer below.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/CheckpointHdf5[.]cpp$")
 
 # PORT v2 (2026-07-31): the uncertainty sidecar is being re-homed onto the
 # explicit-marcher base incrementally (PORT_V2_PREFLIGHT.md). Its 1D sources
@@ -129,6 +131,12 @@ endif()
 
 # ---- Alias targets ----
 add_library(openswmm::engine ALIAS openswmm_engine)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/EngineAbi.cmake)
+openswmm_configure_engine_abi()
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/GpuContract.cmake)
+openswmm_gpu_contract(openswmm_engine)
 
 # ---- Output name ----
 set_target_properties(openswmm_engine PROPERTIES
@@ -247,16 +255,19 @@ else()
             # Enable AVX2 + FMA for SIMD acceleration (x86_64)
             target_compile_options(openswmm_engine PRIVATE -mavx2 -mfma)
         elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            # ARM64 (Apple Silicon / Graviton / Cortex-A): NEON is always
-            # available, but an explicit CPU target lets the compiler emit
-            # more aggressive auto-vectorised code for the inner hot loops
-            # (XSectBatch, DynamicWave momentum kernels). -mcpu=native when
-            # available, else a safe default baseline.
-            include(CheckCXXCompilerFlag)
-            check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
-            if(OPENSWMM_HAVE_MCPU_NATIVE)
-                target_compile_options(openswmm_engine PRIVATE -mcpu=native)
-                message(STATUS "OpenSWMM Engine: -mcpu=native enabled for arm64")
+            # ARM64: NEON is part of the baseline ISA, so the default target
+            # already vectorises the hot loops (XSectBatch, DynamicWave
+            # momentum kernels). -mcpu=native is opt-in (OPENSWMM_NATIVE_CPU,
+            # root CMakeLists.txt): on an SVE build host it emits SVE, and the
+            # library then dies with SIGILL on CPUs without it.
+            if(OPENSWMM_NATIVE_CPU)
+                include(CheckCXXCompilerFlag)
+                check_cxx_compiler_flag("-mcpu=native" OPENSWMM_HAVE_MCPU_NATIVE)
+                if(OPENSWMM_HAVE_MCPU_NATIVE)
+                    target_compile_options(openswmm_engine PRIVATE -mcpu=native)
+                    message(STATUS "OpenSWMM Engine: -mcpu=native (OPENSWMM_NATIVE_CPU); "
+                                   "the library needs this machine's CPU features")
+                endif()
             endif()
         endif()
     elseif(MSVC)
@@ -358,11 +369,21 @@ endif()
 
 # ---- Export macros ----
 include(GenerateExportHeader)
+set(OPENSWMM_ENGINE_EXPORT_DOCUMENTATION [=[
+/**
+ * @file      openswmm_engine_export.h
+ * @brief     Build-generated visibility and deprecation macros for the engine API.
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+]=])
 generate_export_header(openswmm_engine
     BASE_NAME            openswmm_engine
     EXPORT_MACRO_NAME    SWMM_ENGINE_API
     EXPORT_FILE_NAME     openswmm_engine_export.h
     STATIC_DEFINE        OPENSWMM_ENGINE_STATIC
+    CUSTOM_CONTENT_FROM_VARIABLE OPENSWMM_ENGINE_EXPORT_DOCUMENTATION
 )
 
 file(COPY ${CMAKE_CURRENT_BINARY_DIR}/openswmm_engine_export.h
@@ -470,6 +491,8 @@ add_custom_command(TARGET openswmm_engine POST_BUILD
 if(MSVC AND OPENSWMM_BUILD_UNIT_TESTS)
     add_library(openswmm_engine_internal STATIC ${OPENSWMM_ENGINE_SOURCES})
     add_library(openswmm::engine_internal ALIAS openswmm_engine_internal)
+    openswmm_gpu_contract(openswmm_engine_internal)
+    target_link_libraries(openswmm_engine_internal PRIVATE Threads::Threads)
 
     target_compile_features(openswmm_engine_internal PUBLIC cxx_std_20)
     target_compile_definitions(openswmm_engine_internal
@@ -521,9 +544,10 @@ endif()
 # engine do not inherit the dependency. Applied to the MSVC test twin too,
 # since it compiles the same sources.
 if(OPENSWMM_WITH_HYDROCOUPLE)
+    find_package(nlohmann_json CONFIG REQUIRED)
     foreach(_hc_tgt openswmm_engine openswmm_engine_internal)
         if(TARGET ${_hc_tgt})
-            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple)
+            target_link_libraries(${_hc_tgt} PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json)
             target_compile_definitions(${_hc_tgt} PRIVATE OPENSWMM_HAS_HYDROCOUPLE=1)
         endif()
     endforeach()
@@ -534,11 +558,12 @@ if(OPENSWMM_BUILD_2D)
     # Collect 2D source files. The explicit local-inertial LTS marcher is the
     # only integrator (D2 retirement, 2026-07-29): no SUNDIALS, no hypre, no
     # global linear solve anywhere in the 2D module.
-    file(GLOB_RECURSE OPENSWMM_2D_SOURCES
+    file(GLOB_RECURSE OPENSWMM_2D_SOURCES CONFIGURE_DEPENDS
         RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
         2d/data/*.cpp
         2d/gw/*.cpp
         2d/quality/*.cpp   # S7
+        2d/heat/*.cpp
         2d/infil/*.cpp
         2d/subsurface/*.cpp
         2d/mesh/*.cpp
@@ -553,6 +578,7 @@ if(OPENSWMM_BUILD_2D)
     # Explicit local-inertial marcher (the 2D integrator) + its unique-edge
     # CSR layout.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/InertialEdges.cpp)
+    list(APPEND OPENSWMM_2D_SOURCES 2d/solver/MomentumPhysics2D.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialSolver.cpp)
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/ExplicitInertialCheckpoint.cpp)
 
@@ -568,7 +594,8 @@ if(OPENSWMM_BUILD_2D)
     # results are read through the swmm_2d_* API.
     if(OPENSWMM_2D_HDF5_OUTPUT)
         list(APPEND OPENSWMM_2D_SOURCES 2d/output/Default2DOutputPlugin.cpp
-            2d/output/Default2DOutputCheckpoint.cpp)
+            2d/output/Default2DOutputCheckpoint.cpp
+            io/CheckpointHdf5.cpp)
     endif()
     # Surface uncertainty ROM: the mesh eigenbasis it projects onto, the
     # deviation-form ensemble integrator itself, and the correlated-field

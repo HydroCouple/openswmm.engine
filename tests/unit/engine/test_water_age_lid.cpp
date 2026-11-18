@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_water_age_lid.cpp
- * @brief Phase A4 gates — water age through the LID layer stack.
+ * @file      test_water_age_lid.cpp
+ * @brief     Phase A4 gates — water age through the LID layer stack.
  *
  * @details What each deck must PRODUCE for its gate to mean anything, since
  *          a branch that is never reached cannot be tested (lesson 59):
@@ -53,9 +53,9 @@
  *
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §7 A4
  * @see plans/transport/A4_IMPLEMENTATION_BRIEF_2026-08-17.md
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -74,6 +74,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -81,39 +92,86 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 using openswmm::LidLayer;
 using openswmm::LidSpecies;
 
-constexpr int kAge  = static_cast<int>(LidSpecies::AGE);
-constexpr int kNL   = openswmm::LidLayerSpeciesState::kLayerCount;
+constexpr int kAge = static_cast<int>(LidSpecies::AGE);
+constexpr int kNL = openswmm::LidLayerSpeciesState::kLayerCount;
 constexpr double kRainInHr = 2.0;
 /// A distinctive, non-zero source age: every residence time below is then a
 /// DIFFERENCE against it, so an implementation that reported an absolute
 /// elapsed time could not land on the right answer by coincidence.
 constexpr double kRainH = 4.0;
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// One entry per gage interval, for the whole run — see the file comment.
+/**
+ * @brief Generate fixed-intensity rainfall rows at the chosen gage interval.
+ *
+ * Appends a row for each gage interval rather than only endpoints. Numeric time fields are
+ * formatted directly without calendar rollover or overflow validation; supply a fixture-sized
+ * duration.
+ *
+ * @param[in] minutes Nonnegative run duration in minutes on 01/01/2026.
+ * @param[in] interval_min Positive gage interval in minutes; zero/negative is invalid and
+ *     unchecked.
+ * @return Owned STORM rows from minute zero through the last interval not beyond minutes +
+ *     interval_min, using kRainInHr in/hr.
+ */
 std::string rain_series(int minutes, int interval_min) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= minutes + interval_min; m += interval_min) {
-        std::snprintf(buf, sizeof(buf), "STORM 01/01/2026 %02d:%02d %.2f\n",
-                      m / 60, m % 60, kRainInHr);
+        std::snprintf(buf, sizeof(buf), "STORM 01/01/2026 %02d:%02d %.2f\n", m / 60, m % 60,
+                      kRainInHr);
         s += buf;
     }
     return s;
 }
 
+/**
+ * @brief Build rainfall and initial-state water-age source rows.
+ *
+ * Native transported age state is seconds after component loading converts these authored hour
+ * values.
+ *
+ * @param[in] rain_h Rain source age in hours, copied into the authored source config.
+ * @param[in] init_h Initial-state age in hours, copied into the authored source config.
+ * @return Owned WATER_AGE_SOURCES text; no file IO or validation.
+ */
 std::string age_cfg(double rain_h, double init_h) {
     return "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " + std::to_string(rain_h) +
            "\nINITIAL_STATE GLOBAL " + std::to_string(init_h) + "\n";
 }
 
-/// `lid_block` supplies [LID_CONTROLS] + [LID_USAGE]; the rest is shared.
-void write_deck(const char* path, const std::string& lid_block,
-                const char* cfg) {
+/**
+ * @brief Write the six-hour LID-layer age fixture with sustained rain.
+ *
+ * Uses CFS, Horton zero native infiltration, a five-acre pervious subcatchment, fixed six-hour rain
+ * series and a conduit/outfall. Layer flow/age steady-state checks occur in later tests, not during
+ * writing. Uses a local ofstream and requires existing parent directories. Open/write/close
+ * failures are unchecked; owned input strings are not retained and raw tokens/config paths are not
+ * escaped. Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] lid_block Raw complete LID_CONTROLS/LID_USAGE sections inserted before JUNCTIONS;
+ *     include trailing newline/section boundaries.
+ * @param[in] cfg Non-null water-age sidecar filename copied in quotes; config creation is separate.
+ */
+void write_deck(const char* path, const std::string& lid_block, const char* cfg) {
     std::ofstream f(path);
     f << "[TITLE]\nA4 LID layer age gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n"
@@ -128,12 +186,12 @@ void write_deck(const char* path, const std::string& lid_block,
       << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
       << "ROUTING_STEP 10\n\n"
       << "[RAINGAGES]\nRG INTENSITY 0:05 1.0 TIMESERIES STORM\n\n"
-      << "[TIMESERIES]\n" << rain_series(360, 5) << "\n"
+      << "[TIMESERIES]\n"
+      << rain_series(360, 5) << "\n"
       << "[SUBCATCHMENTS]\nS1 RG J1 5 0 500 0.5 0\n\n"
       << "[SUBAREAS]\nS1 0.01 0.1 0.0 0.0 100 OUTLET\n\n"
       << "[INFILTRATION]\nS1 0.0 0.0 4.0 7.0 0\n\n"
-      << lid_block
-      << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+      << lid_block << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
       << "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
@@ -142,12 +200,18 @@ void write_deck(const char* path, const std::string& lid_block,
       << "[REPORT]\nINPUT NO\n";
 }
 
-/// Bioretention: surface + soil + storage + underdrain. 1 acre of the 5.
-/// Every layer is sized to turn over INSIDE the run — a small surface store,
-/// a thin half-saturated soil, and a drain fast enough that storage stays
-/// shallow. A layer still filling at the final step has a mean age below its
-/// V/Q, so a chain of slow layers cannot be checked against one.
-/// See the file warning on units.
+/**
+ * @brief Build a fast-turnover biocell control/usage block for layer-age tests.
+ *
+ * Uses 0.6 in surface height, 3 in soil and 12 in storage with explicit authored void ratio. The
+ * geometry is designed to approach steady turnover within the six-hour fixture; this helper does
+ * not run or verify that condition.
+ *
+ * @param[in] drain_coeff Authored underdrain coefficient in US rain-rate units for the fixed head
+ *     exponent 0.5; default 12.4708.
+ * @return Owned LID_CONTROLS and LID_USAGE sections with one acre, 50 percent initial saturation
+ *     and 100 percent impervious-runoff capture.
+ */
 std::string bio_block(double drain_coeff = 12.4708) {
     std::ostringstream o;
     o << "[LID_CONTROLS]\n"
@@ -155,16 +219,20 @@ std::string bio_block(double drain_coeff = 12.4708) {
          "BC1 SURFACE  0.6    0.0  0.1  100  5\n"
          "BC1 SOIL     3.0    0.5  0.2  0.1  0.864  10.0 3.6\n"
          "BC1 STORAGE  12.0   3.0  0.0  0\n"
-         "BC1 DRAIN    " << drain_coeff << " 0.5  0    0\n\n";
-    return o.str() +
-           "[LID_USAGE]\n"
-           "S1 BC1 1 43560 500 50 100 0\n\n";
+         "BC1 DRAIN    "
+      << drain_coeff << " 0.5  0    0\n\n";
+    return o.str() + "[LID_USAGE]\n"
+                     "S1 BC1 1 43560 500 50 100 0\n\n";
 }
 
-/// Vegetative swale: a single surface layer, no drain. A small storage
-/// height and a real flow width let it fill and then shed at the rate it
-/// receives, so it reaches steady state inside the run — which is what makes
-/// V/Q the mean age rather than an asymptote it is still climbing towards.
+/**
+ * @brief Build a shallow one-layer vegetative-swale age fixture.
+ *
+ * No underdrain/storage layer is defined. The fixed geometry permits surface outflow; whether
+ * steady state is reached is asserted by the later run, not this string builder.
+ * @return Owned VS control/usage sections with 0.6 in surface height, 500 ft width and one-acre
+ *     footprint.
+ */
 std::string swale_block() {
     return "[LID_CONTROLS]\n"
            "SW1 VS\n"
@@ -173,7 +241,15 @@ std::string swale_block() {
            "S1 SW1 1 43560 500 0 100 0\n\n";
 }
 
-/// Rain garden: surface + soil, storage ABSENT (thickness 0).
+/**
+ * @brief Build the rain-garden surface/soil age fixture.
+ *
+ * No storage or underdrain layer is authored. Usage starts at 50 percent soil saturation and
+ * captures 100 percent impervious runoff; width is zero. Constructs text only, without validating
+ * or simulating steady-state behavior.
+ * @return Owned RG control and LID_USAGE sections with 6 inch surface storage, 3 inch soil and one
+ *     acre footprint.
+ */
 std::string garden_block() {
     return "[LID_CONTROLS]\n"
            "RG1 RG\n"
@@ -183,27 +259,55 @@ std::string garden_block() {
            "S1 RG1 1 43560 0 50 100 0\n\n";
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 40000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 40000);
     swmm_engine_end(e);
     return e;
 }
 
 /// The single LID unit of a one-unit deck, as (group, unit-in-group, flat).
-struct Unit { int t = -1, u = -1, flat = -1; };
+struct Unit {
+    int t = -1, u = -1, flat = -1;
+};
 
+/**
+ * @brief Locate the first nonempty LID type group in a one-unit fixture.
+ *
+ * Does not assert that exactly one unit exists; with multiple groups/units it simply selects the
+ * first. Returned values are indices, not references, and later use requires the engine layout to
+ * remain compatible.
+ *
+ * @param[in] eng Live initialized engine with consistent lid_layer_state group offsets; borrowed
+ *     and read only.
+ * @return Group index, unit zero and that group flat offset, or all -1 when every group is empty.
+ */
 Unit only_unit(openswmm::SWMMEngine& eng) {
     const auto& st = eng.context().lid_layer_state;
     for (int t = 0; t < eng.lid().numGroups(); ++t)
@@ -212,22 +316,34 @@ Unit only_unit(openswmm::SWMMEngine& eng) {
     return {};
 }
 
-/// The age of the water ARRIVING at a unit, which every residence time
-/// below is measured as a difference from.
+/**
+ * @brief Read the native age of water arriving at a selected LID usage unit.
+ *
+ * @param[in] ctx Borrowed initialized context with active LID species state and an AGE slot.
+ * @param[in] flat Unchecked valid flat usage-unit index; inflow_value must cover flat*n_species +
+ *     kAge.
+ * @return Inflow age in seconds, without unit conversion or wetness validation.
+ */
 double st_inflow_age(const openswmm::SimulationContext& ctx, int flat) {
     const auto& st = ctx.lid_layer_state;
-    return st.inflow_value[static_cast<std::size_t>(flat) *
-                               static_cast<std::size_t>(st.n_species) +
+    return st.inflow_value[static_cast<std::size_t>(flat) * static_cast<std::size_t>(st.n_species) +
                            static_cast<std::size_t>(kAge)];
 }
 
-double layer_age(const openswmm::SimulationContext& ctx, int flat,
-                 LidLayer k) {
-    return ctx.lid_layer_state.value[
-        ctx.lid_layer_state.layer_index(flat, k, kAge)];
+/**
+ * @brief Read the transported age stored on a selected LID layer.
+ *
+ * @param[in] ctx Borrowed initialized context with consistent LID layer/species arrays.
+ * @param[in] flat Unchecked valid flat usage-unit index.
+ * @param[in] k Valid SURFACE/PAVEMENT/SOIL/STORAGE layer identifier, not COUNT_.
+ * @return Native layer age in seconds from the AGE species slot; no wet/dry or layer-presence
+ *     filtering is added here.
+ */
+double layer_age(const openswmm::SimulationContext& ctx, int flat, LidLayer k) {
+    return ctx.lid_layer_state.value[ctx.lid_layer_state.layer_index(flat, k, kAge)];
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the block exists, is per-LAYER, and the unit is RECEIVING water.
@@ -244,26 +360,25 @@ TEST(WaterAgeLidTest, LayerBlockIsSizedAndTheUnitIsReceiving) {
     ASSERT_NE(e, nullptr);
     auto& eng = as_cpp_engine(e);
     const auto& ctx = eng.context();
-    const auto& st  = ctx.lid_layer_state;
+    const auto& st = ctx.lid_layer_state;
 
     ASSERT_TRUE(st.active()) << "the per-layer block was never sized — no LID "
                                 "units were built, so nothing below is a test";
     ASSERT_EQ(st.n_units, 1);
-    ASSERT_EQ(static_cast<int>(st.value.size()), st.n_units * kNL *
-                                                 st.n_species);
+    ASSERT_EQ(static_cast<int>(st.value.size()), st.n_units * kNL * st.n_species);
     ASSERT_EQ(st.n_species, static_cast<int>(LidSpecies::COUNT_));
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     // SETUP, magnitude: 2 in/h over an acre for two hours is ~0.33 ft of
     // water on the unit. Anything far below that means the storm did not
     // reach it.
-    EXPECT_GT(g.wb_inflow[ui], 0.2)
-        << "the unit received only " << g.wb_inflow[ui] << " ft of water over "
-           "the run; the deck is meant to deliver about 0.33 ft";
+    EXPECT_GT(g.wb_inflow[ui], 0.2) << "the unit received only " << g.wb_inflow[ui]
+                                    << " ft of water over "
+                                       "the run; the deck is meant to deliver about 0.33 ft";
     // SETUP, regime: still arriving at the last step.
     EXPECT_GT(g.in_surf[ui], 0.0)
         << "no inflow at the final step — the storm ended early and every "
@@ -299,8 +414,8 @@ TEST(WaterAgeLidTest, SingleLayerUnitHoldsWaterForItsResidenceTime) {
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     // SETUP: steady state — receiving, and holding water.
     ASSERT_GT(g.in_surf[ui], 0.0) << "not receiving at the final step";
@@ -311,19 +426,20 @@ TEST(WaterAgeLidTest, SingleLayerUnitHoldsWaterForItsResidenceTime) {
     // V/Q, so the closed form only applies once outflow matches inflow.
     const double q_out = g.surface_runoff[ui] + g.infil_loss[ui] / 60.0;
     ASSERT_NEAR(q_out / g.in_surf[ui], 1.0, 0.10)
-        << "the swale is not at steady state: in " << g.in_surf[ui]
-        << " ft/s against out " << q_out << " ft/s, so V/Q is an asymptote "
+        << "the swale is not at steady state: in " << g.in_surf[ui] << " ft/s against out " << q_out
+        << " ft/s, so V/Q is an asymptote "
            "it is still climbing towards rather than its mean age";
 
     const double residence_s = v / g.in_surf[ui];
-    const double arrived_s   = st_inflow_age(ctx, un.flat);
-    const double reported_s  = layer_age(ctx, un.flat, LidLayer::SURFACE);
-    const double held_s      = reported_s - arrived_s;
+    const double arrived_s = st_inflow_age(ctx, un.flat);
+    const double reported_s = layer_age(ctx, un.flat, LidLayer::SURFACE);
+    const double held_s = reported_s - arrived_s;
     EXPECT_NEAR(held_s / residence_s, 1.0, 0.05)
-        << "the swale surface reads " << reported_s << " s on water that "
-           "arrived at " << arrived_s << " s, so it held it for " << held_s
-        << " s against a residence time V/Q of " << residence_s << " s (V = "
-        << v << " ft, Q = " << g.in_surf[ui] << " ft/s) — a ratio of "
+        << "the swale surface reads " << reported_s
+        << " s on water that "
+           "arrived at "
+        << arrived_s << " s, so it held it for " << held_s << " s against a residence time V/Q of "
+        << residence_s << " s (V = " << v << " ft, Q = " << g.in_surf[ui] << " ft/s) — a ratio of "
         << (held_s / residence_s)
         << ". A ratio far above 1 means the mixing volume is not admitting "
            "the water flowing through, so the age is measuring time since "
@@ -351,8 +467,8 @@ TEST(WaterAgeLidTest, StorageAgeIsTheSumOfTheLayerResidenceTimes) {
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     const double v_surf = g.surf_depth[ui] * g.surf_void_frac[ui];
     const double v_soil = g.soil_moist[ui] * g.soil_thick[ui];
@@ -369,13 +485,12 @@ TEST(WaterAgeLidTest, StorageAgeIsTheSumOfTheLayerResidenceTimes) {
     ASSERT_GT(v_stor, 0.0) << "the storage layer holds nothing";
 
     const double chain_s = v_surf / q_surf + v_soil / q_soil + v_stor / q_stor;
-    const double arrived_s  = st_inflow_age(ctx, un.flat);
+    const double arrived_s = st_inflow_age(ctx, un.flat);
     const double reported_s = layer_age(ctx, un.flat, LidLayer::STORAGE);
-    const double held_s     = reported_s - arrived_s;
+    const double held_s = reported_s - arrived_s;
 
     // Monotone first: each layer must be older than the one above it.
-    EXPECT_GT(layer_age(ctx, un.flat, LidLayer::SOIL),
-              layer_age(ctx, un.flat, LidLayer::SURFACE))
+    EXPECT_GT(layer_age(ctx, un.flat, LidLayer::SOIL), layer_age(ctx, un.flat, LidLayer::SURFACE))
         << "soil water is not older than surface water — the layers are not "
            "in series, or the donor chain is wired the wrong way up";
     EXPECT_GT(reported_s, layer_age(ctx, un.flat, LidLayer::SOIL))
@@ -389,10 +504,11 @@ TEST(WaterAgeLidTest, StorageAgeIsTheSumOfTheLayerResidenceTimes) {
     // not perfectly steady at the final step. A factor-level error in any
     // layer's mixing moves this far outside the band.
     EXPECT_NEAR(held_s / chain_s, 1.0, 0.15)
-        << "water reaching storage was held " << held_s << " s against a "
-           "chained residence time of " << chain_s << " s (surface "
-        << (v_surf/q_surf) << " + soil " << (v_soil/q_soil) << " + storage "
-        << (v_stor/q_stor) << ") — a ratio of " << (held_s / chain_s) << ".";
+        << "water reaching storage was held " << held_s
+        << " s against a "
+           "chained residence time of "
+        << chain_s << " s (surface " << (v_surf / q_surf) << " + soil " << (v_soil / q_soil)
+        << " + storage " << (v_stor / q_stor) << ") — a ratio of " << (held_s / chain_s) << ".";
     swmm_engine_destroy(e);
 }
 
@@ -417,22 +533,21 @@ TEST(WaterAgeLidTest, DrainLeavesAtStorageAgeAndReachesTheNode) {
     ASSERT_NE(e, nullptr);
     auto& eng = as_cpp_engine(e);
     const auto& ctx = eng.context();
-    const auto& st  = ctx.lid_layer_state;
+    const auto& st = ctx.lid_layer_state;
     ASSERT_TRUE(st.active());
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     ASSERT_GT(g.drain_flow[ui], 0.0)
         << "the underdrain never flowed — the drain branch was not reached, "
            "so neither claim below is under test";
 
-    const double drain_s = st.drain_value[
-        static_cast<std::size_t>(un.flat) *
-            static_cast<std::size_t>(st.n_species) +
-        static_cast<std::size_t>(kAge)];
+    const double drain_s =
+        st.drain_value[static_cast<std::size_t>(un.flat) * static_cast<std::size_t>(st.n_species) +
+                       static_cast<std::size_t>(kAge)];
     EXPECT_DOUBLE_EQ(drain_s, layer_age(ctx, un.flat, LidLayer::STORAGE))
         << "the drain is not leaving at the storage layer's age";
 
@@ -441,27 +556,32 @@ TEST(WaterAgeLidTest, DrainLeavesAtStorageAgeAndReachesTheNode) {
     // its age is a mixture and must be bracketed rather than matched.
     ASSERT_FALSE(ctx.water_age_state.node_age.empty());
     ASSERT_FALSE(ctx.water_age_state.subcatch_runoff_age.empty());
-    const double j1_h    = ctx.water_age_state.node_age[0] / 3600.0;
+    const double j1_h = ctx.water_age_state.node_age[0] / 3600.0;
     const double drain_h = drain_s / 3600.0;
-    const double surf_h  = ctx.water_age_state.subcatch_runoff_age[0] / 3600.0;
+    const double surf_h = ctx.water_age_state.subcatch_runoff_age[0] / 3600.0;
 
     // SETUP: the drain must be distinctly older than everything else
     // arriving, or the bracket below has no width to detect anything in.
-    ASSERT_GT(drain_h, surf_h + 0.2)
-        << "the underdrain (" << drain_h << " h) is not meaningfully older "
-           "than the subcatchment's own runoff (" << surf_h << " h), so no "
-           "assertion about J1 can tell which age it was given";
+    ASSERT_GT(drain_h, surf_h + 0.2) << "the underdrain (" << drain_h
+                                     << " h) is not meaningfully older "
+                                        "than the subcatchment's own runoff ("
+                                     << surf_h
+                                     << " h), so no "
+                                        "assertion about J1 can tell which age it was given";
 
-    EXPECT_LT(j1_h, drain_h)
-        << "J1 (" << j1_h << " h) is older than the oldest thing entering it, "
-           "the underdrain at " << drain_h << " h";
+    EXPECT_LT(j1_h, drain_h) << "J1 (" << j1_h
+                             << " h) is older than the oldest thing entering it, "
+                                "the underdrain at "
+                             << drain_h << " h";
     EXPECT_GT(j1_h, surf_h + 0.03)
-        << "J1 holds water at " << j1_h << " h while the subcatchment's own "
-           "runoff is " << surf_h << " h and the underdrain delivered "
-        << drain_h << " h. The drain is the only thing that can pull the node "
-           "above its surface runoff, so a J1 at or below " << surf_h
-        << " h means the loader is still handing drain water the "
-        << kRainH << " h RAINFALL age — the stand-in that named phase A4 as "
+        << "J1 holds water at " << j1_h
+        << " h while the subcatchment's own "
+           "runoff is "
+        << surf_h << " h and the underdrain delivered " << drain_h
+        << " h. The drain is the only thing that can pull the node "
+           "above its surface runoff, so a J1 at or below "
+        << surf_h << " h means the loader is still handing drain water the " << kRainH
+        << " h RAINFALL age — the stand-in that named phase A4 as "
            "its fix.";
     swmm_engine_destroy(e);
 }
@@ -485,8 +605,8 @@ TEST(WaterAgeLidTest, AbsentStorageLayerNeverMixes) {
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     // SETUP: the rest of the stack must be working, or "storage is empty" is
     // just "nothing ran".
@@ -498,8 +618,7 @@ TEST(WaterAgeLidTest, AbsentStorageLayerNeverMixes) {
     EXPECT_EQ(g.in_stor[ui], 0.0)
         << "water is being published as entering a storage layer the deck "
            "does not have";
-    EXPECT_EQ(g.drain_flow[ui], 0.0)
-        << "a rain garden with no storage layer reported drain flow";
+    EXPECT_EQ(g.drain_flow[ui], 0.0) << "a rain garden with no storage layer reported drain flow";
     // And the row itself must stay empty. Without this the layer simply
     // advances by dt every step and ends the run holding the elapsed time —
     // which is then what the underdrain would report, since the drain reads
@@ -539,12 +658,12 @@ TEST(WaterAgeLidTest, UnitInflowCarriesTheSubcatchmentAge) {
           << "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
           << "ROUTING_STEP 10\n\n"
           << "[RAINGAGES]\nRG INTENSITY 0:05 1.0 TIMESERIES STORM\n\n"
-          << "[TIMESERIES]\n" << rain_series(180, 5) << "\n"
+          << "[TIMESERIES]\n"
+          << rain_series(180, 5) << "\n"
           << "[SUBCATCHMENTS]\nS1 RG J1 5 50 500 0.5 0\n\n"
           << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
           << "[INFILTRATION]\nS1 0.0 0.0 4.0 7.0 0\n\n"
-          << bio_block()
-          << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
+          << bio_block() << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
           << "[OUTFALLS]\nOUT 9.0 FREE  NO\n\n"
           << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
           << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
@@ -560,8 +679,8 @@ TEST(WaterAgeLidTest, UnitInflowCarriesTheSubcatchmentAge) {
 
     const Unit un = only_unit(eng);
     ASSERT_GE(un.flat, 0);
-    const auto& g  = eng.lid().group(un.t);
-    const auto  ui = static_cast<std::size_t>(un.u);
+    const auto& g = eng.lid().group(un.t);
+    const auto ui = static_cast<std::size_t>(un.u);
 
     // SETUP: the unit must actually be capturing subarea runoff, not just
     // catching rain — otherwise every subarea term is multiplied by zero.
@@ -570,17 +689,19 @@ TEST(WaterAgeLidTest, UnitInflowCarriesTheSubcatchmentAge) {
                                          "gate tests is not exercised";
     ASSERT_GT(g.inflow[ui], 0.0);
     const double rain_ft_s = ctx.subcatches.rainfall[0];
-    ASSERT_GT(g.inflow[ui], rain_ft_s * 1.05)
-        << "the unit's inflow (" << g.inflow[ui] << " ft/s) is no more than "
-           "the rain falling on it (" << rain_ft_s << " ft/s) — no subarea "
-           "runoff is being captured";
+    ASSERT_GT(g.inflow[ui], rain_ft_s * 1.05) << "the unit's inflow (" << g.inflow[ui]
+                                              << " ft/s) is no more than "
+                                                 "the rain falling on it ("
+                                              << rain_ft_s
+                                              << " ft/s) — no subarea "
+                                                 "runoff is being captured";
 
     // The captured runoff aged on the surface before it arrived, so the mix
     // must be older than the rain that fell straight in.
     const double arrived_h = st_inflow_age(ctx, un.flat) / 3600.0;
     EXPECT_GT(arrived_h, kRainH + 0.01)
-        << "water arrives at the unit at " << arrived_h << " h against "
-        << kRainH << " h of rain, while most of it came off an impervious "
+        << "water arrives at the unit at " << arrived_h << " h against " << kRainH
+        << " h of rain, while most of it came off an impervious "
            "surface that had already aged it. An inflow age equal to the "
            "source age means the subarea ages A3 computed are not reaching "
            "the LID.";

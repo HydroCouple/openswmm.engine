@@ -1,10 +1,15 @@
-/*!
- * \file worker_progress.h
- * \brief JSON progress serialization for openswmm-legacy-worker.
+/**
+ * @file      worker_progress.h
+ * @brief     JSON progress serialization for openswmm-legacy-worker.
  *
  * The worker emits progress updates to stdout as JSON objects (one per line).
  * Each line is a complete, valid JSON object that can be independently parsed.
  * Uses plain C++ (no Qt dependency).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
 
 #ifndef OPENSWMM_LEGACY_WORKER_PROGRESS_H
@@ -16,35 +21,57 @@
 namespace WorkerProgress {
 
 /**
- * @brief Safely escape a string for JSON.
+ * @brief Escape a bounded diagnostic string for the worker JSON fields.
  *
- * Handles quotes, backslashes, newlines, etc.
+ * Escapes quote, backslash, newline, carriage return and tab; copies other bytes unchanged,
+ * including other control bytes. Stops at capacity minus one, always terminates under the
+ * positive-capacity precondition, and silently omits a two-byte escape if only one payload byte
+ * remains. Does not report truncation or validate UTF-8.
+ *
+ * @param[in] input Non-null null-terminated source, borrowed for this call.
+ * @param[out] output Non-null writable buffer of at least maxLen bytes; must not overlap input.
+ * @param[in] maxLen Positive buffer capacity including the final null terminator; zero/negative
+ *     capacities are invalid and unchecked.
  */
-inline void escapeJson(const char *input, char *output, int maxLen)
-{
-    const char *src = input;
-    char *dst = output;
-    char *end = output + maxLen - 1;
+inline void escapeJson(const char* input, char* output, int maxLen) {
+    const char* src = input;
+    char* dst = output;
+    char* end = output + maxLen - 1;
 
     while (*src && dst < end) {
         switch (*src) {
-            case '"':
-                if (dst + 1 < end) { *dst++ = '\\'; *dst++ = '"'; }
-                break;
-            case '\\':
-                if (dst + 1 < end) { *dst++ = '\\'; *dst++ = '\\'; }
-                break;
-            case '\n':
-                if (dst + 1 < end) { *dst++ = '\\'; *dst++ = 'n'; }
-                break;
-            case '\r':
-                if (dst + 1 < end) { *dst++ = '\\'; *dst++ = 'r'; }
-                break;
-            case '\t':
-                if (dst + 1 < end) { *dst++ = '\\'; *dst++ = 't'; }
-                break;
-            default:
-                *dst++ = *src;
+        case '"':
+            if (dst + 1 < end) {
+                *dst++ = '\\';
+                *dst++ = '"';
+            }
+            break;
+        case '\\':
+            if (dst + 1 < end) {
+                *dst++ = '\\';
+                *dst++ = '\\';
+            }
+            break;
+        case '\n':
+            if (dst + 1 < end) {
+                *dst++ = '\\';
+                *dst++ = 'n';
+            }
+            break;
+        case '\r':
+            if (dst + 1 < end) {
+                *dst++ = '\\';
+                *dst++ = 'r';
+            }
+            break;
+        case '\t':
+            if (dst + 1 < end) {
+                *dst++ = '\\';
+                *dst++ = 't';
+            }
+            break;
+        default:
+            *dst++ = *src;
         }
         ++src;
     }
@@ -52,24 +79,18 @@ inline void escapeJson(const char *input, char *output, int maxLen)
 }
 
 /**
- * @brief Emit a progress update as a JSON line to stdout.
+ * @brief Write and flush one progress JSON line to stdout.
  *
- * @param stepCount Number of simulation steps completed so far
- * @param elapsed Cumulative elapsed simulation time (days)
- * @param runoffErrFrac Running runoff continuity error as a fraction
- *                      (0.001 = 0.1 %), or 0.0 if not yet meaningful.
- * @param routingErrFrac Running flow-routing continuity error as a fraction.
+ * Formats elapsed to six decimal places and errors to eight; finite numeric values are required for
+ * valid JSON. IO errors are ignored.
  *
- * The continuity values are sent as fractions (not percentages) so the GUI
- * pipeline, which multiplies by 100 for display, matches the refactored
- * engine's runoff/routing-error convention and the final "continuity" line.
- *
- * Format:
- * `{"type":"progress","stepCount":123,"elapsed":0.5,"runoff":0.0001,"routing":0.0002}\n`
+ * @param[in] stepCount Number of successful advancing simulation steps.
+ * @param[in] elapsed Elapsed simulation time in decimal days.
+ * @param[in] runoffErrFrac Running runoff continuity fraction, not percent; zero if unavailable.
+ * @param[in] routingErrFrac Running routing continuity fraction, not percent.
  */
-inline void emitProgress(int stepCount, double elapsed,
-                         double runoffErrFrac, double routingErrFrac)
-{
+inline void emitProgress(int stepCount, double elapsed, double runoffErrFrac,
+                         double routingErrFrac) {
     std::printf("{\"type\":\"progress\",\"stepCount\":%d,\"elapsed\":%.6f,"
                 "\"runoff\":%.8f,\"routing\":%.8f}\n",
                 stepCount, elapsed, runoffErrFrac, routingErrFrac);
@@ -77,54 +98,42 @@ inline void emitProgress(int stepCount, double elapsed,
 }
 
 /**
- * @brief Emit the simulation window (start/end) as a JSON line to stdout.
+ * @brief Write and flush the simulation window as one JSON line.
  *
- * @param startOADate Simulation start as an OADate (decimal days since
- *                    1899-12-30 — the SWMM DateTime epoch).
- * @param endOADate   Simulation end as an OADate.
+ * Typically emitted after swmm_start; both dates use six decimal places. IO errors are ignored.
  *
- * Emitted once after swmm_start so the parent can derive a 0–1 progress
- * fraction from the per-step elapsed-days value and render readable
- * start/current/end columns.
- *
- * Format: `{"type":"dates","start":45000.000000,"end":45010.000000}\n`
+ * @param[in] startOADate Finite start date in decimal days since the legacy SWMM epoch, 1899-12-30.
+ * @param[in] endOADate Finite end date in the same units.
  */
-inline void emitDates(double startOADate, double endOADate)
-{
-    std::printf("{\"type\":\"dates\",\"start\":%.6f,\"end\":%.6f}\n",
-                startOADate, endOADate);
+inline void emitDates(double startOADate, double endOADate) {
+    std::printf("{\"type\":\"dates\",\"start\":%.6f,\"end\":%.6f}\n", startOADate, endOADate);
     std::fflush(stdout);
 }
 
 /**
- * @brief Emit the final mass-balance (continuity) errors to stdout.
+ * @brief Write and flush final runoff/routing continuity fractions as JSON.
  *
- * @param runoffErrFrac  Runoff continuity error as a fraction (0.001 = 0.1 %).
- * @param routingErrFrac Flow-routing continuity error as a fraction.
+ * Caller obtains finalized errors after swmm_end and converts engine percentages to fractions.
+ * Formats eight decimal places; IO errors are ignored.
  *
- * Emitted once after swmm_end() (the errors are only finalised then). The GUI
- * forwards these to the simulation status model, which multiplies by 100 for
- * display — so the values are sent as fractions, not percentages, to match the
- * refactored engine's runoff/routing-error convention.
- *
- * Format: `{"type":"continuity","runoff":0.00050000,"routing":0.00120000}\n`
+ * @param[in] runoffErrFrac Finite final runoff error fraction; 0.001 means 0.1 percent.
+ * @param[in] routingErrFrac Finite final routing error fraction.
  */
-inline void emitContinuity(double runoffErrFrac, double routingErrFrac)
-{
-    std::printf("{\"type\":\"continuity\",\"runoff\":%.8f,\"routing\":%.8f}\n",
-                runoffErrFrac, routingErrFrac);
+inline void emitContinuity(double runoffErrFrac, double routingErrFrac) {
+    std::printf("{\"type\":\"continuity\",\"runoff\":%.8f,\"routing\":%.8f}\n", runoffErrFrac,
+                routingErrFrac);
     std::fflush(stdout);
 }
 
 /**
- * @brief Emit a warning message to stdout.
+ * @brief Escape and flush one warning JSON line to stdout.
  *
- * @param message Warning text (e.g., "Unknown option KEY skipped")
+ * Escapes through a 512-byte local buffer, silently truncating long messages under escapeJson
+ * rules. Other control bytes are not normalized. IO errors are ignored.
  *
- * Format: `{"type":"warning","message":"text"}\n`
+ * @param[in] message Non-null null-terminated text; borrowed only during the call.
  */
-inline void emitWarning(const char *message)
-{
+inline void emitWarning(const char* message) {
     char escaped[512];
     escapeJson(message, escaped, sizeof(escaped));
     std::printf("{\"type\":\"warning\",\"message\":\"%s\"}\n", escaped);
@@ -132,16 +141,15 @@ inline void emitWarning(const char *message)
 }
 
 /**
- * @brief Emit an error message to stderr and stdout.
+ * @brief Flush a diagnostic to stderr and a matching error JSON line to stdout.
  *
- * @param code Error code (SWMM error code)
- * @param message Human-readable error message
+ * Writes full raw text to stderr, then escapes through a 512-byte local buffer for stdout, so the
+ * JSON message can be truncated. IO errors are ignored.
  *
- * Writes to both stderr (for immediate logging) and stdout (for parsing).
- * Format: `{"type":"error","code":5,"message":"text"}\n`
+ * @param[in] code Error code printed numerically.
+ * @param[in] message Non-null null-terminated diagnostic; borrowed only during this call.
  */
-inline void emitError(int code, const char *message)
-{
+inline void emitError(int code, const char* message) {
     std::fprintf(stderr, "ERROR %d: %s\n", code, message);
     std::fflush(stderr);
 

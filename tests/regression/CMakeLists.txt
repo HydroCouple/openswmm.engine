@@ -11,9 +11,9 @@
 #
 # Reference models in tests/regression/data/:
 #   - Example1.inp  : small drainage, 1 storm event (from EPA SWMM examples)
-#   - Example2.inp  : LID-heavy model
-#   - Example3.inp  : complex quality routing
-#   - LargeCity.inp : 1000+ nodes stress test
+#   - slot_surcharge.inp : Preissmann slot surcharge (intentional fork behavior)
+#   - epa_reference/*.inp : source decks for optional local EPA comparisons
+# Generated EPA outputs are supplied through OPENSWMM_EPA_REFERENCE_DIR.
 #
 # See: docs/MASTER_IMPLEMENTATION_PLAN.md Phase 9
 #
@@ -23,6 +23,7 @@ find_package(GTest CONFIG REQUIRED)
 
 add_executable(test_engine_regression
     test_regression_suite.cpp
+    test_upstream_epa.cpp
 )
 
 target_link_libraries(test_engine_regression
@@ -36,7 +37,16 @@ target_link_libraries(test_engine_regression
 target_include_directories(test_engine_regression
     PRIVATE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
 )
+
+set(OPENSWMM_EPA_REFERENCE_DIR "" CACHE PATH
+    "Local unmodified EPA 5.2.4 reference outputs; empty skips optional EPA comparisons")
+
+target_compile_definitions(test_engine_regression PRIVATE
+    OPENSWMM_EPA_REFERENCE_DIR="${OPENSWMM_EPA_REFERENCE_DIR}"
+    OPENSWMM_REGRESSION_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    OPENSWMM_REGRESSION_OUTPUT_DIR="${PROJECT_BINARY_DIR}/regression-upstream")
 
 if(MSVC)
     target_compile_options(test_engine_regression PRIVATE /EHsc)

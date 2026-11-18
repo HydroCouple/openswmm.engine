@@ -55,6 +55,93 @@ from ._enums import (GrateType, InletCurveKind, InletHostKind, InletPlacement,
 from ._common cimport *
 
 
+cdef extern from "openswmm/engine/openswmm_infrastructure.h":
+    ctypedef struct SWMM_LidBottomState:
+        int flow_model
+        int cell
+        int valid_sample
+        double contact_area_m2
+        double surface_head_m
+        double aquifer_head_m
+        double aquifer_time_s
+        double down_cumulative_m3
+        double up_cumulative_m3
+        double net_cumulative_m3
+        double pending_down_m3
+        double pending_up_m3
+        double groundwater_residual_m3
+        double sample_start_s
+        double sample_end_s
+        double sampled_aquifer_time_s
+        double sampled_lid_head_m
+        double sampled_aquifer_head_m
+        double requested_down_m3
+        double requested_up_m3
+        double reserved_down_m3
+        double reserved_up_m3
+        double accepted_down_m3
+        double accepted_up_m3
+        double net_rate_m3s
+    int swmm_lid_node_base_area(SWMM_Engine,int,double*)
+    int swmm_lid_node_bottom_state_get(SWMM_Engine,int,SWMM_LidBottomState*)
+
+
+from libcpp.vector cimport vector
+from functools import wraps
+
+
+def _record_access(method):
+    @wraps(method)
+    def guarded(self, *args, **kwargs):
+        # Converting mappings/iterables can invoke Python. Keep the owner alive
+        # and prevent lifecycle reentry until borrowed strings have been copied.
+        with self._solver._operation():
+            return method(self, *args, **kwargs)
+    return guarded
+
+
+cdef dict _state_dict(SWMM_StorageLidState value):
+    return {'control': value.control, 'saturation': value.saturation, 'bottom': value.bottom, 'max_depth_ft': value.max_depth_ft}
+
+cdef void _fill_state(SWMM_StorageLidState* value, object record) except *:
+    value.control = record['control']
+    value.saturation = record['saturation']
+    value.bottom = record['bottom']
+    value.max_depth_ft = record['max_depth_ft']
+
+cdef dict _anchor_dict(SWMM_StorageLidAnchor value):
+    return {'link': value.link, 'layer': value.layer, 'top': value.top, 'offset_up_ft': value.offset_up_ft, 'offset_down_ft': value.offset_down_ft, 'crest_ft': value.crest_ft}
+
+cdef void _fill_anchor(SWMM_StorageLidAnchor* value, object record) except *:
+    value.link = record['link']
+    value.layer = record['layer']
+    value.top = record['top']
+    value.offset_up_ft = record['offset_up_ft']
+    value.offset_down_ft = record['offset_down_ft']
+    value.crest_ft = record['crest_ft']
+
+cdef bytes _record_text(value):
+    cdef bytes text = ('' if value is None else str(value)).encode('utf-8')
+    if b'\0' in text:
+        raise ValueError("Record strings cannot contain null bytes")
+    return text
+
+cdef object _fill_usage(SWMM_LidUsageRecord* value, object row):
+    value.subcatch_idx = row['subcatch_index']
+    value.control_idx = row['lid_index']
+    value.number = row['number']
+    value.area = row['area']
+    value.width = row['width']
+    value.init_sat = row['init_sat']
+    value.from_imperv = row['from_imperv']
+    value.to_perv = row['to_perv']
+    value.from_perv = row['from_perv']
+    strings = tuple(_record_text(row.get(k, '')) for k in ('report_file', 'report_file_resolved', 'drain_to'))
+    value.report_file = <bytes>strings[0]
+    value.report_file_resolved = <bytes>strings[1]
+    value.drain_to = <bytes>strings[2]
+    return strings
+
 cdef inline SWMM_Engine _h(solver):
     return <SWMM_Engine><size_t>solver.handle
 
@@ -264,9 +351,7 @@ class Transects:
         @rtype: str
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        cdef char buf[1024]
-        _check(swmm_transect_get_comments(h, idx, buf, 1024))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(h, idx, swmm_transect_get_comments)
 
     def set_comments(self, int idx, str text) -> None:
         """Set the descriptive comment string for the transect at C{idx}."""
@@ -388,6 +473,49 @@ class Streets:
 
 
 # ---- Inlets ---------------------------------------------------------
+
+
+cdef dict _inlet_design_record(SWMM_InletDesign* d):
+    d.curve_id[sizeof(d.curve_id) - 1] = 0
+    return {
+        "type": InletType(d.type),
+        "grate_length": d.grate_length,
+        "grate_width": d.grate_width,
+        "grate_type": GrateType(d.grate_type),
+        "open_area": d.open_area,
+        "splash_veloc": d.splash_veloc,
+        "curb_length": d.curb_length,
+        "curb_height": d.curb_height,
+        "throat": ThroatType(d.throat),
+        "slot_length": d.slot_length,
+        "slot_width": d.slot_width,
+        "curve_id": d.curve_id.decode('utf-8'),
+        "curve_kind": InletCurveKind(d.curve_kind),
+    }
+
+
+cdef void _fill_inlet_design(SWMM_InletDesign* d, object values) except *:
+    cdef bytes b_curve
+    if "type" in values:         d.type         = int(values["type"])
+    if "grate_length" in values: d.grate_length = float(values["grate_length"])
+    if "grate_width" in values:  d.grate_width  = float(values["grate_width"])
+    if "grate_type" in values:   d.grate_type   = int(values["grate_type"])
+    if "open_area" in values:    d.open_area    = float(values["open_area"])
+    if "splash_veloc" in values: d.splash_veloc = float(values["splash_veloc"])
+    if "curb_length" in values:  d.curb_length  = float(values["curb_length"])
+    if "curb_height" in values:  d.curb_height  = float(values["curb_height"])
+    if "throat" in values:       d.throat       = int(values["throat"])
+    if "slot_length" in values:  d.slot_length  = float(values["slot_length"])
+    if "slot_width" in values:   d.slot_width   = float(values["slot_width"])
+    if "curve_kind" in values:   d.curve_kind   = int(values["curve_kind"])
+    if "curve_id" in values:
+        b_curve = (values["curve_id"] or "").encode('utf-8')
+        if b"\0" in b_curve:
+            raise ValueError("curve_id must not contain NUL")
+        if len(b_curve) >= sizeof(d.curve_id):
+            raise ValueError("curve_id is longer than 63 bytes")
+        memset(d.curve_id, 0, sizeof(d.curve_id))
+        memcpy(d.curve_id, <const char*>b_curve, len(b_curve))
 
 class Inlets:
     """``solver.infrastructure.inlets`` view."""
@@ -526,25 +654,8 @@ class Inlets:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int idx = key if isinstance(key, int) else self.get_index(key)
         cdef SWMM_InletDesign d
-        cdef char curve[64]
         _check(swmm_inlet_get_design(h, idx, &d))
-        memcpy(curve, d.curve_id, sizeof(curve))
-        curve[sizeof(curve) - 1] = 0
-        return {
-            "type": InletType(d.type),
-            "grate_length": d.grate_length,
-            "grate_width": d.grate_width,
-            "grate_type": GrateType(d.grate_type),
-            "open_area": d.open_area,
-            "splash_veloc": d.splash_veloc,
-            "curb_length": d.curb_length,
-            "curb_height": d.curb_height,
-            "throat": ThroatType(d.throat),
-            "slot_length": d.slot_length,
-            "slot_width": d.slot_width,
-            "curve_id": curve.decode('utf-8'),
-            "curve_kind": InletCurveKind(d.curve_kind),
-        }
+        return _inlet_design_record(&d)
 
     def set_design(self, key, design=None, **kwargs) -> None:
         """Overwrite every field of an inlet design (the type may change).
@@ -575,26 +686,27 @@ class Inlets:
 
         values = dict(design or {})
         values.update(kwargs)
-        cdef bytes b_curve
-        if "type" in values:         d.type         = int(values["type"])
-        if "grate_length" in values: d.grate_length = float(values["grate_length"])
-        if "grate_width" in values:  d.grate_width  = float(values["grate_width"])
-        if "grate_type" in values:   d.grate_type   = int(values["grate_type"])
-        if "open_area" in values:    d.open_area    = float(values["open_area"])
-        if "splash_veloc" in values: d.splash_veloc = float(values["splash_veloc"])
-        if "curb_length" in values:  d.curb_length  = float(values["curb_length"])
-        if "curb_height" in values:  d.curb_height  = float(values["curb_height"])
-        if "throat" in values:       d.throat       = int(values["throat"])
-        if "slot_length" in values:  d.slot_length  = float(values["slot_length"])
-        if "slot_width" in values:   d.slot_width   = float(values["slot_width"])
-        if "curve_kind" in values:   d.curve_kind   = int(values["curve_kind"])
-        if "curve_id" in values:
-            b_curve = (values["curve_id"] or "").encode('utf-8')
-            if len(b_curve) >= sizeof(d.curve_id):
-                raise ValueError("curve_id is longer than 63 bytes")
-            memset(d.curve_id, 0, sizeof(d.curve_id))
-            memcpy(d.curve_id, <const char*>b_curve, len(b_curve))
+        _fill_inlet_design(&d, values)
         _check(swmm_inlet_set_design(h, idx, &d))
+
+    @_record_access
+    def validate_design(self, design, **kwargs) -> dict:
+        """Return the normalized full design without changing any inlet.
+
+        Accept a :meth:`get_design` record, with optional keyword overrides.
+        Native validation clears inactive fields and derives the custom
+        curve kind from the named curve when it exists. Dimensions retain
+        the same project units as :meth:`set_design`.
+        """
+        cdef SWMM_InletDesign proposed
+        cdef SWMM_InletDesign normalized
+        memset(&proposed, 0, sizeof(proposed))
+        values = dict(design)
+        values.update(kwargs)
+        _fill_inlet_design(&proposed, values)
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_inlet_validate_design(h, &proposed, &normalized))
+        return _inlet_design_record(&normalized)
 
     def get_comment(self, key) -> str:
         """Return the free-text description of an inlet design.
@@ -604,9 +716,7 @@ class Inlets:
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int idx = key if isinstance(key, int) else self.get_index(key)
-        cdef char buf[1024]
-        _check(swmm_inlet_get_comment(h, idx, buf, sizeof(buf)))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(h, idx, swmm_inlet_get_comment)
 
     def set_comment(self, key, str text) -> None:
         """Set the free-text description of an inlet design.
@@ -684,6 +794,22 @@ class InletUsages:
             "local_width": u.local_width,
             "placement": InletPlacement(u.placement),
         }
+
+    @_record_access
+    def validate(self, record):
+        """Preflight an inlet usage mapping without changing rows; project display units."""
+        cdef SWMM_InletUsage value
+        value.host_kind = record['host_kind']
+        value.host_idx = record['host_idx']
+        value.design_idx = record['design_idx']
+        value.capture_node_idx = record['capture_node_idx']
+        value.num_inlets = record['num_inlets']
+        value.pct_clogged = record['pct_clogged']
+        value.flow_limit = record['flow_limit']
+        value.local_depress = record['local_depress']
+        value.local_width = record['local_width']
+        value.placement = record['placement']
+        _check(swmm_inlet_usage_validate(_h(self._solver), &value))
 
     def set(self, int host_kind, int host_idx, int design_idx,
             int capture_node_idx, *, int num_inlets=1,
@@ -911,6 +1037,25 @@ class LIDs:
         and specific_storage, one per authored layer; alpha/storage use 1/m.
         When flow is supplied, omitted treatments/materials retain readback values.
         """
+        self._configure_layers(key, layers, treatments=treatments, flow=flow, materials=materials)
+
+    def validate_layers(self, key, layers, *, flow, treatments=None, materials=None):
+        """Pure preflight of the complete NODE profile, including flow and treatment."""
+        if flow is None:
+            raise ValueError("flow options are required for profile validation")
+        self._configure_layers(key, layers, treatments=treatments, flow=flow, materials=materials, validate=True)
+
+    @_record_access
+    def _configure_layers(self, key, layers, *, treatments=None, flow=None, materials=None, bint validate=False):
+        """Atomically replace an arbitrary ordered NODE stack and sync its nodes.
+
+        Accepts an iterable of LidNodeLayer. Invalid stacks leave the old stack,
+        node MaxDepths and anchored link offsets unchanged. Pre-start only.
+        Optional flow is a mapping with model, cells_per_layer, atol, rtol and
+        max_step (seconds). Materials are mappings with theta_r, alpha, n, l
+        and specific_storage, one per authored layer; alpha/storage use 1/m.
+        When flow is supplied, omitted treatments/materials retain readback values.
+        """
         cdef SWMM_Engine h = _h(self._solver)
         cdef int idx = _resolve_index(h, key, swmm_lid_index, swmm_lid_count, "LID")
         values = list(layers)
@@ -977,7 +1122,10 @@ class LIDs:
                 if flow is None:
                     _check(swmm_lid_node_configure(h, idx, rows, count, rules, rule_count))
                 else:
-                    _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
+                    if validate:
+                        _check(swmm_lid_node_validate_flow(h, idx, rows, count, rules, rule_count, &options, retention))
+                    else:
+                        _check(swmm_lid_node_configure_flow(h, idx, rows, count, rules, rule_count, &options, retention))
         finally:
             free(retention)
             free(rules)
@@ -1017,6 +1165,48 @@ class LIDs:
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
         _check(swmm_node_set_lid(h, n, -1, 0.0))
+
+    def node_base_area(self, node):
+        """Geometric LID contact area in project square-length units, before init."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef double area
+        _check(swmm_lid_node_base_area(h,n,&area))
+        return area
+
+    def node_bottom_state(self, node):
+        """Accepted mesh-bottom diagnostics, always SI; positive net is LID to aquifer.
+
+        valid_sample is false before sampling; sample times describe the last
+        completed interval and aquifer_time_s describes the current aquifer.
+        Requires an initialized explicit mesh-bottom connection.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_LidBottomState v
+        _check(swmm_lid_node_bottom_state_get(h,n,&v))
+        return {'flow_model': v.flow_model, 'cell': v.cell, 'valid_sample': v.valid_sample, 'contact_area_m2': v.contact_area_m2, 'surface_head_m': v.surface_head_m, 'aquifer_head_m': v.aquifer_head_m, 'aquifer_time_s': v.aquifer_time_s, 'down_cumulative_m3': v.down_cumulative_m3, 'up_cumulative_m3': v.up_cumulative_m3, 'net_cumulative_m3': v.net_cumulative_m3, 'pending_down_m3': v.pending_down_m3, 'pending_up_m3': v.pending_up_m3, 'groundwater_residual_m3': v.groundwater_residual_m3, 'sample_start_s': v.sample_start_s, 'sample_end_s': v.sample_end_s, 'sampled_aquifer_time_s': v.sampled_aquifer_time_s, 'sampled_lid_head_m': v.sampled_lid_head_m, 'sampled_aquifer_head_m': v.sampled_aquifer_head_m, 'requested_down_m3': v.requested_down_m3, 'requested_up_m3': v.requested_up_m3, 'reserved_down_m3': v.reserved_down_m3, 'reserved_up_m3': v.reserved_up_m3, 'accepted_down_m3': v.accepted_down_m3, 'accepted_up_m3': v.accepted_up_m3, 'net_rate_m3s': v.net_rate_m3s}
+
+    def node_bottom(self, node):
+        """Per-node bottom owner: CURRENT, SEALED or MESH_AQUIFER."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int mode = 0
+        _check(swmm_node_get_lid_bottom(h, n, &mode))
+        return ("CURRENT", "SEALED", "MESH_AQUIFER")[mode]
+
+    def set_node_bottom(self, node, mode):
+        """Change one assigned LID's owner without editing its shared control.
+
+        Mesh ownership is authorable; execution requires R5 qualification.
+        """
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        modes = ("CURRENT", "SEALED", "MESH_AQUIFER")
+        mode = str(mode).upper()
+        if mode not in modes:
+            raise ValueError("bottom must be CURRENT, SEALED or MESH_AQUIFER")
+        _check(swmm_node_set_lid_bottom(h, n, modes.index(mode)))
 
     def set_outlet_anchor(self, link, int layer, *, position="BOTTOM"):
         """Anchor a link to a one-based physical layer; layer=0 removes it."""
@@ -1060,19 +1250,73 @@ class LIDs:
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drain(h, idx, coeff, expon, offset))
 
+    def get_removal(self, int idx, int constituent) -> float:
+        """Underdrain removal (percent) of *constituent* by LID *idx*.
+
+        *constituent* below the pollutant count is a pollutant; pollutant
+        count + m is reaction species m. A constituent with no
+        ``REMOVALS`` entry reads 0.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef double pct = 0.0
+        _check(swmm_lid_get_removal(h, idx, constituent, &pct))
+        return pct
+
+    def set_removal(self, int idx, int constituent, double percent) -> None:
+        """Set the underdrain removal (percent, 0-100) of *constituent* by
+        LID *idx*; 0 removes the entry. Before ``start()`` only."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_lid_set_removal(h, idx, constituent, percent))
+
     def set_pavement(self, int idx, *,
                      double thick, double void_ratio, double frac_imperv,
-                     double ksat, double clog_factor=0.0, double regen_days=0.0) -> None:
-        """Set the porous-pavement layer (PERM_PAVEMENT LIDs)."""
+                     double ksat, double clog_factor=0.0, double regen_days=0.0,
+                     regen_degree=None) -> None:
+        """Set the pavement layer. Omit regen_degree to retain the stored fraction.
+        A supplied degree must be in [0, 1] and is applied each regeneration interval.
+        """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
-        _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
-                                     ksat, clog_factor, regen_days))
+        if regen_degree is None:
+            _check(swmm_lid_set_pavement(h, idx, thick, void_ratio, frac_imperv,
+                                         ksat, clog_factor, regen_days))
+        else:
+            _check(swmm_lid_set_pavement_ex(h, idx, thick, void_ratio, frac_imperv,
+                                            ksat, clog_factor, regen_days, regen_degree))
 
     def set_drainmat(self, int idx, *,
                      double thick, double void_frac, double roughness) -> None:
         """Set the drainage-mat layer (GREEN_ROOF LIDs)."""
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         _check(swmm_lid_set_drainmat(h, idx, thick, void_frac, roughness))
+
+    def set_type(self, int idx, int lid_type) -> None:
+        """Change the type of an unassigned LID before an ordered layer stack is applied."""
+        _check(swmm_lid_set_type(_h(self._solver), idx, lid_type))
+
+    @_record_access
+    def validate_type(self, int idx, int lid_type) -> None:
+        """Preflight a type change without changing the control or its assignments."""
+        _check(swmm_lid_validate_type(_h(self._solver), idx, lid_type))
+
+    @_record_access
+    def get_extra(self, int idx, int field) -> float:
+        """Read a LidExtraField scalar in authored input units."""
+        cdef double value
+        _check(swmm_lid_get_extra(_h(self._solver), idx, field, &value))
+        return value
+
+    @_record_access
+    def set_extra(self, int idx, int field, double value) -> None:
+        """Set one checked scalar, preserving its sibling fields."""
+        _check(swmm_lid_set_extra(_h(self._solver), idx, field, value))
+
+    @_record_access
+    def get_drain_curve(self, int idx) -> str:
+        """Copy the authored drain curve token; reject an invalid control index."""
+        if not 0 <= idx < swmm_lid_count(_h(self._solver)):
+            raise IndexError(idx)
+        cdef const char* value = swmm_lid_get_drain_curve(_h(self._solver), idx)
+        return value.decode('utf-8') if value != NULL else ''
 
     def get_type(self, int idx) -> int:
         """Return the LID control's type code (inverse of the ``lid_type``
@@ -1138,16 +1382,17 @@ class LIDs:
         """Read the porous-pavement layer. Inverse of :meth:`set_pavement`.
 
         @return: Mapping ``thick``, ``void_ratio``, ``frac_imperv``, ``ksat``,
-            ``clog_factor``, ``regen_days``.
+            ``clog_factor``, ``regen_days``, ``regen_degree``.
         @rtype: dict
         """
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef double thick = 0.0, void_ratio = 0.0, frac_imperv = 0.0
-        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0
-        _check(swmm_lid_get_pavement(h, idx, &thick, &void_ratio, &frac_imperv,
-                                     &ksat, &clog_factor, &regen_days))
+        cdef double ksat = 0.0, clog_factor = 0.0, regen_days = 0.0, regen_degree = 0.0
+        _check(swmm_lid_get_pavement_ex(h, idx, &thick, &void_ratio, &frac_imperv,
+                                        &ksat, &clog_factor, &regen_days, &regen_degree))
         return {"thick": thick, "void_ratio": void_ratio, "frac_imperv": frac_imperv,
-                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days}
+                "ksat": ksat, "clog_factor": clog_factor, "regen_days": regen_days,
+                "regen_degree": regen_degree}
 
     def get_drainmat(self, int idx) -> dict:
         """Read the drainage-mat layer. Inverse of :meth:`set_drainmat`.
@@ -1159,6 +1404,106 @@ class LIDs:
         cdef double thick = 0.0, void_frac = 0.0, roughness = 0.0
         _check(swmm_lid_get_drainmat(h, idx, &thick, &void_frac, &roughness))
         return {"thick": thick, "void_frac": void_frac, "roughness": roughness}
+
+    @_record_access
+    def node_snapshot(self, node):
+        """Owned assignment/anchor snapshot; *_ft fields are exact internal feet."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_StorageLidState value
+        cdef SWMM_StorageLidAnchor anchor
+        cdef int first, last
+        _check(swmm_storage_lid_get(h, n, &value))
+        anchors = []
+        for link in range(swmm_link_count(h)):
+            _check(swmm_link_get_from_node(h, link, &first))
+            _check(swmm_link_get_to_node(h, link, &last))
+            if first == n or last == n:
+                _check(swmm_storage_lid_anchor_get(h, link, &anchor))
+                if anchor.layer > 0:
+                    anchors.append(_anchor_dict(anchor))
+        return dict(state=_state_dict(value), anchors=anchors)
+
+    @_record_access
+    def prepare_node(self, node, control, *, double initial_saturation=0, int bottom=0):
+        """Prepare an assignment without mutation, including dependent geometry in internal feet."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef int c = -1 if control is None else _resolve_index(h, control, swmm_lid_index, swmm_lid_count, "LID")
+        cdef SWMM_StorageLidState value
+        cdef vector[SWMM_StorageLidAnchor] anchors
+        cdef int capacity = swmm_link_count(h), count = 0
+        anchors.resize(capacity)
+        _check(swmm_storage_lid_prepare(h, n, c, initial_saturation, bottom, &value,
+                                       &anchors[0] if capacity else NULL, capacity, &count))
+        return dict(state=_state_dict(value), anchors=[_anchor_dict(anchors[i]) for i in range(count)])
+
+    @_record_access
+    def _install_node(self, node, snapshot, bint validate):
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
+        cdef SWMM_StorageLidState value
+        cdef vector[SWMM_StorageLidAnchor] anchors
+        rows = list(snapshot['anchors'])
+        cdef int count = len(rows)
+        _fill_state(&value, snapshot['state'])
+        anchors.resize(count)
+        for i in range(count):
+            _fill_anchor(&anchors[i], rows[i])
+        if validate:
+            _check(swmm_storage_lid_validate(h, n, &value, &anchors[0] if count else NULL, count))
+        else:
+            _check(swmm_storage_lid_replace(h, n, &value, &anchors[0] if count else NULL, count))
+
+    def validate_node(self, node, snapshot):
+        """Validate a complete assignment snapshot without mutation, before initialization."""
+        self._install_node(node, snapshot, True)
+
+    def replace_node(self, node, snapshot):
+        """Atomically restore assignment and keyed anchors, including exact native-foot geometry."""
+        self._install_node(node, snapshot, False)
+
+    @_record_access
+    def usage_record(self, int usage_idx):
+        """Complete owned placement record, including UTF-8 report paths and drain target."""
+        cdef SWMM_LidUsageRecord row
+        _check(swmm_lid_usage_get_record(_h(self._solver), usage_idx, &row))
+        return {
+            'subcatch_index': row.subcatch_idx,
+            'lid_index': row.control_idx,
+            'number': row.number,
+            'area': row.area,
+            'width': row.width,
+            'init_sat': row.init_sat,
+            'from_imperv': row.from_imperv,
+            'to_perv': row.to_perv,
+            'from_perv': row.from_perv,
+            'report_file': row.report_file.decode('utf-8') if row.report_file != NULL else '',
+            'report_file_resolved': row.report_file_resolved.decode('utf-8') if row.report_file_resolved != NULL else '',
+            'drain_to': row.drain_to.decode('utf-8') if row.drain_to != NULL else '',
+        }
+
+    @_record_access
+    def validate_usage(self, record):
+        """Preflight a complete placement record without mutation; project input units."""
+        cdef SWMM_LidUsageRecord row
+        strings = _fill_usage(&row, record)
+        _check(swmm_lid_usage_validate_record(_h(self._solver), &row))
+
+    @_record_access
+    def replace_usages(self, subcatchment, records):
+        """Atomically replace one owner's ordered placements, preserving other owners' rows."""
+        cdef SWMM_Engine h = _h(self._solver)
+        cdef int n = _resolve_subcatch(self._solver, subcatchment)
+        rows = list(records)
+        cdef int count = len(rows)
+        cdef vector[SWMM_LidUsageRecord] values
+        values.resize(count)
+        strings = []
+        for i in range(count):
+            strings.append(_fill_usage(&values[i], rows[i]))
+        _check(swmm_lid_usage_replace_subcatch(h, n, &values[0] if count else NULL, count))
+        self._solver._bump_generation()
 
     def usage_add(self, subcatchment, lid, *,
                   int number, double area, double width,

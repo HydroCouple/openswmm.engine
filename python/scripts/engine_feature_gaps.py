@@ -72,6 +72,8 @@ SECTION_API: dict[str, list[str]] = {
     "REPORT": [r"^swmm_options_(get|set)$"],  # RPT_* keys
     "FILES": [r"^swmm_files?_"],
     "EVENTS": [r"^swmm_events_"],
+    "FROZEN_GROUND": [r"^swmm_frozen_ground_"],
+    "2D_FROZEN_GROUND": [r"^swmm_frozen_ground_"],
     "USER_FLAGS": [r"^swmm_userflag_"],
     "USER_FLAG_VALUES": [r"^swmm_userflag_.*value"],
     "PLUGINS": [r"^swmm_plugins?_"],
@@ -81,6 +83,10 @@ SECTION_API: dict[str, list[str]] = {
     "TEMPERATURE": [r"^swmm_climate_.*(temp|snow|wind|adc|melt)"],
     "ADJUSTMENTS": [r"^swmm_climate_.*adjust"],
     "RAINGAGES": [r"^swmm_gage_"],
+    "UEB_OPTIONS": [r"^swmm_ueb_"],
+    "2D_SNOW_OPTIONS": [r"^swmm_snow2d_(get_options|apply_configuration)"],
+    "2D_SNOW_DEFAULTS": [r"^swmm_snow2d_(defaults_count|get_row|apply_configuration)"],
+    "2D_SNOW": [r"^swmm_snow2d_(cells_count|get_row|apply_configuration)"],
     "SNOWPACKS": [r"^swmm_snowpack_"],
     # Nodes
     "JUNCTIONS": [r"^swmm_node_"],
@@ -139,12 +145,12 @@ SECTION_API: dict[str, list[str]] = {
     "VERTICES": [r"^swmm_spatial_.*link_vert"],
     "POLYGONS": [r"^swmm_spatial_.*polygon"],
     "SYMBOLS": [r"^swmm_spatial_.*gage_coord"],
-    "MAP": [r"^swmm_spatial_.*(map|bound|dimension|extent|units)"],
+    "MAP": [r"^swmm_spatial_.*map_"],
     "TAGS": [r"^swmm_(node|link|subcatch|gage)_(get|set)_tag"],
-    "LABELS": [r"label"],
-    "BACKDROP": [r"backdrop"],
-    "PROFILE": [r"profile"],
-    "PROFILES": [r"profile"],
+    "LABELS": [r"^swmm_spatial_.*annotation"],
+    "BACKDROP": [r"^swmm_spatial_.*annotation"],
+    "PROFILE": [r"^swmm_spatial_.*annotation"],
+    "PROFILES": [r"^swmm_spatial_.*annotation"],
     # 2D surface
     "2D_OPTIONS": [r"^swmm_options_(get|set)_ext$"],
     "2D_MESH_FILE": [r"^swmm_options_(get|set)_ext$"],  # MESH_FILE ext key
@@ -152,12 +158,15 @@ SECTION_API: dict[str, list[str]] = {
     "2D_TRIANGLES": [r"^swmm_2d_.*(triangle|cell)"],
     "2D_QUADS": [r"^swmm_2d_.*(quad|cell|triangle)"],  # quads are cells; setters are triangle-named
     "2D_INITIAL_VELOCITY": [r"^swmm_2d_.*(initial_vel|velocity)"],
+    "2D_INITIAL_HGL": [r"^swmm_2d_.*init_hgl"],
     "2D_VERTEX_NODE_MAP": [r"^swmm_2d_.*vertex_coupl"],
     "2D_TRIANGLE_NODE_MAP": [r"^swmm_2d_.*(triangle|cell)_coupl"],
+    "2D_NODE_COUPLING": [r"^swmm_node_.*2d_coupling"],
     "2D_BOUNDARY_CONDITIONS": [r"^swmm_2d_.*edge_bc"],
     "2D_EDGE_CONVEYANCE": [r"^swmm_2d_.*conveyance"],
     "2D_INITIAL_QUALITY": [r"^swmm_2d_.*(initial_(quality|conc)|cell_conc)"],
-    "2D_BOUNDARY_QUALITY": [r"^swmm_2d_.*bc_conc"],
+    "2D_INITIAL_BED_QUALITY": [r"^swmm_2d_.*initial_bed_quality"],
+    "2D_BOUNDARY_QUALITY": [r"^swmm_2d_.*(bc_conc|boundary_quality)"],
     "2D_INFILTRATION_OPTIONS": [r"^swmm_infil2d_.*option"],
     "2D_INFILTRATION_DEFAULTS": [r"^swmm_infil2d_.*default"],
     "2D_INFILTRATION": [r"^swmm_infil2d_"],
@@ -168,6 +177,7 @@ SECTION_API: dict[str, list[str]] = {
     "2D_AQUIFER_OPTIONS": [r"^swmm_gw2d_option"],
     "2D_AQUIFER": [r"^swmm_gw2d_"],
     "2D_AQUIFER_NODE": [r"^swmm_gw2d_.*node"],
+    "2D_AQUIFER_BOUNDARIES": [r"^swmm_gw2d_boundary_"],
     "2D_AQUIFER_LINKS": [r"^swmm_gw2d_.*link"],
     # Groundwater transport
     "GW_TRANSPORT_OPTIONS": [r"^swmm_gw_transport_option"],
@@ -198,6 +208,12 @@ SECTION_API: dict[str, list[str]] = {
     "REACTION_SUBCATCHMENTS": [r"^swmm_reactions?_.*(subcatch|scope|expr)", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_SOURCES": [r"^swmm_reactions?_.*source", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_QUALITY": [r"^swmm_reactions?_.*(quality|initial)", r"^swmm_reactions_(apply_text|serialize)$"],
+    # These authored domains are exposed through the transactional text API.
+    "REACTION_BUILDUP": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_LIDS": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_SUBSURFACE": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_WALLS": [r"^swmm_reactions_(apply_text|serialize)$"],
+    "REACTION_RAINFALL": [r"^swmm_reaction_rain_conc_", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_PATTERNS": [r"^swmm_reactions?_.*pattern", r"^swmm_reactions_(apply_text|serialize)$"],
     "REACTION_REPORT": [r"^swmm_reactions?_.*report", r"^swmm_reactions_(apply_text|serialize)$"],
     "WATER_AGE_SOURCES": [r"^swmm_water_age_"],
@@ -220,7 +236,7 @@ def parsed_sections() -> dict[str, str]:
     """Section tag -> file that registers or dispatches it."""
     out: dict[str, str] = {}
     for p in sorted(SRC.rglob("*.cpp")):
-        for m in re.finditer(r'register_(?:builtin|custom)\(\s*"([A-Z0-9_]+)"', _text(p)):
+        for m in re.finditer(r'register_(?:builtin|custom)(?:_views)?\(\s*"([A-Z0-9_]+)"', _text(p)):
             if m.group(1) != "MY_CUSTOM":  # doc example in SectionRegistry
                 out.setdefault(m.group(1), str(p.relative_to(REPO)))
     for p in sorted((SRC / "transport" / "components").rglob("*Component*.cpp")) + sorted(
@@ -255,6 +271,8 @@ def _branch_fields(text: str, key_re: str) -> dict[str, set[str]]:
             fields.add(".".join(parts[-2:]))  # e.g. fv.limiter, or water_density
         fields |= {".".join(p.strip() for p in path.split(".")[-2:]) for path in re.findall(
             r"&\s*" + _ROOT_OBJ + r"\s*\.\s*((?:\w+\s*\.\s*)*\w+)", branch)}
+        if re.search(_ROOT_OBJ + r"\s*\.\s*ext_options\s*\[\s*key\s*\]\s*=", branch):
+            fields.add("ext_options")
         fields.discard("sets_limiter")
         out.setdefault(m.group(1), set()).update(
             f for f in fields if not f.split(".")[-1].startswith("sets_"))
@@ -308,11 +326,17 @@ def option_keys() -> dict[str, dict[str, dict]]:
                 return True, "swmm_options_get/set"
             if any(f'"{n}"' in set_ext and f'"{n}"' in get_ext for n in names):
                 return True, "swmm_options_get/set_ext"
+            if ("ext_options" in fields and _touches(get_ext, "ext_options")
+                    and re.search(r"\bext\s*\.\s*find\s*\(\s*key\s*\)", get_ext)
+                    and re.search(r"\.\s*ext_options\s*\[\s*key\s*\]\s*=", set_ext)):
+                return True, "swmm_options_get/set_ext"
         if prefix:  # typed accessor pair, e.g. swmm_transport_get/set_target_dx
             low = key.lower()
             if f"{prefix}get_{low}" in funcs and f"{prefix}set_{low}" in funcs:
                 return True, f"{prefix}get/set_{low}"
-        touched = sorted(f for f in fields if _touches(impl, f))
+        # A map touch alone does not prove access to a parser's key: require both
+        # generic extension paths above rather than an unrelated map read/write.
+        touched = sorted(f for f in fields if f != "ext_options" and _touches(impl, f))
         if touched:
             return True, "field " + ", ".join(touched)
         return False, ""

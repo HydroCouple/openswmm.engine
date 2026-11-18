@@ -12,6 +12,16 @@
  *          factor (defaults to 1.0).
  */
 
+/**
+ * @file      test_gage_scalefactor.cpp
+ * @brief     Tests for gage scalefactor.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -20,35 +30,71 @@
 
 #include "openswmm_solver.h"
 
-#define DATA_PATH_SCALE    "./data/gage_scalefactor.inp"
-#define DATA_PATH_NOSCALE  "./data/gage_noscalefactor.inp"
+#define DATA_PATH_SCALE "./data/gage_scalefactor.inp"
+#define DATA_PATH_NOSCALE "./data/gage_noscalefactor.inp"
 
 namespace {
 
 // Run a SWMM simulation end-to-end and return the final error code.
+/**
+ * @brief Run the gage-scalefactor fixture through global legacy state.
+ *
+ * Requires exclusive legacy-engine use and distinct writable artifacts. Steps until
+ * completion/error without a guard, closes after start/step/end failure, but returns directly on
+ * open refusal. Does not capture numerical samples.
+ *
+ * @param[in] inpFile Non-null existing model path.
+ * @param[in] rptFile Report destination.
+ * @param[in] outFile Binary output destination.
+ * @return First open/start/step/end error, or zero on success; close status is ignored.
+ */
 int runSimulation(const char* inpFile, const char* rptFile, const char* outFile) {
     int err;
     double elapsedTime;
 
     err = swmm_open(inpFile, rptFile, outFile);
-    if (err) return err;
+    if (err)
+        return err;
 
     err = swmm_start(1);
-    if (err) { swmm_close(); return err; }
+    if (err) {
+        swmm_close();
+        return err;
+    }
 
     do {
         err = swmm_step(&elapsedTime);
-        if (err) { swmm_end(); swmm_close(); return err; }
+        if (err) {
+            swmm_end();
+            swmm_close();
+            return err;
+        }
     } while (elapsedTime > 0.0);
 
     err = swmm_end();
-    if (err) { swmm_close(); return err; }
+    if (err) {
+        swmm_close();
+        return err;
+    }
 
     swmm_close();
     return 0;
 }
 
 // Step a simulation and return the first non-zero rainfall reported by gage 0.
+/**
+ * @brief Record the first positive gage-zero rainfall during a legacy run.
+ *
+ * Requires exclusive global legacy state. Open/start/step failures record nonfatal expectations and
+ * calls continue; failed steps leaving positive elapsed can prolong the uncapped loop. End/close
+ * statuses ignored; no independent completion/error status is returned.
+ *
+ * @param[in] inpFile Non-null existing model path.
+ * @param[in] rptFile Report destination.
+ * @param[in] outFile Binary output destination.
+ * @return First positive rainfall in project intensity units (in/hr for these fixtures), or zero if
+ *     never observed.
+ */
 double captureFirstRainfall(const char* inpFile, const char* rptFile, const char* outFile) {
     double elapsedTime;
     double rainfall = 0.0;
@@ -60,7 +106,8 @@ double captureFirstRainfall(const char* inpFile, const char* rptFile, const char
         EXPECT_EQ(swmm_step(&elapsedTime), 0);
         if (elapsedTime > 0.0 && rainfall == 0.0) {
             double r = swmm_getValue(swmm_GAGE_RAINFALL, 0);
-            if (r > 0.0) rainfall = r;
+            if (r > 0.0)
+                rainfall = r;
         }
     } while (elapsedTime > 0.0);
 
@@ -74,12 +121,22 @@ double captureFirstRainfall(const char* inpFile, const char* rptFile, const char
 // Fixture cleans up generated report/output files after each test.
 class GageScaleFactor : public ::testing::Test {
 protected:
+    /**
+     * @brief Remove the eight fixed scale/no-scale legacy report/output artifacts.
+     *
+     * Ignores removal status for the explicitly listed filenames in cwd; source input/rain files are
+     * retained. Global legacy handles must already be closed by the case.
+     */
     void TearDown() override {
         for (const char* f : {
-                 "noscale_test.rpt", "noscale_test.out",
-                 "scale_test.rpt",   "scale_test.out",
-                 "noscale_rf.rpt",   "noscale_rf.out",
-                 "scale_rf.rpt",     "scale_rf.out",
+                 "noscale_test.rpt",
+                 "noscale_test.out",
+                 "scale_test.rpt",
+                 "scale_test.out",
+                 "noscale_rf.rpt",
+                 "noscale_rf.out",
+                 "scale_rf.rpt",
+                 "scale_rf.out",
              }) {
             std::remove(f);
         }
@@ -88,17 +145,13 @@ protected:
 
 // A model that omits the scale factor token must still run (backward compatibility).
 TEST_F(GageScaleFactor, NoScaleFactorBackwardCompat) {
-    int err = runSimulation(DATA_PATH_NOSCALE,
-                            "noscale_test.rpt",
-                            "noscale_test.out");
+    int err = runSimulation(DATA_PATH_NOSCALE, "noscale_test.rpt", "noscale_test.out");
     EXPECT_EQ(err, 0);
 }
 
 // A model that supplies a scale factor of 2.0 must run successfully.
 TEST_F(GageScaleFactor, WithScaleFactorRuns) {
-    int err = runSimulation(DATA_PATH_SCALE,
-                            "scale_test.rpt",
-                            "scale_test.out");
+    int err = runSimulation(DATA_PATH_SCALE, "scale_test.rpt", "scale_test.out");
     EXPECT_EQ(err, 0);
 }
 
@@ -135,8 +188,8 @@ TEST_F(GageScaleFactor, CApiGetReturnsDefaultOneWhenUnset) {
 // Setting via the C API on a no-scale-factor model must double rainfall in the
 // same way that parsing scale_factor=2.0 from the INP does.
 TEST_F(GageScaleFactor, CApiSetTakesEffect) {
-    double rainfall_baseline = captureFirstRainfall(
-        DATA_PATH_NOSCALE, "capi_set_base.rpt", "capi_set_base.out");
+    double rainfall_baseline =
+        captureFirstRainfall(DATA_PATH_NOSCALE, "capi_set_base.rpt", "capi_set_base.out");
     ASSERT_GT(rainfall_baseline, 0.0);
 
     // Open the unscaled model, set scale_factor = 2.0 via API, then step.
@@ -150,15 +203,15 @@ TEST_F(GageScaleFactor, CApiSetTakesEffect) {
         ASSERT_EQ(swmm_step(&elapsed), 0);
         if (elapsed > 0.0 && rainfall_scaled == 0.0) {
             double r = swmm_getValue(swmm_GAGE_RAINFALL, 0);
-            if (r > 0.0) rainfall_scaled = r;
+            if (r > 0.0)
+                rainfall_scaled = r;
         }
     } while (elapsed > 0.0);
     swmm_end();
     swmm_close();
 
     ASSERT_GT(rainfall_scaled, 0.0);
-    EXPECT_NEAR(rainfall_scaled,
-                2.0 * rainfall_baseline,
+    EXPECT_NEAR(rainfall_scaled, 2.0 * rainfall_baseline,
                 std::abs(2.0 * rainfall_baseline) * 0.0001);
 
     std::remove("capi_set_base.rpt");
@@ -175,12 +228,8 @@ TEST_F(GageScaleFactor, CApiSetRejectsNonPositive) {
     // Default for an unscaled gage is 1.0.
     EXPECT_DOUBLE_EQ(swmm_getValue(swmm_GAGE_SCALEFACTOR, 0), 1.0);
 
-    EXPECT_NE(swmm_setValueExpanded(swmm_GAGE,
-                                    swmm_GAGE_SCALEFACTOR,
-                                    0, 0, 0, 0.0), 0);
-    EXPECT_NE(swmm_setValueExpanded(swmm_GAGE,
-                                    swmm_GAGE_SCALEFACTOR,
-                                    0, 0, 0, -1.0), 0);
+    EXPECT_NE(swmm_setValueExpanded(swmm_GAGE, swmm_GAGE_SCALEFACTOR, 0, 0, 0, 0.0), 0);
+    EXPECT_NE(swmm_setValueExpanded(swmm_GAGE, swmm_GAGE_SCALEFACTOR, 0, 0, 0, -1.0), 0);
 
     // Value must be untouched.
     EXPECT_DOUBLE_EQ(swmm_getValue(swmm_GAGE_SCALEFACTOR, 0), 1.0);
@@ -194,16 +243,13 @@ TEST_F(GageScaleFactor, CApiSetRejectsNonPositive) {
 
 // A scale factor of 2.0 must double the reported rainfall intensity.
 TEST_F(GageScaleFactor, ScaleFactorDoublesRainfall) {
-    double rainfall_noscale = captureFirstRainfall(
-        DATA_PATH_NOSCALE, "noscale_rf.rpt", "noscale_rf.out");
-    double rainfall_scale = captureFirstRainfall(
-        DATA_PATH_SCALE, "scale_rf.rpt", "scale_rf.out");
+    double rainfall_noscale =
+        captureFirstRainfall(DATA_PATH_NOSCALE, "noscale_rf.rpt", "noscale_rf.out");
+    double rainfall_scale = captureFirstRainfall(DATA_PATH_SCALE, "scale_rf.rpt", "scale_rf.out");
 
     ASSERT_GT(rainfall_noscale, 0.0);
-    ASSERT_GT(rainfall_scale,   0.0);
+    ASSERT_GT(rainfall_scale, 0.0);
 
     // BOOST_CHECK_CLOSE used 0.01% tolerance — translate to absolute.
-    EXPECT_NEAR(rainfall_scale,
-                2.0 * rainfall_noscale,
-                std::abs(2.0 * rainfall_noscale) * 0.0001);
+    EXPECT_NEAR(rainfall_scale, 2.0 * rainfall_noscale, std::abs(2.0 * rainfall_noscale) * 0.0001);
 }

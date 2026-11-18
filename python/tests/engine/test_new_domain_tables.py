@@ -8,7 +8,7 @@ from openswmm.engine import (
     GroundwaterSourceTerm, GroundwaterZone, GroundwaterSpeciesLedger,
     BadIndexError, BadParamError, LifecycleError, StaleObjectError,
 )
-from tests.engine._groundwater_cases import open_model, cleanup
+from tests.engine._groundwater_cases import MODEL, open_model, cleanup
 
 
 def test_groundwater_transport_tables(tmp_path):
@@ -65,6 +65,76 @@ def test_groundwater_transport_tables(tmp_path):
         solver.close()
         with pytest.raises(StaleObjectError):
             _ = t.parameters
+    finally:
+        cleanup(solver)
+
+
+@pytest.mark.parametrize('units', ['CMS', 'CFS'])
+def test_groundwater_source_xy(tmp_path, units):
+    path = tmp_path / 'source_xy.inp'
+    path.write_text(MODEL.replace('FLOW_UNITS CMS', 'FLOW_UNITS ' + units) + '''
+[GW_SOURCES]
+Well XY 15 2 FLOW 0.001 TSS CONC 10
+Pump CELL 1 FLOW -0.001
+''')
+    solver = Solver(path, path.with_suffix('.rpt'), path.with_suffix('.out'))
+    try:
+        solver.open()
+        transport = solver.surface2d.groundwater.transport
+        assert transport.source_xy(0) == (15.0, 2.0)
+        assert transport.sources[0].cell == 0  # triangle centroid near (15, 2)
+        assert transport.source_xy(1) is None
+        before = transport.sources[0]
+        terms = transport.source_species(0)
+        transport.set_source_scale(0, 2.5)
+        transport.set_source_xy(0, 5.0, 5.0)
+        assert transport.source_xy(0) == (5.0, 5.0)
+        assert transport.sources[0] == replace(before, cell=1, x=5.0, y=5.0)  # quad centroid
+        assert transport.source_species(0) == terms
+        assert transport.source_scale(0) == 2.5
+        assert transport.source_xy(1) is None
+
+        for index in (-1, 2):
+            with pytest.raises(BadIndexError):
+                transport.source_xy(index)
+            with pytest.raises(BadIndexError):
+                transport.set_source_xy(index, 0.0, 0.0)
+        for x, y in ((float('nan'), 0.0), (float('inf'), 0.0), (0.0, -float('inf'))):
+            with pytest.raises(BadParamError):
+                transport.set_source_xy(0, x, y)
+            assert transport.source_xy(0) == (5.0, 5.0)
+
+        row = transport.sources[0]
+        assert row.by_xy and (row.x, row.y) == (5.0, 5.0)
+        transport.set_source(replace(row, flow=0.25))
+        assert transport.source_xy(0) == (5.0, 5.0)
+        assert transport.sources[0] == replace(row, flow=0.25)
+        with pytest.raises(BadParamError):
+            transport.set_source(replace(row, flow=99, x=float('nan')))
+        assert transport.sources[0] == replace(row, flow=0.25)
+
+        saved = tmp_path / 'saved_xy.inp'
+        solver.write(saved)
+        reopened = Solver(saved, saved.with_suffix('.rpt'))
+        try:
+            reopened.open()
+            actual = reopened.surface2d.groundwater.transport
+            assert actual.source_xy(0) == (5.0, 5.0)
+            assert actual.source_xy(1) is None
+            assert actual.sources == transport.sources
+            assert actual.source_species(0) == terms
+            assert actual.source_scale(0) == 2.5
+        finally:
+            cleanup(reopened)
+        solver.initialize()
+        assert transport.source_xy(0) == (5.0, 5.0)
+        with pytest.raises(LifecycleError):
+            transport.set_source_xy(0, 15.0, 2.0)
+        solver.close()
+        with pytest.raises(StaleObjectError):
+            transport.source_xy(0)
+        with pytest.raises(StaleObjectError):
+            transport.set_source_xy(0, 15.0, 2.0)
     finally:
         cleanup(solver)
 

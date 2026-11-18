@@ -15,14 +15,14 @@
 // limitations under the License.
 
 /**
- * @file SpatialHandler.hpp
- * @brief Section handlers for spatial sections: [MAP], [VERTICES], [POLYGONS].
+ * @file      SpatialHandler.hpp
+ * @brief     Section handlers for spatial sections: [MAP], [VERTICES], [POLYGONS].
  * @see SpatialHandler.cpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_SPATIAL_HANDLER_HPP
@@ -31,7 +31,9 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 

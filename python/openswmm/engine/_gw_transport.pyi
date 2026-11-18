@@ -65,6 +65,9 @@ class GroundwaterSource:
     cell: int = 0
     flow: float = 0.0
     flow_timeseries: str = ''
+    by_xy: bool = False
+    x: float = 0.0
+    y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -114,6 +117,19 @@ class GroundwaterTransport:
     def remove_source(self, index: int) -> None: ...
     def source_scale(self, source_index: int) -> float: ...
     def set_source_scale(self, source_index: int, value: float) -> None: ...
+    def source_xy(self, source_index: int) -> tuple[float, float] | None:
+        """Authored X/Y in project map units, or None for a non-XY source.
+
+        The source table separately reports CELL scope and the resolved cell.
+        """
+        ...
+    def set_source_xy(self, source_index: int, x: float, y: float) -> None:
+        """Set finite map coordinates before initialization; retain XY on save.
+
+        Resolves the nearest cell centroid without changing flow, scale or
+        species terms. Requires a mesh with cells.
+        """
+        ...
     def source_species(self, source_index: int) -> tuple[GroundwaterSourceTerm, ...]: ...
     def set_source_species(self, source_index: int, row: GroundwaterSourceTerm) -> None: ...
     def remove_source_species(self, source_index: int, index: int) -> None: ...

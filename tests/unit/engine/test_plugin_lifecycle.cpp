@@ -1,6 +1,6 @@
 /**
- * @file test_plugin_lifecycle.cpp
- * @brief Unit tests for the plugin lifecycle state machine.
+ * @file      test_plugin_lifecycle.cpp
+ * @brief     Unit tests for the plugin lifecycle state machine.
  *
  * @details Tests that:
  *          - Valid state transitions are allowed by plugin_state_transition_valid()
@@ -16,6 +16,10 @@
  * @see src/engine/plugins/PluginFactory.hpp
  * @see docs/MASTER_IMPLEMENTATION_PLAN.md Phase 4
  * @ingroup engine_plugins
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -54,52 +58,52 @@ TEST(PluginStateTest, ValidTransitionsAllowed) {
     using PS = PluginState;
     using openswmm::plugin_state_transition_valid;
 
-    EXPECT_TRUE(plugin_state_transition_valid(PS::UNLOADED,    PS::LOADED));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::LOADED,      PS::INITIALIZED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::UNLOADED, PS::LOADED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::LOADED, PS::INITIALIZED));
     EXPECT_TRUE(plugin_state_transition_valid(PS::INITIALIZED, PS::VALIDATED));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::VALIDATED,   PS::PREPARED));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED,    PS::UPDATING));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::UPDATING,    PS::PREPARED));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED,    PS::FINALIZED));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::FINALIZED,   PS::CLOSED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::VALIDATED, PS::PREPARED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED, PS::UPDATING));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::UPDATING, PS::PREPARED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED, PS::FINALIZED));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::FINALIZED, PS::CLOSED));
 }
 
 TEST(PluginStateTest, InvalidTransitionsRejected) {
     using PS = PluginState;
     using openswmm::plugin_state_transition_valid;
 
-    EXPECT_FALSE(plugin_state_transition_valid(PS::UNLOADED,    PS::INITIALIZED));
-    EXPECT_FALSE(plugin_state_transition_valid(PS::LOADED,      PS::PREPARED));
+    EXPECT_FALSE(plugin_state_transition_valid(PS::UNLOADED, PS::INITIALIZED));
+    EXPECT_FALSE(plugin_state_transition_valid(PS::LOADED, PS::PREPARED));
     EXPECT_FALSE(plugin_state_transition_valid(PS::INITIALIZED, PS::UPDATING));
-    EXPECT_FALSE(plugin_state_transition_valid(PS::CLOSED,      PS::LOADED));
-    EXPECT_FALSE(plugin_state_transition_valid(PS::FINALIZED,   PS::UPDATING));
+    EXPECT_FALSE(plugin_state_transition_valid(PS::CLOSED, PS::LOADED));
+    EXPECT_FALSE(plugin_state_transition_valid(PS::FINALIZED, PS::UPDATING));
 }
 
 TEST(PluginStateTest, AnyStateCanTransitionToError) {
     using PS = PluginState;
     using openswmm::plugin_state_transition_valid;
 
-    EXPECT_TRUE(plugin_state_transition_valid(PS::UNLOADED,    PS::ERROR));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::LOADED,      PS::ERROR));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::UNLOADED, PS::ERROR));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::LOADED, PS::ERROR));
     EXPECT_TRUE(plugin_state_transition_valid(PS::INITIALIZED, PS::ERROR));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED,    PS::ERROR));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::UPDATING,    PS::ERROR));
-    EXPECT_TRUE(plugin_state_transition_valid(PS::FINALIZED,   PS::ERROR));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::PREPARED, PS::ERROR));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::UPDATING, PS::ERROR));
+    EXPECT_TRUE(plugin_state_transition_valid(PS::FINALIZED, PS::ERROR));
 }
 
 TEST(PluginStateTest, StateToStringNeverNull) {
     using PS = PluginState;
     using openswmm::plugin_state_to_string;
 
-    EXPECT_STREQ(plugin_state_to_string(PS::UNLOADED),    "UNLOADED");
-    EXPECT_STREQ(plugin_state_to_string(PS::LOADED),      "LOADED");
+    EXPECT_STREQ(plugin_state_to_string(PS::UNLOADED), "UNLOADED");
+    EXPECT_STREQ(plugin_state_to_string(PS::LOADED), "LOADED");
     EXPECT_STREQ(plugin_state_to_string(PS::INITIALIZED), "INITIALIZED");
-    EXPECT_STREQ(plugin_state_to_string(PS::VALIDATED),   "VALIDATED");
-    EXPECT_STREQ(plugin_state_to_string(PS::PREPARED),    "PREPARED");
-    EXPECT_STREQ(plugin_state_to_string(PS::UPDATING),    "UPDATING");
-    EXPECT_STREQ(plugin_state_to_string(PS::FINALIZED),   "FINALIZED");
-    EXPECT_STREQ(plugin_state_to_string(PS::CLOSED),      "CLOSED");
-    EXPECT_STREQ(plugin_state_to_string(PS::ERROR),       "ERROR");
+    EXPECT_STREQ(plugin_state_to_string(PS::VALIDATED), "VALIDATED");
+    EXPECT_STREQ(plugin_state_to_string(PS::PREPARED), "PREPARED");
+    EXPECT_STREQ(plugin_state_to_string(PS::UPDATING), "UPDATING");
+    EXPECT_STREQ(plugin_state_to_string(PS::FINALIZED), "FINALIZED");
+    EXPECT_STREQ(plugin_state_to_string(PS::CLOSED), "CLOSED");
+    EXPECT_STREQ(plugin_state_to_string(PS::ERROR), "ERROR");
 }
 
 // ============================================================================
@@ -174,11 +178,11 @@ TEST_F(DefaultOutputPluginTest, FinalizeTransitionsToFinalized) {
 TEST_F(DefaultOutputPluginTest, FullLifecycleReturnsAllZero) {
     DefaultOutputPlugin p((TMP + "test.out").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
-    EXPECT_EQ(p.validate(ctx),           0);
-    EXPECT_EQ(p.prepare(ctx),            0);
-    EXPECT_EQ(p.update(snap),            0);
-    EXPECT_EQ(p.update(snap),            0);
-    EXPECT_EQ(p.finalize(ctx),           0);
+    EXPECT_EQ(p.validate(ctx), 0);
+    EXPECT_EQ(p.prepare(ctx), 0);
+    EXPECT_EQ(p.update(snap), 0);
+    EXPECT_EQ(p.update(snap), 0);
+    EXPECT_EQ(p.finalize(ctx), 0);
     EXPECT_EQ(p.state(), PluginState::FINALIZED);
 }
 
@@ -193,8 +197,8 @@ TEST_F(DefaultOutputPluginTest, PrepareResetsStepCountAfterReinit) {
 
     // Simulate re-initialize (e.g., for a second run)
     EXPECT_EQ(p.initialize({}, nullptr), 0);
-    EXPECT_EQ(p.validate(ctx),           0);
-    EXPECT_EQ(p.prepare(ctx),            0);
+    EXPECT_EQ(p.validate(ctx), 0);
+    EXPECT_EQ(p.prepare(ctx), 0);
     EXPECT_EQ(p.state(), PluginState::PREPARED);
 }
 
@@ -270,11 +274,11 @@ TEST_F(DefaultReportPluginTest, WriteSummaryReturnsZero) {
 TEST_F(DefaultReportPluginTest, FullLifecycleReturnsAllZero) {
     DefaultReportPlugin p((TMP + "test.rpt").c_str());
     EXPECT_EQ(p.initialize({}, nullptr), 0);
-    EXPECT_EQ(p.validate(ctx),           0);
-    EXPECT_EQ(p.prepare(ctx),            0);
-    EXPECT_EQ(p.update(snap),            0);
-    EXPECT_EQ(p.finalize(ctx),           0);
-    EXPECT_EQ(p.write_summary(ctx),      0);
+    EXPECT_EQ(p.validate(ctx), 0);
+    EXPECT_EQ(p.prepare(ctx), 0);
+    EXPECT_EQ(p.update(snap), 0);
+    EXPECT_EQ(p.finalize(ctx), 0);
+    EXPECT_EQ(p.write_summary(ctx), 0);
     EXPECT_EQ(p.state(), PluginState::FINALIZED);
 }
 
@@ -364,7 +368,7 @@ TEST_F(PluginFactoryLifecycleTest, UpdateAllDispatchesToPreparedPlugins) {
 
     op->initialize({}, nullptr);
     op->validate(ctx);
-    op->prepare(ctx);  // state == PREPARED
+    op->prepare(ctx); // state == PREPARED
 
     factory.add_output_plugin(op);
 
@@ -475,9 +479,8 @@ TEST_F(PluginFactoryLifecycleTest, LoadPluginsWithBadPathEmitsWarning) {
     bad_spec.path = "/nonexistent/path/plugin.so";
 
     std::string captured_warning;
-    int loaded = factory.load_plugins({bad_spec}, [&](const std::string& msg) {
-        captured_warning = msg;
-    });
+    int loaded =
+        factory.load_plugins({bad_spec}, [&](const std::string& msg) { captured_warning = msg; });
 
     EXPECT_EQ(loaded, 0);
     EXPECT_TRUE(factory.empty());

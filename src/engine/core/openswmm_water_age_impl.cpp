@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file openswmm_water_age_impl.cpp
- * @brief Water-age source-table CRUD implementation (subplan X5).
+ * @file      openswmm_water_age_impl.cpp
+ * @brief     Water-age source-table CRUD implementation (subplan X5).
  *
  * @details Values cross the boundary in HOURS (the config file's unit);
  *          the engine stores SECONDS. Negative values are legal and pass
@@ -25,10 +25,14 @@
  *          `ucf` conversion here: hours are hours in every unit system.
  *
  * @see include/openswmm/engine/openswmm_water_age.h
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
-#include "core/FileIO.hpp"   // issue #7: UTF-8 paths on Windows
+#include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../../../include/openswmm/engine/openswmm_water_age.h"
 #include "../transport/components/WaterAgeModule/WaterAgeComponent.hpp"
 
@@ -39,51 +43,64 @@ namespace {
 
 constexpr double kSecPerHour = 3600.0;
 
+/**
+ * @brief Check the contiguous water-age source code range.
+ *
+ * @param[in] s Candidate WaterAgeSource integer.
+ * @return True for0<=s<COUNT_, false otherwise.
+ */
 bool valid_source(int s) {
     return s >= 0 && s < static_cast<int>(openswmm::WaterAgeSource::COUNT_);
 }
 
-/// The A1a scope rule the parser enforces: only DWF and EXTERNAL_INFLOW
-/// take per-node overrides.
+/**
+ * @brief Identify water-age sources accepting per-node overrides.
+ *
+ * @param[in] s Candidate source code.
+ * @return True only for DWF and EXTERNAL_INFLOW.
+ */
 bool node_scoped(int s) {
     return s == static_cast<int>(openswmm::WaterAgeSource::DWF) ||
            s == static_cast<int>(openswmm::WaterAgeSource::EXTERNAL_INFLOW);
 }
 
-/// Row index of (source, node) in the override arrays, or -1.
-int find_override(const openswmm::WaterAgeConfigData& cfg, int source,
-                  int node) {
+/**
+ * @brief Find the first water-age override with exact source/node indices.
+ *
+ * @param[in] cfg Borrowed aligned override source/node vectors; size fits int.
+ * @param[in] source Exact source integer; not validated.
+ * @param[in] node Exact node index; not validated.
+ * @return Zero-based first matching row, otherwise -1.
+ */
+int find_override(const openswmm::WaterAgeConfigData& cfg, int source, int node) {
     for (std::size_t i = 0; i < cfg.node_over_source.size(); ++i)
-        if (cfg.node_over_source[i] == source &&
-            cfg.node_over_node[i] == node)
+        if (cfg.node_over_source[i] == source && cfg.node_over_node[i] == node)
             return static_cast<int>(i);
     return -1;
 }
 
-}  // namespace
+} // namespace
 
-SWMM_ENGINE_API int swmm_water_age_get_enabled(SWMM_Engine engine,
-                                               int* enabled) {
+SWMM_ENGINE_API int swmm_water_age_get_enabled(SWMM_Engine engine, int* enabled) {
     CHECK_HANDLE(engine);
-    if (enabled == nullptr) return SWMM_ERR_BADPARAM;
+    if (enabled == nullptr)
+        return SWMM_ERR_BADPARAM;
     *enabled = to_engine(engine)->context().options.water_age ? 1 : 0;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_get_global_source(SWMM_Engine engine,
-                                                     int source,
+SWMM_ENGINE_API int swmm_water_age_get_global_source(SWMM_Engine engine, int source,
                                                      double* hours) {
     CHECK_HANDLE(engine);
-    if (hours == nullptr) return SWMM_ERR_BADPARAM;
+    if (hours == nullptr)
+        return SWMM_ERR_BADPARAM;
     CHECK_INDEX(valid_source(source));
     const auto& cfg = to_engine(engine)->context().water_age_config;
     *hours = cfg.global_age[source] / kSecPerHour;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_set_global_source(SWMM_Engine engine,
-                                                     int source,
-                                                     double hours) {
+SWMM_ENGINE_API int swmm_water_age_set_global_source(SWMM_Engine engine, int source, double hours) {
     CHECK_HANDLE(engine);
     CHECK_INDEX(valid_source(source));
     auto& cfg = to_engine(engine)->context().water_age_config;
@@ -94,31 +111,31 @@ SWMM_ENGINE_API int swmm_water_age_set_global_source(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_override_count(SWMM_Engine engine,
-                                                  int* count) {
+SWMM_ENGINE_API int swmm_water_age_override_count(SWMM_Engine engine, int* count) {
     CHECK_HANDLE(engine);
-    if (count == nullptr) return SWMM_ERR_BADPARAM;
-    *count = static_cast<int>(
-        to_engine(engine)->context().water_age_config.node_over_source.size());
+    if (count == nullptr)
+        return SWMM_ERR_BADPARAM;
+    *count =
+        static_cast<int>(to_engine(engine)->context().water_age_config.node_over_source.size());
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_get_override(SWMM_Engine engine, int index,
-                                                int* source, int* node_index,
-                                                double* hours) {
+SWMM_ENGINE_API int swmm_water_age_get_override(SWMM_Engine engine, int index, int* source,
+                                                int* node_index, double* hours) {
     CHECK_HANDLE(engine);
     const auto& cfg = to_engine(engine)->context().water_age_config;
-    CHECK_INDEX(index >= 0 &&
-                index < static_cast<int>(cfg.node_over_source.size()));
+    CHECK_INDEX(index >= 0 && index < static_cast<int>(cfg.node_over_source.size()));
     const auto ui = static_cast<std::size_t>(index);
-    if (source != nullptr)     *source = cfg.node_over_source[ui];
-    if (node_index != nullptr) *node_index = cfg.node_over_node[ui];
-    if (hours != nullptr)      *hours = cfg.node_over_age[ui] / kSecPerHour;
+    if (source != nullptr)
+        *source = cfg.node_over_source[ui];
+    if (node_index != nullptr)
+        *node_index = cfg.node_over_node[ui];
+    if (hours != nullptr)
+        *hours = cfg.node_over_age[ui] / kSecPerHour;
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_set_override(SWMM_Engine engine,
-                                                int source, int node_index,
+SWMM_ENGINE_API int swmm_water_age_set_override(SWMM_Engine engine, int source, int node_index,
                                                 double hours) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -126,13 +143,13 @@ SWMM_ENGINE_API int swmm_water_age_set_override(SWMM_Engine engine,
     CHECK_INDEX(node_index >= 0 && node_index < ctx.n_nodes());
     // The parser's A1a scope rule, enforced identically here — an editor
     // must not be able to author a table the file parser would refuse.
-    if (!node_scoped(source)) return SWMM_ERR_BADPARAM;
+    if (!node_scoped(source))
+        return SWMM_ERR_BADPARAM;
 
     auto& cfg = ctx.water_age_config;
     const int row = find_override(cfg, source, node_index);
     if (row >= 0) {
-        cfg.node_over_age[static_cast<std::size_t>(row)] =
-            hours * kSecPerHour;
+        cfg.node_over_age[static_cast<std::size_t>(row)] = hours * kSecPerHour;
     } else {
         cfg.node_over_source.push_back(source);
         cfg.node_over_node.push_back(node_index);
@@ -142,9 +159,7 @@ SWMM_ENGINE_API int swmm_water_age_set_override(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_remove_override(SWMM_Engine engine,
-                                                   int source,
-                                                   int node_index) {
+SWMM_ENGINE_API int swmm_water_age_remove_override(SWMM_Engine engine, int source, int node_index) {
     CHECK_HANDLE(engine);
     auto& cfg = to_engine(engine)->context().water_age_config;
     const int row = find_override(cfg, source, node_index);
@@ -156,10 +171,10 @@ SWMM_ENGINE_API int swmm_water_age_remove_override(SWMM_Engine engine,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_water_age_save(SWMM_Engine engine,
-                                        const char* path) {
+SWMM_ENGINE_API int swmm_water_age_save(SWMM_Engine engine, const char* path) {
     CHECK_HANDLE(engine);
-    if (path == nullptr || *path == '\0') return SWMM_ERR_BADPARAM;
+    if (path == nullptr || *path == '\0')
+        return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
 
     // IO3c: one spelling for this table — the component's serializer,
@@ -169,7 +184,8 @@ SWMM_ENGINE_API int swmm_water_age_save(SWMM_Engine engine,
     // the empty header, this function's historical contract.
     const std::string text = openswmm::transport::serializeWaterAgeConfig(ctx);
     std::FILE* f = openswmm::io::fopen_utf8(path, "w");
-    if (f == nullptr) return SWMM_ERR_IO;
+    if (f == nullptr)
+        return SWMM_ERR_IO;
     if (text.empty())
         std::fprintf(f, "[WATER_AGE_SOURCES]\n");
     else

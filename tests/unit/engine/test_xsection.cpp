@@ -1,6 +1,6 @@
 /**
- * @file test_xsection.cpp
- * @brief Unit tests for cross-section geometry (per-element + batch).
+ * @file      test_xsection.cpp
+ * @brief     Unit tests for cross-section geometry (per-element + batch).
  *
  * @details Tests:
  *   - Per-element: area, hyd-rad, width, depth-from-area at 0%, 50%, 100% full
@@ -13,6 +13,10 @@
  * @see src/engine/hydraulics/XSection.hpp
  * @see src/engine/hydraulics/XSectBatch.hpp
  * @ingroup engine_hydraulics
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -27,7 +31,7 @@
 using namespace openswmm;
 
 #ifndef BENCHMARK_DATA_DIR
-#  define BENCHMARK_DATA_DIR ""
+#define BENCHMARK_DATA_DIR ""
 #endif
 
 static constexpr double PI = 3.14159265358979323846;
@@ -36,6 +40,16 @@ static constexpr double PI = 3.14159265358979323846;
 // Helper: build a circular XSectParams
 // ============================================================================
 
+/**
+ * @brief Construct circular cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] diameter Positive full diameter in feet.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_circular(double diameter) {
     XSectParams xs;
     double p[4] = {diameter, 0, 0, 0};
@@ -43,6 +57,17 @@ static XSectParams make_circular(double diameter) {
     return xs;
 }
 
+/**
+ * @brief Construct closed rectangular cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] height Positive full height in feet.
+ * @param[in] width Positive section width in feet.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_rect_closed(double height, double width) {
     XSectParams xs;
     double p[4] = {height, width, 0, 0};
@@ -50,6 +75,19 @@ static XSectParams make_rect_closed(double height, double width) {
     return xs;
 }
 
+/**
+ * @brief Construct trapezoidal cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] depth Positive full depth in feet.
+ * @param[in] bot_width Nonnegative bottom width in feet.
+ * @param[in] m1 Nonnegative first side slope, horizontal/vertical ratio.
+ * @param[in] m2 Nonnegative second side slope, horizontal/vertical ratio.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_trapezoidal(double depth, double bot_width, double m1, double m2) {
     XSectParams xs;
     double p[4] = {depth, bot_width, m1, m2};
@@ -57,6 +95,17 @@ static XSectParams make_trapezoidal(double depth, double bot_width, double m1, d
     return xs;
 }
 
+/**
+ * @brief Construct triangular cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] depth Positive full depth in feet.
+ * @param[in] top_width Positive full top width in feet.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_triangular(double depth, double top_width) {
     XSectParams xs;
     double p[4] = {depth, top_width, 0, 0};
@@ -69,11 +118,11 @@ static XSectParams make_triangular(double depth, double top_width) {
 // ============================================================================
 
 TEST(XSectionCircular, FullAreaMatchesFormula) {
-    auto xs = make_circular(2.0);  // D=2ft
+    auto xs = make_circular(2.0); // D=2ft
     // Tolerance accommodates the legacy-faithful PI constant (3.141592654) used
     // in XSection.cpp for numerical parity with the legacy engine.
-    EXPECT_NEAR(xs.a_full, PI / 4.0 * 4.0, 1e-8);  // pi/4 * D^2
-    EXPECT_NEAR(xs.r_full, 0.5, 1e-10);               // D/4
+    EXPECT_NEAR(xs.a_full, PI / 4.0 * 4.0, 1e-8); // pi/4 * D^2
+    EXPECT_NEAR(xs.r_full, 0.5, 1e-10);           // D/4
 }
 
 TEST(XSectionCircular, AreaAtZeroDepth) {
@@ -89,7 +138,7 @@ TEST(XSectionCircular, AreaAtFullDepth) {
 
 TEST(XSectionCircular, AreaAtHalfDepth) {
     auto xs = make_circular(2.0);
-    double a = xsect::getAofY(xs, 1.0);  // y/D = 0.5
+    double a = xsect::getAofY(xs, 1.0); // y/D = 0.5
     // At half depth, A/Afull = 0.5 for a circle
     EXPECT_NEAR(a / xs.a_full, 0.5, 0.01);
 }
@@ -102,7 +151,7 @@ TEST(XSectionCircular, HydRadAtFullDepth) {
 
 TEST(XSectionCircular, WidthAtHalfDepth) {
     auto xs = make_circular(2.0);
-    double w = xsect::getWofY(xs, 1.0);  // y/D = 0.5
+    double w = xsect::getWofY(xs, 1.0); // y/D = 0.5
     // At half depth, W/Wmax = 1.0 for a circle
     EXPECT_NEAR(w / xs.w_max, 1.0, 0.01);
 }
@@ -115,7 +164,7 @@ TEST(XSectionCircular, WidthAtFullDepthIsZero) {
 
 TEST(XSectionCircular, DepthFromAreaRoundTrip) {
     auto xs = make_circular(3.0);
-    double y_orig = 1.5;  // half full
+    double y_orig = 1.5; // half full
     double a = xsect::getAofY(xs, y_orig);
     double y_back = xsect::getYofA(xs, a);
     EXPECT_NEAR(y_back, y_orig, 0.02);
@@ -242,7 +291,7 @@ TEST(XSectionTabulated, EggZeroAndFullArea) {
     xs.y_full = 3.0;
     xs.a_full = 5.0;
     xs.r_full = 0.75;
-    xs.w_max  = 2.0;
+    xs.w_max = 2.0;
 
     EXPECT_DOUBLE_EQ(xsect::getAofY(xs, 0.0), 0.0);
     EXPECT_NEAR(xsect::getAofY(xs, 3.0), 5.0, 0.01);
@@ -254,7 +303,7 @@ TEST(XSectionTabulated, HorseshoeZeroAndFullArea) {
     xs.y_full = 4.0;
     xs.a_full = 10.0;
     xs.r_full = 1.0;
-    xs.w_max  = 4.0;
+    xs.w_max = 4.0;
 
     EXPECT_DOUBLE_EQ(xsect::getAofY(xs, 0.0), 0.0);
     EXPECT_NEAR(xsect::getAofY(xs, 4.0), 10.0, 0.01);
@@ -284,6 +333,15 @@ TEST(XSectionIsOpen, OpenShapes) {
 
 class XSectBatchTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Build six cross-section parameter records and their batch grouping.
+     *
+     * Creates circular diameters 2/3/4, closed rectangles 3x4 and 2x5, and a trapezoid with
+     * depth2/bottom3/slopes1; native length units are feet with conversion factor1. Ignores setParams
+     * return values; groups_ is built from the owned params_ storage, which must remain alive. Fatal
+     * GoogleTest assertions return from this hook on failure; any created handle remains owned by the
+     * fixture for teardown.
+     */
     void SetUp() override {
         // 6 links: 3 circular (D=2,3,4), 2 rectangular (3x4, 2x5), 1 trapezoidal
         params_.resize(6);
@@ -344,8 +402,7 @@ TEST_F(XSectBatchTest, ComputeAreasMatchesPerElement) {
     }
 
     for (int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(areas_batch[i], areas_elem[i], 1e-10)
-            << "Mismatch at link " << i;
+        EXPECT_NEAR(areas_batch[i], areas_elem[i], 1e-10) << "Mismatch at link " << i;
     }
 }
 
@@ -361,8 +418,7 @@ TEST_F(XSectBatchTest, ComputeHydRadMatchesPerElement) {
     }
 
     for (int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(hydrad_batch[i], hydrad_elem[i], 1e-10)
-            << "Mismatch at link " << i;
+        EXPECT_NEAR(hydrad_batch[i], hydrad_elem[i], 1e-10) << "Mismatch at link " << i;
     }
 }
 
@@ -378,8 +434,7 @@ TEST_F(XSectBatchTest, ComputeWidthsMatchesPerElement) {
     }
 
     for (int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(widths_batch[i], widths_elem[i], 1e-10)
-            << "Mismatch at link " << i;
+        EXPECT_NEAR(widths_batch[i], widths_elem[i], 1e-10) << "Mismatch at link " << i;
     }
 }
 
@@ -394,12 +449,12 @@ TEST_F(XSectBatchTest, ZeroDepthGivesZeroArea) {
 
 TEST_F(XSectBatchTest, FullDepthGivesFullArea) {
     double depths[6];
-    for (int i = 0; i < 6; ++i) depths[i] = params_[i].y_full;
+    for (int i = 0; i < 6; ++i)
+        depths[i] = params_[i].y_full;
     double areas[6] = {};
     groups_.computeAreas(depths, areas, 6);
     for (int i = 0; i < 6; ++i) {
-        EXPECT_NEAR(areas[i], params_[i].a_full, 0.01 * params_[i].a_full)
-            << "Link " << i;
+        EXPECT_NEAR(areas[i], params_[i].a_full, 0.01 * params_[i].a_full) << "Link " << i;
     }
 }
 
@@ -411,6 +466,17 @@ TEST_F(XSectBatchTest, FullDepthGivesFullArea) {
 // Per-element: RECT_OPEN
 // ============================================================================
 
+/**
+ * @brief Construct open rectangular cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] height Positive maximum depth in feet.
+ * @param[in] width Positive constant width in feet.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_rect_open(double height, double width) {
     XSectParams xs;
     double p[4] = {height, width, 0, 0};
@@ -448,6 +514,17 @@ TEST(XSectionRectOpen, DepthFromAreaExact) {
 // Per-element: PARABOLIC
 // ============================================================================
 
+/**
+ * @brief Construct parabolic cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] depth Positive full depth in feet.
+ * @param[in] top_width Positive full top width in feet.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_parabolic(double depth, double top_width) {
     XSectParams xs;
     double p[4] = {depth, top_width, 0, 0};
@@ -498,6 +575,18 @@ TEST(XSectionParabolic, DepthFromAreaRoundTrip) {
 // Per-element: POWERFUNC (power function shape)
 // ============================================================================
 
+/**
+ * @brief Construct power-function cross-section parameters for native geometry tests.
+ *
+ * Uses unit conversion factor1 and the shape's authored parameter order. Ignores setParams status;
+ * callers supply valid parameters and cannot treat the result as validated after a refused setup.
+ * Does not retain the temporary parameter array or run hydraulic physics.
+ *
+ * @param[in] depth Positive full depth in feet.
+ * @param[in] top_width Positive full top width in feet.
+ * @param[in] exponent Positive dimensionless power-function exponent accepted by setParams.
+ * @return Owned XSectParams after the attempted setParams call.
+ */
 static XSectParams make_powerfunc(double depth, double top_width, double exponent) {
     XSectParams xs;
     double p[4] = {depth, top_width, exponent, 0};
@@ -535,8 +624,8 @@ TEST(XSectionPowerFunc, IsOpenShape) {
 // ============================================================================
 
 TEST(XSectionCircularPrecision, AreaAtQuarterFull) {
-    auto xs = make_circular(4.0);  // D=4ft
-    double y = 1.0;  // quarter full
+    auto xs = make_circular(4.0); // D=4ft
+    double y = 1.0;               // quarter full
     double a = xsect::getAofY(xs, y);
 
     // Analytical: A = R²(θ - sinθcosθ) where θ = acos(1 - y/R)
@@ -567,8 +656,8 @@ TEST(XSectionCircularPrecision, HydRadVsAnalytical) {
 }
 
 TEST(XSectionCircularPrecision, WidthVsAnalytical) {
-    auto xs = make_circular(4.0);  // D=4ft
-    double y = 1.5;  // y/D = 0.375
+    auto xs = make_circular(4.0); // D=4ft
+    double y = 1.5;               // y/D = 0.375
     double w = xsect::getWofY(xs, y);
 
     // Analytical: W = 2*sqrt(R² - (R-y)²)
@@ -624,7 +713,7 @@ TEST(XSectBatchLarge, CircularBatch1000) {
     constexpr int N = 1000;
     std::vector<XSectParams> params(N);
     for (int i = 0; i < N; ++i) {
-        double d = 1.0 + static_cast<double>(i) * 0.01;  // diameters 1.0 to 10.99
+        double d = 1.0 + static_cast<double>(i) * 0.01; // diameters 1.0 to 10.99
         double p[4] = {d, 0, 0, 0};
         xsect::setParams(params[i], static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
     }
@@ -635,7 +724,7 @@ TEST(XSectBatchLarge, CircularBatch1000) {
 
     std::vector<double> depths(N), areas_batch(N), areas_elem(N);
     for (int i = 0; i < N; ++i) {
-        depths[i] = params[i].y_full * 0.5;  // half full
+        depths[i] = params[i].y_full * 0.5; // half full
     }
 
     groups.computeAreas(depths.data(), areas_batch.data(), N);
@@ -645,8 +734,7 @@ TEST(XSectBatchLarge, CircularBatch1000) {
     }
 
     for (int i = 0; i < N; ++i) {
-        EXPECT_NEAR(areas_batch[i], areas_elem[i], 1e-10)
-            << "Mismatch at link " << i;
+        EXPECT_NEAR(areas_batch[i], areas_elem[i], 1e-10) << "Mismatch at link " << i;
     }
 }
 
@@ -660,10 +748,12 @@ TEST(XSectBatchLarge, CircularBatch1000) {
 // ============================================================================
 
 TEST(XSectionCircular, AreaMatchesEllipseReferenceBenchmark) {
-    std::string path = std::string(BENCHMARK_DATA_DIR)
-        + "/manufactured/xsect-circular-ellipse-reference/reference.csv";
+    std::string path = std::string(BENCHMARK_DATA_DIR) +
+                       "/manufactured/xsect-circular-ellipse-reference/reference.csv";
 
-    struct Row { double y_norm, y_ft, A_ref, A_over_full; };
+    struct Row {
+        double y_norm, y_ft, A_ref, A_over_full;
+    };
     std::vector<Row> rows;
     {
         std::ifstream in(path);
@@ -673,8 +763,12 @@ TEST(XSectionCircular, AreaMatchesEllipseReferenceBenchmark) {
         std::string line;
         bool header_seen = false;
         while (std::getline(in, line)) {
-            if (line.empty() || line[0] == '#') continue;
-            if (!header_seen) { header_seen = true; continue; }
+            if (line.empty() || line[0] == '#')
+                continue;
+            if (!header_seen) {
+                header_seen = true;
+                continue;
+            }
             std::istringstream ss(line);
             std::string tok;
             double v[4] = {};
@@ -694,18 +788,15 @@ TEST(XSectionCircular, AreaMatchesEllipseReferenceBenchmark) {
     double p[4] = {D, 0, 0, 0};
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
-    const double tol = 0.005 * xs.a_full;  // 0.5% of A_full
+    const double tol = 0.005 * xs.a_full; // 0.5% of A_full
     double max_err = 0.0;
 
     for (const auto& row : rows) {
         double A_table = xsect::getAofY(xs, row.y_ft);
         double err = std::abs(A_table - row.A_ref);
         max_err = std::max(max_err, err);
-        EXPECT_LT(err, tol)
-            << "At y_norm=" << row.y_norm
-            << " table=" << A_table
-            << " ref=" << row.A_ref
-            << " err=" << err;
+        EXPECT_LT(err, tol) << "At y_norm=" << row.y_norm << " table=" << A_table
+                            << " ref=" << row.A_ref << " err=" << err;
     }
     (void)max_err;
 }

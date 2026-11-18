@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_transect_table_stability.cpp
- * @brief The lifecycle guard that keeps cached transect-table pointers valid.
+ * @file      test_transect_table_stability.cpp
+ * @brief     The lifecycle guard that keeps cached transect-table pointers valid.
  *
  * @details `ctx.transect_tables` is a std::vector<TransectData>, and two
  *          consumers cache raw pointers INTO its elements:
@@ -41,8 +41,9 @@
  *          drop-in; nothing indexes the store contiguously), not to delete the
  *          assertion.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @license  Apache-2.0
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @license   Apache-2.0
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  */
 
 #include <gtest/gtest.h>
@@ -58,12 +59,25 @@ constexpr const char* kOut = "_transect_stability.out";
 
 class TransectTableStability : public ::testing::Test {
 protected:
+    /**
+     * @brief Create/open the configured transect deck for table-stability tests.
+     *
+     * Passes kInp/kRpt/kOut to engine_open and performs no initialize/start here. Fatal GoogleTest
+     * assertions return from this hook on failure; any created handle remains owned by the fixture for
+     * teardown.
+     */
     void SetUp() override {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
         ASSERT_EQ(swmm_engine_open(engine_, kInp, kRpt, kOut, nullptr), SWMM_OK);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_ != nullptr) {
             swmm_engine_close(engine_);
@@ -88,14 +102,15 @@ TEST_F(TransectTableStability, StreetXsectAppendAllowedBeforeInitialize) {
     for (int i = 0; i < 8; ++i) {
         ASSERT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET,
                                       /*street index*/ 0.0, 0.0, 0.0, 0.0),
-                  SWMM_OK) << "append " << i;
+                  SWMM_OK)
+            << "append " << i;
     }
 
     // The model still initializes and routes with the last-attached table.
     ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
     double elapsed_days = 0.0;
-    int    steps        = 0;
+    int steps = 0;
     do {
         ASSERT_EQ(swmm_engine_step(engine_, &elapsed_days), SWMM_OK);
     } while (elapsed_days > 0.0 && ++steps < 100000);
@@ -116,16 +131,14 @@ TEST_F(TransectTableStability, StreetXsectAppendRefusedAfterInitialize) {
     // This is the assertion that keeps the raw-pointer caching sound. If it
     // ever returns SWMM_OK, transect_tables can reallocate under live
     // pointers — see the file comment.
-    EXPECT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET,
-                                  0.0, 0.0, 0.0, 0.0),
+    EXPECT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET, 0.0, 0.0, 0.0, 0.0),
               SWMM_ERR_LIFECYCLE);
 
     // Same gate after the run has started.
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK);
-    EXPECT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET,
-                                  0.0, 0.0, 0.0, 0.0),
+    EXPECT_EQ(swmm_link_set_xsect(engine_, link, SWMM_XSECT_STREET, 0.0, 0.0, 0.0, 0.0),
               SWMM_ERR_LIFECYCLE);
     ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
 }
 
-}  // namespace
+} // namespace

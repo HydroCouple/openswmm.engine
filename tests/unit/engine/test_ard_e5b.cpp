@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_ard_e5b.cpp
- * @brief E5b + IO3 gates: treatment interop at ARD node stores, kdecay
+ * @file      test_ard_e5b.cpp
+ * @brief     E5b + IO3 gates: treatment interop at ARD node stores, kdecay
  *        ledger closure, TARGET_DX, the per-cell CSV sidecar, and the
  *        save-as config carry-alongside
  *        (plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md §6 E5b;
@@ -47,9 +47,9 @@
  *            includes DETAILED_OUTPUT/TARGET_DX (bypass surface, lesson
  *            10).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -71,28 +71,55 @@ namespace {
 
 namespace fsys = std::filesystem;
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kC0     = 10.0;
+constexpr double kC0 = 10.0;
 constexpr double kKdecay = 0.03;
 
-/// The established chain deck (wet junctions — lesson 9). `stagnant` gives
-/// the level pool; `treatment_j2` adds an R = 0.5 TSS removal at J2;
-/// `routing` selects FLOW_ROUTING.
+/**
+ * @brief Write the fixed E5b ARD source/treatment/decay chain fixture.
+ *
+ *  Opens/truncates the deck using a local ofstream; parent directories must exist. Stream
+ * open/write/close outcomes are not checked, and sidecar names/text are not escaped. Caller-owned
+ * inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ * @param[in] extra_options Raw additional OPTIONS rows; inserted verbatim without validation.
+ * @param[in] kdecay Pollutant first-order decay rate in 1/s; multiplied by 86400 for the authored
+ *     1/day column.
+ * @param[in] stagnant True selects flat 1.5 ft initial water with no inflow and a two-minute run;
+ *     false selects the sloping flowing one-hour chain.
+ * @param[in] treatment_j2 Add J2 TSS R = 0.5 treatment plus its lateral flow/concentration source.
+ * @param[in] routing Non-null FLOW_ROUTING keyword, default DYNWAVE.
+ * @param[in] treated_inflow Include the J2 comparison inflow without requiring treatment; ignored
+ *     for stagnant fixtures.
+ */
 void write_deck(const char* path, const std::string& pc_lines,
-                const std::string& extra_options = "", double kdecay = 0.0,
-                bool stagnant = false, bool treatment_j2 = false,
-                const char* routing = "DYNWAVE",
+                const std::string& extra_options = "", double kdecay = 0.0, bool stagnant = false,
+                bool treatment_j2 = false, const char* routing = "DYNWAVE",
                 bool treated_inflow = false) {
     std::ofstream f(path);
     f << "[TITLE]\nE5b gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING " << routing << "\n"
       << "QUALITY_SOLVER EULERIAN_ARD\n"
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-      << "END_DATE 01/01/2026\nEND_TIME "
-      << (stagnant ? "00:02:00" : "01:00:00") << "\n"
+      << "END_DATE 01/01/2026\nEND_TIME " << (stagnant ? "00:02:00" : "01:00:00") << "\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:01:00\n"
       << extra_options << "\n";
     if (stagnant) {
@@ -134,34 +161,65 @@ void write_deck(const char* path, const std::string& pc_lines,
     f << "[POLLUTANTS]\n"
       << ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac "
          "Cdwf Cinit\n"
-      << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0)  // 1/day column (KD1)
+      << "TSS    MG/L  0     0   0     " << (kdecay * 86400.0) // 1/day column (KD1)
       << "      NO       *        0      0    " << kC0 << "\n\n";
-    if (treatment_j2) f << "[TREATMENT]\nJ2 TSS R = 0.5\n\n";
+    if (treatment_j2)
+        f << "[TREATMENT]\nJ2 TSS R = 0.5\n\n";
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream c(path);
     c << body;
 }
 
 struct RunRecord {
-    std::vector<std::vector<double>> tss_link;  ///< [link][step]
+    std::vector<std::vector<double>> tss_link; ///< [link][step]
     std::vector<std::string> warnings;
     double reacted = 0.0, init = 0.0, final_ = 0.0, outflow = 0.0;
     bool ok = false;
 };
 
+/**
+ * @brief Run an E5b model while collecting first-pollutant link samples and mass ledgers.
+ *
+ * Creates/destroys its engine, samples concentrations after every successful step including
+ * terminal calls, and caps at 20000 positive-time steps. Guard exhaustion can leave ok=true and
+ * partial trajectories. End runs only while ok, and its status is ignored. Nonfatal failures are
+ * recorded; available first-species internal mass ledgers/warnings are copied before destruction,
+ * in native ledger units.
+ *
+ * @param[in] inp Non-null existing input filename.
+ * @param[in] rpt Report destination accepted by engine open.
+ * @param[in] out Binary output destination accepted by engine open.
+ * @return Owned record; ok reflects create/open/init/start/step success, not guard completion or
+ *     end success.
+ */
 RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
     RunRecord rec;
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return rec; }
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return rec;
+    }
     bool ok = swmm_engine_open(e, inp, rpt, out, nullptr) == SWMM_OK;
-    if (!ok) ADD_FAILURE() << "open failed for " << inp;
-    if (ok && (swmm_engine_initialize(e) != SWMM_OK ||
-               swmm_engine_start(e, 1) != SWMM_OK)) {
+    if (!ok)
+        ADD_FAILURE() << "open failed for " << inp;
+    if (ok && (swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK)) {
         ADD_FAILURE() << "init/start failed for " << inp;
         ok = false;
     }
@@ -183,12 +241,17 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
                     rec.tss_link[static_cast<std::size_t>(l)].push_back(
                         ctx.links.conc[static_cast<std::size_t>(l * np)]);
         } while (elapsed > 0.0 && ++guard < 20000);
-        if (ok) swmm_engine_end(e);
+        if (ok)
+            swmm_engine_end(e);
         const auto& mb = ctx.mass_balance;
-        if (!mb.qual_routing_reacted.empty()) rec.reacted = mb.qual_routing_reacted[0];
-        if (!mb.qual_routing_init.empty())    rec.init    = mb.qual_routing_init[0];
-        if (!mb.qual_routing_final.empty())   rec.final_  = mb.qual_routing_final[0];
-        if (!mb.qual_routing_outflow.empty()) rec.outflow = mb.qual_routing_outflow[0];
+        if (!mb.qual_routing_reacted.empty())
+            rec.reacted = mb.qual_routing_reacted[0];
+        if (!mb.qual_routing_init.empty())
+            rec.init = mb.qual_routing_init[0];
+        if (!mb.qual_routing_final.empty())
+            rec.final_ = mb.qual_routing_final[0];
+        if (!mb.qual_routing_outflow.empty())
+            rec.outflow = mb.qual_routing_outflow[0];
         rec.warnings = ctx.warnings;
     }
     swmm_engine_destroy(e);
@@ -196,22 +259,49 @@ RunRecord run_recording(const char* inp, const char* rpt, const char* out) {
     return rec;
 }
 
+/**
+ * @brief Find one case-sensitive diagnostic substring in a string list.
+ *
+ * @param[in] v List searched without mutation.
+ * @param[in] n Literal substring; empty matches any available entry.
+ * @return True on first match; false for no match including an empty list.
+ */
 bool has_needle(const std::vector<std::string>& v, const std::string& n) {
     for (const auto& s : v)
-        if (s.find(n) != std::string::npos) return true;
+        if (s.find(n) != std::string::npos)
+            return true;
     return false;
 }
 
-double integratedAbsDiff(const std::vector<double>& a,
-                         const std::vector<double>& b) {
+/**
+ * @brief Sum absolute paired sample differences over the shared prefix.
+ *
+ * This is a sample sum, not a time integral; unmatched tails are ignored and NaNs propagate.
+ *
+ * @param[in] a First sample vector, unchanged.
+ * @param[in] b Second sample vector, unchanged.
+ * @return Unweighted sum abs(a[i]-b[i]) for min sizes; zero for an empty shared prefix.
+ */
+double integratedAbsDiff(const std::vector<double>& a, const std::vector<double>& b) {
     double s = 0.0;
     const std::size_t n = std::min(a.size(), b.size());
-    for (std::size_t i = 0; i < n; ++i) s += std::fabs(a[i] - b[i]);
+    for (std::size_t i = 0; i < n; ++i)
+        s += std::fabs(a[i] - b[i]);
     return s;
 }
+/**
+ * @brief Sum all samples without timestep weighting.
+ *
+ * Does not normalize, take absolute values or reject nonfinite inputs.
+ *
+ * @param[in] a Sample vector, unchanged.
+ * @return Arithmetic sample sum, zero when empty; units remain sample units rather than
+ *     concentration-time.
+ */
 double integrated(const std::vector<double>& a) {
     double s = 0.0;
-    for (const double x : a) s += x;
+    for (const double x : a)
+        s += x;
     return s;
 }
 
@@ -221,13 +311,11 @@ constexpr int kC1 = 0, kC2 = 1, kC5 = 4;
 // Gate 1 — treatment at an ARD node store: contained, effective, booked.
 // ---------------------------------------------------------------------------
 TEST(ArdE5bTest, TreatmentAppliesAtArdNodeStores) {
-    write_deck("_e5b_tr_base.inp", "", "", 0.0, false, /*treatment_j2=*/false,
-               "DYNWAVE", /*treated_inflow=*/true);
+    write_deck("_e5b_tr_base.inp", "", "", 0.0, false, /*treatment_j2=*/false, "DYNWAVE",
+               /*treated_inflow=*/true);
     write_deck("_e5b_tr.inp", "", "", 0.0, false, /*treatment_j2=*/true);
-    const auto base = run_recording("_e5b_tr_base.inp", "_e5b_tr_base.rpt",
-                                    "_e5b_tr_base.out");
-    const auto tr   = run_recording("_e5b_tr.inp", "_e5b_tr.rpt",
-                                    "_e5b_tr.out");
+    const auto base = run_recording("_e5b_tr_base.inp", "_e5b_tr_base.rpt", "_e5b_tr_base.out");
+    const auto tr = run_recording("_e5b_tr.inp", "_e5b_tr.rpt", "_e5b_tr.out");
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(tr.ok);
 
@@ -236,25 +324,21 @@ TEST(ArdE5bTest, TreatmentAppliesAtArdNodeStores) {
     // the conc→mass round trip everywhere and fails HERE first.
     ASSERT_EQ(base.tss_link[kC1].size(), tr.tss_link[kC1].size());
     for (std::size_t t = 0; t < base.tss_link[kC1].size(); ++t) {
-        ASSERT_EQ(base.tss_link[kC1][t], tr.tss_link[kC1][t])
-            << "C1 diverged at step " << t;
-        ASSERT_EQ(base.tss_link[kC2][t], tr.tss_link[kC2][t])
-            << "C2 diverged at step " << t;
+        ASSERT_EQ(base.tss_link[kC1][t], tr.tss_link[kC1][t]) << "C1 diverged at step " << t;
+        ASSERT_EQ(base.tss_link[kC2][t], tr.tss_link[kC2][t]) << "C2 diverged at step " << t;
     }
 
     // Effect: downstream of the treated node the front must separate hard.
-    const double sep  = integratedAbsDiff(base.tss_link[kC5], tr.tss_link[kC5]);
+    const double sep = integratedAbsDiff(base.tss_link[kC5], tr.tss_link[kC5]);
     const double norm = integrated(base.tss_link[kC5]);
     ASSERT_GT(norm, 0.0);
-    EXPECT_GT(sep, 0.05 * norm)
-        << "an R = 0.5 removal at J2 left the downstream trajectory "
-           "unchanged — treatment is not reaching the ARD stores "
-           "(absorbTreatedNodeConc dead?)";
+    EXPECT_GT(sep, 0.05 * norm) << "an R = 0.5 removal at J2 left the downstream trajectory "
+                                   "unchanged — treatment is not reaching the ARD stores "
+                                   "(absorbTreatedNodeConc dead?)";
 
     // Booking: treatment mass loss must land in the reacted ledger row.
-    EXPECT_GT(tr.reacted, 0.0)
-        << "treatment removed mass but booked nothing to "
-           "qual_routing_reacted";
+    EXPECT_GT(tr.reacted, 0.0) << "treatment removed mass but booked nothing to "
+                                  "qual_routing_reacted";
 }
 
 // ---------------------------------------------------------------------------
@@ -262,17 +346,15 @@ TEST(ArdE5bTest, TreatmentAppliesAtArdNodeStores) {
 // ---------------------------------------------------------------------------
 TEST(ArdE5bTest, KdecayLedgerCloses) {
     write_deck("_e5b_kd.inp", "", "", kKdecay, /*stagnant=*/true);
-    const auto rec = run_recording("_e5b_kd.inp", "_e5b_kd.rpt",
-                                   "_e5b_kd.out");
+    const auto rec = run_recording("_e5b_kd.inp", "_e5b_kd.rpt", "_e5b_kd.out");
     ASSERT_TRUE(rec.ok);
     ASSERT_GT(rec.init, 0.0) << "no initial stored mass — deck defect";
     // Level pool: no inflow, (near) no outflow — the ledger must close as
     // init ≈ final + reacted. 2% band covers boundary micro-flows.
     const double closure = rec.init - rec.final_ - rec.reacted - rec.outflow;
     EXPECT_LT(std::fabs(closure), 0.02 * rec.init)
-        << "quality continuity does not close: init=" << rec.init
-        << " final=" << rec.final_ << " reacted=" << rec.reacted
-        << " outflow=" << rec.outflow
+        << "quality continuity does not close: init=" << rec.init << " final=" << rec.final_
+        << " reacted=" << rec.reacted << " outflow=" << rec.outflow
         << " — the ARD kdecay stage is not booking its removals.";
     EXPECT_GT(rec.reacted, 0.5 * rec.init)
         << "k·t = 3.6 should react away >96% of the initial mass; the "
@@ -289,22 +371,17 @@ TEST(ArdE5bTest, TargetDxChangesTheTransportMesh) {
     // 4 the default (cell_length 0 => 1, clamped to 4) already produces, and
     // the run came out BIT-IDENTICAL. 500/50 = 10 clears the floor.
     write_file("_e5b_dx.ard", "[TRANSPORT_OPTIONS]\nTARGET_DX 50\n");
-    write_deck("_e5b_dx.inp",
-               "org.hydrocouple.openswmm.transport.ard "
-               "config=\"_e5b_dx.ard\"");
-    const auto base = run_recording("_e5b_dx_base.inp", "_e5b_dx_base.rpt",
-                                    "_e5b_dx_base.out");
-    const auto dx   = run_recording("_e5b_dx.inp", "_e5b_dx.rpt",
-                                    "_e5b_dx.out");
+    write_deck("_e5b_dx.inp", "org.hydrocouple.openswmm.transport.ard "
+                              "config=\"_e5b_dx.ard\"");
+    const auto base = run_recording("_e5b_dx_base.inp", "_e5b_dx_base.rpt", "_e5b_dx_base.out");
+    const auto dx = run_recording("_e5b_dx.inp", "_e5b_dx.rpt", "_e5b_dx.out");
     ASSERT_TRUE(base.ok);
     ASSERT_TRUE(dx.ok);
-    const double sep  = integratedAbsDiff(base.tss_link[kC5],
-                                          dx.tss_link[kC5]);
+    const double sep = integratedAbsDiff(base.tss_link[kC5], dx.tss_link[kC5]);
     const double norm = integrated(base.tss_link[kC5]);
     ASSERT_GT(norm, 0.0);
-    EXPECT_GT(sep, 0.002 * norm)
-        << "TARGET_DX 50 left the published front unchanged — the key "
-           "does not reach the mesh builder.";
+    EXPECT_GT(sep, 0.002 * norm) << "TARGET_DX 50 left the published front unchanged — the key "
+                                    "does not reach the mesh builder.";
 
     // Under FLOW_ROUTING FV the solver mesh governs: the key must WARN.
     write_file("_e5b_dxf.ard", "[TRANSPORT_OPTIONS]\nTARGET_DX 250\n");
@@ -312,8 +389,7 @@ TEST(ArdE5bTest, TargetDxChangesTheTransportMesh) {
                "org.hydrocouple.openswmm.transport.ard "
                "config=\"_e5b_dxf.ard\"",
                "", 0.0, false, false, "FV");
-    const auto fvr = run_recording("_e5b_dxf.inp", "_e5b_dxf.rpt",
-                                   "_e5b_dxf.out");
+    const auto fvr = run_recording("_e5b_dxf.inp", "_e5b_dxf.rpt", "_e5b_dxf.out");
     ASSERT_TRUE(fvr.ok);
     EXPECT_TRUE(has_needle(fvr.warnings, "TARGET_DX is ignored under"))
         << "TARGET_DX under FLOW_ROUTING FV was silently ignored";
@@ -325,13 +401,10 @@ TEST(ArdE5bTest, TargetDxChangesTheTransportMesh) {
 TEST(ArdE5bTest, DetailedSidecarWrites) {
     std::error_code ec;
     fsys::remove("_e5b_detail.csv", ec);
-    write_file("_e5b_dt.ard",
-               "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT _e5b_detail.csv\n");
-    write_deck("_e5b_dt.inp",
-               "org.hydrocouple.openswmm.transport.ard "
-               "config=\"_e5b_dt.ard\"");
-    const auto rec = run_recording("_e5b_dt.inp", "_e5b_dt.rpt",
-                                   "_e5b_dt.out");
+    write_file("_e5b_dt.ard", "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT _e5b_detail.csv\n");
+    write_deck("_e5b_dt.inp", "org.hydrocouple.openswmm.transport.ard "
+                              "config=\"_e5b_dt.ard\"");
+    const auto rec = run_recording("_e5b_dt.inp", "_e5b_dt.rpt", "_e5b_dt.out");
     ASSERT_TRUE(rec.ok);
 
     std::ifstream in("_e5b_detail.csv");
@@ -341,11 +414,9 @@ TEST(ArdE5bTest, DetailedSidecarWrites) {
     EXPECT_EQ(line, "time_s,element,kind,cell,species,conc");
     int link_rows = 0, node_rows = 0;
     while (std::getline(in, line)) {
-        if (line.find(",L,") != std::string::npos &&
-            line.find("TSS") != std::string::npos)
+        if (line.find(",L,") != std::string::npos && line.find("TSS") != std::string::npos)
             ++link_rows;
-        if (line.find(",N,") != std::string::npos &&
-            line.find("TSS") != std::string::npos)
+        if (line.find(",N,") != std::string::npos && line.find("TSS") != std::string::npos)
             ++node_rows;
     }
     EXPECT_GT(link_rows, 0) << "no link-cell rows in the sidecar";
@@ -358,23 +429,19 @@ TEST(ArdE5bTest, DetailedSidecarWrites) {
 TEST(ArdE5bTest, ConfigCarryAlongsideOnSaveAs) {
     const std::string ard_body = "[TRANSPORT_OPTIONS]\nDISPERSION 5\n";
     write_file("_e5b_sv.ard", ard_body);
-    write_deck("_e5b_sv.inp",
-               "org.hydrocouple.openswmm.transport.ard "
-               "config=\"_e5b_sv.ard\"");
+    write_deck("_e5b_sv.inp", "org.hydrocouple.openswmm.transport.ard "
+                              "config=\"_e5b_sv.ard\"");
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_e5b_sv.inp", "_e5b_sv.rpt",
-                               "_e5b_sv.out", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_e5b_sv.inp", "_e5b_sv.rpt", "_e5b_sv.out", nullptr), SWMM_OK);
 
     std::error_code ec;
     fsys::remove_all("_e5b_saveas", ec);
     fsys::create_directories("_e5b_saveas", ec);
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(
-                  as_cpp_engine(e).context(), "_e5b_saveas/model.inp",
-                  &warnings),
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(),
+                                                 "_e5b_saveas/model.inp", &warnings),
               0);
     swmm_engine_destroy(e);
 
@@ -383,9 +450,8 @@ TEST(ArdE5bTest, ConfigCarryAlongsideOnSaveAs) {
     // ComponentConfigSave hook), no longer byte-copied — assert the content
     // semantically.
     std::ifstream copied("_e5b_saveas/_e5b_sv.ard");
-    ASSERT_TRUE(copied.is_open())
-        << "save-as did not carry the component config alongside — the "
-           "written config=\"_e5b_sv.ard\" reference dangles.";
+    ASSERT_TRUE(copied.is_open()) << "save-as did not carry the component config alongside — the "
+                                     "written config=\"_e5b_sv.ard\" reference dangles.";
     std::stringstream got;
     got << copied.rdbuf();
     EXPECT_NE(got.str().find("[TRANSPORT_OPTIONS]"), std::string::npos);
@@ -396,19 +462,16 @@ TEST(ArdE5bTest, ConfigCarryAlongsideOnSaveAs) {
 // Gate 6 — DETAILED_OUTPUT-only config under LEGACY warns (bypass surface).
 // ---------------------------------------------------------------------------
 TEST(ArdE5bTest, DetailOnlyConfigWarnsUnderLegacy) {
-    write_file("_e5b_lg.ard",
-               "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT _e5b_lg.csv\n");
+    write_file("_e5b_lg.ard", "[TRANSPORT_OPTIONS]\nDETAILED_OUTPUT _e5b_lg.csv\n");
     write_deck("_e5b_lg.inp",
                "org.hydrocouple.openswmm.transport.ard "
                "config=\"_e5b_lg.ard\"",
                "QUALITY_SOLVER LEGACY\n");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_e5b_lg.inp", "_e5b_lg.rpt",
-                               "_e5b_lg.out", nullptr),
-              SWMM_OK);
-    EXPECT_TRUE(has_needle(as_cpp_engine(e).context().warnings,
-                           "QUALITY_SOLVER is not EULERIAN_ARD"))
+    ASSERT_EQ(swmm_engine_open(e, "_e5b_lg.inp", "_e5b_lg.rpt", "_e5b_lg.out", nullptr), SWMM_OK);
+    EXPECT_TRUE(
+        has_needle(as_cpp_engine(e).context().warnings, "QUALITY_SOLVER is not EULERIAN_ARD"))
         << "a DETAILED_OUTPUT-only model.ard under LEGACY ran without a "
            "word (any_engine_content hole)";
     swmm_engine_destroy(e);
@@ -425,43 +488,40 @@ TEST(ArdE5bTest, DetailOnlyConfigWarnsUnderLegacy) {
 TEST(ArdE5bTest, SaveAsAnnouncesReplacingADifferentConfig) {
     const std::string ard_body = "[TRANSPORT_OPTIONS]\nDISPERSION 5\n";
     write_file("_e5b_ov.ard", ard_body);
-    write_deck("_e5b_ov.inp",
-               "org.hydrocouple.openswmm.transport.ard "
-               "config=\"_e5b_ov.ard\"");
+    write_deck("_e5b_ov.inp", "org.hydrocouple.openswmm.transport.ard "
+                              "config=\"_e5b_ov.ard\"");
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_e5b_ov.inp", "_e5b_ov.rpt",
-                               "_e5b_ov.out", nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_e5b_ov.inp", "_e5b_ov.rpt", "_e5b_ov.out", nullptr), SWMM_OK);
 
     std::error_code ec;
     fsys::remove_all("_e5b_ovdst", ec);
     fsys::create_directories("_e5b_ovdst", ec);
     // A DIFFERENT file already sits where the copy will land.
-    write_file("_e5b_ovdst/_e5b_ov.ard",
-               "[TRANSPORT_OPTIONS]\nDISPERSION 999\n");
+    write_file("_e5b_ovdst/_e5b_ov.ard", "[TRANSPORT_OPTIONS]\nDISPERSION 999\n");
 
     std::vector<std::string> w1;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(
-                  as_cpp_engine(e).context(), "_e5b_ovdst/model.inp", &w1), 0);
+    ASSERT_EQ(
+        openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(), "_e5b_ovdst/model.inp", &w1),
+        0);
     bool announced = false;
     for (const auto& w : w1)
         if (w.find("replaced an existing, different") != std::string::npos)
             announced = true;
-    EXPECT_TRUE(announced)
-        << "save-as overwrote a different pre-existing component config and "
-           "said nothing";
+    EXPECT_TRUE(announced) << "save-as overwrote a different pre-existing component config and "
+                              "said nothing";
 
     // Idempotence: the same save again replaces an IDENTICAL file, which is
     // the ordinary re-save and must stay quiet.
     std::vector<std::string> w2;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(
-                  as_cpp_engine(e).context(), "_e5b_ovdst/model.inp", &w2), 0);
+    ASSERT_EQ(
+        openswmm::inp_writer::writeInpFile(as_cpp_engine(e).context(), "_e5b_ovdst/model.inp", &w2),
+        0);
     for (const auto& w : w2)
         EXPECT_EQ(w.find("replaced an existing, different"), std::string::npos)
             << "an idempotent re-save warned about replacing itself";
     swmm_engine_destroy(e);
 }
 
-}  // namespace
+} // namespace

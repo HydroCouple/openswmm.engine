@@ -1,12 +1,16 @@
 /**
- * @file test_type_conversion.cpp
- * @brief Unit tests for in-place node and link type conversion.
+ * @file      test_type_conversion.cpp
+ * @brief     Unit tests for in-place node and link type conversion.
  *
  * @details Covers: lifecycle guards, node type conversions (preserving common
  *          fields, clearing old type-specific fields, applying new defaults),
  *          link type conversions, topology warnings, and same-type no-op guard.
  *
  * @ingroup engine_tests
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -24,14 +28,24 @@ class ConversionTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable empty model for each API test.
+     *
+     * Stores the owned handle in engine and asserts allocation succeeded. Tests populate the model and
+     * fixture teardown destroys it.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
     }
 
-    void TearDown() override {
-        swmm_engine_destroy(engine);
-    }
+    /**
+     * @brief Destroy the fixture-owned engine and its model resources.
+     *
+     * The destroy API accepts a null handle after failed setup. The member slot is not reset and must
+     * not be used afterward.
+     */
+    void TearDown() override { swmm_engine_destroy(engine); }
 };
 
 // ============================================================================
@@ -111,7 +125,7 @@ TEST_F(ConversionTest, OnlyOutfall_WarnsOnConvert) {
 
     SWMM_ConversionResult res{};
     ASSERT_EQ(swmm_node_convert(engine, 0, SWMM_NODE_JUNCTION, &res), SWMM_OK);
-    EXPECT_GT(res.n_warnings, 0);  // must warn about no outfall
+    EXPECT_GT(res.n_warnings, 0); // must warn about no outfall
     swmm_conversion_result_free(&res);
 }
 
@@ -195,8 +209,8 @@ TEST_F(ConversionTest, PumpToConduit_SetsConduitDefaults) {
 
 TEST_F(ConversionTest, ConduitToWeir_PreservesNodes) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_link_set_nodes(engine, 0, 0, 1), SWMM_OK);
 
     SWMM_ConversionResult res{};
@@ -205,9 +219,9 @@ TEST_F(ConversionTest, ConduitToWeir_PreservesNodes) {
 
     int from = -1, to = -1;
     ASSERT_EQ(swmm_link_get_from_node(engine, 0, &from), SWMM_OK);
-    ASSERT_EQ(swmm_link_get_to_node(engine,   0, &to),   SWMM_OK);
+    ASSERT_EQ(swmm_link_get_to_node(engine, 0, &to), SWMM_OK);
     EXPECT_EQ(from, 0);
-    EXPECT_EQ(to,   1);
+    EXPECT_EQ(to, 1);
 
     int t = -1;
     ASSERT_EQ(swmm_link_get_type(engine, 0, &t), SWMM_OK);
@@ -220,8 +234,8 @@ TEST_F(ConversionTest, ConduitToWeir_PreservesNodes) {
 
 TEST_F(ConversionTest, SameLinkTypeIsError) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT), SWMM_OK);
     EXPECT_EQ(swmm_link_convert(engine, 0, SWMM_LINK_CONDUIT, nullptr), SWMM_ERR_BADPARAM);
 }
 
@@ -231,8 +245,8 @@ TEST_F(ConversionTest, SameLinkTypeIsError) {
 
 TEST_F(ConversionTest, LinkConvertLifecycleGuard) {
     ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL),  SWMM_OK);
-    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT), SWMM_OK);
     ASSERT_EQ(swmm_link_set_nodes(engine, 0, 0, 1), SWMM_OK);
     ASSERT_EQ(swmm_finalize_model(engine), SWMM_OK);
 
@@ -245,6 +259,76 @@ TEST_F(ConversionTest, LinkConvertLifecycleGuard) {
 
 TEST_F(ConversionTest, NullResultOutIsValid) {
     ASSERT_EQ(swmm_node_add(engine, "J", SWMM_NODE_JUNCTION), SWMM_OK);
-    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL),  SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "O", SWMM_NODE_OUTFALL), SWMM_OK);
     EXPECT_EQ(swmm_node_convert(engine, 0, SWMM_NODE_STORAGE, nullptr), SWMM_OK);
+}
+
+// ============================================================================
+// Batch conversion: swmm_convert_types
+// ============================================================================
+
+TEST_F(ConversionTest, BatchPreviewChangesNothing) {
+    ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_STORAGE), SWMM_OK);
+    const int idx[] = {0, 1};
+    SWMM_TypeChange rows[2] = {};
+    ASSERT_EQ(swmm_convert_types(engine, 1, SWMM_NODE_STORAGE, idx, 2, -1, -1, 0, 0, rows),
+              SWMM_OK);
+    EXPECT_EQ(rows[0].source_type, SWMM_NODE_JUNCTION);
+    EXPECT_EQ(rows[0].status, SWMM_OK);
+    EXPECT_EQ(rows[1].source_type, SWMM_NODE_STORAGE); // already the target: no-op
+    EXPECT_EQ(rows[1].status, SWMM_OK);
+    int t = -1;
+    ASSERT_EQ(swmm_node_get_type(engine, 0, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_NODE_JUNCTION);
+}
+
+TEST_F(ConversionTest, BatchApplyConvertsEveryNode) {
+    ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "C", SWMM_NODE_STORAGE), SWMM_OK);
+    const int idx[] = {0, 1, 2};
+    SWMM_TypeChange rows[3] = {};
+    ASSERT_EQ(swmm_convert_types(engine, 1, SWMM_NODE_STORAGE, idx, 3, -1, -1, 0, 1, rows),
+              SWMM_OK);
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(rows[i].status, SWMM_OK);
+        int t = -1;
+        ASSERT_EQ(swmm_node_get_type(engine, i, &t), SWMM_OK);
+        EXPECT_EQ(t, SWMM_NODE_STORAGE);
+        swmm_conversion_result_free(&rows[i].details);
+    }
+    EXPECT_EQ(rows[0].details.new_type, SWMM_NODE_STORAGE);
+    EXPECT_EQ(rows[2].source_type, SWMM_NODE_STORAGE);
+}
+
+TEST_F(ConversionTest, BatchRefusesOneObjectAndConvertsTheRest) {
+    ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
+    ASSERT_EQ(swmm_node_add(engine, "B", SWMM_NODE_OUTFALL), SWMM_OK);
+    ASSERT_EQ(swmm_link_add(engine, "C", SWMM_LINK_CONDUIT), SWMM_OK);
+    ASSERT_EQ(swmm_link_set_nodes(engine, 0, 0, 1), SWMM_OK);
+    const int idx[] = {0, 7}; // 7 is not a link
+    SWMM_TypeChange rows[2] = {};
+    ASSERT_EQ(swmm_convert_types(engine, 0, SWMM_LINK_WEIR, idx, 2, -1, -1, 0, 1, rows), SWMM_OK);
+    EXPECT_EQ(rows[0].status, SWMM_OK);
+    EXPECT_EQ(rows[0].source_type, SWMM_LINK_CONDUIT);
+    EXPECT_EQ(rows[1].status, SWMM_ERR_BADINDEX);
+    EXPECT_EQ(rows[1].source_type, -1);
+    swmm_conversion_result_free(&rows[0].details);
+    int t = -1;
+    ASSERT_EQ(swmm_link_get_type(engine, 0, &t), SWMM_OK);
+    EXPECT_EQ(t, SWMM_LINK_WEIR);
+}
+
+TEST_F(ConversionTest, BatchRejectsBadArguments) {
+    ASSERT_EQ(swmm_node_add(engine, "A", SWMM_NODE_JUNCTION), SWMM_OK);
+    const int idx[] = {0};
+    SWMM_TypeChange row{};
+    EXPECT_EQ(swmm_convert_types(engine, 2, SWMM_NODE_STORAGE, idx, 1, -1, -1, 0, 0, &row),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_convert_types(engine, 1, 99, idx, 1, -1, -1, 0, 0, &row), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_convert_types(engine, 1, SWMM_NODE_STORAGE, idx, 1, -1, -1, 0, 0, nullptr),
+              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_convert_types(engine, 1, SWMM_NODE_STORAGE, nullptr, 0, -1, -1, 0, 0, nullptr),
+              SWMM_OK);
 }

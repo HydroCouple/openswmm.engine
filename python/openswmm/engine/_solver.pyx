@@ -70,7 +70,7 @@ from typing import Iterator, Optional, Union
 
 from ._common cimport *
 from ._dates import datetime_to_oadate, oadate_to_datetime
-from ._enums import EngineState, FlowUnits
+from ._enums import EngineState, FlowUnits, ErrorCode
 
 # Canonical EngineError hierarchy lives in :mod:`_exceptions`. Re-exported for
 # both intra-module raises and backward-compatible imports.
@@ -96,6 +96,16 @@ from ._exceptions import (
 # =============================================================================
 
 _SECONDS_PER_DAY = 86400.0
+
+
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    return swmm_engine_abi_tag().decode("utf-8")
 
 #: Registered id of the built-in GeoPackage model writer/reader plugin. Pass to
 #: :meth:`Solver.write_with_plugin` (or use :meth:`Solver.write_geopackage`).
@@ -129,6 +139,14 @@ cdef inline object _days_to_td(double days):
 # =============================================================================
 # C trampolines for step callbacks
 # =============================================================================
+
+cdef extern from "openswmm/engine/openswmm_engine.h":
+    ctypedef void (*SWMM_PhaseCallback)(SWMM_Engine, int, double, double, void*) noexcept
+    int swmm_set_phase_callback(SWMM_Engine, SWMM_PhaseCallback, void*)
+
+cdef void _phase_trampoline(SWMM_Engine engine, int phase, double start,
+                            double end, void* user_data) noexcept with gil:
+    (<object>user_data)(phase, start, end)
 
 cdef void _step_begin_trampoline(SWMM_Engine engine, double sim_time,
                                   double dt, void* user_data) noexcept with gil:
@@ -202,6 +220,10 @@ cdef class Solver:
         self._step_end_cb = None
         self._warning_cb = None
         self._progress_cb = None
+        self._phase_cb = None
+        self._split_cb = None
+        self._material_transport_cb = None
+        self._material_peer = None
         self._options = None
         self._userflags = None
         self._events_view = None
@@ -305,7 +327,85 @@ cdef class Solver:
         self._generation += 1
         self._surface2d = None
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
+
+    def open_metadata(self) -> None:
+        """Parse configured metadata without runtime plugins or output files.
+
+        Existing model, species and option accessors inspect the parsed model.
+        Close and open normally before initializing a simulation.
+        """
+        self._access.require_idle()
+        if self._handle == NULL:
+            self.create()
+        cdef bytes b_inp = self._inp.encode('utf-8')
+        with self._operation():
+            rc = swmm_engine_open_metadata(<SWMM_Engine><size_t>self.handle, b_inp)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check_engine(rc, self._handle)
+
+    def open_simulation_period(self) -> None:
+        """Open the configured model only as far as its simulation period.
+
+        A metadata open (see :meth:`open_metadata`) that leaves out the 2D
+        mesh and every row that addresses its cells: the built-in reader
+        skips the mesh sections and the per-cell ones, and a
+        ``[2D_MESH_FILE]`` is not read, so a large 2D model opens in a
+        fraction of the time and memory. The start and end times are the
+        ones :meth:`open_metadata` gives. Other answers can differ: there is
+        no 2D mesh, the ``[GW_*]`` rows are not checked, heat overrides
+        scoped ``CELL2D`` or ``MESH_TAG`` are dropped, and a mesh or cell row
+        a full open would refuse is not detected. Close and open normally
+        before initializing a simulation.
+
+        :raises EngineError: On C API failure (specific subclass per code).
+        """
+        self._access.require_idle()
+        if self._handle == NULL:
+            self.create()
+        cdef bytes b_inp = self._inp.encode('utf-8')
+        with self._operation():
+            rc = swmm_engine_open_simulation_period(<SWMM_Engine><size_t>self.handle, b_inp)
+        self._generation += 1
+        self._surface2d = None
+        self._access.raise_callback_error()
+        _check_engine(rc, self._handle)
+
+    def open_results(self, *, surface=None, bint live=False):
+        """Open independent result readers for this solver's configured files.
+
+        Call after end(), or after the solver context exits. While the engine
+        remains open, its resolved 2D output path is discovered automatically;
+        after destroy(), supply surface explicitly to include that file.
+        live=True opens only the configured binary 1D output during a run.
+        The returned Results owns its readers and must be closed separately.
+        """
+        from ._results import Results
+        from pathlib import Path
+        self._access.require_idle()
+        cdef _TextBufs t
+        cdef int status
+        if self._handle != NULL:
+            if not live and self.state not in (EngineState.ENDED, EngineState.CLOSED):
+                raise LifecycleError(ErrorCode.LIFECYCLE, 'Call end() before opening saved results, or use live=True for 1D output')
+            if surface is None and not live:
+                _tb_open(&t, 2)
+                try:
+                    while True:
+                        status = swmm_file_path_get(self._handle, <SWMM_FilePathRole>12, b'',
+                                                    t.p[0], t.size, t.p[1], t.size)
+                        if status != 0 or not _tb_retry(&t):
+                            break
+                    if status == 0:
+                        configured = _tb_str(&t, 0) or _tb_str(&t, 1)
+                        if configured:
+                            candidate = Path(configured)
+                            surface = candidate if candidate.is_absolute() else Path(self._inp).resolve().parent / candidate
+                finally:
+                    _tb_close(&t)
+        return Results.open(self._out or None, surface=surface, live=live)
 
     def initialize(self) -> None:
         """Initialize the simulation; transition to ``INITIALIZED``."""
@@ -340,6 +440,24 @@ cdef class Solver:
         self._access.raise_callback_error()
         _check(rc)
         return _days_to_td(self._elapsed)
+
+    @property
+    def split(self):
+        """Experimental native water peer and owned phase/packet snapshots."""
+        from ._split import SplitParticipant
+        return SplitParticipant(self)
+
+    @property
+    def passive_exchange(self):
+        """Experimental integrated passive exchange and exact V1 observations."""
+        from ._passive_exchange import PassiveExchange
+        return PassiveExchange(self)
+
+    @property
+    def material_split(self):
+        """Experimental in-process material peer and schema-10 packet codec."""
+        from ._split import MaterialSplitParticipant
+        return MaterialSplitParticipant(self)
 
     @property
     def coupling(self):
@@ -395,7 +513,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_end(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def report(self) -> None:
         """Write the summary report to the ``.rpt`` file."""
@@ -403,7 +521,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_report(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def close(self) -> None:
         """Close all files; transition to ``CLOSED``. Idempotent."""
@@ -413,18 +531,29 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_close(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
         self._generation += 1
         self._surface2d = None
+        if self._material_peer is not None:
+            (<Solver>self._material_peer)._material_peer = None
+        self._material_peer = None
 
     def destroy(self) -> None:
         """Destroy the engine handle. Idempotent."""
         self._access.require_idle()
+        if self._material_peer is not None:
+            (<Solver>self._material_peer)._access.require_idle()
         if self._handle != NULL:
             swmm_engine_destroy(<SWMM_Engine><size_t>self.handle)
             self._handle = NULL
             self._generation += 1
             self._surface2d = None
+            self._phase_cb = None
+            self._split_cb = None
+            self._material_transport_cb = None
+            if self._material_peer is not None:
+                (<Solver>self._material_peer)._material_peer = None
+            self._material_peer = None
 
     # ------------------------------------------------------------------
     # Iteration helpers
@@ -605,7 +734,18 @@ cdef class Solver:
 
     def _operation(self, expected=0):
         """Internal nonblocking guard for native calls that release the GIL."""
-        return self._access.operation(self, expected)
+        if self._material_peer is None:
+            return self._access.operation(self, expected)
+        from contextlib import ExitStack
+        stack = ExitStack()
+        try:
+            stack.enter_context(self._access.operation(self, expected))
+            if self._material_peer is not None:
+                stack.enter_context((<Solver>self._material_peer)._access.operation(self._material_peer))
+        except BaseException:
+            stack.close()
+            raise
+        return stack
 
     def _bump_generation(self) -> None:
         """Increment the staleness counter. Called by collection-level
@@ -712,9 +852,7 @@ cdef class Solver:
     @property
     def crs(self) -> str:
         """Coordinate reference system string from ``[OPTIONS]``."""
-        cdef char buf[256]
-        _check(swmm_get_crs(<SWMM_Engine><size_t>self.handle, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_string(<SWMM_Engine><size_t>self.handle, swmm_get_crs)
 
     # ------------------------------------------------------------------
     # Steady-state skip
@@ -761,7 +899,7 @@ cdef class Solver:
         if state.error is not None:
             raise state.error
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, h)
 
     def write_compat(self, path, profile):
         """Write FULL, OpenSWMM legacy, or stock EPA SWMM 5 input.
@@ -776,7 +914,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write_compat(self._handle, destination, selected)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write(self, path) -> None:
         """Write the current model to a SWMM ``.inp`` file."""
@@ -785,7 +923,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write(self._handle, b)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write_with_plugin(self, path, str output_plugin_id="") -> None:
         """Write the current model using an output plugin.
@@ -804,7 +942,7 @@ cdef class Solver:
         with self._operation():
             result = swmm_model_write_with_plugin(self._handle, bp, bid)
         self._access.raise_callback_error()
-        _check(result)
+        _check_engine(result, self._handle)
 
     def write_geopackage(self, path, crs=None) -> None:
         """Write the model to an OGC GeoPackage (``.gpkg``).
@@ -888,6 +1026,52 @@ cdef class Solver:
         if self._userflags is None:
             self._userflags = UserFlags(self)
         return self._userflags
+
+    def frozen_ground_rows(self, bint mesh=False) -> dict:
+        """Authored frozen-ground rows as ``{name: values}``.
+
+        ``mesh=False`` reads ``[FROZEN_GROUND]`` (names are subcatchments or ``*``);
+        ``mesh=True`` reads ``[2D_FROZEN_GROUND]``. Each value is a 10-tuple: thickness (m),
+        conductivity (W/m/K), heat capacity (J/m3/K), freezable water content, deep
+        temperature (C), deep depth (m), initial temperature (C), exponent, snow conductivity
+        (W/m/K) and snow density (kg/m3).
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        cdef int n = 0, i
+        cdef double v[10]
+        cdef _TextBufs t
+        _check(swmm_frozen_ground_count(h, 1 if mesh else 0, &n))
+        rows = {}
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_frozen_ground_get(h, 1 if mesh else 0, i, t.p[0], t.size, v))
+                    if not _tb_retry(&t):
+                        break
+                rows[_tb_str(&t, 0)] = tuple(v[k] for k in range(10))
+        finally:
+            _tb_close(&t)
+        return rows
+
+    def set_frozen_ground(self, str name, values, bint mesh=False) -> None:
+        """Add or replace one frozen-ground row (see :meth:`frozen_ground_rows`).
+
+        The row is authored input and takes effect when the model is next initialized.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        cdef double v[10]
+        cdef int k
+        if len(values) != 10:
+            raise ValueError("a frozen-ground row has ten values")
+        for k in range(10):
+            v[k] = values[k]
+        _check(swmm_frozen_ground_set(h, 1 if mesh else 0, name.encode("utf-8"), v))
+
+    def remove_frozen_ground(self, str name, bint mesh=False) -> None:
+        """Remove the frozen-ground row with this name."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self.handle
+        _check(swmm_frozen_ground_remove(h, 1 if mesh else 0, name.encode("utf-8")))
 
     @property
     def events(self):
@@ -993,6 +1177,18 @@ cdef class Solver:
             from ._forcing import Forcing
             self._forcing = Forcing(self)
         return self._forcing
+
+    @property
+    def checkpoints(self):
+        """Managed checkpoint session, save/restore and inspection access."""
+        from ._checkpoint import Checkpoints
+        return Checkpoints(self)
+
+    @property
+    def snow(self):
+        """Snow configuration, UEB parameters and accepted subcatchment state (SI)."""
+        from ._snow import Snow
+        return Snow(self)
 
     @property
     def climate(self):
@@ -1202,6 +1398,21 @@ cdef class Solver:
     # Callbacks
     # ------------------------------------------------------------------
 
+    def set_phase_callback(self, callback) -> None:
+        """Read-only observer(phase, start_seconds, end_seconds); None unregisters.
+
+        Do not mutate or recursively advance/close/destroy an engine in this
+        callback. The first Python failure is raised after the native step returns.
+        """
+        self._access.require_idle()
+        if callback is None:
+            _check(swmm_set_phase_callback(self._handle, NULL, NULL))
+            self._phase_cb = None
+        else:
+            state = Callback(self._access, callback)
+            _check(swmm_set_phase_callback(self._handle, _phase_trampoline, <void*>state))
+            self._phase_cb = state
+
     def set_step_begin_callback(self, callback) -> None:
         """Register a callback invoked at the start of each timestep.
 
@@ -1278,19 +1489,21 @@ cdef class Solver:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # Finish every teardown stage even if a user callback fails in one.
-        callback_error = None
-        for cleanup in (self.end, self.report, self.close):
+        # Preserve a failing report/finalizer while still releasing every resource.
+        cleanup_error = None
+        for cleanup in (self.end, self.report, self.close, self.destroy):
             try:
                 cleanup()
-            except EngineError:
-                pass
             except BaseException as error:
-                if callback_error is None:
-                    callback_error = error
-        self.destroy()
-        if exc_type is None and callback_error is not None:
-            raise callback_error
+                if cleanup_error is None:
+                    cleanup_error = error
+        if exc_val is not None and cleanup_error is not None:
+            if hasattr(exc_val, "add_note"):
+                exc_val.add_note(f"Solver cleanup also failed: {cleanup_error}")
+            else:
+                exc_val.__context__ = cleanup_error
+        if exc_type is None and cleanup_error is not None:
+            raise cleanup_error
         return False
 
     def __repr__(self) -> str:
@@ -1342,42 +1555,6 @@ class SimulationOptions(MutableMapping):
         # Sub-namespace for the [OPTIONS_EXT] block.
         self.ext = _OptionsExtView(solver)
 
-    # MutableMapping requires __getitem__, __setitem__, __delitem__, __iter__,
-    # __len__. The underlying C API doesn't expose an iteration helper, so we
-    # implement the mapping protocol minimally: indexing and length, plus an
-    # ``iter`` over a small known-key set the schema documents. Iteration over
-    # *all* keys requires a future C API addition.
-    _KNOWN_KEYS = (
-        "FLOW_UNITS", "INFILTRATION", "FLOW_ROUTING", "LINK_OFFSETS",
-        "FORCE_MAIN_EQUATION", "IGNORE_RAINFALL", "IGNORE_SNOWMELT",
-        "IGNORE_GROUNDWATER", "IGNORE_RDII", "IGNORE_ROUTING",
-        "IGNORE_QUALITY", "ALLOW_PONDING", "SKIP_STEADY_STATE",
-        "SYS_FLOW_TOL", "LAT_FLOW_TOL", "START_DATE", "START_TIME",
-        "END_DATE", "END_TIME", "REPORT_START_DATE", "REPORT_START_TIME",
-        "SWEEP_START", "SWEEP_END", "DRY_DAYS", "REPORT_STEP",
-        "WET_STEP", "DRY_STEP", "ROUTING_STEP", "RULE_STEP", "MINIMUM_STEP",
-        "INERTIAL_DAMPING", "NORMAL_FLOW_LIMITED", "MIN_SURFAREA",
-        "MIN_SLOPE", "MAX_TRIALS", "HEAD_TOLERANCE", "THREADS",
-        "TEMPDIR",
-        # Explicit finite-volume solver (FLOW_ROUTING FV). Readable and
-        # writable under any routing model, so a script can configure the
-        # solver before selecting it.
-        "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_RIEMANN", "FV_ORDER",
-        "FV_LIMITER", "FV_SCALAR_SCHEME", "FV_TIME_INTEGRATION",
-        "FV_SLOT_CELERITY", "FV_DISPERSION", "FV_STRUCTURE_COUPLING",
-        "FV_COMPACTION", "FV_BACKEND", "FV_MIN_PARALLEL_CELLS",
-        "FV_LTS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-        # Unsteady friction (issue #156): consumed by the FV (Phase 2) and
-        # dynamic wave (Phase 3) solvers.
-        "UNSTEADY_FRICTION", "UF_K3",
-        # TPA pressure closure (issue #156 Phase 4): FV solver.
-        "FV_PRESSURE_CLOSURE",
-        # Signed piezometric heads in the .out HEAD field (issue #156 O-6).
-        "REPORT_SIGNED_HEADS",
-        # DW surcharge method + TPA celerity (issue #156 Phase 5; adding
-        # SURCHARGE_METHOD also closes the long-standing known-keys gap).
-        "SURCHARGE_METHOD", "TPA_CELERITY",
-    )
 
     def __getitem__(self, key: str) -> str:
         try:
@@ -1392,15 +1569,12 @@ class SimulationOptions(MutableMapping):
         raise TypeError("SWMM options cannot be deleted; assign an empty string instead")
 
     def __iter__(self):
-        for k in self._KNOWN_KEYS:
-            try:
-                self[k]
-            except KeyError:
-                continue
-            yield k
+        # Every standard key the engine accepts (canonical spellings, [REPORT]
+        # keys under their RPT_ prefix), in the engine's order.
+        return iter(_options_keys())
 
     def __len__(self) -> int:
-        return sum(1 for _ in self)
+        return swmm_options_key_count()
 
     def __contains__(self, key) -> bool:
         if not isinstance(key, str):
@@ -1473,19 +1647,40 @@ class _OptionsExtView(MutableMapping):
         raise TypeError("SWMM extended options cannot be deleted")
 
     def __iter__(self):
-        # No enumeration entry-point exposed by the C API yet.
-        return iter(())
+        # 2D keys first (when the model has a 2D surface), then stored extension keys.
+        return iter(_options_ext_keys(self._solver))
 
     def __len__(self) -> int:
-        return 0
+        cdef int n = 0
+        _check(swmm_options_ext_key_count(<SWMM_Engine><size_t>self._solver.handle, &n))
+        return n
+
+
+def _options_keys() -> tuple:
+    cdef char buf[256]
+    cdef int i
+    keys = []
+    for i in range(swmm_options_key_count()):
+        _check(swmm_options_key_at(i, buf, sizeof(buf)))
+        keys.append((<bytes>buf).decode('utf-8'))
+    return tuple(keys)
+
+
+def _options_ext_keys(solver) -> tuple:
+    cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
+    cdef int n = 0
+    cdef int i
+    _check(swmm_options_ext_key_count(h, &n))
+    keys = []
+    for i in range(n):
+        keys.append(_read_engine_index_string(h, i, swmm_options_ext_key_at))
+    return tuple(keys)
 
 
 def _options_get(solver, str key) -> str:
     cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
     cdef bytes b = key.encode('utf-8')
-    cdef char buf[256]
-    _check(swmm_options_get(h, b, buf, 256))
-    return buf.decode('utf-8')
+    return _read_engine_key_string(h, b, swmm_options_get)
 
 
 def _options_set(solver, str key, str value) -> None:
@@ -1498,9 +1693,7 @@ def _options_set(solver, str key, str value) -> None:
 def _options_ext_get(solver, str key) -> str:
     cdef SWMM_Engine h = <SWMM_Engine><size_t>solver.handle
     cdef bytes b = key.encode('utf-8')
-    cdef char buf[256]
-    _check(swmm_options_get_ext(h, b, buf, 256))
-    return buf.decode('utf-8')
+    return _read_engine_key_string(h, b, swmm_options_get_ext)
 
 
 def _options_ext_set(solver, str key, str value) -> None:
@@ -1536,7 +1729,7 @@ class UserFlags(MutableMapping):
         cdef bytes b = (<str>key).encode('utf-8')
         cdef int iv = 0
         cdef double dv = 0.0
-        cdef char sbuf[512]
+        cdef _TextBufs t
         cdef int found = 0
         # Try bool first, then int, then real, then string (the scalar
         # store is the MODEL-scoped per-object value). If all four fail
@@ -1550,9 +1743,16 @@ class UserFlags(MutableMapping):
         rc = swmm_userflag_get_real(h, b, &dv)
         if rc == 0:
             return float(dv)
-        rc = swmm_userflag_value_get(h, b"MODEL", b"", b, sbuf, 512, &found)
-        if rc == 0 and found:
-            return sbuf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                rc = swmm_userflag_value_get(h, b"MODEL", b"", b, t.p[0], t.size, &found)
+                if rc != 0 or not found or not _tb_retry(&t):
+                    break
+            if rc == 0 and found:
+                return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
         raise KeyError(key)
 
     def __setitem__(self, key, value):
@@ -1653,15 +1853,21 @@ class UserFlags(MutableMapping):
         cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
         cdef int n = 0
         cdef int t = 0
-        cdef char name_buf[128]
-        cdef char desc_buf[512]
+        cdef _TextBufs tb
         _check(swmm_userflag_def_count(h, &n))
         out = []
-        for i in range(n):
-            _check(swmm_userflag_def_get(h, i, name_buf, 128, &t,
-                                         desc_buf, 512))
-            out.append(UserFlagDef(name_buf.decode('utf-8'), t,
-                                   desc_buf.decode('utf-8')))
+        _tb_open(&tb, 2)
+        try:
+            for i in range(n):
+                while True:
+                    _check(swmm_userflag_def_get(h, i, tb.p[0], tb.size, &t,
+                                                 tb.p[1], tb.size))
+                    if not _tb_retry(&tb):
+                        break
+                out.append(UserFlagDef(_tb_str(&tb, 0), t,
+                                       _tb_str(&tb, 1)))
+        finally:
+            _tb_close(&tb)
         return out
 
     # -- [USER_FLAG_VALUES] per-object values -------------------------------
@@ -1687,13 +1893,20 @@ class UserFlags(MutableMapping):
         cdef bytes b_type = obj_type.encode('utf-8')
         cdef bytes b_name = obj_name.encode('utf-8')
         cdef bytes b_flag = flag_name.encode('utf-8')
-        cdef char buf[512]
+        cdef _TextBufs t
         cdef int found = 0
-        _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
-                                       buf, 512, &found))
-        if not found:
-            return None
-        return buf.decode('utf-8')
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_userflag_value_get(h, b_type, b_name, b_flag,
+                                               t.p[0], t.size, &found))
+                if not found:
+                    return None
+                if not _tb_retry(&t):
+                    break
+            return _tb_str(&t, 0)
+        finally:
+            _tb_close(&t)
 
     def set_value(self, str obj_type, str obj_name, str flag_name,
                   str value) -> None:

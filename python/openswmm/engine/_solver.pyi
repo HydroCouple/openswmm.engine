@@ -28,7 +28,7 @@ Engine Lifecycle (Pythonic v1 surface)
 Type stubs for :mod:`openswmm.engine._solver`.
 """
 
-from collections.abc import MutableMapping, MutableSequence
+from collections.abc import MutableMapping, MutableSequence, Sequence
 from datetime import datetime, timedelta
 from os import PathLike
 from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional, Union
@@ -36,10 +36,15 @@ from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, Optional,
 from ._enums import EngineState, FlowUnits
 
 if TYPE_CHECKING:
+    from ._split import SplitParticipant, MaterialSplitParticipant
+    from ._passive_exchange import PassiveExchange
+    from ._results import Results
     # Imports for type-checking only — avoids cycles at runtime because the
     # collection modules import Solver themselves.
     from ._2d import Surface2D
     from ._climate import Climate
+    from ._checkpoint import Checkpoints
+    from ._snow import Snow
     from ._controls import Controls
     from ._edit import ModelEditor
     from ._forcing import Forcing
@@ -195,6 +200,16 @@ class EventsView(MutableSequence[Event]):
 # ---------------------------------------------------------------------------
 
 
+def abi_tag() -> str:
+    """Return the immutable C ABI identity of the engine loaded by these bindings.
+
+    Compare it with a native host's engine identity before sharing handles.
+    This query creates no solver and is valid before opening a model.
+    The wheel's ``openswmm/engine/_abi.json`` records its expected build identity.
+    """
+    ...
+
+
 def run(
     inp: _PathLike,
     rpt: Optional[_PathLike] = None,
@@ -268,8 +283,29 @@ class Solver:
     def create(self) -> None: ...
     def set_lenient_open(self, on: bool = ...) -> None: ...
     def open(self, plugin_lib: Optional[_PathLike] = None) -> None: ...
+    def open_metadata(self) -> None: ...
+    def open_simulation_period(self) -> None:
+        """Open the configured model only as far as its simulation period.
+
+        A metadata open (see :meth:`open_metadata`) that leaves out the 2D
+        mesh and every row that addresses its cells: the built-in reader
+        skips the mesh sections and the per-cell ones, and a
+        ``[2D_MESH_FILE]`` is not read, so a large 2D model opens in a
+        fraction of the time and memory. The start and end times are the
+        ones :meth:`open_metadata` gives. Other answers can differ: there is
+        no 2D mesh, the ``[GW_*]`` rows are not checked, heat overrides
+        scoped ``CELL2D`` or ``MESH_TAG`` are dropped, and a mesh or cell row
+        a full open would refuse is not detected. Close and open normally
+        before initializing a simulation.
+
+        :raises EngineError: On C API failure (specific subclass per code).
+        """
+        ...
     def initialize(self) -> None: ...
     def start(self, save_results: bool = True) -> None: ...
+    def open_results(self, *, surface: Optional[_PathLike] = ..., live: bool = ...) -> "Results":
+        """Open independent results after end(); live=True opens only 1D output."""
+        ...
     def advance_to(self, seconds: float) -> timedelta: ...
     @property
     def coupling(self) -> Coupling: ...
@@ -372,6 +408,9 @@ class Solver:
     def userflags(self) -> UserFlags: ...
     @property
     def events(self) -> EventsView: ...
+    def frozen_ground_rows(self, mesh: bool = ...) -> dict[str, tuple[float, ...]]: ...
+    def set_frozen_ground(self, name: str, values: Sequence[float], mesh: bool = ...) -> None: ...
+    def remove_frozen_ground(self, name: str, mesh: bool = ...) -> None: ...
 
     # ------------- Collection accessors (typed) -------------
     @property
@@ -400,6 +439,10 @@ class Solver:
     def forcing(self) -> "Forcing": ...
     @property
     def climate(self) -> "Climate": ...
+    @property
+    def checkpoints(self) -> "Checkpoints": ...
+    @property
+    def snow(self) -> "Snow": ...
     @property
     def infrastructure(self) -> "Infrastructure": ...
     @property
@@ -440,6 +483,13 @@ class Solver:
     def close_runoff_interface(self) -> None: ...
 
     # ------------- Callbacks -------------
+    @property
+    def split(self) -> SplitParticipant: ...
+    @property
+    def material_split(self) -> MaterialSplitParticipant: ...
+    @property
+    def passive_exchange(self) -> PassiveExchange: ...
+    def set_phase_callback(self, callback: Callable[[int, float, float], None] | None) -> None: ...
     def set_step_begin_callback(
         self, callback: Optional[Callable[[float, float], None]]
     ) -> None: ...

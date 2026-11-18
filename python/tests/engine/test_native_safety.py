@@ -134,7 +134,7 @@ def test_destroyed_view_regression_in_subprocess():
     stage = str(Path(openswmm.__file__).parents[1])
     script = f"""
 import sys
-sys.meta_path[:] = [f for f in sys.meta_path if type(f).__module__ != '_openswmm_editable']
+sys.meta_path[:] = [f for f in sys.meta_path if type(f).__module__ not in ('_openswmm_editable', '_editable_skbc_openswmm')]
 sys.path.insert(0, {stage!r})
 from openswmm.engine import Solver, ModelEditor, StaleObjectError, BadHandleError
 s = Solver()

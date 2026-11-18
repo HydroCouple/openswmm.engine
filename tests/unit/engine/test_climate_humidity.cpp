@@ -15,14 +15,14 @@
 // limitations under the License.
 
 /**
- * @file test_climate_humidity.cpp
- * @brief `[TEMPERATURE] HUMIDITY` — every deck form parses, survives the
+ * @file      test_climate_humidity.cpp
+ * @brief     `[TEMPERATURE] HUMIDITY` — every deck form parses, survives the
  *        writer, and reaches `ClimateState::humidity` at run time.
  *
  * @details Forms:
  *            HUMIDITY [DEWPOINT] <value>
  *            HUMIDITY [DEWPOINT] MONTHLY h1 … h12
- *            HUMIDITY [DEWPOINT] TIMESERIES <name>
+ *            HUMIDITY [DEWPOINT] TIMESERIES &lt;name&gt;
  *          DEWPOINT decks are converted to RH each step from the effective
  *          air temperature with the Magnus form SurfaceExchange uses:
  *          RH = 100·e_s(Td)/e_s(Ta), clamped to [0, 100].
@@ -31,9 +31,9 @@
  *          GUI save silently reset RH to the 50 % default.
  *
  * @see plans/transport/HUMIDITY_DEWPOINT_CLIMATE_GUI_PLAN_2026-09-06.md
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -53,17 +53,61 @@
 // Working directory is tests/unit/engine/data/ (set by CMakeLists.txt).
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] e Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine e) {
     return *static_cast<openswmm::SWMMEngine*>(e);
 }
 
-double es_kpa(double t_c) { return 0.61275 * std::exp(17.27 * t_c / (237.3 + t_c)); }
+/**
+ * @brief Evaluate the fixture Magnus saturation-vapor-pressure reference.
+ *
+ * No range/finite validation occurs; overflow/nonfinite arithmetic propagates. Does not call
+ * production climate code.
+ *
+ * @param[in] t_c Temperature in degrees C within the intended physical range and not -237.3 C.
+ * @return 0.61275*exp(17.27*t_c/(237.3+t_c)) in kPa.
+ */
+double es_kpa(double t_c) {
+    return 0.61275 * std::exp(17.27 * t_c / (237.3 + t_c));
+}
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const std::string& path) {
     std::ifstream in(path);
     std::stringstream ss;
@@ -71,10 +115,20 @@ std::string slurp(const std::string& path) {
     return ss.str();
 }
 
-/// Minimal routing deck: air temperature 50 degF from a series, plus the
-/// caller's HUMIDITY line. `flow_units` selects US/SI for the dew-point units.
-std::string deck(const std::string& humidity_line,
-                 const char* flow_units = "CFS",
+/**
+ * @brief Construct a humidity/dewpoint routing deck with held air and test signal series.
+ *
+ * Does not convert the literal signal values when changing units or validate syntax; caller chooses
+ * physically matching values. Only text construction occurs.
+ *
+ * @param[in] humidity_line Complete TEMPERATURE humidity declaration, inserted verbatim.
+ * @param[in] flow_units Non-null FLOW_UNITS token selecting US/SI authored temperature/dewpoint
+ *     units, default CFS.
+ * @param[in] air_temp Non-null numeric air-temperature text in degrees F for US or C for SI,
+ *     default 50.0.
+ * @return Owned one-hour KINWAVE deck with zero rain, held air series and RH/dewpoint signal rows.
+ */
+std::string deck(const std::string& humidity_line, const char* flow_units = "CFS",
                  const char* air_temp = "50.0") {
     std::ostringstream f;
     f << "[TITLE]\nRH gate deck\n\n[OPTIONS]\n"
@@ -106,41 +160,75 @@ std::string deck(const std::string& humidity_line,
     return f.str();
 }
 
-/// Open only (BUILDING state) so config getters can be exercised.
+/**
+ * @brief Open a humidity deck for editable configuration reads.
+ *
+ * Uses no binary output and does not initialize/start. Open failure records ADD_FAILURE; caller
+ * closes/destroys a successful handle. Historical BUILDING wording was inaccurate for file-open
+ * lifecycle.
+ *
+ * @param[in] inp Readable input path; report destination is inp+.rpt.
+ * @return Owned OPENED engine on success; null for creation failure or after destroying a
+ *     failed-open handle.
+ */
 SWMM_Engine open_only(const std::string& inp) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     const std::string rpt = inp + ".rpt";
     if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), nullptr, nullptr) != SWMM_OK) {
-        ADD_FAILURE() << "open(" << inp << "): "
-                      << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
+        ADD_FAILURE() << "open(" << inp
+                      << "): " << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
         swmm_engine_destroy(e);
         return nullptr;
     }
     return e;
 }
 
-/// Run to the end and hold the handle so climate_state is inspectable.
+/**
+ * @brief Run a humidity deck while retaining the engine for post-end climate-state inspection.
+ *
+ * Starts with output disabled, steps until completion/error or20000 successful continuing
+ * iterations, then ignores end status. Step failure/guard exhaustion do not create a separate
+ * failure result here; a non-null handle can contain partial-run state. Successful caller invokes
+ * destroy().
+ *
+ * @param[in] inp Readable humidity fixture input path.
+ * @return Owned ended handle after the stepping attempt, or null after creation/open/init/start
+ *     failure.
+ */
 SWMM_Engine run_and_hold(const std::string& inp) {
     SWMM_Engine e = open_only(inp);
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 0) != SWMM_OK) {
-        ADD_FAILURE() << "init/start(" << inp << "): "
-                      << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
+        ADD_FAILURE() << "init/start(" << inp
+                      << "): " << (swmm_get_last_error_msg(e) ? swmm_get_last_error_msg(e) : "");
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
+/**
+ * @brief Close/destroy a humidity fixture engine, accepting null.
+ *
+ * Ignores close status; caller must not use a consumed handle again and artifacts are retained.
+ *
+ * @param[in] e Owned engine handle to consume, or null for no action.
+ */
 void destroy(SWMM_Engine e) {
-    if (e) { swmm_engine_close(e); swmm_engine_destroy(e); }
+    if (e) {
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+    }
 }
 
 struct Parsed {
@@ -149,6 +237,17 @@ struct Parsed {
     std::string ts;
 };
 
+/**
+ * @brief Copy authored humidity type/variable/monthly/series settings through the C API.
+ *
+ * Monthly values retain the API representation selected by humidity variable/model units. Uses
+ * a64-byte zeroed series buffer, ignores all statuses and does not initialize or advance the
+ * climate.
+ *
+ * @param[in] e Live opened engine with readable climate configuration.
+ * @return Owned Parsed structure with 12 monthly values and series name; defaults/partial data can
+ *     remain after ignored getter failures.
+ */
 Parsed read_config(SWMM_Engine e) {
     Parsed p;
     swmm_climate_get_humidity_type(e, &p.type);
@@ -160,21 +259,28 @@ Parsed read_config(SWMM_Engine e) {
     return p;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Parsing — every deck form lands in the config the C API exposes.
 // ---------------------------------------------------------------------------
 
 TEST(ClimateHumidity, ParsesEveryDeckForm) {
-    struct Case { const char* line; int type; int var; double m0; double m11; const char* ts; };
+    struct Case {
+        const char* line;
+        int type;
+        int var;
+        double m0;
+        double m11;
+        const char* ts;
+    };
     const Case cases[] = {
-        {"HUMIDITY 65",                                          0, 0, 65, 65, ""},
+        {"HUMIDITY 65", 0, 0, 65, 65, ""},
         {"HUMIDITY MONTHLY 10 20 30 40 50 60 70 80 90 91 92 93", 1, 0, 10, 93, ""},
-        {"HUMIDITY TIMESERIES rh_ts",                            2, 0, 50, 50, "rh_ts"},
-        {"HUMIDITY DEWPOINT 40",                                 0, 1, 40, 40, ""},
-        {"HUMIDITY DEWPOINT MONTHLY 1 2 3 4 5 6 7 8 9 10 11 12", 1, 1,  1, 12, ""},
-        {"HUMIDITY DEWPOINT TIMESERIES td_ts",                   2, 1, 50, 50, "td_ts"},
+        {"HUMIDITY TIMESERIES rh_ts", 2, 0, 50, 50, "rh_ts"},
+        {"HUMIDITY DEWPOINT 40", 0, 1, 40, 40, ""},
+        {"HUMIDITY DEWPOINT MONTHLY 1 2 3 4 5 6 7 8 9 10 11 12", 1, 1, 1, 12, ""},
+        {"HUMIDITY DEWPOINT TIMESERIES td_ts", 2, 1, 50, 50, "td_ts"},
     };
     int k = 0;
     for (const auto& c : cases) {
@@ -184,8 +290,8 @@ TEST(ClimateHumidity, ParsesEveryDeckForm) {
         ASSERT_NE(e, nullptr) << c.line;
         const Parsed p = read_config(e);
         EXPECT_EQ(p.type, c.type) << c.line;
-        EXPECT_EQ(p.var,  c.var)  << c.line;
-        EXPECT_DOUBLE_EQ(p.monthly[0],  c.m0)  << c.line;
+        EXPECT_EQ(p.var, c.var) << c.line;
+        EXPECT_DOUBLE_EQ(p.monthly[0], c.m0) << c.line;
         EXPECT_DOUBLE_EQ(p.monthly[11], c.m11) << c.line;
         EXPECT_EQ(p.ts, c.ts) << c.line;
         destroy(e);
@@ -216,8 +322,10 @@ TEST(ClimateHumidity, WriterRoundTripsEveryForm) {
         ASSERT_NE(a, nullptr) << line;
         const Parsed before = read_config(a);
         std::vector<std::string> warnings;
-        ASSERT_EQ(openswmm::inp_writer::writeInpFile(as_cpp_engine(a).context(), out, &warnings), 0);
-        for (const auto& w : warnings) ADD_FAILURE() << line << " writer warning: " << w;
+        ASSERT_EQ(openswmm::inp_writer::writeInpFile(as_cpp_engine(a).context(), out, &warnings),
+                  0);
+        for (const auto& w : warnings)
+            ADD_FAILURE() << line << " writer warning: " << w;
         destroy(a);
 
         EXPECT_NE(slurp(out).find("HUMIDITY"), std::string::npos)
@@ -227,8 +335,8 @@ TEST(ClimateHumidity, WriterRoundTripsEveryForm) {
         ASSERT_NE(b, nullptr) << line;
         const Parsed after = read_config(b);
         EXPECT_EQ(after.type, before.type) << line;
-        EXPECT_EQ(after.var,  before.var)  << line;
-        EXPECT_EQ(after.ts,   before.ts)   << line;
+        EXPECT_EQ(after.var, before.var) << line;
+        EXPECT_EQ(after.ts, before.ts) << line;
         for (int i = 0; i < 12; ++i)
             EXPECT_NEAR(after.monthly[i], before.monthly[i], 1.0e-9) << line << " [" << i << "]";
         destroy(b);
@@ -289,7 +397,7 @@ TEST(ClimateHumidity, DewPointConvertsToRelativeHumiditySI) {
 
 TEST(ClimateHumidity, DewPointAboveAirClampsToSaturation) {
     const std::string inp = "_rh_run_td_sat.inp";
-    write_file(inp, deck("HUMIDITY DEWPOINT 60"));  // above the 50 degF air
+    write_file(inp, deck("HUMIDITY DEWPOINT 60")); // above the 50 degF air
     SWMM_Engine e = run_and_hold(inp);
     ASSERT_NE(e, nullptr);
     EXPECT_DOUBLE_EQ(as_cpp_engine(e).context().climate_state.humidity, 100.0);
@@ -298,7 +406,7 @@ TEST(ClimateHumidity, DewPointAboveAirClampsToSaturation) {
 
 TEST(ClimateHumidity, DewPointTimeseriesReachesTheClimateState) {
     const std::string inp = "_rh_run_td_ts.inp";
-    write_file(inp, deck("HUMIDITY DEWPOINT TIMESERIES td_ts"));  // 40 degF
+    write_file(inp, deck("HUMIDITY DEWPOINT TIMESERIES td_ts")); // 40 degF
     SWMM_Engine e = run_and_hold(inp);
     ASSERT_NE(e, nullptr);
     const double expected = 100.0 * es_kpa((40.0 - 32.0) * 5.0 / 9.0) / es_kpa(10.0);

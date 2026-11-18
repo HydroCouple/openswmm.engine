@@ -178,7 +178,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID, abi_tag
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -200,7 +200,7 @@ from ._exceptions import (
 # Programmatic model building & editing
 # =============================================================================
 from ._model import ModelBuilder
-from ._edit import ModelEditor, ImpactEntry, ConversionResult
+from ._edit import ModelEditor, ImpactEntry, ConversionResult, DeleteRecord, TypeChange
 from ._geometry import CrossSection
 from ._xsect import XSectionGeometry, shape_name
 from ._report import (
@@ -231,6 +231,9 @@ from ._hotstart import HotStart
 from ._massbalance import MassBalance
 from ._statistics import Statistics
 from ._output_reader import OutputReader
+from ._output2d import Output2DReader
+from ._results import Results, ResultField, SeriesField, SurfaceField, SurfaceResults, ResultMesh
+from ._capabilities import capabilities
 
 # =============================================================================
 # Hydrology, water quality, and time-varying inputs
@@ -243,11 +246,13 @@ from ._inflows import Inflows
 from ._controls import Controls
 from ._forcing import Forcing
 from ._climate import Climate
+from ._snow import Snow
+from ._checkpoint import Checkpoints
 
 # =============================================================================
 # Transport processes — heat, water age, reactions, process components
 # =============================================================================
-from ._heat import Heat, HeatNodeOverride
+from ._heat import Heat, HeatNodeOverride, HeatLidMaterial, HeatElementValue, HeatSnapshot
 from ._water_age import WaterAge, WaterAgeOverride
 from ._reactions import (
     Reactions,
@@ -272,7 +277,8 @@ from ._spatial import Spatial
 # =============================================================================
 try:
     from ._2d import (Surface2D, Infiltration2DView, Infil2DDefaults,
-                      Infil2DRow, Infil2DCell)
+                      Infil2DRow, Infil2DCell, InitialQuality2D, BoundaryQuality2D)
+    from ._snow2d import MeshSnow
     HAS_2D = True
 except ModuleNotFoundError as error:
     if error.name != __name__ + "._2d":
@@ -305,7 +311,7 @@ from ._enums import (
     # Hydrology
     InfilModel, GageDataSource, GageRainType,
     # Water quality / LID
-    ConcentrationUnits, BuildupFunc, WashoffFunc, LidType,
+    ConcentrationUnits, BuildupFunc, WashoffFunc, LidType, LidExtraField,
     # Hydrology parameters
     AquiferParam, GwfType,
     # Output variables
@@ -314,14 +320,16 @@ from ._enums import (
     ForcingMode, ForcingTarget, ForcingType, ForcingPersist, PatternType,
     # 2D surface routing
     SurfaceForcingMode, SurfaceBoundaryType,
-    SurfaceInfilMethod, SurfaceInfilDest,
+    SurfaceInfilMethod, SurfaceInfilDest, NodeCoupling2DType,
     # Nodes / editing
     DividerType, RefType,
     # Tables / model files
     TableType, FilePathRole, UserFlagType,
     # Transport processes — heat, water age, reactions
     HeatFluxModule, HeatShortwaveMode, HeatRadiativeParam, HeatSolarParam,
-    HeatCloudParam, HeatSourceKind, WaterAgeSource,
+    HeatCloudParam, HeatSourceKind, HeatSedimentParam, HeatAttr, HeatOverrideScope,
+    GroundHeatValue, GroundHeatLayerValue, ChannelGroundValue,
+    WaterAgeSource,
     ReactionScope, ReactionExprForm,
     # Street inlets
     InletType, GrateType, ThroatType, InletCurveKind,
@@ -331,6 +339,7 @@ from ._enums import (
 )
 
 __all__ = [
+    "abi_tag",
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
@@ -341,7 +350,7 @@ __all__ = [
     "FileError", "ParseError", "NumericalError",
     "CRSError", "DependencyError", "GeoPackageError", "StaleObjectError",
     # --- Programmatic model building & editing ---
-    "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult",
+    "ModelBuilder", "ModelEditor", "ImpactEntry", "ConversionResult", "DeleteRecord", "TypeChange",
     # --- Geometry helpers ---
     "CrossSection",
     "XSectionGeometry",
@@ -355,12 +364,14 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages",
     "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
-    "HotStart", "MassBalance", "Statistics", "OutputReader",
+    "HotStart", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
+    "Results", "ResultField", "SeriesField", "SurfaceField", "SurfaceResults", "ResultMesh",
+    "capabilities",
     # --- Hydrology, water quality, and time-varying inputs ---
     "Pollutants", "Quality", "Tables", "Patterns", "Inflows", "Controls", "Forcing",
-    "Climate", "InitialQuality", "InitialQualityEntry",
+    "Climate", "Snow", "MeshSnow", "Checkpoints", "InitialQuality", "InitialQualityEntry",
     # --- Transport processes — heat, water age, reactions ---
-    "Heat", "HeatNodeOverride",
+    "Heat", "HeatNodeOverride", "HeatLidMaterial", "HeatElementValue", "HeatSnapshot",
     "WaterAge", "WaterAgeOverride",
     "Reactions", "ReactionSpecies", "ReactionCoefficient", "ReactionTerm",
     "ReactionInitialEntry", "ReactionHydVar", "ReactionFunction",
@@ -381,7 +392,7 @@ __all__ = [
     # --- Enumerations: hydrology ---
     "InfilModel", "GageDataSource", "GageRainType",
     # --- Enumerations: water quality / LID ---
-    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
+    "ConcentrationUnits", "BuildupFunc", "WashoffFunc", "LidType", "LidExtraField", "LidNodeLayer", "LidNodeLayerKind", "LidLayerTreatment",
     # --- Enumerations: hydrology parameters ---
     "AquiferParam", "GwfType",
     # --- Enumerations: output variables ---
@@ -390,12 +401,14 @@ __all__ = [
     "ForcingMode", "ForcingTarget", "ForcingType", "ForcingPersist", "PatternType",
     # --- Enumerations: 2D surface routing ---
     "SurfaceForcingMode", "SurfaceBoundaryType",
-    "SurfaceInfilMethod", "SurfaceInfilDest",
+    "SurfaceInfilMethod", "SurfaceInfilDest", "NodeCoupling2DType",
     "DividerType", "RefType",
     "TableType", "FilePathRole", "UserFlagType",
     # --- Enumerations: transport processes ---
     "HeatFluxModule", "HeatShortwaveMode", "HeatRadiativeParam", "HeatSolarParam",
-    "HeatCloudParam", "HeatSourceKind", "WaterAgeSource",
+    "HeatCloudParam", "HeatSourceKind", "HeatSedimentParam", "HeatAttr",
+    "HeatOverrideScope", "GroundHeatValue", "GroundHeatLayerValue",
+    "ChannelGroundValue", "WaterAgeSource",
     "ReactionScope", "ReactionExprForm",
     # --- Enumerations: street inlets ---
     "InletType", "GrateType", "ThroatType", "InletCurveKind",
@@ -406,7 +419,7 @@ __all__ = [
 
 # Native climate, transport, writer and unit-system selectors.
 from ._enums import (
-    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
 )
 __all__ += ['EvapType', 'TempSource', 'WindType', 'HumidityType', 'HumidityVar', 'HeatElemKind', 'InpProfile', 'TransportDispersionMode', 'UnitSystem']
 
@@ -416,7 +429,7 @@ __all__ += ['Transport', 'ThreadInfo', 'EffectiveThreads', 'TransportCell', 'Tra
 
 if not HAS_2D:
     __all__ = [name for name in __all__ if name not in {
-        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell"}]
+        "Surface2D", "Infiltration2DView", "Infil2DDefaults", "Infil2DRow", "Infil2DCell", "MeshSnow"}]
 if HAS_GEOPACKAGE:
     __all__.append("GeoPackage")
 
@@ -427,8 +440,8 @@ __all__ += ["KnownProcessComponent", "ComponentLibrary"]
 from ._enums import (CellScope as CellScope, GroundwaterSoil as GroundwaterSoil, GroundwaterClosure as GroundwaterClosure, GroundwaterVariable as GroundwaterVariable, GroundwaterLedger as GroundwaterLedger, GroundwaterZone as GroundwaterZone, GroundwaterSpeciesLedger as GroundwaterSpeciesLedger)
 __all__ += ['CellScope', 'GroundwaterSoil', 'GroundwaterClosure', 'GroundwaterVariable', 'GroundwaterLedger', 'GroundwaterZone', 'GroundwaterSpeciesLedger']
 if HAS_2D:
-    from ._groundwater import Groundwater, AquiferRow, AquiferNode
-    __all__ += ["Groundwater", "AquiferRow", "AquiferNode"]
+    from ._groundwater import Groundwater, AquiferRow, AquiferNode, AquiferLink
+    __all__ += ["Groundwater", "AquiferRow", "AquiferNode", "AquiferLink"]
 
 from ._enums import GroundwaterTransportZone as GroundwaterTransportZone
 __all__.append("GroundwaterTransportZone")
@@ -468,3 +481,19 @@ from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNod
 if HAS_2D:
     from ._coupling import Coupling, DomainSources, RuntimeSource, SourceReceipt, BoundaryReceipt, CouplingFrame, RuntimeBoundary, RuntimeForcing, RuntimeClear
     __all__ += ["Coupling", "DomainSources", "RuntimeSource", "SourceReceipt", "BoundaryReceipt", "CouplingFrame", "RuntimeBoundary", "RuntimeForcing", "RuntimeClear"]
+
+__all__ += ['EvapPreviewStatus', 'Heat2DValue']
+
+from ._split import SplitParticipant, SplitFrame, MaterialSplitParticipant
+from ._passive_exchange import (
+    PassiveExchange, PassiveAmount, PassiveStatus, PassivePool,
+    PassiveReceipt, PassiveRow, PassiveLeg,
+)
+from ._enums import SplitRole, SplitPhase
+__all__ += ["SplitParticipant", "SplitFrame", "SplitRole", "SplitPhase"]
+
+__all__ += ["MaterialSplitParticipant", "PassiveExchange", "PassiveAmount", "PassiveStatus", "PassivePool", "PassiveReceipt", "PassiveRow", "PassiveLeg"]
+
+from ._statistics import ReportTable, SummaryColumn, SummaryRow
+from ._enums import SummaryTable, SummaryObject
+__all__ += ["ReportTable", "SummaryColumn", "SummaryRow", "SummaryTable", "SummaryObject"]

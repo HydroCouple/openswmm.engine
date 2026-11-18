@@ -585,3 +585,163 @@ class TestHeatRepr(_HeatCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHeatAuthoring(_HeatCase):
+    def test_dry_policy_material_and_provenance(self):
+        from openswmm.engine import HeatLidMaterial
+        s = self.opened_solver()
+        for policy in (0, 1, 2):
+            s.heat.dry_policy = policy
+            self.assertEqual(s.heat.dry_policy, policy)
+        with self.assertRaises(BadParamError):
+            s.heat.dry_policy = 3
+        self.assertEqual(s.heat.dry_policy, 2)
+        self.assertIsInstance(s.heat.lid_material, HeatLidMaterial)
+        self.assertTrue(all(value > 0 for value in s.heat.lid_material))
+        self.assertEqual(s.heat.authoring_flags & 1, 1)
+
+    def test_clear_site_refuses_computed_and_clears_provenance(self):
+        s = self.opened_solver()
+        s.heat.solar['LATITUDE'] = 45
+        s.heat.solar['LONGITUDE'] = -120
+        self.assertEqual(s.heat.authoring_flags & 12, 12)
+        s.heat.shortwave_mode = HeatShortwaveMode.COMPUTED
+        with self.assertRaises(BadParamError):
+            s.heat.solar.clear()
+        self.assertTrue(s.heat.solar_sited)
+        s.heat.shortwave_mode = HeatShortwaveMode.CONSTANT
+        s.heat.solar.clear()
+        self.assertFalse(s.heat.solar_sited)
+        self.assertEqual(s.heat.authoring_flags & 62, 0)
+
+    def test_sediment_temperature_authorship_and_resets(self):
+        from openswmm.engine import HeatSedimentParam, BadIndexError
+        s = self.opened_solver()
+        for param in (HeatSedimentParam.GROUND_TEMPERATURE, HeatSedimentParam.INITIAL_TEMPERATURE):
+            self.assertFalse(s.heat.sediment.is_configured(param))
+            s.heat.sediment[param] = 12.5
+            self.assertTrue(s.heat.sediment.is_configured(param))
+            self.assertEqual(s.heat.sediment[param], 12.5)
+            s.heat.sediment.clear(param)
+            self.assertFalse(s.heat.sediment.is_configured(param))
+        s.heat.sediment.ground_timeseries = 'air_ts'
+        s.heat.sediment.clear('GROUND_TEMPERATURE')
+        self.assertEqual(s.heat.sediment.ground_timeseries, '')
+        with self.assertRaises(BadIndexError):
+            s.heat.sediment.is_configured('BED_THICKNESS')
+
+    def test_effective_element_reports_precedence_and_dynamic_source(self):
+        import math
+        from openswmm.engine import HeatAttr, HeatOverrideScope, HeatElementValue
+        s = self.opened_solver()
+        value = s.heat.effective_element('ALBEDO', 'LINK', 'C1')
+        self.assertIsInstance(value, HeatElementValue)
+        self.assertEqual(value.source, 0)
+        self.assertEqual(value.value, s.heat.radiative['ALBEDO'])
+        s.heat.element_overrides.set(HeatAttr.ALBEDO, HeatOverrideScope.LINK, 'C1', .2)
+        self.assertEqual(s.heat.effective_element('ALBEDO', 'LINK', 'C1'), (.2, 3, 'C1'))
+        s.heat.sediment.ground_timeseries = 'air_ts'
+        dynamic = s.heat.effective_element('GROUND_TEMPERATURE', 'LINK', 'C1')
+        self.assertTrue(math.isnan(dynamic.value))
+        self.assertEqual((dynamic.source, dynamic.source_name), (5, 'air_ts'))
+        with self.assertRaises(ValueError):
+            s.heat.effective_element('ALBEDO', 'LINK', 'C1\0ignored')
+
+    def test_snapshot_restores_exact_settings_and_is_reusable(self):
+        from openswmm.engine import HeatSnapshot
+        s = self.opened_solver()
+        before = (s.heat.dry_policy, s.heat.authoring_flags, s.heat.radiative['ALBEDO'])
+        with s.heat.snapshot() as saved:
+            self.assertIsInstance(saved, HeatSnapshot)
+            for albedo in (.1, .2):
+                s.heat.radiative['ALBEDO'] = albedo
+                s.heat.dry_policy = 2
+                s.heat.solar['LATITUDE'] = 40
+                s.options['HEAT_TRANSPORT'] = False
+                saved.restore()
+                self.assertEqual((s.heat.dry_policy, s.heat.authoring_flags, s.heat.radiative['ALBEDO']), before)
+                self.assertTrue(s.heat.enabled)
+        saved.close()
+        with self.assertRaises(ValueError):
+            saved.restore()
+
+    def test_snapshot_rejects_closed_recreated_and_structurally_changed_owner(self):
+        from openswmm.engine import StaleObjectError
+        s = self.opened_solver()
+        saved = s.heat.snapshot()
+        s.close()
+        with self.assertRaises(StaleObjectError):
+            saved.restore()
+        s.destroy()
+        s.open()
+        with self.assertRaises(StaleObjectError):
+            saved.restore()
+        saved.close()
+        saved = s.heat.snapshot()
+        s.heat.element_overrides.set('ALBEDO', 'LINK', 'C1', .1)
+        with self.assertRaises(StaleObjectError):
+            saved.restore()
+        s.destroy()
+        saved.close()
+
+    def test_snapshot_pre_run_lifecycle(self):
+        from openswmm.engine import LifecycleError
+        s = self.opened_solver()
+        with s.heat.snapshot() as saved:
+            s.initialize()
+            with self.assertRaises(LifecycleError):
+                saved.restore()
+            with self.assertRaises(LifecycleError):
+                s.heat.snapshot()
+
+    def test_atomic_edit_commits_and_rolls_back_python_exception(self):
+        s = self.opened_solver()
+        def successful(owner):
+            owner.heat.radiative['ALBEDO'] = .12
+            owner.climate.evap_monthly = [.25] * 12
+            return 'committed'
+        self.assertEqual(s.heat.edit_atomic(successful), 'committed')
+        old = (s.heat.authoring_flags, s.heat.radiative['ALBEDO'], s.climate.evap_monthly)
+        failure = RuntimeError('abort hydrothermal edit')
+        def refused(owner):
+            owner.heat.radiative['ALBEDO'] = .4
+            owner.climate.evap_monthly = [.5] * 12
+            owner.heat.solar['LATITUDE'] = 20
+            raise failure
+        with self.assertRaises(RuntimeError) as caught:
+            s.heat.edit_atomic(refused)
+        self.assertIs(caught.exception, failure)
+        self.assertEqual((s.heat.authoring_flags, s.heat.radiative['ALBEDO'], s.climate.evap_monthly), old)
+
+    def test_atomic_edit_refuses_nested_and_lifecycle_reentry(self):
+        from openswmm.engine import LifecycleError
+        s = self.opened_solver()
+        before = s.heat.radiative['ALBEDO']
+        def nested(owner):
+            owner.heat.radiative['ALBEDO'] = .3
+            owner.heat.edit_atomic(lambda other: None)
+        with self.assertRaises(LifecycleError):
+            s.heat.edit_atomic(nested)
+        self.assertEqual(s.heat.radiative['ALBEDO'], before)
+        for method in ('close', 'destroy', 'initialize'):
+            with self.subTest(method=method), self.assertRaises(LifecycleError):
+                s.heat.edit_atomic(lambda owner: getattr(owner, method)())
+        with self.assertRaises(TypeError):
+            s.heat.edit_atomic(None)
+        s.initialize()
+        with self.assertRaises(LifecycleError):
+            s.heat.edit_atomic(lambda owner: None)
+
+    def test_atomic_edit_blocks_cross_thread_access(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from openswmm.engine import LifecycleError
+        s = self.opened_solver()
+        before = s.heat.dry_policy
+        def callback(owner):
+            owner.heat.dry_policy = 1
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(lambda: owner.heat.dry_policy).result(timeout=5)
+        with self.assertRaises(LifecycleError):
+            s.heat.edit_atomic(callback)
+        self.assertEqual(s.heat.dry_policy, before)

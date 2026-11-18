@@ -1,0 +1,51 @@
+{
+  "components": [
+    {
+      "id": "surface",
+      "info": {
+        "component_info_id": "org.hydrocouple.openswmm.engine"
+      },
+      "arguments": {
+        "configuration": {
+          "schema": "openswmm.component/1",
+          "model": "model.inp",
+          "role": "integrated2d",
+          "output_directory": "surface-results",
+          "surface_results": true
+        }
+      }
+    },
+    {
+      "id": "network",
+      "info": {
+        "component_info_id": "org.hydrocouple.openswmm.engine"
+      },
+      "arguments": {
+        "configuration": {
+          "schema": "openswmm.component/1",
+          "model": "model.inp",
+          "role": "split_network",
+          "output_directory": "network-results"
+        }
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "component": "surface",
+        "output": "openswmm.node-surface-water.v1"
+      },
+      "to": {
+        "component": "network",
+        "input": "openswmm.node-surface-water.v1"
+      }
+    }
+  ],
+  "workflow": {
+    "strategy": "time_stepped"
+  },
+  "run": {
+    "manifest": "run-manifest.json"
+  }
+}

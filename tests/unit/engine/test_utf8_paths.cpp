@@ -1,6 +1,6 @@
 /**
- * @file test_utf8_paths.cpp
- * @brief Opening and writing a model whose PATH contains non-ASCII characters.
+ * @file      test_utf8_paths.cpp
+ * @brief     Opening and writing a model whose PATH contains non-ASCII characters.
  *
  * @details Regression gate for issue #7: on Windows the narrow `char*` file
  *          APIs (`std::fopen`, the `const char*` `fstream` constructors)
@@ -20,6 +20,10 @@
  *          left in place for review (CLAUDE.md §4.1), never in a temp dir.
  *
  * @ingroup engine_io
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -39,31 +43,43 @@ namespace {
 
 // The reporter's own directory and file names, verbatim — including the
 // square brackets, which are legal on NTFS and were incidental to the bug.
-constexpr const char* kDirName  = "utf8_paths_out/模拟情景8";
+constexpr const char* kDirName = "utf8_paths_out/模拟情景8";
 constexpr const char* kFileStem = "模拟情景[8]";
 
+/**
+ * @brief Build the minimal US-unit UTF-8 filename regression deck.
+ *
+ * No inflow is supplied; this helper only builds text and performs no filesystem or engine
+ * operations.
+ * @return Owned CFS/KINWAVE one-hour deck with one 400 ft conduit between J1 and O1.
+ */
 std::string buildModel() {
-    return
-        "[TITLE]\nUTF-8 path regression (issue #7)\n\n"
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "FLOW_ROUTING         KINWAVE\n"
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             01:00:00\n"
-        "REPORT_STEP          00:05:00\n"
-        "ROUTING_STEP         30\n\n"
-        "[JUNCTIONS]\n;;Name Elev MaxDepth\nJ1  10.0  5.0\n\n"
-        "[OUTFALLS]\n;;Name Elev Type Gated\nO1   8.0  FREE  NO\n\n"
-        "[CONDUITS]\n;;Name From To Length Rough InOff OutOff\n"
-        "C1    J1   O1  400    0.01  0     0\n\n"
-        "[XSECTIONS]\n;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels\n"
-        "C1     CIRCULAR  1.0  0  0  0  1\n";
+    return "[TITLE]\nUTF-8 path regression (issue #7)\n\n"
+           "[OPTIONS]\n"
+           "FLOW_UNITS           CFS\n"
+           "FLOW_ROUTING         KINWAVE\n"
+           "START_DATE           01/01/2026\n"
+           "START_TIME           00:00:00\n"
+           "END_DATE             01/01/2026\n"
+           "END_TIME             01:00:00\n"
+           "REPORT_STEP          00:05:00\n"
+           "ROUTING_STEP         30\n\n"
+           "[JUNCTIONS]\n;;Name Elev MaxDepth\nJ1  10.0  5.0\n\n"
+           "[OUTFALLS]\n;;Name Elev Type Gated\nO1   8.0  FREE  NO\n\n"
+           "[CONDUITS]\n;;Name From To Length Rough InOff OutOff\n"
+           "C1    J1   O1  400    0.01  0     0\n\n"
+           "[XSECTIONS]\n;;Link Shape Geom1 Geom2 Geom3 Geom4 Barrels\n"
+           "C1     CIRCULAR  1.0  0  0  0  1\n";
 }
 
-/// Directory holding the fixture, created fresh. Built through utf8_path so
-/// the directory itself is created correctly on Windows.
+/**
+ * @brief Attempt to create the retained non-ASCII artifact directory.
+ *
+ * Uses create_directories with an ignored error_code, retaining existing contents and leaving cwd
+ * unchanged. Path conversion/allocation exceptions can propagate; this does not guarantee a fresh
+ * or writable directory.
+ * @return Native filesystem path converted from UTF-8 kDirName, even when directory creation fails.
+ */
 fs::path outDir() {
     const fs::path d = openswmm::io::utf8_path(kDirName);
     std::error_code ec;
@@ -71,7 +87,7 @@ fs::path outDir() {
     return d;
 }
 
-}  // namespace
+} // namespace
 
 // A model under a non-ASCII directory AND with a non-ASCII file name opens,
 // runs and reports. Before the fix this failed at swmm_engine_open on Windows
@@ -96,16 +112,14 @@ TEST(Utf8Paths, ModelUnderNonAsciiPathOpensAndRuns) {
 
     // The reported failure: open returns 2 and the message is
     // "InputReader: cannot open file '<path>'".
-    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
-              SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), SWMM_OK)
         << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK) << swmm_get_last_error_msg(e);
     ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK) << swmm_get_last_error_msg(e);
 
     double elapsed = 0.0;
     do {
-        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK)
-            << swmm_get_last_error_msg(e);
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK) << swmm_get_last_error_msg(e);
     } while (elapsed > 0.0);
 
     EXPECT_EQ(swmm_engine_end(e), SWMM_OK);
@@ -128,10 +142,19 @@ TEST(Utf8Paths, ModelUnderNonAsciiPathOpensAndRuns) {
 // than failing to compile. Copying the same bytes into a std::string keeps
 // the assertion byte-exact and printable.
 namespace {
+/**
+ * @brief Copy UTF-8 code units into a byte string for printable assertions.
+ *
+ * Source lifetime need not extend beyond return; the reinterpretation does not return a borrowed
+ * pointer.
+ *
+ * @param[in] s UTF-8 code-unit storage borrowed for this call, including possible embedded zeros.
+ * @return Owned byte-for-byte string of s.size() bytes; no transcoding or Unicode validation.
+ */
 std::string asBytes(const std::u8string& s) {
     return std::string(reinterpret_cast<const char*>(s.data()), s.size());
 }
-}  // namespace
+} // namespace
 
 TEST(Utf8Paths, Utf8PathRoundTripsBytes) {
     const std::string ascii = "utf8_paths_out/plain_ascii.inp";
@@ -153,15 +176,13 @@ TEST(Utf8Paths, PathUtf8IsTheInverseOfUtf8Path) {
     const std::string cjk = std::string(kDirName) + "/" + kFileStem + ".inp";
 
     EXPECT_EQ(io::path_utf8(io::utf8_path(cjk), /*generic=*/true), cjk);
-    EXPECT_EQ(io::path_utf8(io::utf8_path("plain/ascii.inp"), true),
-              "plain/ascii.inp");
+    EXPECT_EQ(io::path_utf8(io::utf8_path("plain/ascii.inp"), true), "plain/ascii.inp");
 
     // The component-wise shapes the call sites actually use: scratchDirFor
     // takes .stem() and .parent_path() back out as UTF-8 strings.
     const fs::path p = io::utf8_path(cjk);
     EXPECT_EQ(io::path_utf8(p.stem()), std::string(kFileStem));
-    EXPECT_EQ(io::path_utf8(p.parent_path(), /*generic=*/true),
-              std::string(kDirName));
+    EXPECT_EQ(io::path_utf8(p.parent_path(), /*generic=*/true), std::string(kDirName));
 
     // Joining a non-ASCII directory onto a non-ASCII relative token — the
     // [2D_MESH_FILE] / component-config save shape in InpWriter.

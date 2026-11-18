@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MsxInitialQuality.hpp
- * @brief U2 (2026-09-07) — [INITIAL_QUALITY] rows for MSX species.
+ * @file      MsxInitialQuality.hpp
+ * @brief     U2 (2026-09-07) — [INITIAL_QUALITY] rows for MSX species.
  *
  * @details `[INITIAL_QUALITY]` is the canonical home of a per-element initial
  *          value for ANY constituent — pollutant, reactions-component species,
@@ -36,9 +36,9 @@
  *          itself. The ReactionsWriter skips mirrored rows so a save emits
  *          each row once, in `[INITIAL_QUALITY]`.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_MSX_INITIAL_QUALITY_HPP
@@ -60,9 +60,8 @@ std::vector<std::string> mirrorInitialQualityMsxRows(SimulationContext& ctx);
 
 /// True when `ctx.initial_quality` carries an MSX row for (is_link, elem,
 /// species) — the ReactionsWriter's "already written elsewhere" test.
-bool initialQualityHasMsxRow(const SimulationContext& ctx, bool is_link,
-                             int elem_idx, int species);
+bool initialQualityHasMsxRow(const SimulationContext& ctx, bool is_link, int elem_idx, int species);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_MSX_INITIAL_QUALITY_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_MSX_INITIAL_QUALITY_HPP

@@ -15,26 +15,34 @@
 // limitations under the License.
 
 /**
- * @file QualityRouting.hpp
- * @brief Water quality routing — constituent transport, mixing, decay.
+ * @defgroup engine_quality Engine water quality
+ * @brief Pollutant and native species surface accumulation, runoff delivery, treatment,
+ * conservative routing and segment-based dispersion contracts.
+ * @ingroup new_engine
+ */
+
+/**
+ * @file      QualityRouting.hpp
+ * @brief     Water quality routing — constituent transport, mixing, decay.
  *
  * @details Batch-oriented quality routing:
  *   1. Batch accumulate link mass flows to downstream nodes (vectorisable)
  *   2. Batch complete mixing at all nodes
- *   3. Batch first-order decay in all links/nodes
- *   4. Batch evaporation concentration factor
+ *   3. Apply node treatment and owned native kinetics
+ *   4. Mix/update links with evaporation and first-order decay as appropriate
  *
  * @note Legacy reference: src/legacy/engine/qualrout.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_QUALITY_ROUTING_HPP
 #define OPENSWMM_QUALITY_ROUTING_HPP
 
+#include "FvQualityTransport.hpp"
 #include <vector>
 
 namespace openswmm {
@@ -47,8 +55,8 @@ namespace quality {
 // Constants
 // ============================================================================
 
-constexpr double ZERO_VOLUME = 0.0353147;  ///< 1 liter in ft3
-constexpr double ZERO_DEPTH  = 0.003281;   ///< 1 mm in ft
+constexpr double ZERO_VOLUME = 0.0353147; ///< 1 liter in ft3
+constexpr double ZERO_DEPTH = 0.003281;   ///< 1 mm in ft
 /// Legacy's effective-zero flow (`ZERO` in src/legacy/engine/consts.h). The
 /// mixing kernels test the inflow RATE against this, not against 0.0.
 /// Published here because the water-age, heat and MSX transport mirrors run
@@ -96,31 +104,49 @@ bool nodeIsReactor(const SimulationContext& ctx, int node);
 /// receiving flow keeps its mix.
 bool nodeIsDry(const SimulationContext& ctx, int node, double q_in);
 
+/// Legacy findStorageQual's evaporation concentration factor
+/// `1 + vEvap/v1` for a storage node (1 for any other node). Shared by the
+/// pollutant reactor and the reaction-species mirror (review B1).
+double storageEvapFactor(const SimulationContext& ctx, int node);
+
+/// Residence time (`nodes.hrt`, s) at storage nodes WITHOUT a treatment
+/// expression, by legacy updateHRT on the hydraulic inflow. Treated nodes
+/// are advanced by applyNodeTreatment. No-op without a reactions component
+/// (review A6).
+void updateUntreatedStorageHrt(SimulationContext& ctx, double dt);
+
 /**
- * @brief One node's [TREATMENT] application, against the CALLER's inflow
- *        figures — the seam the LEGACY pass and the LARD MIX share.
+ * @brief One node's [TREATMENT] application, against the CALLER's inflow figures — the seam the
+ * LEGACY pass and the LARD MIX share.
  *
- * @details Evaluates the node's compiled expressions (removal- and
- *          concentration-typed, with co-treatment resolution and cycle
- *          detection), rewrites `nodes.conc` for every treated pollutant and
- *          books the removed mass into `qual_routing_reacted`. The inflow
- *          concentration and rate come from the CALLER because the two
- *          engines hold them in different places: LEGACY accumulates
- *          `qual_mass_in`/`qual_vol_in`, while LARD's node inflow lives in
- *          its solver-internal drain accumulators — reading the LEGACY
- *          arrays under LARD made an R-typed expression a literal no-op
- *          (`cin` read 0, and `cOut = (c_in > 0) ? … : c_node` kept the
- *          untreated value; P2.3's first draft shipped exactly that).
+ * @details Evaluates the node's compiled expressions (removal- and concentration-typed, with
+ * co-treatment resolution and cycle detection), rewrites `nodes.conc` for every treated
+ * pollutant and books the removed mass into `qual_routing_reacted`. The inflow concentration and
+ * rate come from the CALLER because the two engines hold them in different places: LEGACY
+ * accumulates `qual_mass_in`/`qual_vol_in`, while LARD's node inflow lives in its
+ * solver-internal drain accumulators — reading the LEGACY arrays under LARD made an R-typed
+ * expression a literal no-op (`cin` read 0, and `cOut = (c_in > 0) ? … : c_node` kept the
+ * untreated value; P2.3's first draft shipped exactly that).
  *
- * @param q_in_cfs  Inflow rate feeding the node this interval, ft³/s.
- * @param cin       Per-pollutant inflow concentration, length `np`.
+ * - Argument q_in_cfs: Inflow rate feeding the node this interval, ft³/s.
+ * - Argument cin: Per-pollutant inflow concentration, length `np`.
+ *
+ * - Argument ctx (in,out): Prepared node concentrations/HRT, compiled treatment and shared
+ * scratch/ledgers.
+ * - Argument node (in): Valid native node ID; source definition calls it j.
+ * - Argument dt (in): Accepted positive finite routing interval s.
+ * - Argument q_in_cfs (in): Complete caller inflow ft3/s; source definition calls it q_raw.
+ * @note cin may be null (zeros) or alias treatment cin scratch; other borrowed inputs remain
+ * stable. Exclusive once-per-interval treatment; no hydraulic or clock change.
  */
-void applyNodeTreatment(SimulationContext& ctx, int node, double dt,
-                        double q_in_cfs, const double* cin);
+void applyNodeTreatment(SimulationContext& ctx, int node, double dt, double q_in_cfs,
+                        const double* cin);
 
 // ============================================================================
 // Quality solver
 // ============================================================================
+
+class PassiveStorageExchange;
 
 class QualitySolver {
 public:
@@ -130,38 +156,55 @@ public:
      * @brief Execute one quality routing timestep.
      *
      * @details
-     *   1. Accumulate link mass flows → node quality (batch over links)
-     *   2. Complete mixing at nodes: c_new = (c_old*V + W*dt) / (V + Vin)
-     *   3. First-order decay: c = c * (1 - k*dt)
-     *   4. Update link quality from upstream node
+     * 1. Accumulate link mass flows → node quality (batch over links)
+     * 2. Complete mixing at nodes: c_new = (c_old*V + W*dt) / (V + Vin)
+     * 3. Apply node treatment/owned native kinetics (node scalar decay is in mixing)
+     * 4. Update link quality, forcing and optional age/heat/bed exchange
      *
-     * @param ctx  Simulation context.
-     * @param dt   Timestep (seconds).
+     * - Argument ctx: Simulation context.
+     * - Argument dt: Timestep (seconds).
      */
     void execute(SimulationContext& ctx, double dt);
+    /// Internal funded input for the qualified isolated passive storage case.
+    /// Native lateral assembly must already have drained the captured span.
+    /// Receiving failure is terminal for the exclusive receipt owner.
+    void execute(SimulationContext& ctx, double dt, PassiveStorageExchange& exchange);
+    FvTransportWater& fvWater() noexcept { return fv_transport_.water; }
+    bool fvTransportAccepted() const noexcept { return fv_transport_.accepted(); }
+    bool hasFvRetainedDryMass() const noexcept { return fv_transport_.hasRetainedDryMass(); }
+    std::string fvDryRestartState(const SimulationContext& ctx) const {
+        return fv_transport_.dryRestartState(ctx);
+    }
+    std::string restoreFvDryRestart(SimulationContext& ctx, const std::string& blob, bool apply) {
+        return fv_transport_.restoreDryRestart(ctx, blob, apply);
+    }
+    std::vector<double> fvRetainedPollutantMass(const SimulationContext& ctx) const {
+        return fv_transport_.retainedPollutantMass(ctx);
+    }
+    std::vector<double> fvRetainedSpeciesMass(const SimulationContext& ctx) const {
+        return fv_transport_.retainedSpeciesMass(ctx);
+    }
+    void beginFvWindow() noexcept { fv_transport_.beginWindow(); }
 
     /**
-     * @brief Stage 1 of execute() only: reset the assembly arrays and run the
-     *        five external-load adders (washoff, RDII, DWF, GW, iface) into
-     *        nodes.qual_mass_in / qual_vol_in — no mixing, decay, or link
-     *        update.
+     * @brief Stage 1 of execute() only: reset the assembly arrays and run the external-load
+     * adders (runoff/LID, RDII, DWF, GW, interface, direct, coupling and receipts) into
+     * nodes.qual_mass_in / qual_vol_in — no mixing, decay, or link update.
      *
-     * @details Split out (behavior-preserving refactor) so the Eulerian ARD
-     *          engine (QUALITY_SOLVER EULERIAN_ARD) can consume the same
-     *          source loads while replacing the CSTR transport stages —
-     *          master plan §4.3 source-attribution seam.
+     * @details Split out (behavior-preserving refactor) so the Eulerian ARD engine
+     * (QUALITY_SOLVER EULERIAN_ARD) can consume the same source loads while replacing the CSTR
+     * transport stages — master plan §4.3 source-attribution seam.
      */
     void assembleExternalLoads(SimulationContext& ctx, double dt);
 
     /**
-     * @brief Add direct external inflow (`[INFLOWS]` CONCEN/MASS) pollutant
-     *        loads, and the direct inflow's water, to the node assembly arrays.
+     * @brief Add direct external inflow (`[INFLOWS]` CONCEN/MASS) pollutant loads, and the
+     * direct inflow's water, to the node assembly arrays.
      *
-     * @details The mass rates were evaluated by the inflow solver into
-     *          nodes.ext_qual_mass (CONCEN rows already multiplied by the
-     *          node's flow). This also folds the direct inflow volume into
-     *          qual_vol_in, which is the mixing denominator — legacy divides
-     *          by Node[j].inflow, a total that includes lateral inflow.
+     * @details The mass rates were evaluated by the inflow solver into nodes.ext_qual_mass
+     * (CONCEN rows already multiplied by the node's flow). This also folds the direct inflow
+     * volume into qual_vol_in, which is the mixing denominator — legacy divides by
+     * Node[j].inflow, a total that includes lateral inflow.
      * @see Legacy: routing.c addExternalInflows() pollutant portion
      */
     void addExtInflowLoads(SimulationContext& ctx, double dt);
@@ -169,13 +212,13 @@ public:
     /// mass (queued by SurfaceRouter2D, drained by assembleLateralInflows)
     /// into qual_mass_in. No-op when no 2D coupling is active.
     void addCouplingLoads(SimulationContext& ctx, double dt);
+    void addQualityOnlyInflows(SimulationContext& ctx, double dt); ///< review D2 + gaining conduits
 
     /**
      * @brief Add subcatchment washoff quality loads to node inflows.
      *
-     * @details For each subcatchment with runoff, adds the washoff
-     *          concentration × flow as mass inflow to the outlet node.
-     *          Matches legacy addWetWeatherInflows() in routing.c.
+     * @details For each subcatchment with runoff, adds the washoff concentration × flow as mass
+     * inflow to the outlet node. Matches legacy addWetWeatherInflows() in routing.c.
      */
     void addWetWeatherLoads(SimulationContext& ctx, double dt);
 
@@ -193,17 +236,17 @@ public:
     /**
      * @brief Apply [TREATMENT] at every node that has one.
      *
-     * @param full_inflow  true when the caller assembled the node's COMPLETE
-     *        inflow (link mass flow plus the external loaders), which is what
-     *        legacy's Cin means. The EULERIAN_ARD entry runs only
-     *        assembleExternalLoads, so its accumulators hold the external
-     *        share alone and it passes false — see the note at the Cin site.
+     * - Argument full_inflow: true when the caller assembled the node's COMPLETE inflow (link
+     * mass flow plus the external loaders), which is what legacy's Cin means. The EULERIAN_ARD
+     * entry runs only assembleExternalLoads, so its accumulators hold the external share alone
+     * and it passes false — see the note at the Cin site.
      */
-    void applyTreatment(SimulationContext& ctx, double dt,
-                        bool full_inflow = true);
+    void applyTreatment(SimulationContext& ctx, double dt, bool full_inflow = true);
 
 private:
+    void execute(SimulationContext& ctx, double dt, PassiveStorageExchange* exchange);
     int n_pollutants_ = 0;
+    FvQualityTransport fv_transport_;
     /// Per-node LATERAL carrier volume added into qual_vol_in this step, so
     /// the mixing denominator can be corrected to legacy's form afterwards
     /// (routing.c:480 seeds quality inflow with MAX(0, NET lateral flow)).
@@ -234,11 +277,11 @@ private:
     void accumulateLinkLoads(SimulationContext& ctx, double dt);
 
     /// Batch complete mixing at all nodes.
-    void mixAtNodes(SimulationContext& ctx, double dt);
+    void mixAtNodes(SimulationContext& ctx, double dt,
+                    const PassiveStorageExchange* exchange = nullptr);
 
     /// Batch first-order decay.
     void applyDecay(SimulationContext& ctx, double dt);
-
 };
 
 } // namespace quality

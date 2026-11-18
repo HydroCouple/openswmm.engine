@@ -14,7 +14,8 @@ def main():
     stage = Path(sys.argv[1]).resolve()
     source = Path(__file__).resolve().parents[1]
     sys.meta_path[:] = [finder for finder in sys.meta_path
-                       if type(finder).__module__ != "_openswmm_editable"]
+                       if type(finder).__module__ not in
+                       {"_openswmm_editable", "_editable_skbc_openswmm"}]
     sys.path[:0] = [str(stage), str(source)]
     import openswmm.engine._solver as solver
     assert Path(solver.__file__).is_relative_to(stage), solver.__file__

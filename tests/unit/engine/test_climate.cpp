@@ -1,6 +1,6 @@
 /**
- * @file test_climate.cpp
- * @brief Unit tests for climate processing — Hargreaves ET, batch evaporation.
+ * @file      test_climate.cpp
+ * @brief     Unit tests for climate processing — Hargreaves ET, batch evaporation.
  *
  * @details Tests:
  *   - Hargreaves evapotranspiration formula (solar radiation, latitude)
@@ -10,6 +10,10 @@
  *
  * @see src/engine/hydrology/Climate.hpp
  * @ingroup engine_hydrology
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -43,8 +47,8 @@ TEST(Hargreaves, ZeroRangeGivesZeroET) {
 
 TEST(Hargreaves, HigherLatitudeReducesET) {
     // Same temp but higher latitude should produce different ET
-    double et_low  = hargreaves(25.0, 180, 75.0, 15.0);  // subtropical
-    double et_high = hargreaves(60.0, 180, 75.0, 15.0);  // subarctic
+    double et_low = hargreaves(25.0, 180, 75.0, 15.0);  // subtropical
+    double et_high = hargreaves(60.0, 180, 75.0, 15.0); // subarctic
 
     // Both positive
     EXPECT_GT(et_low, 0.0);
@@ -53,8 +57,8 @@ TEST(Hargreaves, HigherLatitudeReducesET) {
 
 TEST(Hargreaves, WinterDayLessETThanSummer) {
     // Same location, winter vs summer
-    double et_summer = hargreaves(40.0, 172, 80.0, 20.0);  // June 21
-    double et_winter = hargreaves(40.0, 355, 35.0, 10.0);  // Dec 21
+    double et_summer = hargreaves(40.0, 172, 80.0, 20.0); // June 21
+    double et_winter = hargreaves(40.0, 355, 35.0, 10.0); // Dec 21
 
     EXPECT_GT(et_summer, et_winter);
 }
@@ -75,7 +79,7 @@ TEST(Hargreaves, PolarLatitudeWinterGivesZeroOrLow) {
 
 TEST(Hargreaves, EquatorConsistentYear) {
     // Equatorial location: relatively consistent ET year-round
-    double et_jan = hargreaves(0.0, 15,  80.0, 15.0);
+    double et_jan = hargreaves(0.0, 15, 80.0, 15.0);
     double et_jul = hargreaves(0.0, 196, 80.0, 15.0);
 
     // Both should be substantial and similar
@@ -97,10 +101,10 @@ TEST(DailyClimate, ConstantMethodRederivesRate) {
     // monthly adjustment added afterwards applies to the constant instead of
     // accumulating onto the previous step's rate.
     ClimateState state;
-    state.evap_method   = EvapMethod::CONSTANT;
-    state.evaprate_ucf  = 1.0;      // fixture works directly in ft/s
-    state.monthly_evap[0] = 1e-6;   // the authored CONSTANT value
-    state.evap_rate     = 9e-6;     // stale value from a previous step
+    state.evap_method = EvapMethod::CONSTANT;
+    state.evaprate_ucf = 1.0;     // fixture works directly in ft/s
+    state.monthly_evap[0] = 1e-6; // the authored CONSTANT value
+    state.evap_rate = 9e-6;       // stale value from a previous step
 
     updateDailyClimate(state, 180, 6);
     EXPECT_NEAR(state.evap_rate, 1e-6, 1e-12);
@@ -109,7 +113,7 @@ TEST(DailyClimate, ConstantMethodRederivesRate) {
 TEST(DailyClimate, MonthlyMethodSetsFromTable) {
     ClimateState state;
     state.evap_method = EvapMethod::MONTHLY;
-    state.monthly_evap[6] = 0.2;  // July: 0.2 in/day
+    state.monthly_evap[6] = 0.2; // July: 0.2 in/day
 
     updateDailyClimate(state, 180, 6);
 
@@ -120,9 +124,9 @@ TEST(DailyClimate, MonthlyMethodSetsFromTable) {
 TEST(DailyClimate, TemperatureMethodUsesHargreaves) {
     ClimateState state;
     state.evap_method = EvapMethod::TEMPERATURE;
-    state.latitude    = 40.0;
+    state.latitude = 40.0;
     state.temperature = 80.0;
-    state.temp_range  = 20.0;
+    state.temp_range = 20.0;
 
     updateDailyClimate(state, 180, 6);
 
@@ -137,8 +141,8 @@ TEST(DailyClimate, MonthlyAdjustmentApplied) {
     ClimateState state;
     state.evap_method = EvapMethod::CONSTANT;
     state.evaprate_ucf = 1.0;
-    state.monthly_evap[0] = 1e-6;   // CONSTANT source value (re-derived per call)
-    state.adjust_evap[3] = 0.5e-6;  // April: +0.5e-6 ft/s
+    state.monthly_evap[0] = 1e-6;  // CONSTANT source value (re-derived per call)
+    state.adjust_evap[3] = 0.5e-6; // April: +0.5e-6 ft/s
 
     updateDailyClimate(state, 100, 3);
 
@@ -173,17 +177,17 @@ TEST(DailyClimate, VaporPressureIncreasesWithTemp) {
 // ============================================================================
 
 TEST(BatchEvap, LimitedByPondedDepth) {
-    double evap_rate = 1e-4;  // ft/sec (high evap)
+    double evap_rate = 1e-4; // ft/sec (high evap)
     double ponded[4] = {0.001, 0.0, 0.1, 0.0005};
     double evap_out[4] = {};
-    double dt = 60.0;  // seconds
+    double dt = 60.0; // seconds
 
     batchDistributeEvap(evap_rate, ponded, evap_out, 4, dt);
 
     // evap_out[i] = min(evap_rate, ponded[i] / dt)
     EXPECT_NEAR(evap_out[0], std::min(evap_rate, 0.001 / 60.0), 1e-12);
-    EXPECT_DOUBLE_EQ(evap_out[1], 0.0);  // no ponded water → no evap
-    EXPECT_NEAR(evap_out[2], evap_rate, 1e-12);  // 0.1/60 >> evap_rate
+    EXPECT_DOUBLE_EQ(evap_out[1], 0.0);         // no ponded water → no evap
+    EXPECT_NEAR(evap_out[2], evap_rate, 1e-12); // 0.1/60 >> evap_rate
     EXPECT_NEAR(evap_out[3], std::min(evap_rate, 0.0005 / 60.0), 1e-12);
 }
 
@@ -200,7 +204,7 @@ TEST(BatchEvap, ZeroEvapRateGivesZero) {
 
 TEST(BatchEvap, UniformPondedDepthGivesUniformEvap) {
     double evap_rate = 1e-5;
-    double ponded[5] = {1.0, 1.0, 1.0, 1.0, 1.0};  // large ponded depth
+    double ponded[5] = {1.0, 1.0, 1.0, 1.0, 1.0}; // large ponded depth
     double evap_out[5] = {};
 
     batchDistributeEvap(evap_rate, ponded, evap_out, 5, 60.0);
@@ -282,9 +286,9 @@ TEST(MovingAvg7Test, WraparoundDropsOldest) {
 TEST(DailyClimate, HargreavesUsesMovingAverage) {
     ClimateState state;
     state.evap_method = EvapMethod::TEMPERATURE;
-    state.latitude    = 40.0;
+    state.latitude = 40.0;
     state.temperature = 80.0;
-    state.temp_range  = 20.0;
+    state.temp_range = 20.0;
 
     // First call seeds the moving average (count=1)
     updateDailyClimate(state, 180, 6);
@@ -293,7 +297,7 @@ TEST(DailyClimate, HargreavesUsesMovingAverage) {
 
     // Second call with different temp — moving average smooths it
     state.temperature = 60.0;
-    state.temp_range  = 10.0;
+    state.temp_range = 10.0;
     updateDailyClimate(state, 181, 6);
     double rate2 = state.evap_rate;
     EXPECT_GT(rate2, 0.0);
@@ -304,7 +308,7 @@ TEST(DailyClimate, HargreavesUsesMovingAverage) {
     ref.evap_method = EvapMethod::TEMPERATURE;
     ref.latitude = 40.0;
     ref.temperature = 60.0;
-    ref.temp_range  = 10.0;
+    ref.temp_range = 10.0;
     updateDailyClimate(ref, 181, 6);
     double rate_raw = ref.evap_rate;
 
@@ -334,7 +338,7 @@ TEST(DailyClimate, GammaDecreasesWithElevation) {
     sea_level.evap_method = high.evap_method = EvapMethod::CONSTANT;
     sea_level.temperature = high.temperature = 70.0;
     sea_level.elev = 0.0;
-    high.elev = 5000.0;  // 5000 ft elevation
+    high.elev = 5000.0; // 5000 ft elevation
 
     updateDailyClimate(sea_level, 180, 6);
     updateDailyClimate(high, 180, 6);
@@ -354,11 +358,23 @@ TEST(DailyClimate, GammaDecreasesWithElevation) {
 #include <filesystem>
 
 // Helper: write a temporary file and return path
+/**
+ * @brief Write climate fixture text to a deterministic temporary filename.
+ *
+ * The XXXXXX suffix is literal, not a unique-file template. Repeated/concurrent calls overwrite the
+ * same path; caller is responsible for removing it. temp_directory_path exceptions can propagate.
+ *
+ * @param[in] content Borrowed text written verbatim to swmm_climate_test_XXXXXX in the process
+ *     temporary directory.
+ * @return Owned path string, or empty if the ofstream cannot open; subsequent write/close failures
+ *     are not checked.
+ */
 static std::string writeTempFile(const std::string& content) {
     auto tmp = std::filesystem::temp_directory_path() / "swmm_climate_test_XXXXXX";
     std::string path = tmp.string();
     std::ofstream ofs(path);
-    if (!ofs) return "";
+    if (!ofs)
+        return "";
     ofs << content;
     ofs.close();
     return path;
@@ -371,14 +387,13 @@ TEST(ClimateFileReader, OpenNonexistentFileFails) {
 }
 
 TEST(ClimateFileReader, DetectsUserPreparedFormat) {
-    std::string data =
-        "STA001 2020 1 1 40.0 25.0 0.10 5.0\n"
-        "STA001 2020 1 2 42.0 28.0 0.12 6.0\n"
-        "STA001 2020 1 3 38.0 22.0 * 4.0\n";
+    std::string data = "STA001 2020 1 1 40.0 25.0 0.10 5.0\n"
+                       "STA001 2020 1 2 42.0 28.0 0.12 6.0\n"
+                       "STA001 2020 1 3 38.0 22.0 * 4.0\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
-    EXPECT_TRUE(reader.open(path, 0.0, 0));  // US units
+    EXPECT_TRUE(reader.open(path, 0.0, 0)); // US units
     EXPECT_EQ(reader.format(), climate::ClimateFileFormat::USER_PREPARED);
     reader.close();
     std::remove(path.c_str());
@@ -386,10 +401,9 @@ TEST(ClimateFileReader, DetectsUserPreparedFormat) {
 
 TEST(ClimateFileReader, UserPreparedReadsValues) {
     // US units: temps in °F, evap in in/day, wind in mph
-    std::string data =
-        "STA001 2020 7 1 90.0 70.0 0.20 8.0\n"
-        "STA001 2020 7 2 88.0 68.0 0.18 7.0\n"
-        "STA001 2020 7 3 92.0 72.0 0.22 9.0\n";
+    std::string data = "STA001 2020 7 1 90.0 70.0 0.20 8.0\n"
+                       "STA001 2020 7 2 88.0 68.0 0.18 7.0\n"
+                       "STA001 2020 7 3 92.0 72.0 0.22 9.0\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
@@ -421,8 +435,7 @@ TEST(ClimateFileReader, UserPreparedReadsValues) {
 }
 
 TEST(ClimateFileReader, UserPreparedHandlesMissing) {
-    std::string data =
-        "STA001 2020 3 15 * * * *\n";
+    std::string data = "STA001 2020 3 15 * * * *\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
@@ -443,12 +456,11 @@ TEST(ClimateFileReader, UserPreparedHandlesMissing) {
 
 TEST(ClimateFileReader, UserPreparedSIConversion) {
     // SI units: temps in °C, should be converted to °F
-    std::string data =
-        "STA001 2020 6 1 30.0 20.0 5.0 3.0\n";
+    std::string data = "STA001 2020 6 1 30.0 20.0 5.0 3.0\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
-    ASSERT_TRUE(reader.open(path, 0.0, 1));  // SI units
+    ASSERT_TRUE(reader.open(path, 0.0, 1)); // SI units
 
     double jul = openswmm::datetime::encodeDate(2020, 6, 1);
     climate::DailyClimateRecord rec;
@@ -464,11 +476,10 @@ TEST(ClimateFileReader, UserPreparedSIConversion) {
 
 TEST(ClimateFileReader, MonthBoundaryTransition) {
     // Data spanning two months
-    std::string data =
-        "STA001 2020 1 30 40.0 25.0 0.1 5.0\n"
-        "STA001 2020 1 31 41.0 26.0 0.1 5.0\n"
-        "STA001 2020 2 1 35.0 20.0 0.08 4.0\n"
-        "STA001 2020 2 2 36.0 21.0 0.09 4.5\n";
+    std::string data = "STA001 2020 1 30 40.0 25.0 0.1 5.0\n"
+                       "STA001 2020 1 31 41.0 26.0 0.1 5.0\n"
+                       "STA001 2020 2 1 35.0 20.0 0.08 4.0\n"
+                       "STA001 2020 2 2 36.0 21.0 0.09 4.5\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
@@ -495,9 +506,8 @@ TEST(ClimateFileReader, MonthBoundaryTransition) {
 }
 
 TEST(ClimateFileReader, DetectsGHCNDFormat) {
-    std::string data =
-        "DATE        TMIN    TMAX    EVAP    AWND\n"
-        "20200101    -50     100     0       25\n";
+    std::string data = "DATE        TMIN    TMAX    EVAP    AWND\n"
+                       "20200101    -50     100     0       25\n";
     std::string path = writeTempFile(data);
 
     climate::ClimateFileReader reader;
@@ -516,8 +526,8 @@ TEST(DailyClimate, EvapAdjustmentAdds) {
     // Legacy climate.c setEvap: Evap.rate += Adjust.evap[mon-1].
     ClimateState state;
     state.evap_method = EvapMethod::MONTHLY;
-    state.monthly_evap[5] = 0.3;     // June: 0.3 in/day
-    state.adjust_evap[5]  = -2.0e-7; // ft/s, subtracted from the rate
+    state.monthly_evap[5] = 0.3;    // June: 0.3 in/day
+    state.adjust_evap[5] = -2.0e-7; // ft/s, subtracted from the rate
 
     updateDailyClimate(state, 170, 5);
     double adjusted = state.evap_rate;
@@ -526,15 +536,14 @@ TEST(DailyClimate, EvapAdjustmentAdds) {
     updateDailyClimate(state, 170, 5);
     double unadjusted = state.evap_rate;
 
-    EXPECT_NEAR(adjusted - unadjusted, -2.0e-7, 1e-16)
-        << "Evap adjustment should add to the rate";
+    EXPECT_NEAR(adjusted - unadjusted, -2.0e-7, 1e-16) << "Evap adjustment should add to the rate";
 }
 
 TEST(DailyClimate, EvapAdjustmentZeroLeavesRate) {
     ClimateState state;
     state.evap_method = EvapMethod::MONTHLY;
     state.monthly_evap[0] = 0.1;
-    state.adjust_evap[0]  = 0.0;     // legacy default: no adjustment
+    state.adjust_evap[0] = 0.0; // legacy default: no adjustment
 
     updateDailyClimate(state, 15, 0);
     EXPECT_GT(state.evap_rate, 0.0);
@@ -554,24 +563,21 @@ TEST(DailyClimate, GammaMatchesLegacyFormula) {
     // Sea level: z=0 → pa=29.9 → gamma = 0.000359 * 29.9
     state.elev = 0.0;
     updateDailyClimate(state, 180, 6);
-    EXPECT_NEAR(state.gamma, 0.000359 * 29.9, 1e-10)
-        << "Gamma mismatch at sea level";
+    EXPECT_NEAR(state.gamma, 0.000359 * 29.9, 1e-10) << "Gamma mismatch at sea level";
 
     // 1000 ft: z=1 → pa = 29.9 - 1.02 + 0.0032 = 28.8832
     state.elev = 1000.0;
     updateDailyClimate(state, 180, 6);
     double z1 = 1.0;
     double pa1 = 29.9 - 1.02 * z1 + 0.0032 * std::pow(z1, 2.4);
-    EXPECT_NEAR(state.gamma, 0.000359 * pa1, 1e-10)
-        << "Gamma mismatch at 1000 ft elevation";
+    EXPECT_NEAR(state.gamma, 0.000359 * pa1, 1e-10) << "Gamma mismatch at 1000 ft elevation";
 
     // 5000 ft: z=5 → pa = 29.9 - 5.1 + 0.0032*5^2.4
     state.elev = 5000.0;
     updateDailyClimate(state, 180, 6);
     double z5 = 5.0;
     double pa5 = 29.9 - 1.02 * z5 + 0.0032 * std::pow(z5, 2.4);
-    EXPECT_NEAR(state.gamma, 0.000359 * pa5, 1e-10)
-        << "Gamma mismatch at 5000 ft elevation";
+    EXPECT_NEAR(state.gamma, 0.000359 * pa5, 1e-10) << "Gamma mismatch at 5000 ft elevation";
 }
 
 TEST(DailyClimate, EaMatchesLegacyFormula) {
@@ -583,8 +589,7 @@ TEST(DailyClimate, EaMatchesLegacyFormula) {
         state.temperature = ta;
         updateDailyClimate(state, 180, 6);
         double expected = 8.1175e6 * std::exp(-7701.544 / (ta + 405.0265));
-        EXPECT_NEAR(state.ea, expected, 1e-12)
-            << "Ea mismatch at temperature " << ta;
+        EXPECT_NEAR(state.ea, expected, 1e-12) << "Ea mismatch at temperature " << ta;
     }
 }
 
@@ -596,15 +601,29 @@ TEST(DailyClimate, EaMatchesLegacyFormula) {
 // and day-of-year; setTemp() applies a three-zone sinusoidal model.
 // Must match: tmin at sunrise, tmax at hrss, smooth curves between.
 
-static openswmm::climate::ClimateState makeTempState(
-        double lat, int doy, double tmin, double tmax, double prev_tmax) {
+/**
+ * @brief Seed daily air-temperature extrema and compute astronomical temperature times.
+ *
+ * No input validation or file access occurs; callers provide a physically valid latitude and
+ * coherent extrema.
+ *
+ * @param[in] lat Latitude in degrees, using the climate helper convention.
+ * @param[in] doy Day of year supplied to updateTempTimes, normally 1..366.
+ * @param[in] tmin Daily minimum temperature in degrees F.
+ * @param[in] tmax Daily maximum temperature in degrees F.
+ * @param[in] prev_tmax Previous daily maximum in degrees F for nighttime interpolation.
+ * @return Owned ClimateState with has_minmax true, zero longitude-time correction and updated
+ *     sunrise/sunset timing.
+ */
+static openswmm::climate::ClimateState makeTempState(double lat, int doy, double tmin, double tmax,
+                                                     double prev_tmax) {
     ClimateState s;
-    s.latitude      = lat;
-    s.dtlong        = 0.0;
-    s.tmin_daily    = tmin;
-    s.tmax_daily    = tmax;
-    s.prev_tmax     = prev_tmax;
-    s.has_minmax    = true;
+    s.latitude = lat;
+    s.dtlong = 0.0;
+    s.tmin_daily = tmin;
+    s.tmax_daily = tmax;
+    s.prev_tmax = prev_tmax;
+    s.has_minmax = true;
     updateTempTimes(s, doy);
     return s;
 }
@@ -683,15 +702,15 @@ TEST(SubdailyTemp9, PolarNightFlatTemp) {
     // verify it returns a finite temperature in [tmin, tmax]
     for (double h = 0.0; h <= 23.5; h += 1.0) {
         double t = getSubdailyTemp(s, h);
-        EXPECT_GE(t, 9.0);   // slightly below tmin is allowed by zone 1
-        EXPECT_LE(t, 25.0);  // slightly above prev_tmax is allowed
+        EXPECT_GE(t, 9.0);  // slightly below tmin is allowed by zone 1
+        EXPECT_LE(t, 25.0); // slightly above prev_tmax is allowed
     }
 }
 
 // dydif and dhrdy have correct sign relationships
 TEST(SubdailyTemp9, DerivedParamsSign) {
     auto s = makeTempState(35.0, 172, 55.0, 90.0, 88.0);
-    EXPECT_LT(s.dhrdy, 0.0);                   // hrsr < hrss → negative
+    EXPECT_LT(s.dhrdy, 0.0); // hrsr < hrss → negative
     EXPECT_NEAR(s.dydif, 24.0 + s.dhrdy, 1e-9);
-    EXPECT_NEAR(s.hrday, (s.hrsr + s.hrss)/2.0, 1e-9);
+    EXPECT_NEAR(s.hrday, (s.hrsr + s.hrss) / 2.0, 1e-9);
 }

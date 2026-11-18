@@ -15,13 +15,18 @@
 // limitations under the License.
 
 /**
- * @file GeoPackageReader.hpp
- * @brief Reads a GeoPackage file into a SimulationContext (model input tables).
+ * @file      GeoPackageReader.hpp
+ * @brief     Reads a GeoPackage file into a SimulationContext (model input tables).
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup engine_geopackage GeoPackage model persistence
+ * @brief Reading, writing and external-content resolution for GeoPackage-backed model input. Each operation states dataset ownership, error handling and publication behavior.
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_READER_HPP
@@ -32,7 +37,7 @@
 struct sqlite3;
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::gpkg {
@@ -56,8 +61,7 @@ namespace openswmm::gpkg {
  *                       skip Part D hydration.
  * @returns 0 on success, non-zero on error.
  */
-int read_model(sqlite3* db, SimulationContext& ctx,
-               const std::string& simulation_id,
+int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulation_id,
                const std::string& scratch_dir = "");
 
 /**

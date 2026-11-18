@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeComponent.hpp
- * @brief The `org.hydrocouple.openswmm.waterage` process component — phase
+ * @file      WaterAgeComponent.hpp
+ * @brief     The `org.hydrocouple.openswmm.waterage` process component — phase
  *        A1a: parse `[WATER_AGE_SOURCES]` (`model.age`) into
  *        SimulationContext::water_age_config.
  *
@@ -35,9 +35,9 @@
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §1–§2, §7 A1
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_COMPONENT_HPP
@@ -63,6 +63,6 @@ void registerWaterAgeComponent();
 /// carry-alongside copy runs).
 std::string serializeWaterAgeConfig(const SimulationContext& ctx);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_COMPONENT_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_COMPONENT_HPP

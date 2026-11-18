@@ -12,18 +12,20 @@ namespace {
 struct CtxSnapshot {
     std::vector<double> rainfall, runoff, evap_loss, infil_loss;
     std::vector<double> stat_evap_vol, stat_infil_vol, stat_imperv_vol, stat_perv_vol;
-    std::vector<double> lid_return_to_perv_cfs;
+    std::vector<double> lid_return_to_perv_cfs, lid_return_applied_cfs;
     void save(const SubcatchData& sc) {
         rainfall = sc.rainfall; runoff = sc.runoff; evap_loss = sc.evap_loss;
         infil_loss = sc.infil_loss; stat_evap_vol = sc.stat_evap_vol;
         stat_infil_vol = sc.stat_infil_vol; stat_imperv_vol = sc.stat_imperv_vol;
         stat_perv_vol = sc.stat_perv_vol; lid_return_to_perv_cfs = sc.lid_return_to_perv_cfs;
+        lid_return_applied_cfs = sc.lid_return_applied_cfs;  // written by execute() since swmm6_rel 2026-11
     }
     void restore(SubcatchData& sc) const {
         sc.rainfall = rainfall; sc.runoff = runoff; sc.evap_loss = evap_loss;
         sc.infil_loss = infil_loss; sc.stat_evap_vol = stat_evap_vol;
         sc.stat_infil_vol = stat_infil_vol; sc.stat_imperv_vol = stat_imperv_vol;
         sc.stat_perv_vol = stat_perv_vol; sc.lid_return_to_perv_cfs = lid_return_to_perv_cfs;
+        sc.lid_return_applied_cfs = lid_return_applied_cfs;
     }
 };
 }  // namespace

@@ -511,9 +511,9 @@ TEST(MeshEigenBasis, GroundedBasisCapturesUniformShift) {
         for (int e = 0; e < mesh.cell_vertex_count(static_cast<int>(ui)); ++e) {
             const auto idx = static_cast<std::size_t>(openswmm::twoD::MeshData::slot(static_cast<int>(i), e));
             if (mesh.cell_neighbour(static_cast<int>(ui), e) >= 0) continue;
-            if (mesh.edge_mx[idx] >= 1e-9) continue;
-            const double dx = mesh.edge_mx[idx] - mesh.tri_cx[ui];
-            const double dy = mesh.edge_my[idx] - mesh.tri_cy[ui];
+            if (mesh.edge_mx(idx) >= 1e-9) continue;
+            const double dx = mesh.edge_mx(idx) - mesh.tri_cx[ui];
+            const double dy = mesh.edge_my(idx) - mesh.tri_cy[ui];
             const double d  = 2.0 * std::sqrt(dx * dx + dy * dy);
             if (d > 1e-12) gw[ui] += mesh.edge_length[idx] / d;
         }

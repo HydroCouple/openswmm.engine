@@ -90,26 +90,53 @@ carries a temperature computed from a vanishing volume — the 2 °C
 excursion at `J5` at three minutes is that, not a physical result. The
 same caution applies to every concentration during a cold start.
 
-## What this release does not report
+## Species output and remaining limits
 
-`CL2` itself does not appear in Figure 9-1, and it cannot: **the reaction
-system's species are computed but not written to the output file.** The
-section that would select them for reporting, `[REACTION_REPORT]`, is
-\status{Planned} (@ref quality_ref_ch8_msx_reactions "Quality 8, §8.2").
-The output file carries the `[POLLUTANTS]` rows and the reserved rows for
-water age and temperature, and nothing else.
+Reaction species are written as named native result columns after pollutants,
+water age and temperature. The original figure above illustrates the thermal
+rate multiplier; it does not display the species concentrations. Species
+columns are available to the output reader and GUI even when they are absent
+from `[POLLUTANTS]`.
 
-Four other sections of a reaction configuration are also planned and are
-**refused**, not ignored: `[REACTION_SOURCES]`, `[REACTION_PARAMETERS]`,
-`[REACTION_PATTERNS]` and `[REACTION_SUBCATCHMENTS]`. A configuration
-carrying one of them is rejected as a whole, with the phase that will
-deliver it named in the message. That is deliberate — a silently ignored
-source term would be worse than a refused file.
+`[REACTION_REPORT]` can select a subset without changing what the engine
+computes:
 
-So a reaction system today is worth building when the species drive
-something you *can* see, or when you are preparing a model for the release
-that reports them. The quality reference chapter states the same limits
-from the theory side.
+```
+[REACTION_REPORT]
+SPECIES ALL NO
+SPECIES CL2 YES
+```
+
+`[REACTION_SOURCES]` accepts CONC, MASS, FLOWPACED and SETPOINT sources,
+optionally modulated by cyclic `[REACTION_PATTERNS]`. MASS uses declared mass
+units per second. FLOWPACED doses arriving water; SETPOINT raises the mixed
+concentration during positive water exchange and never removes species.
+`[REACTION_PARAMETERS]` overrides PARAMETER coefficients on nodes and links.
+
+`[REACTION_SUBCATCHMENTS]` supplies global or named-subcatchment wet laws.
+Its first-order split mixes retained mass with rain/run-on, reacts, then
+allocates infiltration, runoff and storage. `[REACTION_BUILDUP]` independently
+reacts dry land-use inventories, in declared mass per AREA_UNITS, before
+accrual, sweeping and washoff. Check WET_STEP/DRY_STEP sensitivity.
+
+`[REACTION_LIDS]` opts controls into separate BULK layer reactors and retained
+inventories. Conventional units require full coverage and every unit to opt
+in. Storage-node bucket/Richards reactors require LEGACY quality and a non-Mesh
+bottom. Partial capture, covered barrels, WALL chemistry and 2D-owned
+conventional units remain refused. Full native checkpoints carry these
+inventories; state-only hotstarts refuse them.
+
+`WALL_GEOMETRY YES` enables AV (AREA_UNITS/litre). Conduits derive contact
+from wetted perimeter, physical length and barrels; storage uses explicit
+`[REACTION_WALLS]` areas. WALL density refers to fixed reference area, with
+wetted-fraction kinetics and retained dry mass. ARD falls back to LEGACY for
+WALL systems; LAGRANGIAN refuses them. LEGACY/LAGRANGIAN tank kinetics skip
+zero/sub-litre water; ARD retains its 1e-9 ft³ store threshold.
+
+Exact native checkpoint/output continuation is checked for CPU 1D network,
+wet/dry subcatchment and qualified LID chemistry. Heat/age, active 2D chemistry,
+subsurface laws, pollutants and detailed ARD/LID result streams remain outside
+this profile. Native hotstart inventory loading has a separate contract.
 
 ## Where to go next
 

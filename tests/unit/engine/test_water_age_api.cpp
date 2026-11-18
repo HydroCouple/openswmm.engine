@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_water_age_api.cpp
- * @brief X5: the water-age source-table C API (A6-min), and X6's owed
+ * @file      test_water_age_api.cpp
+ * @brief     X5: the water-age source-table C API (A6-min), and X6's owed
  *        API-flux extraction gate.
  *
  * @details Subplan X5 (= water-age plan A6's GUI-facing subset; GUI plan
@@ -43,9 +43,9 @@
  *
  *          Scratch fixtures use the `_wa_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -65,6 +65,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -72,7 +83,20 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 constexpr double kQ = 5.0;
 constexpr double kCin = 100.0;
 
-/// Five-conduit chain, WATER_AGE ON, optional waterage component file.
+/**
+ * @brief Write the four-hour Lagrangian age API fixture.
+ *
+ * Enables WATER_AGE and TSS MG/L on a wet five-conduit CFS chain with kQ/kCin external supply; no
+ * component sidecar is written by this helper. Uses a local ofstream and requires existing parent
+ * directories. Open/write/close failures are unchecked; owned input strings are not retained and
+ * raw tokens/config paths are not escaped. Optional sidecar files are also overwritten when
+ * described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] component_line Optional non-null raw component row; null omits PROCESS_COMPONENTS,
+ *     while an empty non-null string still emits an empty section.
+ */
 void write_deck(const std::string& path, const char* component_line) {
     std::ofstream f(path);
     f << "[TITLE]\nX5 age API\n\n[OPTIONS]\n"
@@ -102,14 +126,26 @@ void write_deck(const std::string& path, const char* component_line) {
       << "[REPORT]\nINPUT NO\n";
 }
 
-/// Open an engine on a fresh deck (OPENED state — where an editor sits).
-SWMM_Engine open_deck(const std::string& tag,
-                      const char* component_line = nullptr) {
+/**
+ * @brief Create and open a generated age model in editor-visible OPENED state.
+ *
+ * Writes the deck before allocating a handle; does not initialize or start it. Caller owns
+ * destruction and any generated artifact cleanup. A non-null handle keeps component configuration
+ * and model state available for API editing assertions.
+ *
+ * @param[in] tag Artifact prefix for .inp/.rpt/.out filenames; paths may overwrite matching files.
+ * @param[in] component_line Optional borrowed raw component row passed to write_deck; null omits
+ *     the section.
+ * @return Owned raw handle on successful allocation/open, otherwise null after destroying any
+ *     allocated failed handle.
+ */
+SWMM_Engine open_deck(const std::string& tag, const char* component_line = nullptr) {
     write_deck(tag + ".inp", component_line);
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
-    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK) {
+    if (e == nullptr)
+        return nullptr;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(),
+                         nullptr) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
@@ -129,25 +165,19 @@ TEST(WaterAgeApiTest, CrudRoundTripsInHours) {
 
     // Globals: default 0, set, read back, and the engine holds SECONDS.
     double h = -1.0;
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h), SWMM_OK);
     EXPECT_DOUBLE_EQ(h, 0.0);
-    ASSERT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_GW, 6.0),
-              SWMM_OK);
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_GW, 6.0), SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_GW, &h), SWMM_OK);
     EXPECT_DOUBLE_EQ(h, 6.0);
-    EXPECT_DOUBLE_EQ(
-        as_cpp_engine(e).context().water_age_config.global_age[
-            static_cast<int>(openswmm::WaterAgeSource::GW)],
-        21600.0)
+    EXPECT_DOUBLE_EQ(as_cpp_engine(e).context().water_age_config.global_age[static_cast<int>(
+                         openswmm::WaterAgeSource::GW)],
+                     21600.0)
         << "the boundary is HOURS and the engine stores SECONDS";
 
     // D-NS1: negatives pass through unfloored.
-    ASSERT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_RDII, -2.0),
-              SWMM_OK);
-    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RDII, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_RDII, -2.0), SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_RDII, &h), SWMM_OK);
     EXPECT_DOUBLE_EQ(h, -2.0) << "a negative source age was floored — "
                                  "extraction must survive the boundary";
 
@@ -155,16 +185,12 @@ TEST(WaterAgeApiTest, CrudRoundTripsInHours) {
     int count = -1;
     ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
     EXPECT_EQ(count, 0);
-    ASSERT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 0, 3.0),
-              SWMM_OK);
-    ASSERT_EQ(
-        swmm_water_age_set_override(e, SWMM_AGE_SRC_EXTERNAL_INFLOW, 1, 4.0),
-        SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 0, 3.0), SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_EXTERNAL_INFLOW, 1, 4.0), SWMM_OK);
     ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
     EXPECT_EQ(count, 2);
 
-    ASSERT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 0, 9.0),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 0, 9.0), SWMM_OK);
     ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
     EXPECT_EQ(count, 2) << "an update duplicated the row instead of "
                            "replacing it";
@@ -176,8 +202,7 @@ TEST(WaterAgeApiTest, CrudRoundTripsInHours) {
     EXPECT_EQ(nd, 0);
     EXPECT_DOUBLE_EQ(hv, 9.0);
 
-    ASSERT_EQ(swmm_water_age_remove_override(e, SWMM_AGE_SRC_DWF, 0),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_remove_override(e, SWMM_AGE_SRC_DWF, 0), SWMM_OK);
     ASSERT_EQ(swmm_water_age_override_count(e, &count), SWMM_OK);
     EXPECT_EQ(count, 1);
     // The survivor is the one we did not remove.
@@ -196,16 +221,11 @@ TEST(WaterAgeApiTest, RejectsBadArgumentsAndOutOfScopeOverrides) {
     int n = 0;
     // Bad handle on every entry point.
     EXPECT_EQ(swmm_water_age_get_enabled(nullptr, &n), SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_water_age_get_global_source(nullptr, 0, &h),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_water_age_set_global_source(nullptr, 0, 1.0),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_water_age_override_count(nullptr, &n),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_water_age_set_override(nullptr, 1, 0, 1.0),
-              SWMM_ERR_BADHANDLE);
-    EXPECT_EQ(swmm_water_age_remove_override(nullptr, 1, 0),
-              SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_water_age_get_global_source(nullptr, 0, &h), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_water_age_set_global_source(nullptr, 0, 1.0), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_water_age_override_count(nullptr, &n), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_water_age_set_override(nullptr, 1, 0, 1.0), SWMM_ERR_BADHANDLE);
+    EXPECT_EQ(swmm_water_age_remove_override(nullptr, 1, 0), SWMM_ERR_BADHANDLE);
     EXPECT_EQ(swmm_water_age_save(nullptr, "_wa_x.age"), SWMM_ERR_BADHANDLE);
 
     SWMM_Engine e = open_deck("_wa_bad");
@@ -213,30 +233,23 @@ TEST(WaterAgeApiTest, RejectsBadArgumentsAndOutOfScopeOverrides) {
 
     // Null out-pointers and bad source codes.
     EXPECT_EQ(swmm_water_age_get_enabled(e, nullptr), SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_water_age_get_global_source(e, 0, nullptr),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_water_age_get_global_source(e, 0, nullptr), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_water_age_get_global_source(e, -1, &h), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_COUNT, &h),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_water_age_get_global_source(e, SWMM_AGE_SRC_COUNT, &h), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_water_age_set_global_source(e, 99, 1.0), SWMM_ERR_BADINDEX);
     EXPECT_EQ(swmm_water_age_save(e, nullptr), SWMM_ERR_BADPARAM);
     EXPECT_EQ(swmm_water_age_save(e, ""), SWMM_ERR_BADPARAM);
 
     // The A1a scope rule: GW/RAINFALL/etc. take GLOBAL only.
-    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_GW, 0, 1.0),
-              SWMM_ERR_BADPARAM)
+    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_GW, 0, 1.0), SWMM_ERR_BADPARAM)
         << "the API allowed a NODE override the file parser refuses";
-    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_INITIAL_STATE, 0,
-                                          1.0),
+    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_INITIAL_STATE, 0, 1.0),
               SWMM_ERR_BADPARAM);
     // Bad node index, and removing a row that does not exist.
-    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 999, 1.0),
-              SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_water_age_remove_override(e, SWMM_AGE_SRC_DWF, 0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_water_age_set_override(e, SWMM_AGE_SRC_DWF, 999, 1.0), SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_water_age_remove_override(e, SWMM_AGE_SRC_DWF, 0), SWMM_ERR_BADINDEX);
     // Reading past the end.
-    EXPECT_EQ(swmm_water_age_get_override(e, 0, nullptr, nullptr, nullptr),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_water_age_get_override(e, 0, nullptr, nullptr, nullptr), SWMM_ERR_BADINDEX);
 
     swmm_engine_destroy(e);
 }
@@ -248,32 +261,22 @@ TEST(WaterAgeApiTest, RejectsBadArgumentsAndOutOfScopeOverrides) {
 TEST(WaterAgeApiTest, SavedFileParsesBackToTheSameTable) {
     SWMM_Engine a = open_deck("_wa_save");
     ASSERT_NE(a, nullptr);
-    ASSERT_EQ(swmm_water_age_set_global_source(a, SWMM_AGE_SRC_INITIAL_STATE,
-                                               1.5),
-              SWMM_OK);
-    ASSERT_EQ(swmm_water_age_set_global_source(a, SWMM_AGE_SRC_RDII, -2.0),
-              SWMM_OK);
-    ASSERT_EQ(swmm_water_age_set_override(a, SWMM_AGE_SRC_EXTERNAL_INFLOW, 0,
-                                          6.0),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_global_source(a, SWMM_AGE_SRC_INITIAL_STATE, 1.5), SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_global_source(a, SWMM_AGE_SRC_RDII, -2.0), SWMM_OK);
+    ASSERT_EQ(swmm_water_age_set_override(a, SWMM_AGE_SRC_EXTERNAL_INFLOW, 0, 6.0), SWMM_OK);
     ASSERT_EQ(swmm_water_age_save(a, "_wa_saved.age"), SWMM_OK);
     swmm_engine_destroy(a);
 
     // Reopen a deck that REGISTERS the saved file as its component config.
-    SWMM_Engine b = open_deck(
-        "_wa_reopen",
-        "org.hydrocouple.openswmm.waterage config=\"_wa_saved.age\"");
+    SWMM_Engine b =
+        open_deck("_wa_reopen", "org.hydrocouple.openswmm.waterage config=\"_wa_saved.age\"");
     ASSERT_NE(b, nullptr) << "the saved component file failed to parse";
 
     double h = 0.0;
-    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_INITIAL_STATE,
-                                               &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_INITIAL_STATE, &h), SWMM_OK);
     EXPECT_DOUBLE_EQ(h, 1.5);
-    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_RDII, &h),
-              SWMM_OK);
-    EXPECT_DOUBLE_EQ(h, -2.0)
-        << "the negative (extraction) row did not survive the round-trip";
+    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_RDII, &h), SWMM_OK);
+    EXPECT_DOUBLE_EQ(h, -2.0) << "the negative (extraction) row did not survive the round-trip";
 
     int count = 0;
     ASSERT_EQ(swmm_water_age_override_count(b, &count), SWMM_OK);
@@ -286,8 +289,7 @@ TEST(WaterAgeApiTest, SavedFileParsesBackToTheSameTable) {
 
     // Untouched sources stay absent (a save-as of an unedited model must
     // not look configured).
-    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_GW, &h),
-              SWMM_OK);
+    ASSERT_EQ(swmm_water_age_get_global_source(b, SWMM_AGE_SRC_GW, &h), SWMM_OK);
     EXPECT_DOUBLE_EQ(h, 0.0);
     // The value check above cannot SEE a written zero row — "GW GLOBAL 0"
     // parses back to the same 0.0 as absence (measured: X5 falsifier vi
@@ -297,8 +299,8 @@ TEST(WaterAgeApiTest, SavedFileParsesBackToTheSameTable) {
         std::ifstream fin("_wa_saved.age");
         const std::string body((std::istreambuf_iterator<char>(fin)),
                                std::istreambuf_iterator<char>());
-        EXPECT_EQ(body.find("GW"), std::string::npos)
-            << "an untouched source wrote a (zero) row:\n" << body;
+        EXPECT_EQ(body.find("GW"), std::string::npos) << "an untouched source wrote a (zero) row:\n"
+                                                      << body;
         EXPECT_EQ(body.find("RAINFALL"), std::string::npos);
     }
     swmm_engine_destroy(b);
@@ -311,26 +313,25 @@ TEST(WaterAgeApiTest, ApiEditShiftsTheSimulatedAge) {
     auto run = [](const std::string& tag, double hours) {
         SWMM_Engine e = open_deck(tag);
         EXPECT_NE(e, nullptr);
-        if (e == nullptr) return 0.0;
+        if (e == nullptr)
+            return 0.0;
         if (hours != 0.0)
-            EXPECT_EQ(swmm_water_age_set_global_source(
-                          e, SWMM_AGE_SRC_EXTERNAL_INFLOW, hours),
+            EXPECT_EQ(swmm_water_age_set_global_source(e, SWMM_AGE_SRC_EXTERNAL_INFLOW, hours),
                       SWMM_OK);
         EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
         EXPECT_EQ(swmm_engine_start(e, 1), SWMM_OK);
         double elapsed = 0.0;
         int guard = 0;
         do {
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+                break;
         } while (elapsed > 0.0 && ++guard < 200000);
         swmm_engine_end(e);
         auto& ctx = as_cpp_engine(e).context();
         double age = 0.0;
         for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.type[static_cast<std::size_t>(j)] ==
-                openswmm::NodeType::OUTFALL)
-                age = ctx.water_age_state.node_age[
-                    static_cast<std::size_t>(j)];
+            if (ctx.nodes.type[static_cast<std::size_t>(j)] == openswmm::NodeType::OUTFALL)
+                age = ctx.water_age_state.node_age[static_cast<std::size_t>(j)];
         swmm_engine_destroy(e);
         return age;
     };
@@ -341,8 +342,8 @@ TEST(WaterAgeApiTest, ApiEditShiftsTheSimulatedAge) {
     // Steady state: every parcel entered 6 h older (the A1a gate-2 claim,
     // reached through the API instead of a config file).
     EXPECT_NEAR(src - base, 21600.0, 60.0)
-        << "an API-set source age did not reach the engine (base " << base
-        << " s, src " << src << " s)";
+        << "an API-set source age did not reach the engine (base " << base << " s, src " << src
+        << " s)";
 }
 
 // ---------------------------------------------------------------------------
@@ -350,11 +351,12 @@ TEST(WaterAgeApiTest, ApiEditShiftsTheSimulatedAge) {
 // warns, and never goes negative.
 // ---------------------------------------------------------------------------
 TEST(WaterAgeApiTest, NegativeApiMassFluxExtractsAndClamps) {
-    auto run = [](const std::string& tag, double flux, double* min_conc,
-                  long* clamps, bool* warned) {
+    auto run = [](const std::string& tag, double flux, double* min_conc, long* clamps,
+                  bool* warned) {
         SWMM_Engine e = open_deck(tag);
         EXPECT_NE(e, nullptr);
-        if (e == nullptr) return 0.0;
+        if (e == nullptr)
+            return 0.0;
         EXPECT_EQ(swmm_engine_initialize(e), SWMM_OK);
         EXPECT_EQ(swmm_engine_start(e, 1), SWMM_OK);
         auto& ctx = as_cpp_engine(e).context();
@@ -369,19 +371,16 @@ TEST(WaterAgeApiTest, NegativeApiMassFluxExtractsAndClamps) {
             // gate reads as a forcing loop and would still hold if the
             // convention ever changed to per-step.
             if (flux != 0.0)
-                EXPECT_EQ(swmm_node_set_quality_mass_flux(e, 2, 0, flux),
-                          SWMM_OK);
-            if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+                EXPECT_EQ(swmm_node_set_quality_mass_flux(e, 2, 0, flux), SWMM_OK);
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+                break;
             for (int j = 0; j < ctx.n_nodes(); ++j)
-                *min_conc = std::min(
-                    *min_conc,
-                    ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+                *min_conc = std::min(*min_conc, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
         } while (elapsed > 0.0 && ++guard < 200000);
         swmm_engine_end(e);
         double outfall = 0.0;
         for (int j = 0; j < ctx.n_nodes(); ++j)
-            if (ctx.nodes.type[static_cast<std::size_t>(j)] ==
-                openswmm::NodeType::OUTFALL)
+            if (ctx.nodes.type[static_cast<std::size_t>(j)] == openswmm::NodeType::OUTFALL)
                 outfall = ctx.nodes.conc[static_cast<std::size_t>(j * np)];
         *clamps = ctx.negsrc.clamp_events;
         *warned = false;
@@ -402,18 +401,16 @@ TEST(WaterAgeApiTest, NegativeApiMassFluxExtractsAndClamps) {
 
     // Moderate extraction: measurably below the control, still positive.
     const double mod = run("_wa_flux_mod", -50.0, &min_b, &cl_b, &warn_b);
-    EXPECT_LT(mod, base * 0.999)
-        << "a negative API mass flux had NO effect — this is exactly the "
-           "`w <= 0` skip X6 removed (falsifier X6.vi's observer)";
+    EXPECT_LT(mod, base * 0.999) << "a negative API mass flux had NO effect — this is exactly the "
+                                    "`w <= 0` skip X6 removed (falsifier X6.vi's observer)";
     EXPECT_TRUE(warn_b) << "the negative-API-flux warning did not fire";
     EXPECT_GE(min_b, -1.0e-12);
 
     // Extreme extraction: clamps, warns, never negative.
     const double big = run("_wa_flux_big", -1.0e6, &min_c, &cl_c, &warn_c);
-    EXPECT_GE(min_c, -1.0e-12)
-        << "extreme API extraction drove a concentration negative";
+    EXPECT_GE(min_c, -1.0e-12) << "extreme API extraction drove a concentration negative";
     EXPECT_GT(cl_c, 0) << "extreme API extraction never clamped";
     EXPECT_LT(big, mod) << "more extraction did not remove more mass";
 }
 
-}  // namespace
+} // namespace

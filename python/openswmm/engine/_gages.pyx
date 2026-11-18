@@ -197,17 +197,15 @@ cdef class Gage:
     def timeseries(self) -> str:
         """Assigned time-series id (empty when the source is not a series)."""
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_gage_get_timeseries(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_gage_get_timeseries)
 
     @property
     def station_id(self) -> str:
         """Station id for a file source (empty when unset)."""
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_gage_get_station_id(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_gage_get_station_id)
 
     @station_id.setter
     def station_id(self, str value) -> None:
@@ -225,9 +223,8 @@ cdef class Gage:
         file's first data column.
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_gage_get_file_column(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_gage_get_file_column)
 
     @file_column.setter
     def file_column(self, str value) -> None:

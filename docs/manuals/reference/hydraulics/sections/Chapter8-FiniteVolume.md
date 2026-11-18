@@ -1268,8 +1268,8 @@ connectivity — there is no user option:
 | Model | Applies to | Storage | Head |
 |---|---|---|---|
 | **Pass-through** | a *clean* junction of degree 2 with nothing injected at it | none | not a state at all: the two end cells present their centred states directly to each other |
-| **Solved algebraic** | every other storage-less junction with at least one conduit face | none | root of the instantaneous flux balance (8-31) |
-| **Bucket** | storage units, junctions with no conduit face (a pump-only wet well), and junctions demoted by ponding | \f$A_{s}\f$ or a curve | integrated volume ledger, §8.6.5 step 5 |
+| **Solved algebraic** | every other storage-less junction with at least one conduit face and no pump, orifice, weir or outlet | none | root of the instantaneous flux balance (8-31) |
+| **Bucket** | storage units, junctions with no conduit face (a pump-only wet well), junctions at either end of a pump, orifice, weir or outlet, and junctions demoted by ponding | \f$A_{s}\f$ or a curve | integrated volume ledger, §8.6.5 step 5 |
 
 *Clean* means every incident face is a plain conduit face — no culvert
 inlet, no flap gate. A culvert or gate law is head- and
@@ -1321,8 +1321,8 @@ the incident cells, split evenly with zero momentum, because that is
 where an interface junction's water physically stands. The node volume
 the report shows for such a node is that carry ledger and nothing else.
 
-Where a bucket ledger *is* integrated — storage units, structure-only
-junctions, ponding-demoted junctions — the storage relation is the
+Where a bucket ledger *is* integrated — storage units, junctions at a
+structure, ponding-demoted junctions — the storage relation is the
 engine's own: a linear reservoir of area \f$A_{s} = V_{full}/y_{full}\f$
 (`MIN_SURFAREA` unless the project overrode it) held fixed for the run,
 or the storage unit's own curve flattened to a monotone 129-sample
@@ -1376,6 +1376,14 @@ this, because a manhole pour carries no directed momentum: the inflow is
 diverted into the two incident cells, half each, as a zero-momentum area
 source. A structure flow or an unbled carry does revoke it, since both
 need a head the fluxes can respond to.
+
+Where the two conduits of such a junction differ in section, the splice
+poses its one Riemann problem in a section-averaged geometry, and the
+per-side hydrostatic correction becomes the force of the step's wall. The
+average belongs to the splice alone. A node with a head of its own poses a
+separate problem at each face, in that conduit's own section: averaging
+there would drain a large pipe through a fraction of its area and feed a
+small one through a face several times its own.
 
 **A bucket node's coupling to its faces is semi-implicit.** Its storage
 area is typically the `MIN_SURFAREA` floor, which as an effective length
@@ -1473,6 +1481,17 @@ stage, against the state the solver has actually reached — a routing
 step spans many substeps, across which a pump's wet-well depth and a
 weir's head difference move while a frozen discharge does not.
 `ROUTING_STEP` holds them at their start-of-step values instead.
+
+A structure discharge is evaluated from the node heads and then held, so
+a junction at either end of one keeps the bucket ledger of §8.6.1: into a
+storage-less junction nothing buffers the lagged source, and the solved
+head flips between empty and the rim. Inside a macro cycle (§8.5.6) the
+structures alone are re-evaluated before every base substep, since their
+nodes fire at every one; a discharge held for the whole cycle overfills a
+`MIN_SURFAREA` chamber within it and reverses at the next. The outfall
+stage keeps the value the cycle opened with, because it bounds faces
+whose booked flux has to describe one forcing. A bucket donor pays out
+only the water it holds, and the link reports the water actually moved.
 
 Control *rules* are not re-evaluated at substep cadence; they run on the
 engine's own rule step, which is tuned for routing-step cadence. Only
@@ -1794,7 +1813,7 @@ file.
 | `FV_LIMITER` | `MINMOD` | `MINMOD`, `VANLEER` or `SUPERBEE`, with `FV_ORDER 2`. |
 | `FV_SCALAR_SCHEME` | `MUSCL` | `UPWIND`, `MUSCL` or `QUICKEST_ULTIMATE`. |
 | `FV_TIME_INTEGRATION` | `EULER` | `EULER` or `RK2` (Heun, SSP). `RK2` disables local time stepping. |
-| `FV_SLOT_CELERITY` | 100 | Pressurized wave celerity in project length units per second; sets the slot width via (8-5) and doubles as the TPA acoustic celerity \f$a\f$ under `FV_PRESSURE_CLOSURE TPA` (§8.4.5) — the same physical dial either way. Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
+| `FV_SLOT_CELERITY` | 100 ft/s (30.48 m/s) | Pressurized wave celerity in project length units per second (absent or 0 selects the default, the same physical speed in either unit system); sets the slot width via (8-5) and doubles as the TPA acoustic celerity \f$a\f$ under `FV_PRESSURE_CLOSURE TPA` (§8.4.5) — the same physical dial either way. Slot storage share scales as 1/c²; values below the cap-implied celerity (≈ 22.5·√D ft/s for a circular pipe) are inert — WARNING 108 reports the override. Slot storage is itemized by the §8.7.1 diagnostics. With `FV_PRESSURIZED_IMPLICIT YES` the celerity leaves the time-step law entirely (§8.4.4) and becomes a pure accuracy dial. |
 | `FV_PRESSURE_CLOSURE` | `SLOT` | **Experimental** — `SLOT` or `TPA`. `TPA` selects the two-component pressure approach of §8.4.5: sub-atmospheric full-pipe flow behind a per-cell air-pathway regime flag. `SLOT` (the default) is bit-identical to the closure of §8.4.1–§8.4.2. Pair with `REPORT_SIGNED_HEADS YES` to see sub-atmospheric heads in the `.out` file. |
 | `FV_PRESSURIZED_IMPLICIT` | `NO` | **Experimental** — subject to slot program R2b; surfaced in the GUI as an experimental checkbox. Integrate the slot's acoustic pair implicitly on the pressurized subset (§8.4.4): full-bore head loss becomes slot-width invariant and pressurized reaches run at the advective time-step bound. CPU solver only; local time stepping stands down while the solve engages; a run that never pressurizes is bit-identical either way. Composes with `FV_PRESSURE_CLOSURE TPA` under the rules of §8.4.5. |
 | `FV_DISPERSION` | 0 | Longitudinal dispersion coefficient. 0 disables the parabolic term. Accepted but **inert** until finite-volume transport is connected (§8.8); a non-zero value warns at open. |

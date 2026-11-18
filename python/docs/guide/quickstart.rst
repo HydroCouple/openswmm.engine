@@ -133,27 +133,32 @@ See :doc:`forcing` for the full forcing model.
 5. Read the binary ``.out`` file after the run
 ==============================================
 
-After the run completes, point an :class:`~openswmm.engine.OutputReader`
-at the ``.out`` file to query time-series data:
+Read named fields independently of the solver:
+
+.. code-block:: python
+
+    from openswmm.engine import Results
+
+    with Results.open("model.out") as results:
+        field = results.nodes["J1"].depth
+        depth_series = field.read()
+        print(field.units, field.times, float(depth_series.max()))
+
+For saved 2D output, add ``surface="model.2d.h5"`` and use
+``results.surface.depth.read(periods=-1)``. See :doc:`results` for mesh,
+species, selections and optional pandas/xarray conversions.
+
+The existing enum-based interface is also available:
 
 .. code-block:: python
 
     from openswmm.engine import OutputReader, OutNodeVar
 
     with OutputReader("model.out") as reader:
-        n = reader.get_period_count()
-        # Resolve "J1" to its zero-based index by scanning ids
-        j1 = next(
-            i for i in range(reader.get_node_count())
-            if reader.get_node_id(i) == "J1"
-        )
-        depth_series = reader.get_node_series(
-            j1, OutNodeVar.DEPTH, start=0, end=n - 1,
-        )
-        print(n, "steps, depth peak =", float(depth_series.max()))
+        depth_series = reader.node_series("J1", OutNodeVar.DEPTH)
+        print(reader.period_count, "steps, depth peak =", float(depth_series.max()))
 
-The :class:`OutputReader` is independent of any running solver — you
-can use it on a file produced by any past run.
+Both readers work on files produced by past runs.
 
 ----
 

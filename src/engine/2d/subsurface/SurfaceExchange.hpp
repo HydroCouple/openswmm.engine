@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      SurfaceExchange.hpp
+ * @brief     Conservative surface exchange reservations and donor water limits.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #pragma once
 #include <string>
 #include <vector>
@@ -54,14 +64,63 @@ class SurfaceExchange {
 public:
     // Optional qualified mesh prescription; returns a capacity volume in m3.
     // Both planning and settlement use it; donor/receiver ceilings still apply.
-    using Capacity = std::function<double(const SurfaceIntakeRequest&,double)>;
-    std::string plan(const SubsurfaceSolver&, double start, double end,
-                     double completed_through, const std::vector<SurfaceIntakeRequest>&, const Capacity* = nullptr);
-    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&, const Capacity* = nullptr);
+    using Capacity = std::function<double(const SurfaceIntakeRequest&, double)>;
+    /**
+     * @brief Plan donor-limited, receiver-limited intake over a contiguous completed interval.
+     * @par Argument contract The borrowed receiver must remain alive until commit/cancel.
+     * start/end/completed_through use elapsed seconds. The request array is borrowed during the
+     * call and copied into awards; request area m2, pond head m and water ceilings/candidates
+     * m3. The optional final Capacity pointer is a synchronous borrowed callback returning
+     * capacity m3 for a request and interval seconds.
+     * @return Empty for a published pending plan, otherwise refusal text. No receiver state is
+     * changed; allocation/callback exceptions propagate.
+     * @note Detailed validation and deterministic scaling are documented with the
+     * implementation. Public plan publication requires exclusive access and no previous pending
+     * plan.
+     */
+    std::string plan(const SubsurfaceSolver&, double start, double end, double completed_through,
+                     const std::vector<SurfaceIntakeRequest>&, const Capacity* = nullptr);
+    /**
+     * @brief Settle the current awards against the same aquifer owner.
+     * @par Argument contract The first argument is the borrowed mutable receiver used by plan.
+     * The actual-transfer vector must match awards order/count and contain paired water
+     * m3/species inventory in receiver order. The optional Capacity callback is reevaluated
+     * synchronously and must match planning semantics.
+     * @return Empty on success, refusal text before booking on invalid/stale data. Allocation
+     * exceptions during receiver receipt retention can leave partial booking; caller supplies an
+     * enclosing transaction when required.
+     * @note Does not install donor trial state. No callback/input-array pointers are retained
+     * after successful settlement.
+     */
+    std::string commit(SubsurfaceSolver&, const std::vector<SurfaceIntakeActual>&,
+                       const Capacity* = nullptr);
     void cancel() noexcept;
+    /**
+     * @brief Read this exchange transaction's stable result state.
+     * @return Borrowed object-owned sorted intake-award vector; demand/maximum volumes use m3.
+     * Invalidated by plan/cancel/replacement/destruction.
+     * @note No allocation or ownership transfer; caller serializes reads with mutation and must
+     * not free/modify borrowed vectors.
+     */
     const std::vector<SurfaceIntakeAward>& awards() const noexcept { return awards_; }
+    /**
+     * @brief Read this exchange transaction's stable result state.
+     * @return Borrowed object-owned last successful settlement receipts, with copied paired
+     * source tuples. Invalidated by the next successful commit/replacement/destruction; cancel
+     * preserves them.
+     * @note No allocation or ownership transfer; caller serializes reads with mutation and must
+     * not free/modify borrowed vectors.
+     */
     const std::vector<SurfaceIntakeReceipt>& receipts() const noexcept { return receipts_; }
+    /**
+     * @brief Read this exchange transaction's stable result state.
+     * @return Last successfully committed contiguous endpoint in elapsed seconds; initially zero
+     * and preserved by cancel.
+     * @note No allocation or ownership transfer; caller serializes reads with mutation and must
+     * not free/modify borrowed vectors.
+     */
     double completedEnd() const noexcept { return completed_end_; }
+
 private:
     friend class CommonSourceStage;
     double start_ = 0, end_ = 0, completed_end_ = 0;

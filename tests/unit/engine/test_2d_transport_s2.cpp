@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_2d_transport_s2.cpp
- * @brief Overland transport S2 — source concentrations and limited explicit
+ * @file      test_2d_transport_s2.cpp
+ * @brief     Overland transport S2 — source concentrations and limited explicit
  *        dispersion on the face cadence.
  *
  * @details S1 established that species mass rides the marcher's own face
@@ -42,6 +42,10 @@
  *          the Fickian spreading rate (variance of a pulse grows as 2·D·t).
  *          The limiter is exercised deliberately with a D far above the
  *          explicit stability limit, and the bind counter must say so.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -68,7 +72,17 @@ using namespace openswmm::twoD;
 
 namespace {
 
-/// Uniform strip: nx × ny cells of dx × dx, two triangles per cell, flat.
+/**
+ * @brief Build a flat rectangular strip split into two triangles per square.
+ *
+ * No dimension/range validation occurs here; allocation/topology errors propagate.
+ *
+ * @param[in] nx Positive square count along x; derived counts must fit integer/storage limits.
+ * @param[in] ny Positive square count along y; derived counts must fit integer/storage limits.
+ * @param[in] dx Positive square edge length in metres.
+ * @param[in] n Manning roughness assigned uniformly, default 0.03.
+ * @return Owned mesh with zero bed elevations, geometry and topology built.
+ */
 MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
     MeshData mesh;
     const int nvx = nx + 1, nvy = ny + 1;
@@ -84,19 +98,36 @@ MeshData makeStrip(int nx, int ny, double dx, double n = 0.03) {
     int t = 0;
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {
-            const int v00 = j * nvx + i,       v10 = j * nvx + i + 1;
+            const int v00 = j * nvx + i, v10 = j * nvx + i + 1;
             const int v01 = (j + 1) * nvx + i, v11 = (j + 1) * nvx + i + 1;
-            mesh.set_triangle(t, v00, v10, v11); ++t;
-            mesh.set_triangle(t, v00, v11, v01); ++t;
+            mesh.set_triangle(t, v00, v10, v11);
+            ++t;
+            mesh.set_triangle(t, v00, v11, v01);
+            ++t;
         }
-    for (int i = 0; i < mesh.n_triangles(); ++i) mesh.mannings_n[i] = n;
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        mesh.mannings_n[i] = n;
     buildMeshTopology(mesh);
     return mesh;
 }
 
-/// Still pond of uniform depth `h` everywhere, species at `c0`.
-SurfaceStateData makePond(const MeshData& mesh, const SolverOptions2D& opts,
-                          int n_species, double h, double c0) {
+/**
+ * @brief Create uniform-depth water and uniform initial concentration in every species row.
+ *
+ * Does not validate physical values, set species metadata or run a transport step;
+ * allocation/closure failures propagate.
+ *
+ * @param[in] mesh Built triangular mesh with consistent geometry and counts.
+ * @param[in] opts Closure options used to derive head/depth from the area-scaled volume.
+ * @param[in] n_species Nonnegative transport row count supported by storage allocation.
+ * @param[in] h Nonnegative initial area-based water depth in metres.
+ * @param[in] c0 Uniform concentration in the fixture native mass/m3 or row-specific equivalent
+ *     units.
+ * @return Owned state with volume=h*area, closure-derived head/depth and cell_mass=c0*volume for
+ *     every row.
+ */
+SurfaceStateData makePond(const MeshData& mesh, const SolverOptions2D& opts, int n_species,
+                          double h, double c0) {
     SurfaceStateData s;
     s.resize(mesh.n_triangles(), mesh.n_vertices());
     s.transport.resize(n_species, mesh.n_triangles(), 0);
@@ -109,56 +140,113 @@ SurfaceStateData makePond(const MeshData& mesh, const SolverOptions2D& opts,
     return s;
 }
 
+/**
+ * @brief Advance a freshly initialized surface solver in clipped reporting-size windows.
+ *
+ * Calls advance(t,min(t+dt_out,T)) from t=0; ignores returned achieved times/status and propagates
+ * exceptions. No output file is written by this helper itself.
+ *
+ * @param[in,out] solver Initialized solver at model time zero with live attached dependencies.
+ * @param[in] T Final model time in seconds; nonpositive performs no calls.
+ * @param[in] dt_out Positive window length in seconds, default 5; must remain positive to terminate
+ *     the loop.
+ */
 void run(ExplicitInertialSolver& solver, double T, double dt_out = 5.0) {
     for (double t = 0.0; t < T; t += dt_out)
         solver.advance(t, std::min(t + dt_out, T));
 }
 
-struct WetStats { int wet = 0; double cmin = 1e300, cmax = -1e300, worst_rel = 0.0; };
-WetStats wetStats(const MeshData& mesh, const SolverOptions2D& opts,
-                  const SurfaceStateData& s, int sp, double c_ref) {
+struct WetStats {
+    int wet = 0;
+    double cmin = 1e300, cmax = -1e300, worst_rel = 0.0;
+};
+/**
+ * @brief Compute concentration extrema and reference error over strictly wet cells.
+ *
+ * Wet means volume>dry_depth*area. Does not filter nonfinite values, mutate state or convert
+ * species units.
+ *
+ * @param[in] mesh Mesh with area array compatible with s.
+ * @param[in] opts Supplies dry_depth in metres.
+ * @param[in] s State with water/transport arrays compatible with the mesh.
+ * @param[in] sp Valid species row index; unchecked here.
+ * @param[in] c_ref Reference concentration; positive enables relative error, nonpositive leaves
+ *     worst_rel zero.
+ * @return Owned count/min/max/worst_rel; with no wet cells extrema retain 1e300/-1e300 sentinel
+ *     values.
+ */
+WetStats wetStats(const MeshData& mesh, const SolverOptions2D& opts, const SurfaceStateData& s,
+                  int sp, double c_ref) {
     WetStats w;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double v_dry = opts.dry_depth * mesh.tri_area[i];
-        if (!(s.volume[i] > v_dry)) continue;
+        if (!(s.volume[i] > v_dry))
+            continue;
         ++w.wet;
         const double c = s.transport.concentration(sp, i, s.volume[i], v_dry);
         w.cmin = std::min(w.cmin, c);
         w.cmax = std::max(w.cmax, c);
-        if (c_ref > 0.0) w.worst_rel = std::max(w.worst_rel, std::fabs(c - c_ref) / c_ref);
+        if (c_ref > 0.0)
+            w.worst_rel = std::max(w.worst_rel, std::fabs(c - c_ref) / c_ref);
     }
     return w;
 }
 
-/// Mass-weighted mean and variance of x over the species distribution.
-void xMoments(const MeshData& mesh, const SurfaceTransportState& tr, int sp,
-              double& mean, double& var) {
+/**
+ * @brief Compute species-mass-weighted x-coordinate mean and variance.
+ *
+ * Requires positive/nonzero summed mass for a meaningful result; divides by the raw sum without a
+ * zero guard. Does not validate indices or normalize negative/nonfinite masses.
+ *
+ * @param[in] mesh Built mesh with per-cell centroid x in metres.
+ * @param[in] tr Compatible species-major cell masses.
+ * @param[in] sp Valid species index in tr.
+ * @param[out] mean Assigned weighted mean x in metres.
+ * @param[out] var Assigned weighted variance in m2, without nonnegative clamping.
+ */
+void xMoments(const MeshData& mesh, const SurfaceTransportState& tr, int sp, double& mean,
+              double& var) {
     double m = 0.0, mx = 0.0, mxx = 0.0;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double w = tr.cell_mass[tr.idx(sp, i)];
-        m += w; mx += w * mesh.tri_cx[i]; mxx += w * mesh.tri_cx[i] * mesh.tri_cx[i];
+        m += w;
+        mx += w * mesh.tri_cx[i];
+        mxx += w * mesh.tri_cx[i] * mesh.tri_cx[i];
     }
     mean = mx / m;
-    var  = mxx / m - mean * mean;
+    var = mxx / m - mean * mean;
 }
 
-/// Flat mesh edge slot (tri*3+e) of the first boundary edge lying on x == x0.
+/**
+ * @brief Find the first exterior triangular slot whose tested endpoint pair lies on x0.
+ *
+ * Uses this fixture's explicit opposite-vertex endpoint convention; does not inspect quads,
+ * validate edge numbering or change topology. Flat storage uses MeshData::slot rather than assuming
+ * a three-entry cell stride.
+ *
+ * @param[in] mesh Built triangular mesh with valid first-three vertex/neighbor entries and x
+ *     coordinates.
+ * @param[in] x0 Target vertical coordinate in metres, matched at absolute tolerance 1e-12.
+ * @return MeshData::slot(i,e) for the first neighbor-negative local e whose vertices (e+1)%3 and
+ *     (e+2)%3 match x0, or -1.
+ */
 int boundaryEdgeOnX(const MeshData& mesh, double x0) {
     for (int i = 0; i < mesh.n_triangles(); ++i) {
-        const int vv[3]  = {mesh.cell_vertex(i, 0), mesh.cell_vertex(i, 1), mesh.cell_vertex(i, 2)};
-        const int nbr[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1), mesh.cell_neighbour(i, 2)};
+        const int vv[3] = {mesh.cell_vertex(i, 0), mesh.cell_vertex(i, 1), mesh.cell_vertex(i, 2)};
+        const int nbr[3] = {mesh.cell_neighbour(i, 0), mesh.cell_neighbour(i, 1),
+                            mesh.cell_neighbour(i, 2)};
         for (int e = 0; e < 3; ++e) {
-            if (nbr[e] >= 0) continue;
+            if (nbr[e] >= 0)
+                continue;
             const int va = vv[(e + 1) % 3], vb = vv[(e + 2) % 3];
-            if (std::fabs(mesh.vx[va] - x0) < 1e-12 &&
-                std::fabs(mesh.vx[vb] - x0) < 1e-12)
+            if (std::fabs(mesh.vx[va] - x0) < 1e-12 && std::fabs(mesh.vx[vb] - x0) < 1e-12)
                 return MeshData::slot(i, e);
         }
     }
     return -1;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // 1. Rain at the pond's own concentration leaves a still pond UNIFORM to
@@ -186,9 +274,9 @@ TEST(SurfaceTransportS2, RainAtPondConcentrationKeepsPondUniform) {
         << "rain at c_rain == c0 changed a cell's concentration: the rain "
            "mass is not booked against the same volume the rain adds";
     double area = 0.0;
-    for (int i = 0; i < mesh.n_triangles(); ++i) area += mesh.tri_area[i];
-    EXPECT_NEAR(s.transport.gained_rainfall[0], R * area * T * c0,
-                1.0e-9 * R * area * T * c0);
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        area += mesh.tri_area[i];
+    EXPECT_NEAR(s.transport.gained_rainfall[0], R * area * T * c0, 1.0e-9 * R * area * T * c0);
     EXPECT_NEAR(s.transport.totalIncludingLedgers(0), m0, 1.0e-10 * m0);
 }
 
@@ -225,7 +313,7 @@ TEST(SurfaceTransportS2, DispersionSmoothsConservesAndObeysMaxPrinciple) {
     auto mesh = makeStrip(40, 4, 1.0);
     SolverOptions2D opts;
     opts.lts_tiers = 1;
-    opts.dispersion = 0.05;   // D·dt/dx² ≈ 0.015 at the gravity-wave dt
+    opts.dispersion = 0.05; // D·dt/dx² ≈ 0.015 at the gravity-wave dt
     auto s = makePond(mesh, opts, 1, 1.0, 0.0);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         if (mesh.tri_cx[i] < 20.0)
@@ -239,21 +327,22 @@ TEST(SurfaceTransportS2, DispersionSmoothsConservesAndObeysMaxPrinciple) {
     const auto w = wetStats(mesh, opts, s, 0, 0.0);
     EXPECT_NEAR(s.transport.totalIncludingLedgers(0), m0, 1.0e-10 * m0);
     EXPECT_LE(w.cmax, 10.0 * (1.0 + 1.0e-10)) << "new maximum created";
-    EXPECT_GE(w.cmin, -1.0e-12)                << "negative concentration";
+    EXPECT_GE(w.cmin, -1.0e-12) << "negative concentration";
     EXPECT_EQ(s.transport.dispersion_limiter_binds, 0L)
         << "limiter bound at a D far inside the explicit stability limit";
     // The step is gone: cells straddling x = 20 carry intermediate values.
     bool smoothed = false;
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const double c = s.transport.concentration(0, i, s.volume[i], 0.0);
-        if (c > 0.5 && c < 9.5) smoothed = true;
+        if (c > 0.5 && c < 9.5)
+            smoothed = true;
     }
     EXPECT_TRUE(smoothed) << "dispersion did nothing on a still pond";
     // Column-mean profile is monotone in x (no ringing).
     std::vector<double> col(40, 0.0), colv(40, 0.0);
     for (int i = 0; i < mesh.n_triangles(); ++i) {
         const auto k = static_cast<std::size_t>(mesh.tri_cx[i]);
-        col[k]  += s.transport.cell_mass[s.transport.idx(0, i)];
+        col[k] += s.transport.cell_mass[s.transport.idx(0, i)];
         colv[k] += s.volume[i];
     }
     for (std::size_t k = 1; k < 40; ++k)
@@ -308,7 +397,7 @@ TEST(SurfaceTransportS2, OverResolvedDispersionBindsLimiterAndStaysBounded) {
     auto mesh = makeStrip(40, 4, 1.0);
     SolverOptions2D opts;
     opts.lts_tiers = 1;
-    opts.dispersion = 20.0;   // D·dt/dx² ≫ ½
+    opts.dispersion = 20.0; // D·dt/dx² ≫ ½
     auto s = makePond(mesh, opts, 1, 1.0, 0.0);
     for (int i = 0; i < mesh.n_triangles(); ++i)
         if (mesh.tri_cx[i] < 20.0)
@@ -362,27 +451,29 @@ TEST(SurfaceTransportS2, BoundaryInflowAtPondConcentrationKeepsPondUniform) {
     SolverOptions2D opts;
     opts.lts_tiers = 1;
     const double c0 = 4.0;
-    auto s = makePond(mesh, opts, 2, 0.5, c0);   // two species: stride check
+    auto s = makePond(mesh, opts, 2, 0.5, c0); // two species: stride check
     BoundaryData bd;
     bd.resize(mesh.n_edge_slots());
     const int slot = boundaryEdgeOnX(mesh, 0.0);
     ASSERT_GE(slot, 0);
     bd.edge_bc_type[slot] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
-    bd.edge_bc_flow[slot] = -1.0e-3;   // outward per metre; negative = INFLOW
+    bd.edge_bc_flow[slot] = -1.0e-3; // outward per metre; negative = INFLOW
     s.boundary = &bd;
     // Species 0 arrives at c0 (pond stays uniform); species 1 arrives clean.
     s.transport.bc_quality_rows.push_back({slot, 0, c0});
     const double m0_s0 = s.transport.totalIncludingLedgers(0);
     const double m0_s1 = s.transport.totalIncludingLedgers(1);
     double vol0 = 0.0;
-    for (int i = 0; i < mesh.n_triangles(); ++i) vol0 += s.volume[i];
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        vol0 += s.volume[i];
 
     ExplicitInertialSolver solver;
     solver.initialize(mesh, s, opts);
     run(solver, 600.0);
 
     double vol1 = 0.0;
-    for (int i = 0; i < mesh.n_triangles(); ++i) vol1 += s.volume[i];
+    for (int i = 0; i < mesh.n_triangles(); ++i)
+        vol1 += s.volume[i];
     const double v_in = vol1 - vol0;
     ASSERT_GT(v_in, 0.0) << "the inflow boundary admitted no water";
 
@@ -418,7 +509,7 @@ TEST(SurfaceTransportS2, BoundaryQualityOnWallEdgeIsRefused) {
     BoundaryData bd;
     bd.resize(mesh.n_edge_slots());
     s.boundary = &bd;
-    const int slot = boundaryEdgeOnX(mesh, 0.0);   // left as WALL
+    const int slot = boundaryEdgeOnX(mesh, 0.0); // left as WALL
     ASSERT_GE(slot, 0);
     s.transport.bc_quality_rows.push_back({slot, 0, 1.0});
     ExplicitInertialSolver solver;
@@ -437,11 +528,17 @@ TEST(SurfaceTransportS2, BoundaryQualityOnWallEdgeIsRefused) {
 // ---------------------------------------------------------------------------
 namespace {
 
-/// The rain-on-grid pan test_2d_infil_integration.cpp established: a flat
-/// 20×20 m closed basin of four tagged triangles with initial standing
-/// water, an uncoupled minimal 1D network so the routing loop exists, and
-/// no boundary — nothing moves, so the seeded concentrations are read back
-/// exactly as seeded.
+/**
+ * @brief Construct the closed four-triangle initial-quality pan deck.
+ *
+ * Constructs text only; does not validate quality selectors or perform the intended no-flow
+ * simulation.
+ *
+ * @param[in] iq_section Raw initial-quality section text placed before REPORT; caller includes
+ *     section header/newline delimiters.
+ * @return Owned ten-minute CMS deck with Cu/Zn, 0.5 m water in tagged cells, 20-by-20 m pan and
+ *     disconnected minimal 1D routing network.
+ */
 std::string iqDeck(const std::string& iq_section) {
     return "[OPTIONS]\n"
            "FLOW_UNITS           CMS\nFLOW_ROUTING         DYNWAVE\n"
@@ -466,46 +563,60 @@ std::string iqDeck(const std::string& iq_section) {
            "1  2  4  0.03  0.5  WOODS\n"
            "2  3  4  0.03  0.5  LAWN\n"
            "3  0  4  0.03  0.5  PAVED\n\n" +
-           iq_section +
-           "[REPORT]\nINPUT NO\n";
+           iq_section + "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Write an initial-quality fixture deck and assert that the file opens.
+ *
+ * Fatal GoogleTest assertion returns from this helper on open failure. Write/close status is
+ * unchecked; callers must inspect overall test status before assuming the deck exists.
+ *
+ * @param[in] p Destination path, existing file truncated; parent directory must exist.
+ * @param[in] body Complete input text written without an appended newline.
+ */
 void write_iq(const std::string& p, const std::string& body) {
     std::ofstream f(p);
     ASSERT_TRUE(f.is_open()) << p;
     f << body;
 }
 
-/// Open + initialize + start; returns the engine on full success, nullptr
-/// otherwise (destroyed). The refusal legs assert nullptr — the router's
-/// initialize throws are routed through the engine's error path.
+/**
+ * @brief Write/open/initialize/start an initial-quality fixture with saved output.
+ *
+ * Uses short-circuit lifecycle checks. write_iq fatal failure returns only from that helper and
+ * does not itself stop iqOpen. Successful caller must end/close/destroy the engine; no finalization
+ * is performed here.
+ *
+ * @param[in] tag Filesystem-safe path stem for .inp/.rpt/.out artifacts; parent exists.
+ * @param[in] body Complete deck text passed to write_iq.
+ * @return Owned started engine on full success, otherwise null after destroying any created handle.
+ */
 SWMM_Engine iqOpen(const std::string& tag, const std::string& body) {
     write_iq(tag + ".inp", body);
     SWMM_Engine e = swmm_engine_create();
-    if (!e) return nullptr;
-    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (!e)
+        return nullptr;
+    if (swmm_engine_open(e, (tag + ".inp").c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(),
+                         nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     return e;
 }
 
-}  // namespace
+} // namespace
 
 TEST(SurfaceTransportS2, InitialQualitySeedsThroughTheDeckAtAllThreeScopes) {
-    SWMM_Engine e = iqOpen("_s2iq_ok", iqDeck(
-        "[2D_INITIAL_QUALITY]\n"
-        "* Cu 2.0\n"
-        "TAG LAWN Cu 5.0\n"
-        "CELL 2 Cu 9.0\n"
-        "* Zn 1.5\n\n"));
+    SWMM_Engine e = iqOpen("_s2iq_ok", iqDeck("[2D_INITIAL_QUALITY]\n"
+                                              "* Cu 2.0\n"
+                                              "TAG LAWN Cu 5.0\n"
+                                              "CELL 2 Cu 9.0\n"
+                                              "* Zn 1.5\n\n"));
     ASSERT_NE(e, nullptr) << "a valid [2D_INITIAL_QUALITY] deck must open";
 
-    const auto& router =
-        static_cast<openswmm::SWMMEngine*>(e)->surfaceRouter2D();
+    const auto& router = static_cast<openswmm::SWMMEngine*>(e)->surfaceRouter2D();
     const auto& st = router.state();
     const auto& tr = st.transport;
     ASSERT_EQ(tr.n_species, 2);
@@ -520,21 +631,17 @@ TEST(SurfaceTransportS2, InitialQualitySeedsThroughTheDeckAtAllThreeScopes) {
     const double cu[4] = {5.0, 9.0, 5.0, 2.0};
     for (int c = 0; c < 4; ++c) {
         ASSERT_GT(st.volume[c], 0.0);
-        EXPECT_NEAR(tr.cell_mass[tr.idx(0, c)] / st.volume[c], cu[c],
-                    1.0e-12 * cu[c]) << "Cu at cell " << c;
-        EXPECT_NEAR(tr.cell_mass[tr.idx(1, c)] / st.volume[c], 1.5,
-                    1.5e-12) << "Zn at cell " << c;
+        EXPECT_NEAR(tr.cell_mass[tr.idx(0, c)] / st.volume[c], cu[c], 1.0e-12 * cu[c])
+            << "Cu at cell " << c;
+        EXPECT_NEAR(tr.cell_mass[tr.idx(1, c)] / st.volume[c], 1.5, 1.5e-12) << "Zn at cell " << c;
     }
     swmm_engine_destroy(e);
 
     // Refusals — each row would silently seed nothing, so each is fatal.
-    EXPECT_EQ(iqOpen("_s2iq_sp", iqDeck(
-        "[2D_INITIAL_QUALITY]\n* Pb 1.0\n\n")), nullptr)
+    EXPECT_EQ(iqOpen("_s2iq_sp", iqDeck("[2D_INITIAL_QUALITY]\n* Pb 1.0\n\n")), nullptr)
         << "unknown species accepted";
-    EXPECT_EQ(iqOpen("_s2iq_tag", iqDeck(
-        "[2D_INITIAL_QUALITY]\nTAG MEADOW Cu 1.0\n\n")), nullptr)
+    EXPECT_EQ(iqOpen("_s2iq_tag", iqDeck("[2D_INITIAL_QUALITY]\nTAG MEADOW Cu 1.0\n\n")), nullptr)
         << "tag matching no triangle accepted";
-    EXPECT_EQ(iqOpen("_s2iq_cell", iqDeck(
-        "[2D_INITIAL_QUALITY]\nCELL 99 Cu 1.0\n\n")), nullptr)
+    EXPECT_EQ(iqOpen("_s2iq_cell", iqDeck("[2D_INITIAL_QUALITY]\nCELL 99 Cu 1.0\n\n")), nullptr)
         << "off-mesh cell accepted";
 }

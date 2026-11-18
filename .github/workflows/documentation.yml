@@ -192,11 +192,18 @@ jobs:
           done
           exit $fail
 
+      - name: Archive Doxygen docs
+        # Doxygen can generate names such as functions_:.html. Transfer one
+        # archive because upload-artifact rejects colons in individual paths.
+        run: tar -czf doxygen-docs.tar.gz -C docs/html .
+
       - name: Upload Doxygen docs artifact
         uses: actions/upload-artifact@v5
         with:
           name: doxygen-docs
-          path: docs/html/
+          path: doxygen-docs.tar.gz
+          if-no-files-found: error
+          compression-level: 0
           retention-days: 1
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -233,7 +240,12 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: doxygen-docs
-          path: site/
+          path: artifacts/doxygen/
+
+      - name: Extract Doxygen docs
+        run: |
+          mkdir -p site
+          tar -xzf artifacts/doxygen/doxygen-docs.tar.gz -C site
 
       - name: Download Python docs
         uses: actions/download-artifact@v5

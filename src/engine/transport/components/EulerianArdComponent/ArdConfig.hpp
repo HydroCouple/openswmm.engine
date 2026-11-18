@@ -15,28 +15,24 @@
 // limitations under the License.
 
 /**
- * @file ArdConfig.hpp
- * @brief The `org.hydrocouple.openswmm.transport.ard` process component —
+ * @file      ArdConfig.hpp
+ * @brief     The `org.hydrocouple.openswmm.transport.ard` process component —
  *        phase E3: parse the dispersion subset of `model.ard` into
  *        SimulationContext::ard_config.
  *
- * @details E3 scope: `[TRANSPORT_OPTIONS] DISPERSION OFF|FISCHER|<value>`
- *          and `[CONDUIT_DISPERSION]` per-conduit overrides. The remaining
- *          [TRANSPORT_OPTIONS] keys (SCALAR_SCHEME/LIMITER/TARGET_DX — the
- *          [OPTIONS] FV_* keys still configure those today) and the shared
- *          1D sections ([TRANSPORT_BOUNDARIES]/[TRANSPORT_SOURCES] E5,
- *          [STORAGE_MIXING] E2b) are refused with precise deferral errors.
- *          Configurations under which the parsed dispersion cannot take
- *          effect (QUALITY_SOLVER other than EULERIAN_ARD, IGNORE_QUALITY,
- *          no pollutants) warn at open rather than running silently —
- *          the R4 silent-bypass lesson applied at introduction time.
+ * @details Supports display-unit dispersion and conduit overrides, shared scalar
+ *          scheme/limiter, target cell length, diagnostic CSV output and deferred
+ *          MSX-only node boundaries/conduit sources (constant or time series).
+ *          Storage mixing beyond the existing reactor model remains unsupported.
+ *          Configurations bypassed by selected quality/ignore options warn during
+ *          setup. Resolve species/series rows after every component has applied.
  *
  * @see plans/transport/EULERIAN_ARD_TRANSPORT_PLAN.md §4, §6 E3
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_ARD_CONFIG_HPP
@@ -73,8 +69,7 @@ void warnIfFvDispersionKeyIgnored(SimulationContext& ctx);
 /// diagnostics into `errors`; pollutant species are refused (their loading
 /// surface is the legacy pathways). Source VALUE rates convert from species
 /// mass/s to internal conc·ft³/s here (kLitersPerFt3).
-void resolveArdTransportRows(SimulationContext& ctx,
-                             std::vector<std::string>& errors);
+void resolveArdTransportRows(SimulationContext& ctx, std::vector<std::string>& errors);
 
 /// True when the external-load loaders must run even though the model has
 /// no pollutants: a [TRANSPORT_BOUNDARIES] row injects
@@ -84,6 +79,6 @@ void resolveArdTransportRows(SimulationContext& ctx,
 /// delivers exactly nothing.
 bool ardBoundariesNeedExternalVolumes(const SimulationContext& ctx);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_ARD_CONFIG_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_ARD_CONFIG_HPP

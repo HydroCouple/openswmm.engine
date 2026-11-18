@@ -15,15 +15,15 @@
 // limitations under the License.
 
 /**
- * @file openswmm_edit_impl.cpp
- * @brief C API implementation — object deletion and type conversion.
+ * @file      openswmm_edit_impl.cpp
+ * @brief     C API implementation — object deletion and type conversion.
  *
  * @see include/openswmm/engine/openswmm_edit.h
  * @ingroup engine_api
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "openswmm_api_common.hpp"
@@ -33,39 +33,70 @@
 #include "../edit/VirtualJunctionOps.hpp"
 #include "../../../include/openswmm/engine/openswmm_edit.h"
 
+#include "ErrorCodes.hpp"
+#include "../../../include/openswmm/engine/openswmm_infrastructure.h"
+#include <unordered_set>
+#include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 // ============================================================================
 // Internal helpers — convert C++ results to C structs
 // ============================================================================
 
-static void cascade_to_c(const openswmm::edit::CascadeResult& res,
-                          SWMM_ImpactReport* out) {
-    if (!out) return;
+/**
+ * @brief Copy an impact analysis into newly allocated C report storage.
+ *
+ * Allocates entries with new[] and borrows static field pointers. Caller uses
+ * swmm_impact_report_free. Empty analysis assigns NULL; allocation exceptions propagate after
+ * n_entries changes.
+ *
+ * @param[in] res Borrowed analysis with int-representable entry count and static-lifetime field
+ *     labels.
+ * @param[out] out Optional destination; NULL is a no-op. Must not already own unreleased entries.
+ */
+static void cascade_to_c(const openswmm::edit::CascadeResult& res, SWMM_ImpactReport* out) {
+    if (!out)
+        return;
     out->n_entries = static_cast<int>(res.entries.size());
-    if (out->n_entries == 0) { out->entries = nullptr; return; }
+    if (out->n_entries == 0) {
+        out->entries = nullptr;
+        return;
+    }
     out->entries = new SWMM_ImpactEntry[static_cast<std::size_t>(out->n_entries)];
     for (int i = 0; i < out->n_entries; ++i) {
         const auto& e = res.entries[static_cast<std::size_t>(i)];
-        out->entries[i].obj_type  = e.obj_type;
-        out->entries[i].obj_idx   = e.obj_idx;
-        out->entries[i].field     = e.field;   // static literal — safe
-        out->entries[i].cascaded  = e.cascaded ? 1 : 0;
+        out->entries[i].obj_type = e.obj_type;
+        out->entries[i].obj_idx = e.obj_idx;
+        out->entries[i].field = e.field; // static literal — safe
+        out->entries[i].cascaded = e.cascaded ? 1 : 0;
     }
 }
 
+/**
+ * @brief Copy conversion results into caller-owned C allocation fields.
+ *
+ * Allocates pointer arrays with new[] and duplicates strings via strdup; caller uses
+ * swmm_conversion_result_free. Does not check strdup refusal or roll back partial allocation if a
+ * later new[] throws.
+ *
+ * @param[in] res Borrowed conversion result with int-representable field/warning counts.
+ * @param[out] out Optional destination; NULL is a no-op. Existing owned arrays must be freed first.
+ */
 static void conversion_to_c(const openswmm::edit::ConversionResult& res,
-                             SWMM_ConversionResult* out) {
-    if (!out) return;
+                            SWMM_ConversionResult* out) {
+    if (!out)
+        return;
     out->new_type = res.new_type;
 
     out->n_cleared = static_cast<int>(res.cleared_fields.size());
     if (out->n_cleared > 0) {
         out->cleared_fields = new const char*[static_cast<std::size_t>(out->n_cleared)];
         for (int i = 0; i < out->n_cleared; ++i)
-            out->cleared_fields[i] = strdup(res.cleared_fields[static_cast<std::size_t>(i)].c_str());
+            out->cleared_fields[i] =
+                strdup(res.cleared_fields[static_cast<std::size_t>(i)].c_str());
     } else {
         out->cleared_fields = nullptr;
     }
@@ -84,6 +115,224 @@ static void conversion_to_c(const openswmm::edit::ConversionResult& res,
 // extern "C" API
 // ============================================================================
 
+namespace {
+using namespace openswmm;
+
+struct IncidentLinks {
+    int count = 0;
+    int first = -1;
+    int second = -1;
+
+    void add(int link) {
+        if (count == 0)
+            first = link;
+        if (count == 1)
+            second = link;
+        ++count;
+    }
+};
+
+int link_conversion_rule(const SimulationContext& ctx, int link, bool hosts_inlet, int& blocker) {
+    if (ctx.links.type[link] != LinkType::CONDUIT)
+        return SWMM_OK;
+    for (int node : {ctx.links.node1[link], ctx.links.node2[link]}) {
+        if (node >= 0 && node < ctx.n_nodes() && ctx.nodes.is_virtual[node]) {
+            blocker = node;
+            return ERR_VJ_LINK_COUNT;
+        }
+    }
+    if (hosts_inlet)
+        return ERR_INLET_USAGE_SHAPE;
+    return SWMM_OK;
+}
+
+class ConversionBatch {
+public:
+    ConversionBatch(SimulationContext& ctx, bool nodes, int target, int design, int capture,
+                    int placement, bool apply)
+        : ctx(ctx), nodes(nodes), target(target), design(design), capture(capture),
+          placement(placement), apply(apply) {
+        const bool role = nodes && target >= SWMM_CONVERT_VIRTUAL;
+        if (role || !nodes) {
+            const auto& usages = ctx.inlet_usages;
+            for (int i = 0; i < usages.count(); ++i) {
+                if (usages.link_index[i] >= 0)
+                    hosted.insert(usages.link_index[i]);
+                receivers.insert(usages.node_index[i]);
+            }
+        }
+        if (role || (nodes && target == SWMM_NODE_DIVIDER)) {
+            incident.resize(ctx.n_nodes());
+            for (int i = 0; i < ctx.n_links(); ++i) {
+                const int a = ctx.links.node1[i], b = ctx.links.node2[i];
+                if (a >= 0 && a < ctx.n_nodes())
+                    incident[a].add(i);
+                // Divider warnings count distinct links. Virtual rules count attached ends.
+                if (b >= 0 && b < ctx.n_nodes() && (role || a != b))
+                    incident[b].add(i);
+            }
+        }
+        if (role)
+            coupled = edit::vj_coupled_nodes(ctx);
+        if (nodes && apply)
+            outfalls = std::count(ctx.nodes.type.begin(), ctx.nodes.type.end(), NodeType::OUTFALL);
+    }
+
+    void process(int idx, SWMM_TypeChange& row) {
+        row = {};
+        row.source_type = -1;
+        row.dependency_node = -1;
+        if (idx < 0 || idx >= (nodes ? ctx.n_nodes() : ctx.n_links())) {
+            row.status = SWMM_ERR_BADINDEX;
+            return;
+        }
+        if (!nodes) {
+            row.source_type = internal_to_c_link_type(ctx.links.type[idx]);
+            if (row.source_type == target)
+                return;
+            row.status = link_conversion_rule(ctx, idx, hosted.count(idx), row.dependency_node);
+            if (apply && !row.status) {
+                LinkType to;
+                c_to_internal_link_type(target, to);
+                conversion_to_c(edit::convert_link(ctx, idx, to), &row.details);
+            }
+            return;
+        }
+
+        const auto base = ctx.nodes.type[idx];
+        row.source_type = ctx.nodes.is_inlet[idx]     ? static_cast<int>(SWMM_CONVERT_INLET)
+                          : ctx.nodes.is_virtual[idx] ? static_cast<int>(SWMM_CONVERT_VIRTUAL)
+                                                      : internal_to_c_node_type(base);
+        if (row.source_type == target)
+            return;
+        if (target == SWMM_CONVERT_VIRTUAL && row.source_type == SWMM_CONVERT_INLET) {
+            if (apply) {
+                edit::ij_set_inlet(ctx, idx, false);
+                conversion_to_c({target, {"is_inlet", "inlet_usage"}, {}}, &row.details);
+            }
+            return;
+        }
+        if (target >= SWMM_CONVERT_VIRTUAL)
+            row.status = promotion_rule(idx);
+        if (row.status || !apply)
+            return;
+
+        // Every rejectable operation precedes this point. Indices, source type and
+        // owning stores stay stable throughout this synchronous engine call.
+        NodeType to = NodeType::JUNCTION;
+        if (target < SWMM_CONVERT_VIRTUAL)
+            c_to_internal_node_type(target, to);
+        edit::ConversionResult details{target, {}, {}};
+        if (base != to) {
+            const int degree = incident.empty() ? -1 : incident[idx].count;
+            details = edit::convert_node(ctx, idx, to, degree, outfalls);
+            if (base == NodeType::OUTFALL)
+                --outfalls;
+            if (to == NodeType::OUTFALL)
+                ++outfalls;
+            if (row.source_type == SWMM_CONVERT_INLET)
+                details.cleared_fields.push_back("inlet_usage");
+        } else if (target == SWMM_NODE_JUNCTION) {
+            edit::vj_clear_virtual(ctx, idx);
+            details.cleared_fields.push_back("is_virtual");
+            if (row.source_type == SWMM_CONVERT_INLET) {
+                details.cleared_fields.push_back("is_inlet");
+                details.cleared_fields.push_back("inlet_usage");
+            }
+        }
+        if (target >= SWMM_CONVERT_VIRTUAL && !ctx.nodes.is_virtual[idx])
+            edit::vj_promote_checked(ctx, idx, incident[idx].first);
+        if (target == SWMM_CONVERT_INLET) {
+            const int usage = ctx.inlet_usages.add_row(-1, idx, design, capture);
+            ctx.inlet_usages.placement[usage] = placement;
+            ctx.nodes.is_inlet[idx] = 1;
+        }
+        details.new_type = target;
+        conversion_to_c(details, &row.details);
+    }
+
+private:
+    int promotion_rule(int idx) const {
+        const auto& pair = incident[idx];
+        if (const int code = edit::vj_section_rule(ctx, idx, pair.count, pair.first, pair.second))
+            return code;
+        if (coupled[idx])
+            return ERR_VJ_LATERAL_INFLOW;
+        if (receivers.count(idx))
+            return ERR_IJ_CAPTURE_NODE;
+        const bool inlet = target == SWMM_CONVERT_INLET;
+        const auto routing = ctx.options.routing_model;
+        if (routing != RoutingModel::DYNWAVE && (inlet || routing != RoutingModel::FV))
+            return ERR_VJ_ROUTING_MODEL;
+        if (!inlet)
+            return SWMM_OK;
+        if (hosted.count(pair.first) || hosted.count(pair.second))
+            return ERR_IJ_USAGE_ON_PAIR;
+        if (design == -2 && !apply) {
+            if (edit::ij_conduit_shape_ok(ctx, pair.first, false) ||
+                edit::ij_conduit_shape_ok(ctx, pair.first, true))
+                return SWMM_OK;
+            return ERR_IJ_NOT_STREET;
+        }
+        if (design < 0 || design >= ctx.inlets.count())
+            return ERR_IJ_DESIGN;
+        if (capture < 0 || capture >= ctx.n_nodes() || capture == idx ||
+            ctx.nodes.is_virtual[capture])
+            return ERR_IJ_CAPTURE_NODE;
+        if (placement < SWMM_INLET_AUTOMATIC || placement > SWMM_INLET_ON_SAG)
+            return SWMM_ERR_BADPARAM;
+        // vj_section_rule already established identical shapes on both links.
+        if (!edit::ij_conduit_shape_ok(ctx, pair.first, edit::ij_design_is_drop(ctx, design)))
+            return ERR_IJ_NOT_STREET;
+        return SWMM_OK;
+    }
+
+    SimulationContext& ctx;
+    bool nodes;
+    int target, design, capture, placement;
+    bool apply;
+    int outfalls = 0;
+    std::vector<IncidentLinks> incident;
+    std::vector<bool> coupled;
+    std::unordered_set<int> hosted, receivers;
+};
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Recorded deletes — the handle pairs a record with the engine that made it.
+// ---------------------------------------------------------------------------
+
+namespace {
+struct DeleteRecordHandle {
+    SWMM_Engine owner = nullptr;
+    openswmm::edit::DeleteRecord record;
+};
+} // namespace
+
+/**
+ * @brief Run one recorded delete: hand @p del a fresh record when the caller wants one, report
+ *        the cascade, seal the record with the post-delete counts and return it.
+ * @param[in] del Callable taking DeleteRecord* (null for a plain delete) and returning the
+ *     CascadeResult; the caller has validated every index.
+ */
+template <class DeleteFn>
+static int run_recorded_delete(SWMM_Engine engine, openswmm::SimulationContext& ctx,
+                               SWMM_ImpactReport* cascade_out, SWMM_DeleteRecord* record_out,
+                               DeleteFn&& del) {
+    std::unique_ptr<DeleteRecordHandle> handle;
+    if (record_out) {
+        handle = std::make_unique<DeleteRecordHandle>();
+        handle->owner = engine;
+    }
+    auto res = del(handle ? &handle->record : nullptr);
+    cascade_to_c(res, cascade_out);
+    if (record_out) {
+        openswmm::edit::seal_delete_record(ctx, handle->record);
+        *record_out = handle.release();
+    }
+    return SWMM_OK;
+}
+
 extern "C" {
 
 // -------------------------------------------------------------------------
@@ -91,14 +340,16 @@ extern "C" {
 // -------------------------------------------------------------------------
 
 SWMM_ENGINE_API void swmm_impact_report_free(SWMM_ImpactReport* report) {
-    if (!report) return;
+    if (!report)
+        return;
     delete[] report->entries;
-    report->entries  = nullptr;
+    report->entries = nullptr;
     report->n_entries = 0;
 }
 
 SWMM_ENGINE_API void swmm_conversion_result_free(SWMM_ConversionResult* result) {
-    if (!result) return;
+    if (!result)
+        return;
     for (int i = 0; i < result->n_cleared; ++i)
         free(const_cast<char*>(result->cleared_fields[i]));
     delete[] result->cleared_fields;
@@ -108,7 +359,7 @@ SWMM_ENGINE_API void swmm_conversion_result_free(SWMM_ConversionResult* result) 
     for (int i = 0; i < result->n_warnings; ++i)
         free(const_cast<char*>(result->warnings[i]));
     delete[] result->warnings;
-    result->warnings  = nullptr;
+    result->warnings = nullptr;
     result->n_warnings = 0;
 }
 
@@ -117,7 +368,7 @@ SWMM_ENGINE_API void swmm_conversion_result_free(SWMM_ConversionResult* result) 
 // -------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_node_analyze_impact(SWMM_Engine engine, int idx,
-                                              SWMM_ImpactReport* report_out) {
+                                             SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -130,7 +381,7 @@ SWMM_ENGINE_API int swmm_node_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_link_analyze_impact(SWMM_Engine engine, int idx,
-                                              SWMM_ImpactReport* report_out) {
+                                             SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -143,7 +394,7 @@ SWMM_ENGINE_API int swmm_link_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_subcatch_analyze_impact(SWMM_Engine engine, int idx,
-                                                  SWMM_ImpactReport* report_out) {
+                                                 SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -156,7 +407,7 @@ SWMM_ENGINE_API int swmm_subcatch_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_gage_analyze_impact(SWMM_Engine engine, int idx,
-                                              SWMM_ImpactReport* report_out) {
+                                             SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -169,7 +420,7 @@ SWMM_ENGINE_API int swmm_gage_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_table_analyze_impact(SWMM_Engine engine, int idx,
-                                               SWMM_ImpactReport* report_out) {
+                                              SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -182,7 +433,7 @@ SWMM_ENGINE_API int swmm_table_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_transect_analyze_impact(SWMM_Engine engine, int idx,
-                                                   SWMM_ImpactReport* report_out) {
+                                                 SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -196,19 +447,31 @@ SWMM_ENGINE_API int swmm_transect_analyze_impact(SWMM_Engine engine, int idx,
 
 // Unit-hydrograph groups are name-keyed; a group "exists" if any parameter
 // line or gage assignment carries the name.
-static bool uh_group_exists(const openswmm::SimulationContext& ctx,
-                            const char* uh_name) {
-    if (!uh_name || !*uh_name) return false;
+/**
+ * @brief Test whether a unit-hydrograph name is present in parameters or assignments.
+ *
+ * Copies the name, so allocation can throw. Does not require a complete RTK parameter group or
+ * validate gage references.
+ *
+ * @param[in] ctx Borrowed authored unit-hydrograph parameter entries and gage assignments.
+ * @param[in] uh_name Borrowed NUL-terminated exact-case name; NULL/empty returns false.
+ * @return True on any exact string match, false otherwise.
+ */
+static bool uh_group_exists(const openswmm::SimulationContext& ctx, const char* uh_name) {
+    if (!uh_name || !*uh_name)
+        return false;
     const std::string name(uh_name);
     for (const auto& e : ctx.unit_hyds.entries)
-        if (e.name == name) return true;
+        if (e.name == name)
+            return true;
     for (const auto& a : ctx.unit_hyds.gage_assignments)
-        if (a == name) return true;
+        if (a == name)
+            return true;
     return false;
 }
 
 SWMM_ENGINE_API int swmm_pollutant_analyze_impact(SWMM_Engine engine, int idx,
-                                                   SWMM_ImpactReport* report_out) {
+                                                  SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -219,7 +482,7 @@ SWMM_ENGINE_API int swmm_pollutant_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_pattern_analyze_impact(SWMM_Engine engine, int idx,
-                                                 SWMM_ImpactReport* report_out) {
+                                                SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -230,7 +493,7 @@ SWMM_ENGINE_API int swmm_pattern_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_aquifer_analyze_impact(SWMM_Engine engine, int idx,
-                                                 SWMM_ImpactReport* report_out) {
+                                                SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -241,7 +504,7 @@ SWMM_ENGINE_API int swmm_aquifer_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_snowpack_analyze_impact(SWMM_Engine engine, int idx,
-                                                  SWMM_ImpactReport* report_out) {
+                                                 SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -252,7 +515,7 @@ SWMM_ENGINE_API int swmm_snowpack_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_lid_analyze_impact(SWMM_Engine engine, int idx,
-                                             SWMM_ImpactReport* report_out) {
+                                            SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -263,7 +526,7 @@ SWMM_ENGINE_API int swmm_lid_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_street_analyze_impact(SWMM_Engine engine, int idx,
-                                                SWMM_ImpactReport* report_out) {
+                                               SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -274,7 +537,7 @@ SWMM_ENGINE_API int swmm_street_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_inlet_analyze_impact(SWMM_Engine engine, int idx,
-                                               SWMM_ImpactReport* report_out) {
+                                              SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -285,7 +548,7 @@ SWMM_ENGINE_API int swmm_inlet_analyze_impact(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_landuse_analyze_impact(SWMM_Engine engine, int idx,
-                                                 SWMM_ImpactReport* report_out) {
+                                                SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
@@ -295,13 +558,13 @@ SWMM_ENGINE_API int swmm_landuse_analyze_impact(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_hydrograph_analyze_impact(SWMM_Engine engine,
-                                                    const char* uh_name,
-                                                    SWMM_ImpactReport* report_out) {
+SWMM_ENGINE_API int swmm_hydrograph_analyze_impact(SWMM_Engine engine, const char* uh_name,
+                                                   SWMM_ImpactReport* report_out) {
     CHECK_HANDLE(engine);
     const auto& ctx = to_engine(engine)->context();
     CHECK_READABLE(ctx);
-    if (!uh_group_exists(ctx, uh_name)) return SWMM_ERR_BADPARAM;
+    if (!uh_group_exists(ctx, uh_name))
+        return SWMM_ERR_BADPARAM;
     if (report_out)
         cascade_to_c(openswmm::edit::analyze_hydrograph_impact(ctx, uh_name), report_out);
     return SWMM_OK;
@@ -311,8 +574,7 @@ SWMM_ENGINE_API int swmm_hydrograph_analyze_impact(SWMM_Engine engine,
 // Deletion — mutating (CHECK_EDITABLE)
 // -------------------------------------------------------------------------
 
-SWMM_ENGINE_API int swmm_node_delete(SWMM_Engine engine, int idx,
-                                      SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_node_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -324,8 +586,7 @@ SWMM_ENGINE_API int swmm_node_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_link_delete(SWMM_Engine engine, int idx,
-                                      SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_link_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -336,7 +597,7 @@ SWMM_ENGINE_API int swmm_link_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_subcatch_delete(SWMM_Engine engine, int idx,
-                                          SWMM_ImpactReport* cascade_out) {
+                                         SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -346,8 +607,7 @@ SWMM_ENGINE_API int swmm_subcatch_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx,
-                                      SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -357,54 +617,142 @@ SWMM_ENGINE_API int swmm_gage_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
+#define SWMM_DELETE_RECORDED_BODY(COUNT_EXPR, DELETE_FN)                                           \
+    CHECK_HANDLE(engine);                                                                          \
+    auto& ctx = to_engine(engine)->context();                                                      \
+    CHECK_EDITABLE(ctx);                                                                           \
+    CHECK_INDEX(idx >= 0 && idx < (COUNT_EXPR));                                                   \
+    return run_recorded_delete(                                                                    \
+        engine, ctx, cascade_out, record_out,                                                      \
+        [&](openswmm::edit::DeleteRecord* r) { return openswmm::edit::DELETE_FN(ctx, idx, r); })
+
+// Every index is validated before any change, as for swmm_*_delete_many.
+#define SWMM_DELETE_MANY_RECORDED_BODY(COUNT_EXPR, MANY_FN)                                        \
+    CHECK_HANDLE(engine);                                                                          \
+    auto& ctx = to_engine(engine)->context();                                                      \
+    CHECK_EDITABLE(ctx);                                                                           \
+    if (n > 0 && !indices)                                                                         \
+        return SWMM_ERR_BADPARAM;                                                                  \
+    for (int k = 0; k < n; ++k)                                                                    \
+        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));                                 \
+    return run_recorded_delete(                                                                    \
+        engine, ctx, cascade_out, record_out, [&](openswmm::edit::DeleteRecord* r) {               \
+            return n > 0 ? openswmm::edit::MANY_FN(ctx, std::vector<int>(indices, indices + n), r) \
+                         : openswmm::edit::CascadeResult{};                                        \
+        })
+
+SWMM_ENGINE_API int swmm_gage_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_gages(), delete_gage);
+}
+
+SWMM_ENGINE_API int swmm_gage_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_gages(), delete_gages_many);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_links(), delete_link);
+}
+
+SWMM_ENGINE_API int swmm_link_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_links(), delete_links_many);
+}
+
+SWMM_ENGINE_API int swmm_node_delete_recorded(SWMM_Engine engine, int idx,
+                                              SWMM_ImpactReport* cascade_out,
+                                              SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_nodes(), delete_node);
+}
+
+SWMM_ENGINE_API int swmm_node_delete_many_recorded(SWMM_Engine engine, const int* indices, int n,
+                                                   SWMM_ImpactReport* cascade_out,
+                                                   SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_nodes(), delete_nodes_many);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_delete_recorded(SWMM_Engine engine, int idx,
+                                                  SWMM_ImpactReport* cascade_out,
+                                                  SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_RECORDED_BODY(ctx.n_subcatches(), delete_subcatch);
+}
+
+SWMM_ENGINE_API int swmm_subcatch_delete_many_recorded(SWMM_Engine engine, const int* indices,
+                                                       int n, SWMM_ImpactReport* cascade_out,
+                                                       SWMM_DeleteRecord* record_out) {
+    SWMM_DELETE_MANY_RECORDED_BODY(ctx.n_subcatches(), delete_subcatches_many);
+}
+
+#undef SWMM_DELETE_RECORDED_BODY
+#undef SWMM_DELETE_MANY_RECORDED_BODY
+
+SWMM_ENGINE_API int swmm_delete_record_restore(SWMM_Engine engine, SWMM_DeleteRecord record) {
+    CHECK_HANDLE(engine);
+    if (!record)
+        return SWMM_ERR_BADPARAM;
+    auto& handle = *static_cast<DeleteRecordHandle*>(record);
+    if (handle.owner != engine)
+        return SWMM_ERR_BADPARAM;
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    return handle.record.restore(ctx) ? SWMM_OK : SWMM_ERR_BADPARAM;
+}
+
+SWMM_ENGINE_API void swmm_delete_record_destroy(SWMM_DeleteRecord record) {
+    delete static_cast<DeleteRecordHandle*>(record);
+}
+
 // ---------------------------------------------------------------------------
 // Batch deletes (perf plan Phase A1) — equivalent to sequential descending
 // per-object deletes with ONE name-index rebuild per batch.  Every index is
 // validated BEFORE any mutation so the call is all-or-nothing.
 // ---------------------------------------------------------------------------
 
-#define SWMM_DELETE_MANY_BODY(COUNT_EXPR, MANY_FN)                             \
-    CHECK_HANDLE(engine);                                                      \
-    auto& ctx = to_engine(engine)->context();                                  \
-    CHECK_EDITABLE(ctx);                                                       \
-    if (n <= 0) { cascade_to_c(openswmm::edit::CascadeResult{}, cascade_out);  \
-                  return SWMM_OK; }                                            \
-    if (!indices) return SWMM_ERR_BADPARAM;                                    \
-    for (int k = 0; k < n; ++k)                                                \
-        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));             \
-    auto res = openswmm::edit::MANY_FN(ctx,                                    \
-                                       std::vector<int>(indices, indices + n));\
-    cascade_to_c(res, cascade_out);                                            \
+#define SWMM_DELETE_MANY_BODY(COUNT_EXPR, MANY_FN)                                                 \
+    CHECK_HANDLE(engine);                                                                          \
+    auto& ctx = to_engine(engine)->context();                                                      \
+    CHECK_EDITABLE(ctx);                                                                           \
+    if (n <= 0) {                                                                                  \
+        cascade_to_c(openswmm::edit::CascadeResult{}, cascade_out);                                \
+        return SWMM_OK;                                                                            \
+    }                                                                                              \
+    if (!indices)                                                                                  \
+        return SWMM_ERR_BADPARAM;                                                                  \
+    for (int k = 0; k < n; ++k)                                                                    \
+        CHECK_INDEX(indices[k] >= 0 && indices[k] < (COUNT_EXPR));                                 \
+    auto res = openswmm::edit::MANY_FN(ctx, std::vector<int>(indices, indices + n));               \
+    cascade_to_c(res, cascade_out);                                                                \
     return SWMM_OK
 
-SWMM_ENGINE_API int swmm_node_delete_many(SWMM_Engine engine,
-                                          const int* indices, int n,
+SWMM_ENGINE_API int swmm_node_delete_many(SWMM_Engine engine, const int* indices, int n,
                                           SWMM_ImpactReport* cascade_out) {
     SWMM_DELETE_MANY_BODY(ctx.n_nodes(), delete_nodes_many);
 }
 
-SWMM_ENGINE_API int swmm_link_delete_many(SWMM_Engine engine,
-                                          const int* indices, int n,
+SWMM_ENGINE_API int swmm_link_delete_many(SWMM_Engine engine, const int* indices, int n,
                                           SWMM_ImpactReport* cascade_out) {
     SWMM_DELETE_MANY_BODY(ctx.n_links(), delete_links_many);
 }
 
-SWMM_ENGINE_API int swmm_subcatch_delete_many(SWMM_Engine engine,
-                                              const int* indices, int n,
+SWMM_ENGINE_API int swmm_subcatch_delete_many(SWMM_Engine engine, const int* indices, int n,
                                               SWMM_ImpactReport* cascade_out) {
     SWMM_DELETE_MANY_BODY(ctx.n_subcatches(), delete_subcatches_many);
 }
 
-SWMM_ENGINE_API int swmm_gage_delete_many(SWMM_Engine engine,
-                                          const int* indices, int n,
+SWMM_ENGINE_API int swmm_gage_delete_many(SWMM_Engine engine, const int* indices, int n,
                                           SWMM_ImpactReport* cascade_out) {
     SWMM_DELETE_MANY_BODY(ctx.n_gages(), delete_gages_many);
 }
 
 #undef SWMM_DELETE_MANY_BODY
 
-SWMM_ENGINE_API int swmm_table_delete(SWMM_Engine engine, int idx,
-                                       SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_table_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -415,7 +763,7 @@ SWMM_ENGINE_API int swmm_table_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_transect_delete(SWMM_Engine engine, int idx,
-                                          SWMM_ImpactReport* cascade_out) {
+                                         SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -426,7 +774,7 @@ SWMM_ENGINE_API int swmm_transect_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_pollutant_delete(SWMM_Engine engine, int idx,
-                                           SWMM_ImpactReport* cascade_out) {
+                                          SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -436,7 +784,7 @@ SWMM_ENGINE_API int swmm_pollutant_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_pattern_delete(SWMM_Engine engine, int idx,
-                                         SWMM_ImpactReport* cascade_out) {
+                                        SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -446,7 +794,7 @@ SWMM_ENGINE_API int swmm_pattern_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_aquifer_delete(SWMM_Engine engine, int idx,
-                                         SWMM_ImpactReport* cascade_out) {
+                                        SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -456,7 +804,7 @@ SWMM_ENGINE_API int swmm_aquifer_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_snowpack_delete(SWMM_Engine engine, int idx,
-                                          SWMM_ImpactReport* cascade_out) {
+                                         SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -465,8 +813,7 @@ SWMM_ENGINE_API int swmm_snowpack_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_lid_delete(SWMM_Engine engine, int idx,
-                                     SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_lid_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -476,7 +823,7 @@ SWMM_ENGINE_API int swmm_lid_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_street_delete(SWMM_Engine engine, int idx,
-                                        SWMM_ImpactReport* cascade_out) {
+                                       SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -485,8 +832,7 @@ SWMM_ENGINE_API int swmm_street_delete(SWMM_Engine engine, int idx,
     return SWMM_OK;
 }
 
-SWMM_ENGINE_API int swmm_inlet_delete(SWMM_Engine engine, int idx,
-                                       SWMM_ImpactReport* cascade_out) {
+SWMM_ENGINE_API int swmm_inlet_delete(SWMM_Engine engine, int idx, SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -496,7 +842,7 @@ SWMM_ENGINE_API int swmm_inlet_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_landuse_delete(SWMM_Engine engine, int idx,
-                                         SWMM_ImpactReport* cascade_out) {
+                                        SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -506,11 +852,12 @@ SWMM_ENGINE_API int swmm_landuse_delete(SWMM_Engine engine, int idx,
 }
 
 SWMM_ENGINE_API int swmm_hydrograph_delete(SWMM_Engine engine, const char* uh_name,
-                                            SWMM_ImpactReport* cascade_out) {
+                                           SWMM_ImpactReport* cascade_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
-    if (!uh_group_exists(ctx, uh_name)) return SWMM_ERR_BADPARAM;
+    if (!uh_group_exists(ctx, uh_name))
+        return SWMM_ERR_BADPARAM;
     cascade_to_c(openswmm::edit::delete_hydrograph(ctx, uh_name), cascade_out);
     return SWMM_OK;
 }
@@ -520,7 +867,7 @@ SWMM_ENGINE_API int swmm_hydrograph_delete(SWMM_Engine engine, const char* uh_na
 // -------------------------------------------------------------------------
 
 SWMM_ENGINE_API int swmm_node_convert(SWMM_Engine engine, int idx, int new_type,
-                                       SWMM_ConversionResult* result_out) {
+                                      SWMM_ConversionResult* result_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -532,7 +879,7 @@ SWMM_ENGINE_API int swmm_node_convert(SWMM_Engine engine, int idx, int new_type,
 
     const auto ui = static_cast<std::size_t>(idx);
     if (ctx.nodes.type[ui] == internal_new)
-        return SWMM_ERR_BADPARAM;  // same type — no-op
+        return SWMM_ERR_BADPARAM; // same type — no-op
 
     // Relational refactor (Phase 4): convert_node moves the node's subtype row
     // (set_node_type) so ctx.node_subtypes stays the single source of truth.
@@ -541,8 +888,25 @@ SWMM_ENGINE_API int swmm_node_convert(SWMM_Engine engine, int idx, int new_type,
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_convert_types(SWMM_Engine engine, int nodes, int target,
+                                       const int* indices, int count, int design, int capture,
+                                       int placement, int apply, SWMM_TypeChange* results) {
+    CHECK_HANDLE(engine);
+    auto& ctx = to_engine(engine)->context();
+    CHECK_EDITABLE(ctx);
+    if ((nodes != 0 && nodes != 1) || target < 0 ||
+        target >
+            (nodes ? static_cast<int>(SWMM_CONVERT_INLET) : static_cast<int>(SWMM_LINK_OUTLET)) ||
+        count < 0 || (count && (!indices || !results)))
+        return SWMM_ERR_BADPARAM;
+    ConversionBatch batch(ctx, nodes != 0, target, design, capture, placement, apply != 0);
+    for (int i = 0; i < count; ++i)
+        batch.process(indices[i], results[i]);
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
-                                       SWMM_ConversionResult* result_out) {
+                                      SWMM_ConversionResult* result_out) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
@@ -554,8 +918,13 @@ SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
 
     const auto ui = static_cast<std::size_t>(idx);
     if (ctx.links.type[ui] == internal_new)
-        return SWMM_ERR_BADPARAM;  // same type — no-op
+        return SWMM_ERR_BADPARAM; // same type — no-op
 
+    int blocker = -1;
+    const int rule =
+        link_conversion_rule(ctx, idx, ctx.inlet_usages.find_by_link(idx) >= 0, blocker);
+    if (rule)
+        return rule;
     auto res = openswmm::edit::convert_link(ctx, idx, internal_new);
     conversion_to_c(res, result_out);
     return SWMM_OK;
@@ -566,22 +935,23 @@ SWMM_ENGINE_API int swmm_link_convert(SWMM_Engine engine, int idx, int new_type,
 // ============================================================================
 
 SWMM_ENGINE_API int swmm_conduit_split(SWMM_Engine engine, int link_idx, double t,
-                                       const char* new_node_name,
-                                       const char* new_link_name,
-                                       int make_virtual,
-                                       int* new_node_idx, int* new_link_idx) {
+                                       const char* new_node_name, const char* new_link_name,
+                                       int make_virtual, int* new_node_idx, int* new_link_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
     CHECK_EDITABLE(ctx);
     CHECK_INDEX(link_idx >= 0 && link_idx < ctx.n_links());
-    if (!new_node_name || !new_link_name) return SWMM_ERR_BADPARAM;
+    if (!new_node_name || !new_link_name)
+        return SWMM_ERR_BADPARAM;
 
-    const auto res = openswmm::edit::vj_split_conduit(
-        ctx, link_idx, t, new_node_name, new_link_name, make_virtual != 0);
+    const auto res = openswmm::edit::vj_split_conduit(ctx, link_idx, t, new_node_name,
+                                                      new_link_name, make_virtual != 0);
     if (res.new_node_idx < 0)
-        return SWMM_ERR_BADPARAM;   // split rejected (bad t / names / type)
-    if (new_node_idx) *new_node_idx = res.new_node_idx;
-    if (new_link_idx) *new_link_idx = res.new_link_idx;
+        return SWMM_ERR_BADPARAM; // split rejected (bad t / names / type)
+    if (new_node_idx)
+        *new_node_idx = res.new_node_idx;
+    if (new_link_idx)
+        *new_link_idx = res.new_link_idx;
     // Split succeeded; a nonzero err here is a make_virtual rule code — the
     // node stands as a regular junction and the caller decides what to do.
     return (res.err == 0) ? SWMM_OK : res.err;
@@ -596,17 +966,18 @@ SWMM_ENGINE_API int swmm_virtual_junction_fuse(SWMM_Engine engine, int node_idx,
 
     int surviving = -1;
     const int code = openswmm::edit::vj_fuse(ctx, node_idx, &surviving);
-    if (code == -1) return SWMM_ERR_BADPARAM;   // not a virtual junction
-    if (code != 0)  return code;                // ERR_VJ_LINK_COUNT
-    if (surviving_link_idx) *surviving_link_idx = surviving;
+    if (code == -1)
+        return SWMM_ERR_BADPARAM; // not a virtual junction
+    if (code != 0)
+        return code; // ERR_VJ_LINK_COUNT
+    if (surviving_link_idx)
+        *surviving_link_idx = surviving;
     return SWMM_OK;
 }
 
 SWMM_ENGINE_API int swmm_conduit_split_inlet(SWMM_Engine engine, int link_idx, double t,
-                                             const char* new_node_name,
-                                             const char* new_link_name,
-                                             const char* inlet_id,
-                                             const char* capture_node,
+                                             const char* new_node_name, const char* new_link_name,
+                                             const char* inlet_id, const char* capture_node,
                                              int* new_node_idx, int* new_link_idx) {
     CHECK_HANDLE(engine);
     auto& ctx = to_engine(engine)->context();
@@ -624,15 +995,17 @@ SWMM_ENGINE_API int swmm_conduit_split_inlet(SWMM_Engine engine, int link_idx, d
         }
     const int capture = ctx.node_names.find(capture_node);
 
-    const auto res = openswmm::edit::ij_split_conduit(
-        ctx, link_idx, t, new_node_name, new_link_name, design, capture);
+    const auto res = openswmm::edit::ij_split_conduit(ctx, link_idx, t, new_node_name,
+                                                      new_link_name, design, capture);
     if (res.err != 0) {
         // -1 is the split's own rejection (bad t / duplicate or empty name /
         // non-conduit); everything else is a distinct rule code.
         return (res.err == -1) ? SWMM_ERR_BADPARAM : res.err;
     }
-    if (new_node_idx) *new_node_idx = res.new_node_idx;
-    if (new_link_idx) *new_link_idx = res.new_link_idx;
+    if (new_node_idx)
+        *new_node_idx = res.new_node_idx;
+    if (new_link_idx)
+        *new_link_idx = res.new_link_idx;
     return SWMM_OK;
 }
 
@@ -645,9 +1018,12 @@ SWMM_ENGINE_API int swmm_inlet_junction_fuse(SWMM_Engine engine, int node_idx,
 
     int surviving = -1;
     const int code = openswmm::edit::ij_fuse(ctx, node_idx, &surviving);
-    if (code == -1) return SWMM_ERR_BADPARAM;   // not an inlet junction
-    if (code != 0)  return code;                // ERR_VJ_LINK_COUNT
-    if (surviving_link_idx) *surviving_link_idx = surviving;
+    if (code == -1)
+        return SWMM_ERR_BADPARAM; // not an inlet junction
+    if (code != 0)
+        return code; // ERR_VJ_LINK_COUNT
+    if (surviving_link_idx)
+        *surviving_link_idx = surviving;
     return SWMM_OK;
 }
 

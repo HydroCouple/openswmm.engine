@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_wiring.cpp
- * @brief X1: `QUALITY_SOLVER LAGRANGIAN` is a real, warned, inert dispatch.
+ * @file      test_lard_wiring.cpp
+ * @brief     X1: `QUALITY_SOLVER LAGRANGIAN` is a real, warned, inert dispatch.
  *
  * @details Subplan X1 (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md,
  *          strategy §12 Phase 0). The claims, each with the probe that would
@@ -45,9 +45,9 @@
  *          Scratch fixtures use the `_lw_` prefix — unique per the
  *          configure-time collision check (b85b802d).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -66,42 +66,76 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kQ = 5.0;      ///< steady inflow, cfs
-constexpr double kCin = 100.0;  ///< steady inflow concentration, mg/L
+constexpr double kQ = 5.0;     ///< steady inflow, cfs
+constexpr double kCin = 100.0; ///< steady inflow concentration, mg/L
 
 /// Deck knobs. The base deck is the five-conduit chain the node-store suite
 /// established: one steady flow + concentration source at the head, no decay,
 /// so under any WORKING transport engine the answer everywhere is kCin.
 struct DeckSpec {
-    const char* solver = "LAGRANGIAN";  ///< QUALITY_SOLVER value; "" = omit line
-    bool pollutants = true;             ///< [POLLUTANTS] TSS + its inflow row
-    bool water_age = false;             ///< WATER_AGE ON
-    bool heat = false;                  ///< HEAT_TRANSPORT ON (live under
-                                        ///< LARD as of H7b)
-    bool ignore_quality = false;        ///< IGNORE_QUALITY YES
-    int quality_step = 0;               ///< X3a: QUALITY_STEP seconds; 0 = omit
-    int max_segs = 0;                   ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
-    bool rwpt = false;                  ///< X3b: DISPERSION RWPT
-    int rwpt_seed = 0;                  ///< X3b: RWPT_SEED; 0 = omit
-    std::string pc_lines;               ///< L3: [PROCESS_COMPONENTS] body
+    const char* solver = "LAGRANGIAN"; ///< QUALITY_SOLVER value; "" = omit line
+    bool pollutants = true;            ///< [POLLUTANTS] TSS + its inflow row
+    bool water_age = false;            ///< WATER_AGE ON
+    bool heat = false;                 ///< HEAT_TRANSPORT ON (live under
+                                       ///< LARD as of H7b)
+    bool ignore_quality = false;       ///< IGNORE_QUALITY YES
+    int quality_step = 0;              ///< X3a: QUALITY_STEP seconds; 0 = omit
+    int max_segs = 0;                  ///< X3a: MAX_SEGMENTS_PER_LINK; 0 = omit
+    bool rwpt = false;                 ///< X3b: DISPERSION RWPT
+    int rwpt_seed = 0;                 ///< X3b: RWPT_SEED; 0 = omit
+    std::string pc_lines;              ///< L3: [PROCESS_COMPONENTS] body
 };
 
+/**
+ * @brief Write the four-hour transport owner/option wiring fixture.
+ *
+ * Uses a wet five-conduit CFS chain. Pollutants get 50 mg/L initial state and kCin source
+ * concentration; optional flags are emitted only under their explicit sign/nonempty conditions.
+ * Uses a local ofstream and requires existing parent directories. Open/write/close failures are
+ * unchecked; owned input strings are not retained and raw tokens/config paths are not escaped.
+ * Optional sidecar files are also overwritten when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] s Borrowed spec: non-null optional solver keyword, water-age/heat/ignore-quality
+ *     flags, positive quality-step seconds, positive segment cap, RWPT flag/nonzero seed, pollutant
+ *     flag and raw process-component rows.
+ */
 void write_deck(const std::string& path, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD X1 wiring\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n";
-    if (s.solver[0] != '\0') f << "QUALITY_SOLVER " << s.solver << "\n";
-    if (s.water_age) f << "WATER_AGE ON\n";
-    if (s.heat) f << "HEAT_TRANSPORT ON\n";
-    if (s.ignore_quality) f << "IGNORE_QUALITY YES\n";
-    if (s.quality_step > 0) f << "QUALITY_STEP " << s.quality_step << "\n";
-    if (s.max_segs > 0) f << "MAX_SEGMENTS_PER_LINK " << s.max_segs << "\n";
-    if (s.rwpt) f << "DISPERSION RWPT\n";
-    if (s.rwpt_seed != 0) f << "RWPT_SEED " << s.rwpt_seed << "\n";
+    if (s.solver[0] != '\0')
+        f << "QUALITY_SOLVER " << s.solver << "\n";
+    if (s.water_age)
+        f << "WATER_AGE ON\n";
+    if (s.heat)
+        f << "HEAT_TRANSPORT ON\n";
+    if (s.ignore_quality)
+        f << "IGNORE_QUALITY YES\n";
+    if (s.quality_step > 0)
+        f << "QUALITY_STEP " << s.quality_step << "\n";
+    if (s.max_segs > 0)
+        f << "MAX_SEGMENTS_PER_LINK " << s.max_segs << "\n";
+    if (s.rwpt)
+        f << "DISPERSION RWPT\n";
+    if (s.rwpt_seed != 0)
+        f << "RWPT_SEED " << s.rwpt_seed << "\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       // 4 h, not 1: at 1 h the LEGACY control's exponential approach to
       // steady state leaves the tail links at 99.998 against kCin's 1e-6
@@ -142,15 +176,29 @@ void write_deck(const std::string& path, const DeckSpec& s) {
 struct WiringRun {
     double peak_node_conc = 0.0;
     double peak_link_conc = 0.0;
-    std::vector<double> depth_trace;  ///< J2 depth per step
-    std::vector<double> flow_trace;   ///< C3 flow per step
-    std::vector<double> link_final;   ///< [link] conc at end
-    std::vector<double> msx_link_final;  ///< [link*nsp+s] at end (L3)
+    std::vector<double> depth_trace;    ///< J2 depth per step
+    std::vector<double> flow_trace;     ///< C3 flow per step
+    std::vector<double> link_final;     ///< [link] conc at end
+    std::vector<double> msx_link_final; ///< [link*nsp+s] at end (L3)
     std::vector<std::string> warnings;
-    int solver_kind = -1;             ///< ctx value after open
+    int solver_kind = -1; ///< ctx value after open
     bool ok = false;
 };
 
+/**
+ * @brief Run the LARD wiring fixture and collect selected state trajectories.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status. Records
+ * first-pollutant peak concentrations, J2 depth feet, C3 flow cfs, final pollutant/MSX arrays,
+ * warnings and solver enum. Step refusal can leave partial traces. No independent completeness or
+ * full-state parity guarantee.
+ *
+ * @param[in] tag Safe cwd artifact prefix for overwritten .inp/.rpt/.out.
+ * @param[in] s Deck choices passed to write_deck; must yield at least three nodes and links for
+ *     indexed probes.
+ * @return Owned result with ok=false on create/open/init/start/step refusal; guard exhaustion can
+ *     still return ok=true.
+ */
 WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
     WiringRun r;
     const std::string inp = tag + ".inp";
@@ -159,11 +207,12 @@ WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
     write_deck(inp, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) !=
-            SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -183,16 +232,14 @@ WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
         }
         if (np > 0) {
             for (int l = 0; l < nl; ++l)
-                r.peak_link_conc = std::max(
-                    r.peak_link_conc,
-                    ctx.links.conc[static_cast<std::size_t>(l * np)]);
+                r.peak_link_conc =
+                    std::max(r.peak_link_conc, ctx.links.conc[static_cast<std::size_t>(l * np)]);
             for (int j = 0; j < nn; ++j)
-                r.peak_node_conc = std::max(
-                    r.peak_node_conc,
-                    ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+                r.peak_node_conc =
+                    std::max(r.peak_node_conc, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
         }
-        r.depth_trace.push_back(ctx.nodes.depth[2]);  // J2
-        r.flow_trace.push_back(ctx.links.flow[2]);    // C3
+        r.depth_trace.push_back(ctx.nodes.depth[2]); // J2
+        r.flow_trace.push_back(ctx.links.flow[2]);   // C3
     } while (elapsed > 0.0 && ++guard < 200000);
     swmm_engine_end(e);
     if (np > 0) {
@@ -215,9 +262,16 @@ WiringRun run_deck(const std::string& tag, const DeckSpec& s) {
 /// is live; what remains bypassed under LARD is age/heat (X4).
 constexpr const char* kLardWarn = "does not advance under the LARD engine yet";
 
+/**
+ * @brief Search warnings for the fixture's exact LARD diagnostic fragment.
+ *
+ * @param[in] warnings Warning strings, unchanged.
+ * @return True if any string contains kLardWarn case-sensitively, otherwise false.
+ */
 bool has_lard_warning(const std::vector<std::string>& warnings) {
     for (const auto& w : warnings)
-        if (w.find(kLardWarn) != std::string::npos) return true;
+        if (w.find(kLardWarn) != std::string::npos)
+            return true;
     return false;
 }
 
@@ -225,35 +279,29 @@ bool has_lard_warning(const std::vector<std::string>& warnings) {
 // Gate 1 — the option parses, and survives a save-as (both spellings).
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
-    DeckSpec s;  // LAGRANGIAN, pollutants on
-    s.quality_step = 2;   // X3a keys ride the same save-as rule
+    DeckSpec s;         // LAGRANGIAN, pollutants on
+    s.quality_step = 2; // X3a keys ride the same save-as rule
     s.max_segs = 50;
-    s.rwpt = true;        // X3b keys too (handoff §5.viii's W1 extension)
+    s.rwpt = true; // X3b keys too (handoff §5.viii's W1 extension)
     s.rwpt_seed = 42;
     write_deck("_lw_rt.inp", s);
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_lw_rt.inp", "_lw_rt.rpt", "_lw_rt.out",
-                               nullptr),
-              SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_lw_rt.inp", "_lw_rt.rpt", "_lw_rt.out", nullptr), SWMM_OK);
     auto& ctx = as_cpp_engine(e).context();
-    ASSERT_EQ(ctx.options.quality_solver,
-              openswmm::QualitySolverKind::LAGRANGIAN)
+    ASSERT_EQ(ctx.options.quality_solver, openswmm::QualitySolverKind::LAGRANGIAN)
         << "QUALITY_SOLVER LAGRANGIAN did not parse to the enum value";
 
     std::vector<std::string> warnings;
-    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_lw_rt_saved.inp",
-                                                 &warnings),
-              0);
+    ASSERT_EQ(openswmm::inp_writer::writeInpFile(ctx, "_lw_rt_saved.inp", &warnings), 0);
     swmm_engine_destroy(e);
 
     // The saved file must reopen as LAGRANGIAN — the A1a defect was exactly
     // this round-trip silently degrading to LEGACY.
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    ASSERT_EQ(swmm_engine_open(e2, "_lw_rt_saved.inp", "_lw_rt2.rpt",
-                               "_lw_rt2.out", nullptr),
+    ASSERT_EQ(swmm_engine_open(e2, "_lw_rt_saved.inp", "_lw_rt2.rpt", "_lw_rt2.out", nullptr),
               SWMM_OK);
     EXPECT_EQ(as_cpp_engine(e2).context().options.quality_solver,
               openswmm::QualitySolverKind::LAGRANGIAN)
@@ -264,10 +312,8 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
         << "save-as dropped QUALITY_STEP";
     EXPECT_EQ(as_cpp_engine(e2).context().options.max_segments_per_link, 50)
         << "save-as dropped MAX_SEGMENTS_PER_LINK";
-    EXPECT_TRUE(as_cpp_engine(e2).context().options.lard_rwpt)
-        << "save-as dropped DISPERSION RWPT";
-    EXPECT_EQ(as_cpp_engine(e2).context().options.rwpt_seed, 42)
-        << "save-as dropped RWPT_SEED";
+    EXPECT_TRUE(as_cpp_engine(e2).context().options.lard_rwpt) << "save-as dropped DISPERSION RWPT";
+    EXPECT_EQ(as_cpp_engine(e2).context().options.rwpt_seed, 42) << "save-as dropped RWPT_SEED";
     swmm_engine_destroy(e2);
 
     // The short spelling parses too (the EULERIAN_ARD/ARD precedent).
@@ -276,8 +322,7 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
     write_deck("_lw_alias.inp", alias);
     SWMM_Engine e3 = swmm_engine_create();
     ASSERT_NE(e3, nullptr);
-    ASSERT_EQ(swmm_engine_open(e3, "_lw_alias.inp", "_lw_alias.rpt",
-                               "_lw_alias.out", nullptr),
+    ASSERT_EQ(swmm_engine_open(e3, "_lw_alias.inp", "_lw_alias.rpt", "_lw_alias.out", nullptr),
               SWMM_OK);
     EXPECT_EQ(as_cpp_engine(e3).context().options.quality_solver,
               openswmm::QualitySolverKind::LAGRANGIAN);
@@ -291,8 +336,9 @@ TEST(LardWiringTest, LagrangianOptionRoundTripsThroughSaveAs) {
 // as LEGACY, and the pollutant-only run carries NO bypass warning.
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, LagrangianTransportsWhereLegacyDoes) {
-    DeckSpec lard;                      // LAGRANGIAN
-    DeckSpec leg;  leg.solver = "LEGACY";
+    DeckSpec lard; // LAGRANGIAN
+    DeckSpec leg;
+    leg.solver = "LEGACY";
 
     const WiringRun a = run_deck("_lw_zero_lard", lard);
     const WiringRun b = run_deck("_lw_zero_leg", leg);
@@ -319,8 +365,7 @@ TEST(LardWiringTest, LagrangianTransportsWhereLegacyDoes) {
     // reserved-species warning may fire.
     EXPECT_FALSE(has_lard_warning(a.warnings))
         << "the age/heat bypass warning fired on a pollutant-only deck";
-    EXPECT_FALSE(has_lard_warning(b.warnings))
-        << "the LARD warning fired on a LEGACY run";
+    EXPECT_FALSE(has_lard_warning(b.warnings)) << "the LARD warning fired on a LEGACY run";
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +373,8 @@ TEST(LardWiringTest, LagrangianTransportsWhereLegacyDoes) {
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, LagrangianLeavesHydraulicsBitIdentical) {
     DeckSpec lard;
-    DeckSpec leg;  leg.solver = "LEGACY";
+    DeckSpec leg;
+    leg.solver = "LEGACY";
 
     const WiringRun a = run_deck("_lw_hyd_lard", lard);
     const WiringRun b = run_deck("_lw_hyd_leg", leg);
@@ -341,10 +387,8 @@ TEST(LardWiringTest, LagrangianLeavesHydraulicsBitIdentical) {
     for (std::size_t i = 0; i < a.depth_trace.size(); ++i) {
         // Exact equality on purpose: quality is passive, so the solver
         // switch must not move hydraulics by one ULP.
-        ASSERT_EQ(a.depth_trace[i], b.depth_trace[i])
-            << "J2 depth diverged at step " << i;
-        ASSERT_EQ(a.flow_trace[i], b.flow_trace[i])
-            << "C3 flow diverged at step " << i;
+        ASSERT_EQ(a.depth_trace[i], b.depth_trace[i]) << "J2 depth diverged at step " << i;
+        ASSERT_EQ(a.flow_trace[i], b.flow_trace[i]) << "C3 flow diverged at step " << i;
     }
 }
 
@@ -353,11 +397,10 @@ TEST(LardWiringTest, LagrangianLeavesHydraulicsBitIdentical) {
 // ---------------------------------------------------------------------------
 TEST(LardWiringTest, DefaultDeckStillRunsLegacyTransport) {
     DeckSpec s;
-    s.solver = "";  // no QUALITY_SOLVER line at all
+    s.solver = ""; // no QUALITY_SOLVER line at all
     const WiringRun r = run_deck("_lw_default", s);
     ASSERT_TRUE(r.ok);
-    EXPECT_EQ(r.solver_kind,
-              static_cast<int>(openswmm::QualitySolverKind::LEGACY));
+    EXPECT_EQ(r.solver_kind, static_cast<int>(openswmm::QualitySolverKind::LEGACY));
     ASSERT_EQ(r.link_final.size(), 5u);
     // Steady source, no decay: the exact answer everywhere is kCin. This is
     // the transported-signal claim, not merely "nonzero".
@@ -404,15 +447,14 @@ TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
     bare.pollutants = false;
     const WiringRun b = run_deck("_lw_warn_bare", bare);
     ASSERT_TRUE(b.ok);
-    EXPECT_FALSE(has_lard_warning(b.warnings))
-        << "the LARD warning fired with nothing bypassed";
+    EXPECT_FALSE(has_lard_warning(b.warnings)) << "the LARD warning fired with nothing bypassed";
 
     // (c) IGNORE_QUALITY wins even over a deck that WOULD warn: the stage
     // is skipped before the solver choice is consulted, and that
     // configuration's own warning family covers it.
     DeckSpec ignored;
     ignored.ignore_quality = true;
-    ignored.heat = true;  // the warning's trigger, suppressed by (c)
+    ignored.heat = true; // the warning's trigger, suppressed by (c)
     const WiringRun c = run_deck("_lw_warn_ign", ignored);
     ASSERT_TRUE(c.ok);
     EXPECT_FALSE(has_lard_warning(c.warnings))
@@ -420,8 +462,7 @@ TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
            "stage does not run for ANY solver";
 }
 
-}  // namespace
-
+} // namespace
 
 // ===========================================================================
 // L3 — MSX species ride LARD segments and react (the last unstarted quality
@@ -432,13 +473,22 @@ TEST(LardWiringTest, BypassWarningFiresExactlyWhenTheStageWouldBeLive) {
 
 namespace {
 
+/**
+ * @brief Find one literal warning fragment.
+ *
+ * @param[in] w Warning vector, unchanged.
+ * @param[in] needle Non-null terminated case-sensitive substring; empty matches any available
+ *     entry.
+ * @return True on first match; false for no match or an empty list.
+ */
 bool l3_has(const std::vector<std::string>& w, const char* needle) {
     for (const auto& s : w)
-        if (s.find(needle) != std::string::npos) return true;
+        if (s.find(needle) != std::string::npos)
+            return true;
     return false;
 }
 
-}  // namespace
+} // namespace
 
 // Gate 1 (base-FAILING): FORMULA over a transported pollutant is live on
 // the segments — X = 2·TSS holds at the tail link once TSS is steady.
@@ -450,15 +500,14 @@ TEST(LardL3Test, FormulaSpeciesTracksItsPollutantOnSegments) {
         << "[REACTION_TANKS]\nFORMULA X 2.0 * TSS\n";
     rxn.close();
     DeckSpec s;
-    s.pc_lines =
-        "org.hydrocouple.openswmm.reactions config=\"_l3_f.rxn\"";
+    s.pc_lines = "org.hydrocouple.openswmm.reactions config=\"_l3_f.rxn\"";
     const WiringRun r = run_deck("_l3_f", s);
     ASSERT_TRUE(r.ok);
 
     ASSERT_FALSE(r.link_final.empty());
     ASSERT_FALSE(r.msx_link_final.empty());
     const double tss_c5 = r.link_final[4];
-    const double x_c5 = r.msx_link_final[4];  // one species → index = link
+    const double x_c5 = r.msx_link_final[4]; // one species → index = link
     ASSERT_GT(tss_c5, 1.0) << "premise: TSS never arrived at C5";
     EXPECT_NEAR(x_c5, 2.0 * tss_c5, 0.02 * (2.0 * tss_c5))
         << "FORMULA X = 2*TSS reads " << x_c5 << " against TSS " << tss_c5
@@ -484,8 +533,7 @@ TEST(LardL3Test, RateProductionGrowsAlongFlowAndAgreesWithArd) {
         << "[REACTION_TANKS]\nRATE X 0.001 * TSS\n";
     rxn.close();
     DeckSpec lard;
-    lard.pc_lines =
-        "org.hydrocouple.openswmm.reactions config=\"_l3_r.rxn\"";
+    lard.pc_lines = "org.hydrocouple.openswmm.reactions config=\"_l3_r.rxn\"";
     DeckSpec ard = lard;
     ard.solver = "EULERIAN_ARD";
 
@@ -497,16 +545,14 @@ TEST(LardL3Test, RateProductionGrowsAlongFlowAndAgreesWithArd) {
 
     const double x1 = a.msx_link_final[0];
     const double x5 = a.msx_link_final[4];
-    EXPECT_GT(x5, 1.0)
-        << "RATE X 0.001*TSS produced nothing at the tail link under LARD "
-           "— the binding is dead (base reads 0)";
-    EXPECT_GT(x5, x1)
-        << "production must ACCUMULATE along the flow direction — more "
-           "residence behind C5 than C1";
+    EXPECT_GT(x5, 1.0) << "RATE X 0.001*TSS produced nothing at the tail link under LARD "
+                          "— the binding is dead (base reads 0)";
+    EXPECT_GT(x5, x1) << "production must ACCUMULATE along the flow direction — more "
+                         "residence behind C5 than C1";
 
     const double x5_ard = b.msx_link_final[4];
-    std::printf("L3 cross-engine at C5: LARD %.4f vs ARD %.4f (ratio %.4f)\n",
-                x5, x5_ard, x5 / x5_ard);
+    std::printf("L3 cross-engine at C5: LARD %.4f vs ARD %.4f (ratio %.4f)\n", x5, x5_ard,
+                x5 / x5_ard);
     ASSERT_GT(x5_ard, 1.0) << "premise: the ARD reference produced nothing";
     // 0.10, not 0.35: the honest ratio is 0.975 (0.025 off), and the
     // off-by-np gather falsifier reads 1.146 — bands of 0.35 and even

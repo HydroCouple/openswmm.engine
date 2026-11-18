@@ -31,8 +31,11 @@ elseif(UNIX)
 endif()
 
 # Helper function to create a unit test executable
-function(add_gtest_unit TEST_NAME SOURCE_FILE)
-    add_executable(${TEST_NAME} ${SOURCE_FILE})
+# One executable from one or more test sources. Sources that share a feature are
+# listed together: each executable links the whole engine, so fewer executables
+# means a shorter build.
+function(add_gtest_unit TEST_NAME)
+    add_executable(${TEST_NAME} ${ARGN})
 
     target_link_libraries(${TEST_NAME}
         PRIVATE
@@ -52,7 +55,11 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
     )
 
     if(MSVC)
-        target_compile_options(${TEST_NAME} PRIVATE /EHsc)
+        # Large Google Test translation units exceed the default COFF section limit.
+        target_compile_options(${TEST_NAME} PRIVATE /EHsc /bigobj)
+        # Debug frames are large (one checkpoint test body alone takes about 800 KB), and
+        # the default 1 MB stack overflows. 8 MB matches the Linux and macOS main thread.
+        target_link_options(${TEST_NAME} PRIVATE /STACK:8388608)
     endif()
 
     set_target_properties(${TEST_NAME} PROPERTIES
@@ -80,26 +87,57 @@ function(add_gtest_unit TEST_NAME SOURCE_FILE)
 endfunction()
 
 # ---- Unit test targets ----
+add_gtest_unit(test_engine_abi test_engine_abi.cpp)
+add_test(NAME test_engine_abi_features
+    COMMAND ${CMAKE_COMMAND}
+        "-DENGINE_ROOT=${PROJECT_SOURCE_DIR}"
+        "-DEVIDENCE=${PROJECT_SOURCE_DIR}/tests/verification/extension_sdk_2026-10/feature-abi"
+        -P "${PROJECT_SOURCE_DIR}/tests/cmake/test_engine_abi_features.cmake")
+set_tests_properties(test_engine_abi_features PROPERTIES LABELS "unit;abi")
+add_gtest_unit(test_engine_outfalls
+    test_outfall_export_receipts.cpp
+    test_outfall_stage_data.cpp
+)
+add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
-add_gtest_unit(test_engine_tokenizer         test_tokenizer.cpp)
+add_gtest_unit(test_engine_parser_core
+    test_tokenizer.cpp
+    test_name_index.cpp
+    test_name_case_parity.cpp
+    test_postparse_resolver.cpp
+    test_warning_error_parity.cpp
+    test_sentinel_parity.cpp
+    test_section_order_parity.cpp
+    test_section_registry.cpp
+    test_ignore_flags.cpp
+)
 add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
-add_gtest_unit(test_engine_name_index        test_name_index.cpp)
-add_gtest_unit(test_engine_name_case_parity  test_name_case_parity.cpp)
-add_gtest_unit(test_engine_options_parser    test_options_parser.cpp)
-add_gtest_unit(test_engine_timeseries_file_roundtrip test_timeseries_file_roundtrip.cpp)
+add_gtest_unit(test_engine_options
+    test_options_parser.cpp
+    test_report_options_api.cpp
+    test_transport_options_api.cpp
+    test_options_malformed_values.cpp
+    test_options_api_units.cpp
+)
+add_gtest_unit(test_engine_gages
+    test_timeseries_file_roundtrip.cpp
+    test_timeseries_time_modes.cpp
+    test_gage_scalefactor.cpp
+    test_gage_attributes.cpp
+    test_gage_file_roundtrip.cpp
+    test_gage_rain_series.cpp
+    test_multicolumn_series_file.cpp
+    test_gage_format_preservation.cpp
+)
 add_gtest_unit(test_engine_pathresolver      test_pathresolver.cpp)
-add_gtest_unit(test_engine_postparse_resolver test_postparse_resolver.cpp)
-add_gtest_unit(test_engine_warning_error_parity test_warning_error_parity.cpp)
-add_gtest_unit(test_engine_sentinel_parity test_sentinel_parity.cpp)
-add_gtest_unit(test_engine_outfall_stage_data test_outfall_stage_data.cpp)
 add_gtest_unit(test_engine_inp_writer_relative_paths test_inp_writer_relative_paths.cpp)
 add_gtest_unit(test_engine_inp_writer_saveas_paths test_inp_writer_saveas_paths.cpp)
 add_gtest_unit(test_engine_inp_writer_roundtrip test_inp_writer_roundtrip.cpp)
+add_gtest_unit(test_engine_ui_file_io_roundtrip test_ui_file_io_roundtrip.cpp)
 add_gtest_unit(test_engine_inp_writer_atomic test_inp_writer_atomic.cpp)
 add_gtest_unit(test_engine_filled_circular_offset_api test_filled_circular_offset_api.cpp)
-add_gtest_unit(test_engine_timeseries_time_modes test_timeseries_time_modes.cpp)
 add_gtest_unit(test_engine_plugin_lifecycle      test_plugin_lifecycle.cpp)
 add_gtest_unit(test_engine_plugin_filter_invariant test_plugin_filter_invariant.cpp)
 # PR H3 — Froude band-trust diagnostic (fr_trust / surcharge_frac).
@@ -117,6 +155,21 @@ add_gtest_unit(test_engine_rom_phase_coordinate test_rom_phase_coordinate.cpp)
 add_gtest_unit(test_engine_rom_directional_operator test_rom_directional_operator.cpp)
 # Slice RC.5 — GeoPackage explicit-builtin registration + is_builtin flag.
 add_gtest_unit(test_engine_pluginfactory_builtins test_pluginfactory_builtins.cpp)
+if(NOT EMSCRIPTEN)
+    foreach(_abi RANGE 0 2)
+        add_library(test_io_abi_${_abi} SHARED fake_io_abi_plugin.cpp)
+        target_include_directories(test_io_abi_${_abi} PRIVATE "${PROJECT_SOURCE_DIR}/include"
+            "${PROJECT_BINARY_DIR}/src/engine")
+        target_compile_definitions(test_io_abi_${_abi} PRIVATE TEST_PLUGIN_ABI=${_abi})
+        set_target_properties(test_io_abi_${_abi} PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/io-abi-fakes"
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/io-abi-fakes")
+        add_dependencies(test_engine_pluginfactory_builtins test_io_abi_${_abi})
+        target_compile_definitions(test_engine_pluginfactory_builtins PRIVATE
+            TEST_IO_ABI_${_abi}="$<TARGET_FILE:test_io_abi_${_abi}>")
+    endforeach()
+endif()
+
 # Slice QA-01.4 — per-node summary stats read from a SWMM_Output handle.
 add_gtest_unit(test_engine_output_node_stats     test_output_node_stats.cpp)
 add_gtest_unit(test_engine_output_system_vars    test_output_system_vars.cpp)
@@ -126,49 +179,66 @@ add_gtest_unit(test_engine_model_write_with_plugin test_model_write_with_plugin.
 add_gtest_unit(test_engine_files_section          test_files_section.cpp)
 add_gtest_unit(test_engine_iface_routing          test_iface_routing.cpp)
 add_gtest_unit(test_engine_files_iface_gaps       test_files_iface_gaps.cpp)
-add_gtest_unit(test_engine_section_order_parity   test_section_order_parity.cpp)
 add_gtest_unit(test_engine_capi_file_paths        test_capi_file_paths.cpp)
 add_gtest_unit(test_engine_events_section         test_events_section.cpp)
-add_gtest_unit(test_engine_report_options_api     test_report_options_api.cpp)
 # Legacy parity for the .rpt analysis-timing block: the wall clock starts at
 # open() (before parsing) as in report_writeLogo(), and elapsed time rolls
 # whole days into a "d." prefix as in report_writeSysTime().
-add_gtest_unit(test_engine_report_timing          test_report_timing.cpp)
-add_gtest_unit(test_engine_ard_transport          test_ard_transport.cpp)
-add_gtest_unit(test_engine_initial_quality        test_initial_quality.cpp)
+add_gtest_unit(test_engine_report
+    test_report_timing.cpp
+    test_mc_report_parity.cpp
+    test_report_link_steps.cpp
+    test_report_section.cpp
+    test_report_tables.cpp
+)
+add_gtest_unit(test_engine_ard
+    test_ard_transport.cpp
+    test_ard_dispersion.cpp
+    test_reaction_ard_binding.cpp
+    test_ard_transport_bcs.cpp
+    test_ard_e5b.cpp
+    test_ard_node_store.cpp
+    test_heat_ard_binding.cpp
+)
+add_gtest_unit(test_engine_quality
+    test_initial_quality.cpp
+    test_outfall_backflow_quality.cpp
+    test_negative_sources.cpp
+    test_quality_closeout_bindings.cpp
+    test_treatment.cpp
+    test_quality_roundtrip.cpp
+)
 add_gtest_unit(test_engine_process_components     test_process_components.cpp)
-add_gtest_unit(test_engine_reactions_config       test_reactions_config.cpp)
-add_gtest_unit(test_engine_reactions_api          test_reactions_api.cpp)
-add_gtest_unit(test_engine_reaction_expressions   test_reaction_expressions.cpp)
-add_gtest_unit(test_engine_reaction_integrators   test_reaction_integrators.cpp)
-add_gtest_unit(test_engine_reaction_legacy_binding test_reaction_legacy_binding.cpp)
-add_gtest_unit(test_engine_ard_dispersion         test_ard_dispersion.cpp)
-add_gtest_unit(test_engine_reaction_ard_binding   test_reaction_ard_binding.cpp)
+add_gtest_unit(test_engine_reactions
+    test_reactions_config.cpp
+    test_reactions_api.cpp
+    test_reaction_expressions.cpp
+    test_reaction_integrators.cpp
+    test_reaction_legacy_binding.cpp
+)
 # BW-MSX (2026-09-19): reactions-component species build up / wash off by the
 # pollutant relations (OVERLAND plan §8.9).
 add_gtest_unit(test_engine_msx_buildup_washoff    test_msx_buildup_washoff.cpp)
-add_gtest_unit(test_engine_ard_transport_bcs      test_ard_transport_bcs.cpp)
-add_gtest_unit(test_engine_ard_e5b                test_ard_e5b.cpp)
-add_gtest_unit(test_engine_ard_node_store         test_ard_node_store.cpp)
-add_gtest_unit(test_engine_lard_wiring            test_lard_wiring.cpp)
-add_gtest_unit(test_engine_lard_heat              test_lard_heat.cpp)
-add_gtest_unit(test_engine_lard_transport         test_lard_transport.cpp)
+add_gtest_unit(test_engine_lard
+    test_lard_wiring.cpp
+    test_lard_heat.cpp
+    test_lard_transport.cpp
+    test_lard_age.cpp
+    test_lard_dt_reference.cpp
+    test_lard_rwpt.cpp
+    test_transport_dt_reference.cpp
+)
 add_gtest_unit(test_engine_kinwave_storage        test_kinwave_storage_outlets.cpp)
-add_gtest_unit(test_engine_lard_age               test_lard_age.cpp)
-add_gtest_unit(test_engine_lard_dt_reference      test_lard_dt_reference.cpp)
-add_gtest_unit(test_engine_lard_rwpt              test_lard_rwpt.cpp)
-add_gtest_unit(test_engine_outfall_backflow       test_outfall_backflow_quality.cpp)
-add_gtest_unit(test_engine_negative_sources       test_negative_sources.cpp)
-add_gtest_unit(test_engine_water_age_api          test_water_age_api.cpp)
-add_gtest_unit(test_engine_transport_options_api  test_transport_options_api.cpp)
-add_gtest_unit(test_engine_options_malformed      test_options_malformed_values.cpp)
-add_gtest_unit(test_engine_water_age              test_water_age.cpp)
-add_gtest_unit(test_engine_water_age_watershed    test_water_age_watershed.cpp)
-add_gtest_unit(test_engine_water_age_lid          test_water_age_lid.cpp)
+add_gtest_unit(test_engine_water_age
+    test_water_age_api.cpp
+    test_water_age.cpp
+    test_water_age_watershed.cpp
+    test_water_age_lid.cpp
+)
+add_gtest_unit(test_engine_capi_gap_closures     test_capi_gap_closures.cpp)
 add_gtest_unit(test_engine_heat_watershed         test_heat_watershed.cpp)
 add_gtest_unit(test_engine_heat_integrator        test_heat_integrator.cpp)
 add_gtest_unit(test_engine_heat_lid               test_heat_lid.cpp)
-add_gtest_unit(test_engine_transport_dt_reference test_transport_dt_reference.cpp)
 add_gtest_unit(test_engine_transport_snow       test_transport_snow.cpp)
 add_gtest_unit(test_engine_heat_transport         test_heat_transport.cpp)
 add_gtest_unit(test_engine_heat_surface_exchange  test_heat_surface_exchange.cpp)
@@ -176,26 +246,33 @@ add_gtest_unit(test_engine_heat_radiative_exchange test_heat_radiative_exchange.
 # Step 3 — the [HEAT_SOURCES] C API (the one heat section H6a left without one).
 add_gtest_unit(test_engine_heat_sources_api       test_heat_sources_api.cpp)
 add_gtest_unit(test_engine_heat_solar_radiation   test_heat_solar_radiation.cpp)
-add_gtest_unit(test_engine_heat_ard_binding       test_heat_ard_binding.cpp)
 # H6b — the coupled bed / hyporheic stepper (pure-function gates).
 add_gtest_unit(test_engine_bed_exchange           test_bed_exchange.cpp)
 # 2026-09-01 closeout — five bindings, one gate each.
-add_gtest_unit(test_engine_quality_closeout_bindings test_quality_closeout_bindings.cpp)
 # PE1/PE2/PE4 — per-element heat attributes and per-element climate forcing.
 add_gtest_unit(test_engine_heat_per_element       test_heat_per_element.cpp)
 add_gtest_unit(test_engine_output_quality         test_output_quality.cpp)
 # In-place rename for snow packs / aquifers / inlets / streets / LID controls.
 # Without these APIs the GUI registries flushed a renamed object as a NEW one,
 # duplicating it in the engine and orphaning the original.
-add_gtest_unit(test_engine_object_rename          test_object_rename.cpp)
-add_gtest_unit(test_engine_options_api_units      test_options_api_units.cpp)
+add_gtest_unit(test_engine_object_edit
+    test_object_rename.cpp
+    test_table_rename_api.cpp
+    test_object_deletion.cpp
+    test_object_deletion_ext.cpp
+    test_object_deletion_many.cpp
+    test_type_conversion.cpp
+)
 # CRS lives in two stores (spatial frame + [OPTIONS]); every C-API write path
 # must fill both and the .inp writer must emit whichever is set.
 add_gtest_unit(test_engine_crs_api_roundtrip      test_crs_api_roundtrip.cpp)
-add_gtest_unit(test_engine_climate_api             test_climate_api.cpp)
+add_gtest_unit(test_engine_climate
+    test_climate_api.cpp
+    test_climate_humidity.cpp
+    test_climate.cpp
+)
 # [TEMPERATURE] HUMIDITY: CONSTANT/MONTHLY/TIMESERIES, DEWPOINT -> RH, writer
 # round-trip. The heat model's met input the GUI Climatology dialog edits.
-add_gtest_unit(test_engine_climate_humidity        test_climate_humidity.cpp)
 # Issue #7: a model under a non-ASCII path (…/模拟情景8/模拟情景[8].inp) must
 # open, run and write its .rpt/.out. Windows' narrow file APIs decode in the
 # ANSI code page, so every engine open goes through core/FileIO.hpp.
@@ -203,25 +280,29 @@ add_gtest_unit(test_engine_utf8_paths        test_utf8_paths.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
-add_gtest_unit(test_engine_user_flags        test_user_flags.cpp)
+add_gtest_unit(test_engine_user_flags
+    test_user_flags.cpp
+    test_user_flags_capi.cpp
+    test_tags.cpp
+)
 # User-flags C API surface for the GUI (Phase 0 of
 # openswmm.gui/docs/USER_FLAGS_UI_PLAN_2026-06-03.md).
-add_gtest_unit(test_engine_user_flags_capi   test_user_flags_capi.cpp)
-add_gtest_unit(test_engine_section_registry  test_section_registry.cpp)
 add_gtest_unit(test_engine_xsection          test_xsection.cpp)
 target_compile_definitions(test_engine_xsection PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 # STREET cross-section end-to-end (parse → street transect → routing).
-add_gtest_unit(test_engine_street_xsect      test_street_xsect.cpp)
+add_gtest_unit(test_engine_xsect
+    test_street_xsect.cpp
+    test_street_xsect_api.cpp
+    test_xsect_api.cpp
+)
 # ctx.transect_tables must keep cached element pointers valid as it grows —
 # XSectBatch and Link cache raw double* into its elements at initialize() and
 # swmm_link_set_xsect can append afterwards. Guards the deque choice.
 add_gtest_unit(test_engine_transect_table_stability test_transect_table_stability.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
-add_gtest_unit(test_engine_street_xsect_api  test_street_xsect_api.cpp)
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
-add_gtest_unit(test_engine_xsect_api         test_xsect_api.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,
@@ -238,7 +319,10 @@ endif()
 # GUI editor round-trip getters/setters (pollutant units, aquifer ET pattern,
 # snowpack surfaces, inlet params/type, LID layers/type).
 add_gtest_unit(test_engine_editor_roundtrip_api test_editor_roundtrip_api.cpp)
-add_gtest_unit(test_engine_virtual_junction test_virtual_junction.cpp)
+add_gtest_unit(test_engine_inlets
+    test_virtual_junction.cpp
+    test_virtual_junction_quality.cpp
+)
 # HEC-22 inlet capture kernel + end-to-end capture for both host kinds
 # (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
 add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
@@ -247,13 +331,31 @@ add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
 add_gtest_unit(test_engine_inlet_junction_io test_inlet_junction_io.cpp)
 # Species/age loads carried by a lateral at a virtual junction, every routing
 # x quality-solver pair (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md E4).
-add_gtest_unit(test_engine_virtual_junction_quality test_virtual_junction_quality.cpp)
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
-add_gtest_unit(test_engine_fv_slot_volume test_fv_slot_volume.cpp)
-add_gtest_unit(test_engine_report_link_steps test_report_link_steps.cpp)
-add_gtest_unit(test_engine_fv_closure_shapes test_fv_closure_shapes.cpp)
+add_gtest_unit(test_engine_fv_closure
+    test_fv_slot_volume.cpp
+    test_fv_closure_shapes.cpp
+    test_fv_solver_closure.cpp
+    test_fv_unsteady_friction.cpp
+    test_dw_unsteady_friction.cpp
+    test_fv_tpa_closure.cpp
+    test_dw_tpa.cpp
+)
 add_gtest_unit(test_engine_fv_pressurized_implicit test_fv_pressurized_implicit.cpp)
+add_gtest_unit(test_engine_fv_pressure_reference test_fv_pressure_reference.cpp)
+add_gtest_unit(test_engine_fv_nonlinear_pressure_storage test_fv_nonlinear_pressure_storage.cpp)
+add_gtest_unit(test_engine_fv_pressure_candidate_adapter test_fv_pressure_candidate_adapter.cpp)
+add_gtest_unit(test_engine_fv_implicit_reach test_fv_implicit_reach.cpp)
+add_gtest_unit(test_engine_native_gmres test_native_gmres.cpp)
+add_gtest_unit(test_engine_fv_implicit_network test_fv_implicit_network.cpp)
+add_gtest_unit(test_engine_fv_conduit_condensation test_fv_conduit_condensation.cpp)
+add_gtest_unit(test_engine_fv_interface_tree test_fv_interface_tree.cpp)
+add_gtest_unit(test_engine_fv_block_ilu test_fv_block_ilu.cpp)
+add_gtest_unit(test_engine_fv_linear_workspace test_fv_linear_workspace.cpp)
+add_gtest_unit(test_engine_fv_physical_storage test_fv_physical_storage.cpp)
+add_gtest_unit(test_engine_fv_wet_slot test_fv_wet_slot.cpp)
 
+add_gtest_unit(test_engine_frozen_ground    test_frozen_ground.cpp)
 add_gtest_unit(test_engine_infiltration     test_infiltration.cpp)
 target_compile_definitions(test_engine_infiltration PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
@@ -265,13 +367,17 @@ target_compile_definitions(test_engine_ode_solver PRIVATE
 add_gtest_unit(test_engine_massbalance      test_massbalance.cpp)
 # Runtime-effect coverage for the [OPTIONS] IGNORE_* process flags (closes the
 # gap that left five of the six flags as parsed-but-dead no-ops).
-add_gtest_unit(test_engine_ignore_flags     test_ignore_flags.cpp)
 add_gtest_unit(test_engine_runoff           test_runoff.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_runoff PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_runoff PRIVATE SWMM_USE_OPENMP)
+endif()
 add_gtest_unit(test_engine_snow             test_snow.cpp)
-add_gtest_unit(test_engine_gage_scalefactor test_gage_scalefactor.cpp)
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_snow PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_snow PRIVATE SWMM_USE_OPENMP)
+endif()
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
-add_gtest_unit(test_engine_gage_attributes  test_gage_attributes.cpp)
-add_gtest_unit(test_engine_gage_file_roundtrip test_gage_file_roundtrip.cpp)
 
 # Issue #158 — CUMULATIVE rain-gage format. The intensity is the rise since the
 # previous record over the RECORDING INTERVAL, applied for that whole interval;
@@ -283,29 +389,172 @@ add_gtest_unit(test_engine_gage_cumulative  test_gage_cumulative.cpp)
 # USER_CSV rain-file loading (documented in the manual, previously never read —
 # such a gage contributed zero rainfall silently) plus the guard that the
 # resolved-series API cannot drift from what updateAllGages applies.
-add_gtest_unit(test_engine_gage_rain_series test_gage_rain_series.cpp)
 # Parse-once multi-column series files (CSV/TSV/PCSWMM TSF) — wide rows,
 # AM/PM datetimes, delimiter sniff, single-read cache. See
 # plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md.
-add_gtest_unit(test_engine_multicolumn_series_file test_multicolumn_series_file.cpp)
 # B1 regression: set_station_id / set_filename must not corrupt a USER_CSV
 # gage's file format or column binding; new file-column accessors.
-add_gtest_unit(test_engine_gage_format_preservation test_gage_format_preservation.cpp)
-add_gtest_unit(test_engine_climate          test_climate.cpp)
 add_gtest_unit(test_engine_lid              test_lid.cpp)
 target_compile_definitions(test_engine_lid PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_groundwater      test_groundwater.cpp)
+add_gtest_unit(test_engine_groundwater_family
+    test_groundwater_parallel.cpp
+    test_groundwater_init.cpp
+)
 target_compile_definitions(test_engine_groundwater PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_routing          test_routing.cpp)
 add_gtest_unit(test_engine_checkpoint       test_engine_checkpoint.cpp)
+# This executable bundles hundreds of complete checkpoint/continuation runs.
+# Keep its aggregate budget separate from CTest's shorter per-suite CI default.
+set_tests_properties(test_engine_checkpoint PROPERTIES TIMEOUT 3600)
+if(MSVC)
+    # An MSVC Debug build runs these two cases in about 40 and 50 minutes (5 and 8 minutes on
+    # Linux), which puts the whole executable past two hours. The other platforms run them.
+    set_property(TEST test_engine_checkpoint APPEND PROPERTY ENVIRONMENT
+        "GTEST_FILTER=-EngineCheckpoint.SpatialSourcesOwnGraphsDeliverWetWeatherAndContinueVariableEngineSteps:EngineCheckpoint.CombinedOutputContinuesPairedHistoriesAndVectorRichardsBackwater")
+endif()
 target_compile_definitions(test_engine_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
 add_gtest_unit(test_engine_quality_routing  test_quality_routing.cpp)
+add_executable(test_engine_passive_exchange_c test_passive_exchange_c.c)
+target_link_libraries(test_engine_passive_exchange_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_passive_exchange_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_passive_exchange_c)
+add_executable(test_engine_material_split_c test_material_split_c.c)
+target_link_libraries(test_engine_material_split_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_material_split_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_material_split_c)
+add_executable(test_engine_material_checkpoint_c test_material_checkpoint_c.c)
+target_link_libraries(test_engine_material_checkpoint_c PRIVATE openswmm_engine)
+set_target_properties(test_engine_material_checkpoint_c PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF LINKER_LANGUAGE CXX RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+openswmm_stage_test_runtime_deps(test_engine_material_checkpoint_c)
+if(NOT OPENSWMM_BUILD_2D OR NOT OPENSWMM_WITH_HYDROCOUPLE)
+    target_compile_definitions(test_engine_material_checkpoint_c PRIVATE MATERIAL_RECOVERY_OFF)
+endif()
+add_test(NAME test_engine_material_checkpoint_guards COMMAND test_engine_material_checkpoint_c --guards)
+set_tests_properties(test_engine_material_checkpoint_guards PROPERTIES LABELS unit)
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_material_pair test_material_pair.cpp)
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_material_pair PRIVATE MATERIAL_OUTPUT_CHECKPOINT_TESTS)
+    endif()
+    add_library(material_test_transport OBJECT test_material_split_c.c)
+    target_link_libraries(material_test_transport PRIVATE openswmm_engine)
+    target_compile_definitions(material_test_transport PRIVATE MATERIAL_TRANSPORT_ONLY)
+    set_target_properties(material_test_transport PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    target_sources(test_engine_material_pair PRIVATE $<TARGET_OBJECTS:material_test_transport>)
+    target_sources(test_engine_material_checkpoint_c PRIVATE $<TARGET_OBJECTS:material_test_transport>)
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        target_compile_definitions(test_engine_material_pair PRIVATE MATERIAL_PACKET_TESTS)
+        target_link_libraries(test_engine_material_pair PRIVATE nlohmann_json::nlohmann_json)
+        add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --guards)
+    else()
+        target_compile_definitions(test_engine_material_split_c PRIVATE MATERIAL_SPLIT_OFF)
+        add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --off)
+    endif()
+    target_compile_definitions(test_engine_material_pair PRIVATE
+        MATERIAL_PAIR_DATA="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/passive_exchange_c"
+        MATERIAL_PAIR_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_material_pair_2026-11-07/native")
+    add_test(NAME test_engine_public_passive_guards COMMAND test_engine_passive_exchange_c --guards)
+else()
+    target_compile_definitions(test_engine_material_split_c PRIVATE MATERIAL_SPLIT_OFF)
+    add_test(NAME test_engine_material_split_guards COMMAND test_engine_material_split_c --off)
+    add_test(NAME test_engine_public_passive_guards COMMAND test_engine_passive_exchange_c --off)
+endif()
+set_tests_properties(test_engine_public_passive_guards PROPERTIES LABELS unit)
+add_gtest_unit(test_engine_passive_storage_exchange test_passive_storage_exchange.cpp)
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_peer_passive_storage_exchange test_peer_passive_storage_exchange.cpp)
+    target_compile_definitions(test_engine_peer_passive_storage_exchange PRIVATE
+        PEER_FUNDING_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_peer_funding_2026-11-07/native")
+    if(OPENSWMM_WITH_HYDROCOUPLE)
+        target_compile_definitions(test_engine_peer_passive_storage_exchange PRIVATE PEER_RECOVERY_PACKET_TESTS)
+    endif()
+    add_gtest_unit(test_engine_coupled_water_checkpoint test_coupled_water_checkpoint.cpp)
+    add_gtest_unit(test_engine_changing_volume_storage_exchange test_changing_volume_storage_exchange.cpp)
+    target_sources(test_engine_changing_volume_storage_exchange PRIVATE test_passive_storage_funding.cpp)
+    target_compile_definitions(test_engine_changing_volume_storage_exchange PRIVATE
+        CHANGING_VOLUME_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_changing_volume_2026-11-06/native-fixtures")
+    target_compile_definitions(test_engine_coupled_water_checkpoint PRIVATE
+        COUPLED_WATER_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_variable_volume_2026-11-06/native-fixtures")
+    add_gtest_unit(test_engine_live_passive_storage_exchange test_live_passive_storage_exchange.cpp)
+    target_compile_definitions(test_engine_live_passive_storage_exchange PRIVATE
+        LIVE_EXCHANGE_TEST_OUTPUT="${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/native-fixtures")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        if(OPENSWMM_WITH_HYDROCOUPLE)
+            set(_material_checkpoint_options "")
+            if(NOT OPENSWMM_2D_HDF5_OUTPUT)
+                list(APPEND _material_checkpoint_options --numeric-only)
+            endif()
+            add_test(NAME test_engine_material_checkpoint_c
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_checkpoint_c.py
+                    --caller $<TARGET_FILE:test_engine_material_checkpoint_c>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_pair_recovery_c_2026-11-08/ctest
+                    ${_material_checkpoint_options})
+            set_tests_properties(test_engine_material_checkpoint_c PROPERTIES LABELS unit TIMEOUT 600)
+        endif()
+        if(OPENSWMM_WITH_HYDROCOUPLE)
+            add_test(NAME test_engine_material_split_packets
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_split_c.py
+                    --caller $<TARGET_FILE:test_engine_material_split_c>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_material_packet_2026-11-07/c-split)
+            set_tests_properties(test_engine_material_split_packets PROPERTIES LABELS unit TIMEOUT 180)
+        endif()
+        add_test(NAME test_engine_public_passive_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_public_passive.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --caller $<TARGET_FILE:test_engine_passive_exchange_c>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_public_passive_2026-11-07/public-c)
+        set_tests_properties(test_engine_public_passive_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_native_basis_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_native_bases.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_bases_2026-11-07/exact-bases)
+        set_tests_properties(test_engine_native_basis_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_exact_slice_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_exact_slices.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_exact_slices_2026-11-07/exact-slices)
+        set_tests_properties(test_engine_exact_slice_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_water_aggregate_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_water_aggregates.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_water_aggregates_2026-11-06/exact-water)
+        set_tests_properties(test_engine_water_aggregate_exact_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_changing_volume_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_changing_volume.py
+                --engine $<TARGET_FILE:test_engine_changing_volume_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_changing_volume_2026-11-06/exact-accounting)
+        set_tests_properties(test_engine_changing_volume_exact_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_coupled_water_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_coupled_water.py
+                --engine $<TARGET_FILE:test_engine_coupled_water_checkpoint>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_variable_volume_2026-11-06/exact-water)
+        set_tests_properties(test_engine_coupled_water_exact_accounting PROPERTIES LABELS unit)
+        add_test(NAME test_engine_passive_roundoff_exact_accounting
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_passive_roundoff.py
+                --owner $<TARGET_FILE:test_engine_passive_storage_exchange>
+                --live $<TARGET_FILE:test_engine_live_passive_storage_exchange>
+                --output ${PROJECT_SOURCE_DIR}/tests/verification/component_species_halves_2026-11-05/exact-audit)
+        set_tests_properties(test_engine_passive_roundoff_exact_accounting PROPERTIES LABELS unit)
+    endif()
+endif()
+add_gtest_unit(test_engine_fv_conservative_mixing test_fv_conservative_mixing.cpp)
+add_gtest_unit(test_engine_fv_transport_allocations test_fv_transport_allocations.cpp)
+add_gtest_unit(test_engine_fv_accepted_water test_fv_accepted_water.cpp)
+add_gtest_unit(test_engine_fv_scalar_dry_inventory test_fv_scalar_dry_inventory.cpp)
+add_gtest_unit(test_engine_fv_dry_restart test_fv_dry_restart.cpp)
+target_compile_definitions(test_engine_fv_dry_restart PRIVATE
+    OPENSWMM_FV_DRY_RESTART_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/fv_dry_restart")
+add_gtest_unit(test_engine_fv_conservative_quality test_fv_conservative_quality.cpp)
+target_compile_definitions(test_engine_fv_conservative_quality PRIVATE
+    OPENSWMM_FV_CONSERVATIVE_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/fv_conservative_quality")
 target_compile_definitions(test_engine_quality_routing PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
@@ -320,40 +569,48 @@ add_gtest_unit(test_engine_benchmark_corpus  test_benchmark_corpus.cpp)
 target_compile_definitions(test_engine_benchmark_corpus PRIVATE
     "BENCHMARK_DATA_DIR=\"${PROJECT_SOURCE_DIR}/tests/benchmarks\""
 )
-add_gtest_unit(test_engine_treatment        test_treatment.cpp)
 # [GWF] expression C API + validator (AQUIFER_GROUNDWATER_EXCHANGE_GUI_PLAN E1).
 add_gtest_unit(test_engine_gwf_api          test_gwf_api.cpp)
 add_gtest_unit(test_engine_rdii             test_rdii.cpp)
-add_gtest_unit(test_engine_hydrograph_mutation test_hydrograph_mutation_api.cpp)
-add_gtest_unit(test_engine_pattern_mutation  test_pattern_mutation_api.cpp)
-add_gtest_unit(test_engine_transect_mutation test_transect_mutation_api.cpp)
-add_gtest_unit(test_engine_transect_inp_parser test_transect_inp_parser.cpp)
-add_gtest_unit(test_engine_da4_api          test_da4_engine_api.cpp)
-add_gtest_unit(test_engine_controls         test_controls.cpp)
-add_gtest_unit(test_engine_control_rule_validate test_control_rule_validate_api.cpp)
-add_gtest_unit(test_engine_control_rule_runtime_add test_control_rule_runtime_add.cpp)
-add_gtest_unit(test_engine_controls_legacy_parity test_controls_legacy_parity.cpp)
+add_gtest_unit(test_engine_table_mutation
+    test_hydrograph_mutation_api.cpp
+    test_pattern_mutation_api.cpp
+    test_transect_mutation_api.cpp
+    test_transect_inp_parser.cpp
+    test_da4_engine_api.cpp
+)
+add_gtest_unit(test_engine_controls
+    test_controls.cpp
+    test_control_rule_validate_api.cpp
+    test_control_rule_runtime_add.cpp
+    test_controls_legacy_parity.cpp
+)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
-add_gtest_unit(test_engine_storage_shapes  test_storage_shapes.cpp)
+add_gtest_unit(test_engine_storage
+    test_storage_shapes.cpp
+    test_pump_ideal_curve.cpp
+)
 add_gtest_unit(test_engine_storage_shape_roundtrip test_storage_shape_roundtrip.cpp)
 add_gtest_unit(test_engine_links_pump_stats_bulk test_links_pump_stats_bulk.cpp)
-add_gtest_unit(test_engine_pump_ideal_curve test_pump_ideal_curve.cpp)
 add_gtest_unit(test_engine_nodes_bulk_phase3 test_nodes_bulk_phase3.cpp)
+add_gtest_unit(test_engine_site_drainage_model test_site_drainage_model.cpp)
+set_property(TEST test_engine_site_drainage_model APPEND PROPERTY RESOURCE_LOCK site_drainage_model_out)
 add_gtest_unit(test_engine_links_bulk_phase3 test_links_bulk_phase3.cpp)
 add_gtest_unit(test_engine_subcatchments_bulk_phase3 test_subcatchments_bulk_phase3.cpp)
 add_gtest_unit(test_engine_subcatch_editor_api test_subcatch_editor_api.cpp)
 add_gtest_unit(test_engine_statistics_bulk_phase3 test_statistics_bulk_phase3.cpp)
 add_gtest_unit(test_engine_runoff_interface_capi test_runoff_interface_capi.cpp)
-add_gtest_unit(test_engine_report_section  test_report_section.cpp)
+# G-08: the end-of-run summary tables as data (swmm_summary_*), checked against the .rpt
+# of the same run. Inputs and outputs go to data/report_tables/.
 add_gtest_unit(test_engine_concurrent       test_concurrent_engines.cpp)
-add_gtest_unit(test_engine_object_deletion test_object_deletion.cpp)
-add_gtest_unit(test_engine_object_deletion_ext test_object_deletion_ext.cpp)
 # Perf plan Phase A1 — swmm_*_delete_many parity with sequential descending
 # per-object deletes, all-or-nothing validation, and the one-rehash batch.
-add_gtest_unit(test_engine_object_deletion_many test_object_deletion_many.cpp)
-add_gtest_unit(test_engine_quality_roundtrip test_quality_roundtrip.cpp)
-add_gtest_unit(test_engine_type_conversion test_type_conversion.cpp)
-add_gtest_unit(test_engine_tags           test_tags.cpp)
+# Recorded deletes: swmm_*_delete_recorded + swmm_delete_record_restore put the
+# model back exactly. Each case writes its input and saved .inp files under
+# tests/output/delete_record_2026-11-12/<case>/ for review.
+add_gtest_unit(test_engine_delete_record test_delete_record.cpp)
+target_compile_definitions(test_engine_delete_record PRIVATE
+    OPENSWMM_DELETE_RECORD_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/delete_record_2026-11-12")
 # Engine gaps BN-LINK-01a / -01b — symmetric getters for initial-flow /
 # max-flow (added 2026-05-25 for Slice SB of the GUI plan).
 add_gtest_unit(test_engine_link_flow_roundtrip test_link_flow_roundtrip.cpp)
@@ -406,14 +663,35 @@ set_property(TEST
 # `_out.inp`, shared by test_object_deletion_ext and test_quality_roundtrip.
 # Also renamed. The check below is what stops a third.
 
-# The 2D suites read the HDF5 results file the run writes, so they need the
-# 2D results writer. A 2D build without it (OPENSWMM_2D_HDF5_OUTPUT=OFF) is a
-# deployment configuration — the WebAssembly package — not a test one.
-if(OPENSWMM_BUILD_2D AND NOT OPENSWMM_2D_HDF5_OUTPUT)
-    message(FATAL_ERROR
-        "The 2D unit tests read the HDF5 results file: configure them with "
-        "OPENSWMM_2D_HDF5_OUTPUT=ON (or OPENSWMM_BUILD_2D=OFF).")
-endif()
+# Water/source/checkpoint tests can run without the mesh results writer.
+# These surface/output suites require the writer and read back its HDF5 file.
+if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+    add_gtest_unit(test_engine_split_reports test_split_reports.cpp)
+    target_compile_definitions(test_engine_split_reports PRIVATE
+        SPLIT_REPORT_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_split_reports_2026-11-07/native")
+    add_gtest_unit(test_engine_split test_engine_split.cpp)
+    set(_split_evidence "${PROJECT_SOURCE_DIR}/tests/verification/component_split_2026-11-03")
+    target_compile_definitions(test_engine_split PRIVATE SPLIT_EVIDENCE="${_split_evidence}")
+    find_program(OPENSWMM_SPLIT_H5DIFF NAMES h5diff)
+    set_tests_properties(test_engine_split PROPERTIES FIXTURES_SETUP engine_split)
+    if(OPENSWMM_SPLIT_H5DIFF)
+        foreach(_case DrainingSurface SpillingNetwork PerStepExchange VariableRouting DrySurface
+                      EarlyFinishFlushesPendingBatch CompetingWithdrawals
+                      OutfallDischarge OutfallWithdrawal OutfallFlapGate OutfallOverlap
+                      OutfallSpreadRelaxation OutfallMixedNodeExchange OutfallEarlyFinish
+                      WatershedRainfall WatershedOutfall ConventionalLidOutlets ConventionalLidOverflow ConventionalLidCascade WatershedEarlyFinish
+                      GroundwaterNodeGain GroundwaterNodeLoss GroundwaterIndependent GroundwaterEnslaved GroundwaterSigma GroundwaterLinkGain GroundwaterLinkLoss GroundwaterCompetingLinks GroundwaterOneWayLoss GroundwaterUSUnits GroundwaterEarlyFinish GroundwaterWatershed
+                      ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
+                      JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
+                      ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish
+                      ReviewedBedLossShared ReviewedBedLossIndependent ReviewedBedGainIndependent ReviewedBedEnslaved ReviewedBedSigma ReviewedConduitLoss ReviewedConduitGain ReviewedConduitOneWay ReviewedBedConduit ReviewedClassicalBedConduit ReviewedRichardsBedConduit ReviewedBedsEarlyFinish ReviewedBedWithoutSurfacePort ReviewedConduitWithoutSurfacePort)
+            add_test(NAME test_engine_split_${_case}_hdf5
+                COMMAND "${OPENSWMM_SPLIT_H5DIFF}" "${_split_evidence}/${_case}/native.h5"
+                        "${_split_evidence}/${_case}/surface.h5")
+            set_tests_properties(test_engine_split_${_case}_hdf5 PROPERTIES FIXTURES_REQUIRED engine_split LABELS "unit")
+        endforeach()
+    endif()
 
 # Mesh geometric graph-Laplacian eigenbasis (the surface uncertainty ROM's
 # reduced basis). Links the engine library rather than compiling MeshEigenBasis
@@ -672,59 +950,123 @@ set_tests_properties(test_engine_2d_surface PROPERTIES
     LABELS "unit"
     ENVIRONMENT "OPENSWMM_2D_BACKEND=cpu")
 
-# Exercise the acceleration path end-to-end under BOTH cell closures. The
-# Kokkos marcher kernels implement FLAT and VFR alike, so the factory must
-# discover and load the omp plugin in both cases (the default-on policy) — the
-# old closure-refusal guard retired with the CVODE-family solvers, which were
-# VFR-only. Numeric parity is byte-exact by construction (disjoint writes,
-# exact-min reductions); the bench harness verifies .out byte-identity
-# serial-vs-omp on the Bellinge slice.
-if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN)
-    file(COPY ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
-         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
-    # VFR variant of the same fixture, generated at configure time.
-    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
-         _omp_vfr_inp)
+endif()
+
+# Numeric end-to-end gates require the actual OpenMP plugin, exercise both
+# closures and compare every 2D continuity term against the CPU reference.
+if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_vfr_inp)
     string(REPLACE "[2D_OPTIONS]" "[2D_OPTIONS]\nCELL_CLOSURE           VFR"
            _omp_vfr_inp "${_omp_vfr_inp}")
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp
-         "${_omp_vfr_inp}")
-
-    add_test(
-        NAME    test_engine_2d_omp_default
-        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example.inp 2d_omp_default.rpt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    add_test(
-        NAME    test_engine_2d_omp_vfr
-        COMMAND $<TARGET_FILE:openswmm> 2d_complete_example_vfr.inp 2d_omp_vfr.rpt
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    )
-    # Point plugin discovery straight at the freshly built omp plugin. Without
-    # this the engine only searches its own module dir; on Windows multi-config
-    # builds the CLI and the plugin land in separate per-config trees (e.g.
-    # bin/Debug vs src/engine/2d/gpu/Debug), so the omp plugin is never found,
-    # the run silently falls back to the serial CPU solver, and the
-    # PASS_REGULAR_EXPRESSION below never matches. OPENSWMM_GPU_PLUGIN_PATH is
-    # the highest-priority search dir, so this makes discovery deterministic on
-    # every platform/generator. Guarded so non-omp GPU backends still configure.
-    set(_omp_test_env "OPENSWMM_2D_BACKEND=omp")
-    if(TARGET openswmm_gpu_omp)
-        list(APPEND _omp_test_env
-             "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp "${_omp_vfr_inp}")
+    # Outfall OUT1 also discharges into triangle 2. Its cell must be pinned to
+    # tier zero on both backends; the plugin used to miss the pin and rebuild
+    # after every transfer instead (1D -> 2D spill 26,562 vs 40,489 m3).
+    # Anchored on the section line: the header comment names the section too.
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_outfall_inp)
+    string(REPLACE "\n[2D_TRIANGLE_NODE_MAP]\n" "\n[2D_TRIANGLE_NODE_MAP]\n2 OUT1 0.60 10.0\n"
+           _omp_outfall_inp "${_omp_outfall_inp}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp "${_omp_outfall_inp}")
+    # A mixed mesh: the two NE triangles (T6, T7) become one quad, cell 6,
+    # which keeps the "vault" coupling tag and owns both of their boundary
+    # edges (east = local edge 0, north = local edge 1).
+    file(READ ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp _omp_quad_inp)
+    string(REPLACE "   4   5   8    0.018  vault ;; T6 — NE lower (couples to ST1)\n   4   8   7    0.018        ;; T7 — NE upper\n"
+           "\n[2D_QUADS]\n   4   5   8   7    0.018  vault\n" _omp_quad_inp "${_omp_quad_inp}")
+    string(REPLACE "\n   7     0      SPECIFIED_FLOW " "\n   6     1      SPECIFIED_FLOW "
+           _omp_quad_inp "${_omp_quad_inp}")
+    string(FIND "${_omp_quad_inp}" "[2D_QUADS]" _omp_quad_at)
+    string(FIND "${_omp_quad_inp}" "   6     1      SPECIFIED_FLOW " _omp_quad_bc_at)
+    if(_omp_quad_at EQUAL -1 OR _omp_quad_bc_at EQUAL -1)
+        message(FATAL_ERROR "The mixed-mesh variant of 2d_complete_example.inp was not produced")
     endif()
-    # test_engine_2d_omp_default carries no INTEGRATOR line, so it also gates
-    # the marcher-is-the-default contract; the separate P5
-    # test_engine_2d_omp_explicit became an exact duplicate of it once EXPLICIT
-    # became the default and was dropped.
-    set_tests_properties(test_engine_2d_omp_default PROPERTIES
-        LABELS "unit"
-        ENVIRONMENT "${_omp_test_env}"
-        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
-    set_tests_properties(test_engine_2d_omp_vfr PROPERTIES
-        LABELS "unit"
-        ENVIRONMENT "${_omp_test_env}"
-        PASS_REGULAR_EXPRESSION "using GPU backend: omp")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp "${_omp_quad_inp}")
+    # The species cases add transport rows (--quality): a decaying pollutant with a rain
+    # concentration, water age and dispersion. Their binary output and quality continuity
+    # tables must match the CPU run exactly.
+    foreach(_case default vfr evaporation outfall dw dw_vfr swe swe_vfr quad quad_dw quad_swe
+                  swe_o2 quad_swe_o2 species species_dw species_swe species_quad_swe_o2
+                  reactions reactions_swe)
+        set(_input "${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp")
+        set(_extra)
+        if(_case STREQUAL "vfr")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+        elseif(_case STREQUAL "outfall")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_outfall.inp")
+        elseif(_case STREQUAL "evaporation")
+            set(_extra --evaporation)
+        elseif(_case STREQUAL "dw")
+            set(_extra --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "dw_vfr")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+            set(_extra --momentum DIFFUSIVE_WAVE --option "FACE_RECONSTRUCTION VFR_FACE")
+        elseif(_case STREQUAL "swe")
+            set(_extra --momentum FULL_SWE)
+        elseif(_case STREQUAL "swe_vfr")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_vfr.inp")
+            set(_extra --momentum FULL_SWE)
+        elseif(_case STREQUAL "quad")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --option "CELL_CLOSURE VFR" --option "FACE_RECONSTRUCTION VFR_FACE")
+        elseif(_case STREQUAL "quad_dw")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "quad_swe")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum FULL_SWE --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "swe_o2")
+            set(_extra --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2")
+        elseif(_case STREQUAL "quad_swe_o2")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
+                --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "species")
+            set(_extra --quality)
+        elseif(_case STREQUAL "species_dw")
+            set(_extra --quality --momentum DIFFUSIVE_WAVE)
+        elseif(_case STREQUAL "species_swe")
+            set(_extra --quality --momentum FULL_SWE)
+        elseif(_case STREQUAL "species_quad_swe_o2")
+            set(_input "${CMAKE_CURRENT_BINARY_DIR}/2d_complete_example_quad.inp")
+            set(_extra --quality --momentum FULL_SWE --option "RECONSTRUCTION_ORDER 2"
+                --option "CELL_CLOSURE VFR")
+        elseif(_case STREQUAL "reactions")
+            # The reaction species ride the surface and react in the plugin's own stage.
+            set(_extra --quality --reactions --expect-log "device transport with device reactions")
+        elseif(_case STREQUAL "reactions_swe")
+            set(_extra --quality --reactions --momentum FULL_SWE
+                --expect-log "device transport with device reactions")
+        endif()
+        add_test(NAME test_engine_2d_omp_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_input}
+                --output ${CMAKE_CURRENT_BINARY_DIR}/omp_continuity_${_case}
+                ${_extra})
+        set_tests_properties(test_engine_2d_omp_${_case} PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
+    # Configurations outside the Kokkos marcher's capabilities
+    # (SurfaceCapabilities.hpp). Each must be refused by name and served by
+    # the CPU marcher. When a capability lands, its case moves to the parity
+    # loop above; a case left here then fails because the plugin is selected.
+    set(_refuse_front_rebuild --option "FRONT_REBUILD YES"
+        --expect-refusal "does not implement FRONT_REBUILD YES")
+    foreach(_case front_rebuild)
+        add_test(NAME test_engine_2d_omp_refuses_${_case}
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_engine_continuity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${PROJECT_SOURCE_DIR}/examples/2d_complete_example.inp
+                --output ${CMAKE_CURRENT_BINARY_DIR}/omp_refuses_${_case}
+                ${_refuse_${_case}})
+        set_tests_properties(test_engine_2d_omp_refuses_${_case} PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
 endif()
 
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a
@@ -739,14 +1081,53 @@ if(OPENSWMM_BUILD_2D)
     # Remap 1D↔2D pushes through.
     add_gtest_unit(test_engine_2d_triangle_coupling_rows
                    test_2d_triangle_coupling_rows.cpp)
+    # [2D_NODE_COUPLING] per-node coupling type: parse, defaults, validation,
+    # C API, node delete, .inp/GeoPackage round trip, router filter.
+    add_gtest_unit(test_engine_2d_node_coupling_section
+                   test_2d_node_coupling_section.cpp)
+    # COUPLING_LAW WEIR_ORIFICE: the pure law, the Rubinato (2017) Table 2/3
+    # slopes, and the engine path (structure resolution, conservation).
+    add_gtest_unit(test_engine_2d_exchange_law test_2d_exchange_law.cpp)
+    add_gtest_unit(test_engine_2d_exchange_rubinato_steady
+                   test_2d_exchange_rubinato_steady.cpp)
+    # Table 2 rows in the full engine (flume rebuilt from rig_geometry.yaml);
+    # report-only agreement, writes ./rubinato2017_model_out/.
+    add_gtest_unit(test_engine_2d_exchange_rubinato_model
+                   test_2d_exchange_rubinato_model.cpp)
+    add_gtest_unit(test_engine_2d_weir_orifice_coupling
+                   test_2d_weir_orifice_coupling.cpp)
+    # Coupled-junction ponds (COUPLING_POND_MODE / RIM_BAND) and the
+    # head-equalisation cap: pure geometry, then engine runs.
+    add_gtest_unit(test_engine_2d_pond_continuity test_2d_pond_continuity.cpp)
+    add_gtest_unit(test_engine_2d_coupling_ponds test_2d_coupling_ponds.cpp)
+    # A 2D-coupled junction under FLOW_ROUTING FV ponds on the footprint the
+    # 2D router assigns at start (the FV mesh must re-read it) and its head
+    # follows the surface.
+    add_gtest_unit(test_engine_fv_coupled_ponding test_fv_coupled_ponding.cpp)
+    # Outfalls on the 2D surface: flap-gated tailwater, TAILWATER_RELAX,
+    # COUPLING_HEAD sampling, SPREAD delivery, the tailwater report.
+    add_gtest_unit(test_engine_2d_outfall_boundary test_2d_outfall_boundary.cpp)
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).
-    add_gtest_unit(test_engine_2d_coupling_units test_2d_coupling_units.cpp)
+    add_gtest_unit(test_engine_2d_units_and_options
+        test_2d_coupling_units.cpp
+        test_2d_init_depth_units.cpp
+        test_2d_decoupled_stepping.cpp
+        test_2d_timestep_reduction.cpp
+        test_2d_plain_sources.cpp
+        test_2d_lts_equivalence.cpp
+        test_2d_run_stats.cpp
+    )
     # [2D_TRIANGLES] INIT_DEPTH unit-system regression — the column shares the
     # mesh's vertical datum (project display units), so initialize() must scale
     # it by mesh_to_si like vz. It was consumed raw as metres before the fix.
-    add_gtest_unit(test_engine_2d_init_depth_units test_2d_init_depth_units.cpp)
+    # [2D_INITIAL_HGL] — initial water-surface elevation as an alternative to
+    # INIT_DEPTH: resolved depth is clamped at the cell invert, HGL overrides
+    # depth per cell, follows mesh units, and round-trips through the writer.
+    add_gtest_unit(test_engine_2d_init_hgl test_2d_init_hgl.cpp)
+    target_compile_definitions(test_engine_2d_init_hgl PRIVATE
+        OPENSWMM_INIT_HGL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     # Two-way 1D↔2D OUTFALL coupling regression — a coupled outfall's pipe
     # discharge must reach the 2D mesh (it read nodes.outflow≈0 before the fix)
     # and both the 2D and 1D continuity ledgers must close.
@@ -763,7 +1144,6 @@ if(OPENSWMM_BUILD_2D)
     # across the marcher's multi-step sync batches, queue-spread delivery, and
     # the withdrawal budget. The macro-window cases retired with the implicit
     # solvers.
-    add_gtest_unit(test_engine_2d_decoupled_stepping test_2d_decoupled_stepping.cpp)
     # Rainfall→mesh interpolation (natural-neighbour / IDW) + RAINFALL_MODE
     # option round-trip. Pure geometry over the engine-exported interpolator.
     add_gtest_unit(test_engine_2d_rainfall_interp test_2d_rainfall_interp.cpp)
@@ -779,10 +1159,11 @@ if(OPENSWMM_BUILD_2D)
     # steady-slope rain/outflow ledger + normal depth, Froude clamp.
     add_gtest_unit(test_engine_2d_inertial_marcher test_2d_inertial_marcher.cpp)
     add_gtest_unit(test_engine_2d_cpu_correctness test_2d_cpu_correctness.cpp)
+    add_gtest_unit(test_engine_2d_swe_reconstruction test_2d_swe_reconstruction.cpp)
+    add_gtest_unit(test_engine_2d_momentum_physics test_2d_momentum_physics.cpp)
     # Tiered LTS gates: exact conservation at every tier count through a
     # multiscale dam-break, K-tier ≈ global-dt equivalence, and the
     # fine-patch-in-coarse-watershed stability case.
-    add_gtest_unit(test_engine_2d_lts_equivalence test_2d_lts_equivalence.cpp)
     # Mixed triangle/quad meshes (plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md):
     # padded stride-4 layout, quad geometry, B&S 2007 quad VFR closure vs a
     # brute-force integration oracle, marcher gates on quads / mixed strips
@@ -794,10 +1175,10 @@ if(OPENSWMM_BUILD_2D)
     # properties, well-balanced rest, Stoker / Ritter dam breaks vs exact
     # solutions (first and second order), Manning steady slope, conservation.
     add_gtest_unit(test_engine_2d_momentum_modes test_2d_momentum_modes.cpp)
+    add_gtest_unit(test_engine_2d_edge_conveyance test_2d_edge_conveyance.cpp)
     # swmm_2d_get_run_stats: backend label, closure, LTS tiers and the
     # cumulative marcher counters the GUI shows during a run, plus the
     # "2D solver: …" advisory in the report.
-    add_gtest_unit(test_engine_2d_run_stats test_2d_run_stats.cpp)
     # Overland transport S1 (D-2DT1..D-2DT3): species MASS rides the marcher's
     # own face accumulators on the face's tier. The uniform-concentration
     # property to round-off across a 6-tier dam-break with a wet/dry front is
@@ -805,19 +1186,21 @@ if(OPENSWMM_BUILD_2D)
     # from a donor-timing one. Plus mass conservation, the max principle,
     # two-species stride isolation, infiltration ledgering vs evaporative
     # up-concentration, and species-as-passenger bit-identity.
-    add_gtest_unit(test_engine_2d_transport_s1 test_2d_transport_s1.cpp)
+    add_gtest_unit(test_engine_2d_transport
+        test_2d_transport_s1.cpp
+        test_2d_transport_s2.cpp
+        test_2d_transport_s3.cpp
+    )
     # Overland transport S2: rain and boundary-inflow source concentrations
     # (uniformity to round-off when the source matches the pond), limited
     # explicit isotropic dispersion on the face cadence (conservation, max
     # principle, Fickian 2·D·t rate, limiter bind at unstable D, D=0 inert),
     # and [2D_BOUNDARY_QUALITY] refusal on a WALL edge.
-    add_gtest_unit(test_engine_2d_transport_s2 test_2d_transport_s2.cpp)
     # Overland transport S3 (D-2DT4): the 1D↔2D coupling carries species —
     # drain at the cell's concentration through the node mass queue (junction
     # reads exactly c0), spill at nodes.conc (pan stays uniform), outfall
     # discharge through coupling_src (max principle + bound), cross-domain
     # mass identity, and species-as-passenger bit-identity on coupled decks.
-    add_gtest_unit(test_engine_2d_transport_s3 test_2d_transport_s3.cpp)
     # Overland transport S4: age / temperature / MSX rows in the 1D layout —
     # evaporation concentrates solutes but not temperature, the temperature
     # row is signed end-to-end, a still pan ages exactly, the coupling tuple
@@ -837,11 +1220,13 @@ if(OPENSWMM_BUILD_2D)
     # over Infil2D itself: the SI⇄ft/project-unit adapter (anchored on
     # hand-computed SI values, not on a re-derivation of the adapter), the
     # D-I3 override>tag>'*'>none resolution order, and D-I4 validation.
-    add_gtest_unit(test_engine_2d_infil test_2d_infil.cpp)
+    add_gtest_unit(test_engine_2d_infil
+        test_2d_infil.cpp
+        test_2d_infil_integration.cpp
+    )
     # Track I end-to-end: mass-balance ledger closure, the per-cell continuity
     # residual (the silent call site 4), lazy/inactive-cell equivalence,
     # section round-trip and the C API surface.
-    add_gtest_unit(test_engine_2d_infil_integration test_2d_infil_integration.cpp)
     # 1D↔2D unit exchange for boundary conditions on a US (ft / CFS) project:
     # constant stage follows the mesh units, TS/rating stage follows
     # FLOW_UNITS only, flows follow FLOW_UNITS, writers emit display units,
@@ -849,6 +1234,37 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_2d_bc_units test_2d_bc_units.cpp)
     target_compile_definitions(test_engine_2d_bc_units PRIVATE
         OPENSWMM_BC_UNITS_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    # Pinned outputs of the 2D mesh readers: every field the [2D_MESH_FILE]
+    # loader and the .inp reader fill, for the edge cases under
+    # data/mesh_snapshots/ (mesh open plan; regenerate on purpose only).
+    add_gtest_unit(test_engine_mesh_snapshots test_mesh_snapshots.cpp)
+    target_compile_definitions(test_engine_mesh_snapshots PRIVATE
+        OPENSWMM_MESH_SNAPSHOT_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+    # Live output reads, open-handle replacement, rollback and HDF5 interoperability.
+    # Compile the helpers here so access-property IDs and HDF5 calls use one
+    # library instance even when the engine embeds a separate static HDF5 copy.
+    add_executable(test_checkpoint_output_io test_checkpoint_output_io.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointOutputPublication.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointFile.cpp
+        ${PROJECT_SOURCE_DIR}/src/engine/io/CheckpointHdf5.cpp)
+    target_link_libraries(test_checkpoint_output_io PRIVATE GTest::gtest_main)
+    target_include_directories(test_checkpoint_output_io PRIVATE ${PROJECT_SOURCE_DIR}/src/engine)
+    set_target_properties(test_checkpoint_output_io PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY})
+    add_test(NAME test_checkpoint_output_io COMMAND $<TARGET_FILE:test_checkpoint_output_io>)
+    set_tests_properties(test_checkpoint_output_io PROPERTIES LABELS "unit")
+    target_compile_definitions(test_checkpoint_output_io PRIVATE
+        CHECKPOINT_OUTPUT_IO_DIR="${CMAKE_CURRENT_BINARY_DIR}/checkpoint-output-io")
+    if(TARGET hdf5::hdf5-shared)
+        target_link_libraries(test_checkpoint_output_io PRIVATE hdf5::hdf5-shared)
+    elseif(TARGET hdf5::hdf5-static)
+        target_link_libraries(test_checkpoint_output_io PRIVATE hdf5::hdf5-static)
+    else()
+        target_link_libraries(test_checkpoint_output_io PRIVATE ${HDF5_C_LIBRARIES})
+        target_include_directories(test_checkpoint_output_io PRIVATE ${HDF5_INCLUDE_DIRS})
+    endif()
+    openswmm_stage_test_runtime_deps(test_checkpoint_output_io)
     # Results-file size controls ([2D_OPTIONS] OUTPUT_PRECISION /
     # OUTPUT_COMPRESSION / REPORT_2D_VARIABLES / REPORT_2D_SPECIES /
     # REPORT_2D_STEP): grammar + C API round trip, float32 storage, unselected
@@ -868,7 +1284,6 @@ if(OPENSWMM_BUILD_2D)
         target_link_libraries(test_engine_2d_output_options PRIVATE ${HDF5_C_LIBRARIES})
         target_include_directories(test_engine_2d_output_options PRIVATE ${HDF5_INCLUDE_DIRS})
     endif()
-    if(OPENSWMM_2D_HDF5_OUTPUT)
         target_compile_definitions(test_engine_checkpoint PRIVATE OPENSWMM_MESH_OUTPUT_CHECKPOINT_TEST=1)
         if(TARGET hdf5::hdf5-shared)
             target_link_libraries(test_engine_checkpoint PRIVATE hdf5::hdf5-shared)
@@ -917,6 +1332,7 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_source_water_delivery_bridge test_source_water_delivery_bridge.cpp)
     add_gtest_unit(test_engine_common_source_stage test_common_source_stage.cpp)
     add_gtest_unit(test_engine_sigma_conservation test_sigma_conservation.cpp)
+    add_gtest_unit(test_engine_sigma_porewater_map test_sigma_porewater_map.cpp)
     target_compile_definitions(test_engine_common_source_stage PRIVATE OPENSWMM_R4_STAGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_stage_2026-10-06/models")
     target_compile_definitions(test_engine_source_water_driver PRIVATE OPENSWMM_R4_WATER_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_water_2026-10-05/models")
     target_compile_definitions(test_engine_source_clock_groups PRIVATE OPENSWMM_R4_CLOCK_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_clocks_2026-10-05/models")
@@ -936,8 +1352,27 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_runtime_coupling_api test_runtime_coupling_api.cpp)
     add_gtest_unit(test_engine_runtime_water_checkpoint test_runtime_water_checkpoint.cpp)
     add_gtest_unit(test_engine_gw_transport_kernel test_gw_transport_kernel.cpp)
+    # Closure audit C1 (2026-10-17): pre-run groundwater resolution and the
+    # atomic hydrothermal edit contracts. Decks under
+    # tests/output/hydrothermal_config_api.
+    add_gtest_unit(test_engine_hydrothermal_config_api test_hydrothermal_config_api.cpp)
+    add_gtest_unit(test_engine_mesh_heat test_mesh_heat.cpp)
+    add_gtest_unit(test_engine_porous_heat test_porous_heat.cpp)
+    add_gtest_unit(test_engine_column_scratch test_column_scratch.cpp)
+    target_compile_definitions(test_engine_column_scratch PRIVATE
+        OPENSWMM_TEST_COLUMN_SCRATCH=1
+        OPENSWMM_COLUMN_SCRATCH_TEST_DIR="${PROJECT_SOURCE_DIR}/tests/output/column_scratch")
+    add_gtest_unit(test_engine_ground_heat test_ground_heat.cpp)
+    add_gtest_unit(test_engine_channel_heat_contacts test_channel_heat_contacts.cpp)
+    target_compile_definitions(test_engine_ground_heat PRIVATE OPENSWMM_GROUND_HEAT_OUT="${PROJECT_SOURCE_DIR}/tests/output")
+    target_compile_definitions(test_engine_mesh_heat PRIVATE OPENSWMM_MESH_HEAT_OUT="${PROJECT_SOURCE_DIR}/tests/output")
+    target_compile_definitions(test_engine_hydrothermal_config_api PRIVATE
+        OPENSWMM_HYDROTHERMAL_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_gw_transport_kernel PRIVATE
         OPENSWMM_GW_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
+    if(OPENSWMM_2D_HDF5_OUTPUT)
+        target_compile_definitions(test_engine_gw_transport_kernel PRIVATE OPENSWMM_GW_RESULTS_FILE_TEST=1)
+    endif()
     # T7.5 reads the .h5 the run wrote, so it links HDF5 the same way the
     # 2D surface suite does.
     if(TARGET hdf5::hdf5-shared)
@@ -970,7 +1405,6 @@ target_compile_definitions(test_engine_msx_parity PRIVATE
 # (the tapered slot mouth), A↔h round-trip incl. the taper band and deep slot,
 # I₁ as the antiderivative of A with an analytic above-crown extension, and the
 # FV_SLOT_CELERITY design value actually delivered.
-add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
 # Exact-geometry closure (plans/FV1D_CLOSURE_KERNEL_PERF_PLAN_2026-09-11 §2c):
 # SectionGeometry's closed forms are self-consistent (A = ∫W) and match the
 # legacy full-depth properties; the monotone cubic closure reproduces the exact
@@ -978,17 +1412,13 @@ add_gtest_unit(test_engine_fv_closure test_fv_solver_closure.cpp)
 # its own I₁, the open polynomial class is exact, and a byte copy of the POD
 # closure evaluates bit-identically (the device-capture contract).
 add_gtest_unit(test_engine_fv_section_geometry test_fv_section_geometry.cpp)
-add_gtest_unit(test_engine_fv_unsteady_friction test_fv_unsteady_friction.cpp)
-add_gtest_unit(test_engine_dw_unsteady_friction test_dw_unsteady_friction.cpp)
 add_gtest_unit(test_engine_perf_timers test_perf_timers.cpp)
 set_tests_properties(test_engine_perf_timers PROPERTIES ENVIRONMENT "OPENSWMM_PERF=1")
 add_test(NAME test_engine_perf_timers_disabled
     COMMAND ${CMAKE_COMMAND} -E env --unset=OPENSWMM_PERF
         $<TARGET_FILE:test_engine_perf_timers>
-        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate)
+        --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate:ProcessPerf.DisabledProfilingDoesNotAccumulate)
 set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
-add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
-add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over
@@ -998,6 +1428,9 @@ add_gtest_unit(test_engine_fv_analytic test_fv_solver_analytic.cpp)
 # coupling and continuity, mixed-flow filling bore vs. Rankine–Hugoniot,
 # compaction results-transparency, and the scalar-transport contracts.
 add_gtest_unit(test_engine_fv_network test_fv_solver_network.cpp)
+# The junction head root find, costed with the engine's own counters.
+add_gtest_unit(test_engine_fv_junction_root test_fv_junction_root.cpp)
+set_tests_properties(test_engine_fv_junction_root PROPERTIES ENVIRONMENT "OPENSWMM_PERF=1")
 # Local time stepping (§6.12): fall-through to global stepping bit-for-bit on an
 # untiered mesh, tier-interface conservation exact at every tier count, a
 # wetting front crossing tier boundaries without loss, and the substep-count
@@ -1323,6 +1756,147 @@ if(OPENSWMM_WITH_HYDROCOUPLE)
         PC_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/output/process_components")
     # The libraries must exist on disk before the test scans for them.
     add_dependencies(test_engine_process_component_loader hc_smoke_components)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    add_gtest_unit(test_engine_component test_engine_component.cpp)
+    target_link_libraries(test_engine_component PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+    target_compile_definitions(test_engine_component PRIVATE ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
+    add_dependencies(test_engine_component openswmm_engine_component)
+    if(OPENSWMM_BUILD_2D AND OPENSWMM_2D_HDF5_OUTPUT)
+        add_gtest_unit(test_engine_material_components test_material_components.cpp)
+        target_link_libraries(test_engine_material_components PRIVATE HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_engine_material_components PRIVATE
+            ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>"
+            MATERIAL_COMPONENT_DATA="${CMAKE_CURRENT_SOURCE_DIR}/data/passive_exchange_c"
+            MATERIAL_COMPONENT_EVIDENCE="${PROJECT_SOURCE_DIR}/tests/verification/component_material_components_2026-11-08/direct")
+        add_dependencies(test_engine_material_components openswmm_engine_component)
+        add_executable(test_engine_material_group_recovery test_material_group_recovery.cpp)
+        target_link_libraries(test_engine_material_group_recovery PRIVATE openswmm::engine HydroCouple::HydroCouple nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS})
+        target_compile_definitions(test_engine_material_group_recovery PRIVATE
+            ENGINE_COMPONENT_LIBRARY="$<TARGET_FILE:openswmm_engine_component>")
+        add_dependencies(test_engine_material_group_recovery openswmm_engine_component)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME test_engine_material_group_recovery
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/verify_material_group_recovery.py
+                    --caller $<TARGET_FILE:test_engine_material_group_recovery>
+                    --output ${PROJECT_SOURCE_DIR}/tests/verification/component_group_recovery_2026-11-08/ctest)
+            set_tests_properties(test_engine_material_group_recovery PROPERTIES LABELS unit TIMEOUT 600)
+        endif()
+        target_compile_definitions(test_engine_component PRIVATE OPENSWMM_COMPONENT_2D_RESULTS=1
+            SPLIT_WITNESS="${_split_evidence}")
+        set_tests_properties(test_engine_component PROPERTIES FIXTURES_REQUIRED engine_split)
+        add_dependencies(test_engine_component test_engine_split)
+        find_program(OPENSWMM_H5DIFF_EXECUTABLE NAMES h5diff)
+        if(OPENSWMM_H5DIFF_EXECUTABLE)
+            set_tests_properties(test_engine_material_components PROPERTIES FIXTURES_SETUP engine_material_components)
+            set(_material_outputs "${PROJECT_SOURCE_DIR}/tests/verification/component_material_components_2026-11-08/direct")
+            set(_material_comparisons "")
+            foreach(_basis mg ug count)
+                foreach(_sign positive negative)
+                    list(APPEND _material_comparisons "FullDurationAllBasesBothSignsAndOrdersMatchNative/${_basis}-${_sign}")
+                    foreach(_steps 5 8)
+                        list(APPEND _material_comparisons "ShortSlicesAndPendingReportWindowsMatchNative/${_basis}-${_sign}-${_steps}")
+                    endforeach()
+                endforeach()
+            endforeach()
+            foreach(_order network-first source-first)
+                list(APPEND _material_comparisons "EarlyFinishInBothOrdersFlushesOnlyPendingNativeWindow/${_order}")
+            endforeach()
+            foreach(_comparison IN LISTS _material_comparisons)
+                string(REPLACE "/" "_" _name "${_comparison}")
+                add_test(NAME test_engine_material_component_${_name}_hdf5
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}" "${_material_outputs}/${_comparison}-native.h5"
+                        "${_material_outputs}/${_comparison}-surface/model.2d.h5")
+                set_tests_properties(test_engine_material_component_${_name}_hdf5 PROPERTIES
+                    FIXTURES_REQUIRED engine_material_components LABELS unit)
+            endforeach()
+            set_tests_properties(test_engine_component PROPERTIES FIXTURES_SETUP engine_component_surface)
+            set(_surface_cases "${CMAKE_CURRENT_SOURCE_DIR}/data/component_engine")
+            foreach(_case DrainingSurface SpillingNetwork PerStepExchange VariableRouting DrySurface
+                          EarlyFinishFlushesPendingBatch CompetingWithdrawals
+                      OutfallDischarge OutfallWithdrawal OutfallFlapGate OutfallOverlap
+                      OutfallSpreadRelaxation OutfallMixedNodeExchange OutfallEarlyFinish
+                      WatershedRainfall WatershedOutfall ConventionalLidOutlets ConventionalLidOverflow ConventionalLidCascade WatershedEarlyFinish
+                      GroundwaterNodeGain GroundwaterNodeLoss GroundwaterIndependent GroundwaterEnslaved GroundwaterSigma GroundwaterLinkGain GroundwaterLinkLoss GroundwaterCompetingLinks GroundwaterOneWayLoss GroundwaterUSUnits GroundwaterEarlyFinish GroundwaterWatershed
+                      ReviewedFootprintSources ReviewedFootprintIndependent ReviewedFootprintEnslaved ReviewedFootprintSigma ReviewedFootprintEvaporation ReviewedFootprintEarlyFinish
+                      JointRichardsClosedShared JointRichardsClosedIndependent JointRichardsEnslavedShared JointRichardsEnslavedIndependent JointRichardsSigmaShared JointRichardsSigmaIndependent JointRichardsCompeting JointRichardsAquiferGain JointRichardsEarlyFinish
+                      ReviewedMappedDischarge ReviewedMappedWithdrawal ReviewedMappedFlapGate ReviewedMappedRichards ReviewedReturnClosedShared ReviewedReturnIndependent ReviewedReturnEnslaved ReviewedReturnSigma ReviewedReturnRichards ReviewedReturnEarlyFinish ReviewedReturnMixedMapped ReviewedReturnOrdinary
+                      ClassicalMeshReviewedShared ClassicalMeshReviewedIndependent ClassicalMeshReviewedEnslaved ClassicalMeshReviewedSigma ClassicalMeshReviewedGain ClassicalMeshOrdinarySources ClassicalMeshConduit ClassicalSealedReviewed ClassicalCurrentReviewed ClassicalMixedRichards ClassicalMixedRichardsSigma ClassicalEarlyFinish
+                      ReviewedBedLossShared ReviewedBedLossIndependent ReviewedBedGainIndependent ReviewedBedEnslaved ReviewedBedSigma ReviewedConduitLoss ReviewedConduitGain ReviewedConduitOneWay ReviewedBedConduit ReviewedClassicalBedConduit ReviewedRichardsBedConduit ReviewedBedsEarlyFinish ReviewedBedWithoutSurfacePort ReviewedConduitWithoutSurfacePort)
+                add_test(NAME test_engine_component_split_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}" "${_split_evidence}/${_case}/native.h5"
+                        "${_surface_cases}/SplitWaterComponentsMatchIndependentNativeRuns/wrapped/${_case}/surface/model.2d.h5")
+                set_tests_properties(test_engine_component_split_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS "unit")
+            endforeach()
+            add_test(NAME test_engine_component_surface_hdf5_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination/native/model.2d.h5"
+                    "${_surface_cases}/CompleteSurfaceWaterMatchesNativeWithoutTouchingAuthoredDestination/wrapped/model.2d.h5")
+            add_test(NAME test_engine_component_surface_instance_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/SurfaceInstancesKeepIndependentResultsWhenAdvancedTogether/wrapped/model.2d.h5"
+                    "${_surface_cases}/SurfaceInstancesKeepIndependentResultsWhenAdvancedTogether/peer/model.2d.h5")
+            add_test(NAME test_engine_component_surface_coupled_parity
+                COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                    "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/native/model.2d.h5"
+                    "${_surface_cases}/CompleteCoupledSurfaceWaterMatchesNativeWithActualExchange/wrapped/model.2d.h5")
+            foreach(_case IN ITEMS
+                GroundwaterSharedRecharge
+                GroundwaterIndependentRecharge
+                GroundwaterSharedNodeIn
+                GroundwaterIndependentNodeIn
+                GroundwaterSharedNodeOut
+                GroundwaterIndependentNodeOut
+                GroundwaterSharedLinkIn
+                GroundwaterIndependentLinkIn
+                GroundwaterSharedLinkOut
+                GroundwaterIndependentLinkOut
+                GroundwaterUsProject
+                GroundwaterUsProjectSiMesh)
+                add_test(NAME test_engine_component_gw_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_gw_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case RANGE 0 17)
+                add_test(NAME test_engine_component_managed_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/NativeSourceOwners/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/NativeSourceOwners/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_managed_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case IN ITEMS 0 1 4 5 8 9)
+                add_test(NAME test_engine_component_mesh_transport_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/MatchedMeshGroundTransport/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/MatchedMeshGroundTransport/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_mesh_transport_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            foreach(_case RANGE 0 5)
+                add_test(NAME test_engine_component_joint_lid_${_case}_parity
+                    COMMAND "${OPENSWMM_H5DIFF_EXECUTABLE}"
+                        "${_surface_cases}/NativeRichardsAquiferAcceptance/${_case}/native/model.2d.h5"
+                        "${_surface_cases}/NativeRichardsAquiferAcceptance/${_case}/wrapped/model.2d.h5")
+                set_tests_properties(test_engine_component_joint_lid_${_case}_parity PROPERTIES
+                    FIXTURES_REQUIRED engine_component_surface LABELS unit)
+            endforeach()
+            set_tests_properties(test_engine_component_surface_hdf5_parity
+                test_engine_component_surface_instance_parity
+                test_engine_component_surface_coupled_parity PROPERTIES
+                FIXTURES_REQUIRED engine_component_surface LABELS unit)
+        endif()
+    endif()
+    set(OPENSWMM_COMPONENT_RECEIVER_LIBRARY "" CACHE FILEPATH "Optional CF2 receiver for direct engine-component acceptance")
+    if(OPENSWMM_COMPONENT_RECEIVER_LIBRARY)
+        if(NOT EXISTS "${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+            message(FATAL_ERROR "OPENSWMM_COMPONENT_RECEIVER_LIBRARY does not exist")
+        endif()
+        target_compile_definitions(test_engine_component PRIVATE ENGINE_RECEIVER_LIBRARY="${OPENSWMM_COMPONENT_RECEIVER_LIBRARY}")
+    endif()
 endif()
 
 # ---- No two test sources may share a scratch-fixture name ----
@@ -1369,6 +1943,16 @@ endif()
 
 add_gtest_unit(test_engine_lid_nodes test_lid_nodes.cpp)
 add_gtest_unit(test_engine_richards_column test_richards_column.cpp)
+add_gtest_unit(test_engine_richards_batch_parallel test_richards_batch_parallel.cpp)
+target_compile_definitions(test_engine_richards_batch_parallel PRIVATE
+    OPENSWMM_RICHARDS_BATCH_TEST_DIR="${PROJECT_SOURCE_DIR}/tests/output/richards_batch_parallel")
+if(NOT TARGET OpenMP::OpenMP_CXX)
+    find_package(OpenMP QUIET)
+endif()
+if(TARGET OpenMP::OpenMP_CXX)
+    target_link_libraries(test_engine_richards_batch_parallel PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(test_engine_richards_batch_parallel PRIVATE OPENSWMM_TEST_HAS_OPENMP=1)
+endif()
 target_compile_definitions(test_engine_lid_nodes PRIVATE OPENSWMM_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
 if(OPENSWMM_WITH_GEOPACKAGE)
@@ -1438,7 +2022,8 @@ add_gtest_unit(test_engine_grid_mapping_weights   test_grid_mapping_weights.cpp)
 add_gtest_unit(test_engine_runoff_ensemble        test_runoff_ensemble.cpp)
 target_sources(test_engine_runoff_ensemble PRIVATE
     ${PROJECT_SOURCE_DIR}/src/engine/uncertainty/RunoffEnsemble.cpp)
-add_gtest_unit(test_engine_site_drainage_model    test_site_drainage_model.cpp)
+# test_engine_site_drainage_model: registered upstream (swmm6_rel, with its
+# site_drainage_model_out RESOURCE_LOCK) -- the sweep's duplicate was dropped at the 2026-11 merge.
 if(OPENSWMM_BUILD_2D)
     # parseSoftRainfallGridLine is defined in uncertainty/QualityUncertaintyHandler.cpp,
     # which src/engine/CMakeLists.txt only compiles into OPENSWMM_2D_SOURCES --
@@ -1476,3 +2061,66 @@ endif()
 #       spectral_accel scaffolding is unported and the feature itself was
 #       closed as unsafe for large networks -- see .memory/current.md).
 #       Registering this would mean un-excluding closed code; leave it off.
+
+# Loader/runtime safety is hardware independent. The fake CUDA library never
+# allocates a device; it fails deliberately after a matched capability probe.
+if(OPENSWMM_BUILD_2D)
+    add_library(test_gpu_failure_plugin SHARED fake_gpu_plugin.cpp)
+    target_include_directories(test_gpu_failure_plugin PRIVATE "${PROJECT_SOURCE_DIR}/src/engine")
+    target_compile_definitions(test_gpu_failure_plugin PRIVATE OPENSWMM_GPU_PLUGIN_BUILD=1)
+    include("${PROJECT_SOURCE_DIR}/cmake/GpuContract.cmake")
+    openswmm_gpu_contract(test_gpu_failure_plugin)
+    set_target_properties(test_gpu_failure_plugin PROPERTIES OUTPUT_NAME openswmm_gpu_cuda
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gpu-fakes"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gpu-fakes")
+    add_gtest_unit(test_engine_2d_backend_safety test_2d_backend_safety.cpp)
+    target_link_libraries(test_engine_2d_backend_safety PRIVATE test_gpu_failure_plugin)
+    if(TARGET openswmm_gpu_omp)
+        add_dependencies(test_engine_2d_backend_safety openswmm_gpu_omp)
+        target_compile_definitions(test_engine_2d_backend_safety PRIVATE
+            OPENSWMM_TEST_OMP_DIRECTORY="$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
+    # Windows stages the linked DLL beside the executable. Load that same
+    # instance so the injected probe counters observe the calls made by the host.
+    if(WIN32)
+        set(_failure_plugin_dir "$<TARGET_FILE_DIR:test_engine_2d_backend_safety>")
+    else()
+        set(_failure_plugin_dir "$<TARGET_FILE_DIR:test_gpu_failure_plugin>")
+    endif()
+    set_tests_properties(test_engine_2d_backend_safety PROPERTIES
+        ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=${_failure_plugin_dir}"
+        TIMEOUT 60)
+endif()
+
+# These gates must execute the real packed recharge operator. A missing
+# plugin is a failure, not a skipped comparison or a successful CPU fallback.
+if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
+    foreach(_threads IN ITEMS 1 4)
+        add_test(NAME gw_recharge_plugin_${_threads}_threads
+            COMMAND test_engine_gw_transport_kernel --gtest_filter=GwRechargePlugin.*
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data)
+        add_test(NAME gw_rk2_plugin_${_threads}_threads
+            COMMAND test_engine_2d_inertial_marcher
+                --gtest_filter=CoupledGroundwaterRk2.OptionalOpenmpRechargePreservesStagesRestartAndRollback
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data)
+        set_tests_properties(gw_recharge_plugin_${_threads}_threads gw_rk2_plugin_${_threads}_threads PROPERTIES
+            ENVIRONMENT "OPENSWMM_2D_BACKEND=omp;OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>;OPENSWMM_GW_TEST_REQUIRE_PLUGIN=1;OPENSWMM_GW_TEST_EXPECT_THREADS=${_threads};OPENSWMM_2D_THREADS=${_threads};OMP_NUM_THREADS=${_threads};OMP_PROC_BIND=false"
+            LABELS "gpu;groundwater" RUN_SERIAL TRUE TIMEOUT 120)
+    endforeach()
+endif()
+
+if(OPENSWMM_BUILD_2D)
+    add_gtest_unit(test_engine_portability_regressions test_portability_regressions.cpp)
+    target_compile_definitions(test_engine_portability_regressions PRIVATE
+        OPENSWMM_PORTABILITY_OUT="${CMAKE_CURRENT_BINARY_DIR}/portability-output")
+endif()
+
+# OpenSWMM issue #2 / USEPA #216 and #234: conduit loss conservation.
+add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
+target_compile_definitions(test_engine_conduit_losses PRIVATE
+    ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")
+
+# Physical ordinary-junction chamber storage (engine #10 / USEPA #200).
+add_gtest_unit(test_engine_junction_storage test_junction_storage.cpp)
+target_compile_definitions(test_engine_junction_storage PRIVATE
+    ISSUE10_OUTPUT_DIR="${PROJECT_SOURCE_DIR}/tests/verification/junction_storage_issue10/runs")

@@ -78,6 +78,7 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/linux",
             "cacheVariables": {
+                "OPENSWMM_STRICT_GCC_WARNINGS": "ON",
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
@@ -103,6 +104,7 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/linux-debug",
             "cacheVariables": {
+                "OPENSWMM_STRICT_GCC_WARNINGS": "ON",
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_C_FLAGS": "-Wall -Wextra -Werror=implicit-function-declaration -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",
                 "CMAKE_CXX_FLAGS": "-Wall -Wextra -fno-fast-math -ffp-contract=off -fno-math-errno -fexcess-precision=standard -fvisibility=hidden",

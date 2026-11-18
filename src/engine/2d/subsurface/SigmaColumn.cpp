@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file SigmaColumn.cpp
- * @brief G-steps 4 and 5 — see the header for the coordinate, the flux forms
+ * @file      SigmaColumn.cpp
+ * @brief     G-steps 4 and 5 — see the header for the coordinate, the flux forms
  *        and the handover convention.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "SigmaColumn.hpp"
@@ -34,35 +34,58 @@ namespace openswmm::twoD::sigma {
 
 namespace {
 
-constexpr double kLMin  = 1.0e-3;   ///< column thickness floor (m)
-constexpr double kTiny  = 1.0e-300;
+constexpr double kLMin = 1.0e-3; ///< column thickness floor (m)
+constexpr double kTiny = 1.0e-300;
 
+/**
+ * @brief Address one layer of a caller-owned strided water-content array.
+ * @param[in] t Required writable array spanning the requested layer.
+ * @param[in] j Nonnegative layer index, within caller-provided extent.
+ * @param[in] stride Positive element stride, in doubles.
+ * @return Borrowed mutable reference to t[j*stride], invalid when its backing storage changes.
+ * @note No bounds/overflow checks, allocation or retention beyond the returned reference.
+ */
 inline double& at(double* t, int j, int stride) noexcept {
     return t[static_cast<std::size_t>(j) * static_cast<std::size_t>(stride)];
 }
+/**
+ * @brief Address one layer of a caller-owned strided water-content array.
+ * @param[in] t Required readable array spanning the requested layer.
+ * @param[in] j Nonnegative layer index, within caller-provided extent.
+ * @param[in] stride Positive element stride, in doubles.
+ * @return Water-content value by copy.
+ * @note No bounds/overflow checks, allocation or retention beyond the returned reference.
+ */
 inline double at(const double* t, int j, int stride) noexcept {
     return t[static_cast<std::size_t>(j) * static_cast<std::size_t>(stride)];
 }
 
-/// Harmonic mean, zero when either side is zero (the conductive-series rule).
+/**
+ * @brief Harmonic mean, zero when either side is zero (the conductive-series rule).
+ *
+ * @param[in] a Finite nonnegative first diffusivity, m2/s.
+ * @param[in] b Finite nonnegative second diffusivity, m2/s.
+ * @return Harmonic mean in m2/s, or zero when a+b <= 1e-300. Pure scalar calculation without
+ * input validation or allocation.
+ */
 inline double harmonic(double a, double b) noexcept {
     const double s = a + b;
     return (s > kTiny) ? (2.0 * a * b / s) : 0.0;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 
 double columnStorage(const double* theta, int m, int stride, double L) noexcept {
     const double dz = std::max(L, 0.0) / static_cast<double>(m);
     double s = 0.0;
-    for (int j = 0; j < m; ++j) s += at(theta, j, stride) * dz;
+    for (int j = 0; j < m; ++j)
+        s += at(theta, j, stride) * dz;
     return s;
 }
 
-void seedHydrostatic(const soil::Params& p, double* theta, int m, int stride,
-                     double L) noexcept {
+void seedHydrostatic(const soil::Params& p, double* theta, int m, int stride, double L) noexcept {
     const double Lc = std::max(L, 0.0);
     const double dsig = 1.0 / static_cast<double>(m);
     for (int j = 0; j < m; ++j) {
@@ -74,9 +97,8 @@ void seedHydrostatic(const soil::Params& p, double* theta, int m, int stride,
     }
 }
 
-double columnDtLimit(const soil::Params& p, const double* theta, int m,
-                     int stride, double L, double Ldot, double c_col,
-                     bool capillary) noexcept {
+double columnDtLimit(const soil::Params& p, const double* theta, int m, int stride, double L,
+                     double Ldot, double c_col, bool capillary) noexcept {
     const double Lc = std::max(L, kLMin);
     const double dsig = 1.0 / static_cast<double>(m);
     const double dz = Lc * dsig;
@@ -87,14 +109,13 @@ double columnDtLimit(const soil::Params& p, const double* theta, int m,
         // retention inverse: the analytic form differs per law and per
         // branch, and this runs once per rebuild, not per firing.
         const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
-        const double se   = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
-        const double dse  = 1.0e-3;
+        const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
+        const double dse = 1.0e-3;
         const double se_hi = std::min(se + dse, 1.0);
         const double se_lo = std::max(se - dse, 1.0e-8);
         const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
         const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
-        const double c = std::fabs(k_hi - k_lo) /
-                         std::max((se_hi - se_lo) * span, 1.0e-12);
+        const double c = std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
 
         const double sig = (static_cast<double>(j) + 0.5) * dsig;
         const double grid = std::fabs(sig * Ldot);
@@ -104,23 +125,80 @@ double columnDtLimit(const soil::Params& p, const double* theta, int m,
             diff = 2.0 * soil::diffusivity(p, psi) / std::max(dz, 1.0e-12);
         }
         const double denom = c + grid + diff;
-        if (denom > kTiny) lim = std::min(lim, dz / denom);
+        if (denom > kTiny)
+            lim = std::min(lim, dz / denom);
     }
     return std::max(c_col, 1.0e-6) * lim;
 }
 
 // ---------------------------------------------------------------------------
 
-void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
-                   ColumnStep& st) noexcept {
-    if (m <= 0 || !(st.dt > 0.0)) return;
+void prepareColumn(const soil::Params& p, const double* theta, int m, int stride,
+                   const ColumnStep& st, ColumnPreparation& prepared) noexcept {
+    prepared.psi.resize(m);
+    prepared.conductivity.resize(m);
+    prepared.diffusivity.resize(m);
+    prepared.celerity.resize(m);
+    prepared.diffusion_bound.resize(m);
+    const double dsig = 1.0 / static_cast<double>(m);
+    const double dz = std::max(std::max(st.L_old, 0.0), kLMin) * dsig;
+    for (int j = 0; j < m; ++j) {
+        const double th = std::clamp(at(theta, j, stride), p.theta_r, p.theta_s);
+        const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
+        const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
+        const double dse = 1.0e-3;
+        const double se_hi = std::min(se + dse, 1.0);
+        const double se_lo = std::max(se - dse, 1.0e-8);
+        const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
+        const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
+        prepared.celerity[j] = std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
+        prepared.psi[j] = soil::suctionAtSaturation(p, se);
+        prepared.conductivity[j] = soil::conductivity(p, prepared.psi[j]);
+        prepared.diffusivity[j] = st.capillary ? soil::diffusivity(p, prepared.psi[j]) : 0.0;
+        prepared.diffusion_bound[j] =
+            st.capillary ? 2.0 * prepared.diffusivity[j] / std::max(dz, 1.0e-12) : 0.0;
+    }
+    prepared.fixed_velocity = st.forward_euler;
+    if (prepared.fixed_velocity) {
+        double lim = 1.0e30;
+        for (int j = 0; j < m; ++j) {
+            const double sig = (static_cast<double>(j) + 0.5) * dsig;
+            const double grid = std::fabs(sig * st.grid_rate);
+            const double denom = prepared.celerity[j] + grid + prepared.diffusion_bound[j];
+            if (denom > kTiny)
+                lim = std::min(lim, dz / denom);
+        }
+        prepared.dt_limit = std::max(1.0, 1.0e-6) * lim;
+    }
+}
+
+static void advancePreparedColumn(const soil::Params& p, double* theta, int m, int stride,
+                                  ColumnStep& st, const ColumnPreparation* prepared) noexcept {
+    if (m <= 0 || !(st.dt > 0.0))
+        return;
 
     const double dsig = 1.0 / static_cast<double>(m);
-    const double L0   = std::max(st.L_old, 0.0);
-    const double L1   = std::max(st.L_new, 0.0);
-    const double Ldot = (L1 - L0) / st.dt;
+    const double L0 = std::max(st.L_old, 0.0);
+    const double L1 = std::max(st.L_new, 0.0);
+    const double Ldot = st.forward_euler ? st.grid_rate : (L1 - L0) / st.dt;
 
-    st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
+    if (!prepared) {
+        st.dt_limit = columnDtLimit(p, theta, m, stride, L0, Ldot, 1.0, st.capillary);
+    } else if (prepared->fixed_velocity) {
+        st.dt_limit = prepared->dt_limit;
+    } else {
+        // Non-Euler trial heights change Ldot; only the soil terms are invariant.
+        const double dz = std::max(L0, kLMin) * dsig;
+        double lim = 1.0e30;
+        for (int j = 0; j < m; ++j) {
+            const double sig = (static_cast<double>(j) + 0.5) * dsig;
+            const double grid = std::fabs(sig * Ldot);
+            const double denom = prepared->celerity[j] + grid + prepared->diffusion_bound[j];
+            if (denom > kTiny)
+                lim = std::min(lim, dz / denom);
+        }
+        st.dt_limit = std::max(1.0, 1.0e-6) * lim;
+    }
 
     // ---- 1. w_j from the OLD geometry. w is the conserved quantity; θ is a
     //         derived view of it, and it is re-derived from the NEW L at the
@@ -136,6 +214,21 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         w[static_cast<std::size_t>(j)] = th_old[static_cast<std::size_t>(j)] * dz0;
     }
 
+    if (st.transfers) {
+        auto& r = *st.transfers;
+        r = {};
+        r.old_length = L0;
+        r.new_length = L1;
+        r.contacts = st.layer_inflow ? *st.layer_inflow : std::vector<double>(m, 0);
+        r.old_water = w;
+        r.faces.resize(m + 1);
+        r.compression.assign(m + 1, 0);
+        r.grid.resize(m + 1);
+        for (int j = 0; j <= m; ++j)
+            r.grid[j] =
+                st.forward_euler ? -double(j) * dsig * Ldot * st.dt : -double(j) * dsig * (L1 - L0);
+    }
+
     auto psiOf = [&](double th) {
         const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
         const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
@@ -145,14 +238,14 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     // ---- 2. Interior faces. f[j] is the face ABOVE layer j (σ = j/m), so
     //         f[0] is the top boundary and f[m] the bottom.
     for (int jf = 1; jf < m; ++jf) {
-        const int up = jf - 1;              // layer above the face
-        const int dn = jf;                  // layer below
+        const int up = jf - 1; // layer above the face
+        const int dn = jf;     // layer below
         const double th_up = th_old[static_cast<std::size_t>(up)];
         const double th_dn = th_old[static_cast<std::size_t>(dn)];
         const double sig_f = static_cast<double>(jf) * dsig;
 
         // (a) gravity — downward, donor is the layer above.
-        double flux = soil::conductivity(p, psiOf(th_up));
+        double flux = prepared ? prepared->conductivity[up] : soil::conductivity(p, psiOf(th_up));
 
         // (b) grid motion, upwinded on its own sign. The face moves at
         //     ż = σ_f·L̇; the relative flux is −θ_donor·ż, so L̇ > 0 (faces
@@ -163,8 +256,10 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 
         // (c) capillary diffusion, harmonic-mean D̄ across the face.
         if (st.capillary) {
-            const double d_up = soil::diffusivity(p, psiOf(th_up));
-            const double d_dn = soil::diffusivity(p, psiOf(th_dn));
+            const double d_up =
+                prepared ? prepared->diffusivity[up] : soil::diffusivity(p, psiOf(th_up));
+            const double d_dn =
+                prepared ? prepared->diffusivity[dn] : soil::diffusivity(p, psiOf(th_dn));
             const double dbar = harmonic(d_up, d_dn);
             flux -= dbar * (th_dn - th_up) / std::max(L0 * dsig, 1.0e-12);
         }
@@ -178,17 +273,17 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
         const double th_top = th_old[0];
         const double headroom = std::max(p.theta_s - th_top, 0.0) * dz0 / st.dt;
         const double accept = std::min(std::max(st.q_in, 0.0), headroom);
-        st.f_top    = accept;
+        st.f_top = accept;
         st.rejected = std::max(st.q_in, 0.0) - accept;
 
         // ET is limited by what the top layer holds above residual, and by
         // the Feddes stress at its own suction — no `if (infil <= 0)` gate.
         const double avail = std::max(th_top - p.theta_r, 0.0) * dz0 / st.dt;
-        const double psi_top = psiOf(th_top);
+        const double psi_top = prepared ? prepared->psi[0] : psiOf(th_top);
         // The reviewed wilting suction is a shared SI model parameter.
         const double psi_w = st.wilting_suction;
         const double stress = soil::feddesStress(psi_top, psi_w);
-        st.et_stress=stress;
+        st.et_stress = stress;
         st.et_taken = std::min(std::max(st.q_et, 0.0) * stress, avail);
         f[0] = st.f_top - st.et_taken;
     }
@@ -207,26 +302,33 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     //         surface solver's volume share. Applied to interior faces and
     //         the bottom face (the top face is already capped above).
     for (int j = 0; j < m; ++j) {
-        const double avail = std::max(w[static_cast<std::size_t>(j)] -
-                                      p.theta_r * dz0, 0.0);
+        const double avail = std::max(w[static_cast<std::size_t>(j)] - p.theta_r * dz0, 0.0);
         double out = 0.0;
         if (f[static_cast<std::size_t>(j)] < 0.0)
-            out += -f[static_cast<std::size_t>(j)] * st.dt;      // upward out of j
+            out += -f[static_cast<std::size_t>(j)] * st.dt; // upward out of j
         if (f[static_cast<std::size_t>(j + 1)] > 0.0)
-            out += f[static_cast<std::size_t>(j + 1)] * st.dt;   // downward out of j
+            out += f[static_cast<std::size_t>(j + 1)] * st.dt; // downward out of j
         if (out > avail && out > kTiny) {
             const double beta = avail / out;
             if (f[static_cast<std::size_t>(j)] < 0.0)
                 f[static_cast<std::size_t>(j)] *= beta;
             if (f[static_cast<std::size_t>(j + 1)] > 0.0) {
                 f[static_cast<std::size_t>(j + 1)] *= beta;
-                if (j == m - 1) st.f_bot = f[static_cast<std::size_t>(m)];
+                if (j == m - 1)
+                    st.f_bot = f[static_cast<std::size_t>(m)];
             }
         }
     }
 
     // Positivity sharing may reduce the net top export; report actual ET.
-    st.et_taken=std::max(0.0,st.f_top-f[0]);
+    st.et_taken = std::max(0.0, st.f_top - f[0]);
+    if (st.transfers) {
+        auto& r = *st.transfers;
+        r.infiltration = st.f_top * st.dt;
+        r.evaporation = st.et_taken * st.dt;
+        for (int j = 0; j <= m; ++j)
+            r.faces[j] = f[j] * st.dt;
+    }
 
     // ---- 6. Update w, then re-derive θ from the NEW geometry. This is where
     //         the layers compress: same water, new dz.
@@ -248,8 +350,8 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     for (int j = 0; j < m; ++j) {
         w_new[static_cast<std::size_t>(j)] =
             w[static_cast<std::size_t>(j)] +
-            st.dt * (f[static_cast<std::size_t>(j)] -
-                     f[static_cast<std::size_t>(j + 1)]);
+            st.dt * (f[static_cast<std::size_t>(j)] - f[static_cast<std::size_t>(j + 1)]) +
+            (st.layer_inflow ? (*st.layer_inflow)[static_cast<std::size_t>(j)] : 0.0);
     }
 
     const double w_max = p.theta_s * dz1;
@@ -260,25 +362,56 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
     for (int j = 0; j < m; ++j) {
         double wj = w_new[static_cast<std::size_t>(j)] + carry;
         carry = 0.0;
-        if (wj > w_max) { carry = wj - w_max; wj = w_max; }
+        if (wj > w_max) {
+            carry = wj - w_max;
+            wj = w_max;
+        }
         w_new[static_cast<std::size_t>(j)] = wj;
+        if (st.transfers)
+            st.transfers->compression[j + 1] = carry;
     }
-    st.overflow_to_sat = carry / st.dt;      // m/s down across the table
+    st.overflow_to_sat = carry / st.dt; // m/s down across the table
 
     // Draw any residual deficit upward from the table (capillary support).
+    if (st.transfers)
+        st.transfers->support = w_new;
     double draw = 0.0;
     for (int j = m - 1; j >= 0; --j) {
         double wj = w_new[static_cast<std::size_t>(j)] - draw;
         draw = 0.0;
-        if (wj < w_min) { draw = w_min - wj; wj = w_min; }
+        if (wj < w_min) {
+            draw = w_min - wj;
+            wj = w_min;
+        }
         w_new[static_cast<std::size_t>(j)] = wj;
     }
-    st.deficit_from_sat = draw / st.dt;      // m/s up across the table
+    st.deficit_from_sat = draw / st.dt;
+    if (st.transfers) {
+        auto& r = *st.transfers;
+        double flux = 0;
+        auto before = std::move(r.support);
+        r.support.assign(m + 1, 0);
+        for (int j = 0; j < m; ++j) {
+            flux -= w_new[j] - before[j];
+            r.support[j + 1] = flux;
+        }
+        r.new_water = w_new;
+    }
+    // m/s up across the table
 
     for (int j = 0; j < m; ++j)
-        at(theta, j, stride) =
-            dz1 > 0.0 ? w_new[static_cast<std::size_t>(j)] / dz1 : p.theta_s;
+        at(theta, j, stride) = dz1 > 0.0 ? w_new[static_cast<std::size_t>(j)] / dz1 : p.theta_s;
     st.theta_bot = at(theta, m - 1, stride);
 }
 
-}  // namespace openswmm::twoD::sigma
+void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
+                   ColumnStep& st) noexcept {
+    advancePreparedColumn(p, theta, m, stride, st, nullptr);
+}
+
+void advanceColumn(const soil::Params& p, double* theta, int m, int stride, ColumnStep& st,
+                   const ColumnPreparation& prepared) noexcept {
+    advancePreparedColumn(p, theta, m, stride, st, &prepared);
+}
+
+} // namespace openswmm::twoD::sigma

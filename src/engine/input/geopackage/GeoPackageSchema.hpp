@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file GeoPackageSchema.hpp
- * @brief DDL and metadata registration for the OpenSWMM GeoPackage schema.
+ * @file      GeoPackageSchema.hpp
+ * @brief     DDL and metadata registration for the OpenSWMM GeoPackage schema.
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_SCHEMA_HPP
@@ -65,8 +65,8 @@ void create_schema(sqlite3* db);
  * @param srs_name Human-readable name (e.g., "WGS 84").
  * @param wkt      WKT definition string.
  */
-void register_crs(sqlite3* db, int srs_id, const std::string& org,
-                  int org_id, const std::string& srs_name, const std::string& wkt);
+void register_crs(sqlite3* db, int srs_id, const std::string& org, int org_id,
+                  const std::string& srs_name, const std::string& wkt);
 
 /**
  * @brief Register a feature table in gpkg_contents and gpkg_geometry_columns.
@@ -80,9 +80,9 @@ void register_crs(sqlite3* db, int srs_id, const std::string& org,
  * @param min_x, min_y, max_x, max_y  Bounding box.
  */
 void register_feature_table(sqlite3* db, const std::string& table_name,
-                            const std::string& geom_type, int srs_id,
-                            const std::string& identifier, const std::string& description,
-                            double min_x, double min_y, double max_x, double max_y);
+                            const std::string& geom_type, int srs_id, const std::string& identifier,
+                            const std::string& description, double min_x, double min_y,
+                            double max_x, double max_y);
 
 /**
  * @brief Pre-populate the variables catalog with known SWMM output variables.

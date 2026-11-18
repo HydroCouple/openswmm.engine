@@ -1,0 +1,20 @@
+--- a/src/engine/2d/subsurface/SubsurfaceSolver.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceSolver.cpp
+@@ -4548,7 +4548,7 @@
+         const double length = state_.zs[cell] - state_.hg[cell];
+         if (!(length > 0))
+             continue;
+-        if (independentClock() && length < soil::kRechargeLengthFloor)
++        if (length < soil::kRechargeLengthFloor)
+             continue; // legacy extension law floors storage as well as its rate
+         const auto p = paramsOf(cell);
+         OpenSwmmGwRechargeInputV1 v{};
+@@ -4600,7 +4600,7 @@
+  */
+ double SubsurfaceSolver::rawRecharge(int cell, const soil::Params& p,
+                                      double length) const noexcept {
+-    if (independentClock() && length < soil::kRechargeLengthFloor)
++    if (length < soil::kRechargeLengthFloor)
+         return soil::rechargeQ0AtLength(p, length, state_.hu[cell]);
+     const int slot = recharge_backend_.evaluate && std::size_t(cell) < recharge_slots_.size()
+                          ? recharge_slots_[cell]

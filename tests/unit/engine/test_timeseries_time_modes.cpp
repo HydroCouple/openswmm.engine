@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_timeseries_time_modes.cpp
- * @brief Inline [TIMESERIES] time modes: time-only rows are elapsed times
+ * @file      test_timeseries_time_modes.cpp
+ * @brief     Inline [TIMESERIES] time modes: time-only rows are elapsed times
  *        anchored at the simulation start; dated rows are absolute; both may
  *        mix in one series.
  *
@@ -42,9 +42,9 @@
  *          under tests/unit/engine/data/tseries_modes/ with the `_` prefix
  *          that .gitignore excludes.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -71,13 +71,32 @@ using openswmm::TableType;
 
 constexpr const char* kDir = "tseries_modes/";
 
-std::string data(const std::string& name) { return kDir + name; }
+/**
+ * @brief Prefix a time-mode fixture filename with its relative data directory.
+ *
+ * @param[in] name Filename or relative suffix appended verbatim; no path validation.
+ * @return Owned tseries_modes/ path; no file is created or opened.
+ */
+std::string data(const std::string& name) {
+    return kDir + name;
+}
 
 // 01/01/2007 06:00 as an OADate — the fixture's START_DATE + START_TIME.
 const double kStart = openswmm::datetime::encodeDate(2007, 1, 1) + 0.25;
 // 01/02/2007 00:00.
 const double kJan2 = openswmm::datetime::encodeDate(2007, 1, 2);
 
+/**
+ * @brief Collect an entire fixture file into owned text.
+ *
+ * Uses ordinary text mode and its platform newline rules. The local stream closes on return; no
+ * model state is touched and no borrowed buffer is returned. Default stream exception settings
+ * apply; allocation exceptions may propagate.
+ *
+ * @param[in] path Borrowed input filename used for this synchronous open/read.
+ * @return Owned string collected from the stream; empty can mean an empty file or failure to open.
+ *     Partial read failures have no separate status.
+ */
 std::string slurp(const std::string& path) {
     std::ifstream in(path);
     std::stringstream ss;
@@ -85,16 +104,25 @@ std::string slurp(const std::string& path) {
     return ss.str();
 }
 
-/// Rows of the [TIMESERIES] section whose first column is `id`, each
-/// whitespace-split into columns (writer column widths are not a contract).
-std::vector<std::vector<std::string>> seriesRows(const std::string& text,
-                                                 const std::string& id) {
+/**
+ * @brief Extract whitespace-tokenized rows for one exact timeseries identifier.
+ *
+ * Strips terminal CR/leading whitespace, skips blank and semicolon-leading lines, and stops a
+ * section at the next leading bracket. Does not parse quoted names, strip inline comments or
+ * validate dates/numbers.
+ *
+ * @param[in] text Complete input/writer text, unchanged.
+ * @param[in] id Case-sensitive first-column identifier to retain.
+ * @return Owned token rows inside sections beginning literally [TIMESERIES], in encounter order.
+ */
+std::vector<std::vector<std::string>> seriesRows(const std::string& text, const std::string& id) {
     std::vector<std::vector<std::string>> rows;
     std::istringstream in(text);
     std::string line;
     bool inside = false;
     while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         std::string t = line;
         while (!t.empty() && std::isspace(static_cast<unsigned char>(t.front())))
             t.erase(t.begin());
@@ -102,16 +130,30 @@ std::vector<std::vector<std::string>> seriesRows(const std::string& text,
             inside = (t.rfind("[TIMESERIES]", 0) == 0);
             continue;
         }
-        if (!inside || t.empty() || t.front() == ';') continue;
+        if (!inside || t.empty() || t.front() == ';')
+            continue;
         std::istringstream row(t);
         std::vector<std::string> c;
         std::string tok;
-        while (row >> tok) c.push_back(tok);
-        if (!c.empty() && c[0] == id) rows.push_back(std::move(c));
+        while (row >> tok)
+            c.push_back(tok);
+        if (!c.empty() && c[0] == id)
+            rows.push_back(std::move(c));
     }
     return rows;
 }
 
+/**
+ * @brief Borrow one expected named timeseries for fixture assertions.
+ *
+ * Records a nonfatal EXPECT_GE on lookup but still indexes even after failure; caller must supply a
+ * present series. Does not initialize or advance the model.
+ *
+ * @param[in] eng Live opened engine containing id; ownership remains with caller.
+ * @param[in] id Existing timeseries identifier; absence violates the indexing precondition.
+ * @return Const table reference valid while the engine context/table vector remains alive and
+ *     unmodified.
+ */
 const Table& table(SWMMEngine& eng, const std::string& id) {
     const int idx = eng.context().find_timeseries(id);
     EXPECT_GE(idx, 0) << "series " << id << " missing";
@@ -120,11 +162,19 @@ const Table& table(SWMMEngine& eng, const std::string& id) {
 
 struct OpenedFixture {
     SWMMEngine eng;
+    /**
+     * @brief Open the fixed time-mode deck and record input diagnostics.
+     *
+     * Owns its engine as a member, writes _time_modes.rpt and requests no binary output. Open refusal
+     * records a nonfatal expectation and each context error records ADD_FAILURE; construction still
+     * returns, so callers must not assume successful initialization. Does not start a run.
+     */
     OpenedFixture() {
-        EXPECT_EQ(eng.open(data("time_modes.inp").c_str(),
-                           data("_time_modes.rpt").c_str(), nullptr),
-                  SWMM_OK);
-        for (const auto& e : eng.context().errors) ADD_FAILURE() << e;
+        EXPECT_EQ(
+            eng.open(data("time_modes.inp").c_str(), data("_time_modes.rpt").c_str(), nullptr),
+            SWMM_OK);
+        for (const auto& e : eng.context().errors)
+            ADD_FAILURE() << e;
     }
 };
 
@@ -140,7 +190,7 @@ TEST(TimeseriesTimeModes, RelativeRowsAnchorAtSimulationStart) {
     EXPECT_DOUBLE_EQ(t.rel_anchor, kStart);
     EXPECT_NEAR(t.x[0], kStart, 1e-9);
     EXPECT_NEAR(t.x[1], kStart + 1.0 / 24.0, 1e-9);
-    EXPECT_NEAR(t.x[2], kStart + 25.5 / 24.0, 1e-9);  // decimal hours > 24
+    EXPECT_NEAR(t.x[2], kStart + 25.5 / 24.0, 1e-9); // decimal hours > 24
 }
 
 TEST(TimeseriesTimeModes, DatedRowsAreAbsoluteAndCarryTheDateForward) {
@@ -150,7 +200,7 @@ TEST(TimeseriesTimeModes, DatedRowsAreAbsoluteAndCarryTheDateForward) {
     EXPECT_EQ(t.n_relative, 0);
     EXPECT_NEAR(t.x[0], kJan2, 1e-9);
     EXPECT_NEAR(t.x[1], kJan2 + 0.25, 1e-9);
-    EXPECT_NEAR(t.x[2], kJan2 + 0.50, 1e-9);  // date-less continuation row
+    EXPECT_NEAR(t.x[2], kJan2 + 0.50, 1e-9); // date-less continuation row
 }
 
 TEST(TimeseriesTimeModes, MixedSeriesShiftsOnlyTheRelativeHead) {
@@ -200,7 +250,7 @@ TEST(TimeseriesTimeModes, WriterPreservesAuthoredForms) {
     EXPECT_EQ(rel[0].size(), 3u);
     EXPECT_EQ(rel[0][1], "0:00");
     EXPECT_EQ(rel[1][1], "1:00");
-    EXPECT_EQ(rel[2][1], "25:30");  // 25.5 decimal hours round-trips as clock
+    EXPECT_EQ(rel[2][1], "25:30"); // 25.5 decimal hours round-trips as clock
 
     // Dated series keeps explicit dates on every row (3 columns after name).
     auto dated = seriesRows(text, "TS_DATED");
@@ -252,8 +302,7 @@ TEST(TimeseriesTimeModes, WriteReloadWriteIsAFixedPoint) {
     }
     {
         SWMMEngine eng2;
-        ASSERT_EQ(eng2.open(out1.c_str(), data("_time_modes_rt.rpt").c_str(), nullptr),
-                  SWMM_OK);
+        ASSERT_EQ(eng2.open(out1.c_str(), data("_time_modes_rt.rpt").c_str(), nullptr), SWMM_OK);
         // Reload re-anchors relative rows at the (unchanged) start date, so
         // the resolved tables must be identical to the first open.
         const Table& t = table(eng2, "TS_MIXED");
@@ -309,10 +358,9 @@ TEST(TimeseriesTimeModes, RelativeInfoCApiRoundTripAndClearReset) {
     EXPECT_EQ(swmm_timeseries_set_relative_info(eng, idx, 99, kStart), SWMM_OK);
     ASSERT_EQ(swmm_timeseries_get_relative_info(eng, idx, &n, &anchor), SWMM_OK);
     EXPECT_EQ(n, 2);
-    EXPECT_EQ(swmm_timeseries_set_relative_info(eng, idx, -1, kStart),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_timeseries_set_relative_info(eng, idx, -1, kStart), SWMM_ERR_BADPARAM);
 
     swmm_engine_destroy(eng);
 }
 
-}  // namespace
+} // namespace

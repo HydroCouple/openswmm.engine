@@ -1,4 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
+
+/**
+ * @file      test_kokkos_explicit_alignment.cpp
+ * @brief     Tests for kokkos explicit alignment.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
+#include "2d/coupling/NodeCoupling.hpp"
+#include "core/SimulationContext.hpp"
+#include "transport/components/ReactionModule/ReactionArdBinding.hpp"
+#include "transport/components/ReactionModule/ReactionExpression.hpp"
+#include "2d/data/BoundaryData.hpp"
+#include "data/NodeData.hpp"
 #include "2d/data/SolverOptions2D.hpp"
 #include "2d/data/SurfaceStateData.hpp"
 #include "2d/gpu/ExplicitKokkosSurfaceSolver.hpp"
@@ -6,7 +22,9 @@
 #include "2d/mesh/MeshBuilder.hpp"
 #include "2d/solver/ExplicitInertialSolver.hpp"
 #include "2d/solver/InertialKernels.hpp"
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
@@ -15,40 +33,237 @@ namespace gpu = openswmm::twoD::gpu;
 namespace sk = gpu::swe_kernels;
 namespace openswmm::twoD {
 struct ExplicitInertialSolverTestAccess {
-    static void gradients(ExplicitInertialSolver &s) { s.computeLimitedGradientsSwe(); }
-    static void faces(ExplicitInertialSolver &s, double dt) {
+    /// Wall-drag energy ledger and mixing statistics of the CPU marcher (momentum physics).
+    static std::array<double, 4> physicsLedger(const ExplicitInertialSolver& s) {
+        return {s.wall_drag_energy_, double(s.momentum_physics_.substeps),
+                double(s.momentum_physics_.retries), s.momentum_physics_.last_limit};
+    }
+    /**
+     * @brief Recompute CPU limited SWE reconstruction gradients for the device comparison.
+     *
+     * Mutates solver gradient buffers only through the production reconstruction routine. Kokkos
+     * initialization is not needed for this CPU accessor.
+     *
+     * @param[in,out] s Initialized CPU FULL_SWE solver with valid attached mesh/state and gradient
+     *     storage; borrowed dependencies remain alive.
+     */
+    static void gradients(ExplicitInertialSolver& s) { s.computeLimitedGradientsSwe(); }
+    /**
+     * @brief Fire all currently active CPU SWE faces for one Euler comparison step.
+     *
+     * Uses the true firing flag and mutates per-face water/momentum accumulators and discharge. Caller
+     * manages stage preparation and subsequent cell gathering.
+     *
+     * @param[in,out] s Initialized FULL_SWE solver with consistent active-face list, state and
+     *     reconstruction buffers.
+     * @param[in] dt Positive face integration interval in seconds.
+     */
+    static void faces(ExplicitInertialSolver& s, double dt) {
         s.fireFacesSwe(s.active_faces_, dt, true);
     }
-    static void cells(ExplicitInertialSolver &s, double dt) {
+    /**
+     * @brief Consume active-cell transfers and apply the CPU cell operation.
+     *
+     * Uses the true firing flag; updates attached water state, momentum and consumed transfer buffers.
+     * Does not schedule a complete model advance.
+     *
+     * @param[in,out] s Initialized solver whose active-cell list and face-transfer buffers describe the
+     *     intended Euler stage.
+     * @param[in] dt Positive cell integration interval in seconds.
+     */
+    static void cells(ExplicitInertialSolver& s, double dt) {
         s.fireCells(s.active_cells_, dt, true);
     }
-    static auto &edges(ExplicitInertialSolver &s) { return s.edges_; }
-    static auto &cells(ExplicitInertialSolver &s) { return s.active_cells_; }
-    static auto &faceList(ExplicitInertialSolver &s) { return s.active_faces_; }
-    static auto &active(ExplicitInertialSolver &s) { return s.cell_active_; }
-    static auto &tiers(ExplicitInertialSolver &s) { return s.tier_; }
-    static auto &qx(ExplicitInertialSolver &s) { return s.qcx_; }
-    static auto &qy(ExplicitInertialSolver &s) { return s.qcy_; }
-    static std::vector<double> gradients(ExplicitInertialSolver &s, int axis) {
+    /**
+     * @brief Expose CPU face topology and metric storage to the kernel fixture.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to s.edges_; invalidated by solver destruction or topology/storage
+     *     rebuild.
+     */
+    static auto& edges(ExplicitInertialSolver& s) { return s.edges_; }
+    /**
+     * @brief Expose the CPU active-cell index list.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to the solver-owned cell list; valid until destruction or a
+     *     list/storage rebuild.
+     */
+    static auto& cells(ExplicitInertialSolver& s) { return s.active_cells_; }
+    /**
+     * @brief Expose the CPU active-face index list.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to the solver-owned face list; valid until destruction or a
+     *     list/storage rebuild.
+     */
+    static auto& faceList(ExplicitInertialSolver& s) { return s.active_faces_; }
+    /**
+     * @brief Expose CPU cell activity flags.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to solver-owned activity flags in cell-index order; no copy or
+     *     ownership transfer.
+     */
+    static auto& active(ExplicitInertialSolver& s) { return s.cell_active_; }
+    /**
+     * @brief Expose CPU local-timestep cell tiers.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to solver-owned cell-tier storage; no copy or ownership transfer.
+     */
+    static auto& tiers(ExplicitInertialSolver& s) { return s.tier_; }
+    /**
+     * @brief Expose CPU x-directed depth-integrated momentum.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to solver-owned per-cell qx in m2/s; no copy or ownership transfer.
+     */
+    static auto& qx(ExplicitInertialSolver& s) { return s.qcx_; }
+    /**
+     * @brief Expose CPU y-directed depth-integrated momentum.
+     *
+     * Borrowed storage must not outlive its solver; operations that resize the corresponding container
+     * may invalidate element references/iterators.
+     *
+     * @param[in,out] s Live initialized CPU solver; caller preserves buffer sizes, valid indices and
+     *     solver invariants when mutating the returned reference.
+     * @return Mutable reference to solver-owned per-cell qy in m2/s; no copy or ownership transfer.
+     */
+    static auto& qy(ExplicitInertialSolver& s) { return s.qcy_; }
+    /**
+     * @brief Pack CPU gradients into the device kernel comparison layout.
+     *
+     * Does not mutate solver state. Requires each selected eta vector to contain at least
+     * state.depth.size() entries; no bounds validation occurs.
+     *
+     * @param[in] s Initialized CPU solver with attached state and previously computed gradient buffers
+     *     covering all depth entries.
+     * @param[in] axis Zero selects x gradients; any nonzero value selects y gradients.
+     * @return Owned vector containing cell eta gradients, all u gradients, all v gradients, then any
+     *     remaining eta entries, in native reconstruction units.
+     */
+    static std::vector<double> gradients(ExplicitInertialSolver& s, int axis) {
         std::vector<double> v;
         const auto n = s.state_->depth.size();
-        auto &eta = axis ? s.gey_ : s.gex_;
-        auto &u = axis ? s.guy_ : s.gux_;
-        auto &w = axis ? s.gvy_ : s.gvx_;
+        auto& eta = axis ? s.gey_ : s.gex_;
+        auto& u = axis ? s.guy_ : s.gux_;
+        auto& w = axis ? s.gvy_ : s.gvx_;
         v.insert(v.end(), eta.begin(), eta.begin() + n);
         v.insert(v.end(), u.begin(), u.end());
         v.insert(v.end(), w.begin(), w.end());
         v.insert(v.end(), eta.begin() + n, eta.end());
         return v;
     }
-    static std::vector<std::vector<double>> transfers(ExplicitInertialSolver &s) {
-        return {s.facc_L_, s.facc_R_, s.macc_x_L_, s.macc_x_R_, s.macc_y_L_, s.macc_y_R_, s.q_};
+    /**
+     * @brief Snapshot CPU face water/momentum transfers and discharge for comparison.
+     *
+     * @param[in] s Initialized CPU solver after the face operation under test.
+     * @return Owned copies in order water-left, water-right, x-momentum-left/right,
+     *     y-momentum-left/right, discharge; each retains the corresponding production buffer layout and
+     *     units.
+     */
+    static std::vector<std::vector<double>> transfers(ExplicitInertialSolver& s) {
+        std::vector<std::vector<double>> rows(7);
+        const auto stride = s.face_accum_stride_;
+        for (std::size_t e = 0; e < s.face_accum_.size() / stride; ++e)
+            for (std::size_t side = 0; side < stride; ++side)
+                rows[side].push_back(s.face_accum_[e * stride + side]);
+        rows[6] = s.q_;
+        return rows;
     }
 };
 } // namespace openswmm::twoD
 namespace openswmm::twoD::gpu {
 struct ExplicitKokkosSurfaceSolverTestAccess {
-    static int coarse(ExplicitKokkosSurfaceSolver &s) {
+    /// Wall-drag energy ledger and mixing statistics of the Kokkos marcher (momentum physics).
+    static std::array<double, 4> physicsLedger(const ExplicitKokkosSurfaceSolver& s) {
+        return {s.wall_drag_energy_, double(s.ph_substeps_), double(s.ph_retries_),
+                s.ph_last_limit_};
+    }
+    /**
+     * @brief Upload current boundary/source inputs and rebuild the device firing state at time zero.
+     *
+     * Calls pushForcings then syncAndRebuild(0.0); intended before manual boundary substeps, rather
+     * than as a complete scheduled advance.
+     *
+     * @param[in,out] s Initialized Kokkos solver with live attached forcing/state dependencies and
+     *     initialized Kokkos runtime.
+     */
+    static void prepareBoundarySteps(ExplicitKokkosSurfaceSolver& s) {
+        s.pushForcings();
+        s.syncAndRebuild(0.0);
+    }
+    /**
+     * @brief Upload changed boundary values and directly fire device tier zero.
+     *
+     * Uses fireCells(0,dt,true); mutates device water state and receipt accumulators without
+     * publication or full advance scheduling.
+     *
+     * @param[in,out] s Initialized and prepared Kokkos solver; attached forcing dependencies and
+     *     runtime remain valid.
+     * @param[in] dt Positive interval in seconds for the manual cell firing.
+     */
+    static void boundarySubstep(ExplicitKokkosSurfaceSolver& s, double dt) {
+        s.pushForcings();
+        s.fireCells(0, dt, true);
+    }
+    /**
+     * @brief Publish a manually fired device boundary window to host state.
+     *
+     * Calls publishAndCopyBack with start time zero. Applies production accumulator-draining semantics;
+     * attached host state must remain alive.
+     *
+     * @param[in,out] s Initialized solver holding the device state/receipt accumulators to publish.
+     * @param[in] span Positive reporting interval in seconds used for mean-flux publication.
+     */
+    static void publish(ExplicitKokkosSurfaceSolver& s, double span) {
+        s.publishAndCopyBack(0.0, span);
+    }
+    /**
+     * @brief Read this solver instance's advance performance counter.
+     *
+     * @param[in] s Live Kokkos solver whose per-instance performance attribution is under test.
+     * @return Recorded advance count; this accessor does not enable performance collection or
+     *     synchronize device work.
+     */
+    static long advances(const ExplicitKokkosSurfaceSolver& s) {
+        return s.perf_counters_.n_advance;
+    }
+    /**
+     * @brief Prepare and find the first active device cell assigned a coarse time tier.
+     *
+     * Uploads forcings, rebuilds at time zero and copies active/tier views to host; modifies the
+     * prepared solver state before searching.
+     *
+     * @param[in,out] s Initialized Kokkos solver with valid forcing/state dependencies and runtime.
+     * @return First cell index with active flag and tier greater than zero, or -1 if none exists.
+     */
+    static int coarse(ExplicitKokkosSurfaceSolver& s) {
         s.pushForcings();
         s.syncAndRebuild(0.0);
         auto active = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, s.d_active_);
@@ -58,7 +273,22 @@ struct ExplicitKokkosSurfaceSolverTestAccess {
                 return i;
         return -1;
     }
-    static double checkBound(ExplicitKokkosSurfaceSolver &s, int i, double depth) {
+    /**
+     * @brief Change one device depth and measure the refreshed frozen-tier CFL ratio.
+     *
+     * Writes the device depth and refreshes dt0; does not restore either. Requires a nonnegative tier
+     * small enough for the integer left shift. No index, shift-range or zero-denominator guard is added
+     * by this accessor.
+     *
+     * @param[in,out] s Initialized Kokkos solver with valid device depth/tier storage, mesh metrics,
+     *     options and runtime.
+     * @param[in] i Valid cell index in every accessed state/metric/tier array.
+     * @param[in] depth Replacement water depth in metres producing a positive finite zero-velocity CFL
+     *     bound.
+     * @return Refreshed base timestep times 2^tier divided by the cell CFL interval; values at most one
+     *     satisfy this fixture bound.
+     */
+    static double checkBound(ExplicitKokkosSurfaceSolver& s, int i, double depth) {
         auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, s.d_depth_);
         h(i) = depth;
         Kokkos::deep_copy(s.d_depth_, h);
@@ -71,38 +301,114 @@ struct ExplicitKokkosSurfaceSolverTestAccess {
 };
 } // namespace openswmm::twoD::gpu
 using A = ExplicitInertialSolverTestAccess;
-void require(bool yes, const char *what) {
+using KA = gpu::ExplicitKokkosSurfaceSolverTestAccess;
+/**
+ * @brief Fail the standalone alignment test when a required condition is false.
+ *
+ * Throws std::runtime_error when yes is false; otherwise has no effect.
+ *
+ * @param[in] yes Condition that must hold.
+ * @param[in] what Non-null diagnostic string, copied into the exception on failure.
+ */
+void require(bool yes, const char* what) {
     if (!yes)
         throw std::runtime_error(what);
 }
-void near(double a, double b, const char *what, double tol = 2e-11) {
+/**
+ * @brief Check a finite scalar against a reference with a relative-plus-unit-floor tolerance.
+ *
+ * Throws std::runtime_error if either value is nonfinite or abs(a-b)>tol*(1+abs(b)). The unit floor
+ * is literal 1 in the compared quantity's native units; no input mutation occurs.
+ *
+ * @param[in] a Actual scalar in the same native units as b.
+ * @param[in] b Reference scalar; its magnitude scales the tolerance.
+ * @param[in] what Non-null failure label written to stderr and copied into the exception.
+ * @param[in] tol Nonnegative tolerance multiplier, default 2e-11.
+ */
+void near(double a, double b, const char* what, double tol = 2e-11) {
     if (!std::isfinite(a) || !std::isfinite(b) || std::abs(a - b) > tol * (1 + std::abs(b))) {
         std::cerr << what << ": " << a << " != " << b << '\n';
         throw std::runtime_error(what);
     }
 }
-template <class T> auto device(const std::vector<T> &data) {
-    Kokkos::View<T *, gpu::MemSpace> d("test", data.size());
+/**
+ * @brief Copy a one-dimensional host vector into a newly allocated device-space Kokkos view.
+ *
+ * Requires initialized Kokkos. Uses a host mirror and deep_copy; does not retain references to the
+ * input or mutate it. Allocation/runtime errors propagate.
+ *
+ * @param[in] data Readable vector whose element type supports assignment between compatible
+ *     host/device views; may be empty.
+ * @return Owning reference-counted Kokkos::View<T*,gpu::MemSpace> with extent data.size() and
+ *     copied values.
+ */
+template <class T> auto device(const std::vector<T>& data) {
+    Kokkos::View<T*, gpu::MemSpace> d("test", data.size());
     auto h = Kokkos::create_mirror_view(d);
     for (size_t i = 0; i < data.size(); ++i)
         h(i) = data[i];
     Kokkos::deep_copy(d, h);
     return d;
 }
-template <class V> auto host(const V &d) {
+/**
+ * @brief Copy a one-dimensional Kokkos view into an owned standard vector.
+ *
+ * Uses create_mirror_view_and_copy and does not retain or mutate the input view; runtime/allocation
+ * errors propagate.
+ *
+ * @param[in] d Valid readable rank-one view with initialized Kokkos runtime and copyable
+ *     non_const_value_type.
+ * @return Owned vector of extent d.extent(0), containing a host mirror copy in index order.
+ */
+template <class V> auto host(const V& d) {
     auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace{}, d);
     std::vector<typename V::non_const_value_type> v(d.extent(0));
     for (size_t i = 0; i < v.size(); ++i)
         v[i] = h(i);
     return v;
 }
-void compare(const std::vector<double> &a, const std::vector<double> &b, const char *what,
+/**
+ * @brief Compare equally sized scalar vectors using the standalone finite-value assertion.
+ *
+ * Throws for unequal sizes with the label "size", or for the first failed/nonfinite element through
+ * near(); inputs are unchanged.
+ *
+ * @param[in] a Actual values, in matching index order and units to b.
+ * @param[in] b Reference values; may be empty when a is empty.
+ * @param[in] what Non-null element failure diagnostic passed to near().
+ * @param[in] tol Nonnegative multiplier for abs(a[i]-b[i]) <= tol*(1+abs(b[i])).
+ */
+void compare(const std::vector<double>& a, const std::vector<double>& b, const char* what,
              double tol = 2e-11) {
     require(a.size() == b.size(), "size");
     for (size_t i = 0; i < a.size(); ++i)
         near(a[i], b[i], what, tol);
 }
-double sum(const std::vector<double> &v) { return std::accumulate(v.begin(), v.end(), 0.0); }
+/**
+ * @brief Sum a scalar fixture vector in index order from a zero accumulator.
+ *
+ * @param[in] v Readable vector in consistent native units; may be empty.
+ * @return Double-precision sum in the input units, or zero for an empty vector; nonfinite values
+ *     propagate.
+ */
+double sum(const std::vector<double>& v) {
+    return std::accumulate(v.begin(), v.end(), 0.0);
+}
+/**
+ * @brief Build a metre-spaced square topology for CPU/device alignment cases.
+ *
+ * Leaves unrelated properties at MeshData defaults. Count/index preconditions are not checked here;
+ * allocation and topology-builder failures propagate.
+ *
+ * @param[in] n Positive number of unit-square subdivisions along each axis; derived vertex/cell
+ *     counts must fit integer/storage limits.
+ * @param[in] shape 1 builds quads; 2 alternates quad and split-square triangle patches; other
+ *     values split every square into two triangles.
+ * @param[in] skew Perturb interior vertex x/y by bounded sine/cosine offsets of 0.15 m.
+ * @param[in] slope Set vertex bed elevation to 0.015*x+0.007*y metres before interior horizontal
+ *     perturbations.
+ * @return Owned mesh with populated geometry and built adjacency/edge topology.
+ */
 MeshData mesh(int n, int shape = 0, bool skew = false, bool slope = false) {
     MeshData m;
     m.resize_vertices((n + 1) * (n + 1));
@@ -136,21 +442,48 @@ MeshData mesh(int n, int shape = 0, bool skew = false, bool slope = false) {
     buildMeshTopology(m);
     return m;
 }
-SurfaceStateData state(const MeshData &m, double depth) {
+/**
+ * @brief Allocate a surface state and seed uniform area-scaled water volumes.
+ *
+ * Does not initialize head/depth from volume; subsequent solver initialization performs that
+ * closure. Mesh is neither mutated nor retained by this helper.
+ *
+ * @param[in] m Mesh with consistent cell/vertex counts and valid per-cell area in m2.
+ * @param[in] depth Intended nonnegative uniform initial water depth in metres.
+ * @return Owned resized state with volume[i]=depth*area[i] in m3; other fields retain resize
+ *     defaults.
+ */
+SurfaceStateData state(const MeshData& m, double depth) {
     SurfaceStateData s;
     s.resize(m.n_cells(), m.n_vertices());
     for (int i = 0; i < m.n_cells(); ++i)
         s.volume[i] = depth * m.tri_area[i];
     return s;
 }
+/**
+ * @brief Create alignment options with a fixed one-second cap and CFL number 0.4.
+ *
+ * @param[in] tiers Supported positive local-timestep tier count; the helper does not validate it.
+ * @return Owned options with lts_tiers=tiers, max_timestep=1 s and num_threads=1; all other fields
+ *     retain production defaults.
+ */
 SolverOptions2D options(int tiers = 1) {
     SolverOptions2D o;
+    // The fixtures compare the local-inertial marchers; it is no longer the default closure.
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
     o.lts_tiers = tiers;
     o.max_timestep = 1;
     o.cfl_number = .4;
     o.num_threads = 1;
     return o;
 }
+/**
+ * @brief Check that a changed device depth still respects the frozen coarse-tier CFL bound.
+ *
+ * Builds a 16-by-16 triangular depth-contrast fixture with four tiers, locates an active coarse
+ * cell and raises its device depth to 0.2 m before checking the refreshed base timestep. Requires
+ * initialized Kokkos; failures throw through require().
+ */
 void frozenTier() {
     auto m = mesh(16);
     auto s = state(m, .0041);
@@ -165,90 +498,1148 @@ void frozenTier() {
     require(i >= 0, "coarse CFL fixture");
     require(Access::checkBound(solver, i, .2) <= 1 + 1e-14, "frozen-tier CFL bound");
 }
+/**
+ * @brief Require direct Kokkos initialization to reject unsupported fixture configurations.
+ *
+ * Separately tries each configuration outside kKokkosSurfaceCapabilities (transport rows with
+ * surface heat exchange, FRONT_REBUILD YES), requiring
+ * std::invalid_argument each time. Requires initialized Kokkos; unexpected exceptions propagate
+ * and a missing rejection throws std::runtime_error. Remove a case here in the change that adds
+ * its capability and its parity check.
+ */
 void unsupported() {
-    for (int kind = 0; kind < 3; ++kind) {
-        auto m = mesh(2, kind == 0 ? 1 : 0);
+    const char* names[] = {"", "transport with surface heat", "", "FRONT_REBUILD"};
+    for (int kind : {1, 3}) {
+        auto m = mesh(2);
         auto s = state(m, .1);
         auto o = options();
-        if (kind == 1)
-            o.momentum = Momentum2D::FULL_SWE;
-        if (kind == 2)
+        if (kind == 1) {
             s.transport.resize(1, m.n_cells(), 0);
+            s.heat.enabled = true;
+        }
+        if (kind == 3)
+            o.front_rebuild = 1;
         bool rejected = false;
         try {
             gpu::ExplicitKokkosSurfaceSolver solver;
             solver.initialize(m, s, o);
-        } catch (const std::invalid_argument &) {
+        } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        require(rejected, "unsupported direct Kokkos initialization");
+        const std::string what =
+            std::string("unsupported direct Kokkos initialization: ") + names[kind];
+        require(rejected, what.c_str());
     }
 }
+/**
+ * @brief Compare complete CPU/Kokkos inertial advances across wetting and source cases.
+ *
+ * Exercises FLAT/VFR closures, one/four tiers and five
+ * dam-break/rain/infiltration/evaporation/coupling scenarios over three windows ending at 2 s.
+ * Checks water, applied sources and selected conservation budgets at relative-plus-floor tolerance
+ * 2e-9. Requires initialized Kokkos; emits step/PASS progress and throws at the first mismatch.
+ */
 void marcher() {
+    for (double reference_step : {0.0, 0.37})
+        for (bool vfr : {false, true})
+            for (int tiers : {1, 4})
+                for (int scenario = 0; scenario < 5; ++scenario) {
+                    auto m = mesh(12, 0, false, vfr);
+                    auto s = state(m, .1);
+                    auto o = options(tiers);
+                    o.theta_reference_step = reference_step;
+                    if (vfr)
+                        o.cell_closure = CellClosure2D::VFR;
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (scenario == 0)
+                            s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
+                        if (scenario == 1) {
+                            s.infil_rate[i] = .15;
+                            s.evap_rate[i] = .1;
+                            s.coupling_flux[i] = -.2;
+                        }
+                        if (scenario == 2) {
+                            s.volume[i] = 0;
+                            s.rainfall[i] = .02;
+                        }
+                        if (scenario == 3) {
+                            s.rainfall[i] = .1;
+                            s.infil_rate[i] = .1;
+                        }
+                        if (scenario == 4) {
+                            s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
+                            s.infil_rate[i] = .2;
+                        }
+                    }
+                    auto ref = s;
+                    auto ro = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, ref, ro);
+                    kk.initialize(m, s, o);
+                    double t = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.0}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        std::cout << "step smoothing_ref=" << reference_step << " tiers=" << tiers
+                                  << " case=" << scenario << " end=" << end
+                                  << " cpu=" << cpu.last_num_steps()
+                                  << " kk=" << kk.last_num_steps() << std::endl;
+                        compare(s.volume, ref.volume, "marcher volume", 2e-9);
+                        compare(s.infil_applied, ref.infil_applied, "infiltration", 2e-9);
+                        compare(s.coupling_applied, ref.coupling_applied, "coupling", 2e-9);
+                        near(s.evap_loss_total, ref.evap_loss_total, "evaporation", 2e-9);
+                        if (scenario == 0)
+                            near(sum(s.volume), .2 * 72, "closed volume");
+                        if (scenario == 1) {
+                            double infiltrated = 0;
+                            for (int i = 0; i < m.n_cells(); ++i)
+                                infiltrated += s.infil_applied[i] * m.tri_area[i];
+                            near(sum(s.volume) + infiltrated + s.evap_loss_total -
+                                     sum(s.coupling_applied),
+                                 14.4, "source budget conservation");
+                        }
+                        if (scenario == 2)
+                            near(sum(s.volume), .02 * 144 * end, "rain storage");
+                        t = end;
+                    }
+                    std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
+                }
+}
+/**
+ * @brief Require two arrays to hold the same bits, element for element.
+ *
+ * Bitwise, so -0.0 and +0.0 differ: both marchers publish into the same output files, where a
+ * signed zero is a visible difference. Throws std::runtime_error naming the first differing element.
+ */
+void exact(const std::vector<double>& a, const std::vector<double>& b, const std::string& what) {
+    require(a.size() == b.size(), (what + ": size").c_str());
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (std::bit_cast<std::uint64_t>(a[i]) != std::bit_cast<std::uint64_t>(b[i])) {
+            char buf[256];
+            std::snprintf(buf, sizeof buf, "%s: element %zu differs: %.17g != %.17g", what.c_str(),
+                          i, a[i], b[i]);
+            throw std::runtime_error(buf);
+        }
+}
+/**
+ * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit under one momentum
+ * closure.
+ *
+ * Runs skewed, sloping triangle, mixed and quadrilateral meshes through dam-break, source/sink, rain, infiltration,
+ * every open-boundary law (each reversed mid-run) and a dam break with initial velocity, for both cell closures and face
+ * reconstructions and for one and four tiers, over three windows. Volume, head, depth, published
+ * edge flux, applied infiltration/coupling and the step count must match exactly; the
+ * evaporation total and the cumulative boundary receipts, sums folded in a different order, to
+ * 1e-13. Requires initialized Kokkos; prints PASS or throws at the first mismatch.
+ *
+ * @param[in] mode Momentum closure the Kokkos marcher implements.
+ * @param[in] name Label used in messages.
+ * @param[in] order Reconstruction order, 1 or 2; 2 applies to FULL_SWE (MUSCL faces and the
+ * two-stage step, which runs on one tier whatever the tier count asked for).
+ */
+void modeParity(Momentum2D mode, const char* name, int order = 1) {
+    const BoundaryType laws[] = {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                                 BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE};
+    int cases = 0;
+    for (int shape : {0, 2, 1}) // triangles, mixed, quads
+        for (bool vfr : {false, true})
+            for (int tiers : {1, 4})
+                for (int scenario = 0; scenario < 10; ++scenario) {
+                    auto m = mesh(8, shape, true, true);
+                    auto a = state(m, .1), b = a;
+                    auto o = options(tiers);
+                    o.momentum = mode;
+                    o.reconstruction_order = order;
+                    if (vfr) {
+                        o.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (scenario == 0 || scenario == 4 || scenario == 9)
+                            a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                        if (scenario == 9) { // [2D_INITIAL_VELOCITY]: the pool starts moving
+                            m.tri_init_u.set(static_cast<std::size_t>(i),
+                                             m.tri_cx[i] < 4 ? .4 : 0.);
+                            m.tri_init_v.set(static_cast<std::size_t>(i),
+                                             m.tri_cx[i] < 4 ? -.2 : 0.);
+                        }
+                        if (scenario == 1) {
+                            a.infil_rate[i] = .15;
+                            a.evap_rate[i] = .1;
+                            a.coupling_flux[i] = m.tri_cx[i] < 4 ? -.2 : .05;
+                        }
+                        if (scenario == 2) {
+                            a.volume[i] = 0;
+                            a.rainfall[i] = .02;
+                        }
+                        if (scenario == 3) {
+                            a.rainfall[i] = .1;
+                            a.infil_rate[i] = .1;
+                        }
+                        if (scenario == 4)
+                            a.infil_rate[i] = .2;
+                    }
+                    b = a;
+                    BoundaryData ba;
+                    std::vector<int> slots;
+                    if (scenario >= 5 && scenario <= 8) {
+                        ba.resize(m.n_cells() * kMaxCellVerts);
+                        for (int i = 0; i < m.n_cells(); ++i)
+                            for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                                if (m.cell_neighbour(i, e) < 0) {
+                                    const int slot = MeshData::slot(i, e);
+                                    slots.push_back(slot);
+                                    ba.edge_bc_type[slot] = static_cast<int8_t>(laws[scenario - 5]);
+                                }
+                    }
+                    auto bb = ba;
+                    if (scenario >= 5 && scenario <= 8) {
+                        a.boundary = &ba;
+                        b.boundary = &bb;
+                    }
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    int phase = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                        const double sign = phase == 1 ? 1.0 : -1.0;
+                        for (int slot : slots) {
+                            ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                            ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                            ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                        }
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string(name) + " shape=" + std::to_string(shape) +
+                            (vfr ? " VFR" : " FLAT") + " tiers=" + std::to_string(tiers) +
+                            " scenario=" + std::to_string(scenario) +
+                            " window=" + std::to_string(phase) + " ";
+                        require(cpu.last_num_steps() == kk.last_num_steps(),
+                                (tag + "steps").c_str());
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(b.head, a.head, tag + "head");
+                        exact(b.depth, a.depth, tag + "depth");
+                        exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                        exact(b.infil_applied, a.infil_applied, tag + "infiltration");
+                        exact(b.coupling_applied, a.coupling_applied, tag + "coupling");
+                        if (mode == Momentum2D::FULL_SWE) {
+                            // The cell momentum, through the velocity both marchers publish.
+                            require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                                    (tag + "velocity publication").c_str());
+                            exact(b.face_vx, a.face_vx, tag + "velocity x");
+                            exact(b.face_vy, a.face_vy, tag + "velocity y");
+                        }
+                        // A domain total: the two marchers fold it in different orders, so it
+                        // agrees to rounding, not bit for bit. Every per-cell field is exact.
+                        near(b.evap_loss_total, a.evap_loss_total, (tag + "evaporation").c_str(),
+                             1e-13);
+                        for (std::size_t k = 0; k < slots.size(); ++k) {
+                            const auto found = ba.receipts.find(slots[k]);
+                            const decltype(ba.receipts)::mapped_type none{};
+                            const auto& r = found == ba.receipts.end() ? none : found->second;
+                            // Cumulative gross receipts: the CPU adds each firing into the
+                            // running total, the device adds a window subtotal, so they
+                            // agree to rounding. The volumes they produce are exact above.
+                            near(b.boundary_in_applied[k], r.water_in,
+                                 (tag + "boundary in").c_str(), 1e-13);
+                            near(b.boundary_out_applied[k], r.water_out,
+                                 (tag + "boundary out").c_str(), 1e-13);
+                            near(b.boundary_requested[k], r.requested,
+                                 (tag + "boundary requested").c_str(), 1e-13);
+                        }
+                        // The router drains the applied-depth ledgers at every mass-balance
+                        // read; left to accumulate, the two marchers add into them in a
+                        // different association and differ in the last bit.
+                        for (auto* st : {&a, &b}) {
+                            std::fill(st->infil_applied.begin(), st->infil_applied.end(), 0.0);
+                            std::fill(st->coupling_applied.begin(), st->coupling_applied.end(),
+                                      0.0);
+                        }
+                        t = end;
+                        ++phase;
+                    }
+                    ++cases;
+                }
+    std::cout << name << " CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
+}
+/**
+ * @brief Seed three transport rows on a state: a pollutant, water age and a signed temperature.
+ *
+ * The pollutant concentration rises with x, the age is uniform and the temperature changes sign
+ * across the mesh, so the unsigned floors and the signed row are both exercised. Sizes the
+ * runoff volumes, so the marchers book them.
+ *
+ * @param[in] m Mesh the state was sized for.
+ * @param[in,out] s State with its water volumes set; receives the rows.
+ * @param[in] points Coupling points the per-point exchange totals are sized for.
+ */
+void seedRows(const MeshData& m, SurfaceStateData& s, int points = 0) {
+    auto& tr = s.transport;
+    tr.resize(3, m.n_cells(), points);
+    tr.n_pollut = 1;
+    tr.age_row = 1;
+    tr.temp_row = 2;
+    tr.row_names = {"P", "__WATER_AGE__", "__TEMPERATURE__"};
+    tr.cell_runoff_vol.assign(static_cast<std::size_t>(m.n_cells()), 0.0);
+    for (int i = 0; i < m.n_cells(); ++i) {
+        tr.cell_mass[tr.idx(0, i)] = (1.0 + m.tri_cx[i]) * s.volume[i];
+        tr.cell_mass[tr.idx(1, i)] = 100.0 * s.volume[i];
+        tr.cell_mass[tr.idx(2, i)] = (m.tri_cy[i] - 4.0) * s.volume[i];
+    }
+}
+/**
+ * @brief Require the transport rows of two marchers to agree: per-cell and per-point values bit
+ * for bit, run totals to rounding.
+ *
+ * @param[in] b Kokkos state.
+ * @param[in] a CPU state.
+ * @param[in] tag Case label for messages.
+ */
+void rowsMatch(const SurfaceStateData& b, const SurfaceStateData& a, const std::string& tag) {
+    const auto& tb = b.transport;
+    const auto& ta = a.transport;
+    exact(tb.cell_mass, ta.cell_mass, tag + "cell mass");
+    exact(tb.cell_runoff_vol, ta.cell_runoff_vol, tag + "runoff volume");
+    exact(tb.exch_mass, ta.exch_mass, tag + "drained mass per point");
+    exact(tb.exch_spill, ta.exch_spill, tag + "spill volume per point");
+    require(tb.dispersion_limiter_binds == ta.dispersion_limiter_binds,
+            (tag + "dispersion limiter binds").c_str());
+    // Run totals: the CPU folds per-thread subtotals, the device per-cell ones.
+    const std::pair<const std::vector<double>*, const std::vector<double>*> ledgers[] = {
+        {&tb.lost_infiltration, &ta.lost_infiltration}, {&tb.lost_boundary, &ta.lost_boundary},
+        {&tb.lost_coupling, &ta.lost_coupling},         {&tb.gained_rainfall, &ta.gained_rainfall},
+        {&tb.gained_boundary, &ta.gained_boundary},     {&tb.gained_coupling, &ta.gained_coupling}};
+    const char* names[] = {"lost infiltration", "lost boundary",   "lost coupling",
+                           "gained rainfall",   "gained boundary", "gained coupling"};
+    for (int k = 0; k < 6; ++k)
+        for (std::size_t r = 0; r < ledgers[k].first->size(); ++r)
+            near((*ledgers[k].first)[r], (*ledgers[k].second)[r],
+                 (tag + names[k] + " row " + std::to_string(r)).c_str(), 1e-12);
+}
+/**
+ * @brief Require the Kokkos marcher to carry transport rows exactly as the CPU marcher does under
+ * one momentum closure.
+ *
+ * Three rows (pollutant, age, signed temperature) on triangle, mixed and quadrilateral meshes, both
+ * closures, one and four tiers: a dam break, held sinks with a coupling source, rain on a dry bed
+ * at a rain concentration, dispersion below and above its limiter, and every open-boundary law
+ * with boundary concentrations, reversed mid-run. Between windows the host ages the water, as the
+ * router does. Water fields, cell mass, runoff volumes and the step count must match exactly; run
+ * totals and boundary receipts to 1e-12. Requires initialized Kokkos; prints PASS or throws.
+ *
+ * @param[in] mode Momentum closure.
+ * @param[in] name Label used in messages.
+ * @param[in] order Reconstruction order requested. With rows, order 2 blends them in the two-stage
+ * step under every GROUNDWATER setting (GROUNDWATER NO used to select first order).
+ * @param[in] groundwater The [2D_OPTIONS] GROUNDWATER value: -1 automatic, 0 no.
+ */
+void speciesParity(Momentum2D mode, const char* name, int order = 1, int groundwater = -1) {
+    const BoundaryType laws[] = {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                                 BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE};
+    int cases = 0;
+    long binds = 0;
+    for (int shape : {0, 2, 1}) // triangles, mixed, quads
+        for (bool vfr : {false, true})
+            for (int tiers : {1, 4})
+                for (int scenario = 0; scenario < 9; ++scenario) {
+                    auto m = mesh(8, shape, true, true);
+                    auto a = state(m, .1);
+                    auto o = options(tiers);
+                    o.momentum = mode;
+                    o.reconstruction_order = order;
+                    o.groundwater = static_cast<int8_t>(groundwater);
+                    if (vfr) {
+                        o.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    if (scenario == 3)
+                        o.dispersion = .05;
+                    if (scenario == 4)
+                        o.dispersion = 20.;
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (scenario == 0 || scenario == 3 || scenario == 4)
+                            a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                        if (scenario == 1) {
+                            a.infil_rate[i] = .15;
+                            a.evap_rate[i] = .1;
+                            a.coupling_flux[i] = m.tri_cx[i] < 4 ? -.2 : .05;
+                        }
+                        if (scenario == 2) {
+                            a.volume[i] = 0;
+                            a.rainfall[i] = .02;
+                        }
+                        if (scenario == 4)
+                            a.infil_rate[i] = .2;
+                    }
+                    seedRows(m, a);
+                    a.transport.rain_conc = {2.5, 0.0, 12.0};
+                    if (scenario == 1) {
+                        auto& tr = a.transport;
+                        tr.coupling_src.assign(tr.cell_mass.size(), 0.0);
+                        for (int i = 0; i < m.n_cells(); ++i) {
+                            tr.coupling_src[tr.idx(0, i)] = .05 * 7.0;
+                            tr.coupling_src[tr.idx(2, i)] = .05 * -3.0;
+                        }
+                    }
+                    BoundaryData ba;
+                    std::vector<int> slots;
+                    if (scenario >= 5) {
+                        ba.resize(m.n_cells() * kMaxCellVerts);
+                        for (int i = 0; i < m.n_cells(); ++i)
+                            for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                                if (m.cell_neighbour(i, e) < 0) {
+                                    const int slot = MeshData::slot(i, e);
+                                    slots.push_back(slot);
+                                    ba.edge_bc_type[slot] = static_cast<int8_t>(laws[scenario - 5]);
+                                    a.transport.bc_quality_rows.push_back({slot, 0, 3.0});
+                                    a.transport.bc_quality_rows.push_back({slot, 2, 15.0});
+                                }
+                    }
+                    auto b = a;
+                    auto bb = ba;
+                    if (scenario >= 5) {
+                        a.boundary = &ba;
+                        b.boundary = &bb;
+                    }
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    int phase = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                        const double sign = phase == 1 ? 1.0 : -1.0;
+                        for (int slot : slots) {
+                            ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                            ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                            ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                        }
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string(name) + " rows shape=" + std::to_string(shape) +
+                            (vfr ? " VFR" : " FLAT") + " tiers=" + std::to_string(tiers) +
+                            " scenario=" + std::to_string(scenario) +
+                            " window=" + std::to_string(phase) + " ";
+                        require(cpu.last_num_steps() == kk.last_num_steps(),
+                                (tag + "steps").c_str());
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(b.head, a.head, tag + "head");
+                        exact(b.depth, a.depth, tag + "depth");
+                        exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                        exact(b.infil_applied, a.infil_applied, tag + "infiltration");
+                        exact(b.coupling_applied, a.coupling_applied, tag + "coupling");
+                        rowsMatch(b, a, tag);
+                        const std::size_t ns = 3;
+                        for (std::size_t k = 0; k < slots.size(); ++k) {
+                            const auto found = ba.receipts.find(slots[k]);
+                            if (found == ba.receipts.end())
+                                continue;
+                            for (std::size_t r = 0; r < ns; ++r) {
+                                near(b.boundary_requested_mass[k * ns + r],
+                                     found->second.requested_mass[r],
+                                     (tag + "boundary requested mass").c_str(), 1e-12);
+                                near(b.boundary_applied_mass[k * ns + r],
+                                     found->second.applied_mass[r],
+                                     (tag + "boundary applied mass").c_str(), 1e-12);
+                            }
+                        }
+                        // The host owns the rows between advances: age the water on both, as
+                        // the router does, and drain the applied-depth ledgers.
+                        for (auto* st : {&a, &b}) {
+                            auto& tr = st->transport;
+                            for (int i = 0; i < m.n_cells(); ++i)
+                                tr.cell_mass[tr.idx(1, i)] += (end - t) * st->volume[i];
+                            std::fill(st->infil_applied.begin(), st->infil_applied.end(), 0.0);
+                            std::fill(st->coupling_applied.begin(), st->coupling_applied.end(),
+                                      0.0);
+                        }
+                        t = end;
+                        ++phase;
+                    }
+                    binds += a.transport.dispersion_limiter_binds;
+                    ++cases;
+                }
+    require(binds > 0, "the dispersion limiter never bound: the fixture does not exercise it");
+    std::cout << name << " transport rows CPU/Kokkos bit identity (" << cases << " cases, " << binds
+              << " limiter binds) PASS\n";
+}
+/**
+ * @brief Require identical transport rows through the live junction exchange, drain and spill.
+ *
+ * The nodeExchange() fixture with three rows: two cells share one node whose published row values
+ * the spill carries in; the drain leaves at each cell's concentration and is booked per point.
+ * Requires initialized Kokkos; prints PASS or throws.
+ */
+void speciesExchange() {
+    // Order 2 (FULL_SWE only) evaluates the junction law at each stage's starting state and
+    // books half of every stage; both solvers must do so identically.
+    for (auto [mode, order] :
+         {std::pair{Momentum2D::LOCAL_INERTIAL, 1}, std::pair{Momentum2D::DIFFUSIVE_WAVE, 1},
+          std::pair{Momentum2D::FULL_SWE, 1}, std::pair{Momentum2D::FULL_SWE, 2}})
+        for (bool vfr : {false, true})
+            for (int law : {0, 1})
+                for (bool spill : {false, true}) {
+                    auto m = mesh(3, 0, false, vfr);
+                    auto a = state(m, .2);
+                    auto o = options(4);
+                    o.momentum = mode;
+                    o.reconstruction_order = order;
+                    if (vfr)
+                        o.cell_closure = CellClosure2D::VFR;
+                    openswmm::NodeData nodes;
+                    nodes.resize(1);
+                    nodes.invert_elev[0] = -.1;
+                    nodes.full_depth[0] = .1;
+                    nodes.full_volume[0] = 1.;
+                    nodes.volume[0] = 1.01;
+                    nodes.head[0] = spill ? .8 : -.05;
+                    nodes.depth[0] = nodes.head[0] - nodes.invert_elev[0];
+                    std::vector<CouplingPoint> points;
+                    for (int cell : {0, 1}) {
+                        CouplingPoint cp{};
+                        cp.cell_idx = cell;
+                        cp.vertex_idx = -1;
+                        cp.node_idx = 0;
+                        cp.cd = .6;
+                        cp.area = .1;
+                        cp.law = law;
+                        cp.geo.z_crest = 0;
+                        cp.geo.l_weir = .4;
+                        cp.geo.a_orif = .1;
+                        points.push_back(cp);
+                    }
+                    seedRows(m, a, 2);
+                    const std::vector<double> node_rows = {4.0, 250.0, -2.0};
+                    auto b = a;
+                    a.nodes_1d = b.nodes_1d = &nodes;
+                    a.node_coupling = b.node_coupling = &points;
+                    a.node_row_conc = b.node_row_conc = &node_rows;
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    for (double end : {.37, .91}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string("exchange rows mode=") +
+                            std::to_string(static_cast<int>(mode)) +
+                            " order=" + std::to_string(order) + (vfr ? " VFR" : " FLAT") +
+                            " law=" + std::to_string(law) + (spill ? " spill " : " drain ");
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(kk.last_coupling_exchange(), cpu.last_coupling_exchange(),
+                              tag + "exchange volume");
+                        rowsMatch(b, a, tag);
+                        const double moved =
+                            sum(a.transport.exch_mass) + sum(a.transport.exch_spill);
+                        require(moved != 0.0, (tag + "nothing was exchanged").c_str());
+                        t = end;
+                    }
+                }
+    std::cout << "Transport rows through node drain/spill PASS\n";
+}
+/**
+ * @brief Compile a three-species reaction system for the stage checks.
+ *
+ * A decays into B through a shared term and reacts with the pollutant; B decays at a rate that
+ * depends on the cell temperature; C is the FORMULA sum of the two (or an EQUIL species, to make a
+ * system outside the device subset).
+ *
+ * @param[in,out] rx Receives the compiled system.
+ * @param[in] solver Integrator.
+ * @param[in] full FULL coupling: project C inside every rate evaluation.
+ * @param[in] variant 0 regular; 1 declares C EQUIL; 2 gives B a rate that overflows inside the step,
+ *     so the step fails after trial values were written.
+ */
+void compileReactions(openswmm::ReactionData& rx, openswmm::ReactionSolverKind solver, bool full,
+                      int variant) {
+    using openswmm::ReactionExprForm;
+    rx = openswmm::ReactionData{};
+    rx.species_name = {"A", "B", "C"};
+    rx.species_is_wall = {0, 0, 0};
+    rx.species_units = {"MG", "MG", "MG"};
+    rx.species_atol = {0.0, 1.0e-9, 0.0};
+    rx.species_rtol = {0.0, 1.0e-7, 0.0};
+    rx.coef_name = {"k1", "k2"};
+    rx.coef_is_param = {0, 0};
+    rx.coef_value = {0.31, 0.007};
+    rx.term_name = {"T1"};
+    rx.term_expr_src = {"k1 * A"};
+    rx.solver = solver;
+    rx.coupling = full ? openswmm::ReactionCoupling::FULL : openswmm::ReactionCoupling::NONE;
+    rx.rate_units = openswmm::ReactionRateUnits::SEC;
+    const std::vector<std::string> pollutants = {"P"};
+    auto compile = [&](const std::string& source, int max_term) {
+        openswmm::transport::RxSymbols symbols{&rx.species_name, &rx.coef_name, &rx.term_name,
+                                               &pollutants, max_term};
+        openswmm::RxExprSpan span;
+        int column = 0;
+        const std::string error = openswmm::transport::compileReactionExpression(
+            source, symbols, rx.token_pool, span, column);
+        require(error.empty(), ("reaction fixture: " + error).c_str());
+        return span;
+    };
+    rx.term_expr = {compile(rx.term_expr_src[0], 0)};
+    rx.pipe_expr_src = {"-T1 - k2 * A * P",
+                        variant == 2 ? "1e300 * (1 + B)" : "T1 - 0.1 * B * EXP(-TEMP / 50)",
+                        variant == 1 ? "C - A - B" : "A + B + 0.5 * C * STEP(-1)"};
+    rx.pipe_form = {ReactionExprForm::RATE, ReactionExprForm::RATE,
+                    variant == 1 ? ReactionExprForm::EQUIL : ReactionExprForm::FORMULA};
+    for (const auto& source : rx.pipe_expr_src)
+        rx.pipe_expr.push_back(compile(source, 1));
+    rx.tank_form.assign(3, ReactionExprForm::NONE);
+    rx.tank_expr.assign(3, openswmm::RxExprSpan{});
+    rx.tank_expr_src.assign(3, "");
+    rx.compiled = true;
+    rx.configured = true;
+}
+/**
+ * @brief The host stage after an advance, as SurfaceRouter2D::applyAgingAndReactions runs it.
+ *
+ * @param[in,out] ctx Pollutant decay rates, the reaction system and the reacted ledger.
+ * @param[in] m Mesh.
+ * @param[in,out] s State whose rows age, decay and react.
+ * @param[in] o Options (dry depth, unit factor).
+ * @param[in] dt Stage interval, seconds.
+ */
+void hostStage(openswmm::SimulationContext& ctx, const MeshData& m, SurfaceStateData& s,
+               const SolverOptions2D& o, double dt) {
+    auto& tr = s.transport;
+    const auto nt = static_cast<std::size_t>(tr.n_cells);
+    if (tr.age_row >= 0)
+        for (std::size_t c = 0; c < nt; ++c)
+            tr.cell_mass[std::size_t(tr.age_row) * nt + c] += dt * s.volume[c];
+    bool any_decay = false;
+    for (int p = 0; p < tr.n_pollut; ++p)
+        any_decay = any_decay || ctx.pollutants.k_decay[std::size_t(p)] != 0.0;
+    if (!any_decay && tr.n_msx == 0)
+        return;
+    const auto ns = static_cast<std::size_t>(tr.n_species);
+    std::vector<double> phi(ns * nt, 0.0), a(nt, 0.0), dx(nt, 1.0);
+    for (std::size_t c = 0; c < nt; ++c) {
+        const double v = s.volume[c];
+        if (!(v > o.dry_depth * m.tri_area[c]))
+            continue;
+        a[c] = v * o.flow_2d_to_1d;
+        for (std::size_t r = 0; r < ns; ++r)
+            phi[r * nt + c] = tr.cell_mass[r * nt + c] / v;
+    }
+    openswmm::transport::reactArdStage(ctx, dt, phi.data(), a.data(), dx.data(),
+                                       static_cast<int>(nt), nullptr, nullptr, 0, tr.n_pollut,
+                                       static_cast<int>(ns), 0.0, tr.temp_row);
+    for (std::size_t c = 0; c < nt; ++c) {
+        if (a[c] == 0.0)
+            continue;
+        for (std::size_t r = 0; r < std::size_t(tr.n_pollut + tr.n_msx); ++r)
+            tr.cell_mass[r * nt + c] = phi[r * nt + c] * s.volume[c];
+    }
+}
+/**
+ * @brief Require the device reaction stage to reproduce the host stage bit for bit.
+ *
+ * Six rows (a decaying pollutant, three reaction species, age, temperature) on a mixed mesh with a
+ * dam break and rain, so cells are wet, dry and wetting. The CPU marcher is followed by the host
+ * stage; the Kokkos marcher is offered the stage and must run it for EUL and RK5 systems with and
+ * without FULL coupling and for decay alone, decline it for an EQUIL system (the host then runs
+ * it), and leave failing cells unchanged while reporting them. Cell masses and the decayed-mass
+ * ledger must match exactly. Requires initialized Kokkos; prints PASS or throws.
+ */
+void reactionStage() {
+    using openswmm::ReactionSolverKind;
+    struct Case {
+        const char* name;
+        ReactionSolverKind solver;
+        bool full, reactions, device;
+        int variant;
+        double decay;
+    };
+    const Case cases[] = {
+        {"RK5", ReactionSolverKind::RK5, false, true, true, 0, 0.004},
+        {"RK5 FULL", ReactionSolverKind::RK5, true, true, true, 0, 0.004},
+        {"EUL", ReactionSolverKind::EUL, false, true, true, 0, 0.0},
+        {"EUL FULL", ReactionSolverKind::EUL, true, true, true, 0, 0.004},
+        {"decay only", ReactionSolverKind::RK5, false, false, true, 0, 0.004},
+        {"age only", ReactionSolverKind::RK5, false, false, true, 0, 0.0},
+        {"EQUIL on the host", ReactionSolverKind::RK5, false, true, false, 1, 0.004},
+        {"ROS2 on the host", ReactionSolverKind::ROS2, false, true, false, 0, 0.004},
+        {"failing rate", ReactionSolverKind::RK5, false, true, true, 2, 0.004},
+    };
+    for (const Case& c : cases)
+        for (Momentum2D mode : {Momentum2D::LOCAL_INERTIAL, Momentum2D::FULL_SWE}) {
+            auto m = mesh(8, 2, true, true);
+            auto a = state(m, .1);
+            auto o = options(4);
+            o.momentum = mode;
+            o.dispersion = .05;
+            for (int i = 0; i < m.n_cells(); ++i) {
+                a.volume[i] = (m.tri_cx[i] < 4 ? .3 : 0) * m.tri_area[i];
+                a.rainfall[i] = m.tri_cy[i] > 6 ? .01 : 0;
+            }
+            auto& tr = a.transport;
+            const int nm = c.reactions ? 3 : 0;
+            tr.resize(3 + nm, m.n_cells(), 0);
+            tr.n_pollut = 1;
+            tr.n_msx = nm;
+            tr.age_row = 1 + nm;
+            tr.temp_row = 2 + nm;
+            for (int i = 0; i < m.n_cells(); ++i) {
+                tr.cell_mass[tr.idx(0, i)] = (1.0 + m.tri_cx[i]) * a.volume[i];
+                if (nm) {
+                    tr.cell_mass[tr.idx(1, i)] = (2.0 + .3 * m.tri_cy[i]) * a.volume[i];
+                    tr.cell_mass[tr.idx(2, i)] = .25 * a.volume[i];
+                }
+                tr.cell_mass[tr.idx(tr.age_row, i)] = 100.0 * a.volume[i];
+                tr.cell_mass[tr.idx(tr.temp_row, i)] = (8.0 + m.tri_cy[i]) * a.volume[i];
+            }
+            tr.rain_conc = {2.5};
+            openswmm::SimulationContext ca, cb;
+            for (auto* ctx : {&ca, &cb}) {
+                ctx->pollutants.k_decay = {c.decay};
+                ctx->mass_balance.qual_routing_reacted.assign(1, 0.0);
+                if (c.reactions)
+                    compileReactions(ctx->reactions, c.solver, c.full, c.variant);
+            }
+            auto b = a;
+            auto oa = o, ob = o;
+            ExplicitInertialSolver cpu;
+            gpu::ExplicitKokkosSurfaceSolver kk;
+            cpu.initialize(m, a, oa);
+            kk.initialize(m, b, ob);
+            double t = 0;
+            long failed = 0;
+            for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                const double dt = end - t;
+                auto& stage = b.transport.stage;
+                stage.requested = true;
+                stage.done = false;
+                stage.dt = dt;
+                stage.volume_to_1d = ob.flow_2d_to_1d;
+                stage.dry_depth = ob.dry_depth;
+                stage.decays = {static_cast<unsigned char>(c.decay != 0.0)};
+                stage.decay_factor = {c.decay != 0.0 ? std::exp(-c.decay * dt) : 1.0};
+                stage.reactions = c.reactions ? &cb.reactions : nullptr;
+                cpu.advance(t, end);
+                kk.advance(t, end);
+                hostStage(ca, m, a, oa, dt);
+                const std::string tag = std::string("reaction stage ") + c.name +
+                                        " mode=" + std::to_string(static_cast<int>(mode)) + " ";
+                require(stage.done == c.device, (tag + "device/host choice").c_str());
+                if (stage.done) {
+                    if (stage.decays[0])
+                        cb.mass_balance.qual_routing_reacted[0] += stage.removed[0];
+                    failed += stage.failed_cells;
+                } else {
+                    hostStage(cb, m, b, ob, dt);
+                }
+                exact(b.volume, a.volume, tag + "volume");
+                exact(b.transport.cell_mass, a.transport.cell_mass, tag + "cell mass");
+                exact(cb.mass_balance.qual_routing_reacted, ca.mass_balance.qual_routing_reacted,
+                      tag + "decayed mass");
+                t = end;
+            }
+            require((failed > 0) == (c.variant == 2), "reaction stage: failed cells reported");
+            if (c.decay != 0.0)
+                require(ca.mass_balance.qual_routing_reacted[0] > 0.0,
+                        "reaction stage: nothing decayed");
+        }
+    std::cout << "Device reaction stage (age, decay, EUL/RK5 reactions) bit identity PASS\n";
+}
+/**
+ * @brief Require the Kokkos marcher to reproduce the CPU marcher bit for bit with the optional
+ * momentum physics enabled.
+ *
+ * FULL_SWE on one tier, both reconstruction orders, both closures, triangle, mixed and quad
+ * meshes. A moving pool runs under Coriolis, Smagorinsky mixing, depth mixing length with a
+ * background viscosity, quadratic wall drag, and all of them together with rain and a
+ * specified-stage boundary on the west edge. Volume, head, depth, edge flux, the published cell
+ * velocity and the step count must match exactly over three windows. Requires initialized
+ * Kokkos; prints PASS or throws at the first mismatch.
+ */
+void physicsParity() {
+    const char* labels[] = {"Coriolis", "Smagorinsky", "mixing length", "wall drag", "combined"};
+    int cases = 0;
+    for (int order : {1, 2})
+        for (int shape : {0, 2, 1})
+            for (bool vfr : {false, true})
+                for (int physics = 0; physics < 5; ++physics) {
+                    auto m = mesh(8, shape, true, true);
+                    auto a = state(m, .05);
+                    for (int i = 0; i < m.n_cells(); ++i) {
+                        if (m.tri_cx[i] < 4)
+                            a.volume[i] = .3 * m.tri_area[i];
+                        // A dry strip under rain in the combined case (wetting under
+                        // rotation, mixing and drag).
+                        if (physics == 4 && m.tri_cx[i] > 6)
+                            a.volume[i] = 0;
+                        const auto c = static_cast<std::size_t>(i);
+                        m.tri_init_u.set(c, .3 + .05 * m.tri_cy[i]); // sheared, so it mixes
+                        m.tri_init_v.set(c, m.tri_cx[i] < 4 ? -.2 : .1);
+                        if (physics == 4)
+                            a.rainfall[i] = .01;
+                    }
+                    auto b = a;
+                    auto o = options(1);
+                    o.momentum = Momentum2D::FULL_SWE;
+                    o.reconstruction_order = order;
+                    if (vfr) {
+                        o.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    if (physics == 0 || physics == 4) {
+                        o.coriolis = Coriolis2D::CONSTANT_F;
+                        // Unphysically fast in the Coriolis-only case, so that the
+                        // rotation step limit 0.25/f binds.
+                        o.coriolis_f = physics == 0 ? 20. : .05;
+                        o.coriolis_f_set = true;
+                    }
+                    if (physics == 1 || physics == 4) {
+                        o.turbulence = Turbulence2D::SMAGORINSKY;
+                        o.smagorinsky_cs = .2;
+                    }
+                    if (physics == 2) {
+                        o.turbulence = Turbulence2D::MIXING_LENGTH;
+                        o.mixing_length_coefficient = .5;
+                        // Large enough that the diffusion step bound binds and sub-steps.
+                        o.eddy_viscosity_background = 2.;
+                    }
+                    BoundaryData ba;
+                    ba.resize(m.n_cells() * kMaxCellVerts);
+                    int drag_edges = 0, open_edges = 0;
+                    for (int i = 0; i < m.n_cells(); ++i)
+                        for (int e = 0; e < m.cell_vertex_count(i); ++e) {
+                            if (m.cell_neighbour(i, e) >= 0)
+                                continue;
+                            const int slot = MeshData::slot(i, e);
+                            int va, vb;
+                            m.cell_edge_vertices(i, e, va, vb);
+                            const bool west = m.vx[va] == 0 && m.vx[vb] == 0;
+                            if (physics == 4 && west) {
+                                ba.edge_bc_type[slot] =
+                                    static_cast<int8_t>(BoundaryType::SPECIFIED_STAGE);
+                                ba.edge_bc_head[slot] = .25;
+                                ++open_edges;
+                            } else if (physics >= 3) {
+                                ba.edge_wall_drag[slot] = .05;
+                                ++drag_edges;
+                            }
+                        }
+                    require(physics < 3 || drag_edges > 0, "physics fixture has wall drag");
+                    require(physics < 4 || open_edges > 0, "physics fixture has an open boundary");
+                    auto bb = ba;
+                    a.boundary = &ba;
+                    b.boundary = &bb;
+                    auto oa = o, ob = o;
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, oa);
+                    kk.initialize(m, b, ob);
+                    double t = 0;
+                    int window = 0;
+                    for (double end : {.93282250995272253, 1.8656450199054451, 2.5}) {
+                        cpu.advance(t, end);
+                        kk.advance(t, end);
+                        const std::string tag =
+                            std::string("physics ") + labels[physics] +
+                            " order=" + std::to_string(order) + " shape=" + std::to_string(shape) +
+                            (vfr ? " VFR" : " FLAT") + " window=" + std::to_string(window) + " ";
+                        require(cpu.last_num_steps() == kk.last_num_steps(),
+                                (tag + "steps").c_str());
+                        exact(b.volume, a.volume, tag + "volume");
+                        exact(b.head, a.head, tag + "head");
+                        exact(b.depth, a.depth, tag + "depth");
+                        exact(b.edge_flux, a.edge_flux, tag + "edge flux");
+                        require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                                (tag + "velocity publication").c_str());
+                        exact(b.face_vx, a.face_vx, tag + "velocity x");
+                        exact(b.face_vy, a.face_vy, tag + "velocity y");
+                        // Wall-drag energy removed, mixing sub-steps and retries, and the
+                        // last diffusion bound.
+                        require(A::physicsLedger(cpu) == KA::physicsLedger(kk),
+                                (tag + "physics ledger").c_str());
+                        t = end;
+                        ++window;
+                    }
+                    ++cases;
+                }
+    std::cout << "Momentum physics CPU/Kokkos bit identity (" << cases << " cases) PASS\n";
+}
+/**
+ * @brief Require identical wall drag in a cell whose wall edges are not perpendicular.
+ *
+ * One scalene triangle, all three edges dragging walls, water moving obliquely. The CPU applies
+ * the drag slot by slot forward and then in reverse; on a right-angle corner that order cannot
+ * be told apart, on this cell it can. Volume and the published velocity must match exactly over
+ * three windows. Requires initialized Kokkos; prints PASS or throws.
+ */
+void wallDragOrder() {
+    for (bool vfr : {false, true}) {
+        MeshData m;
+        m.resize_vertices(3);
+        m.vx = {0., 3., .7};
+        m.vy = {0., .4, 2.1};
+        m.vz = {0., .02, .05};
+        m.resize_triangles(1);
+        m.set_triangle(0, 0, 1, 2);
+        buildMeshTopology(m);
+        m.tri_init_u.set(0, .6);
+        m.tri_init_v.set(0, -.35);
+        auto a = state(m, .4), b = a;
+        auto o = options(1);
+        o.momentum = Momentum2D::FULL_SWE;
+        if (vfr) {
+            o.cell_closure = CellClosure2D::VFR;
+            o.face_reconstruction = FaceDepth2D::VFR_FACE;
+        }
+        BoundaryData ba;
+        ba.resize(kMaxCellVerts);
+        for (int e = 0; e < 3; ++e)
+            ba.edge_wall_drag[MeshData::slot(0, e)] = .3 + .2 * e;
+        auto bb = ba;
+        a.boundary = &ba;
+        b.boundary = &bb;
+        auto oa = o, ob = o;
+        ExplicitInertialSolver cpu;
+        gpu::ExplicitKokkosSurfaceSolver kk;
+        cpu.initialize(m, a, oa);
+        kk.initialize(m, b, ob);
+        double t = 0;
+        for (double end : {.4, .9, 1.5}) {
+            cpu.advance(t, end);
+            kk.advance(t, end);
+            require(cpu.last_num_steps() == kk.last_num_steps(), "wall drag order steps");
+            exact(b.volume, a.volume, "wall drag order volume");
+            require(cpu.publishMomentumVelocity() && kk.publishMomentumVelocity(),
+                    "wall drag order velocity publication");
+            exact(b.face_vx, a.face_vx, "wall drag order velocity x");
+            exact(b.face_vy, a.face_vy, "wall drag order velocity y");
+            require(a.face_vx[0] != 0 && a.face_vy[0] != 0, "wall drag order fixture moves");
+            require(A::physicsLedger(cpu) == KA::physicsLedger(kk), "wall drag order ledger");
+            require(A::physicsLedger(cpu)[0] > 0, "wall drag order fixture removes energy");
+            t = end;
+        }
+    }
+    std::cout << "Wall drag sweep order PASS\n";
+}
+// All non-wall laws, in both directions and closures. Boundary values are
+// resolved by the router before advance; rating curves arrive as held flows.
+/**
+ * @brief Compare open-boundary CPU/device storage, fluxes and gross receipts in both directions.
+ *
+ * Tests normal flow, specified stage/flow and router-resolved held rating-curve flows with both
+ * closures and tier counts over three 0.37 s windows. Verifies published receipt arrays,
+ * conservation and that the device plugin leaves the engine receipt map empty. Requires initialized
+ * Kokkos; prints PASS or propagates an assertion/runtime failure.
+ */
+void boundaries() {
     for (bool vfr : {false, true})
         for (int tiers : {1, 4})
-            for (int scenario = 0; scenario < 5; ++scenario) {
-                auto m = mesh(12, 0, false, vfr);
-                auto s = state(m, .1);
+            for (auto type : {BoundaryType::NORMAL_FLOW, BoundaryType::SPECIFIED_STAGE,
+                              BoundaryType::SPECIFIED_FLOW, BoundaryType::RATING_CURVE}) {
+                auto m = mesh(3, 0, false, vfr);
+                auto a = state(m, .2), b = a;
                 auto o = options(tiers);
                 if (vfr)
                     o.cell_closure = CellClosure2D::VFR;
-                for (int i = 0; i < m.n_cells(); ++i) {
-                    if (scenario == 0)
-                        s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
-                    if (scenario == 1) {
-                        s.infil_rate[i] = .15;
-                        s.evap_rate[i] = .1;
-                        s.coupling_flux[i] = -.2;
-                    }
-                    if (scenario == 2) {
-                        s.volume[i] = 0;
-                        s.rainfall[i] = .02;
-                    }
-                    if (scenario == 3) {
-                        s.rainfall[i] = .1;
-                        s.infil_rate[i] = .1;
-                    }
-                    if (scenario == 4) {
-                        s.volume[i] = (m.tri_cx[i] < 6 ? .2 : 0) * m.tri_area[i];
-                        s.infil_rate[i] = .2;
-                    }
-                }
-                auto ref = s;
-                auto ro = o;
+                BoundaryData ba;
+                ba.resize(m.n_cells() * kMaxCellVerts);
+                std::vector<int> slots;
+                for (int i = 0; i < m.n_cells(); ++i)
+                    for (int e = 0; e < m.cell_vertex_count(i); ++e)
+                        if (m.cell_neighbour(i, e) < 0) {
+                            const int slot = MeshData::slot(i, e);
+                            slots.push_back(slot);
+                            ba.edge_bc_type[slot] = static_cast<int8_t>(type);
+                        }
+                auto bb = ba;
+                a.boundary = &ba;
+                b.boundary = &bb;
                 ExplicitInertialSolver cpu;
                 gpu::ExplicitKokkosSurfaceSolver kk;
-                cpu.initialize(m, ref, ro);
-                kk.initialize(m, s, o);
+                cpu.initialize(m, a, o);
+                kk.initialize(m, b, o);
+                const double initial = sum(a.volume);
                 double t = 0;
-                for (double end : {.93282250995272253, 1.8656450199054451, 2.0}) {
+                for (int phase = 0; phase < 3; ++phase) {
+                    const double sign = phase == 1 ? 1.0 : -1.0;
+                    for (int slot : slots) {
+                        ba.edge_bed_slope[slot] = bb.edge_bed_slope[slot] = sign * .001;
+                        ba.edge_bc_flow[slot] = bb.edge_bc_flow[slot] = sign * .03;
+                        ba.edge_bc_head[slot] = bb.edge_bc_head[slot] = phase == 1 ? 0.0 : .6;
+                    }
+                    const double end = t + .37;
                     cpu.advance(t, end);
                     kk.advance(t, end);
-                    std::cout << "step tiers=" << tiers << " case=" << scenario << " end=" << end
-                              << " cpu=" << cpu.last_num_steps() << " kk=" << kk.last_num_steps()
-                              << std::endl;
-                    compare(s.volume, ref.volume, "marcher volume", 2e-9);
-                    compare(s.infil_applied, ref.infil_applied, "infiltration", 2e-9);
-                    compare(s.coupling_applied, ref.coupling_applied, "coupling", 2e-9);
-                    near(s.evap_loss_total, ref.evap_loss_total, "evaporation", 2e-9);
-                    if (scenario == 0)
-                        near(sum(s.volume), .2 * 72, "closed volume");
-                    if (scenario == 1) {
-                        double infiltrated = 0;
-                        for (int i = 0; i < m.n_cells(); ++i)
-                            infiltrated += s.infil_applied[i] * m.tri_area[i];
-                        near(sum(s.volume) + infiltrated + s.evap_loss_total -
-                                 sum(s.coupling_applied),
-                             14.4, "source budget conservation");
+                    compare(b.volume, a.volume, "boundary storage", 2e-9);
+                    compare(b.edge_flux, a.edge_flux, "boundary flux", 2e-9);
+                    double incoming = 0, outgoing = 0;
+                    require(b.boundary_receipt_slots == slots, "boundary receipt slots");
+                    for (std::size_t k = 0; k < slots.size(); ++k) {
+                        const auto& r = ba.receipts.at(slots[k]);
+                        near(b.boundary_in_applied[k], r.water_in, "gross boundary in", 2e-9);
+                        near(b.boundary_out_applied[k], r.water_out, "gross boundary out", 2e-9);
+                        near(b.boundary_requested[k], r.requested, "boundary requested", 2e-9);
+                        near(b.boundary_last_flow[k], r.last_flow, "boundary last flow", 2e-9);
+                        near(b.boundary_last_dt[k], r.last_dt, "boundary last dt", 2e-9);
+                        incoming += r.water_in;
+                        outgoing += r.water_out;
                     }
-                    if (scenario == 2)
-                        near(sum(s.volume), .02 * 144 * end, "rain storage");
+                    near(sum(b.volume) + outgoing - incoming, initial, "boundary conservation");
+                    if (phase > 0)
+                        require(incoming > 0 && outgoing > 0, "both boundary directions exercised");
                     t = end;
                 }
-                std::cout << "marcher tiers=" << tiers << " scenario=" << scenario << " PASS\n";
+                require(bb.receipts.empty(), "plugin must not mutate engine receipt map");
             }
+    std::cout << "Open boundary laws and gross receipts PASS\n";
 }
-sk::Mesh mirrorMesh(MeshData &m, InertialEdges &e) {
+
+// Reverse a prescribed flow between two cell firings before one publication.
+// The mean flux is zero, but both gross transfers must survive. Then publish
+// again without a firing to prove the device accumulators were drained.
+/**
+ * @brief Check gross boundary receipt preservation through reversal, publication and dry-out.
+ *
+ * Manually fires equal inward/outward prescribed flows for 0.1 s each before publishing a 0.2 s
+ * window, checks zero mean flux with nonzero gross receipts, then republishes without double
+ * counting. A large outflow request must drain only available water and retain the rejected-request
+ * distinction. Requires initialized Kokkos; prints PASS or throws.
+ */
+void boundaryReversal() {
+    auto m = mesh(1);
+    auto s = state(m, .2);
+    auto o = options();
+    BoundaryData bc;
+    bc.resize(m.n_cells() * kMaxCellVerts);
+    int slot = -1;
+    for (int e = 0; e < 3; ++e)
+        if (m.cell_neighbour(0, e) < 0) {
+            slot = MeshData::slot(0, e);
+            break;
+        }
+    require(slot >= 0, "boundary reversal fixture");
+    bc.edge_bc_type[slot] = static_cast<int8_t>(BoundaryType::SPECIFIED_FLOW);
+    s.boundary = &bc;
+    gpu::ExplicitKokkosSurfaceSolver kk;
+    kk.initialize(m, s, o);
+    using Access = gpu::ExplicitKokkosSurfaceSolverTestAccess;
+    const double initial = sum(s.volume);
+    bc.edge_bc_flow[slot] = -.02;
+    Access::prepareBoundarySteps(kk);
+    Access::boundarySubstep(kk, .1);
+    bc.edge_bc_flow[slot] = .02;
+    Access::boundarySubstep(kk, .1);
+    Access::publish(kk, .2);
+    const double expected = .002 * m.edge_length[slot];
+    near(s.boundary_in_applied[0], expected, "reversal inflow");
+    near(s.boundary_out_applied[0], expected, "reversal outflow");
+    near(s.edge_flux[slot], 0, "reversal mean flux");
+    near(sum(s.volume), initial, "reversal storage");
+    Access::publish(kk, .2);
+    near(s.boundary_in_applied[0], expected, "no repeated inflow publication");
+    near(s.boundary_out_applied[0], expected, "no repeated outflow publication");
+    const double available = s.volume[0];
+    bc.edge_bc_flow[slot] = 1000.;
+    Access::boundarySubstep(kk, .1);
+    Access::publish(kk, .1);
+    near(s.volume[0], 0, "boundary availability floor");
+    near(s.boundary_out_applied[0], expected + available, "clamped applied boundary outflow");
+    require(-s.boundary_requested[0] > s.boundary_out_applied[0],
+            "boundary request distinguishes rejected water");
+    near(sum(s.volume) + s.boundary_out_applied[0] - s.boundary_in_applied[0], initial,
+         "clamped boundary conservation");
+    std::cout << "Within-window boundary reversal and dry-out PASS\n";
+}
+
+/**
+ * @brief Compare device/CPU drain and spill exchange with a shared finite node pond budget.
+ *
+ * Exercises both closures and two coupling laws with two cells sharing one node over windows ending
+ * at 0.37/0.91 s. Checks exchange direction, applied ledgers, surface conservation and at most 0.01
+ * m3 shared pond spill per window. Borrowed node/coupling/state fixtures outlive both solvers.
+ * Requires initialized Kokkos; prints PASS or throws.
+ */
+void nodeExchange() {
+    for (bool vfr : {false, true})
+        for (int law : {0, 1})
+            for (bool spill : {false, true}) {
+                auto m = mesh(3, 0, false, vfr);
+                auto a = state(m, .2), b = a;
+                auto o = options(4);
+                if (vfr)
+                    o.cell_closure = CellClosure2D::VFR;
+                openswmm::NodeData nodes;
+                nodes.resize(1);
+                nodes.invert_elev[0] = -.1;
+                nodes.full_depth[0] = .1;
+                nodes.full_volume[0] = 1.;
+                nodes.volume[0] = 1.01; // Only the .01 ponded share may spill.
+                nodes.head[0] = spill ? .8 : -.05;
+                nodes.depth[0] = nodes.head[0] - nodes.invert_elev[0];
+                std::vector<CouplingPoint> points;
+                for (int cell : {0, 1}) {
+                    CouplingPoint cp{};
+                    cp.cell_idx = cell;
+                    cp.vertex_idx = -1;
+                    cp.node_idx = 0;
+                    cp.cd = .6;
+                    cp.area = .1;
+                    cp.law = law;
+                    cp.geo.z_crest = 0;
+                    cp.geo.l_weir = .4;
+                    cp.geo.a_orif = .1;
+                    points.push_back(cp);
+                }
+                a.nodes_1d = b.nodes_1d = &nodes;
+                a.node_coupling = b.node_coupling = &points;
+                ExplicitInertialSolver cpu;
+                gpu::ExplicitKokkosSurfaceSolver kk;
+                cpu.initialize(m, a, o);
+                kk.initialize(m, b, o);
+                const double initial = sum(a.volume);
+                double total = 0, t = 0;
+                for (double end : {.37, .91}) {
+                    cpu.advance(t, end);
+                    kk.advance(t, end);
+                    compare(b.volume, a.volume, "node exchange storage", 2e-9);
+                    compare(kk.last_coupling_exchange(), cpu.last_coupling_exchange(),
+                            "node exchange ledger", 2e-9);
+                    compare(b.coupling_applied, a.coupling_applied, "node applied exchange", 2e-9);
+                    const double exchanged = sum(kk.last_coupling_exchange());
+                    require(spill ? exchanged < 0 : exchanged > 0, "node exchange direction");
+                    if (spill)
+                        require(-exchanged <= .01 + 1e-12, "shared node ponded-only spill budget");
+                    total += exchanged;
+                    near(sum(b.volume) + total, initial, "node exchange conservation");
+                    t = end;
+                }
+            }
+    std::cout << "Node drain/spill and shared pond budget PASS\n";
+}
+
+/**
+ * @brief Copy host mesh/edge geometry into the portable SWE kernel view layout.
+ *
+ * Requires initialized Kokkos and mutually consistent array sizes/indices. Computes
+ * midpoint-to-centroid slot arms on host, then deep-copies each field; input references are not
+ * retained. No topology/index validation is performed here; allocation/runtime failures propagate.
+ *
+ * @param[in] m Borrowed mesh with built topology, cell metrics, edge normals/lengths/conveyance and
+ *     valid vertex indices; not mutated.
+ * @param[in] e Borrowed compatible inertial edge/CSR/metric arrays; every referenced left slot must
+ *     index m edge storage; not mutated.
+ * @return Owned collection of reference-counted Kokkos device views for geometry, topology, slot
+ *     arms, boundary metrics and conveyance.
+ */
+sk::Mesh mirrorMesh(MeshData& m, InertialEdges& e) {
     sk::Mesh d;
     std::vector<int> nv(m.n_cells()), nei(4 * m.n_cells(), -1),
         sign(e.cell_sign.begin(), e.cell_sign.end());
@@ -290,13 +1681,22 @@ sk::Mesh mirrorMesh(MeshData &m, InertialEdges &e) {
     d.boundary_length = device(m.edge_length);
     return d;
 }
+/**
+ * @brief Compare portable device SWE kernel stages with the CPU Euler implementation.
+ *
+ * Tests triangles/quads/mixed meshes, first/second-order reconstruction and four wet/dry/conveyance
+ * scenarios. Compares gradients, face water/momentum transfers and discharge, independent host
+ * gathering, transfer consumption, then flat closure plus wall/friction momentum. Exercises kernels
+ * directly rather than enabling unsupported FULL_SWE Kokkos solver initialization. Requires
+ * initialized Kokkos; prints case progress and throws on mismatch.
+ */
 void sweChecks() {
     for (int shape : {0, 1, 2})
         for (int scenario = 0; scenario < 4; ++scenario)
             for (int order : {1, 2}) {
                 auto m = mesh(6, shape, true);
                 if (scenario == 3)
-                    for (double &c : m.edge_conveyance)
+                    for (double& c : m.edge_conveyance)
                         c = .35;
                 auto s = state(m, .3);
                 auto o = options();
@@ -316,7 +1716,7 @@ void sweChecks() {
                     if (scenario == 3 && m.tri_cx[i] > 3)
                         s.head[i] += 1;
                 }
-                auto &e = A::edges(cpu);
+                auto& e = A::edges(cpu);
                 auto dm = mirrorMesh(m, e);
                 std::vector<int> active(A::active(cpu).begin(), A::active(cpu).end());
                 sk::State ds{device(s.head),
@@ -398,32 +1798,244 @@ void sweChecks() {
                           << " PASS\n";
             }
 }
+/**
+ * @brief Verify external host volume injection reactivates dry CPU/device flow consistently.
+ *
+ * Advances an initially dry four-tier fixture, injects 1 m3 into cell zero at t=1 s, resynchronizes
+ * and advances to t=2 s. Checks conserved total water, active redistribution and CPU/device parity.
+ * Requires initialized Kokkos; prints PASS or throws.
+ */
 void externalVolumeResync() {
     auto m = mesh(4);
     auto a = state(m, 0.0), b = a;
     auto o = options(4);
     ExplicitInertialSolver cpu;
     gpu::ExplicitKokkosSurfaceSolver device_solver;
-    cpu.initialize(m, a, o); device_solver.initialize(m, b, o);
-    cpu.advance(0, 1); device_solver.advance(0, 1);
+    cpu.initialize(m, a, o);
+    device_solver.initialize(m, b, o);
+    cpu.advance(0, 1);
+    device_solver.advance(0, 1);
     a.volume[0] = b.volume[0] = 1.0;
-    cpu.resyncFromVolumes(1); device_solver.resyncFromVolumes(1);
-    cpu.advance(1, 2); device_solver.advance(1, 2);
+    cpu.resyncFromVolumes(1);
+    device_solver.resyncFromVolumes(1);
+    cpu.advance(1, 2);
+    device_solver.advance(1, 2);
     near(sum(a.volume), 1.0, "CPU external transfer conservation");
     near(sum(b.volume), 1.0, "Kokkos external transfer conservation");
     require(a.volume[0] < 1.0 && b.volume[0] < 1.0, "external transfer activates faces");
     compare(a.volume, b.volume, "external transfer CPU/Kokkos parity", 2e-9);
     std::cout << "External volume resync PASS\n";
 }
-int main(int argc, char **argv) {
+/**
+ * @brief Check advance counters remain attributable to separate device solver instances.
+ *
+ * Returns immediately when performance collection is disabled; does not enable it. Otherwise
+ * advances one instance twice and another once, verifies counts 2/1, and prints PASS. Requires
+ * initialized Kokkos; assertion/runtime failures propagate.
+ */
+void perModelCounters() {
+    if (!openswmm::perf::enabled())
+        return;
+    auto m = mesh(2);
+    auto a = state(m, .1), b = state(m, .2);
+    auto o = options();
+    gpu::ExplicitKokkosSurfaceSolver x, y;
+    x.initialize(m, a, o);
+    y.initialize(m, b, o);
+    x.advance(0, .1);
+    y.advance(0, .1);
+    x.advance(.1, .2);
+    require(gpu::ExplicitKokkosSurfaceSolverTestAccess::advances(x) == 2, "first model counters");
+    require(gpu::ExplicitKokkosSurfaceSolverTestAccess::advances(y) == 1, "second model counters");
+    std::cout << "Per-model performance attribution PASS\n";
+}
+// Issue #195: exercise ψ on the live LI marcher, including updates after device upload.
+void edgeConveyance() {
+    for (bool vfr : {false, true})
+        for (int tiers : {1, 4})
+            for (double theta : {1., .8}) {
+                double previous_flux = 1e30, previous_volume = 1e30;
+                for (double psi : {1., .5, .3, 0.}) {
+                    auto m = mesh(4);
+                    auto setBarrier = [&](double value) {
+                        for (int c = 0; c < m.n_cells(); ++c)
+                            for (int k = 0; k < m.cell_vertex_count(c); ++k) {
+                                const int n = m.cell_neighbour(c, k);
+                                if (n >= 0 && (m.tri_cx[c] < 2) != (m.tri_cx[n] < 2))
+                                    m.edge_conveyance[MeshData::slot(c, k)] = value;
+                            }
+                    };
+                    setBarrier(psi);
+                    auto a = state(m, 0.);
+                    for (int c = 0; c < m.n_cells(); ++c) {
+                        a.volume[c] = m.tri_cx[c] < 2 ? .2 * m.tri_area[c] : 0.;
+                        m.tri_init_u.set(static_cast<std::size_t>(c), m.tri_cx[c] < 2 ? .1 : 0.);
+                    }
+                    auto b = a;
+                    auto o = options(tiers), ro = o;
+                    o.theta = ro.theta = theta;
+                    o.advection = ro.advection = true;
+                    if (vfr) {
+                        o.cell_closure = ro.cell_closure = CellClosure2D::VFR;
+                        o.face_reconstruction = ro.face_reconstruction = FaceDepth2D::VFR_FACE;
+                    }
+                    ExplicitInertialSolver cpu;
+                    gpu::ExplicitKokkosSurfaceSolver kk;
+                    cpu.initialize(m, a, ro);
+                    kk.initialize(m, b, o);
+                    const auto widths = cpu.inertialEdges().xi;
+                    const auto lengths = cpu.inertialEdges().cell_lchar;
+                    cpu.advance(0, .001);
+                    kk.advance(0, .001);
+                    compare(a.volume, b.volume, "conveyance initial volume");
+                    compare(a.edge_flux, b.edge_flux, "conveyance initial flux");
+                    double flux = 0, volume = 0;
+                    const auto& ed = cpu.inertialEdges();
+                    for (int e = 0; e < ed.ne; ++e)
+                        if (ed.mx[e] == 2)
+                            flux -= b.edge_flux[ed.slotL[e]];
+                    for (int c = 0; c < m.n_cells(); ++c)
+                        if (m.tri_cx[c] > 2)
+                            volume += b.volume[c];
+                    require(flux < previous_flux && volume < previous_volume,
+                            "conveyance must rank 1 > .5 > .3 > 0");
+                    previous_flux = flux;
+                    previous_volume = volume;
+                    if (psi == 0)
+                        require(volume == 0 && flux == 0, "closed line must retain a dry side");
+                    double t = .001;
+                    for (double next : {0., .3, .5, 1., 0., 1.}) {
+                        // Change every face so closure freezes all cells exactly, then reopen.
+                        std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), next);
+                        const auto before = b.volume;
+                        cpu.advance(t, t + .017);
+                        kk.advance(t, t + .017);
+                        compare(a.volume, b.volume, "runtime conveyance volume");
+                        compare(a.edge_flux, b.edge_flux, "runtime conveyance flux");
+                        near(sum(b.volume), 1.6, "conveyance water conservation");
+                        require(cpu.inertialEdges().xi == widths &&
+                                    cpu.inertialEdges().cell_lchar == lengths,
+                                "conveyance must preserve CFL geometry");
+                        if (next == 0) {
+                            require(b.volume == before, "closing faces must freeze volume exactly");
+                            for (double f : b.edge_flux)
+                                require(f == 0, "closed face must publish zero flux");
+                        }
+                        t += .017;
+                    }
+                }
+            }
+    // A runtime factor edit must retain the Perot contribution of an active inlet.
+    {
+        auto m = mesh(4);
+        BoundaryData ba, bb;
+        ba.resize(m.n_edge_slots());
+        int inlet = -1;
+        for (int c = 0; c < m.n_cells() && inlet < 0; ++c)
+            for (int k = 0; k < 3; ++k) {
+                const int slot = MeshData::slot(c, k);
+                if (m.cell_neighbour(c, k) < 0 && m.edge_nx[slot] < -.9) {
+                    inlet = slot;
+                    break;
+                }
+            }
+        require(inlet >= 0, "conveyance inlet fixture");
+        ba.edge_bc_type[inlet] = int8_t(BoundaryType::SPECIFIED_FLOW);
+        ba.edge_bc_flow[inlet] = -.01;
+        bb = ba;
+        auto a = state(m, .2), b = a;
+        a.boundary = &ba;
+        b.boundary = &bb;
+        auto o = options(), ro = o;
+        o.theta = ro.theta = .8;
+        ExplicitInertialSolver cpu;
+        gpu::ExplicitKokkosSurfaceSolver kk;
+        cpu.initialize(m, a, ro);
+        kk.initialize(m, b, o);
+        cpu.advance(0, .001);
+        kk.advance(0, .001);
+        std::fill(m.edge_conveyance.begin(), m.edge_conveyance.end(), .3);
+        cpu.advance(.001, .002);
+        kk.advance(.001, .002);
+        compare(a.volume, b.volume, "conveyance inlet volume");
+        compare(a.edge_flux, b.edge_flux, "conveyance inlet flux");
+    }
+    std::cout << "Local-inertial edge conveyance PASS\n";
+}
+
+/**
+ * @brief Run the standalone host/device alignment checks inside a Kokkos runtime lifetime.
+ *
+ * Initializes Kokkos and prints execution-space/concurrency before the try block; finalizes after
+ * caught test failures. Initialization, initial output or finalization failures are not caught
+ * here. OpenMP builds also check execution space and, when present, OMP_NUM_THREADS using atoi.
+ * Runs all case functions and the final ledger average check; writes progress/PASS diagnostics to
+ * stdout.
+ *
+ * @param[in,out] argc Command-line argument count passed by reference to Kokkos initialization; may
+ *     be modified by Kokkos.
+ * @param[in,out] argv Writable argument pointer array accepted by Kokkos for argc entries;
+ *     pointed-to strings and sentinel follow its command-line conventions.
+ * @return 0 after all assertions pass; 1 when a std::exception from the guarded test body is
+ *     printed to stderr.
+ */
+int main(int argc, char** argv) {
     Kokkos::initialize(argc, argv);
     std::cout << "Execution space: " << gpu::ExecSpace::name()
               << ", concurrency=" << gpu::ExecSpace().concurrency() << std::endl;
     int rc = 0;
     try {
+#ifdef OPENSWMM_GPU_EXECSPACE_OPENMP
+        require(std::string(gpu::ExecSpace::name()) == "OpenMP", "OpenMP execution space required");
+        if (const char* n = std::getenv("OMP_NUM_THREADS"))
+            require(gpu::ExecSpace().concurrency() == std::atoi(n),
+                    "requested OpenMP concurrency was not active");
+#endif
+        // OPENSWMM_ALIGNMENT_ONLY=physics runs the momentum-physics parity alone and
+        // =rows the transport-row parity alone (mutation checks).
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "physics") {
+            physicsParity();
+            wallDragOrder();
+            Kokkos::finalize();
+            return 0;
+        }
+        auto rowChecks = [] {
+            speciesParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
+            speciesParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE");
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
+            speciesParity(Momentum2D::FULL_SWE, "FULL_SWE order 2, GROUNDWATER NO", 2, 0);
+            speciesExchange();
+            reactionStage();
+        };
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "stage") { // the reaction stage alone
+            reactionStage();
+            Kokkos::finalize();
+            return 0;
+        }
+        if (const char* only = std::getenv("OPENSWMM_ALIGNMENT_ONLY");
+            only && std::string(only) == "rows") {
+            rowChecks();
+            Kokkos::finalize();
+            return 0;
+        }
+        perModelCounters();
         frozenTier();
         unsupported();
         marcher();
+        modeParity(Momentum2D::LOCAL_INERTIAL, "LOCAL_INERTIAL");
+        modeParity(Momentum2D::DIFFUSIVE_WAVE, "DIFFUSIVE_WAVE");
+        modeParity(Momentum2D::FULL_SWE, "FULL_SWE");
+        modeParity(Momentum2D::FULL_SWE, "FULL_SWE order 2", 2);
+        rowChecks();
+        physicsParity();
+        wallDragOrder();
+        edgeConveyance();
+        boundaries();
+        boundaryReversal();
+        nodeExchange();
         externalVolumeResync();
         sweChecks();
         auto initial = device(std::vector<double>{7., -3., 0.});
@@ -431,7 +2043,7 @@ int main(int argc, char **argv) {
         sk::averageLedger(initial, live);
         compare(host(live), {9., 1., 1.}, "RK ledger average");
         std::cout << "PASS host/device-space alignment checks\n";
-    } catch (const std::exception &e) {
+    } catch (const std::exception& e) {
         std::cerr << e.what() << '\n';
         rc = 1;
     }

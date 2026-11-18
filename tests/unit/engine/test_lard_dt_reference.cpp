@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_dt_reference.cpp
- * @brief X3a: the LARD dt-refinement instrument, and the reverse-flow deck.
+ * @file      test_lard_dt_reference.cpp
+ * @brief     X3a: the LARD dt-refinement instrument, and the reverse-flow deck.
  *
  * @details Two debts collected in one suite.
  *
@@ -53,9 +53,9 @@
  *
  *          Scratch fixtures use the `_ld_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -72,6 +72,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -83,24 +94,41 @@ constexpr double kCinit = 80.0;
 struct DeckSpec {
     bool lard = true;
     int routing_step = 40;
-    int quality_step = 0;         ///< 0 = omit the key
+    int quality_step = 0; ///< 0 = omit the key
     const char* end_time = "00:20:00";
-    bool washout = true;          ///< Cinit high, fresh inflow (no TSS row)
-    bool water_age = false;       ///< age washout variant (INITIAL_STATE)
-    bool reverse = false;         ///< FIXED high-stage outfall deck
-    bool orifice = false;         ///< washout variant: C3 becomes ORIFICE O3
-    bool dry_start = false;       ///< gate 5: init depth 0, fill transient
-    bool storage = false;         ///< gate 5: J2 becomes a storage unit
+    bool washout = true;    ///< Cinit high, fresh inflow (no TSS row)
+    bool water_age = false; ///< age washout variant (INITIAL_STATE)
+    bool reverse = false;   ///< FIXED high-stage outfall deck
+    bool orifice = false;   ///< washout variant: C3 becomes ORIFICE O3
+    bool dry_start = false; ///< gate 5: init depth 0, fill transient
+    bool storage = false;   ///< gate 5: J2 becomes a storage unit
 };
 
-void write_deck(const std::string& path, const std::string& tag,
-                const DeckSpec& s) {
+/**
+ * @brief Write a transport time-step reference fixture and optional initial-age config.
+ *
+ * Washout uses a nonzero initial TSS concentration with fresh inflow; other cases supply kCin mg/L.
+ * Age mode writes literal INITIAL_STATE GLOBAL 1.0 to a separate sidecar. No solver results are
+ * measured by this writer. Opens/truncates the deck using a local ofstream; parent directories must
+ * exist. Stream open/write/close outcomes are not checked, and sidecar names/text are not escaped.
+ * Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] tag Filename prefix for &lt;tag&gt;.age when water_age is enabled.
+ * @param[in] s Borrowed spec selecting Lagrangian/legacy, optional positive quality-step seconds,
+ *     routing/end tokens, reverse/fixed-stage or normal network, dry start, storage/orifice
+ *     substitutions, washout and water-age flags.
+ */
+void write_deck(const std::string& path, const std::string& tag, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD X3a dt-reference\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << (s.lard ? "QUALITY_SOLVER LAGRANGIAN\n" : "QUALITY_SOLVER LEGACY\n");
-    if (s.water_age) f << "WATER_AGE ON\n";
-    if (s.quality_step > 0) f << "QUALITY_STEP " << s.quality_step << "\n";
+    if (s.water_age)
+        f << "WATER_AGE ON\n";
+    if (s.quality_step > 0)
+        f << "QUALITY_STEP " << s.quality_step << "\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << s.end_time << "\n"
       << "ROUTING_STEP " << s.routing_step << "\nREPORT_STEP 00:05:00\n\n";
@@ -127,17 +155,16 @@ void write_deck(const std::string& path, const std::string& tag,
           << "J4 7.6  10 " << y0 << " 0 0\n\n";
         if (s.storage)
             f << "[STORAGE]\n"
-              << "J2 8.8 10 " << (s.dry_start ? "0.05" : "1.5")
-              << " FUNCTIONAL 0 0 2000\n\n";
-        f
-          << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
+              << "J2 8.8 10 " << (s.dry_start ? "0.05" : "1.5") << " FUNCTIONAL 0 0 2000\n\n";
+        f << "[OUTFALLS]\nOUT 7.0 FREE  NO\n\n"
           << "[CONDUITS]\n"
           << "C1 J0 J1 500 0.013 0 0 0\nC2 J1 J2 500 0.013 0 0 0\n";
         // The orifice variant swaps the middle conduit for O3: the ladder
         // then flows through the zero-volume PASSTHROUGH, the only path on
         // which a stale passthrough concentration (X2.vi) is observable —
         // conduit-only decks never execute that branch.
-        if (!s.orifice) f << "C3 J2 J3 500 0.013 0 0 0\n";
+        if (!s.orifice)
+            f << "C3 J2 J3 500 0.013 0 0 0\n";
         f << "C4 J3 J4 500 0.013 0 0 0\n"
           << "C5 J4 OUT 500 0.013 0 0 0\n\n";
         if (s.orifice)
@@ -151,16 +178,14 @@ void write_deck(const std::string& path, const std::string& tag,
     // Washout: Cinit high, inflow water FRESH (no TSS inflow row) — the
     // outfall traces a falling curve whose mid-point is the observable.
     // Reverse/steady variants carry a concentration source instead.
-    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 "
-      << (s.washout ? kCinit : 0.0) << "\n\n";
+    f << "[POLLUTANTS]\nTSS MG/L 0 0 0 0 NO * 0 0 " << (s.washout ? kCinit : 0.0) << "\n\n";
     if (s.water_age) {
         const std::string age_path = tag + ".age";
         std::ofstream a(age_path);
         a << "[WATER_AGE_SOURCES]\nINITIAL_STATE GLOBAL 1.0\n";
         a.close();
         f << "[PROCESS_COMPONENTS]\n"
-          << "org.hydrocouple.openswmm.waterage config=\"" << age_path
-          << "\"\n\n";
+          << "org.hydrocouple.openswmm.waterage config=\"" << age_path << "\"\n\n";
     }
     f << "[INFLOWS]\n"
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n";
@@ -170,10 +195,10 @@ void write_deck(const std::string& path, const std::string& tag,
 }
 
 struct DtRun {
-    double outfall_conc = 0.0;   ///< TSS at the outfall node, end of run
-    double outfall_age = 0.0;    ///< seconds
-    double mass_out = 0.0;       ///< ∫ conc·|q| dt on the LAST link, engine-
-                                 ///< neutral (same formula both engines)
+    double outfall_conc = 0.0; ///< TSS at the outfall node, end of run
+    double outfall_age = 0.0;  ///< seconds
+    double mass_out = 0.0;     ///< ∫ conc·|q| dt on the LAST link, engine-
+                               ///< neutral (same formula both engines)
     std::vector<double> node_final;
     double peak_node = 0.0, peak_link = 0.0;
     double min_flow_c2 = 1.0e30, final_flow_c2 = 0.0;
@@ -182,17 +207,33 @@ struct DtRun {
     bool ok = false;
 };
 
+/**
+ * @brief Run the timestep-reference transport fixture and collect concentration/ledger diagnostics.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status. Guard exhaustion
+ * may still be ok. mass_out sums concentration*abs(last-link ft3/s)*dt_s without the liters-per-ft3
+ * conversion, omitting the terminal zero-elapsed interval; it is a comparison quantity rather than
+ * independently unit-normalized physical mass. Age uses seconds and partial diagnostics can remain
+ * after failure.
+ *
+ * @param[in] tag Safe cwd artifact prefix passed to write_deck.
+ * @param[in] s Deck choices yielding at least one pollutant and the expected optional link probes.
+ * @return Owned peaks, finite flag, final node/outfall concentration/age, C2 flow and first-species
+ *     native mass ledgers; ok=false on setup/step refusal.
+ */
 DtRun run_deck(const std::string& tag, const DeckSpec& s) {
     DtRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, tag, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -218,20 +259,19 @@ DtRun run_deck(const std::string& tag, const DeckSpec& s) {
             const double dt_s = (elapsed - prev_elapsed) * 86400.0;
             const auto ul = static_cast<std::size_t>((nl - 1) * np);
             r.mass_out += ctx.links.conc[ul] *
-                          std::abs(ctx.links.flow[static_cast<std::size_t>(
-                              nl - 1)]) * dt_s;
+                          std::abs(ctx.links.flow[static_cast<std::size_t>(nl - 1)]) * dt_s;
         }
         prev_elapsed = elapsed;
         for (int l = 0; l < nl; ++l) {
-            const double c =
-                ctx.links.conc[static_cast<std::size_t>(l * np)];
-            if (!std::isfinite(c)) r.finite = false;
+            const double c = ctx.links.conc[static_cast<std::size_t>(l * np)];
+            if (!std::isfinite(c))
+                r.finite = false;
             r.peak_link = std::max(r.peak_link, c);
         }
         for (int j = 0; j < nn; ++j) {
-            const double c =
-                ctx.nodes.conc[static_cast<std::size_t>(j * np)];
-            if (!std::isfinite(c)) r.finite = false;
+            const double c = ctx.nodes.conc[static_cast<std::size_t>(j * np)];
+            if (!std::isfinite(c))
+                r.finite = false;
             r.peak_node = std::max(r.peak_node, c);
         }
         if (nl > 1) {
@@ -252,9 +292,7 @@ DtRun run_deck(const std::string& tag, const DeckSpec& s) {
         }
     }
     const auto& mb = ctx.mass_balance;
-    auto row = [](const std::vector<double>& v) {
-        return v.empty() ? 0.0 : v[0];
-    };
+    auto row = [](const std::vector<double>& v) { return v.empty() ? 0.0 : v[0]; };
     r.mb_ex_in = row(mb.qual_routing_ex_in);
     r.mb_init = row(mb.qual_routing_init);
     r.mb_outflow = row(mb.qual_routing_outflow);
@@ -268,7 +306,7 @@ DtRun run_deck(const std::string& tag, const DeckSpec& s) {
 // Gate 1 — pollutant washout converges under QUALITY_STEP refinement.
 // ---------------------------------------------------------------------------
 TEST(LardDtReferenceTest, WashoutConvergesUnderQualityStepRefinement) {
-    DeckSpec s;  // washout, ROUTING_STEP 40
+    DeckSpec s; // washout, ROUTING_STEP 40
     // Measured (X3a round): the outfall front arrives ~min 15 and is fully
     // through by min 18 — at 20:00 the washout is FINISHED (1.2e-7) and the
     // liveness floor rails. 17:00 sits mid-front: ladder {33.9, 18.2, 14.8},
@@ -293,12 +331,12 @@ TEST(LardDtReferenceTest, WashoutConvergesUnderQualityStepRefinement) {
     const double d2 = std::abs(a[1] - a[2]);
     // (a) Contraction. Hydraulics are FIXED across the ladder (same
     // ROUTING_STEP), so unlike the heat instrument nothing else moves.
-    EXPECT_GT(d1, d2)
-        << "no contraction: A=" << a[0] << "," << a[1] << "," << a[2];
+    EXPECT_GT(d1, d2) << "no contraction: A=" << a[0] << "," << a[1] << "," << a[2];
     // Ratio reported for the record (validator: pin only from measurement).
     if (d2 > 0.0)
         std::printf("[ INSTR    ] washout contraction ratio d1/d2 = %.3f, "
-                    "|a0-a2| = %.3f\n", d1 / d2, std::abs(a[0] - a[2]));
+                    "|a0-a2| = %.3f\n",
+                    d1 / d2, std::abs(a[0] - a[2]));
     // (b) The coarse answer is already close, on the deck's own scale.
     // MEASURED (X3a round): correct form 19.057; the smallest defective
     // form this band must catch is full-qual_vol_in-per-substep (X3a
@@ -329,16 +367,15 @@ TEST(LardDtReferenceTest, WashoutConvergesUnderQualityStepRefinement) {
     ASSERT_LT(ao[2], 0.98 * kCinit) << "orifice washout never started";
     const double od1 = std::abs(ao[0] - ao[1]);
     const double od2 = std::abs(ao[1] - ao[2]);
-    EXPECT_GT(od1, od2)
-        << "no contraction: A=" << ao[0] << "," << ao[1] << "," << ao[2];
+    EXPECT_GT(od1, od2) << "no contraction: A=" << ao[0] << "," << ao[1] << "," << ao[2];
     if (od2 > 0.0)
         std::printf("[ INSTR    ] orifice contraction ratio d1/d2 = %.3f, "
-                    "|a0-a2| = %.3f\n", od1 / od2, std::abs(ao[0] - ao[2]));
+                    "|a0-a2| = %.3f\n",
+                    od1 / od2, std::abs(ao[0] - ao[2]));
     // MEASURED (X3a round): correct form 8.178; stale passthrough (X2.vi,
     // falsifier ii) gives 14.502 with contraction weakening 3.506 -> 1.475.
     // Band at the geometric mean, 10.9.
-    EXPECT_LT(std::abs(ao[0] - ao[2]), 10.9)
-        << "orifice coarse-step error is large";
+    EXPECT_LT(std::abs(ao[0] - ao[2]), 10.9) << "orifice coarse-step error is large";
 }
 
 // ---------------------------------------------------------------------------
@@ -363,11 +400,11 @@ TEST(LardDtReferenceTest, AgeConvergesUnderQualityStepRefinement) {
 
     const double d1 = std::abs(a[0] - a[1]);
     const double d2 = std::abs(a[1] - a[2]);
-    EXPECT_GT(d1, d2)
-        << "no contraction: A=" << a[0] << "," << a[1] << "," << a[2];
+    EXPECT_GT(d1, d2) << "no contraction: A=" << a[0] << "," << a[1] << "," << a[2];
     if (d2 > 0.0)
         std::printf("[ INSTR    ] age contraction ratio d1/d2 = %.3f, "
-                    "|a0-a2| = %.3f\n", d1 / d2, std::abs(a[0] - a[2]));
+                    "|a0-a2| = %.3f\n",
+                    d1 / d2, std::abs(a[0] - a[2]));
     // MEASURED (X3a round): correct form 8.031 s; age-after-transport
     // (X4.ii, falsifier iv) gives 20.552 s with the contraction itself
     // inverting (2.534 -> 0.393). Band at the geometric mean, 12.8 s.
@@ -379,10 +416,10 @@ TEST(LardDtReferenceTest, AgeConvergesUnderQualityStepRefinement) {
 // ---------------------------------------------------------------------------
 TEST(LardDtReferenceTest, SteadyAnswerIsQualityStepInvariant) {
     DeckSpec base;
-    base.washout = false;          // steady concentration source
+    base.washout = false; // steady concentration source
     base.end_time = "04:00:00";
     DeckSpec sub = base;
-    sub.quality_step = 5;          // 8 substeps per routing step
+    sub.quality_step = 5; // 8 substeps per routing step
 
     const DtRun a = run_deck("_ld_inv_base", base);
     const DtRun b = run_deck("_ld_inv_sub", sub);
@@ -399,8 +436,7 @@ TEST(LardDtReferenceTest, SteadyAnswerIsQualityStepInvariant) {
     // rate/(q_ext·nsub), a factor nsub=8 here.
     ASSERT_EQ(a.node_final.size(), b.node_final.size());
     for (std::size_t n = 0; n < a.node_final.size(); ++n)
-        EXPECT_NEAR(a.node_final[n], b.node_final[n],
-                    1.0e-5 * std::max(1.0, a.node_final[n]))
+        EXPECT_NEAR(a.node_final[n], b.node_final[n], 1.0e-5 * std::max(1.0, a.node_final[n]))
             << "steady node " << n << " moved with QUALITY_STEP";
 }
 
@@ -410,10 +446,11 @@ TEST(LardDtReferenceTest, SteadyAnswerIsQualityStepInvariant) {
 TEST(LardDtReferenceTest, ReverseFlowConservesAndStaysBounded) {
     DeckSpec lard;
     lard.reverse = true;
-    lard.washout = false;          // source at J0
+    lard.washout = false; // source at J0
     lard.end_time = "02:00:00";
     lard.routing_step = 5;
-    DeckSpec leg = lard;  leg.lard = false;
+    DeckSpec leg = lard;
+    leg.lard = false;
 
     const DtRun a = run_deck("_ld_rev_lard", lard);
     const DtRun b = run_deck("_ld_rev_leg", leg);
@@ -422,10 +459,8 @@ TEST(LardDtReferenceTest, ReverseFlowConservesAndStaysBounded) {
     // Premise, on the CONTROL: the deck must actually reverse and then
     // recover forward drainage — otherwise this gate observes nothing and
     // the deck needs tuning, not the engine.
-    ASSERT_LT(b.min_flow_c2, -1.0e-3)
-        << "the LEGACY control never reversed — deck premise broken";
-    ASSERT_GT(b.final_flow_c2, 0.0)
-        << "the LEGACY control never recovered forward flow";
+    ASSERT_LT(b.min_flow_c2, -1.0e-3) << "the LEGACY control never reversed — deck premise broken";
+    ASSERT_GT(b.final_flow_c2, 0.0) << "the LEGACY control never recovered forward flow";
     // And the engine under test saw the same hydraulics (bit-identity is
     // the wiring suite's gate; here direction suffices).
     ASSERT_LT(a.min_flow_c2, -1.0e-3);
@@ -445,8 +480,7 @@ TEST(LardDtReferenceTest, ReverseFlowConservesAndStaysBounded) {
     // transient books ~0.34% (the X2 T3 transient-residual family; both
     // engines carry one). Band at 1.5%: 4.4x the measured closure error,
     // 3.3x below the handoff's 5% refusal line.
-    EXPECT_NEAR(out / in, 1.0, 0.015)
-        << "ledger broke under reversal: in=" << in << " out=" << out;
+    EXPECT_NEAR(out / in, 1.0, 0.015) << "ledger broke under reversal: in=" << in << " out=" << out;
 }
 
 // ---------------------------------------------------------------------------
@@ -503,10 +537,10 @@ TEST(LardDtReferenceTest, StorageFillLardVsLegacyGapBoundedOnRsLadder) {
     double liveness = 0.0;
     const int ladder[4] = {80, 40, 20, 10};
     for (int i = 0; i < 4; ++i) {
-        DeckSpec si;              // QUALITY_STEP omitted → dtq = rs
-        si.washout = false;       // steady CONCEN source at J0
-        si.dry_start = true;      // fill transient: dV/dt large
-        si.storage = true;        // J2's volume is state, not residue
+        DeckSpec si;         // QUALITY_STEP omitted → dtq = rs
+        si.washout = false;  // steady CONCEN source at J0
+        si.dry_start = true; // fill transient: dV/dt large
+        si.storage = true;   // J2's volume is state, not residue
         si.end_time = "00:17:20";
         si.routing_step = ladder[i];
         DeckSpec sl = si;
@@ -524,13 +558,12 @@ TEST(LardDtReferenceTest, StorageFillLardVsLegacyGapBoundedOnRsLadder) {
     ASSERT_GT(a_lard[3], 0.0) << "nothing discharged — lengthen the run";
     ASSERT_GT(liveness, 0.02 * kCin) << "front never arrived";
 
-    std::printf("[ INSTR    ] rs lard   A = %.3f %.3f %.3f %.3f\n",
-                a_lard[0], a_lard[1], a_lard[2], a_lard[3]);
-    std::printf("[ INSTR    ] rs legacy A = %.3f %.3f %.3f %.3f\n",
-                a_leg[0], a_leg[1], a_leg[2], a_leg[3]);
-    std::printf("[ INSTR    ] rs D = %.3f %.3f %.3f %.3f  |D80/D10| = %.3f\n",
-                dd[0], dd[1], dd[2], dd[3],
-                dd[3] != 0.0 ? std::abs(dd[0] / dd[3]) : 0.0);
+    std::printf("[ INSTR    ] rs lard   A = %.3f %.3f %.3f %.3f\n", a_lard[0], a_lard[1], a_lard[2],
+                a_lard[3]);
+    std::printf("[ INSTR    ] rs legacy A = %.3f %.3f %.3f %.3f\n", a_leg[0], a_leg[1], a_leg[2],
+                a_leg[3]);
+    std::printf("[ INSTR    ] rs D = %.3f %.3f %.3f %.3f  |D80/D10| = %.3f\n", dd[0], dd[1], dd[2],
+                dd[3], dd[3] != 0.0 ? std::abs(dd[0] / dd[3]) : 0.0);
     // The razor. MEASURED (closeout P1.1 round): correct form D(80) =
     // −114.4; X2.viii applied (nodes.volume for old_volume in the node
     // mix) gives −329.8 — the defect loses arriving mass into the
@@ -545,4 +578,4 @@ TEST(LardDtReferenceTest, StorageFillLardVsLegacyGapBoundedOnRsLadder) {
            "produces exactly this signature";
 }
 
-}  // namespace
+} // namespace

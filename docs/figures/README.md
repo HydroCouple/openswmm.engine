@@ -25,6 +25,13 @@ docs/figures/
 | `external` | image whose generator or data cannot live in-tree (e.g. the Bellinge hero) | `-` | the image, with `provenance` filled |
 | `legacy` | EPA or hand-drawn figure kept as-is | `-` | the image, in its manual's media directory |
 
+The `synthetic` tier describes a figure build that needs only numpy and
+matplotlib; it also covers replotting archived measurements/results without
+running the engine (for example the CPU review and Rubinato comparison).
+It does not label the underlying observations synthetic. These generators
+must preserve source provenance and distinguish experimental observations
+from synthetic model forcing in their captions.
+
 ## Writing a generator
 
 ```python

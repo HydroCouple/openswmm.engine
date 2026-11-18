@@ -15,29 +15,54 @@
  * "WARN " — the harness records them as evidence.
  */
 
+/**
+ * @file      rt_write.c
+ * @brief     Tests for rt write.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <stdio.h>
 #include <string.h>
 
 #include "openswmm/engine/openswmm_engine.h"
 #include "openswmm/engine/openswmm_model.h"
 
+/**
+ * @brief Parse and immediately write one input deck, optionally retaining unresolved names.
+ *
+ * --lenient anywhere after the paths enables lenient open; other extra tokens are ignored. Opens
+ * without report/output paths, writes the target deck and prints writer warnings prefixed WARN.
+ * Closes the engine on post-allocation paths but does not destroy its raw handle; no simulation is
+ * run.
+ *
+ * @param[in] argc Process argument count, requiring input and output deck paths.
+ * @param[in] argv Borrowed input/output paths after the program name; matching output paths may be
+ *     overwritten.
+ * @return Three for missing arguments, one for allocation/open failure, two for write failure,
+ *     otherwise zero.
+ */
 int main(int argc, char** argv) {
     if (argc < 3) {
         fprintf(stderr, "usage: rt_write <in.inp> <out.inp> [--lenient]\n");
         return 3;
     }
-    const char* in_path  = argv[1];
+    const char* in_path = argv[1];
     const char* out_path = argv[2];
     int lenient = 0;
     for (int i = 3; i < argc; ++i)
-        if (strcmp(argv[i], "--lenient") == 0) lenient = 1;
+        if (strcmp(argv[i], "--lenient") == 0)
+            lenient = 1;
 
     SWMM_Engine e = swmm_engine_create();
     if (!e) {
         fprintf(stderr, "rt_write: could not create engine\n");
         return 1;
     }
-    if (lenient) swmm_engine_set_lenient_open(e, 1);
+    if (lenient)
+        swmm_engine_set_lenient_open(e, 1);
 
     /* No .rpt / .out: this is a parse-and-serialise pass, not a run. */
     int rc = swmm_engine_open(e, in_path, NULL, NULL, NULL);
@@ -58,7 +83,8 @@ int main(int argc, char** argv) {
     int nw = swmm_get_warning_count(e);
     for (int i = 0; i < nw; ++i) {
         const char* w = swmm_get_warning_at(e, i);
-        if (w && *w) printf("WARN %s\n", w);
+        if (w && *w)
+            printf("WARN %s\n", w);
     }
 
     swmm_engine_close(e);

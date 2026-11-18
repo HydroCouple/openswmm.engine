@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SectionParser.hpp
- * @brief Utility for splitting raw INP section lines into (data, comment) pairs.
+ * @file      SectionParser.hpp
+ * @brief     Utility for splitting raw INP section lines into (data, comment) pairs.
  *
  * @details Preserves per-object comments written by the legacy SWMM GUI.
  *          Comment storage format: multiple lines are joined with the literal
@@ -27,9 +27,9 @@
  *
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #pragma once
@@ -49,36 +49,29 @@ namespace openswmm::input {
  *          object has no comment.
  */
 struct ParsedLine {
-    std::string data;     ///< Stripped data line ready for tokenisation
-    std::string comment;  ///< Object comment joined with literal "\\n"; "" = none
+    std::string data;    ///< Stripped data line ready for tokenisation
+    std::string comment; ///< Object comment joined with literal "\\n"; "" = none
 };
 
 /**
- * @brief Split raw section lines into (data, comment) pairs.
+ * @brief Pair raw section data rows with preceding object-comment text.
  *
- * @details Rules applied in order:
- *   - Lines starting with ";;" are column-header or dashes markers — discarded,
- *     and any accumulated pending comment is reset.
- *   - Lines starting with ";" (but not ";;") are object-comment lines.  The
- *     leading semicolon is stripped and the text is appended to the pending
- *     comment, separated from any prior line by the literal "\\n" token.
- *   - All other non-empty lines are data lines.  They receive the pending
- *     comment (which is then cleared) and are appended to the result.
- *   - A trailing comment block with no subsequent data line is silently
- *     discarded (there is no object to attach it to).
+ * Single-semicolon lines append text after the semicolon using a literal backslash-n separator.
+ * Double-semicolon headers clear pending comments; trailing unattached comments are discarded.
+ * Whitespace-only strings are data unless pretrimmed. Data rows are copied verbatim: this helper
+ * does not strip inline comments or quotes.
  *
- * @param raw_lines  Lines as accumulated by InputReader (may contain ";;" and
- *                   ";" lines verbatim, plus stripped data lines).
- * @returns          Vector of ParsedLine, one entry per data line.
+ * @param[in] raw_lines Borrowed section rows. Empty strings are skipped; semicolon handling
+ *     requires the semicolon in column zero, so callers trim structural rows first.
+ * @return Independent ParsedLine strings, one per nonempty data row.
  */
-inline std::vector<ParsedLine>
-parse_section(const std::vector<std::string>& raw_lines)
-{
+inline std::vector<ParsedLine> parse_section(const std::vector<std::string>& raw_lines) {
     std::vector<ParsedLine> result;
     std::string pending;
 
     for (const auto& raw : raw_lines) {
-        if (raw.empty()) continue;
+        if (raw.empty())
+            continue;
 
         if (raw[0] == ';') {
             if (raw.size() >= 2 && raw[1] == ';') {
@@ -86,8 +79,9 @@ parse_section(const std::vector<std::string>& raw_lines)
                 pending.clear();
             } else {
                 // Single-';' object-comment line — append to pending
-                if (!pending.empty()) pending += "\\n";
-                pending += raw.substr(1);  // strip leading ';'
+                if (!pending.empty())
+                    pending += "\\n";
+                pending += raw.substr(1); // strip leading ';'
             }
             continue;
         }

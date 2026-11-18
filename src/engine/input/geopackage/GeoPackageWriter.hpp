@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file GeoPackageWriter.hpp
- * @brief Writes a SimulationContext to a GeoPackage file (model input tables).
+ * @file      GeoPackageWriter.hpp
+ * @brief     Writes a SimulationContext to a GeoPackage file (model input tables).
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_WRITER_HPP
@@ -32,7 +32,7 @@
 struct sqlite3;
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::gpkg {
@@ -49,8 +49,8 @@ namespace openswmm::gpkg {
  * @param simulation_id  Unique ID for this model instance.
  * @param srs_id         SRS ID to use for geometry encoding (default: 0 = undefined).
  */
-void write_model(sqlite3* db, const SimulationContext& ctx,
-                 const std::string& simulation_id, int srs_id = 0);
+void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& simulation_id,
+                 int srs_id = 0);
 
 /**
  * @brief Convenience: create a new GeoPackage file, write schema + model.

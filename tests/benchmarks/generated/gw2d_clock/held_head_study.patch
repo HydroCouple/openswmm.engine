@@ -1,0 +1,358 @@
+--- /dev/null
++++ b/src/engine/2d/subsurface/HeadStudy.hpp
+@@ -0,0 +1,43 @@
++#pragma once
++#include <algorithm>
++#include <cmath>
++#include <cstdlib>
++#include <fstream>
++#include <iomanip>
++#include <string>
++#include <stdexcept>
++#include <vector>
++namespace openswmm::twoD::head_study {
++struct Trial {
++    const std::string mode =
++        std::getenv("GW_STUDY_POLICY") ? std::getenv("GW_STUDY_POLICY") : "off";
++    const double eps = std::getenv("GW_STUDY_EPS") ? std::stod(std::getenv("GW_STUDY_EPS")) : 0.05;
++    const bool trace = std::getenv("GW_STUDY_COMMITS") != nullptr;
++    const bool rates =
++        mode == "combined" || mode == "rates" || mode == "native" || mode == "native_only";
++    const bool receipts = mode == "combined" || mode == "receipts" || mode == "native";
++    std::vector<double> observed, bound;
++    std::ofstream log, early;
++    Trial() {
++        if (!(eps > 0 && eps < 1) || (!rates && !receipts && mode != "off"))
++            throw std::runtime_error("Unknown held-head study policy or invalid tolerance");
++        if (trace) {
++            log.open("commits.csv");
++            log << std::setprecision(17)
++                << "cell,start_s,end_s,head_before,head_after,intake_m3,lateral_m3,deep_m3,boundary_net_m3,et_m3,stability_s\n";
++        }
++        if (receipts) {
++            early.open("early.csv");
++            early << std::setprecision(17) << "time_s,cell,vin,vout,bin,bout\n";
++        }
++    }
++    void resize(int n) {
++        observed.resize(n);
++        bound.resize(n, 1e30);
++    }
++};
++inline Trial& experiment() {
++    static Trial value;
++    return value;
++}
++}
+--- a/src/engine/2d/subsurface/GwClock.hpp
++++ b/src/engine/2d/subsurface/GwClock.hpp
+@@ -44,7 +44,8 @@
+     // finish lands unfinished cells; an ordinary check or snapshot does not.
+     // Owner failures require rollback of the enclosing owner/clock transaction.
+     void check(double end, Owner& owner, bool gw_only = false, bool finish = false,
+-               const std::function<void()>& publish = {});
++               const std::function<void()>& publish = {},
++               const std::function<void(std::vector<int>&)>& early = {});
+     void land(std::span<const int> cells, Owner& owner);
+     void refresh(Owner& owner);
+     void checkpoint(detail::CompletedSourceArchive& archive);
+--- a/src/engine/2d/subsurface/GwClock.cpp
++++ b/src/engine/2d/subsurface/GwClock.cpp
+@@ -164,7 +164,8 @@
+ }
+ 
+ void GwClock::check(double end, Owner& owner, bool gw_only, bool finish,
+-                    const std::function<void()>& publish) {
++                    const std::function<void()>& publish,
++                    const std::function<void(std::vector<int>&)>& early) {
+     if (!std::isfinite(end) || end < time_)
+         throw std::invalid_argument("GW clock: invalid check time");
+     if (!gw_only && exceeds(end, time_ + options_.surface_max_step))
+@@ -208,6 +209,8 @@
+     std::vector<int> landing(subcycled.begin(), subcycled.end());
+     collect(fine_, end, landing);
+     collect(coarse_, end, landing);
++    if (early)
++        early(landing);
+     if (finish)
+         for (int i = 0; i < static_cast<int>(cells_.size()); ++i)
+             landing.push_back(i);
+--- a/src/engine/2d/subsurface/SubsurfaceClock.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceClock.cpp
+@@ -1,3 +1,4 @@
++#include "HeadStudy.hpp"
+ // SPDX-License-Identifier: Apache-2.0
+ #include "SubsurfaceSolver.hpp"
+ #include "../data/SolverOptions2D.hpp"
+@@ -22,7 +23,9 @@
+             continue;
+         state.dense[i] = static_cast<int>(bounds.size());
+         state.cells.push_back(i);
+-        bounds.push_back(state_.dt_cell[i]);
++        bounds.push_back(head_study::experiment().rates
++                             ? std::min(state_.dt_cell[i], head_study::experiment().bound.at(i))
++                             : state_.dt_cell[i]);
+     }
+     std::vector<GwClock::Face> topology;
+     for (int e = 0; e < static_cast<int>(state_.eacc_L.size()); ++e) {
+@@ -117,7 +120,9 @@
+     double stability(int id) const override {
+         const int cell = state.cells[id];
+         gw.refreshCellBound(cell, *gw.mesh_, *gw.edges_);
+-        return gw.state_.dt_cell[cell];
++        return head_study::experiment().rates
++                   ? std::min(gw.state_.dt_cell[cell], head_study::experiment().bound.at(cell))
++                   : gw.state_.dt_cell[cell];
+     }
+ };
+ 
+@@ -125,7 +130,37 @@
+                                     bool finish, const std::function<void()>& publish) {
+     prepareClock();
+     IndependentOwner owner(*this, surface);
+-    clock_state_->schedule->check(end, owner, gw_only, finish, publish);
++    auto& trial = head_study::experiment();
++    auto& state = *clock_state_;
++    const auto early = [&](std::vector<int>& due) {
++        if (!trial.receipts || gw_only ||
++            std::floor(end / options_.base_step) <=
++                std::floor(state.schedule->time() / options_.base_step))
++            return;
++        for (int cell : state.cells) {
++            int id = state.dense[cell];
++            if (std::find(due.begin(), due.end(), id) != due.end())
++                continue;
++            auto [in, out] = pendingClockWater(cell);
++            double yield = specificYieldOf(cell);
++            double limit = trial.eps * yield * state_.area[cell] * std::max(.01, state_.hg[cell]);
++            double bin = .5 * std::min(infiltrationStorageDeficit(cell), limit);
++            double bout = .5 * std::min(unreservedDrainableWater(cell, yield), limit);
++            if ((in > 0 && in >= bin) || (out > 0 && out >= bout)) {
++                due.push_back(id);
++                trial.early << end << ',' << cell << ',' << in << ',' << out << ',' << bin << ','
++                            << bout << '\n';
++            }
++        }
++    };
++    const double previous = state.schedule->time();
++    state.schedule->check(end, owner, gw_only, finish, publish, early);
++    if (std::getenv("GW_STUDY_CAPACITY")) {
++        const double step = state_.infil_interval[state.cells.front()];
++        if (step > 0 && std::floor(end / step) > std::floor(previous / step))
++            for (int cell : state.cells)
++                publishCellInfiltration(cell, surface, step, end);
++    }
+ }
+ 
+ void SubsurfaceSolver::landClockCells(std::span<const int> mesh_cells, SurfaceStateData& surface) {
+--- a/src/engine/2d/subsurface/SubsurfaceSolver.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceSolver.cpp
+@@ -1,3 +1,4 @@
++#include "HeadStudy.hpp"
+ // SPDX-License-Identifier: Apache-2.0
+ //
+ // Copyright 2026 Caleb Buahin
+@@ -522,6 +523,14 @@
+     // A·Sy is the capacitance. `T` uses the WETTER of the pair with a
+     // floor, so an empty aquifer does not report an infinite step and
+     // then take one.
++    auto& study = head_study::experiment();
++    const bool predict = independentClock() && study.rates;
++    double incoming = 0., outgoing = state_.c_loss[u] * state_.hg[u] / zs * A;
++    const double head = state_.z_bed[u] + state_.hg[u];
++    const auto add = [&](double flow) {
++        incoming += std::max(0., flow);
++        outgoing += std::max(0., -flow);
++    };
+     double sumT = 0.0;
+     if (has_lat) {
+         const int b0 = edges.cell_ptr[u];
+@@ -536,11 +545,23 @@
+             const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
+             const double Te = std::max({state_.hg[u], state_.hg[ju], 0.01 * zs});
+             sumT += Ke * Te * edges.xi[eu] * edges.inv_dx[eu];
++            if (predict) {
++                const double dh = state_.z_bed[ju] + state_.hg[ju] - head;
++                add(Ke * (dh > 0 ? state_.hg[ju] : state_.hg[u]) * edges.xi[eu] * edges.inv_dx[eu] *
++                    dh);
++            }
+         }
+     }
+     if (u < cell_boundaries_.size())
+         for (auto id : cell_boundaries_[u]) {
+             const auto& edge = boundaries_[id];
++            if (predict) {
++                const double t = cell_completed_.empty() ? 0. : cell_completed_[u];
++                const auto pulse = integrateGwBoundary(edge, t, 1., head, state_.z_bed[u], zs,
++                                                       state_.Ks[u], tr_.n_species);
++                incoming += pulse.in;
++                outgoing += pulse.out;
++            }
+             if (!edge.head)
+                 continue;
+             double outside = std::abs(edge.signal.constant - state_.z_bed[u]);
+@@ -638,6 +659,15 @@
+         }
+         if (sum > 0)
+             dt_solute = std::min(.5, tr_.c_diff) * A / sum;
++    }
++    if (predict) {
++        study.resize(n);
++        const double speed =
++            std::max(study.observed[u], std::max(incoming, outgoing) / (A * specificYieldOf(i)));
++        const double margin = std::min(opts_->max_timestep, options_.max_step / 4);
++        study.bound[u] = speed > 0 ? std::max(options_.base_step + margin,
++                                              .5 * study.eps * std::max(.01, state_.hg[u]) / speed)
++                                   : 1.e30;
+     }
+     state_.dt_cell[u] = std::min({dt_g, dt_u, dt_solute});
+     if (heat_.active() && !heat_.cells[u].column.energy.empty())
+@@ -1956,6 +1986,8 @@
+ }
+ 
+ void SubsurfaceSolver::publishInfiltration(SurfaceStateData& surf, double interval, double time) {
++    if (time > 0 && independentClock() && std::getenv("GW_STUDY_CAPACITY"))
++        return;
+     perf::ProcessTimer process_timer(perf::ProcessPhase::gw_infiltration);
+     if (!state_.active || !(interval > 0.0))
+         return;
+@@ -3108,6 +3140,18 @@
+         clock_state_->elapsed[k] += dt;
+         clock_state_->maximum[k] = std::max(clock_state_->maximum[k], dt);
+     }
++    auto& study = head_study::experiment();
++    if (study.rates && clock_state_ && study.mode != "native" && study.mode != "native_only") {
++        study.resize(state_.n_cells);
++        study.observed[u] = std::fabs(hg1 - hg0) / std::max(dt, options_.base_step);
++    }
++    if (study.trace && study.log.tellp() > 125000000)
++        throw std::runtime_error("Trace budget exceeded");
++    if (study.trace)
++        study.log << i << ',' << time << ',' << time + dt << ',' << hg0 << ',' << hg1 << ','
++                  << infil_vol << ',' << lat_vol << ',' << q_deep * A * dt << ','
++                  << boundary_in - boundary_out << ',' << state_.qet_last[u] * A * dt << ','
++                  << state_.dt_cell[u] << '\n';
+     clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
+ }
+ 
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -1,3 +1,5 @@
++#include <fstream>
++#include <iomanip>
+ /**
+  * @file      ExplicitInertialSolver.cpp
+  * @brief     Implementation of the explicit local-inertial FV marcher with
+@@ -4245,6 +4247,10 @@
+ }
+ 
+ void ExplicitInertialSolver::atGroundwaterCheck(double end, const std::function<void()>& publish) {
++    if (std::getenv("GW_STUDY_CHECK_TRACE")) {
++        static std::ofstream out("producer_checks.csv");
++        out << std::setprecision(17) << end << '\n';
++    }
+     const bool finish = gw_end_time_ > 0 && std::abs(end - gw_end_time_) <=
+                                                 64 * std::numeric_limits<double>::epsilon() *
+                                                     std::max(1., gw_end_time_);
+@@ -4461,7 +4467,25 @@
+         }
+         const int K = static_cast<int>(cells_by_tier_.size());
+         const int nsub_full = 1 << (K - 1);
+-        const double remaining = t_target - t;
++        double target = t_target;
++        if (gw_ && gw_->independentClock() && !gw_quiescent_ && std::getenv("GW_STUDY_ALIGN")) {
++            const double base = gw_->options().base_step;
++            const auto* override_period = std::getenv("GW_STUDY_SURFACE_CHECK");
++            const double p = override_period ? std::stod(override_period) : base;
++            if (!(p > 0 && p <= base))
++                throw std::invalid_argument("Invalid diagnostic producer check period");
++            const double next = (std::floor(t / p) + 1) * p;
++            const auto policy = std::string_view(std::getenv("GW_STUDY_ALIGN"));
++            bool split = policy == "all";
++            if (policy == "late" && dt0_ > p) {
++                const auto& clock = *gw_->clockState()->schedule;
++                for (std::size_t i = 0; i < clock.cellCount() && !split; ++i)
++                    split = clock.rung(i) < 0;
++            }
++            if (next > t && split)
++                target = std::min(target, next);
++        }
++        const double remaining = target - t;
+ 
+         // G1-c item 2 (2026-09-19): a quiescent SURFACE no longer strides
+         // the window when an aquifer is live — the groundwater's lateral
+@@ -4472,12 +4496,14 @@
+         // froze the water table in place.
+         if (active_cells_.empty() && !(gw_ && gw_->active())) {
+             // Quiescent: stride the window; the lazy tier keeps accumulating.
+-            t = t_target;
++            t = target;
+             last_dt_ = remaining;
+             // Lazy rain/spill can wet an inactive cell during this stride.
+             // Reconsider activation at the next entry; no macro cycles ran
+             // to advance the normal rebuild cadence.
+             cycles_since_rebuild = kRebuildEveryCycles;
++            if (t < t_target)
++                continue;
+             break;
+         }
+ 
+@@ -4508,7 +4534,7 @@
+         // which cost an O(n_cells + n_faces) re-tiering, forced a full
+         // syncAndRebuild on the next entry, and — because the leftover has
+         // no floor — fired degenerate substeps (down to ~1e-13 s when the
+-        // macro path's `t += nsub*dt0` landed 1 ulp short of t_target).
++        // macro path's `t += nsub*dt0` landed 1 ulp short of target).
+         // Firing the union lists directly is the same arithmetic in the
+         // same order (the collapsed tier-0 lists WERE these lists) and
+         // leaves the tiering intact, so the rebuild keeps its own cadence.
+@@ -4516,21 +4542,23 @@
+             // Sub-ulp residue (macro landing shortfall): land without
+             // firing physics on a span below any numerical significance.
+             const double clock_ulp = 8 * std::numeric_limits<double>::epsilon() *
+-                                     std::max({1., std::abs(t), std::abs(t_target)});
++                                     std::max({1., std::abs(t), std::abs(target)});
+             if (!(gw_ && gw_->independentClock()) && !common_stage_ && remaining <= dt0_ * 1.0e-9 &&
+                 (!(second_order_ && gw_) || remaining <= clock_ulp)) {
+                 if (second_order_ && gw_) {
+                     // Numerical landing only: no physical interval is replayed.
+                     // Both owners adopt the same representable accepted clock.
+-                    source_phase_end_ = t_target;
+-                    gw_->source_firing_end_ = t_target;
++                    source_phase_end_ = target;
++                    gw_->source_firing_end_ = target;
+                     if (state_->snow.active())
+-                        state_->snow.reanchorCompletedEnd(t_target);
++                        state_->snow.reanchorCompletedEnd(target);
+                     for (int i = 0; i < gw_->state_.n_cells; ++i)
+                         if (gw_->covers(i))
+-                            gw_->cell_completed_[i] = t_target;
++                            gw_->cell_completed_[i] = target;
+                 }
+-                t = t_target;
++                t = target;
++                if (t < t_target)
++                    continue;
+                 break;
+             }
+             settleAccumulators();
+@@ -4554,7 +4582,7 @@
+                 if (gw_ && !independent)
+                     for (int k = 0; k < Kgw; ++k)
+                         gw_->fireGwFaces(k, dt_tail);
+-                source_phase_end_ = s + 1 == nt ? t_target : t + (s + 1) * dt_tail;
++                source_phase_end_ = s + 1 == nt ? target : t + (s + 1) * dt_tail;
+                 const auto publish = [&] {
+                     fireCells(active_cells_, dt_tail, true);
+                     if (gw_) {
+@@ -4578,7 +4606,9 @@
+             accumulators_pending_ = false; // every side just gathered
+             last_dt_ = dt_tail;
+             ++cycles_since_rebuild;
+-            t = t_target; // exact landing — no 1-ulp re-entry
++            t = target;
++            if (t < t_target)
++                continue;
+             break;
+         }
+     }

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_pathresolver.cpp
- * @brief Unit tests for openswmm::io::PathResolver.
+ * @file      test_pathresolver.cpp
+ * @brief     Unit tests for openswmm::io::PathResolver.
  *
  * @details Covers the four documented entry points
  *   (makeRelative / resolveRelative / normaliseSeparators / parentDir)
@@ -35,9 +35,9 @@
  *   written under tests/unit/engine/data/pathresolver/ — never the OS
  *   temp directory — so a reviewer can inspect the artifacts.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -63,19 +63,19 @@ TEST(PathResolverNormalise, ConvertsBackslashesToForwardSlashes) {
 
 TEST(PathResolverNormalise, CollapsesDuplicateSlashes) {
     EXPECT_EQ(normaliseSeparators("a//b///c"), "a/b/c");
-    EXPECT_EQ(normaliseSeparators("/a///b"),   "/a/b");
+    EXPECT_EQ(normaliseSeparators("/a///b"), "/a/b");
 }
 
 TEST(PathResolverNormalise, DropsDotSegments) {
     EXPECT_EQ(normaliseSeparators("a/./b/./c"), "a/b/c");
-    EXPECT_EQ(normaliseSeparators("./a/b"),     "a/b");
-    EXPECT_EQ(normaliseSeparators("a/b/."),     "a/b");
+    EXPECT_EQ(normaliseSeparators("./a/b"), "a/b");
+    EXPECT_EQ(normaliseSeparators("a/b/."), "a/b");
 }
 
 TEST(PathResolverNormalise, TrimsTrailingSlashExceptRoots) {
-    EXPECT_EQ(normaliseSeparators("a/b/"),   "a/b");
-    EXPECT_EQ(normaliseSeparators("/"),      "/");
-    EXPECT_EQ(normaliseSeparators("C:/"),    "C:/");
+    EXPECT_EQ(normaliseSeparators("a/b/"), "a/b");
+    EXPECT_EQ(normaliseSeparators("/"), "/");
+    EXPECT_EQ(normaliseSeparators("C:/"), "C:/");
 }
 
 TEST(PathResolverNormalise, EmptyInputReturnsEmpty) {
@@ -83,7 +83,7 @@ TEST(PathResolverNormalise, EmptyInputReturnsEmpty) {
 }
 
 TEST(PathResolverNormalise, IsIdempotent) {
-    const std::string raw  = "a\\b//c/./d/";
+    const std::string raw = "a\\b//c/./d/";
     const std::string once = normaliseSeparators(raw);
     EXPECT_EQ(normaliseSeparators(once), once);
 }
@@ -110,8 +110,8 @@ TEST(PathResolverIsAbsolute, RecognisesPosixAbsolute) {
 TEST(PathResolverIsAbsolute, RecognisesWindowsDriveLetter) {
     EXPECT_TRUE(isAbsolutePath("C:\\foo"));
     EXPECT_TRUE(isAbsolutePath("C:/foo"));
-    EXPECT_TRUE(isAbsolutePath("Z:foo"));   // "Z:foo" is drive-relative but
-                                            // we still consider it root-bound.
+    EXPECT_TRUE(isAbsolutePath("Z:foo")); // "Z:foo" is drive-relative but
+                                          // we still consider it root-bound.
 }
 
 TEST(PathResolverIsAbsolute, RecognisesUNC) {
@@ -125,12 +125,12 @@ TEST(PathResolverIsAbsolute, RecognisesUNC) {
 
 TEST(PathResolverParentDir, ReturnsParentOfFile) {
     EXPECT_EQ(parentDir("/a/b/c.inp"), "/a/b");
-    EXPECT_EQ(parentDir("/a/b/"),      "/a/b");
+    EXPECT_EQ(parentDir("/a/b/"), "/a/b");
 }
 
 TEST(PathResolverParentDir, EmptyWhenNoParent) {
     EXPECT_EQ(parentDir("model.inp"), "");
-    EXPECT_EQ(parentDir(""),          "");
+    EXPECT_EQ(parentDir(""), "");
 }
 
 TEST(PathResolverParentDir, PreservesPosixRoot) {
@@ -167,28 +167,23 @@ TEST(PathResolverResolve, AbsoluteTokenReturnedUnchanged) {
 TEST(PathResolverResolve, RelativeTokenJoinedToAnchor) {
     // Joined output is also forward-slash on every platform (see above).
 #ifdef _WIN32
-    EXPECT_EQ(resolveRelative("data/rain.dat", "C:/proj"),
-              "C:/proj/data/rain.dat");
+    EXPECT_EQ(resolveRelative("data/rain.dat", "C:/proj"), "C:/proj/data/rain.dat");
 #else
-    EXPECT_EQ(resolveRelative("data/rain.dat", "/home/me/proj"),
-              "/home/me/proj/data/rain.dat");
+    EXPECT_EQ(resolveRelative("data/rain.dat", "/home/me/proj"), "/home/me/proj/data/rain.dat");
 #endif
 }
 
 TEST(PathResolverResolve, AcceptsBackslashSeparatorsInToken) {
 #ifndef _WIN32
     // Even on POSIX, an .inp authored on Windows might carry "data\rain.dat".
-    EXPECT_EQ(resolveRelative("data\\rain.dat", "/home/me/proj"),
-              "/home/me/proj/data/rain.dat");
+    EXPECT_EQ(resolveRelative("data\\rain.dat", "/home/me/proj"), "/home/me/proj/data/rain.dat");
 #endif
 }
 
 TEST(PathResolverResolve, CollapsesParentTraversal) {
 #ifndef _WIN32
-    EXPECT_EQ(resolveRelative("../shared/rain.dat", "/home/me/proj"),
-              "/home/me/shared/rain.dat");
-    EXPECT_EQ(resolveRelative("../../shared/data/rain.dat",
-                              "/home/me/proj/sub"),
+    EXPECT_EQ(resolveRelative("../shared/rain.dat", "/home/me/proj"), "/home/me/shared/rain.dat");
+    EXPECT_EQ(resolveRelative("../../shared/data/rain.dat", "/home/me/proj/sub"),
               "/home/me/shared/data/rain.dat");
 #endif
 }
@@ -202,8 +197,7 @@ TEST(PathResolverResolve, EmptyAnchorLeavesRelativeUnchanged) {
 
 TEST(PathResolverResolve, MissingFileDoesNotThrow) {
     // Resolution must be lexical — no filesystem stat.
-    EXPECT_NO_THROW(
-        (void) resolveRelative("does/not/exist.dat", "/no/such/place"));
+    EXPECT_NO_THROW((void)resolveRelative("does/not/exist.dat", "/no/such/place"));
 }
 
 // ---------------------------------------------------------------------------
@@ -214,30 +208,30 @@ TEST(PathResolverResolve, MissingFileDoesNotThrow) {
 TEST(PathResolverMakeRelative, SiblingFileReturnsBareName) {
     auto r = makeRelative("/proj/data/rain.dat", "/proj/data");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "rain.dat");
-    EXPECT_EQ(r.up_levels,      0);
+    EXPECT_EQ(r.path, "rain.dat");
+    EXPECT_EQ(r.up_levels, 0);
     EXPECT_TRUE(r.warning.empty());
 }
 
 TEST(PathResolverMakeRelative, SubdirFile) {
     auto r = makeRelative("/proj/data/rain.dat", "/proj");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "data/rain.dat");
-    EXPECT_EQ(r.up_levels,      0);
+    EXPECT_EQ(r.path, "data/rain.dat");
+    EXPECT_EQ(r.up_levels, 0);
 }
 
 TEST(PathResolverMakeRelative, ParentDirFile) {
     auto r = makeRelative("/shared/rain.dat", "/shared/proj");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "../rain.dat");
-    EXPECT_EQ(r.up_levels,      1);
+    EXPECT_EQ(r.path, "../rain.dat");
+    EXPECT_EQ(r.up_levels, 1);
 }
 
 TEST(PathResolverMakeRelative, GrandparentTraversal) {
     auto r = makeRelative("/a/shared/data/rain.dat", "/a/proj/sub");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "../../shared/data/rain.dat");
-    EXPECT_EQ(r.up_levels,      2);
+    EXPECT_EQ(r.path, "../../shared/data/rain.dat");
+    EXPECT_EQ(r.up_levels, 2);
 }
 #endif
 
@@ -292,16 +286,14 @@ TEST(PathResolverMakeRelative, WindowsCrossDriveReturnsAbsoluteCrossVolume) {
 }
 
 TEST(PathResolverMakeRelative, UNCDifferentShareReturnsAbsoluteCrossVolume) {
-    auto r = makeRelative("//srv1/share/data/rain.dat",
-                          "//srv2/share/proj");
+    auto r = makeRelative("//srv1/share/data/rain.dat", "//srv2/share/proj");
     EXPECT_EQ(r.classification, PathClass::AbsoluteCrossVolume);
 }
 
 TEST(PathResolverMakeRelative, UNCSameShareIsRelative) {
-    auto r = makeRelative("//srv/share/data/rain.dat",
-                          "//srv/share/proj");
+    auto r = makeRelative("//srv/share/data/rain.dat", "//srv/share/proj");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "../data/rain.dat");
+    EXPECT_EQ(r.path, "../data/rain.dat");
 }
 
 TEST(PathResolverMakeRelative, DriveLetterCaseInsensitive) {
@@ -309,7 +301,7 @@ TEST(PathResolverMakeRelative, DriveLetterCaseInsensitive) {
     // be treated as the same volume.
     auto r = makeRelative("c:/proj/data/rain.dat", "C:/proj");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "data/rain.dat");
+    EXPECT_EQ(r.path, "data/rain.dat");
 }
 
 // ---------------------------------------------------------------------------
@@ -340,7 +332,7 @@ TEST(PathResolverMakeRelative, UnicodePathRoundTrip) {
     const std::string anchor = "/Пользователи/проект";
     auto r = makeRelative(target, anchor);
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           "data/дождь.dat");
+    EXPECT_EQ(r.path, "data/дождь.dat");
 }
 #endif
 
@@ -352,8 +344,8 @@ TEST(PathResolverMakeRelative, UnicodePathRoundTrip) {
 TEST(PathResolverMakeRelative, ExactMatchYieldsCurrentDir) {
     auto r = makeRelative("/proj/model.inp", "/proj/model.inp");
     EXPECT_EQ(r.classification, PathClass::Relative);
-    EXPECT_EQ(r.path,           ".");
-    EXPECT_EQ(r.up_levels,      0);
+    EXPECT_EQ(r.path, ".");
+    EXPECT_EQ(r.up_levels, 0);
 }
 #endif
 

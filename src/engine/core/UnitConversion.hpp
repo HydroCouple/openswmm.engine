@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file UnitConversion.hpp
- * @brief Global unit conversion factors — matching legacy SWMM Ucf[]/Qcf[].
+ * @file      UnitConversion.hpp
+ * @brief     Global unit conversion factors — matching legacy SWMM Ucf[]/Qcf[].
  *
  * @details Provides static UCF() function and quantity enums identical to
  *          legacy SWMM's UCF(u) macro / function. All internal computations
- *          use ft, ft², ft³, sec as base units. UCF converts from project
- *          display units (in/hr, acres, CFS, etc.) to internal units.
+ *          use ft, ft², ft³, sec as base units. UCF provides internal-to-display factors; divide a display value by the factor
+ *          to recover internal units. Temperature requires an affine offset conversion.
  *
  *          Usage:
  *          @code
@@ -33,9 +33,9 @@
  * @note Legacy reference: src/legacy/engine/swmm5.c Ucf[], Qcf[], UCF()
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_UNIT_CONVERSION_HPP
@@ -54,17 +54,17 @@ namespace ucf {
 // ============================================================================
 
 enum Quantity {
-    RAINFALL   = 0,   ///< Divide in/hr (US) or mm/hr (SI) by this → ft/sec
-    RAINDEPTH  = 1,   ///< Divide in (US) or mm (SI) by this → ft
-    EVAPRATE   = 2,   ///< Divide in/day (US) or mm/day (SI) by this → ft/sec
-    LENGTH     = 3,   ///< Divide ft (US) or m (SI) by this → ft
-    LANDAREA   = 4,   ///< Divide ac (US) or ha (SI) by this → ft²
-    VOLUME     = 5,   ///< Divide ft³ (US) or m³ (SI) by this → ft³
-    WINDSPEED  = 6,   ///< Divide mph (US) or km/hr (SI) by this → mph
-    TEMPERATURE= 7,   ///< Divide °F (US) or °C (SI) by this → °F
-    MASS       = 8,   ///< Divide lb (US) or kg (SI) by this → mg
-    GWFLOW     = 9,   ///< Divide cfs/ac (US) or cms/ha (SI) by this → ft/sec
-    FLOW       = 10   ///< Divide display flow units by this → cfs
+    RAINFALL = 0,    ///< Divide in/hr (US) or mm/hr (SI) by this → ft/sec
+    RAINDEPTH = 1,   ///< Divide in (US) or mm (SI) by this → ft
+    EVAPRATE = 2,    ///< Divide in/day (US) or mm/day (SI) by this → ft/sec
+    LENGTH = 3,      ///< Divide ft (US) or m (SI) by this → ft
+    LANDAREA = 4,    ///< Divide ac (US) or ha (SI) by this → ft²
+    VOLUME = 5,      ///< Divide ft³ (US) or m³ (SI) by this → ft³
+    WINDSPEED = 6,   ///< Divide mph (US) or km/hr (SI) by this → mph
+    TEMPERATURE = 7, ///< Legacy scale entry only; absolute temperatures require offset conversion
+    MASS = 8,        ///< Divide lb (US) or kg (SI) by this → mg
+    GWFLOW = 9,      ///< Divide cfs/ac (US) or cms/ha (SI) by this → ft/sec
+    FLOW = 10        ///< Divide display flow units by this → cfs
 };
 
 // ============================================================================
@@ -75,26 +75,26 @@ enum Quantity {
 /// Or equivalently: internal = project / UCF; project = internal * UCF
 static constexpr double Ucf[10][2] = {
     //  US           SI
-    {43200.0,    1097280.0 },   // RAINFALL: in/hr, mm/hr → ft/sec
-    {12.0,       304.8     },   // RAINDEPTH: in, mm → ft
-    {1036800.0,  26334720.0},   // EVAPRATE: in/day, mm/day → ft/sec
-    {1.0,        0.3048    },   // LENGTH: ft, m → ft
-    {2.2956e-5,  0.92903e-5},   // LANDAREA: ac, ha → ft²
-    {1.0,        0.02832   },   // VOLUME: ft³, m³ → ft³
-    {1.0,        1.608     },   // WINDSPEED: mph, km/hr → mph
-    {1.0,        1.8       },   // TEMPERATURE: °F, °C → °F
-    {2.203e-6,   1.0e-6    },   // MASS: lb, kg → mg
-    {43560.0,    3048.0    }    // GWFLOW: cfs/ac, cms/ha → ft/sec
+    {43200.0, 1097280.0},    // RAINFALL: in/hr, mm/hr → ft/sec
+    {12.0, 304.8},           // RAINDEPTH: in, mm → ft
+    {1036800.0, 26334720.0}, // EVAPRATE: in/day, mm/day → ft/sec
+    {1.0, 0.3048},           // LENGTH: ft, m → ft
+    {2.2956e-5, 0.92903e-5}, // LANDAREA: ac, ha → ft²
+    {1.0, 0.02832},          // VOLUME: ft³, m³ → ft³
+    {1.0, 1.608},            // WINDSPEED: mph, km/hr → mph
+    {1.0, 1.8},              // TEMPERATURE: °F, °C → °F
+    {2.203e-6, 1.0e-6},      // MASS: lb, kg → mg
+    {43560.0, 3048.0}        // GWFLOW: cfs/ac, cms/ha → ft/sec
 };
 
 /// Qcf[flow_units] — conversion from display flow to cfs
 static constexpr double Qcf[6] = {
-    1.0,       // CFS → cfs
-    448.831,   // GPM → cfs
-    0.64632,   // MGD → cfs
-    0.02832,   // CMS → cfs
-    28.317,    // LPS → cfs
-    2.4466     // MLD → cfs
+    1.0,     // CFS → cfs
+    448.831, // GPM → cfs
+    0.64632, // MGD → cfs
+    0.02832, // CMS → cfs
+    28.317,  // LPS → cfs
+    2.4466   // MLD → cfs
 };
 
 // ============================================================================
@@ -110,17 +110,25 @@ static constexpr double Qcf[6] = {
 //              display  = internal * Ucf[q][us]       (internal → display)
 
 namespace detail {
+/**
+ * @brief Build compile-time reciprocals of every quantity/system conversion.
+ * @return Owned 10-by-2 fixed array with entry 1/Ucf[q][system]; no runtime state.
+ */
 inline constexpr std::array<std::array<double, 2>, 10> makeUcfInv() {
     std::array<std::array<double, 2>, 10> r{};
     for (int q = 0; q < 10; ++q)
         for (int u = 0; u < 2; ++u)
-            r[static_cast<std::size_t>(q)][static_cast<std::size_t>(u)] =
-                1.0 / Ucf[q][u];
+            r[static_cast<std::size_t>(q)][static_cast<std::size_t>(u)] = 1.0 / Ucf[q][u];
     return r;
 }
+/**
+ * @brief Build compile-time reciprocals of flow conversion factors.
+ * @return Owned six-entry fixed array with entry 1/Qcf[flow_units].
+ */
 inline constexpr std::array<double, 6> makeQcfInv() {
     std::array<double, 6> r{};
-    for (int f = 0; f < 6; ++f) r[static_cast<std::size_t>(f)] = 1.0 / Qcf[f];
+    for (int f = 0; f < 6; ++f)
+        r[static_cast<std::size_t>(f)] = 1.0 / Qcf[f];
     return r;
 }
 } // namespace detail
@@ -135,9 +143,9 @@ inline constexpr std::array<double, 6> Qcf_inv = detail::makeQcfInv();
 // Convenience constants — common fixed conversions not unit-system dependent
 // ============================================================================
 
-static constexpr double ACRES_TO_FT2 = 43560.0;     ///< 1 acre = 43560 ft²
-static constexpr double FT3_TO_MGAL  = 7.48052e-6;  ///< ft³ → million gallons
-static constexpr double SEC_PER_DAY  = 86400.0;     ///< seconds per day
+static constexpr double ACRES_TO_FT2 = 43560.0;   ///< 1 acre = 43560 ft²
+static constexpr double FT3_TO_MGAL = 7.48052e-6; ///< ft³ → million gallons
+static constexpr double SEC_PER_DAY = 86400.0;    ///< seconds per day
 
 // ============================================================================
 // UCF function — matching legacy UCF()
@@ -185,8 +193,7 @@ double UCF_inv(int quantity, const SimulationOptions& opts);
 int getUnitSystem(int flow_units);
 
 /// Legacy FlowUnitWords — index by FlowUnits enum (CFS,GPM,MGD,CMS,LPS,MLD).
-inline constexpr const char* FlowUnitWords[6] =
-    { "CFS", "GPM", "MGD", "CMS", "LPS", "MLD" };
+inline constexpr const char* FlowUnitWords[6] = {"CFS", "GPM", "MGD", "CMS", "LPS", "MLD"};
 
 // ============================================================================
 // DisplayUnits — single source of truth for internal → display conversion
@@ -198,33 +205,47 @@ inline constexpr const char* FlowUnitWords[6] =
 // instead of re-deriving Ucf / Qcf inline. Mirrors legacy statsrpt.c / report.c
 // UCF()-based output and the VolUnitsWords / PondingUnitsWords tables.
 struct DisplayUnits {
-    int unit_system = 0;            ///< 0 = US, 1 = SI
-    int flow_units  = 0;            ///< FlowUnits enum value
+    int unit_system = 0; ///< 0 = US, 1 = SI
+    int flow_units = 0;  ///< FlowUnits enum value
 
     // --- internal → display multipliers (display = internal * factor) ---
-    double flow      = 1.0;         ///< cfs  → display flow (Qcf)
-    double length    = 1.0;         ///< ft   → ft | m
-    double volume    = 1.0;         ///< ft³  → ft³ | m³
-    double rainfall  = 1.0;         ///< ft/s → in/hr | mm/hr
-    double raindepth = 1.0;         ///< ft   → in | mm (also runoff-depth columns)
-    double evaprate  = 1.0;         ///< ft/s → in/day | mm/day
-    double landarea  = 1.0;         ///< ft²  → ac | ha
-    double mvol      = 1.0;         ///< ft³  → 10^6 gal | 10^6 ltr
-    double landvol   = 1.0;         ///< ft³  → acre-ft | hectare-m
+    double flow = 1.0;      ///< cfs  → display flow (Qcf)
+    double length = 1.0;    ///< ft   → ft | m
+    double volume = 1.0;    ///< ft³  → ft³ | m³
+    double rainfall = 1.0;  ///< ft/s → in/hr | mm/hr
+    double raindepth = 1.0; ///< ft   → in | mm (also runoff-depth columns)
+    double evaprate = 1.0;  ///< ft/s → in/day | mm/day
+    double landarea = 1.0;  ///< ft²  → ac | ha
+    double mvol = 1.0;      ///< ft³  → 10^6 gal | 10^6 ltr
+    double landvol = 1.0;   ///< ft³  → acre-ft | hectare-m
 
     // --- unit-label words (legacy statsrpt.c / report.c) ---
-    const char* flow_word        = "CFS";      ///< CFS | CMS | ...
-    const char* length_word      = "Feet";     ///< depth / HGL / surcharge column
-    const char* depth_word       = "in";       ///< rainfall / runoff depth (in | mm)
-    const char* vel_word         = "ft/sec";   ///< link velocity (ft/sec | m/sec)
-    const char* mvol_word        = "10^6 gal"; ///< 10^6 gal | 10^6 ltr
-    const char* landvol_word     = "acre-feet";///< acre-feet | hectare-m
+    const char* flow_word = "CFS";             ///< CFS | CMS | ...
+    const char* length_word = "Feet";          ///< depth / HGL / surcharge column
+    const char* depth_word = "in";             ///< rainfall / runoff depth (in | mm)
+    const char* vel_word = "ft/sec";           ///< link velocity (ft/sec | m/sec)
+    const char* mvol_word = "10^6 gal";        ///< 10^6 gal | 10^6 ltr
+    const char* landvol_word = "acre-feet";    ///< acre-feet | hectare-m
     const char* storage_vol_word = "1000 ft3"; ///< 1000 ft3 | 1000 m3
 
-    /// Build from simulation options (selects unit system + flow units).
+    /**
+     * @brief Build display factors and borrowed static labels from flow-unit options.
+     *
+     * Determines US/SI from sanitized flow_units, ignoring any independent unit-system preference.
+     * Multipliers convert internal ft/cfs/ft3 to the corresponding report units; temperature uses the
+     * separate affine helper.
+     *
+     * @param[in] opts Borrowed options; out-of-range flow_units falls back to CFS/US.
+     * @return Independent factor bundle; label pointers reference static literals and need no release.
+     */
     static DisplayUnits from(const SimulationOptions& opts);
 
-    /// Internal temperature (°F) → display (°F for US, °C for SI).
+    /**
+     * @brief Convert an internal Fahrenheit temperature to this bundle's display scale.
+     *
+     * @param[in] tF Internal temperature in deg F, propagated without finite/range validation.
+     * @return tF for unit_system==0, otherwise (tF-32)*5/9 in deg C.
+     */
     double temperature(double tF) const {
         return unit_system == 0 ? tF : (5.0 / 9.0) * (tF - 32.0);
     }

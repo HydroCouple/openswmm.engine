@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_surface_exchange.cpp
- * @brief Phase H2 gates — latent + sensible surface exchange.
+ * @file      test_heat_surface_exchange.cpp
+ * @brief     Phase H2 gates — latent + sensible surface exchange.
  *
  * @details Two kinds of gate, deliberately separated:
  *
@@ -40,9 +40,9 @@
  *          rate that can be wrong.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §2.1, §2.4, §6 H2
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -61,27 +61,64 @@ namespace se = openswmm::transport::heat;
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr double kTWater = 20.0;  ///< °C, the deck's INITIAL_STATE
-constexpr double kTAirC  = 10.0;  ///< °C  (50 °F in the deck)
-constexpr double kRH     = 50.0;  ///< %
+constexpr double kTWater = 20.0; ///< °C, the deck's INITIAL_STATE
+constexpr double kTAirC = 10.0;  ///< °C  (50 °F in the deck)
+constexpr double kRH = 50.0;     ///< %
 constexpr double kWindMph = 5.0;
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// A storage node (the only node type with a free surface) fed by nothing,
-/// draining through one conduit. `open_channel` selects RECT_OPEN vs
-/// CIRCULAR so the conduit branch can be switched on and off by geometry
-/// rather than by a flag.
-void write_deck(const char* path, const std::string& extra_options,
-                const std::string& pc_lines, bool open_channel = true,
-                bool storage = true, const char* end_time = "01:00:00") {
+/**
+ * @brief Write a heat-exchange fixture with selectable exposed geometry and storage.
+ *
+ * Uses CFS and constant 50 F air, kWindMph wind and kRH humidity; neither option guarantees the
+ * model configuration parses without the caller component sidecars. Opens/truncates the deck using
+ * a local ofstream; parent directories must exist. Stream open/write/close outcomes are not
+ * checked, and sidecar names/text are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] extra_options Raw additional OPTIONS rows; inserted verbatim without validation.
+ * @param[in] pc_lines Raw PROCESS_COMPONENTS rows, copied when nonempty; caller supplies valid
+ *     component IDs/config references and line separators.
+ * @param[in] open_channel True uses open rectangular conduits; false uses circular conduits to
+ *     select surface exposure through geometry.
+ * @param[in] storage True creates S1 constant-area storage; false uses a junction at the same named
+ *     location.
+ * @param[in] end_time Non-null authored HH:MM:SS end time on the fixed start date; copied verbatim.
+ */
+void write_deck(const char* path, const std::string& extra_options, const std::string& pc_lines,
+                bool open_channel = true, bool storage = true, const char* end_time = "01:00:00") {
     std::ofstream f(path);
     f << "[TITLE]\nH2 surface exchange gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
@@ -94,10 +131,9 @@ void write_deck(const char* path, const std::string& extra_options,
       // 50 degF = 10 degC. Constant humidity and wind so the met inputs are
       // exactly the numbers the formulation gates use.
       << "TIMESERIES air_ts\n"
-      << "WINDSPEED MONTHLY " << kWindMph << " " << kWindMph << " "
-      << kWindMph << " " << kWindMph << " " << kWindMph << " " << kWindMph
-      << " " << kWindMph << " " << kWindMph << " " << kWindMph << " "
-      << kWindMph << " " << kWindMph << " " << kWindMph << "\n"
+      << "WINDSPEED MONTHLY " << kWindMph << " " << kWindMph << " " << kWindMph << " " << kWindMph
+      << " " << kWindMph << " " << kWindMph << " " << kWindMph << " " << kWindMph << " " << kWindMph
+      << " " << kWindMph << " " << kWindMph << " " << kWindMph << "\n"
       << "HUMIDITY " << kRH << "\n\n"
       << "[TIMESERIES]\nair_ts 01/01/2026 00:00 50.0\n"
       << "air_ts 01/02/2026 00:00 50.0\n\n";
@@ -112,39 +148,59 @@ void write_deck(const char* path, const std::string& extra_options,
       << "[CONDUITS]\n"
       << "C1 S1 J1  500 0.013 0 0 0\nC2 J1 OUT 500 0.013 0 0 0\n\n"
       << "[XSECTIONS]\n"
-      << (open_channel
-              ? "C1 RECT_OPEN 3.0 4.0 0 0\nC2 RECT_OPEN 3.0 4.0 0 0\n\n"
-              : "C1 CIRCULAR 3.0 0 0 0\nC2 CIRCULAR 3.0 0 0 0\n\n");
+      << (open_channel ? "C1 RECT_OPEN 3.0 4.0 0 0\nC2 RECT_OPEN 3.0 4.0 0 0\n\n"
+                       : "C1 CIRCULAR 3.0 0 0 0\nC2 CIRCULAR 3.0 0 0 0\n\n");
     if (!pc_lines.empty())
         f << "[PROCESS_COMPONENTS]\n" << pc_lines << "\n\n";
     f << "[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Build a 20 C initial-state heat config with selectable surface exchange.
+ *
+ * @param[in] surface_on True writes SURFACE_EXCHANGE ON; false writes OFF.
+ * @return Owned HEAT_SOURCES/HEAT_FLUXES section text; no file IO or validation.
+ */
 std::string heat_cfg(bool surface_on) {
     return std::string("[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
                        "[HEAT_FLUXES]\nSURFACE_EXCHANGE ") +
            (surface_on ? "ON\n" : "OFF\n");
 }
 
+/**
+ * @brief Run a generated fixture and keep its engine for state inspection.
+ *
+ * Steps with saved results until completion, step error or a 20000-step guard, then invokes end
+ * without checking its status. A non-null result does not prove successful complete
+ * stepping/finalization. Does not request a full report; returned context/diagnostics remain owned
+ * by that handle.
+ *
+ * @param[in] inp Non-null input-deck path, borrowed for the synchronous run.
+ * @param[in] rpt Report destination passed through to engine open.
+ * @param[in] out Binary-result destination; start requests saved results.
+ * @return Owned raw engine handle after allocation/open/initialize/start succeed, or null after
+ *     allocation/setup failure; caller must destroy any returned handle.
+ */
 SWMM_Engine run_and_hold(const char* inp, const char* rpt, const char* out) {
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
+    if (e == nullptr)
+        return nullptr;
     if (swmm_engine_open(e, inp, rpt, out, nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the formulations, against values computed outside this codebase.
@@ -168,11 +224,10 @@ TEST(HeatSurfaceExchangeTest, FormulationsMatchPublishedValues) {
     EXPECT_NEAR(se::bowenRatio(kTWater, kTAirC, kRH, 1.0), 0.35264094, 1.0e-6);
 
     // Latent flux, same conditions. Positive = leaving the water.
-    const double je = se::latentFlux(kTWater, kTAirC, kRH, w_ms, 1.505e-8,
-                                     1.6e-8, 1000.0);
-    EXPECT_NEAR(je, 215.5056677, 1.0e-4)
-        << "Je is " << je << " W/m2 — check rho_w, Le and f(w) separately; "
-           "each has its own assertion above.";
+    const double je = se::latentFlux(kTWater, kTAirC, kRH, w_ms, 1.505e-8, 1.6e-8, 1000.0);
+    EXPECT_NEAR(je, 215.5056677, 1.0e-4) << "Je is " << je
+                                         << " W/m2 — check rho_w, Le and f(w) separately; "
+                                            "each has its own assertion above.";
     EXPECT_NEAR(se::sensibleFlux(je, 0.35264094), 75.99612, 1.0e-3);
 }
 
@@ -186,9 +241,8 @@ TEST(HeatSurfaceExchangeTest, SaturatedAirAtWaterTemperatureIsFinite) {
     const double br = se::bowenRatio(kTWater, kTWater, 100.0, 1.0);
     EXPECT_TRUE(std::isfinite(br)) << "Bowen ratio is not finite at zero "
                                       "vapour-pressure deficit";
-    const double je = se::latentFlux(kTWater, kTWater, 100.0,
-                                     kWindMph * 0.44704, 1.505e-8, 1.6e-8,
-                                     1000.0);
+    const double je =
+        se::latentFlux(kTWater, kTWater, 100.0, kWindMph * 0.44704, 1.505e-8, 1.6e-8, 1000.0);
     EXPECT_NEAR(je, 0.0, 1.0e-12);
     EXPECT_TRUE(std::isfinite(se::sensibleFlux(je, br)));
 }
@@ -198,8 +252,9 @@ TEST(HeatSurfaceExchangeTest, SaturatedAirAtWaterTemperatureIsFinite) {
 // ---------------------------------------------------------------------------
 TEST(HeatSurfaceExchangeTest, SurfaceExchangeCoolsAStoragePool) {
     write_file("_hx_on.heat", heat_cfg(true));
-    write_deck("_hx_on.inp", "", "org.hydrocouple.openswmm.heat "
-                                 "config=\"_hx_on.heat\"");
+    write_deck("_hx_on.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_on.heat\"");
     SWMM_Engine on = run_and_hold("_hx_on.inp", "_hx_on.rpt", "_hx_on.out");
     ASSERT_NE(on, nullptr);
     const auto& ctx_on = as_cpp_engine(on).context();
@@ -207,8 +262,9 @@ TEST(HeatSurfaceExchangeTest, SurfaceExchangeCoolsAStoragePool) {
     const double t_on = ctx_on.heat_state.node_temp[0];
 
     write_file("_hx_off.heat", heat_cfg(false));
-    write_deck("_hx_off.inp", "", "org.hydrocouple.openswmm.heat "
-                                  "config=\"_hx_off.heat\"");
+    write_deck("_hx_off.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_off.heat\"");
     SWMM_Engine off = run_and_hold("_hx_off.inp", "_hx_off.rpt", "_hx_off.out");
     ASSERT_NE(off, nullptr);
     const double t_off = as_cpp_engine(off).context().heat_state.node_temp[0];
@@ -222,11 +278,10 @@ TEST(HeatSurfaceExchangeTest, SurfaceExchangeCoolsAStoragePool) {
         << " degC, not its 20 degC initial state — something other than the "
            "flux module is moving temperature";
 
-    EXPECT_LT(t_on, t_off)
-        << "the pool reads " << t_on << " degC with exchange on versus "
-        << t_off << " off. Dry air (50 % RH) over warmer water evaporates, "
-                    "and evaporation cools; warming here means the sign of "
-                    "-(Je + Jc) was dropped.";
+    EXPECT_LT(t_on, t_off) << "the pool reads " << t_on << " degC with exchange on versus " << t_off
+                           << " off. Dry air (50 % RH) over warmer water evaporates, "
+                              "and evaporation cools; warming here means the sign of "
+                              "-(Je + Jc) was dropped.";
     EXPECT_GT(t_on, 0.0) << "an hour of exchange should not freeze the pool — "
                             "check the ft2/m2 conversion";
     swmm_engine_destroy(on);
@@ -251,13 +306,13 @@ TEST(HeatSurfaceExchangeTest, SpecificHeatIsNowObservable) {
     // is TIGHTER here than a loosened one at an hour, and a ratio of 1.0
     // (cp ignored) still misses by half.
     write_file("_hx_cp.heat", heat_cfg(true));
-    write_deck("_hx_cp1.inp", "", "org.hydrocouple.openswmm.heat "
-                                  "config=\"_hx_cp.heat\"",
+    write_deck("_hx_cp1.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_cp.heat\"",
                /*open_channel=*/true, /*storage=*/true, "00:05:00");
     SWMM_Engine a = run_and_hold("_hx_cp1.inp", "_hx_cp1.rpt", "_hx_cp1.out");
     ASSERT_NE(a, nullptr);
-    const double dt1 =
-        kTWater - as_cpp_engine(a).context().heat_state.node_temp[0];
+    const double dt1 = kTWater - as_cpp_engine(a).context().heat_state.node_temp[0];
     swmm_engine_destroy(a);
 
     // Double the thermal mass; the same flux must move the temperature half
@@ -268,14 +323,15 @@ TEST(HeatSurfaceExchangeTest, SpecificHeatIsNowObservable) {
                /*open_channel=*/true, /*storage=*/true, "00:05:00");
     SWMM_Engine b = run_and_hold("_hx_cp2.inp", "_hx_cp2.rpt", "_hx_cp2.out");
     ASSERT_NE(b, nullptr);
-    const double dt2 =
-        kTWater - as_cpp_engine(b).context().heat_state.node_temp[0];
+    const double dt2 = kTWater - as_cpp_engine(b).context().heat_state.node_temp[0];
     swmm_engine_destroy(b);
 
     ASSERT_GT(dt1, 1.0e-6) << "the pool did not cool at all — nothing to halve";
     EXPECT_NEAR(dt2 / dt1, 0.5, 0.005)
         << "doubling WATER_SPECIFIC_HEAT_CAPACITY changed the cooling by a "
-           "factor of " << (dt2 / dt1) << ", expected 0.5. A ratio of 1.0 "
+           "factor of "
+        << (dt2 / dt1)
+        << ", expected 0.5. A ratio of 1.0 "
            "means cp never reached the flux arithmetic — which is exactly "
            "the unobservability H1 shipped with and H2 was supposed to end.";
 }
@@ -288,8 +344,9 @@ TEST(HeatSurfaceExchangeTest, JunctionsAndClosedConduitsDoNotExchange) {
     //     gives a junction no surface area (node::getSurfArea returns 0),
     //     and its evaporation obeys that too — a manhole is closed.
     write_file("_hx_j.heat", heat_cfg(true));
-    write_deck("_hx_j.inp", "", "org.hydrocouple.openswmm.heat "
-                                "config=\"_hx_j.heat\"",
+    write_deck("_hx_j.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_j.heat\"",
                /*open_channel=*/false, /*storage=*/false);
     SWMM_Engine j = run_and_hold("_hx_j.inp", "_hx_j.rpt", "_hx_j.out");
     ASSERT_NE(j, nullptr);
@@ -309,8 +366,9 @@ TEST(HeatSurfaceExchangeTest, JunctionsAndClosedConduitsDoNotExchange) {
 
     // (c) The positive control: the SAME geometry opened up must exchange,
     //     or (a) and (b) prove only that the module is dead everywhere.
-    write_deck("_hx_open.inp", "", "org.hydrocouple.openswmm.heat "
-                                   "config=\"_hx_j.heat\"",
+    write_deck("_hx_open.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_j.heat\"",
                /*open_channel=*/true, /*storage=*/false);
     SWMM_Engine o = run_and_hold("_hx_open.inp", "_hx_open.rpt", "_hx_open.out");
     ASSERT_NE(o, nullptr);
@@ -330,12 +388,12 @@ TEST(HeatSurfaceExchangeTest, HumidityReachesTheClimateState) {
     // frozen there, and 50 happens to be this deck's own value — so the
     // gate uses 90 %, a number the default cannot produce.
     write_file("_hx_rh.heat", heat_cfg(true));
-    write_deck("_hx_rh.inp", "", "org.hydrocouple.openswmm.heat "
-                                 "config=\"_hx_rh.heat\"");
+    write_deck("_hx_rh.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_rh.heat\"");
     {
         std::ifstream in("_hx_rh.inp");
-        std::string body((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
+        std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         const std::string from = "HUMIDITY 50";
         const auto at = body.find(from);
         ASSERT_NE(at, std::string::npos) << "deck helper changed shape";
@@ -345,8 +403,7 @@ TEST(HeatSurfaceExchangeTest, HumidityReachesTheClimateState) {
     SWMM_Engine e = run_and_hold("_hx_rh.inp", "_hx_rh.rpt", "_hx_rh.out");
     ASSERT_NE(e, nullptr);
     EXPECT_NEAR(as_cpp_engine(e).context().climate_state.humidity, 90.0, 1.0e-9)
-        << "climate_state.humidity is "
-        << as_cpp_engine(e).context().climate_state.humidity
+        << "climate_state.humidity is " << as_cpp_engine(e).context().climate_state.humidity
         << " — the [TEMPERATURE] HUMIDITY row never reached the running "
            "state, so RH is still the dead 50 % default";
     swmm_engine_destroy(e);
@@ -362,31 +419,27 @@ TEST(HeatSurfaceExchangeTest, FluxModuleTogglesParseAndDefer) {
     // this is the other one. The leg then moved to SEDIMENT_EXCHANGE (H6),
     // and H6b implemented THAT, so it flips a second time: the toggle must
     // now parse, enable the module, and open cleanly.
-    write_file("_hx_h4.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
-    write_deck("_hx_h4.inp", "", "org.hydrocouple.openswmm.heat "
-                                 "config=\"_hx_h4.heat\"");
+    write_file("_hx_h4.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                              "[HEAT_FLUXES]\nSEDIMENT_EXCHANGE ON\n");
+    write_deck("_hx_h4.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_h4.heat\"");
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_hx_h4.inp", "_hx_h4.rpt", "_hx_h4.out",
-                               nullptr),
-              SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(e, "_hx_h4.inp", "_hx_h4.rpt", "_hx_h4.out", nullptr), SWMM_OK)
         << "SEDIMENT_EXCHANGE ON still refuses — the H6 deferral was not "
            "retired with the phase that implements it (H6b)";
     EXPECT_TRUE(as_cpp_engine(e).context().heat_config.sediment_exchange);
     swmm_engine_destroy(e);
 
-    write_file("_hx_bad.heat",
-               "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE MAYBE\n");
-    write_deck("_hx_bad.inp", "", "org.hydrocouple.openswmm.heat "
-                                  "config=\"_hx_bad.heat\"");
+    write_file("_hx_bad.heat", "[HEAT_SOURCES]\nINITIAL_STATE GLOBAL 20.0\n\n"
+                               "[HEAT_FLUXES]\nSURFACE_EXCHANGE MAYBE\n");
+    write_deck("_hx_bad.inp", "",
+               "org.hydrocouple.openswmm.heat "
+               "config=\"_hx_bad.heat\"");
     SWMM_Engine e2 = swmm_engine_create();
     ASSERT_NE(e2, nullptr);
-    EXPECT_NE(swmm_engine_open(e2, "_hx_bad.inp", "_hx_bad.rpt", "_hx_bad.out",
-                               nullptr),
-              SWMM_OK)
+    EXPECT_NE(swmm_engine_open(e2, "_hx_bad.inp", "_hx_bad.rpt", "_hx_bad.out", nullptr), SWMM_OK)
         << "'MAYBE' was accepted as a module toggle";
     swmm_engine_destroy(e2);
 }

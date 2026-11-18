@@ -36,6 +36,7 @@ water quality, spatial data, and GeoPackage I/O.
 from ._coupling import Coupling as Coupling, DomainSources as DomainSources, RuntimeSource as RuntimeSource, SourceReceipt as SourceReceipt, BoundaryReceipt as BoundaryReceipt, CouplingFrame as CouplingFrame, RuntimeBoundary as RuntimeBoundary, RuntimeForcing as RuntimeForcing, RuntimeClear as RuntimeClear
 from ._solver import (
     Solver as Solver,
+    abi_tag as abi_tag,
     run as run,
     run_with_callback as run_with_callback,
 )
@@ -62,6 +63,8 @@ from ._exceptions import (
 from ._model import ModelBuilder as ModelBuilder
 from ._edit import (
     ConversionResult as ConversionResult,
+    TypeChange as TypeChange,
+    DeleteRecord as DeleteRecord,
     ImpactEntry as ImpactEntry,
     ModelEditor as ModelEditor,
 )
@@ -104,6 +107,7 @@ from ._forcing import Forcing as Forcing
 # =============================================================================
 from ._heat import Heat as Heat
 from ._heat import HeatNodeOverride as HeatNodeOverride
+from ._heat import HeatLidMaterial as HeatLidMaterial, HeatElementValue as HeatElementValue, HeatSnapshot as HeatSnapshot
 from ._water_age import WaterAge as WaterAge
 from ._water_age import WaterAgeOverride as WaterAgeOverride
 from ._reactions import Reactions as Reactions
@@ -171,6 +175,7 @@ from ._enums import (
     BuildupFunc as BuildupFunc,
     ConcentrationUnits as ConcentrationUnits,
     LidType as LidType,
+    LidExtraField as LidExtraField,
     WashoffFunc as WashoffFunc,
     # Transport processes — heat, water age, reactions
     HeatFluxModule as HeatFluxModule,
@@ -179,6 +184,9 @@ from ._enums import (
     HeatSolarParam as HeatSolarParam,
     HeatCloudParam as HeatCloudParam,
     HeatSourceKind as HeatSourceKind,
+    GroundHeatValue as GroundHeatValue,
+    GroundHeatLayerValue as GroundHeatLayerValue,
+    ChannelGroundValue as ChannelGroundValue,
     WaterAgeSource as WaterAgeSource,
     ReactionScope as ReactionScope,
     ReactionExprForm as ReactionExprForm,
@@ -205,6 +213,7 @@ from ._enums import (
     SurfaceBoundaryType as SurfaceBoundaryType,
     SurfaceInfilMethod as SurfaceInfilMethod,
     SurfaceInfilDest as SurfaceInfilDest,
+    NodeCoupling2DType as NodeCoupling2DType,
     # Nodes / editing
     DividerType as DividerType,
     RefType as RefType,
@@ -213,13 +222,16 @@ from ._enums import (
     RunoffTotal as RunoffTotal,
 )
 
+HAS_2D: bool
 HAS_GEOPACKAGE: bool
+
+from ._capabilities import capabilities as capabilities
 
 __all__: list[str]
 
 # Native climate, transport, writer and unit-system selectors.
 from ._enums import (
-    EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
 )
 
 from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
@@ -259,3 +271,18 @@ from ._enums import (
 )
 
 from ._lid_nodes import LidNodeLayer as LidNodeLayer, LidNodeLayerKind as LidNodeLayerKind, LidLayerTreatment as LidLayerTreatment
+
+from ._split import (
+    SplitParticipant as SplitParticipant, SplitFrame as SplitFrame,
+    MaterialSplitParticipant as MaterialSplitParticipant,
+)
+from ._passive_exchange import (
+    PassiveExchange as PassiveExchange, PassiveAmount as PassiveAmount,
+    PassiveStatus as PassiveStatus, PassivePool as PassivePool,
+    PassiveReceipt as PassiveReceipt, PassiveRow as PassiveRow, PassiveLeg as PassiveLeg,
+)
+from ._enums import SplitRole as SplitRole, SplitPhase as SplitPhase
+from ._statistics import (
+    ReportTable as ReportTable, SummaryColumn as SummaryColumn, SummaryRow as SummaryRow,
+)
+from ._enums import SummaryTable as SummaryTable, SummaryObject as SummaryObject

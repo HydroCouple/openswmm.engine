@@ -17,6 +17,8 @@ def model(tmp_path):
     live=[]
     def create(*, groundwater=False, heat=False, msx=False, closure='CLOSED_FORM', momentum='LOCAL_INERTIAL', units='CMS', age=False, standalone=False):
         text=GW_MODEL.replace('0.03 0.1','0.03 0') if groundwater else SURFACE_MODEL
+        # The shared models pin a momentum equation; drop it so `momentum` is the one in force.
+        text='\n'.join(l for l in text.split('\n') if not l.strip().startswith('MOMENTUM_EQUATION'))
         text=text.replace('FLOW_UNITS CMS','FLOW_UNITS '+units).replace('[2D_OPTIONS]','[2D_OPTIONS]\nMOMENTUM_EQUATION '+momentum)
         if standalone:
             a=text.index('[JUNCTIONS]'); b=text.index('[2D_OPTIONS]'); text=text[:a]+text[b:]

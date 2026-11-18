@@ -70,7 +70,7 @@ compiler's own tables, so there is exactly one copy of the truth.
     rxn = s.reactions
     nh3 = rxn.species.add("NH3", units="MG", atol=1e-6, rtol=1e-6)
     rxn.coefficients.add("Kb", value=0.05)
-    rxn.terms.add("Kf", "1.5826e-4 * RE^0.88 / D")
+    rxn.terms.add("Kf", "0.5 * DT")
 
     nh3.set_expression(ReactionScope.PIPE, ReactionExprForm.RATE, "-Kb * NH3")
     nh3.initial = 0.5
@@ -162,37 +162,51 @@ class ExpressionDiagnostic(NamedTuple):
 
 def _species_row(solver, int idx):
     """Read species *idx* as ``(name, is_wall, units, atol, rtol)``."""
-    cdef char name[128]
-    cdef char units[128]
+    cdef _TextBufs t
     cdef int is_wall = 0
     cdef double atol = 0.0
     cdef double rtol = 0.0
-    name[0] = 0
-    units[0] = 0
-    _check(swmm_reaction_species_get(
-        _h(solver), idx, name, 128, &is_wall, units, 128, &atol, &rtol))
-    return (name.decode('utf-8'), is_wall != 0, units.decode('utf-8'),
-            atol, rtol)
+    _tb_open(&t, 2)
+    try:
+        while True:
+            _check(swmm_reaction_species_get(
+                _h(solver), idx, t.p[0], t.size, &is_wall, t.p[1], t.size, &atol, &rtol))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), is_wall != 0, _tb_str(&t, 1),
+                atol, rtol)
+    finally:
+        _tb_close(&t)
 
 
 def _coeff_row(solver, int idx):
     """Read coefficient *idx* as ``(name, is_param, value)``."""
-    cdef char name[128]
+    cdef _TextBufs t
     cdef int is_param = 0
     cdef double value = 0.0
-    name[0] = 0
-    _check(swmm_reaction_coeff_get(_h(solver), idx, name, 128, &is_param, &value))
-    return (name.decode('utf-8'), is_param != 0, value)
+    _tb_open(&t, 1)
+    try:
+        while True:
+            _check(swmm_reaction_coeff_get(_h(solver), idx, t.p[0], t.size, &is_param, &value))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), is_param != 0, value)
+    finally:
+        _tb_close(&t)
 
 
 def _term_row(solver, int idx):
     """Read term *idx* as ``(name, expression)``."""
-    cdef char name[128]
-    cdef char expr[1024]
-    name[0] = 0
-    expr[0] = 0
-    _check(swmm_reaction_term_get(_h(solver), idx, name, 128, expr, 1024))
-    return (name.decode('utf-8'), expr.decode('utf-8'))
+    cdef _TextBufs t
+    _tb_open(&t, 2)
+    try:
+        while True:
+            _check(swmm_reaction_term_get(_h(solver), idx, t.p[0], t.size, t.p[1], t.size))
+            if not _tb_retry(&t):
+                break
+        return (_tb_str(&t, 0), _tb_str(&t, 1))
+    finally:
+        _tb_close(&t)
 
 
 def _species_count(solver) -> int:
@@ -297,7 +311,7 @@ class ReactionSpecies:
         """Return this species' expression in one scope.
 
         :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE`` or
-            ``TANK`` (species expressions exist only in those two scopes).
+            ``TANK`` or ``SUBCATCHMENT``.
         :returns: ``(form, expression)`` where *form* is a
             :class:`~openswmm.engine.ReactionExprForm`. ``form`` is ``NONE``
             and ``expression`` is ``""`` when the species has no expression
@@ -305,11 +319,17 @@ class ReactionSpecies:
         :raises BadParamError: *scope* is not a species expression scope.
         """
         cdef int form = 0
-        cdef char expr[1024]
-        expr[0] = 0
-        _check(swmm_reaction_expr_get(
-            _h(self._solver), int(scope), self._index, &form, expr, 1024))
-        return (ReactionExprForm(form), expr.decode('utf-8'))
+        cdef _TextBufs t
+        _tb_open(&t, 1)
+        try:
+            while True:
+                _check(swmm_reaction_expr_get(
+                    _h(self._solver), int(scope), self._index, &form, t.p[0], t.size))
+                if not _tb_retry(&t):
+                    break
+            return (ReactionExprForm(form), _tb_str(&t, 0))
+        finally:
+            _tb_close(&t)
 
     def set_expression(self, scope, form, str expression="") -> None:
         """Set — or with ``ReactionExprForm.NONE`` clear — one scope's expression.
@@ -319,7 +339,7 @@ class ReactionSpecies:
         (or anything it would invalidate) fails to compile the change is
         rolled back and refused.
 
-        :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE`` or ``TANK``.
+        :param scope: :class:`~openswmm.engine.ReactionScope` ``PIPE``, ``TANK`` or ``SUBCATCHMENT``.
         :param form: :class:`~openswmm.engine.ReactionExprForm` — ``RATE``
             (``dC/dt = f(...)``), ``EQUIL`` (``0 = f(...)``), ``FORMULA``
             (``C = f(...)``), or ``NONE`` to clear the scope.
@@ -362,6 +382,18 @@ class ReactionSpecies:
         ``BUILDING``/``OPENED`` only.
         """
         _check(swmm_reaction_init_global_set(_h(self._solver), self._index, value))
+
+    @property
+    def rain_conc(self) -> float:
+        """Rainfall concentration in species units; zero means clean rainfall."""
+        cdef double value = 0.0
+        _check(swmm_reaction_rain_conc_get(_h(self._solver), self._index, &value))
+        return value
+
+    @rain_conc.setter
+    def rain_conc(self, double value) -> None:
+        """Set ``[REACTION_RAINFALL]`` concentration (``>= 0``, before start)."""
+        _check(swmm_reaction_rain_conc_set(_h(self._solver), self._index, value))
 
     def __repr__(self) -> str:
         try:
@@ -914,16 +946,13 @@ class Reactions:
         indirection.
 
         :param key: One of ``SOLVER``, ``COUPLING``, ``RATE_UNITS``,
-            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
+            ``AREA_UNITS``, ``WALL_GEOMETRY``, ``PATTERN_TIMESTEP``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
         :returns: The canonical token (numeric options come back as text —
             ``TIMESTEP`` in seconds, ``ATOL``/``RTOL`` dimensionless).
         :raises BadParamError: *key* is not a recognised option.
         """
         cdef bytes b = key.encode('utf-8')
-        cdef char buf[128]
-        buf[0] = 0
-        _check(swmm_reaction_option_get(_h(self._solver), b, buf, 128))
-        return buf.decode('utf-8')
+        return _read_engine_key_string(_h(self._solver), b, swmm_reaction_option_get)
 
     def set_option(self, str key, str value) -> None:
         """Set one ``[REACTION_OPTIONS]`` value from its canonical token.
@@ -931,7 +960,7 @@ class Reactions:
         ``BUILDING``/``OPENED`` only, validated eagerly with rollback.
 
         :param key: One of ``SOLVER``, ``COUPLING``, ``RATE_UNITS``,
-            ``AREA_UNITS``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
+            ``AREA_UNITS``, ``WALL_GEOMETRY``, ``PATTERN_TIMESTEP``, ``TIMESTEP``, ``ATOL``, ``RTOL``, ``TEMPERATURE``.
         :param value: The canonical token; numeric options take their value
             as text (``TIMESTEP`` in seconds, ``ATOL``/``RTOL`` dimensionless).
         :raises BadParamError: *key* or *value* is not recognised.

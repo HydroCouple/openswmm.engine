@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Offline flow tracing over completed output or supplied hydraulic averages.
+"""Flow tracing over hydraulic output or supplied hydraulic averages.
 
 All dimensional quantities are SI. Travel times are passage-weighted estimates
 under frozen average flows, not particle arrival times. A handle owns its inputs
@@ -92,6 +92,7 @@ cdef extern from "openswmm/engine/openswmm_trace.h" nogil:
     void swmm_trace_close(SWMM_Trace handle)
     const char *swmm_trace_error(SWMM_Trace handle)
     int swmm_trace_prepare(SWMM_Trace handle, const char *output_path, const char *cache_path, const char *fingerprint, SWMM_TraceProgress progress, void *user)
+    int swmm_trace_prepare_live(SWMM_Trace handle, const char *output_path, SWMM_TraceProgress progress, void *user)
     int swmm_trace_set_averages(SWMM_Trace handle, const SWMM_TraceNodeAverage *nodes, int node_count, const SWMM_TraceLinkAverage *links, int link_count, const SWMM_TraceInfo *info)
     int swmm_trace_get_info(SWMM_Trace handle, SWMM_TraceInfo *info)
     int swmm_trace_get_averages(SWMM_Trace handle, SWMM_TraceNodeAverage *nodes, int node_capacity, SWMM_TraceLinkAverage *links, int link_capacity)
@@ -549,6 +550,35 @@ cdef class FlowTracer:
         try:
             with nogil:
                 status = swmm_trace_prepare(h, output_ptr, cache_ptr, digest_ptr, callback, user)
+        finally:
+            self._busy = False
+        if context[1] is not None:
+            raise context[1]
+        self._check(status)
+
+    def prepare_live(self, output_path, *, progress=None):
+        """Scan complete reporting periods in a growing or cancelled output.
+
+        No closing footer or cache is required. Appends during the scan are
+        ignored; call again to refresh. Truncation raises ``TraceError`` with
+        ``TraceStatus.MISMATCH``. Progress callbacks follow ``prepare`` rules.
+        """
+        cdef bytes output = _text(os.fspath(output_path))
+        cdef const char* output_ptr = output
+        cdef SWMM_TraceProgress callback = NULL
+        cdef void* user = NULL
+        cdef SWMM_Trace h = self._h()
+        cdef int status
+        if progress is not None and not callable(progress):
+            raise TypeError("progress must be callable")
+        context = [progress, None]
+        if progress is not None:
+            callback, user = _progress, <void*>context
+        h = self._h()
+        self._busy = True
+        try:
+            with nogil:
+                status = swmm_trace_prepare_live(h, output_ptr, callback, user)
         finally:
             self._busy = False
         if context[1] is not None:

@@ -64,6 +64,8 @@ class ErrorCode(IntEnum):
     @cvar CRS: Coordinate reference system error.
     @cvar NUMERICAL: Numerical error (e.g., divergence).
     @cvar DEPENDENCY: Object has dependents that block the requested operation.
+    @cvar CANCELLED: A caller cancelled a cancellable read-only operation.
+    @cvar BUFSIZE: An output buffer is too small for the value; nothing was written.
     @cvar INTERNAL: Internal/unspecified error.
     """
 
@@ -83,6 +85,8 @@ class ErrorCode(IntEnum):
     CRS = 13
     NUMERICAL = 14
     DEPENDENCY = 15
+    CANCELLED = 16
+    BUFSIZE = 17
     INTERNAL = 99
 
 
@@ -608,6 +612,16 @@ class OutSubcatchVar(IntEnum):
     GW_ELEV = 6
     SOIL_MOIST = 7
     POLLUT_BASE = 8
+    SNOW_SWE = 65536
+    SNOW_ENERGY = 65537
+    SNOW_SURFACE_TEMP = 65538
+    SNOW_BULK_TEMP = 65539
+    SNOW_ALBEDO = 65540
+    SNOW_COVER = 65541
+    SNOW_MELT = 65542
+    SNOW_INPUT = 65543
+    SNOW_SUBLIMATION = 65544
+    SNOW_TIME = 65545
 
 
 class OutNodeVar(IntEnum):
@@ -932,6 +946,27 @@ class SurfaceBoundaryType(IntEnum):
     RATING_CURVE = 4
 
 
+class NodeCoupling2DType(IntEnum):
+    """Per-node 1D-2D coupling structure type (C{[2D_NODE_COUPLING]}).
+
+    Mirrors C{SWMM_NodeCoupling2DType} in C{openswmm_2d.h}.
+
+    @cvar NONE: Not coupleable; map rows naming the node are ignored.
+    @cvar MANHOLE: Manhole (default for junctions and dividers).
+    @cvar GRATE: Grate inlet.
+    @cvar CURB: Curb opening.
+    @cvar OPEN: Open-top storage under the mesh (storage default).
+    @cvar OUTFALL: Tailwater and discharge delivery (outfall default).
+    """
+
+    NONE = 0
+    MANHOLE = 1
+    GRATE = 2
+    CURB = 3
+    OPEN = 4
+    OUTFALL = 5
+
+
 class SurfaceInfilMethod(IntEnum):
     """Per-cell 2D infiltration method (C{[2D_INFILTRATION*]}).
 
@@ -1114,11 +1149,13 @@ class HeatFluxModule(IntEnum):
     @cvar SURFACE_EXCHANGE: Latent + sensible surface exchange.
     @cvar RADIATIVE_EXCHANGE: Shortwave + longwave radiation.
     @cvar LAYER_CONDUCTION: LID vertical conduction.
+    @cvar SEDIMENT_EXCHANGE: Channel sediment and hyporheic exchange.
     """
 
     SURFACE_EXCHANGE = 0
     RADIATIVE_EXCHANGE = 1
     LAYER_CONDUCTION = 2
+    SEDIMENT_EXCHANGE = 3
 
 
 class HeatShortwaveMode(IntEnum):
@@ -1153,6 +1190,7 @@ class HeatRadiativeParam(IntEnum):
     @cvar EMISS_LANDCOVER: Land-cover emissivity, [0, 1].
     @cvar ATM_EMISS_COEFF: Brunt atmospheric-emissivity coefficient, [0, 1].
     @cvar LW_REFLECTION: Longwave reflection RL, [0, 1].
+    @cvar LANDCOVER_TEMPERATURE: Celsius; NaN restores air-temperature inheritance.
     """
 
     SHORTWAVE = 0
@@ -1163,6 +1201,7 @@ class HeatRadiativeParam(IntEnum):
     EMISS_LANDCOVER = 5
     ATM_EMISS_COEFF = 6
     LW_REFLECTION = 7
+    LANDCOVER_TEMPERATURE = 8
 
 
 class HeatSolarParam(IntEnum):
@@ -1209,6 +1248,115 @@ class HeatCloudParam(IntEnum):
     SW_ATTEN_K = 1
     SW_ATTEN_N = 2
     LW_CLOUD_K = 3
+
+
+class HeatSedimentParam(IntEnum):
+    """C{[SEDIMENT_EXCHANGE]} GLOBAL parameters (bed zone beneath conduits).
+
+    Mirrors C{SWMM_HeatSedimentParam}.
+
+    @cvar THERMAL_DIFFUSIVITY: Bed thermal diffusivity, m2/s, > 0.
+    @cvar SOLUTE_DIFFUSIVITY: Bed solute diffusivity, m2/s, >= 0.
+    @cvar BED_THICKNESS: Bed layer thickness, m, > 0.
+    @cvar GROUND_DEPTH: Depth to the deep-ground boundary, m, > 0.
+    @cvar GROUND_TEMPERATURE: Deep-ground temperature, degC (constant spelling).
+    @cvar HYPORHEIC_VELOCITY: Exchange velocity, m/s, >= 0.
+    @cvar DENSITY: Bed bulk density, kg/m3, > 0.
+    @cvar SPECIFIC_HEAT: Bed specific heat, J/kg/K, > 0.
+    @cvar INITIAL_TEMPERATURE: Initial bed temperature, degC.
+    @cvar GROUND_SOURCE: Dimensionless selector: 0 prescribed, 1 finite mesh contacts.
+    """
+
+    THERMAL_DIFFUSIVITY = 0
+    SOLUTE_DIFFUSIVITY = 1
+    BED_THICKNESS = 2
+    GROUND_DEPTH = 3
+    GROUND_TEMPERATURE = 4
+    HYPORHEIC_VELOCITY = 5
+    DENSITY = 6
+    SPECIFIC_HEAT = 7
+    INITIAL_TEMPERATURE = 8
+    MESH_POROSITY = 9
+    GROUND_SOURCE = 10
+
+
+class HeatAttr(IntEnum):
+    """Heat attributes that take per-element overrides.
+
+    Mirrors C{SWMM_HeatAttr}: the C{[RADIATIVE_FLUXES]} attributes, then the
+    C{[SEDIMENT_EXCHANGE]} ones (LINK or TAG scope only).
+    """
+
+    ALBEDO = 0
+    SHADE_FACTOR = 1
+    SKY_VIEW = 2
+    EMISS_WATER = 3
+    EMISS_LANDCOVER = 4
+    LANDCOVER_TEMPERATURE = 5
+    THERMAL_DIFFUSIVITY = 6
+    SOLUTE_DIFFUSIVITY = 7
+    BED_THICKNESS = 8
+    GROUND_DEPTH = 9
+    GROUND_TEMPERATURE = 10
+    HYPORHEIC_VELOCITY = 11
+    SEDIMENT_DENSITY = 12
+    SEDIMENT_SPECIFIC_HEAT = 13
+    MESH_POROSITY = 14
+    GROUND_SOURCE = 15
+
+
+class HeatOverrideScope(IntEnum):
+    """Scope of a per-element heat override row. Mirrors C{SWMM_HeatOverrideScope}."""
+
+    TAG = 1
+    NODE = 2
+    LINK = 3
+    CELL2D = 6
+    MESH_TAG = 7
+
+
+class GroundHeatValue(IntEnum):
+    """Canonical soil heat fields returned by :meth:`Heat.ground_values`."""
+
+    ENERGY = 0
+    CAPACITY = 1
+    TEMPERATURE = 2
+    INITIAL_ENERGY = 3
+    ADVECTIVE_ENERGY = 4
+    SOURCE_ENERGY = 5
+    SURFACE_ENERGY = 6
+    DEEP_ENERGY = 7
+    LATENT_ENERGY = 8
+    LATERAL_ENERGY = 9
+    WATER_CONTACT_ENERGY = 10
+    RESIDUAL = 11
+    NORMALIZED_RESIDUAL = 12
+    PENDING_LATERAL = 13
+    CHANNEL_CONTACT = 14
+    LID_CONTACT = 15
+
+
+class GroundHeatLayerValue(IntEnum):
+    """Fixed-depth soil layer fields returned by :meth:`Heat.ground_layers`."""
+
+    TOP = 0
+    BOTTOM = 1
+    TEMPERATURE = 2
+    ENERGY = 3
+    CAPACITY = 4
+    MOISTURE = 5
+    CONDUCTIVITY = 6
+    SATURATED_WATER = 7
+
+
+class ChannelGroundValue(IntEnum):
+    """Mapped channel/soil result fields returned by :class:`Heat`."""
+
+    BED_TEMPERATURE = 0
+    ATMOSPHERIC_ENERGY = 1
+    TO_SOIL_ENERGY = 2
+    WATER_INCREMENT = 3
+    INTERVAL_COUNT = 4
 
 
 class HeatSourceKind(IntEnum):
@@ -1277,6 +1425,8 @@ class ReactionScope(IntEnum):
     TERM = 0
     PIPE = 1
     TANK = 2
+    SUBSURFACE = 3
+    SUBCATCHMENT = 4
 
 
 class ReactionExprForm(IntEnum):
@@ -1554,6 +1704,11 @@ class GroundwaterVariable(IntEnum):
     ET_POTENTIAL = 27
     ET_STRESS = 28
     ET_REFRESH = 29
+    COMPLETED_TIME = 30
+    PENDING_IN = 31
+    PENDING_OUT = 32
+    QX = 33
+    QY = 34
 
 
 class GroundwaterLedger(IntEnum):
@@ -1572,6 +1727,8 @@ class GroundwaterLedger(IntEnum):
     SOURCE_IN = 11
     SOURCE_OUT = 12
     REJECT = 13
+    BOUNDARY_IN = 14
+    BOUNDARY_OUT = 15
 
 
 class GroundwaterZone(IntEnum):
@@ -1597,6 +1754,11 @@ class GroundwaterSpeciesLedger(IntEnum):
     RESIDUAL = 12
     SOURCE_IN = 13
     SOURCE_OUT = 14
+    BOUNDARY_IN = 15
+    BOUNDARY_OUT = 16
+    BOUNDARY_FLUX_IN = 17
+    BOUNDARY_FLUX_OUT = 18
+    AGE_GENERATED = 19
 
 
 class GroundwaterTransportZone(IntEnum):
@@ -1646,3 +1808,85 @@ class TraceTerminal(IntEnum):
     RETAINED = 3
     UNRESOLVED = 4
     CIRCULATION = 5
+
+
+class EvapPreviewStatus(IntEnum):
+    """Codes matching native SWMM_EvapPreviewStatus."""
+    AVAILABLE = 0
+    HELD = 1
+    MISSING = 2
+    ESTIMATED = 3
+
+
+class Heat2DValue(IntEnum):
+    """Codes matching native SWMM_Heat2DValue."""
+    WATER_TEMPERATURE = 0
+    BED_TEMPERATURE = 1
+    BED_ENERGY = 2
+    BED_CAPACITY = 3
+    ATMOSPHERIC_ENERGY = 4
+    RADIATIVE_ENERGY = 5
+    SENSIBLE_ENERGY = 6
+    LATENT_ENERGY = 7
+    DEEP_ENERGY = 8
+    WATER_TO_BED_ENERGY = 9
+    WATER_THERMAL_INCREMENT = 10
+    ACCEPTED_EVAPORATION = 11
+    THERMAL_RESIDUAL = 12
+
+
+class SplitRole(IntEnum):
+    NETWORK = 1
+    SURFACE = 2
+
+
+class SplitPhase(IntEnum):
+    CONDUCTANCE = 1
+    ADVANCE = 2
+    FINISH = 3
+    OUTFALL_PREPARE = 4
+    SOURCE_PREPARE = 5
+    LID_TRIAL = 6
+    LID_ACCEPT = 7
+    MATERIAL_REPORT = 8
+
+
+class LidExtraField(IntEnum):
+    """Stored layer fields: vegetation fraction; side slope/clogging dimensionless;
+    suction and drain open/close in authored in/mm; drain delay in hours;
+    storage covered 1 for a covered rain barrel, otherwise 0.
+    """
+    SURFACE_VEGETATION = 0
+    SURFACE_SIDE_SLOPE = 1
+    SOIL_SUCTION = 2
+    STORAGE_CLOGGING = 3
+    DRAIN_DELAY = 4
+    DRAIN_OPEN = 5
+    DRAIN_CLOSE = 6
+    STORAGE_COVERED = 7
+
+
+class SummaryTable(IntEnum):
+    """Report summary tables, matching native SWMM_SummaryTable (the ``.rpt`` sections)."""
+    NODE_DEPTH = 0
+    NODE_INFLOW = 1
+    NODE_SURCHARGE = 2
+    NODE_FLOODING = 3
+    STORAGE_VOLUME = 4
+    OUTFALL_LOADING = 5
+    LINK_FLOW = 6
+    FLOW_CLASSIFICATION = 7
+    CONDUIT_SURCHARGE = 8
+    PUMPING = 9
+    LID_PERFORMANCE = 10
+
+
+class SummaryObject(IntEnum):
+    """Object kind of a summary-table row (native SWMM_SUMMARY_OBJECT_*).
+
+    ``SYSTEM`` is a total row (Outfall Loading); ``SUBCATCHMENT`` rows are LID units.
+    """
+    SYSTEM = -1
+    NODE = 0
+    LINK = 1
+    SUBCATCHMENT = 2

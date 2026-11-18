@@ -34,6 +34,30 @@ def _seed(controls):
 
 
 class TestFindReferences(unittest.TestCase):
+    def test_rainfall_validation_keeps_the_legacy_limit(self):
+        model = ModelBuilder()
+        model.add_gage("RG")
+        model.add_link("P1", 1)  # pump
+        controls = model.to_solver().controls
+        for attribute in ("INTENSITY", "24-HR_DEPTH", "48-HR_DEPTH"):
+            ok, message = controls.validate_message(
+                f"RULE Rain\nIF GAGE RG {attribute} > 1\nTHEN PUMP P1 STATUS = ON"
+            )
+            self.assertTrue(ok, message)
+        ok, message = controls.validate_message(
+            "RULE Rain\nIF GAGE RG 72-HR_DEPTH > 1\nTHEN PUMP P1 STATUS = ON"
+        )
+        self.assertFalse(ok)
+        self.assertIn("1 to 48", message)
+        self.assertEqual(len(controls), 0)
+
+    def test_rain_gage_reference(self):
+        controls = _controls()
+        controls.append(
+            "RULE Rain\nIF GAGE RG 48-HR_DEPTH > 1\nTHEN ORIFICE O1 SETTING = 0"
+        )
+        self.assertEqual(controls.find_references("rg"), [0])
+
     def test_single_match(self):
         controls = _seed(_controls())
         # P1 is referenced only by R1 (index 0).

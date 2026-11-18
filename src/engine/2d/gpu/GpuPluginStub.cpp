@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file GpuPluginStub.cpp
- * @brief Placeholder GPU surface-solver plugin (Phase 0 scaffold).
+ * @file      GpuPluginStub.cpp
+ * @brief     Placeholder GPU surface-solver plugin (Phase 0 scaffold).
  *
  * @details Implements the GpuPluginAbi.h contract with NO actual GPU backend.
  *          It exists so the runtime discovery / dlopen / fallback wiring can be
@@ -28,26 +28,24 @@
  *          C ABI header and the C++ standard library — no Kokkos — so it
  *          compiles with a plain host compiler on every platform.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
 
 #include <cstring>
 
-extern "C" OPENSWMM_GPU_ABI int
-openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
+extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     if (out == nullptr) {
         return 1;
     }
     std::memset(out, 0, sizeof(*out));
-    out->abi_version  = OPENSWMM_GPU_ABI_VERSION;
+    out->abi_version = OPENSWMM_GPU_ABI_VERSION;
     out->device_count = 0;
-    out->vendor       = OPENSWMM_GPU_VENDOR_NONE;
-    std::strncpy(out->device_name, "stub (no GPU backend wired)",
-                 sizeof(out->device_name) - 1);
+    out->vendor = OPENSWMM_GPU_VENDOR_NONE;
+    std::strncpy(out->device_name, "stub (no GPU backend wired)", sizeof(out->device_name) - 1);
     // No device: tell the core to use the CPU solver.
     return 1;
 }

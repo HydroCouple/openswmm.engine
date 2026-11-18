@@ -66,10 +66,11 @@ Flux modules
 ============
 
 :attr:`Heat.modules` is a keyed, iterable mapping of
-:class:`HeatFluxModule` to ``bool``; the three modules —
+:class:`HeatFluxModule` to ``bool``; the four modules —
 ``SURFACE_EXCHANGE`` (latent + sensible), ``RADIATIVE_EXCHANGE``
-(shortwave + longwave) and ``LAYER_CONDUCTION`` (LID vertical
-conduction) — toggle independently.
+(shortwave + longwave), ``LAYER_CONDUCTION`` (LID vertical conduction),
+and ``SEDIMENT_EXCHANGE`` (channel bed and hyporheic exchange) — toggle
+independently.
 
 ----
 
@@ -232,3 +233,104 @@ series name, or an empty string when no series is bound. Use the corresponding
 ``set_shortwave_timeseries(name)`` and ``cloud.set_timeseries(name)`` methods
 to assign an existing series. Shortwave values are W/m²; cloud values are
 fractions in [0, 1].
+
+
+Pre-run authoring and transport previews
+========================================
+
+``heat.dry_policy`` uses ``0`` (HOLD), ``1`` (AIR), or ``2`` (DEFAULT).
+``heat.lid_material`` returns read-only water/soil conductivity in W/m/K,
+soil density in kg/m³, and soil specific heat in J/kg/K.
+``heat.authoring_flags`` records configured heat (bit 1), a shared climate
+site (bit 2), and explicit latitude/longitude/timezone/elevation (bits
+4/8/16/32). ``heat.solar.clear()`` clears that site before initialization;
+COMPUTED shortwave must first be changed to another mode.
+
+``heat.sediment.is_configured(param)`` and ``heat.sediment.clear(param)``
+apply to ``GROUND_TEMPERATURE`` and ``INITIAL_TEMPERATURE``. Clearing ground
+temperature also clears its timeseries and restores inheritance.
+``heat.effective_element(attr, scope, name)`` resolves NODE or LINK
+configuration precedence independently of whether the process is active.
+Its ``HeatElementValue`` contains ``value``, ``source``, and ``source_name``.
+Source codes are GLOBAL=0, TAG=1, NODE=2, LINK=3, air temperature=4, and ground
+series=5. Dynamic temperatures return NaN with their source name.
+
+``heat.snapshot()`` captures heat configuration, its shared site, and
+component registrations before initialization. The snapshot owns its native
+storage and retains the solver. Use it as a context manager or call
+``close()``; releasing it is safe even after destroying the solver.
+Call ``restore()`` explicitly to undo scalar heat changes. Closing the solver,
+reopening it, or making structural edits invalidates the snapshot; capture a
+new one after those changes. Restoring also invalidates other structural
+views. A snapshot does not permit restoring after initialization.
+
+``heat.edit_atomic(callback)`` calls ``callback(solver)`` before initialization
+and returns the callback's result. If the callback raises, native state is
+rolled back before the original exception is re-raised. The callback may edit
+only climate, snow and heat configuration, ``HEAT_TRANSPORT``, component
+registrations, and climate-file paths. Topology edits, lifecycle calls and
+nested transactions are forbidden. Reacquire structural views after editing.
+
+.. code-block:: python
+
+    s = Solver("model.inp")
+    s.open()  # Authoring only: do not initialize yet.
+    try:
+        with s.heat.snapshot() as saved:
+            s.heat.dry_policy = 1
+            saved.restore()
+
+        def configure_heat(model):
+            model.heat.radiative[HeatRadiativeParam.ALBEDO] = 0.08
+            model.heat.dry_policy = 1
+
+        s.heat.edit_atomic(configure_heat)
+        planned = s.transport.preview_matrix(
+            ignore_quality=False, heat=True, age=False, ignore_2d=False,
+            surface_classes=(True, True, True, True), groundwater=-1,
+        )
+    finally:
+        s.destroy()
+
+``transport.preview_matrix`` returns the same domain/class mapping as
+``solver.transport_matrix`` without changing live options. Its required
+Boolean fields and the four ``surface_classes`` entries accept only 0/1;
+classes are ordered POLLUTANTS, MSX, AGE, TEMPERATURE. ``groundwater`` is
+-1 (automatic), 0 (off), or 1 (on). This is a plan for transport, rather than
+proof of initialized runtime activity or local heat-flux support.
+
+Complete snapshots and mapping previews
+=======================================
+
+``heat.snapshot(complete=True)`` additionally captures climate, snow,
+hydrothermal options and 2D/ground thermal authoring configuration. Its
+ownership, explicit ``restore()``, lifecycle and structural invalidation rules
+match the default heat snapshot described above.
+
+``heat.preview_channel_ground_map(link, first=None, limit=256, progress=None)``
+returns pre-run XY coverage for a link ID or index. Omit ``first`` to return
+all contacts, or provide a zero-based offset and a page limit (zero is allowed
+for a summary query). ``required`` and summary counts describe the complete
+mapping; ``contacts`` contains the requested rows. Rows have ``layer=-1``.
+``valid`` means complete XY coverage; soil ownership, invert and thermal
+configuration still require validation during initialization.
+
+An optional ``progress(stage, percent)`` callback runs synchronously with
+stages 1 (mesh) and 2 (mapping), and percentages in 0..100. Return true to cancel;
+this raises an ``EngineError`` with ``ErrorCode.CANCELLED``. Callback exceptions
+are re-raised unchanged. Callbacks must not mutate or close the engine.
+
+For initialized 2D thermal arrays, ``Heat2DValue`` names the field codes accepted
+by ``heat.mesh_values``. With 2D support, ``surface2d.initial_bed_quality`` and
+``set_initial_bed_quality(species, conc, tag=None, cell=None)`` expose authored
+bed-porewater concentrations using the same scope and species units as surface
+initial quality. ``remove_initial_bed_quality(index)`` removes one row.
+``surface2d.set_auto_backend_cpu(enabled=True)`` sets a pre-run session policy
+for unoverridden AUTO; explicit backend/environment choices take precedence.
+The policy is not serialized and must be reapplied after opening a model.
+
+``tables.rename(key, new_id)`` preserves table references and enforces
+case-insensitive uniqueness within each curve/timeseries namespace.
+``tables.set_type(key, TableType.CURVE_RATING)`` changes a curve's type while
+preserving points and references; conversions to or from TIMESERIES are
+refused. Both edits require an authoring state and advance solver generation.

@@ -14,11 +14,13 @@ has to answer about their own system, and the cost of the answer.
 
 **One principle runs through all six.** A default is not a recommendation;
 it is the choice that reproduces earlier behaviour. `FLOW_ROUTING DYNWAVE`,
-`SURCHARGE_METHOD EXTRAN`, `QUALITY_SOLVER LEGACY` and
-`MOMENTUM_EQUATION LOCAL_INERTIAL` are all defaults because changing them
-would change existing models' answers, not because they are the best
-available representation of every system. A model that never sets a key is
-choosing the legacy formulation.
+`SURCHARGE_METHOD EXTRAN` and `QUALITY_SOLVER LEGACY` are all defaults
+because changing them would change existing models' answers, not because
+they are the best available representation of every system. A model that
+never sets a key is choosing the legacy formulation. The exception is the 2D
+momentum closure: `MOMENTUM_EQUATION` defaults to `FULL_SWE` (it was
+`LOCAL_INERTIAL` before 2026-11-13), so a 2D model that never sets it runs
+the full shallow-water equations.
 
 ## 1.1 Which flow router
 

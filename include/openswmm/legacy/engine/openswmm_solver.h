@@ -1,16 +1,23 @@
-/*! \file swmm5.h
- * \brief Prototypes for SWMM5 API functions.
- * \author L. Rossman
- * \date Created on: 2021-11-01
- * \date Last edited on: 2024-12-23 (Build 5.3.0)
- * \details This file contains the prototypes for SWMM5 API functions.
+/**
+ * @file      openswmm_solver.h
+ * @brief     Prototypes for SWMM5 API functions.
+ * @author    L. Rossman
+ * @date      Created on: 2021-11-01
+ * @date      Last edited on: 2024-12-23 (Build 5.3.0)
+ * @details This file contains the prototypes for SWMM5 API functions.
  *
  *  Update History
  *  ==============
  *  - Build 5.3.0:
  *      - Added new functions to support saving hotstart files at specific times.
  *      - Expansions to the SWMM API to include attributes of more objects and water quality.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
+
 #ifndef OPENSWMM_LEGACY_SOLVER_H_
 #define OPENSWMM_LEGACY_SOLVER_H_
 
@@ -18,15 +25,14 @@
 
 // --- use "C" linkage for C++ programs
 #ifdef __cplusplus
-extern "C" { 
+extern "C" {
 #endif
 
 /*!
  * \enum swmm_Object
  * \brief Enumeration of object types used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Rain gages */
     swmm_GAGE,
     /*! \brief Subcatchments */
@@ -71,8 +77,7 @@ typedef enum
  * \enum swmm_NodeType
  * \brief Enumeration of node types used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Junction node */
     swmm_JUNCTION = 0,
     /*! \brief Outfall node */
@@ -87,8 +92,7 @@ typedef enum
  * \enum swmm_LinkType
  * \brief Enumeration of link types used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Conduit link */
     swmm_CONDUIT = 0,
     /*! \brief Pump link */
@@ -105,8 +109,7 @@ typedef enum
  * \enum swmm_GageProperty
  * \brief Enumeration of gage properties used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Total precipitation */
     swmm_GAGE_TOTAL_PRECIPITATION = 100,
     /*! \brief Rainfall */
@@ -120,10 +123,9 @@ typedef enum
 /*!
  * \enum swmm_SubcatchProperty
  * \brief Enumeration of subcatchment properties used in SWMM5
- * \TODO Add LID properties to this enum
+ * @todo Add LID properties to this enum
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Area */
     swmm_SUBCATCH_AREA = 200,
     /*! \brief Rain gage */
@@ -267,8 +269,9 @@ typedef enum
  * \enum swmm_NodeProperty
  * \brief Enumeration of node properties used in SWMM5
  */
-typedef enum
-{
+#define OPENSWMM_JUNCTION_STORAGE 1
+
+typedef enum {
     /*! \brief Node type */
     swmm_NODE_TYPE = 300,
     /*! \brief Elevation */
@@ -301,14 +304,14 @@ typedef enum
     swmm_NODE_POLLUTANT_LATMASS_FLUX,
     /*! \brief Total outflow */
     swmm_NODE_OUTFLOW,
+    swmm_NODE_STORAGE_AREA, /*!< Physical junction chamber area in project ft2/m2 */
 } swmm_NodeProperty;
 
 /*!
  * \enum swmm_LinkProperty
  * \brief Enumeration of link properties used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Link type */
     swmm_LINK_TYPE = 400,
     /*! \brief Upstream node */
@@ -377,8 +380,7 @@ typedef enum
  * weather quality forcing. Values are in the pollutant's concentration
  * units (e.g. mg/L) as defined in the input file.
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Rain (wet deposition) concentration */
     swmm_POLLUT_RAIN_CONCEN = 500,
     /*! \brief Groundwater inflow concentration */
@@ -409,8 +411,7 @@ typedef enum
  * \c swmm_setValueExpanded / \c swmm_getValueExpanded (0-based position
  * within the pattern: 0-11 monthly, 0-6 daily, 0-23 hourly/weekend).
  */
-typedef enum
-{
+typedef enum {
     /*! \brief One multiplier factor (subIndex = factor position) */
     swmm_PATTERN_FACTOR = 600,
     /*! \brief Number of factors in the pattern (read-only) */
@@ -426,8 +427,7 @@ typedef enum
  * simulation starts and while it is running; they are read per step when
  * sweeping is evaluated, so a mid-run edit takes effect on the next step.
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Street-sweeping interval (days) */
     swmm_LANDUSE_SWEEP_INTERVAL = 700,
     /*! \brief Fraction of buildup available for sweeping (0-1) */
@@ -465,8 +465,7 @@ typedef enum
  * water table elevation, upper moisture) bound or seed the groundwater state
  * and return \c ERR_API_IS_RUNNING while the simulation is running.
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Porosity (volumetric fraction, pre-start-only) */
     swmm_AQUIFER_POROSITY = 800,
     /*! \brief Wilting point (volumetric fraction, pre-start-only) */
@@ -497,8 +496,7 @@ typedef enum
  * \enum swmm_SystemProperty
  * \brief Enumeration of system properties used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Start date */
     swmm_STARTDATE = 0,
     /*! \brief Current date */
@@ -617,8 +615,7 @@ typedef enum
  * \enum swmm_FlowUnitsProperty
  * \brief Enumeration of flow units used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief Cubic feet per second */
     swmm_CFS = 0,
     /*! \brief Gallons per minute */
@@ -637,8 +634,7 @@ typedef enum
  * \enum swmm_API_Errors
  * \brief Enumeration of API errors used in SWMM5
  */
-typedef enum
-{
+typedef enum {
     /*! \brief API error for file not opened */
     ERR_API_NOT_OPEN = -999901,
     /*! \brief API error for API not started */
@@ -678,115 +674,111 @@ typedef enum
  * \struct swmm_SubcatchStats
  * \brief Cumulative subcatchment statistics.
  */
-typedef struct
-{
-    double precip;           /*!< Total precipitation (depth) */
-    double runon;            /*!< Total runon (volume) */
-    double evap;             /*!< Total evaporation (volume) */
-    double infil;            /*!< Total infiltration (volume) */
-    double runoff;           /*!< Total runoff (volume) */
-    double maxFlow;          /*!< Maximum runoff rate (flowrate) */
-    double impervRunoff;     /*!< Impervious area runoff (volume) */
-    double pervRunoff;       /*!< Pervious area runoff (volume) */
+typedef struct {
+    double precip;       /*!< Total precipitation volume (ft3) */
+    double runon;        /*!< Runon volume (ft3) */
+    double evap;         /*!< Evaporation volume (ft3) */
+    double infil;        /*!< Infiltration volume (ft3) */
+    double runoff;       /*!< Runoff volume (ft3) */
+    double maxFlow;      /*!< Maximum runoff rate (cfs) */
+    double impervRunoff; /*!< Impervious runoff volume (ft3) */
+    double pervRunoff;   /*!< Pervious runoff volume (ft3) */
 } swmm_SubcatchStats;
 
 /*!
  * \struct swmm_NodeStats
  * \brief Cumulative node statistics.
  */
-typedef struct
-{
-    double avgDepth;             /*!< Average node depth */
-    double maxDepth;             /*!< Maximum node depth */
-    double maxDepthDate;         /*!< Date/time of maximum depth */
-    double maxRptDepth;          /*!< Maximum depth from reporting step */
-    double volFlooded;           /*!< Total volume flooded */
-    double timeFlooded;          /*!< Total time flooded (hours) */
-    double timeSurcharged;       /*!< Total time surcharged (hours) */
-    double timeCourantCritical;  /*!< Total time Courant-critical (hours) */
-    double totLatFlow;           /*!< Total lateral inflow volume */
-    double maxLatFlow;           /*!< Maximum lateral inflow rate */
-    double maxInflow;            /*!< Maximum total inflow rate */
-    double maxOverflow;          /*!< Maximum flooding rate */
-    double maxPondedVol;         /*!< Maximum ponded volume */
-    double maxInflowDate;        /*!< Date/time of maximum inflow */
-    double maxOverflowDate;      /*!< Date/time of maximum overflow */
+typedef struct {
+    double avgDepth;            /*!< Raw sum of sampled depths (ft), not a normalized average */
+    double maxDepth;            /*!< Maximum node depth (ft) */
+    double maxDepthDate;        /*!< Absolute SWMM day of maximum depth */
+    double maxRptDepth;         /*!< Maximum report-step depth (ft) */
+    double volFlooded;          /*!< Flooded volume (ft3) */
+    double timeFlooded;         /*!< Total time flooded (seconds) */
+    double timeSurcharged;      /*!< Total time surcharged (seconds) */
+    double timeCourantCritical; /*!< Number of Courant-critical events, not duration */
+    double totLatFlow;          /*!< Lateral inflow volume (ft3) */
+    double maxLatFlow;          /*!< Maximum lateral inflow (cfs) */
+    double maxInflow;           /*!< Maximum total inflow (cfs) */
+    double maxOverflow;         /*!< Maximum flooding rate (cfs) */
+    double maxPondedVol;        /*!< Maximum ponded volume (ft3) */
+    double maxInflowDate;       /*!< Absolute SWMM day of maximum inflow */
+    double maxOverflowDate;     /*!< Absolute SWMM day of maximum overflow */
 } swmm_NodeStats;
 
 /*!
  * \struct swmm_StorageStats
  * \brief Cumulative storage node statistics.
  */
-typedef struct
-{
-    double initVol;      /*!< Initial volume */
-    double avgVol;       /*!< Average volume */
-    double maxVol;       /*!< Maximum volume */
-    double maxFlow;      /*!< Maximum total inflow rate */
-    double evapLosses;   /*!< Evaporation losses (volume) */
-    double exfilLosses;  /*!< Exfiltration losses (volume) */
-    double maxVolDate;   /*!< Date/time of maximum volume */
+typedef struct {
+    double initVol;     /*!< Initial volume (ft3) */
+    double avgVol;      /*!< Raw sum of sampled volumes (ft3), not a normalized average */
+    double maxVol;      /*!< Maximum volume (ft3) */
+    double maxFlow;     /*!< Maximum total inflow (cfs) */
+    double evapLosses;  /*!< Evaporation volume (ft3) */
+    double exfilLosses; /*!< Exfiltration volume (ft3) */
+    double maxVolDate;  /*!< Absolute SWMM day of maximum volume */
 } swmm_StorageStats;
 
 /*!
  * \struct swmm_OutfallStats
  * \brief Cumulative outfall node statistics.
  */
-typedef struct
-{
-    double  avgFlow;      /*!< Average flow rate */
-    double  maxFlow;      /*!< Maximum flow rate */
-    double *totalLoad;    /*!< Array of pollutant loads (caller allocates) */
-    int     totalPeriods; /*!< Number of simulation periods */
+typedef struct {
+    double
+        avgFlow; /*!< Raw sum of sampled outflow rates (cfs); divide by totalPeriods for the sample mean */
+    double maxFlow; /*!< Maximum outflow rate (cfs) */
+    double*
+        totalLoad; /*!< Optional caller-owned Npollut array in native concentration-volume accounting units */
+    int totalPeriods; /*!< Number of included outflow samples */
 } swmm_OutfallStats;
 
 /*!
  * \struct swmm_LinkStats
  * \brief Cumulative link statistics.
  */
-typedef struct
-{
-    double maxFlow;              /*!< Maximum flow rate */
-    double maxFlowDate;          /*!< Date/time of maximum flow */
-    double maxVeloc;             /*!< Maximum velocity */
-    double maxDepth;             /*!< Maximum depth */
-    double timeNormalFlow;       /*!< Time in normal flow (hours) */
-    double timeInletControl;     /*!< Time under inlet control (hours) */
-    double timeSurcharged;       /*!< Time surcharged (hours) */
-    double timeFullUpstream;     /*!< Time full at upstream (hours) */
-    double timeFullDnstream;     /*!< Time full at downstream (hours) */
-    double timeFullFlow;         /*!< Time at full flow (hours) */
-    double timeCapacityLimited;  /*!< Time capacity-limited (hours) */
-    double timeInFlowClass[SWMM_MAX_FLOW_CLASSES]; /*!< Time in each flow class */
-    double timeCourantCritical;  /*!< Time Courant-critical (hours) */
-    long   flowTurns;            /*!< Number of flow reversals */
-    int    flowTurnSign;         /*!< Current flow direction sign */
+typedef struct {
+    double maxFlow;             /*!< Maximum flow rate (cfs) */
+    double maxFlowDate;         /*!< Absolute SWMM day of maximum flow */
+    double maxVeloc;            /*!< Maximum velocity (ft/s) */
+    double maxDepth;            /*!< Maximum depth (ft) */
+    double timeNormalFlow;      /*!< Time in normal flow (seconds) */
+    double timeInletControl;    /*!< Time under inlet control (seconds) */
+    double timeSurcharged;      /*!< Time surcharged (seconds) */
+    double timeFullUpstream;    /*!< Time full at upstream (seconds) */
+    double timeFullDnstream;    /*!< Time full at downstream (seconds) */
+    double timeFullFlow;        /*!< Time at full flow (seconds) */
+    double timeCapacityLimited; /*!< Time capacity-limited (seconds) */
+    double timeInFlowClass
+        [SWMM_MAX_FLOW_CLASSES]; /*!< Seconds accumulated in each fixed flow-class slot */
+    double timeCourantCritical;  /*!< Number of Courant-critical events, not duration */
+    long flowTurns;              /*!< Number of flow reversals */
+    int flowTurnSign;            /*!< Current flow direction sign */
 } swmm_LinkStats;
 
 /*!
  * \struct swmm_PumpStats
  * \brief Cumulative pump statistics.
  */
-typedef struct
-{
-    double utilized;     /*!< Fraction of time utilized */
-    double minFlow;      /*!< Minimum flow rate */
-    double avgFlow;      /*!< Average flow rate */
-    double maxFlow;      /*!< Maximum flow rate */
-    double volume;       /*!< Total pumping volume */
-    double energy;       /*!< Total energy demand */
-    double offCurveLow;  /*!< Off-curve depth below on-depth */
-    double offCurveHigh; /*!< Off-curve depth above on-depth */
-    int    startUps;     /*!< Number of pump start-ups */
-    int    totalPeriods; /*!< Total simulation periods */
+typedef struct {
+    double utilized;     /*!< Accumulated utilization time (seconds) */
+    double minFlow;      /*!< Minimum sampled pumping rate (cfs) */
+    double avgFlow;      /*!< Raw sum of sampled pumping rates (cfs), not a normalized average */
+    double maxFlow;      /*!< Maximum pumping rate (cfs) */
+    double volume;       /*!< Pumped volume (ft3) */
+    double energy;       /*!< Accumulated pumping energy (kWh) */
+    double offCurveLow;  /*!< Time below the pump curve (seconds) */
+    double offCurveHigh; /*!< Time above the pump curve (seconds) */
+    int startUps;        /*!< Number of pump start-ups */
+    int totalPeriods;    /*!< Number of included pumping samples */
 } swmm_PumpStats;
 
 /*!
  * \struct swmm_RoutingTotals
- * \brief System-level flow routing mass balance totals (all in ft3 or m3).
+ * \brief System-level flow routing mass balance totals (raw ft3; pctError is percent).
  */
-typedef struct
-{
+typedef struct {
     double dwInflow;     /*!< Dry weather inflow volume */
     double wwInflow;     /*!< Wet weather inflow volume */
     double gwInflow;     /*!< Groundwater inflow volume */
@@ -806,326 +798,513 @@ typedef struct
  * \struct swmm_RunoffTotals
  * \brief System-level surface runoff mass balance totals.
  */
-typedef struct
-{
-    double rainfall;       /*!< Total rainfall (depth) */
+typedef struct {
+    double rainfall;       /*!< Total rainfall volume (ft3) */
     double evap;           /*!< Evaporation loss (volume) */
     double infil;          /*!< Infiltration loss (volume) */
     double runoff;         /*!< Runoff volume */
     double drains;         /*!< LID drain volume */
     double runon;          /*!< Runon from outfalls (volume) */
-    double initStorage;    /*!< Initial surface storage (depth) */
-    double finalStorage;   /*!< Final surface storage (depth) */
-    double initSnowCover;  /*!< Initial snow cover (depth) */
-    double finalSnowCover; /*!< Final snow cover (depth) */
-    double snowRemoved;    /*!< Snow removal (depth) */
+    double initStorage;    /*!< Initial surface storage (ft3) */
+    double finalStorage;   /*!< Final surface storage (ft3) */
+    double initSnowCover;  /*!< Initial snow cover (ft3) */
+    double finalSnowCover; /*!< Final snow cover (ft3) */
+    double snowRemoved;    /*!< Snow removal (ft3) */
     double pctError;       /*!< Continuity error (%) */
 } swmm_RunoffTotals;
 
-/*!
- * \typedef progress_callback
- * \brief Callback function for progress reporting
- * \param[in] progress Progress value between 0 and 1
+/**
+ * @brief Receive synchronous legacy simulation progress.
+ *
+ * Borrowed function pointer used during swmm_run_with_callback; no return value/cancellation
+ * channel. Do not reenter or concurrently use the process-global legacy engine.
+ *
+ * @param[in] progress NewRoutingTime/TotalDuration fraction supplied after an attempted step;
+ *     caller should handle completion/error callbacks and does not own engine state.
  */
 typedef void (*progress_callback)(double progress);
 
-/*!
- * \brief Run a SWMM simulation with the given input file, report file, and output file.
- * \param[in] inputFile Path to the input file
- * \param[in] reportFile Path to the report file
- * \param[in] outputFile Path to the output file
- * \return Error code
+/**
+ * @brief Run the global legacy engine through open/start/step/end/report/close.
+ *
+ * Resets global open/start flags and errors, saves binary results, writes console progress and
+ * closes resources before returning. Writes the full text report only for scratch output when no
+ * error occurred. Operates on one process-global project; do not overlap another legacy simulation.
+ *
+ * @param[in] inputFile Non-null null-terminated input-deck path, borrowed for the call.
+ * @param[in] reportFile Non-null null-terminated report path; the engine opens/overwrites the
+ *     report.
+ * @param[in] outputFile Non-null null-terminated binary output path; an empty string selects a
+ *     scratch output file.
+ * @return Final process-global ErrorCode, zero for a successful run.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_run(const char *inputFile, const char *reportFile, const char *outputFile);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_run(const char* inputFile, const char* reportFile,
+                                            const char* outputFile);
 
-/*!
- * \brief Run a SWMM simulation with the given input file, report file, and output file with a progress callback.
- * \param[in] inputFile Path to the input file
- * \param[in] reportFile Path to the report file
- * \param[in] outputFile Path to the output file
- * \param[in] callback Progress callback function
- * \return Error code
+/**
+ * @brief Run the global legacy engine and report synchronous step progress.
+ *
+ * Uses the same lifecycle and scratch-report behavior as swmm_run. Progress is
+ * NewRoutingTime/TotalDuration; this entry point adds no clamp or zero-duration guard. Callback
+ * execution occurs on the simulation thread and must not reenter or concurrently mutate the global
+ * engine.
+ *
+ * @param[in] inputFile Non-null null-terminated input-deck path, borrowed for the call.
+ * @param[in] reportFile Non-null null-terminated report path; the engine opens/overwrites the
+ *     report.
+ * @param[in] outputFile Non-null null-terminated binary output path; an empty string selects a
+ *     scratch output file.
+ * @param[in] callback Optional borrowed function pointer called after each attempted step,
+ *     including completion/error; null disables progress. Return type is void, so it cannot cancel.
+ * @return Final process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_run_with_callback(
-    const char *inputFile, const char *reportFile, const char *outputFile, progress_callback callback);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_run_with_callback(const char* inputFile,
+                                                          const char* reportFile,
+                                                          const char* outputFile,
+                                                          progress_callback callback);
 
-/*!
- * \brief Open a SWMM simulation with the given input file, report file, and output file.
- * \param[in] inputFile Path to the input file
- * \param[in] reportFile Path to the report file
- * \param[in] outputFile Path to the output file
- * \return Error code
+/**
+ * @brief Open, parse and validate a single process-global legacy model.
+ *
+ * Resets global error/warning/lifecycle state, opens files, reads the deck and validates it. On a
+ * failure after files/project allocation, call swmm_close to release partial resources. Requires
+ * the previous project to have been closed; this function resets flags rather than safely disposing
+ * an already-open model.
+ *
+ * @param[in] inputFile Non-null null-terminated input-deck path, borrowed for the call.
+ * @param[in] reportFile Non-null null-terminated report path; the engine opens/overwrites the
+ *     report.
+ * @param[in] outputFile Non-null null-terminated binary output path; an empty string selects a
+ *     scratch output file.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_open(const char *inputFile, const char *reportFile, const char *outputFile);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_open(const char* inputFile, const char* reportFile,
+                                             const char* outputFile);
 
-/*!
- * \brief Start a SWMM simulation with the given save flag.
- * \param[in] saveFlag Flag to save simulation
- * \return Error code
+/**
+ * @brief Initialize the opened model and its computing systems.
+ *
+ * Requires successful swmm_open and no active run. Resets clocks, initializes
+ * runoff/routing/quality, opens output and rainfall/hotstart interfaces, mass balance and
+ * statistics. A failed start may already have marked the model started and allocated systems;
+ * finalize/close through the lifecycle before reuse.
+ *
+ * @param[in] saveFlag Zero suppresses periodic binary-result saving; nonzero enables it.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_start(int saveFlag);
 
-/*!
- * \brief Perform a SWMM simulation step and return the elapsed time.
- * \param[out] elapsedTime Elapsed time in decimal days
- * \return Error code
+/**
+ * @brief Advance one routing step and save any scheduled results.
+ *
+ * Requires a successfully started open model. Advances associated runoff/quality processors as
+ * needed. The pointer is used only during the call; no wall-clock duration or callback scheduling
+ * is implied.
+ *
+ * @param[out] elapsedTime Non-null writable double, set to elapsed days since simulation start, or
+ *     zero at completion; initialized to zero before lifecycle validation.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_step(double *elapsedTime);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_step(double* elapsedTime);
 
-/*!
- * \brief Perform a SWMM simulation step with a stride step and return the elapsed time.
- * \param[in] strideStep Stride step
- * \param[out] elapsedTime Elapsed time
- * \return Error code
+/**
+ * @brief Advance routing up to a requested interval while retaining the configured step afterward.
+ *
+ * Requires open/started state. Repeatedly steps until the temporary end, then restores original
+ * RouteStep and full RoutingDuration, and exposes the actual elapsed time. Existing global errors
+ * are returned without advancing.
+ *
+ * @param[in] strideStep Requested stride in seconds; <= 0 delegates to one swmm_step. A positive
+ *     stride temporarily caps RouteStep if smaller and stops at model end.
+ * @param[out] elapsedTime Non-null writable elapsed-days slot; positive when more model time
+ *     remains, zero at final completion or before validation.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_stride(int strideStep, double *elapsedTime);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_stride(int strideStep, double* elapsedTime);
 
-/*!
- * \brief Set hotstart file for SWMM simulation.
- * \details Sets the hotstart file to use for simulation. Errors does not terminate simulation unless
- * there is a prior terminating error.
- * \param[in] hotStartFile Path to the hotstart file
- * \return Error code
+/**
+ * @brief Select a validated hotstart input for the next start.
+ *
+ * Requires an open model before swmm_start. Validation errors are returned locally without storing
+ * them as a new terminating global ErrorCode; a preexisting global error still blocks the call.
+ * Success stores the path/mode; actual state loading occurs at start.
+ *
+ * @param[in] hotStartFile Non-null null-terminated filename, copied up to MAXFNAME characters and
+ *     resolved through the legacy input-directory path rules.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_useHotStart(const char *hotStartFile);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_useHotStart(const char* hotStartFile);
 
-/*!
- * \brief Save hotstart file for SWMM simulation at current time.
- * \param[in] hotStartFile Path to the hotstart file
- * \return Error code
+/**
+ * @brief Write current running state to a named hotstart file.
+ *
+ * Requires an open started model and no prior global error. The writer may create/overwrite the
+ * destination; writer errors are returned directly.
+ *
+ * @param[in] hotStartFile Non-null null-terminated destination passed to the hotstart writer;
+ *     borrowed only during the call.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_saveHotStart(const char *hotStartFile);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_saveHotStart(const char* hotStartFile);
 
-/*!
- * \brief End a SWMM simulation.
- * \return Error code
+/**
+ * @brief Finalize output/continuity and close computing systems while retaining model/statistics.
+ *
+ * Requires an open project. If started, writes final binary records, finalizes
+ * mass-balance/statistics reports when no error and reporting enabled, closes computing systems and
+ * clears the started flag. Calling again on an open ended model performs no additional
+ * finalization. Statistics remain allocated until swmm_close.
+ * @return Zero on success or the legacy engine error enum. Lifecycle errors can also set the
+ *     process-global ErrorCode.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_end(void);
 
-/*!
- * \brief Writes simulation results to the report file.
- * \return Error code
+/**
+ * @brief Write the full results report from the current legacy project.
+ *
+ * Caller must provide an opened model with appropriate completed output/report state. This wrapper
+ * checks only ErrorCode; it does not enforce a separate lifecycle condition. Normally call after
+ * swmm_end and before swmm_close.
+ * @return Current ErrorCode after report_writeReport, or the existing error without writing.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_report(void);
 
-/*!
- * \brief Close a SWMM simulation.
- * \return Error code
+/**
+ * @brief Release global statistics/model/output resources and close project files.
+ *
+ * Clears open/started flags and each closed file pointer; repeated explicit closes avoid double
+ * fclose. Deletes scratch output where applicable. Does not itself run swmm_end, so finish an
+ * active simulation first to produce final output and accounting. Previously borrowed model storage
+ * becomes invalid.
+ * @return Always zero.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_close(void);
 
-/*!
- * \brief Get the mass balance errors for a SWMM simulation.
- * \param[out] runoffErr Runoff error (percent)
- * \param[out] flowErr Flow error (percent)
- * \param[out] qualErr Quality error (percent)
- * \return Error code
- */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float *runoffErr, float *flowErr, float *qualErr);
-
-/*!
- * \brief Get the running (timestep-by-timestep) continuity errors while a
- *        simulation is in progress.
+/**
+ * @brief Read finalized runoff, routing and quality continuity errors.
  *
- * Unlike swmm_getMassBalErr (which only returns the finalised errors after
- * swmm_end), this recomputes the runoff and flow-routing continuity errors from
- * the live mass-balance accumulators and current system storage, so it may be
- * called between swmm_step calls to surface progress-time continuity. Calling it
- * mid-run has no effect on the final reported errors (massbal_report recomputes
- * them at swmm_end). Returns zeros if called before swmm_start or after swmm_end.
+ * Call after swmm_end and before swmm_close for final values. These are percentages (0.1 means 0.1
+ * percent), unlike the worker JSON fractions. Outputs are copied, not retained.
  *
- * \param[out] runoffErr Running runoff continuity error (percent)
- * \param[out] flowErr Running flow-routing continuity error (percent)
- * \return Error code
+ * @param[out] runoffErr Non-null writable percent-error slot.
+ * @param[out] flowErr Non-null writable routing percent-error slot.
+ * @param[out] qualErr Non-null writable quality percent-error slot.
+ * @return Always zero; outputs are zero unless the model is open and not started.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float *runoffErr, float *flowErr);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getMassBalErr(float* runoffErr, float* flowErr,
+                                                      float* qualErr);
 
-/*!
- * \brief Get the version of the SWMM engine.
- * \return Version number
+/**
+ * @brief Recompute current runoff and routing continuity errors during a run.
+ *
+ * Uses live water accumulators/current storage between steps and does not change the eventual
+ * finalized errors. Values are percentages; caller storage is not retained.
+ *
+ * @param[out] runoffErr Non-null writable runoff percent-error slot.
+ * @param[out] flowErr Non-null writable routing percent-error slot.
+ * @return Always zero; both outputs are zero unless the model is open and started.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getRunningMassBalErr(float* runoffErr, float* flowErr);
+
+/**
+ * @brief Return the compiled legacy engine version integer.
+ * @return VERSION, without requiring an open model.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getVersion(void);
 
-/*!
- * \brief Retrieves the code number and text of the error condition that
- * caused SWMM to abort its analysis.
- * \param[out] errMsg Error message text
- * \param[in] msgLen Maximum size of errMsg
- * \return Error message code number
+/**
+ * @brief Copy the current terminating error text into caller-owned storage.
+ *
+ * Lazily populates ErrorMsg from ErrorCode when necessary, then changes a leading newline in the
+ * copy to a space. A negative length converts to an unsigned copy bound and is invalid. The buffer
+ * is used synchronously only.
+ *
+ * @param[out] errMsg Non-null writable character buffer of at least msgLen + 1 bytes; sstrncpy can
+ *     copy msgLen payload characters and append a terminator.
+ * @param[in] msgLen Nonnegative maximum number of payload characters, not total buffer capacity;
+ *     zero still writes a terminator.
+ * @return Current global ErrorCode; does not clear it.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getError(char *errMsg, int msgLen);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getError(char* errMsg, int msgLen);
 
-/*!
- * \brief Retrieves the text of the error message that corresponds to the error code number.
- * \param[in] errorCode Error code number
- * \param[out] outErrMsg Error message text
- * \return Error code
+/**
+ * @brief Copy the text for an explicit internal legacy error enum.
+ *
+ * The unusual declaration is an array of character pointers, not a character buffer. No
+ * null/capacity checks are performed and no storage is retained; unknown-code behavior follows
+ * error_getMsg.
+ *
+ * @param[in] errorCode Legacy internal error enum passed to error_getMsg, independent of global
+ *     ErrorCode.
+ * @param[out] outErrMsg Required pointer-array argument; only *outErrMsg is used and must reference
+ *     writable storage for the bounded MAXMSG copy plus its terminator (reserve 1025 bytes).
+ * @return Always zero after lookup/copy.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getErrorFromCode(int error_code, char *outErrMsg[1024]);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getErrorFromCode(int errorCode, char* outErrMsg[1024]);
 
-/*!
- * \brief Gets the number of warnings issued during a simulation.
- * \return Number of warning messages issued
+/**
+ * @brief Return the current project warning counter.
+ * @return Global number of warnings, reset at swmm_open; no lifecycle validation is performed.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getWarnings(void);
 
-/*!
- * \brief Callback type invoked for each warning the engine emits.
- * \param message Null-terminated warning text.
- * \param userData Opaque pointer supplied to swmm_setWarningCallback.
- */
-typedef void (*swmm_LegacyWarningCallback)(const char *message, void *userData);
-
-/*!
- * \brief Registers a callback invoked for each warning the engine emits.
+/**
+ * @brief Receive one process-global legacy engine warning.
  *
- * Mirrors the refactored engine's warning callback so a host (e.g. the legacy
- * worker process) can stream warnings live instead of only reading them from
- * the report (.rpt) file. Register BEFORE swmm_open to also capture warnings
- * issued during input parsing (e.g. unknown section/option keywords). The
- * callback is process-global, which is safe because the legacy engine runs
- * single-threaded within a process.
- * \param[in] cb Callback function, or NULL to disable.
- * \param[in] userData Opaque pointer passed through to the callback.
- * \return 0 on success.
+ * Runs on the engine thread. Avoid reentrant lifecycle/model edits and keep callback code/userData
+ * alive until replacement or disabling.
+ *
+ * @param[in] message Borrowed null-terminated warning text valid only during this synchronous
+ *     callback; copy it to retain.
+ * @param[in] userData Opaque pointer supplied to swmm_setWarningCallback; ownership remains with
+ *     the registering caller.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb, void *userData);
+typedef void (*swmm_LegacyWarningCallback)(const char* message, void* userData);
 
-/*!
- * \brief Retrieves the number of objects of a specific type.
- * \param[in] objType Type of SWMM object
- * \return Number of objects or error code
+/**
+ * @brief Retain a process-global callback for each emitted warning.
+ *
+ * Register before swmm_open to capture parse warnings. Invocations are synchronous on the legacy
+ * engine thread; avoid reentrancy and concurrent access to global engine state.
+ *
+ * @param[in] cb Callback pointer to retain, or null to disable. Its code must remain valid until
+ *     replaced/disabled.
+ * @param[in] userData Opaque pointer retained and supplied unchanged; caller owns its lifetime
+ *     until replacement/disable.
+ * @return Always zero.
+ */
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setWarningCallback(swmm_LegacyWarningCallback cb,
+                                                           void* userData);
+
+/**
+ * @brief Get the number of objects in a legacy category.
+ *
+ * @param[in] objType Legacy object category from swmm_GAGE up to but excluding swmm_SYSTEM.
+ * @return Object count, zero when no project is open, or ERR_API_OBJECT_TYPE for an unsupported
+ *     category. Errors share the integer result space with counts.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getCount(int objType);
 
-/*!
- * \brief Retrieves the ID name of an object.
- * \param[in] objType Type of SWMM object
- * \param[in] index Object index
- * \param[out] name Object name
- * \param[in] size Size of the name array
- * \return Error code
+/**
+ * @brief Copy the ID of one named legacy object.
+ *
+ * @param[in] objType Named category: gage, subcatchment, node, link, pollutant, landuse, time
+ *     pattern, curve, time series, transect, aquifer or unit hydrograph/snowmelt where supported.
+ * @param[in] index Zero-based object index strictly below the category count.
+ * @param[out] name Non-null writable buffer, initially cleared; reserve at least size + 1 bytes for
+ *     the legacy bounded copy.
+ * @param[in] size Nonnegative maximum payload characters, excluding the final terminator.
+ * @return Zero on success, or ERR_API_NOT_OPEN / ERR_API_OBJECT_TYPE / ERR_API_OBJECT_INDEX. Output
+ *     remains empty on validation failure.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getName(int objType, int index, char *name, int size);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getName(int objType, int index, char* name, int size);
 
-/*!
- * \brief Retrieves the index of a named object.
- * \param[in] objType Type of SWMM object
- * \param[in] name Object name
- * \return Object index or error code
+/**
+ * @brief Find a named object in the opened global model.
+ *
+ * @param[in] objType Supported category in [swmm_GAGE,swmm_SYSTEM).
+ * @param[in] name Non-null null-terminated lookup name; borrowed only during the call.
+ * @return Zero-based index or -1 when project_findObject cannot find the name; ERR_API_NOT_OPEN /
+ *     ERR_API_OBJECT_TYPE on validation failure.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getIndex(int objType, const char *name);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getIndex(int objType, const char* name);
 
-/*!
- * \brief Get the value of a property for an object of a given property in the SWMM model.
- * \param[in] property Property type
- * \param[in] index Object index
- * \return Property value
- * \deprecated Use swmm_getValueExpanded instead. Function will be changed to swmm_getValueExpanded in future versions.
+/**
+ * @brief Read one legacy numeric-family property.
+ *
+ * Requires an open model. Dispatches by numeric property band: <100 system, <200 gage, <300
+ * subcatchment, <400 node, <500 link; passes -1 for sub/pollutant indices. Prefer the Expanded
+ * interface for explicit type/subobject selection.
+ *
+ * @param[in] property Property enum for the selected object family; system/date/step, gage,
+ *     subcatchment, node and link values follow the public property enums.
+ * @param[in] index Zero-based object index; ignored by system properties. Other families validate
+ *     against their object count.
+ * @return Property value in its declared/model units, or a legacy API error enum encoded as double.
+ *     Numeric values and errors share the same return channel.
  */
 double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValue(int property, int index);
 
-/*!
- * \brief Get the value of a property for an object given property, index, and subindex in the SWMM model.
- * \param[in] objType Object type
- * \param[in] property Property type
- * \param[in] index Object index
- * \param[in] subIndex Optional Subindex for the property
- * \param[in] pollutantIndex Optional Pollutant index for the property
- * \return Property value
+/**
+ * @brief Read one explicitly typed property.
+ *
+ * Requires an open model. Dispatches to the matching property implementation; no uniform validation
+ * or transaction applies across properties. Buffers/strings are not involved.
+ *
+ * @param[in] objType swmm_SYSTEM, GAGE, SUBCATCH, NODE, LINK, POLLUTANT, TIME_PATTERN, LANDUSE or
+ *     AQUIFER; selects the property implementation.
+ * @param[in] property Property enum for the selected object family; system/date/step, gage,
+ *     subcatchment, node and link values follow the public property enums.
+ * @param[in] index Zero-based object index; ignored by system properties. Other families validate
+ *     against their object count.
+ * @param[in] subIndex Property-specific subobject (e.g. subarea 0..2, pattern factor or landuse
+ *     entry); use the relevant property range, as it is not a universal optional index.
+ * @param[in] pollutantIndex Zero-based pollutant index for pollutant-dependent
+ *     node/link/subcatchment properties; unused by other properties.
+ * @return Property value in its declared/model units, or a legacy API error enum encoded as double.
+ *     Numeric values and errors share the same return channel.
  */
-double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex);
+double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getValueExpanded(int objType, int property, int index,
+                                                            int subIndex, int pollutantIndex);
 
-/*!
- * \brief Set the value of a property for an object of a given property and index in the SWMM model.
- * \param[in] property Property type
- * \param[in] index Object index
- * \param[in] value Property value
- * \return Error code
- * \deprecated Use swmm_setValueExpanded instead. Function will be changed to swmm_setValueExpanded in future versions.
+/**
+ * @brief Set one legacy numeric-family property.
+ *
+ * Requires an open model. The compatibility setter supports rainfall/scale, reporting flags, node
+ * lateral flow/outfall stage, link setting and route/report controls. Reporting edits generally
+ * require not started. Prefer the Expanded interface for explicit type/subobject selection.
+ *
+ * @param[in] property Property enum for the selected object family; system/date/step, gage,
+ *     subcatchment, node and link values follow the public property enums.
+ * @param[in] index Zero-based object index; ignored by system properties. Other families validate
+ *     against their object count.
+ * @param[in] value New value in the selected property units; hydraulic lengths/flows and rainfall
+ *     generally use model display units, dates absolute SWMM days, step sizes seconds, and
+ *     fractions dimensionless. Property-specific range/lifecycle checks apply.
+ * @return Zero or a legacy API object/property/value/state error. Some unsupported
+ *     indices/lifecycle edits are silently ignored with zero, so zero does not guarantee mutation.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValue(int property, int index, double value);
 
-/*!
- * \brief Set the value of a property for an object given property, index, and subindex in the SWMM model.
- * \param[in] objType Object type
- * \param[in] property Property type
- * \param[in] index Object index
- * \param[in] subIndex Optional Subindex for the property
- * \param[in] pollutantIndex Optional Pollutant index for the property
- * \param[in] value Property value
- * \return Error code
+/**
+ * @brief Set one explicitly typed property.
+ *
+ * Requires an open model. Dispatches to the matching property implementation; no uniform validation
+ * or transaction applies across properties. Buffers/strings are not involved.
+ *
+ * @param[in] objType swmm_SYSTEM, GAGE, SUBCATCH, NODE, LINK, POLLUTANT, TIME_PATTERN, LANDUSE or
+ *     AQUIFER; selects the property implementation.
+ * @param[in] property Property enum for the selected object family; system/date/step, gage,
+ *     subcatchment, node and link values follow the public property enums.
+ * @param[in] index Zero-based object index; ignored by system properties. Other families validate
+ *     against their object count.
+ * @param[in] subIndex Property-specific subobject (e.g. subarea 0..2, pattern factor or landuse
+ *     entry); use the relevant property range, as it is not a universal optional index.
+ * @param[in] pollutantIndex Zero-based pollutant index for pollutant-dependent
+ *     node/link/subcatchment properties; unused by other properties.
+ * @param[in] value New value in the selected property units; hydraulic lengths/flows and rainfall
+ *     generally use model display units, dates absolute SWMM days, step sizes seconds, and
+ *     fractions dimensionless. Property-specific range/lifecycle checks apply.
+ * @return Zero or a legacy API object/property/value/state error. Some unsupported
+ *     indices/lifecycle edits are silently ignored with zero, so zero does not guarantee mutation.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int property, int index, int subIndex, int pollutantIndex, double value);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setValueExpanded(int objType, int property, int index,
+                                                         int subIndex, int pollutantIndex,
+                                                         double value);
 
-/*!
- * \brief Set (or replace) the treatment expression for a node/pollutant pair.
- * \param[in] nodeIndex Node index
- * \param[in] pollutantIndex Pollutant index
- * \param[in] expression Treatment expression in input-file form, e.g. "R = 0.5" or "C = BOD * 0.2"
- * \return Error code
+/**
+ * @brief Replace a node/pollutant treatment expression for subsequent routing steps.
+ *
+ * May be called before or during a run. The old equation is freed before parsing its replacement;
+ * parse failure leaves no equation for the pair. No rollback restores the old expression and the
+ * caller string is not retained.
+ *
+ * @param[in] nodeIndex Zero-based node index within the opened model.
+ * @param[in] pollutantIndex Zero-based pollutant index.
+ * @param[in] expression Non-null nonempty null-terminated input-form equation, e.g. R = 0.5 or C =
+ *     BOD * 0.2; copied into a bounded MAXLINE working buffer.
+ * @return Zero on success; ERR_API_NOT_OPEN, ERR_API_OBJECT_INDEX or ERR_API_PROPERTY_VALUE on
+ *     rejected lifecycle/index/expression.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex, const char *expression);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setTreatment(int nodeIndex, int pollutantIndex,
+                                                     const char* expression);
 
-/*!
- * \brief Remove the treatment expression for a node/pollutant pair.
- * \param[in] nodeIndex Node index
- * \param[in] pollutantIndex Pollutant index
- * \return Error code
+/**
+ * @brief Remove a node/pollutant treatment equation.
+ *
+ * Requires an open model, before or during a run. Frees the owned equation and leaves the pair
+ * without treatment removal.
+ *
+ * @param[in] nodeIndex Zero-based node index.
+ * @param[in] pollutantIndex Zero-based pollutant index.
+ * @return Zero on success (including an already absent equation), or ERR_API_NOT_OPEN /
+ *     ERR_API_OBJECT_INDEX.
  */
 int EXPORT_OPENSWMMCORE_SOLVER_API swmm_clearTreatment(int nodeIndex, int pollutantIndex);
 
-/*!
- * \brief Set the underdrain flow parameters of a LID process at runtime.
- * \param[in] lidIndex LID process index
- * \param[in] coeff Underdrain flow coefficient (in/hr or mm/hr)
- * \param[in] expon Underdrain head exponent
- * \param[in] offset Offset height of underdrain (in or mm)
- * \return Error code
+/**
+ * @brief Replace live underdrain parameters of a legacy LID process.
+ *
+ * Edits take effect on the next kernel evaluation. The validator tests negativity without an
+ * explicit finite-value check; callers should supply finite physical parameters.
+ *
+ * @param[in] lidIndex Zero-based LID process index.
+ * @param[in] coeff Nonnegative coefficient in authored rain-rate units (in/hr or mm/hr) for the
+ *     configured head exponent.
+ * @param[in] expon Nonnegative dimensionless head exponent.
+ * @param[in] offset Nonnegative drain offset in in or mm, converted internally to ft.
+ * @return Zero, ERR_API_NOT_OPEN, ERR_API_OBJECT_INDEX, or ERR_API_PROPERTY_VALUE for a negative
+ *     parameter.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon, double offset);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_setLidDrain(int lidIndex, double coeff, double expon,
+                                                    double offset);
 
-/*!
- * \brief Get saved value of
- * \param[in] property Property type
- * \param[in] index Object index
- * \param[in] period Time period index
- * \return Property value
+/**
+ * @brief Read a saved output value after the run has ended.
+ *
+ * Requires an open ended model with readable saved output. Numeric zero is ambiguous with
+ * unavailable data. Does not retain caller storage.
+ *
+ * @param[in] property swmm_CURRENTDATE or a supported subcatch/node/link result property.
+ * @param[in] index Zero-based object index, ignored for the saved date.
+ * @param[in] period One-based saved reporting period in [1,Nperiods], unlike the separate
+ *     output-reader zero-based API.
+ * @return Saved value in model display units (date in absolute SWMM days), or zero if closed, still
+ *     started, invalid period/property, or an unsupported/missing value.
  */
 double EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSavedValue(int property, int index, int period);
 
-/*!
- * \brief Write a line of text to the SWMM report file.
- * \param[in] line Line of text
+/**
+ * @brief Append a caller line to the open report.
+ *
+ * Does nothing if no project is open. Report-write failures are not separately returned by this
+ * void wrapper.
+ *
+ * @param[in] line Non-null null-terminated report text; borrowed during the call.
  */
-void EXPORT_OPENSWMMCORE_SOLVER_API swmm_writeLine(const char *line);
+void EXPORT_OPENSWMMCORE_SOLVER_API swmm_writeLine(const char* line);
 
-/*!
- * \brief Decode double date value into year, month, day, hour, minute, second, and day of week.
- * \param[in] date Date value
- * \param[out] year Year
- * \param[out] month Month
- * \param[out] day Day
- * \param[out] hour Hour
- * \param[out] minute Minute
- * \param[out] second Second
- * \param[out] dayOfWeek Day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+/**
+ * @brief Decode an absolute legacy SWMM date/time into calendar fields.
+ *
+ * No model lifecycle is required; valid encodable dates and non-null outputs are caller
+ * preconditions. Uses the legacy floor/whole-second conventions and does not retain pointers.
+ *
+ * @param[in] date Encoded date/time in decimal days relative to the legacy epoch 1899-12-30.
+ * @param[out] year Non-null writable year.
+ * @param[out] month Non-null writable month 1..12 for a valid date.
+ * @param[out] day Non-null writable calendar day.
+ * @param[out] hour Non-null writable hour.
+ * @param[out] minute Non-null writable minute.
+ * @param[out] second Non-null writable whole second.
+ * @param[out] dayOfWeek Non-null writable weekday: Sunday=1 through Saturday=7, as returned by
+ *     datetime_dayOfWeek.
  */
-void EXPORT_OPENSWMMCORE_SOLVER_API swmm_decodeDate(double date, int *year, int *month, int *day,
-                               int *hour, int *minute, int *second, int *dayOfWeek);
+void EXPORT_OPENSWMMCORE_SOLVER_API swmm_decodeDate(double date, int* year, int* month, int* day,
+                                                    int* hour, int* minute, int* second,
+                                                    int* dayOfWeek);
 
-/*!
- * \brief Encode date values into a double date value.
- * \param[in] year Year
- * \param[in] month Month
- * \param[in] day Day
- * \param[in] hour Hour
- * \param[in] minute Minute
- * \param[in] second Second
- * \return Date value
+/**
+ * @brief Encode calendar date and clock fields using the legacy date utilities.
+ *
+ * @param[in] year Calendar year accepted by datetime_encodeDate.
+ * @param[in] month Month 1..12.
+ * @param[in] day Valid calendar day for the month/year.
+ * @param[in] hour Clock hour 0..23.
+ * @param[in] minute Minute 0..59.
+ * @param[in] second Whole second 0..59.
+ * @return datetime_encodeDate + datetime_encodeTime, in absolute SWMM decimal days. Invalid
+ *     component sentinel behavior is inherited from those helpers; this wrapper does not validate
+ *     the combined result.
  */
-double EXPORT_OPENSWMMCORE_SOLVER_API swmm_encodeDate(int year, int month, int day,
-                                 int hour, int minute, int second);
+double EXPORT_OPENSWMMCORE_SOLVER_API swmm_encodeDate(int year, int month, int day, int hour,
+                                                      int minute, int second);
 
 /* ====================================================================
  *  Statistics and mass balance API functions
@@ -1133,68 +1312,119 @@ double EXPORT_OPENSWMMCORE_SOLVER_API swmm_encodeDate(int year, int month, int d
  *  Call these after swmm_end() but before swmm_close().
  * ==================================================================== */
 
-/*!
- * \brief Get cumulative subcatchment statistics.
- * \param[in]  index  Subcatchment index
- * \param[out] stats  Pointer to swmm_SubcatchStats to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw internal subcatchment statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags.  No display-unit conversion or averaging normalization is performed.
+ *
+ * @param[in] index Zero-based global subcatchment index; subtype must match subcatchment.
+ * @param[out] stats Non-null caller-owned destination, borrowed only during the call. Volumes ft3,
+ *     peak flow cfs.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSubcatchStats(int index, swmm_SubcatchStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSubcatchStats(int index, swmm_SubcatchStats* stats);
 
-/*!
- * \brief Get cumulative node statistics.
- * \param[in]  index  Node index
- * \param[out] stats  Pointer to swmm_NodeStats to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw internal node statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags.  No display-unit conversion or averaging normalization is performed.
+ *
+ * @param[in] index Zero-based global node index; subtype must match node.
+ * @param[out] stats Non-null caller-owned destination, borrowed only during the call. Depths ft,
+ *     volumes ft3, flows cfs, duration fields seconds and max dates absolute SWMM days. avgDepth is
+ *     an accumulated sample sum; timeCourantCritical counts events.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getNodeStats(int index, swmm_NodeStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getNodeStats(int index, swmm_NodeStats* stats);
 
-/*!
- * \brief Get cumulative storage node statistics.
- * \param[in]  index  Node index (must be a STORAGE node)
- * \param[out] stats  Pointer to swmm_StorageStats to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw internal storage node statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags.  No display-unit conversion or averaging normalization is performed.
+ *
+ * @param[in] index Zero-based global node index; subtype must match storage node.
+ * @param[out] stats Non-null caller-owned destination, borrowed only during the call. Volumes ft3,
+ *     maxFlow cfs and maxVolDate absolute SWMM days; avgVol is an accumulated sample sum.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index, or ERR_API_OBJECT_TYPE for a wrong subtype.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getStorageStats(int index, swmm_StorageStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getStorageStats(int index, swmm_StorageStats* stats);
 
-/*!
- * \brief Get cumulative outfall node statistics.
- * \param[in]  index  Node index (must be an OUTFALL node)
- * \param[out] stats  Pointer to swmm_OutfallStats to fill
- * \return Error code (0 = success)
- * \note  Caller must pre-allocate stats->totalLoad with Nobjects[POLLUT] doubles.
+/**
+ * @brief Copy raw internal outfall node statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags. Flows cfs; avgFlow is a sample sum, totalPeriods its count. Loads retain
+ * internal concentration-volume accounting units. No display-unit conversion or averaging
+ * normalization is performed.
+ *
+ * @param[in] index Zero-based global node index; subtype must match outfall node.
+ * @param[in,out] stats Non-null caller-owned destination, borrowed only during the call. Initialize
+ *     totalLoad to null to skip loads or to writable storage for Npollut doubles; the API never
+ *     allocates that storage.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index, or ERR_API_OBJECT_TYPE for a wrong subtype.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getOutfallStats(int index, swmm_OutfallStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getOutfallStats(int index, swmm_OutfallStats* stats);
 
-/*!
- * \brief Get cumulative link statistics.
- * \param[in]  index  Link index
- * \param[out] stats  Pointer to swmm_LinkStats to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw internal link statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags.  No display-unit conversion or averaging normalization is performed.
+ *
+ * @param[in] index Zero-based global link index; subtype must match link.
+ * @param[out] stats Non-null caller-owned destination, borrowed only during the call. Depths ft,
+ *     velocity ft/s, flows cfs, duration fields seconds, maxFlowDate absolute SWMM days;
+ *     timeCourantCritical counts events.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getLinkStats(int index, swmm_LinkStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getLinkStats(int index, swmm_LinkStats* stats);
 
-/*!
- * \brief Get cumulative pump statistics.
- * \param[in]  index  Link index (must be a PUMP link)
- * \param[out] stats  Pointer to swmm_PumpStats to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw internal pump link statistics.
+ *
+ * Call after swmm_end and before swmm_close for final data. Checks array presence, not explicit
+ * lifecycle flags.  No display-unit conversion or averaging normalization is performed.
+ *
+ * @param[in] index Zero-based global link index; subtype must match pump link.
+ * @param[out] stats Non-null caller-owned destination, borrowed only during the call. Flows cfs,
+ *     volume ft3, energy kWh; utilized/off-curve fields are seconds and avgFlow remains a sample
+ *     sum.
+ * @return Zero on success, ERR_API_NOT_ENDED if the statistics array is absent,
+ *     ERR_API_OBJECT_INDEX for an invalid index, or ERR_API_OBJECT_TYPE for a wrong subtype.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getPumpStats(int index, swmm_PumpStats *stats);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getPumpStats(int index, swmm_PumpStats* stats);
 
-/*!
- * \brief Get system-level flow routing mass balance totals.
- * \param[out] totals  Pointer to swmm_RoutingTotals to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw global routing continuity totals.
+ *
+ * Use after swmm_end and before swmm_close for finalized totals. Does not recompute accounting,
+ * retain storage or normalize units.
+ *
+ * @param[out] totals Non-null caller-owned destination. routing volume categories are ft3; pctError
+ *     is percent, with no model display conversion.
+ * @return Always zero; no lifecycle or null checks.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSystemRoutingTotals(swmm_RoutingTotals *totals);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSystemRoutingTotals(swmm_RoutingTotals* totals);
 
-/*!
- * \brief Get system-level surface runoff mass balance totals.
- * \param[out] totals  Pointer to swmm_RunoffTotals to fill
- * \return Error code (0 = success)
+/**
+ * @brief Copy raw global runoff continuity totals.
+ *
+ * Use after swmm_end and before swmm_close for finalized totals. Does not recompute accounting,
+ * retain storage or normalize units.
+ *
+ * @param[out] totals Non-null caller-owned destination. runoff water categories including rainfall
+ *     and snow stores are ft3; pctError is percent, with no model display conversion.
+ * @return Always zero; no lifecycle or null checks.
  */
-int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSystemRunoffTotals(swmm_RunoffTotals *totals);
+int EXPORT_OPENSWMMCORE_SOLVER_API swmm_getSystemRunoffTotals(swmm_RunoffTotals* totals);
 
 #ifdef __cplusplus
 } // matches the linkage specification from above */

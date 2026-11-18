@@ -86,11 +86,16 @@ from openswmm.engine import (
     WaterAgeSource,
     WeirType,
     XSectShape,
+    abi_tag,
     datetime_to_oadate,
     oadate_to_datetime,
     run,
     run_with_callback,
 )
+
+
+def check_engine_identity() -> str:
+    return abi_tag()
 
 
 def check_solver_lifecycle() -> None:
@@ -586,6 +591,9 @@ def check_new_domain_contracts(solver: Solver) -> None:
     gw.transport.set_parameters(replace(GroundwaterParameters(), rho_s=2700))
     gw.transport.set_initial_quality(GroundwaterInitialQuality(species='TSS', value=5))
     gw.transport.set_source(GroundwaterSource(name='well', flow=1e-5))
+    source_xy: tuple[float, float] | None = gw.transport.source_xy(0)
+    if source_xy is not None:
+        gw.transport.set_source_xy(0, source_xy[0], source_xy[1])
     gw.transport.set_source_species(0, GroundwaterSourceTerm(species='TSS', value=3))
     row_name: str = gw.transport.sources[0].name
     row_density: float = gw.transport.parameters[0].rho_s

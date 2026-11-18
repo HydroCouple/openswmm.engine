@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_ignore_flags.cpp
- * @brief Runtime-effect tests for the [OPTIONS] IGNORE_* process flags.
+ * @file      test_ignore_flags.cpp
+ * @brief     Runtime-effect tests for the [OPTIONS] IGNORE_* process flags.
  *
  * @details The existing option tests (test_options_parser.cpp,
  *          test_rdii.cpp) only assert parse->store. These tests close the
@@ -37,9 +37,9 @@
  * @see Legacy reference: src/legacy/engine/swmm5.c, runoff.c, gage.c, subcatch.c
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -66,6 +66,18 @@ namespace {
 // CMake pins to tests/unit/engine/data). NOT deleted after the run.
 const fs::path kArtifactDir = "ignore_flags";
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * Creates parent directories with the throwing filesystem overload before opening. Uses
+ * binary/truncate mode. Open failure is not reported by this helper. Subsequent write/close
+ * failures are not checked; the local stream closes at scope exit and no path/content storage is
+ * retained. Allocation/filesystem exceptions can propagate.
+ *
+ * @param[in] p Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] text Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const fs::path& p, const std::string& text) {
     fs::create_directories(p.parent_path());
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
@@ -78,8 +90,17 @@ void write_file(const fs::path& p, const std::string& text) {
 // ---------------------------------------------------------------------------
 
 // A 100%-impervious subcatchment under 1 in/hr rain draining J1 -> O1.
-std::string rain_model(const std::string& ignore_lines,
-                       const std::string& extra_sections = "") {
+/**
+ * @brief Build a rained-on ten-acre subcatchment and J1-to-O1 conduit.
+ *
+ * Returns text only; raw caller rows are copied without escaping or parser validation.
+ *
+ * @param[in] ignore_lines Raw OPTIONS lines selecting ignore switches.
+ * @param[in] extra_sections Raw sections appended after conduit geometry.
+ * @return Owned two-hour CFS deck with a 50 percent impervious subcatchment and a one-inch/hour
+ *     rain series.
+ */
+std::string rain_model(const std::string& ignore_lines, const std::string& extra_sections = "") {
     std::ostringstream s;
     s << "[OPTIONS]\n"
          "FLOW_UNITS           CFS\n"
@@ -132,55 +153,74 @@ std::string rain_model(const std::string& ignore_lines,
 
 // Quality sections: one pollutant with buildup + washoff on a land use that
 // fully covers S1.
+/**
+ * @brief Build a TSS landuse buildup/washoff section set.
+ *
+ * Does not include the hydraulic model, parse the rows or alter state.
+ * @return Owned sections with LU1 covering all S1, TSS in mg/L, power-law buildup and exponential
+ *     washoff.
+ */
 std::string quality_sections() {
-    return
-        "\n[POLLUTANTS]\n"
-        ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
-        "TSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
-        "\n[LANDUSES]\n"
-        ";;Name SweepInterval Availability LastSweep\n"
-        "LU1  0  0  0\n"
-        "\n[COVERAGES]\n"
-        ";;Subcatch LandUse Percent\n"
-        "S1  LU1  100\n"
-        "\n[BUILDUP]\n"
-        ";;LandUse Pollutant Func C1 C2 C3 PerUnit\n"
-        "LU1  TSS  POW  100  0  1  AREA\n"
-        "\n[WASHOFF]\n"
-        ";;LandUse Pollutant Func C1 C2 SweepRmvl BmpRmvl\n"
-        "LU1  TSS  EXP  0.1  1.0  0  0\n";
+    return "\n[POLLUTANTS]\n"
+           ";;Name Units Crain Cgw Crdii Kdecay SnowOnly CoPollut CoFrac Cdwf Cinit\n"
+           "TSS  MG/L  0  0  0  0  NO  *  0.0  0  0\n"
+           "\n[LANDUSES]\n"
+           ";;Name SweepInterval Availability LastSweep\n"
+           "LU1  0  0  0\n"
+           "\n[COVERAGES]\n"
+           ";;Subcatch LandUse Percent\n"
+           "S1  LU1  100\n"
+           "\n[BUILDUP]\n"
+           ";;LandUse Pollutant Func C1 C2 C3 PerUnit\n"
+           "LU1  TSS  POW  100  0  1  AREA\n"
+           "\n[WASHOFF]\n"
+           ";;LandUse Pollutant Func C1 C2 SweepRmvl BmpRmvl\n"
+           "LU1  TSS  EXP  0.1  1.0  0  0\n";
 }
 
 // Aquifer with a high initial water table so lateral GW flow to J1 is nonzero
 // from t=0 (independent of rain).
+/**
+ * @brief Build a legacy groundwater source with an initially high water table.
+ *
+ * Requires the caller hydraulic deck to contain S1/J1 and a pervious share. Returns text only; does
+ * not solve groundwater.
+ * @return Owned AQ1/S1/J1 sections using an 8 ft initial water-table elevation and explicit 2 ft
+ *     lateral-flow threshold.
+ */
 std::string groundwater_sections() {
-    return
-        "\n[AQUIFERS]\n"
-        ";;Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc\n"
-        "AQ1  0.5  0.15  0.30  5.0  10  15  0.35  14  0.0  0.0  8.0  0.30\n"
-        // Legacy semantics: Egwt `*` means the receiving node's invert is the
-        // lateral-flow threshold (J1 sits at 100 ft, far above the aquifer),
-        // and Wgr is the initial water-table ELEVATION. For the aquifer to
-        // discharge, the threshold is given explicitly (2 ft) below the
-        // initial water table (8 ft), and the subcatchment must have a
-        // pervious share (gwater_getGroundwater returns at FracPerv <= 0).
-        "\n[GROUNDWATER]\n"
-        ";;Subcatch Aquifer Node Esurf A1 B1 A2 B2 A3 Dsw Egwt Ebot Wgr Umc\n"
-        "S1  AQ1  J1  10.0  0.1  1.5  0  0  0  0  2.0  0  8.0  *\n";
+    return "\n[AQUIFERS]\n"
+           ";;Name Por WP FC Ksat Kslope Tslope ETu ETs Seep Ebot Egw Umc\n"
+           "AQ1  0.5  0.15  0.30  5.0  10  15  0.35  14  0.0  0.0  8.0  0.30\n"
+           // Legacy semantics: Egwt `*` means the receiving node's invert is the
+           // lateral-flow threshold (J1 sits at 100 ft, far above the aquifer),
+           // and Wgr is the initial water-table ELEVATION. For the aquifer to
+           // discharge, the threshold is given explicitly (2 ft) below the
+           // initial water table (8 ft), and the subcatchment must have a
+           // pervious share (gwater_getGroundwater returns at FracPerv <= 0).
+           "\n[GROUNDWATER]\n"
+           ";;Subcatch Aquifer Node Esurf A1 B1 A2 B2 A3 Dsw Egwt Ebot Wgr Umc\n"
+           "S1  AQ1  J1  10.0  0.1  1.5  0  0  0  0  2.0  0  8.0  *\n";
 }
 
 // Snowpack whose surfaces hold snow (very small melt coefficients), plus a
 // constant sub-freezing air temperature so rain falls as snow.
+/**
+ * @brief Build a slowly melting SP1 snowpack and temperature-series reference.
+ *
+ * Uses 32 F base temperature and small melt coefficients. Caller supplies the temperature records
+ * and subcatchment snowpack assignment; no IO occurs.
+ * @return Owned snowpack/temperature sections referring to caller-provided TEMPTS series.
+ */
 std::string snow_sections() {
-    return
-        "\n[SNOWPACKS]\n"
-        ";;Name Surface Cmin Cmax Tbase FWF SD0 FW0 SNN0/SFrac\n"
-        "SP1  PLOWABLE    0.001  0.001  32  0.10  0  0  0.5\n"
-        "SP1  IMPERVIOUS  0.001  0.001  32  0.10  0  0  0.0\n"
-        "SP1  PERVIOUS    0.001  0.001  32  0.10  0  0  0.0\n"
-        "SP1  REMOVAL     1.0  0  0  0  0  0\n"
-        "\n[TEMPERATURE]\n"
-        "TIMESERIES TEMPTS\n";
+    return "\n[SNOWPACKS]\n"
+           ";;Name Surface Cmin Cmax Tbase FWF SD0 FW0 SNN0/SFrac\n"
+           "SP1  PLOWABLE    0.001  0.001  32  0.10  0  0  0.5\n"
+           "SP1  IMPERVIOUS  0.001  0.001  32  0.10  0  0  0.0\n"
+           "SP1  PERVIOUS    0.001  0.001  32  0.10  0  0  0.0\n"
+           "SP1  REMOVAL     1.0  0  0  0  0  0\n"
+           "\n[TEMPERATURE]\n"
+           "TIMESERIES TEMPTS\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +231,11 @@ class IgnoreFlagsTest : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Destroy a non-null fixture handle and clear its member slot.
+     *
+     * Engine destruction supplies remaining model cleanup; safe after setup failed before allocation.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_destroy(engine_);
@@ -198,45 +243,86 @@ protected:
         }
     }
 
+    /**
+     * @brief Borrow the current fixture model context.
+     *
+     * Requires a live engine_ handle; performs unchecked downcast and does not transfer ownership.
+     * @return Mutable reference valid until engine destruction/reset or model replacement.
+     */
     openswmm::SimulationContext& ctx() {
         return static_cast<openswmm::SWMMEngine*>(engine_)->context();
     }
 
     // Open a model from INP text; leaves the engine INITIALIZED (post open()).
+    /**
+     * @brief Write and open an ignore-flag fixture on a newly allocated handle.
+     *
+     * Requires engine_ to be null or already released: replacing it does not free an older handle. Uses
+     * fatal allocation/open assertions, leaving partial state for teardown. Does not initialize/start
+     * despite the older ordinary comment; output artifacts remain available.
+     *
+     * @param[in] tag Artifact stem below kArtifactDir; matching .inp/.rpt/.out paths may be
+     *     overwritten.
+     * @param[in] inp_text Borrowed full deck text copied to the fixture input.
+     * @param[out] out_path Optional writable string receiving the result filename before engine
+     *     creation/open; unchanged ownership.
+     */
     void open(const std::string& tag, const std::string& inp_text,
               std::string* out_path = nullptr) {
         const auto inp = kArtifactDir / (tag + ".inp");
         const auto rpt = kArtifactDir / (tag + ".rpt");
         const auto out = kArtifactDir / (tag + ".out");
         write_file(inp, inp_text);
-        if (out_path) *out_path = out.string();
+        if (out_path)
+            *out_path = out.string();
 
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, inp.string().c_str(),
-                                   rpt.string().c_str(), out.string().c_str(),
-                                   nullptr), SWMM_OK)
+        ASSERT_EQ(swmm_engine_open(engine_, inp.string().c_str(), rpt.string().c_str(),
+                                   out.string().c_str(), nullptr),
+                  SWMM_OK)
             << "open failed: " << swmm_get_last_error_msg(engine_);
     }
 
     // Full open -> initialize -> start -> run -> end.
-    void run(const std::string& tag, const std::string& inp_text,
-             std::string* out_path = nullptr) {
+    /**
+     * @brief Open, initialize, start, step and end an ignore-flag fixture.
+     *
+     * Fatal assertions check each lifecycle and step status; a helper assertion returns from that
+     * helper and records test failure. Uses elapsed completion with no guard, saves results, then
+     * leaves the ended handle for queries and teardown. Does not request report or close here.
+     *
+     * @param[in] tag Artifact stem below kArtifactDir; matching .inp/.rpt/.out paths may be
+     *     overwritten.
+     * @param[in] inp_text Borrowed full deck text copied to the fixture input.
+     * @param[out] out_path Optional writable string receiving the result filename before engine
+     *     creation/open; unchanged ownership.
+     */
+    void run(const std::string& tag, const std::string& inp_text, std::string* out_path = nullptr) {
         open(tag, inp_text, out_path);
         ASSERT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
-        ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK)
-            << swmm_get_last_error_msg(engine_);
+        ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
         double elapsed = 0.0;
         for (;;) {
             int rc = swmm_engine_step(engine_, &elapsed);
             ASSERT_EQ(rc, SWMM_OK) << swmm_get_last_error_msg(engine_);
-            if (elapsed <= 0.0) break;
+            if (elapsed <= 0.0)
+                break;
         }
         ASSERT_EQ(swmm_engine_end(engine_), SWMM_OK);
     }
 
+    /**
+     * @brief Destroy the current ignore-flag engine and clear its slot.
+     *
+     * Null is a no-op. Any context/array references previously borrowed from the engine become invalid;
+     * artifacts are retained.
+     */
     void reset() {
-        if (engine_) { swmm_engine_destroy(engine_); engine_ = nullptr; }
+        if (engine_) {
+            swmm_engine_destroy(engine_);
+            engine_ = nullptr;
+        }
     }
 };
 
@@ -248,17 +334,14 @@ TEST_F(IgnoreFlagsTest, IgnoreRainfall_ZeroesRunoff) {
     double runoff_on = -1.0, runoff_off = -1.0;
 
     run("rainfall_active", rain_model(""));
-    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_on),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_on), SWMM_OK);
     reset();
 
     run("rainfall_ignored", rain_model("IGNORE_RAINFALL      YES\n"));
-    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_off),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_off), SWMM_OK);
 
     EXPECT_GT(runoff_on, 0.0) << "baseline model should generate runoff";
-    EXPECT_DOUBLE_EQ(runoff_off, 0.0)
-        << "IGNORE_RAINFALL must suppress all runoff";
+    EXPECT_DOUBLE_EQ(runoff_off, 0.0) << "IGNORE_RAINFALL must suppress all runoff";
 }
 
 // ===========================================================================
@@ -279,13 +362,11 @@ TEST_F(IgnoreFlagsTest, IgnoreRouting_SkipsRouting) {
     double qmax_off = -1.0;
     ASSERT_EQ(swmm_stat_link_max_flow(engine_, c1, &qmax_off), SWMM_OK);
     double wet_off = -1.0;
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_WET_WEATHER,
-                                     &wet_off), SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_WET_WEATHER, &wet_off), SWMM_OK);
 
     EXPECT_GT(qmax_on, 0.0) << "baseline conduit should carry flow";
     EXPECT_DOUBLE_EQ(qmax_off, 0.0) << "IGNORE_ROUTING must skip routing";
-    EXPECT_DOUBLE_EQ(wet_off, 0.0)
-        << "no routing => no wet-weather inflow booked";
+    EXPECT_DOUBLE_EQ(wet_off, 0.0) << "no routing => no wet-weather inflow booked";
 }
 
 TEST_F(IgnoreFlagsTest, FlowRoutingNone_CouplesIgnoreRouting) {
@@ -303,8 +384,7 @@ TEST_F(IgnoreFlagsTest, IgnoreQuality_DropsPollutantColumns) {
 
     run("quality_active", rain_model("", quality_sections()), &out_on);
     reset();
-    run("quality_ignored", rain_model("IGNORE_QUALITY       YES\n",
-                                       quality_sections()), &out_off);
+    run("quality_ignored", rain_model("IGNORE_QUALITY       YES\n", quality_sections()), &out_off);
     reset();
 
     SWMM_Output h_on = swmm_output_open(out_on.c_str());
@@ -318,8 +398,7 @@ TEST_F(IgnoreFlagsTest, IgnoreQuality_DropsPollutantColumns) {
     swmm_output_close(h_off);
 
     EXPECT_EQ(np_on, 1) << "baseline .out should carry the one pollutant";
-    EXPECT_EQ(np_off, 0)
-        << "IGNORE_QUALITY must drop all pollutant columns (output.c:150)";
+    EXPECT_EQ(np_off, 0) << "IGNORE_QUALITY must drop all pollutant columns (output.c:150)";
 }
 
 // ===========================================================================
@@ -330,18 +409,14 @@ TEST_F(IgnoreFlagsTest, IgnoreGroundwater_ZeroesGwInflow) {
     double gw_on = -1.0, gw_off = -1.0;
 
     run("gw_active", rain_model("", groundwater_sections()));
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_GW_INFLOW, &gw_on),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_GW_INFLOW, &gw_on), SWMM_OK);
     reset();
 
-    run("gw_ignored", rain_model("IGNORE_GROUNDWATER   YES\n",
-                                 groundwater_sections()));
-    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_GW_INFLOW, &gw_off),
-              SWMM_OK);
+    run("gw_ignored", rain_model("IGNORE_GROUNDWATER   YES\n", groundwater_sections()));
+    ASSERT_EQ(swmm_get_routing_total(engine_, SWMM_ROUTING_GW_INFLOW, &gw_off), SWMM_OK);
 
     EXPECT_GT(gw_on, 0.0) << "baseline model should produce GW inflow";
-    EXPECT_DOUBLE_EQ(gw_off, 0.0)
-        << "IGNORE_GROUNDWATER must suppress GW inflow";
+    EXPECT_DOUBLE_EQ(gw_off, 0.0) << "IGNORE_GROUNDWATER must suppress GW inflow";
 }
 
 // ===========================================================================
@@ -350,9 +425,8 @@ TEST_F(IgnoreFlagsTest, IgnoreGroundwater_ZeroesGwInflow) {
 
 TEST_F(IgnoreFlagsTest, IgnoreSnowmelt_ChangesRunoff) {
     // Sub-freezing temperature series so precip would fall as snow.
-    const std::string temp_ts =
-        "TEMPTS  01/01/2026 00:00 20\n"
-        "TEMPTS  01/01/2026 12:00 20\n";
+    const std::string temp_ts = "TEMPTS  01/01/2026 00:00 20\n"
+                                "TEMPTS  01/01/2026 12:00 20\n";
     // Assign S1 the snowpack SP1 (SnowPack column) by rebuilding the subcatch
     // line; simplest is to append the snow sections + a TEMPTS series and set
     // the subcatchment's snowpack via a dedicated model.
@@ -363,22 +437,21 @@ TEST_F(IgnoreFlagsTest, IgnoreSnowmelt_ChangesRunoff) {
         // carries SP1 in the SnowPack column.
         std::string inp = rain_model(ignore_lines, extra);
         const std::string from = "S1  RG1  J1  10.0  50   500  0.5  0  \n";
-        const std::string to   = "S1  RG1  J1  10.0  50   500  0.5  0  SP1\n";
+        const std::string to = "S1  RG1  J1  10.0  50   500  0.5  0  SP1\n";
         auto pos = inp.find(from);
-        if (pos != std::string::npos) inp.replace(pos, from.size(), to);
+        if (pos != std::string::npos)
+            inp.replace(pos, from.size(), to);
         return inp;
     };
 
     double runoff_keep = -1.0, runoff_ignore = -1.0;
 
     run("snow_active", snow_model(""));
-    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_keep),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_keep), SWMM_OK);
     reset();
 
     run("snow_ignored", snow_model("IGNORE_SNOWMELT      YES\n"));
-    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_ignore),
-              SWMM_OK);
+    ASSERT_EQ(swmm_get_runoff_total(engine_, SWMM_RUNOFF_RUNOFF, &runoff_ignore), SWMM_OK);
 
     // With snowmelt honored + sub-freezing temps, precip accumulates as snow
     // and little/no runoff is produced this hour. Ignoring snowmelt routes the
@@ -404,4 +477,4 @@ TEST_F(IgnoreFlagsTest, AutoCouple_NoSnowpack_IgnoresSnowmelt) {
         << "no snowpacks => IGNORE_SNOWMELT (legacy project.c:221)";
 }
 
-}  // namespace
+} // namespace

@@ -1,0 +1,6 @@
+[2D_VERTICES]
+0 0 1
+bad 0 1
+[2D_TRIANGLES]
+0 1 4
+;; UNITS: m

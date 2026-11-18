@@ -1,6 +1,6 @@
 /**
- * @file charconv_compat.hpp
- * @brief Portable from_chars for floating-point types.
+ * @file      charconv_compat.hpp
+ * @brief     Portable from_chars for floating-point types.
  *
  * @details Apple libc++ does not support std::from_chars for floating-point
  *          types.  This header provides a drop-in wrapper that uses strtod
@@ -12,6 +12,10 @@
  *          See plans/MODEL_LOAD_INIT_OPTIMIZATION_PLAN_2026-08-12.md item 2.1.
  *
  * @ingroup engine_core
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_CHARCONV_COMPAT_HPP
@@ -27,11 +31,11 @@
 // The fallback path is only compiled where float from_chars is missing, which
 // in practice means Apple libc++. strtod_l lives in <xlocale.h> there and in
 // <locale.h> on glibc; both provide newlocale/freelocale from POSIX.2008.
-#  define OPENSWMM_CHARCONV_FALLBACK 1
-#  include <locale.h>
-#  if defined(__APPLE__)
-#    include <xlocale.h>
-#  endif
+#define OPENSWMM_CHARCONV_FALLBACK 1
+#include <locale.h>
+#if defined(__APPLE__)
+#include <xlocale.h>
+#endif
 #endif
 
 namespace openswmm {
@@ -40,35 +44,36 @@ namespace openswmm {
 namespace detail {
 
 /**
- * @brief Process-wide "C" locale handle for strtod_l.
+ * @brief Borrow a process-lifetime C numeric locale handle on fallback builds.
  *
- * @details Plain strtod consults the current global locale on every call to
- *          find the decimal separator. Pinning the C locale removes that work
- *          and, more importantly, makes the conversion locale-independent —
- *          which is what std::from_chars guarantees on the platforms that take
- *          the other branch. Without it a host running under a comma-decimal
- *          locale would parse "0.013" as 0.
- *
- *          Constructed once on first use. If newlocale() fails the handle is
- *          null and the call sites fall back to plain strtod.
+ * Function-local static initialization is synchronized by C++; a failed allocation remains cached
+ * and fallback parsing then consults the process locale.
+ * @return Cached locale_t or null if newlocale failed; never freed by this helper.
  */
 inline locale_t c_locale() noexcept {
     static locale_t loc = newlocale(LC_NUMERIC_MASK, "C", nullptr);
     return loc;
 }
 
-}  // namespace detail
+} // namespace detail
 #endif
 
 /**
- * @brief Locale-independent parse of a double from a character range.
+ * @brief Parse a double prefix using the available numeric backend.
  *
- * On toolchains that support std::from_chars for doubles this forwards
- * directly; otherwise it converts via strtod_l against a cached C locale,
- * using a stack buffer for the null termination strtod requires.
+ * Uses std::from_chars when supported. Fallback copies fewer than 64 bytes to a stack buffer,
+ * otherwise a temporary string, and calls C-locale strtod_l when locale creation succeeded. The
+ * fallback does not inspect errno/range errors, so overflow may return infinity with success; it
+ * accepts strtod syntax such as leading whitespace/plus. noexcept means an allocation failure in
+ * the long-token fallback terminates.
+ *
+ * @param[in] first Beginning of a valid borrowed byte range [first,last).
+ * @param[in] last One-past-end pointer in the same range; no NUL terminator is required.
+ * @param[out] value Parsed destination; preserved for an empty/no-conversion input. Standard
+ *     backend preserves it on reported range errors.
+ * @return Backend end pointer and error status; caller checks ptr==last for complete-token parsing.
  */
-inline std::from_chars_result from_chars_double(const char* first,
-                                                const char* last,
+inline std::from_chars_result from_chars_double(const char* first, const char* last,
                                                 double& value) noexcept {
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     return std::from_chars(first, last, value);
@@ -83,7 +88,7 @@ inline std::from_chars_result from_chars_double(const char* first,
     // meaningful double anyway, but is still handled correctly via the heap
     // path rather than being truncated.
     const std::size_t n = static_cast<std::size_t>(last - first);
-    char        stack_buf[64];
+    char stack_buf[64];
     std::string heap_buf;
     const char* cstr = nullptr;
     if (n < sizeof(stack_buf)) {
@@ -95,8 +100,8 @@ inline std::from_chars_result from_chars_double(const char* first,
         cstr = heap_buf.c_str();
     }
 
-    char*  end = nullptr;
-    double v   = 0.0;
+    char* end = nullptr;
+    double v = 0.0;
     if (const locale_t loc = detail::c_locale(); loc != nullptr) {
         v = strtod_l(cstr, &end, loc);
     } else {

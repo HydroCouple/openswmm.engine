@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file MeshBuilder.cpp
- * @brief Implementation of mesh topology construction and geometry computation.
+ * @file      MeshBuilder.cpp
+ * @brief     Implementation of mesh topology construction and geometry computation.
  *
  * @details Mixed triangle / quadrilateral cells (kMaxCellVerts = 4 padded
  *          layout, see MeshData.hpp). Triangle arithmetic is kept
@@ -28,6 +28,10 @@
  *
  * @see MeshBuilder.hpp
  * @ingroup engine_2d
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "MeshBuilder.hpp"
@@ -47,12 +51,21 @@ namespace {
 // Hash for (min, max) vertex pair — identifies a unique edge
 struct EdgeKey {
     int v_lo, v_hi;
-    bool operator==(const EdgeKey& o) const noexcept {
-        return v_lo == o.v_lo && v_hi == o.v_hi;
-    }
+    /**
+     * @brief Compare an edge's complete orientation-independent key.
+     * @param[in] o Borrowed other key.
+     * @return True only when both ordered vertex indices match. No allocation or mutation.
+     */
+    bool operator==(const EdgeKey& o) const noexcept { return v_lo == o.v_lo && v_hi == o.v_hi; }
 };
 
 struct EdgeKeyHash {
+    /**
+     * @brief Hash the ordered vertex pair using unsigned Cantor pairing.
+     * @param[in] k Borrowed edge key; valid mesh indices are nonnegative.
+     * @return size_t hash with ordinary unsigned wraparound for arithmetic overflow; collisions
+     * are resolved by EdgeKey equality. No allocation or mutation.
+     */
     std::size_t operator()(const EdgeKey& k) const noexcept {
         // Cantor pairing
         auto a = static_cast<std::size_t>(k.v_lo);
@@ -64,23 +77,37 @@ struct EdgeKeyHash {
 // Edge record: first cell and local edge that claimed this edge
 struct EdgeRecord {
     int cell_idx;
-    int local_edge;  // 0 .. nv-1
+    int local_edge; // 0 .. nv-1
 };
 
+/**
+ * @brief Construct an orientation-independent mesh edge identity.
+ * @param[in] va First valid zero-based vertex index.
+ * @param[in] vb Second valid zero-based vertex index.
+ * @return Value-owned key ordered as min/max; no validation, allocation or mesh mutation.
+ */
 inline EdgeKey makeEdgeKey(int va, int vb) {
     return {std::min(va, vb), std::max(va, vb)};
 }
 
+/**
+ * @brief Populate one quad cell's sorted two-plane storage geometry.
+ * @param[in,out] mesh Built mixed mesh; side arrays are allocated/reset if their sizes differ
+ * from the current cell count.
+ * @param[in] t Valid zero-based cell index; triangles are an immediate no-op.
+ * @post Writes six sorted elevations in mesh length units and two planimetric areas in squared
+ * mesh units. Requires exclusive access; allocation may throw. No
+ * connectivity/positive-total-area validation occurs here.
+ */
 inline void computeQuadVfr(MeshData& mesh, int t);
 
-} // anonymous namespace
-
-
-void buildMeshTopology(MeshData& mesh) {
+/**
+ * @brief Fill cell_nbr from the cell connectivity (cell_nbr must already be sized).
+ * @param[in] report Progress callback (start %, width %, cell, count) returning true to cancel.
+ * @return False if cancelled.
+ */
+template <class Report> bool fillCellNeighbours(MeshData& mesh, const Report& report) {
     const int nt = mesh.n_triangles();
-
-    // --- 1. Build edge-neighbour adjacency ---
-
     // Map: sorted vertex pair → first cell that claimed this edge
     std::unordered_map<EdgeKey, EdgeRecord, EdgeKeyHash> edge_map;
     edge_map.reserve(static_cast<std::size_t>(nt) * kMaxCellVerts);
@@ -89,8 +116,9 @@ void buildMeshTopology(MeshData& mesh) {
     for (int t = 0; t < nt; ++t) {
         const int nv = mesh.cell_vertex_count(t);
         for (int k = 0; k < kMaxCellVerts; ++k)
-            mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, k))] =
-                (k < nv) ? -1 : -2;
+            mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, k))] = (k < nv) ? -1 : -2;
+        if (report(0, 10, t, nt))
+            return false;
     }
 
     for (int t = 0; t < nt; ++t) {
@@ -107,13 +135,51 @@ void buildMeshTopology(MeshData& mesh) {
             } else {
                 // Second cell — complete the pair
                 auto& first = it->second;
-                mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, e))] =
-                    first.cell_idx;
+                mesh.cell_nbr[static_cast<std::size_t>(MeshData::slot(t, e))] = first.cell_idx;
                 mesh.cell_nbr[static_cast<std::size_t>(
                     MeshData::slot(first.cell_idx, first.local_edge))] = t;
             }
         }
+        if (report(10, 25, t, nt))
+            return false;
     }
+    return true;
+}
+
+} // anonymous namespace
+
+void buildCellNeighbours(MeshData& mesh) {
+    mesh.size_neighbours();
+    (void)fillCellNeighbours(mesh, [](int, int, int, int) { return false; });
+}
+
+void buildMeshTopology(MeshData& mesh) {
+    (void)buildMeshTopologyCancellable(mesh, {});
+}
+
+bool buildMeshTopologyCancellable(MeshData& mesh, const std::function<bool(int)>& progress) {
+    const int nt = mesh.n_triangles();
+    const auto cancelled = [&](int value) { return progress && progress(value); };
+    const auto report = [&](int start, int width, int cell, int count) {
+        if (!progress)
+            return false;
+        const int stride = std::max(1, count / 100);
+        if ((cell + 1) % stride != 0 && cell + 1 != count)
+            return false;
+        const int pct = count > 0 ? start + width * (cell + 1) / count : start + width;
+        return cancelled(pct);
+    };
+    if (cancelled(0))
+        return false;
+
+    // The derived arrays are not allocated at parse (MeshData::resize_triangles);
+    // size them here. Every element is written below.
+    mesh.size_neighbours();
+    mesh.size_geometry();
+
+    // --- 1. Build edge-neighbour adjacency ---
+    if (!fillCellNeighbours(mesh, report))
+        return false;
 
     // --- 2. Compute cell geometry ---
 
@@ -130,8 +196,7 @@ void buildMeshTopology(MeshData& mesh) {
             double x2 = mesh.vx[v2], y2 = mesh.vy[v2], z2 = mesh.vz[v2];
 
             // Centroid
-            mesh.tri_cx[t] = (x0 + x1 + x2) / 3.0;
-            mesh.tri_cy[t] = (y0 + y1 + y2) / 3.0;
+            mesh.cell_centroid_xy(t, mesh.tri_cx[t], mesh.tri_cy[t]);
             mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
 
             // Area via cross product: 0.5 * ||(v1-v0) × (v2-v0)||
@@ -146,33 +211,31 @@ void buildMeshTopology(MeshData& mesh) {
             double x[4], y[4], z[4];
             for (int k = 0; k < 4; ++k) {
                 const int v = mesh.cell_vertex(t, k);
-                x[k] = mesh.vx[v]; y[k] = mesh.vy[v]; z[k] = mesh.vz[v];
+                x[k] = mesh.vx[v];
+                y[k] = mesh.vy[v];
+                z[k] = mesh.vz[v];
             }
-            const double a1s = 0.5 * ((x[1] - x[0]) * (y[2] - y[0]) -
-                                      (x[2] - x[0]) * (y[1] - y[0]));
-            const double a2s = 0.5 * ((x[2] - x[0]) * (y[3] - y[0]) -
-                                      (x[3] - x[0]) * (y[2] - y[0]));
+            const double a1s =
+                0.5 * ((x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]));
+            const double a2s =
+                0.5 * ((x[2] - x[0]) * (y[3] - y[0]) - (x[3] - x[0]) * (y[2] - y[0]));
             const double a1 = std::abs(a1s), a2 = std::abs(a2s);
             const double area = a1 + a2;
-            const double c1x = (x[0] + x[1] + x[2]) / 3.0;
-            const double c1y = (y[0] + y[1] + y[2]) / 3.0;
-            const double c2x = (x[0] + x[2] + x[3]) / 3.0;
-            const double c2y = (y[0] + y[2] + y[3]) / 3.0;
-            if (area > 0.0) {
-                mesh.tri_cx[t] = (a1 * c1x + a2 * c2x) / area;
-                mesh.tri_cy[t] = (a1 * c1y + a2 * c2y) / area;
-            } else {
-                mesh.tri_cx[t] = 0.25 * (x[0] + x[1] + x[2] + x[3]);
-                mesh.tri_cy[t] = 0.25 * (y[0] + y[1] + y[2] + y[3]);
-            }
+            mesh.cell_centroid_xy(t, mesh.tri_cx[t], mesh.tri_cy[t]);
             mesh.tri_cz[t] = 0.25 * (z[0] + z[1] + z[2] + z[3]);
             mesh.tri_area[t] = area;
         }
+        if (report(35, 25, t, nt))
+            return false;
     }
     // Quad VFR side data (needs the connectivity + z only; sized on first quad).
     mesh.quad_vfr_z.clear();
     mesh.quad_vfr_a.clear();
-    for (int t = 0; t < nt; ++t) computeQuadVfr(mesh, t);
+    for (int t = 0; t < nt; ++t) {
+        computeQuadVfr(mesh, t);
+        if (report(60, 5, t, nt))
+            return false;
+    }
 
     // --- 3. Compute edge geometry ---
 
@@ -185,22 +248,19 @@ void buildMeshTopology(MeshData& mesh) {
             int idx = MeshData::slot(t, e);
             if (e >= nv) {
                 // Padding slot: zero geometry, so a stray read is inert.
-                mesh.edge_mx[idx] = mesh.edge_my[idx] = mesh.edge_mz[idx] = 0.0;
                 mesh.edge_length[idx] = 0.0;
                 mesh.edge_nx[idx] = mesh.edge_ny[idx] = 0.0;
-                mesh.edge_dist_c[idx] = 0.0;
                 continue;
             }
             int va, vb;
             mesh.cell_edge_vertices(t, e, va, vb);
 
-            double ax = mesh.vx[va], ay = mesh.vy[va], az = mesh.vz[va];
-            double bx = mesh.vx[vb], by = mesh.vy[vb], bz = mesh.vz[vb];
+            double ax = mesh.vx[va], ay = mesh.vy[va];
+            double bx = mesh.vx[vb], by = mesh.vy[vb];
 
-            // Edge midpoint
-            mesh.edge_mx[idx] = 0.5 * (ax + bx);
-            mesh.edge_my[idx] = 0.5 * (ay + by);
-            mesh.edge_mz[idx] = 0.5 * (az + bz);
+            // Edge midpoint (MeshData::edge_mx / edge_my give the same values on demand)
+            const double mid_x = 0.5 * (ax + bx);
+            const double mid_y = 0.5 * (ay + by);
 
             // Edge length (planimetric)
             double dx = bx - ax;
@@ -213,8 +273,8 @@ void buildMeshTopology(MeshData& mesh) {
             double ny = -dx;
 
             // Ensure outward: dot product with (midpoint - centroid) should be positive
-            double to_mid_x = mesh.edge_mx[idx] - cx;
-            double to_mid_y = mesh.edge_my[idx] - cy;
+            double to_mid_x = mid_x - cx;
+            double to_mid_y = mid_y - cy;
             if (nx * to_mid_x + ny * to_mid_y < 0.0) {
                 nx = -nx;
                 ny = -ny;
@@ -229,22 +289,39 @@ void buildMeshTopology(MeshData& mesh) {
                 mesh.edge_nx[idx] = 0.0;
                 mesh.edge_ny[idx] = 0.0;
             }
-            // Centroid → edge normal distance (the ghost-cell arm).
-            mesh.edge_dist_c[idx] =
-                to_mid_x * mesh.edge_nx[idx] + to_mid_y * mesh.edge_ny[idx];
+            // The centroid → edge normal distance (the ghost-cell arm) is
+            // MeshData::edge_dist_c(): to_mid · n over these same values.
         }
+        if (report(65, 35, t, nt))
+            return false;
     }
+    return !cancelled(100);
 }
 
-
 std::string validateMesh(const MeshData& mesh) {
+    bool cancelled = false;
+    return validateMeshCancellable(mesh, {}, cancelled);
+}
+
+std::string validateMeshCancellable(const MeshData& mesh, const std::function<bool(int)>& progress,
+                                    bool& cancelled) {
+    cancelled = false;
     int nv_total = mesh.n_vertices();
     int nt = mesh.n_triangles();
 
-    if (nv_total < 3) return "Mesh must have at least 3 vertices";
-    if (nt < 1) return "Mesh must have at least 1 cell";
+    if (nv_total < 3)
+        return "Mesh must have at least 3 vertices";
+    if (nt < 1)
+        return "Mesh must have at least 1 cell";
 
     for (int t = 0; t < nt; ++t) {
+        if (progress) {
+            const int stride = std::max(1, nt / 100);
+            if ((t % stride == 0 || t + 1 == nt) && progress(100 * t / nt)) {
+                cancelled = true;
+                return {};
+            }
+        }
         const int nv = mesh.cell_vertex_count(t);
         const char* kind = (nv == 4) ? "Quad " : "Triangle ";
         if (nv != 3 && nv != 4) {
@@ -287,9 +364,8 @@ std::string validateMesh(const MeshData& mesh) {
                 const int s = (cr > 0.0) ? 1 : (cr < 0.0) ? -1 : 0;
                 if (s == 0 || (sign != 0 && s != sign)) {
                     std::ostringstream oss;
-                    oss << "Quad " << t << " (vertices " << v[0] << " " << v[1]
-                        << " " << v[2] << " " << v[3]
-                        << ") is not a convex quadrilateral";
+                    oss << "Quad " << t << " (vertices " << v[0] << " " << v[1] << " " << v[2]
+                        << " " << v[3] << ") is not a convex quadrilateral";
                     return oss.str();
                 }
                 sign = s;
@@ -303,6 +379,10 @@ std::string validateMesh(const MeshData& mesh) {
         }
     }
 
+    if (progress && progress(100)) {
+        cancelled = true;
+        return {};
+    }
     return {};
 }
 
@@ -310,14 +390,19 @@ namespace {
 // Quad VFR side data for cell t (no-op for triangles). Allocates the SoA on
 // first use so all-triangle meshes carry nothing.
 inline void computeQuadVfr(MeshData& mesh, int t) {
-    if (mesh.cell_vertex_count(t) != 4) return;
+    if (mesh.cell_vertex_count(t) != 4)
+        return;
     const auto nt = static_cast<std::size_t>(mesh.n_triangles());
-    if (mesh.quad_vfr_z.size() != nt * kQuadVfrZ) mesh.quad_vfr_z.assign(nt * kQuadVfrZ, 0.0);
-    if (mesh.quad_vfr_a.size() != nt * 2)         mesh.quad_vfr_a.assign(nt * 2, 0.0);
+    if (mesh.quad_vfr_z.size() != nt * kQuadVfrZ)
+        mesh.quad_vfr_z.assign(nt * kQuadVfrZ, 0.0);
+    if (mesh.quad_vfr_a.size() != nt * 2)
+        mesh.quad_vfr_a.assign(nt * 2, 0.0);
     double x[4], y[4], z[4];
     for (int k = 0; k < 4; ++k) {
         const int v = mesh.cell_vertex(t, k);
-        x[k] = mesh.vx[v]; y[k] = mesh.vy[v]; z[k] = mesh.vz[v];
+        x[k] = mesh.vx[v];
+        y[k] = mesh.vy[v];
+        z[k] = mesh.vz[v];
     }
     double A1 = 0.0, A2 = 0.0;
     quadVfrPrecompute(x, y, z, &mesh.quad_vfr_z[static_cast<std::size_t>(t) * kQuadVfrZ], A1, A2);
@@ -327,6 +412,14 @@ inline void computeQuadVfr(MeshData& mesh, int t) {
 
 // Z-dependent geometry of one cell: mean bed and edge-midpoint beds. Triangle
 // expressions kept identical to the triangle-only builder (bit-identity).
+/**
+ * @brief Refresh one cell's bed centroid, edge beds and quad VFR data.
+ * @param[in,out] mesh Built mesh whose vertex elevations already contain the edits.
+ * @param[in] t Valid zero-based cell index with three or four vertices.
+ * @post Writes mesh-length bed elevations; XY-derived geometry and hydraulic state remain
+ * unchanged. Quad VFR arrays may allocate. No bounds validation; caller supplies exclusive mesh
+ * access.
+ */
 inline void recomputeCellZ(MeshData& mesh, int t) {
     const int nv = mesh.cell_vertex_count(t);
     if (nv == 3) {
@@ -339,38 +432,36 @@ inline void recomputeCellZ(MeshData& mesh, int t) {
         const double z2 = mesh.vz[v2];
 
         mesh.tri_cz[t] = (z0 + z1 + z2) / 3.0;
-
-        // Edge e (0..2) is opposite vertex e; its endpoints are the other two
-        // vertices of the triangle (same convention as cell_edge_vertices).
-        mesh.edge_mz[MeshData::slot(t, 0)] = 0.5 * (z1 + z2);
-        mesh.edge_mz[MeshData::slot(t, 1)] = 0.5 * (z2 + z0);
-        mesh.edge_mz[MeshData::slot(t, 2)] = 0.5 * (z0 + z1);
         return;
     }
     double zsum = 0.0;
-    for (int k = 0; k < nv; ++k) zsum += mesh.vz[mesh.cell_vertex(t, k)];
+    for (int k = 0; k < nv; ++k)
+        zsum += mesh.vz[mesh.cell_vertex(t, k)];
     mesh.tri_cz[t] = zsum / static_cast<double>(nv);
-    for (int e = 0; e < nv; ++e) {
-        int va, vb;
-        mesh.cell_edge_vertices(t, e, va, vb);
-        mesh.edge_mz[MeshData::slot(t, e)] = 0.5 * (mesh.vz[va] + mesh.vz[vb]);
-    }
     computeQuadVfr(mesh, t);
 }
 } // namespace
 
 void recomputeVertexZDependents(MeshData& mesh, int vidx) {
+    // Before buildMeshTopology there are no derived Z arrays to update; the
+    // build computes them from vz.
+    if (!mesh.geometry_built())
+        return;
     const int nt = mesh.n_triangles();
     for (int t = 0; t < nt; ++t) {
         const int nv = mesh.cell_vertex_count(t);
         bool hit = false;
-        for (int k = 0; k < nv && !hit; ++k) hit = (mesh.cell_vertex(t, k) == vidx);
-        if (!hit) continue;
+        for (int k = 0; k < nv && !hit; ++k)
+            hit = (mesh.cell_vertex(t, k) == vidx);
+        if (!hit)
+            continue;
         recomputeCellZ(mesh, t);
     }
 }
 
 void recomputeAllZDependents(MeshData& mesh) {
+    if (!mesh.geometry_built()) // as recomputeVertexZDependents
+        return;
     const int nt = mesh.n_triangles();
     for (int t = 0; t < nt; ++t) {
         // Identical body to recomputeVertexZDependents above, minus the

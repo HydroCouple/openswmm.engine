@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file parity_probe.cpp
- * @brief Emits the three artifacts the load-optimization parity gate compares.
+ * @file      parity_probe.cpp
+ * @brief     Emits the three artifacts the load-optimization parity gate compares.
  *
  * @details The plan's gate (Phase 0.4) diffs, for each model, the report minus
  *          its timing lines, the binary output byte-for-byte, and the
@@ -32,8 +32,9 @@
  *          state. That is what makes it a parse/resolve parity check, which is
  *          exactly the surface Phases 1 and 2 disturb.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
- * @license  Apache-2.0
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @license   Apache-2.0
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
  */
 
 #include <cstdio>
@@ -47,38 +48,61 @@ namespace fs = std::filesystem;
 
 namespace {
 
+/**
+ * @brief Print a failed parity-probe stage to stderr and choose a nonzero exit code.
+ *
+ * @param[in] what Non-null diagnostic stage name.
+ * @param[in] rc Stage result; a zero is converted to one for failure reporting.
+ * @return rc when nonzero, otherwise one.
+ */
 int fail(const char* what, int rc) {
     std::fprintf(stderr, "parity_probe: %s failed (rc=%d)\n", what, rc);
     return rc != 0 ? rc : 1;
 }
 
-}  // namespace
+} // namespace
 
+/**
+ * @brief Write parsed-model, completed report and binary-output parity artifacts.
+ *
+ * Creates the directory using an unchecked error_code, writes back immediately after open before
+ * initialization, then saves/steps/finalizes results. A 100-million-step guard can stop an
+ * unfinished run without a distinct guard error. Owns/destroys its handle on each explicit path;
+ * close failures are ignored. Matching artifacts may be overwritten; no comparison is performed
+ * here.
+ *
+ * @param[in] argc Process argument count; requires model path and output directory.
+ * @param[in] argv Borrowed model, output-directory and optional stem strings; default stem comes
+ *     from the input filename.
+ * @return Two for missing arguments, stage error code (or one) on rejected
+ *     allocation/open/write/initialize/start/step/end/report, otherwise zero.
+ */
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr,
-                     "usage: parity_probe <model.inp> <out-dir> [stem]\n");
+        std::fprintf(stderr, "usage: parity_probe <model.inp> <out-dir> [stem]\n");
         return 2;
     }
 
     const std::string inp = argv[1];
-    const fs::path    dir = argv[2];
-    const std::string stem =
-        (argc > 3) ? argv[3] : fs::path(inp).stem().string();
+    const fs::path dir = argv[2];
+    const std::string stem = (argc > 3) ? argv[3] : fs::path(inp).stem().string();
 
     std::error_code ec;
     fs::create_directories(dir, ec);
 
     const std::string rpt = (dir / (stem + ".rpt")).string();
     const std::string out = (dir / (stem + ".out")).string();
-    const std::string wb  = (dir / (stem + ".writeback.inp")).string();
+    const std::string wb = (dir / (stem + ".writeback.inp")).string();
 
     SWMM_Engine eng = swmm_engine_create();
-    if (eng == nullptr) return fail("create", 1);
+    if (eng == nullptr)
+        return fail("create", 1);
 
-    int rc = swmm_engine_open(eng, inp.c_str(), rpt.c_str(), out.c_str(),
-                              nullptr);
-    if (rc != SWMM_OK) { swmm_engine_destroy(eng); return fail("open", rc); }
+    int rc = swmm_engine_open(eng, inp.c_str(), rpt.c_str(), out.c_str(), nullptr);
+    if (rc != SWMM_OK) {
+        swmm_engine_destroy(eng);
+        return fail("open", rc);
+    }
 
     // Write-back before initialize(): the parse/resolve product, not run state.
     rc = swmm_model_write(eng, wb.c_str());
@@ -104,7 +128,7 @@ int main(int argc, char** argv) {
 
     // Run to completion so the .out is a full result set, not a header.
     double elapsed_days = 0.0;
-    long   guard        = 0;
+    long guard = 0;
     do {
         rc = swmm_engine_step(eng, &elapsed_days);
         if (rc != SWMM_OK) {
@@ -115,10 +139,12 @@ int main(int argc, char** argv) {
     } while (elapsed_days > 0.0 && ++guard < 100000000L);
 
     rc = swmm_engine_end(eng);
-    if (rc == SWMM_OK) rc = swmm_engine_report(eng);
+    if (rc == SWMM_OK)
+        rc = swmm_engine_report(eng);
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
-    if (rc != SWMM_OK) return fail("end/report", rc);
+    if (rc != SWMM_OK)
+        return fail("end/report", rc);
 
     std::printf("parity_probe: wrote %s{.rpt,.out,.writeback.inp}\n",
                 (dir / stem).string().c_str());

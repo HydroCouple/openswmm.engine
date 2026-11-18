@@ -27,6 +27,7 @@ import argparse
 import io
 import tokenize
 import json
+import hashlib
 import re
 import sys
 from collections import defaultdict
@@ -42,7 +43,27 @@ HEADER_EXCLUDE = {
     "openswmm_engine_impl.h",
     "openswmm_engine_internal.h",
     "openswmm_engine_export.h",
+    "openswmm_abi_tag.h",
 }
+
+
+def public_api_fingerprint(headers: Path = HEADERS) -> str:
+    """Hash the public header inventory exactly as cmake/EngineAbi.cmake does.
+
+    Header contents are intentionally conservative: changes to declarations,
+    enums, structures, macros or comments all invalidate the previous identity.
+    Generated ABI/export headers and private implementation headers are excluded.
+    """
+    paths = [path for path in headers.glob("*.h") if path.name not in HEADER_EXCLUDE]
+    sdk = headers.parent / "plugin_sdk"
+    paths.extend(path for path in sdk.rglob("*") if path.suffix in {".h", ".hpp"})
+    inventory = "".join(
+        f"{path.relative_to(headers.parents[1]).as_posix()}\n{hashlib.sha256(path.read_bytes()).hexdigest()}\n"
+        for path in sorted(paths)
+    )
+    if not inventory:
+        raise ValueError(f"No public engine headers in {headers}")
+    return hashlib.sha256(inventory.encode("utf-8")).hexdigest()
 
 # C function: anything tagged SWMM_ENGINE_API, function name is the identifier
 # immediately preceding the opening paren (declaration may span lines).
@@ -84,11 +105,12 @@ def collect_c_enums() -> dict[str, str]:
 
 # These have Python-native replacements rather than missing wrappers.
 KNOWN_UNBOUND = frozenset({
-    "swmm_get_last_error",      # typed EngineError exceptions
-    "swmm_get_last_error_msg",  # typed EngineError exceptions
     "swmm_get_current_time",    # Solver.current_datetime
     "swmm_coupling_set_source", # scalar C convenience; Python uses identical atomic set_sources
     "swmm_coupling_advance_to", # C alias of swmm_engine_advance_to used by Solver.advance_to
+    "swmm_lid_get_pavement",    # LIDs.get_pavement reads all seven values via the _ex form
+    "swmm_passive_exchange_leg_v1",     # PassiveExchange.leg reads the v2 record (adds stage)
+    "swmm_passive_exchange_attempt_v1", # PassiveExchange.attempt reads the v2 record (adds stage)
 })
 
 
@@ -205,6 +227,9 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="emit JSON")
     ap.add_argument("--out", help="write JSON report to this path instead of stdout")
     ap.add_argument("--strict", action="store_true", help="exit 1 if gaps found")
+    ap.add_argument("--coverage", action="store_true", help="include per-header counts and C-to-Python member mapping in --json")
+    ap.add_argument("--abi-manifest", type=Path,
+                    help="also verify an engine-abi.json against the current public headers; stale ABI metadata fails the audit")
     args = ap.parse_args()
 
     c_funcs = collect_c_functions()
@@ -239,6 +264,28 @@ def main() -> int:
         "declared_but_unsurfaced_in_pyx": declared_unsurfaced,
         "enums_missing_from_python": dict(sorted(missing_enums.items())),
     }
+    abi_matches = True
+    if args.abi_manifest:
+        published = json.loads(args.abi_manifest.read_text(encoding="utf-8"))
+        current = public_api_fingerprint()
+        abi_matches = published.get("apiHeadersSha256") == current
+        report["abi"] = {"manifest": str(args.abi_manifest), "tag": published.get("tag"),
+                         "apiHeadersSha256": current, "matches": abi_matches}
+    if args.coverage:
+        graph = pyx_callgraph()
+        report['function_bindings'] = {
+            name: {'header': header,
+                   'status': 'intentional' if name in KNOWN_UNBOUND else 'bound' if name in pyx else 'missing',
+                   'python_members': ['.'.join(part for part in member if part)
+                                      for member in sorted(graph.get(name, ()))]}
+            for name, header in sorted(c_funcs.items())
+        }
+        report['header_coverage'] = {
+            header: {'functions': sum(h == header for h in c_funcs.values()),
+                     'bound': sum(h == header and name in pyx for name, h in c_funcs.items()),
+                     'intentional': sum(h == header and name in KNOWN_UNBOUND for name, h in c_funcs.items())}
+            for header in sorted(set(c_funcs.values()))
+        }
 
     if args.out:
         lines = []
@@ -291,7 +338,7 @@ def main() -> int:
             print(f"      {fn}")
 
     gaps = bool(unbound or missing_enums)
-    if args.strict and gaps:
+    if not abi_matches or (args.strict and gaps):
         return 1
     return 0
 

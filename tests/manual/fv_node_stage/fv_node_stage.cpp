@@ -39,6 +39,15 @@
 //   ./fv_node_stage <model.inp> <model.out>
 // where <model.out> is a completed FV run of that same .inp.
 
+/**
+ * @file      fv_node_stage.cpp
+ * @brief     Tests for fv node stage.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
+ */
+
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_nodes.h>
@@ -54,41 +63,73 @@
 namespace {
 
 enum NodeClass {
-    CLS_PASSTHRU = 0,   // degree-2 clean junction -> gets the publish-side fix
-    CLS_ALG_DRYLAT,     // storage-less junction, NO lateral inflow, no fix
-    CLS_ALG_WETLAT,     // storage-less junction WITH lateral inflow, no fix
-    CLS_BUCKET_ZEROFACE,// junction with no conduit faces (pump-only wet well)
-    CLS_STORAGE,        // storage unit
+    CLS_PASSTHRU = 0,    // degree-2 clean junction -> gets the publish-side fix
+    CLS_ALG_DRYLAT,      // storage-less junction, NO lateral inflow, no fix
+    CLS_ALG_WETLAT,      // storage-less junction WITH lateral inflow, no fix
+    CLS_BUCKET_ZEROFACE, // junction with no conduit faces (pump-only wet well)
+    CLS_STORAGE,         // storage unit
     CLS_OUTFALL,
     CLS_DIVIDER,
     CLS_COUNT
 };
 
 const char* kClassName[CLS_COUNT] = {
-    "passthru (fix applies)", "algebraic, no lat inflow", "algebraic, HAS lat inflow",
+    "passthru (fix applies)",
+    "algebraic, no lat inflow",
+    "algebraic, HAS lat inflow",
     "junction, 0 conduits",
-    "storage", "outfall", "divider",
+    "storage",
+    "outfall",
+    "divider",
 };
 
-struct Percentiles { double p50, p90, p99, max; };
+struct Percentiles {
+    double p50, p90, p99, max;
+};
 
-Percentiles pct(std::vector<double>& v)
-{
+/**
+ * @brief Sort a sample vector and return rounded-index empirical percentiles.
+ *
+ * Selects index round(f*(size-1)) rather than interpolating. Allocates no separate sample copy.
+ *
+ * @param[in,out] v Mutable sample vector sorted ascending in place; all entries must be finite for
+ *     ordered statistics.
+ * @return p50/p90/p99/max in the sample units, or four zeros when empty.
+ */
+Percentiles pct(std::vector<double>& v) {
     Percentiles p{0, 0, 0, 0};
-    if (v.empty()) return p;
+    if (v.empty())
+        return p;
     std::sort(v.begin(), v.end());
     auto at = [&](double f) {
         const auto i = static_cast<std::size_t>(f * double(v.size() - 1) + 0.5);
         return v[std::min(i, v.size() - 1)];
     };
-    p.p50 = at(0.50); p.p90 = at(0.90); p.p99 = at(0.99); p.max = v.back();
+    p.p50 = at(0.50);
+    p.p90 = at(0.90);
+    p.p99 = at(0.99);
+    p.max = v.back();
     return p;
 }
 
 } // namespace
 
-int main(int argc, char** argv)
-{
+/**
+ * @brief Compare published node heads with wet adjacent conduit surfaces by topology class.
+ *
+ * Opens the model into .probe.rpt/.probe.out artifacts to derive adjacency, destroys the model
+ * handle, removes those artifacts, then reads the supplied output. Prints class counts and
+ * percentiles of node head minus highest wet adjacent link surface. Geometry is read in model API
+ * units; caller must use a matching model/output unit system. Pass-through topology eligibility is
+ * only an upper bound on runtime classification; this does not inspect internal carry state.
+ *
+ * @param[in] argc Process argument count; requires model and completed-output paths.
+ * @param[in] argv Borrowed model input and corresponding FV binary output; additional arguments are
+ *     ignored.
+ * @return Two for missing arguments, one for engine/output open or topology-count mismatch,
+ *     otherwise zero even if individual result-period reads are skipped.
+ */
+int main(int argc, char** argv) {
     if (argc < 3) {
         std::fprintf(stderr,
                      "usage: %s <model.inp> <model.out>\n"
@@ -101,11 +142,13 @@ int main(int argc, char** argv)
 
     // ---- topology, from a throwaway open so the real .out is untouched -----
     SWMM_Engine eng = swmm_engine_create();
-    if (!eng) { std::fprintf(stderr, "engine_create failed\n"); return 1; }
+    if (!eng) {
+        std::fprintf(stderr, "engine_create failed\n");
+        return 1;
+    }
     const std::string junkRpt = out + ".probe.rpt";
     const std::string junkOut = out + ".probe.out";
-    int err = swmm_engine_open(eng, inp.c_str(), junkRpt.c_str(),
-                               junkOut.c_str(), nullptr);
+    int err = swmm_engine_open(eng, inp.c_str(), junkRpt.c_str(), junkOut.c_str(), nullptr);
     if (err != SWMM_OK) {
         std::fprintf(stderr, "engine_open failed: %d\n", err);
         swmm_engine_destroy(eng);
@@ -115,13 +158,13 @@ int main(int argc, char** argv)
     const int nN = swmm_node_count(eng);
     const int nL = swmm_link_count(eng);
 
-    std::vector<int>    conduitDeg(nN, 0);   // incident CONDUIT faces
-    std::vector<int>    structDeg(nN, 0);    // incident pump/orifice/weir/outlet
-    std::vector<int>    dirty(nN, 0);        // a culvert or flap gate on a face
+    std::vector<int> conduitDeg(nN, 0); // incident CONDUIT faces
+    std::vector<int> structDeg(nN, 0);  // incident pump/orifice/weir/outlet
+    std::vector<int> dirty(nN, 0);      // a culvert or flap gate on a face
     std::vector<double> invert(nN, 0.0);
-    std::vector<int>    ntype(nN, 0);
+    std::vector<int> ntype(nN, 0);
     // Adjacent (link, end) pairs, for the stage comparison below.
-    std::vector<std::vector<std::pair<int, double>>> adj(nN);  // (link, invert@end)
+    std::vector<std::vector<std::pair<int, double>>> adj(nN); // (link, invert@end)
 
     for (int n = 0; n < nN; ++n) {
         swmm_node_get_invert_elev(eng, n, &invert[n]);
@@ -132,7 +175,8 @@ int main(int argc, char** argv)
         swmm_link_get_type(eng, l, &lt);
         swmm_link_get_from_node(eng, l, &n1);
         swmm_link_get_to_node(eng, l, &n2);
-        if (n1 < 0 || n2 < 0) continue;
+        if (n1 < 0 || n2 < 0)
+            continue;
 
         if (lt == SWMM_LINK_CONDUIT) {
             double offUp = 0.0, offDn = 0.0;
@@ -140,12 +184,17 @@ int main(int argc, char** argv)
             swmm_link_get_offset_dn(eng, l, &offDn);
             swmm_link_get_culvert_code(eng, l, &culv);
             swmm_link_get_flap_gate(eng, l, &flap);
-            ++conduitDeg[n1]; ++conduitDeg[n2];
-            if (culv != 0 || flap != 0) { dirty[n1] = 1; dirty[n2] = 1; }
+            ++conduitDeg[n1];
+            ++conduitDeg[n2];
+            if (culv != 0 || flap != 0) {
+                dirty[n1] = 1;
+                dirty[n2] = 1;
+            }
             adj[n1].emplace_back(l, invert[n1] + offUp);
             adj[n2].emplace_back(l, invert[n2] + offDn);
         } else {
-            ++structDeg[n1]; ++structDeg[n2];
+            ++structDeg[n1];
+            ++structDeg[n2];
         }
     }
 
@@ -156,15 +205,24 @@ int main(int argc, char** argv)
     std::vector<int> cls(nN, CLS_ALG_DRYLAT);
     for (int n = 0; n < nN; ++n) {
         switch (ntype[n]) {
-        case SWMM_NODE_STORAGE: cls[n] = CLS_STORAGE; continue;
-        case SWMM_NODE_OUTFALL: cls[n] = CLS_OUTFALL; continue;
-        case SWMM_NODE_DIVIDER: cls[n] = CLS_DIVIDER; continue;
-        default: break;
+        case SWMM_NODE_STORAGE:
+            cls[n] = CLS_STORAGE;
+            continue;
+        case SWMM_NODE_OUTFALL:
+            cls[n] = CLS_OUTFALL;
+            continue;
+        case SWMM_NODE_DIVIDER:
+            cls[n] = CLS_DIVIDER;
+            continue;
+        default:
+            break;
         }
-        if (conduitDeg[n] == 0)                cls[n] = CLS_BUCKET_ZEROFACE;
+        if (conduitDeg[n] == 0)
+            cls[n] = CLS_BUCKET_ZEROFACE;
         else if (conduitDeg[n] == 2 && !dirty[n] && structDeg[n] == 0)
-                                               cls[n] = CLS_PASSTHRU;
-        else                                   cls[n] = CLS_ALG_DRYLAT;
+            cls[n] = CLS_PASSTHRU;
+        else
+            cls[n] = CLS_ALG_DRYLAT;
     }
     swmm_engine_close(eng);
     swmm_engine_destroy(eng);
@@ -173,14 +231,18 @@ int main(int argc, char** argv)
 
     // ---- published stages -------------------------------------------------
     SWMM_Output oh = swmm_output_open(out.c_str());
-    if (!oh) { std::fprintf(stderr, "cannot open %s\n", out.c_str()); return 1; }
+    if (!oh) {
+        std::fprintf(stderr, "cannot open %s\n", out.c_str());
+        return 1;
+    }
     const int nPer = swmm_output_get_period_count(oh);
-    const int nNo  = swmm_output_get_node_count(oh);
-    const int nLo  = swmm_output_get_link_count(oh);
+    const int nNo = swmm_output_get_node_count(oh);
+    const int nLo = swmm_output_get_link_count(oh);
     if (nNo != nN || nLo != nL) {
         std::fprintf(stderr,
                      "MISMATCH: .out has %d nodes / %d links, model has %d / %d "
-                     "-- is this .out from this .inp?\n", nNo, nLo, nN, nL);
+                     "-- is this .out from this .inp?\n",
+                     nNo, nLo, nN, nL);
         swmm_output_close(oh);
         return 1;
     }
@@ -189,14 +251,15 @@ int main(int argc, char** argv)
     {
         std::vector<float> lat(static_cast<std::size_t>(nN));
         for (int t = 0; t < nPer; ++t) {
-            if (swmm_output_get_node_result(oh, t, SWMM_OUT_NODE_LATERAL_INFLOW,
-                                            lat.data()) != 0) continue;
+            if (swmm_output_get_node_result(oh, t, SWMM_OUT_NODE_LATERAL_INFLOW, lat.data()) != 0)
+                continue;
             for (int n = 0; n < nN; ++n)
                 if (std::fabs(double(lat[static_cast<std::size_t>(n)])) > 1.0e-6)
                     hasLat[n] = 1;
         }
         for (int n = 0; n < nN; ++n)
-            if (cls[n] == CLS_ALG_DRYLAT && hasLat[n]) cls[n] = CLS_ALG_WETLAT;
+            if (cls[n] == CLS_ALG_DRYLAT && hasLat[n])
+                cls[n] = CLS_ALG_WETLAT;
     }
 
     std::vector<std::vector<double>> stepByCls(CLS_COUNT);
@@ -207,22 +270,25 @@ int main(int argc, char** argv)
     long wetSamples = 0;
 
     for (int t = 0; t < nPer; ++t) {
-        if (swmm_output_get_node_result(oh, t, SWMM_OUT_NODE_HEAD,
-                                        nodeHead.data()) != 0) continue;
-        if (swmm_output_get_link_result(oh, t, SWMM_OUT_LINK_DEPTH,
-                                        linkDepth.data()) != 0) continue;
+        if (swmm_output_get_node_result(oh, t, SWMM_OUT_NODE_HEAD, nodeHead.data()) != 0)
+            continue;
+        if (swmm_output_get_link_result(oh, t, SWMM_OUT_LINK_DEPTH, linkDepth.data()) != 0)
+            continue;
         for (int n = 0; n < nN; ++n) {
-            if (adj[n].empty()) continue;
+            if (adj[n].empty())
+                continue;
             // Highest adjacent conduit water surface at this node's end.
             double best = -1.0e30;
             bool wet = false;
             for (const auto& [l, invAtEnd] : adj[n]) {
                 const double d = double(linkDepth[static_cast<std::size_t>(l)]);
-                if (!(d > 1.0e-4)) continue;      // dry conduit: router FUDGE
+                if (!(d > 1.0e-4))
+                    continue; // dry conduit: router FUDGE
                 best = std::max(best, invAtEnd + d);
                 wet = true;
             }
-            if (!wet) continue;
+            if (!wet)
+                continue;
             ++wetSamples;
             // POSITIVE = node stage sits ABOVE the adjacent conduit surface,
             // which is the step the user sees in the profile.
@@ -234,16 +300,14 @@ int main(int argc, char** argv)
 
     // ---- report -----------------------------------------------------------
     std::printf("model    : %s\n", inp.c_str());
-    std::printf("periods  : %d   nodes: %d   links: %d   wet samples: %ld\n\n",
-                nPer, nN, nL, wetSamples);
+    std::printf("periods  : %d   nodes: %d   links: %d   wet samples: %ld\n\n", nPer, nN, nL,
+                wetSamples);
 
-    std::printf("%-24s %8s %8s   node-stage minus highest adjacent conduit surface\n",
-                "node class", "count", "% nodes");
-    std::printf("%-24s %8s %8s   %9s %9s %9s %9s\n",
-                "", "", "", "p50", "p90", "p99", "max");
-    std::printf("%-24s %8s %8s   %9s %9s %9s %9s\n",
-                "------------------------", "--------", "--------",
-                "---------", "---------", "---------", "---------");
+    std::printf("%-24s %8s %8s   node-stage minus highest adjacent conduit surface\n", "node class",
+                "count", "% nodes");
+    std::printf("%-24s %8s %8s   %9s %9s %9s %9s\n", "", "", "", "p50", "p90", "p99", "max");
+    std::printf("%-24s %8s %8s   %9s %9s %9s %9s\n", "------------------------", "--------",
+                "--------", "---------", "---------", "---------", "---------");
 
     int total = 0;
     for (int c = 0; c < CLS_COUNT; ++c)
@@ -251,21 +315,18 @@ int main(int argc, char** argv)
 
     for (int c = 0; c < CLS_COUNT; ++c) {
         const int cnt = static_cast<int>(std::count(cls.begin(), cls.end(), c));
-        if (cnt == 0) continue;
+        if (cnt == 0)
+            continue;
         Percentiles p = pct(stepByCls[static_cast<std::size_t>(c)]);
-        std::printf("%-24s %8d %7.1f%%   %9.4f %9.4f %9.4f %9.4f\n",
-                    kClassName[c], cnt,
-                    100.0 * double(cnt) / double(total ? total : 1),
-                    p.p50, p.p90, p.p99, p.max);
+        std::printf("%-24s %8d %7.1f%%   %9.4f %9.4f %9.4f %9.4f\n", kClassName[c], cnt,
+                    100.0 * double(cnt) / double(total ? total : 1), p.p50, p.p90, p.p99, p.max);
     }
 
-    const int nPass = static_cast<int>(std::count(cls.begin(), cls.end(),
-                                                  int(CLS_PASSTHRU)));
+    const int nPass = static_cast<int>(std::count(cls.begin(), cls.end(), int(CLS_PASSTHRU)));
     std::printf("\nCOVERAGE: %d of %d nodes (%.1f%%) are pass-through and receive\n"
                 "the face-consistent published stage. The remaining %d publish the\n"
                 "solver's raw head (Routing.cpp:1254).\n",
-                nPass, nN, 100.0 * double(nPass) / double(nN ? nN : 1),
-                nN - nPass);
+                nPass, nN, 100.0 * double(nPass) / double(nN ? nN : 1), nN - nPass);
     std::printf("\nNOTE: eligibility here is an UPPER BOUND -- lateral inflow and\n"
                 "carry can revoke pass-through at runtime (ExplicitFvSolver.cpp:1818).\n");
     return 0;

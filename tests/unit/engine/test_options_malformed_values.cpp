@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_options_malformed_values.cpp
- * @brief A malformed option value returns an error — it does not kill the
+ * @file      test_options_malformed_values.cpp
+ * @brief     A malformed option value returns an error — it does not kill the
  *        process.
  *
  * @details Found while validating Y0 and recorded there as pre-existing and
@@ -43,9 +43,9 @@
  *          crashed test binary is the observation — ctest reports the
  *          death, and that is the intended signal.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -56,6 +56,16 @@
 
 namespace {
 
+/**
+ * @brief Read a transport option into owned text.
+ *
+ * Does not assert, parse, mutate or retain engine ownership; buffer capacity can itself cause
+ * refusal.
+ *
+ * @param[in] e Live engine handle, borrowed.
+ * @param[in] key Non-null option keyword.
+ * @return Copied value from a 256-byte buffer, or literal &lt;ERR&gt; on getter refusal.
+ */
 std::string get_opt(SWMM_Engine e, const char* key) {
     char buf[256] = {0};
     if (swmm_options_get(e, key, buf, static_cast<int>(sizeof(buf))) != SWMM_OK)
@@ -68,17 +78,35 @@ std::string get_opt(SWMM_Engine e, const char* key) {
 /// adding a key and add a row here too.
 const char* const kNumericKeys[] = {
     // Timesteps / dates
-    "ROUTING_STEP", "MINIMUM_STEP", "DRY_DAYS", "DRY_STEP", "WET_STEP",
-    "REPORT_STEP", "RULE_STEP", "LENGTHENING_STEP",
+    "ROUTING_STEP",
+    "MINIMUM_STEP",
+    "DRY_DAYS",
+    "DRY_STEP",
+    "WET_STEP",
+    "REPORT_STEP",
+    "RULE_STEP",
+    "LENGTHENING_STEP",
     // Solver
-    "MAX_TRIALS", "HEAD_TOLERANCE", "SYS_FLOW_TOL", "LAT_FLOW_TOL",
-    "VARIABLE_STEP", "THREADS",
+    "MAX_TRIALS",
+    "HEAD_TOLERANCE",
+    "SYS_FLOW_TOL",
+    "LAT_FLOW_TOL",
+    "VARIABLE_STEP",
+    "THREADS",
     // Finite volume
-    "FV_CELL_LENGTH", "FV_MIN_CELLS", "FV_CFL", "FV_ORDER",
-    "FV_SLOT_CELERITY", "FV_DISPERSION",
-    "FV_MIN_PARALLEL_CELLS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
+    "FV_CELL_LENGTH",
+    "FV_MIN_CELLS",
+    "FV_CFL",
+    "FV_ORDER",
+    "FV_SLOT_CELERITY",
+    "FV_DISPERSION",
+    "FV_MIN_PARALLEL_CELLS",
+    "FV_LTS_MAX_TIERS",
+    "FV_CFL_CENSUS_INTERVAL",
     // Quality & transport (Y0)
-    "QUALITY_STEP", "MAX_SEGMENTS_PER_LINK", "RWPT_SEED",
+    "QUALITY_STEP",
+    "MAX_SEGMENTS_PER_LINK",
+    "RWPT_SEED",
     // Unsteady friction (issue #156)
     "UF_K3",
 };
@@ -91,11 +119,11 @@ const char* const kNumericKeys[] = {
 /// parses refuse the trailing "e999999", and the strict time parse
 /// refuses it as neither seconds nor H:M[:S].
 const char* const kMalformed[] = {
-    "abc",        // std::invalid_argument
-    "",           // empty — a line edit mid-typing
-    " ",          // whitespace only
-    "--",         // punctuation only
-    "1e999999",   // overflow (stod) / trailing junk (strict stoi & time)
+    "abc",      // std::invalid_argument
+    "",         // empty — a line edit mid-typing
+    " ",        // whitespace only
+    "--",       // punctuation only
+    "1e999999", // overflow (stod) / trailing junk (strict stoi & time)
 };
 
 /// Integer-parsed keys (strict stoi/stol in the dispatch) and the values
@@ -103,13 +131,19 @@ const char* const kMalformed[] = {
 /// family std::stoi silently truncated before H1 ("1.5" became 1,
 /// "1e999999" became 1 — a caller's typo turned into a different number).
 const char* const kIntKeys[] = {
-    "MAX_TRIALS", "THREADS", "FV_MIN_CELLS", "FV_ORDER",
-    "FV_MIN_PARALLEL_CELLS", "FV_LTS_MAX_TIERS", "FV_CFL_CENSUS_INTERVAL",
-    "MAX_SEGMENTS_PER_LINK", "RWPT_SEED",
+    "MAX_TRIALS",
+    "THREADS",
+    "FV_MIN_CELLS",
+    "FV_ORDER",
+    "FV_MIN_PARALLEL_CELLS",
+    "FV_LTS_MAX_TIERS",
+    "FV_CFL_CENSUS_INTERVAL",
+    "MAX_SEGMENTS_PER_LINK",
+    "RWPT_SEED",
 };
 const char* const kIntMalformed[] = {
-    "99999999999999999999999",  // std::out_of_range on stoi/stol
-    "1.5",                      // partial parse — silently truncated before H1
+    "99999999999999999999999", // std::out_of_range on stoi/stol
+    "1.5",                     // partial parse — silently truncated before H1
 };
 
 /// Time-typed keys (seconds or H:M[:S] — parse_time_seconds' grammar).
@@ -118,11 +152,10 @@ const char* const kIntMalformed[] = {
 /// H[:M] fallthrough. The strict wrapper refuses; the clock form must
 /// keep working (gate 3).
 const char* const kTimeKeys[] = {
-    "ROUTING_STEP", "REPORT_STEP", "MINIMUM_STEP",
-    "DRY_STEP", "WET_STEP", "RULE_STEP",
+    "ROUTING_STEP", "REPORT_STEP", "MINIMUM_STEP", "DRY_STEP", "WET_STEP", "RULE_STEP",
 };
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — no malformed value on any numeric key may terminate the process.
@@ -136,9 +169,8 @@ TEST(OptionsMalformedValuesTest, MalformedNumericsReturnErrorNotDeath) {
             // Reaching the next line at all is the claim: before the guard
             // this call aborted the process on the first key.
             const int rc = swmm_options_set(e, key, bad);
-            EXPECT_NE(rc, SWMM_OK)
-                << "key '" << key << "' accepted malformed value '" << bad
-                << "' — a bad parse must be refused, not silently stored";
+            EXPECT_NE(rc, SWMM_OK) << "key '" << key << "' accepted malformed value '" << bad
+                                   << "' — a bad parse must be refused, not silently stored";
         }
     }
     // Int-parsed keys additionally refuse overflow and PARTIAL parses —
@@ -165,9 +197,9 @@ TEST(OptionsMalformedValuesTest, RefusedSetPreservesThePreviousValue) {
     ASSERT_EQ(swmm_options_set(e, "FV_CFL", "0.75"), SWMM_OK);
     ASSERT_EQ(swmm_options_set(e, "MAX_SEGMENTS_PER_LINK", "50"), SWMM_OK);
     ASSERT_EQ(swmm_options_set(e, "QUALITY_STEP", "5"), SWMM_OK);
-    const std::string cfl0  = get_opt(e, "FV_CFL");
+    const std::string cfl0 = get_opt(e, "FV_CFL");
     const std::string segs0 = get_opt(e, "MAX_SEGMENTS_PER_LINK");
-    const std::string qs0   = get_opt(e, "QUALITY_STEP");
+    const std::string qs0 = get_opt(e, "QUALITY_STEP");
 
     EXPECT_NE(swmm_options_set(e, "FV_CFL", "abc"), SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "MAX_SEGMENTS_PER_LINK", "xyz"), SWMM_OK);
@@ -193,12 +225,13 @@ TEST(OptionsMalformedValuesTest, WellFormedValuesStillRoundTrip) {
     // If the guard were placed so that it swallowed successful control flow
     // — e.g. wrapping the `return SWMM_OK` — every set would still "work"
     // but nothing would persist. These rows are the liveness half.
-    const struct { const char* key; const char* val; } good[] = {
-        { "FV_CFL",                 "0.6"  },
-        { "MAX_SEGMENTS_PER_LINK",  "64"   },
-        { "QUALITY_STEP",           "2.5"  },
-        { "RWPT_SEED",              "11"   },
-        { "THREADS",                "3"    },
+    const struct {
+        const char* key;
+        const char* val;
+    } good[] = {
+        {"FV_CFL", "0.6"},       {"MAX_SEGMENTS_PER_LINK", "64"},
+        {"QUALITY_STEP", "2.5"}, {"RWPT_SEED", "11"},
+        {"THREADS", "3"},
     };
     for (const auto& g : good) {
         ASSERT_EQ(swmm_options_set(e, g.key, g.val), SWMM_OK) << g.key;
@@ -236,11 +269,11 @@ TEST(OptionsMalformedValuesTest, EnumKeysStillRejectUnknownTokens) {
     // These return BADPARAM by an explicit `else return`, not by throwing.
     // Same answer as a bad numeric, reached a different way — if the guard
     // ever short-circuited the dispatch these would start passing.
-    EXPECT_NE(swmm_options_set(e, "FLOW_UNITS",     "FURLONGS"), SWMM_OK);
-    EXPECT_NE(swmm_options_set(e, "FLOW_ROUTING",   "MAGIC"),    SWMM_OK);
-    EXPECT_NE(swmm_options_set(e, "QUALITY_SOLVER", "MAGIC"),    SWMM_OK);
-    EXPECT_NE(swmm_options_set(e, "DISPERSION",     "FISCHER"),  SWMM_OK);
-    EXPECT_NE(swmm_options_set(e, "FV_RIEMANN",     "ROE"),      SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "FLOW_UNITS", "FURLONGS"), SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "FLOW_ROUTING", "MAGIC"), SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "QUALITY_SOLVER", "MAGIC"), SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "DISPERSION", "FISCHER"), SWMM_OK);
+    EXPECT_NE(swmm_options_set(e, "FV_RIEMANN", "ROE"), SWMM_OK);
     EXPECT_NE(swmm_options_set(e, "UNSTEADY_FRICTION", "BRUNONE"), SWMM_OK);
 
     swmm_engine_destroy(e);
@@ -264,16 +297,15 @@ TEST(OptionsMalformedValuesTest, FilesAndPathSlotParsesAreStrict) {
 
     // Establish hot-start save slot 0 with a known datetime, then attack.
     ASSERT_EQ(swmm_files_set(e, "HOTSTART_SAVE_PATH", "a.hsf"), SWMM_OK);
-    ASSERT_EQ(swmm_files_set(e, "HOTSTART_SAVE_DATETIME", "46036.5"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_files_set(e, "HOTSTART_SAVE_DATETIME", "46036.5"), SWMM_OK);
 
     // ("" is deliberately absent: for this key it is the documented
     // clear spelling, not a malformed value.)
     const char* const bad_datetime[] = {
-        "abc", " ", "--",
-        "1.5abc",      // partial parse — stored 1.5 before this gate
-        "01/01/2026",  // date spelling — stored 1.0 before this gate
-        "1e999999",    // overflow
+        "abc",        " ", "--",
+        "1.5abc",     // partial parse — stored 1.5 before this gate
+        "01/01/2026", // date spelling — stored 1.0 before this gate
+        "1e999999",   // overflow
     };
     for (const char* bad : bad_datetime)
         EXPECT_NE(swmm_files_set(e, "HOTSTART_SAVE_DATETIME", bad), SWMM_OK)
@@ -281,8 +313,7 @@ TEST(OptionsMalformedValuesTest, FilesAndPathSlotParsesAreStrict) {
     // Every refused set left the previous value standing.
     {
         char buf[64] = {0};
-        ASSERT_EQ(swmm_files_get(e, "HOTSTART_SAVE_DATETIME", buf,
-                                 static_cast<int>(sizeof(buf))),
+        ASSERT_EQ(swmm_files_get(e, "HOTSTART_SAVE_DATETIME", buf, static_cast<int>(sizeof(buf))),
                   SWMM_OK);
         EXPECT_DOUBLE_EQ(std::stod(buf), 46036.5);
     }
@@ -290,24 +321,18 @@ TEST(OptionsMalformedValuesTest, FilesAndPathSlotParsesAreStrict) {
     // Owner indexes are decimal integers, strictly. "0.5" resolving to
     // slot 0 was a wrong-slot WRITE — the quieter sibling of the
     // wrong-value store, and with slot 0 present it returned SWMM_OK.
-    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0.5",
-                                 "b.hsf"),
-              SWMM_OK);
-    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0x0",
-                                 "b.hsf"),
-              SWMM_OK);
+    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0.5", "b.hsf"), SWMM_OK);
+    EXPECT_NE(swmm_file_path_set(e, SWMM_FILE_HOTSTART_SAVE, "0x0", "b.hsf"), SWMM_OK);
     char abs_buf[512] = {0};
     char orig_buf[512] = {0};
-    EXPECT_NE(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0.5",
-                                 abs_buf, static_cast<int>(sizeof(abs_buf)),
-                                 orig_buf,
+    EXPECT_NE(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0.5", abs_buf,
+                                 static_cast<int>(sizeof(abs_buf)), orig_buf,
                                  static_cast<int>(sizeof(orig_buf))),
               SWMM_OK);
     // Liveness: the plain index still resolves, and the attacked slot
     // kept its path.
-    ASSERT_EQ(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0",
-                                 abs_buf, static_cast<int>(sizeof(abs_buf)),
-                                 orig_buf,
+    ASSERT_EQ(swmm_file_path_get(e, SWMM_FILE_HOTSTART_SAVE, "0", abs_buf,
+                                 static_cast<int>(sizeof(abs_buf)), orig_buf,
                                  static_cast<int>(sizeof(orig_buf))),
               SWMM_OK);
     EXPECT_STREQ(orig_buf, "a.hsf");

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ClimateFormat.hpp
- * @brief User-CSV climate-file parser / materialiser.
+ * @file      ClimateFormat.hpp
+ * @brief     User-CSV climate-file parser / materialiser.
  *
  * @details Slice IO-6c. Canonical row form:
  *
@@ -32,9 +32,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_CLIMATE_FORMAT_HPP
@@ -47,11 +47,36 @@
 
 namespace openswmm::gpkg::formats {
 
-FormatResult parseClimateCsv(const std::string&        path,
-                              std::vector<ClimateRow>&  rows);
+/**
+ * @brief Append daily records from the user climate CSV subset.
+ *
+ * Uses 2048-byte line reads, comma splitting without CSV quoting, trimmed case-insensitive headers
+ * and # comments. Date text remains unvalidated; absent/unparseable numbers become zero (stod
+ * prefixes accepted). No unit conversion, sort, duplicate/finite/range check or late ferror/close
+ * reporting; allocation exceptions can escape.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in,out] rows Caller-owned destination appended in file order; not cleared, and earlier
+ *     rows remain on failure.
+ * @return Failure for open refusal or a nonempty header lacking date; otherwise success, including
+ *     an empty file.
+ */
+FormatResult parseClimateCsv(const std::string& path, std::vector<ClimateRow>& rows);
 
-FormatResult writeClimateCsv(const std::string&             path,
-                              const std::vector<ClimateRow>& rows);
+/**
+ * @brief Overwrite a daily climate CSV with the fixed seven-column header.
+ *
+ * Writes numbers with four decimals, unescaped date text and row order unchanged. Does not check
+ * fprintf/fclose errors, atomically stage output, create directories or validate dates/units.
+ *
+ * @param[in] path UTF-8 filesystem path; caller supplies parent directories and owns
+ *     destination/source lifetime.
+ * @param[in] rows Borrowed date/tmin/tmax/evap/wind/sky/humidity rows in retained source-unit
+ *     conventions.
+ * @return Failure only when opening output fails; otherwise success.
+ */
+FormatResult writeClimateCsv(const std::string& path, const std::vector<ClimateRow>& rows);
 
 } // namespace openswmm::gpkg::formats
 

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_virtual_junction_quality.cpp
- * @brief Water-quality loads carried by a lateral inflow at a virtual
+ * @file      test_virtual_junction_quality.cpp
+ * @brief     Water-quality loads carried by a lateral inflow at a virtual
  *        junction (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md §E4), across
  *        every routing × quality-solver combination.
  *
@@ -30,9 +30,9 @@
  *          outputs land under ./virtual_junction_out/ (working dir is
  *          tests/unit/engine/data) — no temp files (CLAUDE.md §4.1).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -47,7 +47,7 @@
 #include <openswmm/engine/openswmm_massbalance.h>
 #include <openswmm/engine/openswmm_nodes.h>
 
-#include "core/SWMMEngine.hpp"   // ctx.links.conc (no C getter for link quality)
+#include "core/SWMMEngine.hpp" // ctx.links.conc (no C getter for link quality)
 
 namespace fs = std::filesystem;
 
@@ -55,87 +55,129 @@ namespace {
 
 const char* kOutDir = "virtual_junction_out";
 
+/**
+ * @brief Create the fixture output directory and form one artifact filename.
+ *
+ * Creates missing output-root directories and propagates filesystem errors. Does not
+ * create/truncate the artifact, sanitize name or create arbitrary nested parents; no
+ * current-directory change occurs.
+ *
+ * @param[in] name Raw filename/path appended below kOutDir; caller chooses a safe fixture
+ *     destination.
+ * @return Owned native path string.
+ */
 std::string outPath(const std::string& name) {
     fs::create_directories(kOutDir);
     return (fs::path(kOutDir) / name).string();
 }
 
-constexpr double kQin   = 1.0;    // cfs at J_IN
-constexpr double kCin   = 20.0;   // mg/L at J_IN
-constexpr double kQlat  = 0.5;    // cfs at MID
-constexpr double kClat  = 100.0;  // mg/L at MID
-constexpr double kCmix  = (kQin * kCin + kQlat * kClat) / (kQin + kQlat);
+constexpr double kQin = 1.0;    // cfs at J_IN
+constexpr double kCin = 20.0;   // mg/L at J_IN
+constexpr double kQlat = 0.5;   // cfs at MID
+constexpr double kClat = 100.0; // mg/L at MID
+constexpr double kCmix = (kQin * kCin + kQlat * kClat) / (kQin + kQlat);
 
 // J_IN -> C_UP -> MID -> C_DN -> O_OUT, 1 ft circular pipes on 1 % slopes,
 // constant inflows via [INFLOWS] baselines.
-std::string deck(bool virtual_mid, const std::string& routing,
-                 const std::string& quality_solver) {
-    std::string s =
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\n"
-        "FLOW_ROUTING         " + routing + "\n";
+/**
+ * @brief Build regular-versus-virtual mid-junction lateral mixing decks.
+ *
+ * Dimensions are native feet, flows cfs and concentrations mg/L. Text is inserted without escaping;
+ * no validation or run occurs.
+ *
+ * @param[in] virtual_mid True defines MID as a virtual junction; false uses an ordinary
+ *     zero-max-depth junction.
+ * @param[in] routing Raw routing keyword.
+ * @param[in] quality_solver Raw QUALITY_SOLVER value, or empty to omit the option.
+ * @return Owned CFS one-hour two-conduit deck with TSS and constant upstream/lateral
+ *     water/concentration inputs.
+ */
+std::string deck(bool virtual_mid, const std::string& routing, const std::string& quality_solver) {
+    std::string s = "[OPTIONS]\n"
+                    "FLOW_UNITS           CFS\n"
+                    "FLOW_ROUTING         " +
+                    routing + "\n";
     if (!quality_solver.empty())
         s += "QUALITY_SOLVER       " + quality_solver + "\n";
-    s +=
-        "START_DATE           01/01/2026\n"
-        "START_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\n"
-        "END_TIME             01:00:00\n"
-        "REPORT_STEP          00:01:00\n"
-        "ROUTING_STEP         1\n"
-        "ALLOW_PONDING        NO\n"
-        "\n"
-        "[JUNCTIONS]\n"
-        ";;Name  Elev  MaxDepth\n"
-        "J_IN    10.0  5.0\n";
-    if (!virtual_mid) s += "MID     9.0   0.0\n";
+    s += "START_DATE           01/01/2026\n"
+         "START_TIME           00:00:00\n"
+         "END_DATE             01/01/2026\n"
+         "END_TIME             01:00:00\n"
+         "REPORT_STEP          00:01:00\n"
+         "ROUTING_STEP         1\n"
+         "ALLOW_PONDING        NO\n"
+         "\n"
+         "[JUNCTIONS]\n"
+         ";;Name  Elev  MaxDepth\n"
+         "J_IN    10.0  5.0\n";
+    if (!virtual_mid)
+        s += "MID     9.0   0.0\n";
     s += "\n";
     if (virtual_mid)
         s += "[VIRTUAL_JUNCTIONS]\n;;Name  Elev\nMID     9.0\n\n";
-    s +=
-        "[OUTFALLS]\n"
-        ";;Name  Elev  Type  Gated\n"
-        "O_OUT   8.0   FREE  NO\n"
-        "\n"
-        "[CONDUITS]\n"
-        ";;Name    From   To     Length  N      Z1  Z2\n"
-        "C_UP      J_IN   MID    100.0   0.013  0   0\n"
-        "C_DN      MID    O_OUT  100.0   0.013  0   0\n"
-        "\n"
-        "[XSECTIONS]\n"
-        ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
-        "C_UP      CIRCULAR  1.0  0   0   0   1\n"
-        "C_DN      CIRCULAR  1.0  0   0   0   1\n"
-        "\n"
-        "[POLLUTANTS]\n"
-        ";;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit\n"
-        "TSS     MG/L   0.0    0.0  0.0    0.0     NO        *         0.0     0.0   0.0\n"
-        "\n"
-        "[INFLOWS]\n"
-        ";;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  Baseline\n"
-        "J_IN    FLOW         \"\"          FLOW    1.0      1.0      " + std::to_string(kQin) + "\n"
-        "J_IN    TSS          \"\"          CONCEN  1.0      1.0      " + std::to_string(kCin) + "\n"
-        "MID     FLOW         \"\"          FLOW    1.0      1.0      " + std::to_string(kQlat) + "\n"
-        "MID     TSS          \"\"          CONCEN  1.0      1.0      " + std::to_string(kClat) + "\n"
-        "\n"
-        "[REPORT]\n"
-        "CONTINUITY YES\n"
-        "\n"
-        "[COORDINATES]\n"
-        ";;Node  X    Y\n"
-        "J_IN    0.0    0.0\n"
-        "MID     100.0  0.0\n"
-        "O_OUT   200.0  0.0\n";
+    s += "[OUTFALLS]\n"
+         ";;Name  Elev  Type  Gated\n"
+         "O_OUT   8.0   FREE  NO\n"
+         "\n"
+         "[CONDUITS]\n"
+         ";;Name    From   To     Length  N      Z1  Z2\n"
+         "C_UP      J_IN   MID    100.0   0.013  0   0\n"
+         "C_DN      MID    O_OUT  100.0   0.013  0   0\n"
+         "\n"
+         "[XSECTIONS]\n"
+         ";;Link    Shape     G1   G2  G3  G4  Barrels\n"
+         "C_UP      CIRCULAR  1.0  0   0   0   1\n"
+         "C_DN      CIRCULAR  1.0  0   0   0   1\n"
+         "\n"
+         "[POLLUTANTS]\n"
+         ";;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit\n"
+         "TSS     MG/L   0.0    0.0  0.0    0.0     NO        *         0.0     0.0   0.0\n"
+         "\n"
+         "[INFLOWS]\n"
+         ";;Node  Constituent  Timeseries  Type    Mfactor  Sfactor  Baseline\n"
+         "J_IN    FLOW         \"\"          FLOW    1.0      1.0      " +
+         std::to_string(kQin) +
+         "\n"
+         "J_IN    TSS          \"\"          CONCEN  1.0      1.0      " +
+         std::to_string(kCin) +
+         "\n"
+         "MID     FLOW         \"\"          FLOW    1.0      1.0      " +
+         std::to_string(kQlat) +
+         "\n"
+         "MID     TSS          \"\"          CONCEN  1.0      1.0      " +
+         std::to_string(kClat) +
+         "\n"
+         "\n"
+         "[REPORT]\n"
+         "CONTINUITY YES\n"
+         "\n"
+         "[COORDINATES]\n"
+         ";;Node  X    Y\n"
+         "J_IN    0.0    0.0\n"
+         "MID     100.0  0.0\n"
+         "O_OUT   200.0  0.0\n";
     return s;
 }
 
 struct QualProbe {
-    double outlet_conc = -1.0;   // C_DN, mg/L, end of run
-    double outlet_flow = 0.0;    // C_DN, cfs
-    double qual_error  = 1.0;    // quality continuity error (fraction)
-    bool   ran = false;
+    double outlet_conc = -1.0; // C_DN, mg/L, end of run
+    double outlet_flow = 0.0;  // C_DN, cfs
+    double qual_error = 1.0;   // quality continuity error (fraction)
+    bool ran = false;
 };
 
+/**
+ * @brief Run one mixing deck and snapshot final downstream quality/flow.
+ *
+ * Owns/destroys the engine. Initialize/start failures record nonfatal expectations and execution
+ * continues; loop has no guard. Reads C_DN first-pollutant mg/L, project flow cfs and dimensionless
+ * quality continuity fraction. Requires the intended one-pollutant fixture for internal indexing.
+ *
+ * @param[in] base Safe basename for retained outPath artifacts.
+ * @param[in] text Complete deck written with unchecked stream status.
+ * @return Owned probe with ran=false on open/step refusal; true after reaching termination even if
+ *     unchecked end/getter calls fail.
+ */
 QualProbe run(const std::string& base, const std::string& text) {
     QualProbe p;
     const std::string inp = outPath(base + ".inp");
@@ -147,7 +189,10 @@ QualProbe run(const std::string& base, const std::string& text) {
     const int rc = swmm_engine_open(e, inp.c_str(), outPath(base + ".rpt").c_str(),
                                     outPath(base + ".out").c_str(), nullptr);
     EXPECT_EQ(rc, 0) << base << ": " << swmm_get_last_error_msg(e);
-    if (rc != 0) { swmm_engine_destroy(e); return p; }
+    if (rc != 0) {
+        swmm_engine_destroy(e);
+        return p;
+    }
     EXPECT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
     EXPECT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
     double elapsed = 0.0;
@@ -176,10 +221,21 @@ QualProbe run(const std::string& base, const std::string& text) {
     return p;
 }
 
-void lateralLoad(const std::string& tag, const std::string& routing,
-                 const std::string& solver) {
+/**
+ * @brief Compare virtual and ordinary junction lateral mixing against analytic bounds.
+ *
+ * Runs both decks, fatally requires both probes ran, then checks total outlet flow, analytic
+ * concentration mixture, inter-model parity and relative continuity quality using explicit
+ * tolerances. Writes/retains artifacts and records assertions; does not return a result or enforce
+ * every model state field.
+ *
+ * @param[in] tag Safe suffix and diagnostic label for two generated runs.
+ * @param[in] routing Routing keyword passed to deck.
+ * @param[in] solver Quality solver keyword passed to deck.
+ */
+void lateralLoad(const std::string& tag, const std::string& routing, const std::string& solver) {
     const QualProbe ref = run("vj_qual_ref_" + tag, deck(false, routing, solver));
-    const QualProbe vj  = run("vj_qual_" + tag,     deck(true,  routing, solver));
+    const QualProbe vj = run("vj_qual_" + tag, deck(true, routing, solver));
     ASSERT_TRUE(ref.ran && vj.ran) << tag;
 
     // Both carry the whole 1.5 cfs. Under FV the published conduit flow is
@@ -195,7 +251,7 @@ void lateralLoad(const std::string& tag, const std::string& routing,
     // the virtual junction, whose water and mass take the same cell path,
     // is held to the tight one.
     EXPECT_NEAR(ref.outlet_conc, kCmix, 0.05 * kCmix) << tag << " (reference)";
-    EXPECT_NEAR(vj.outlet_conc,  kCmix, 0.02 * kCmix) << tag << " (virtual)";
+    EXPECT_NEAR(vj.outlet_conc, kCmix, 0.02 * kCmix) << tag << " (virtual)";
     EXPECT_NEAR(vj.outlet_conc, ref.outlet_conc, 0.03 * kCmix) << tag;
 
     // Quality continuity: no worse than the same reach split at a regular

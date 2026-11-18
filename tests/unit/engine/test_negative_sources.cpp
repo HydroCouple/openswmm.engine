@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_negative_sources.cpp
- * @brief X6 / D-NS1: negative sources extract, warn, clamp to available,
+ * @file      test_negative_sources.cpp
+ * @brief     X6 / D-NS1: negative sources extract, warn, clamp to available,
  *        and the ledger carries the mass ACTUALLY removed — in all three
  *        engines.
  *
@@ -41,9 +41,9 @@
  *
  *          Scratch fixtures use the `_nx_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -61,6 +61,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -69,22 +80,39 @@ constexpr double kQ = 5.0;
 constexpr double kCin = 100.0;
 
 struct DeckSpec {
-    const char* solver = "LEGACY";  ///< LEGACY | EULERIAN_ARD | LAGRANGIAN
-    double extract = 0.0;           ///< J2 TSS MASS baseline (negative = out)
+    const char* solver = "LEGACY"; ///< LEGACY | EULERIAN_ARD | LAGRANGIAN
+    double extract = 0.0;          ///< J2 TSS MASS baseline (negative = out)
     bool water_age = false;
-    const char* age_source = nullptr;  ///< [WATER_AGE_SOURCES] body
+    const char* age_source = nullptr; ///< [WATER_AGE_SOURCES] body
     bool single_conduit = false;
     const char* end_time = "04:00:00";
-    bool dwf = false;               ///< dry-weather inflow at J0 (gate 4)
+    bool dwf = false; ///< dry-weather inflow at J0 (gate 4)
 };
 
-void write_deck(const std::string& path, const std::string& tag,
-                const DeckSpec& s) {
+/**
+ * @brief Write the pollutant-extraction fixture and optional water-age source config.
+ *
+ * Always emits kQ external flow and kCin concentration; optional DWF adds another kQ. A non-null
+ * age_source creates a separate WATER_AGE_SOURCES sidecar. Incompatible geometry/extraction
+ * combinations are not validated here. Uses a local ofstream and requires existing parent
+ * directories. Open/write/close failures are unchecked; owned input strings are not retained and
+ * raw tokens/config paths are not escaped. Optional sidecar files are also overwritten when
+ * described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] tag Filename prefix for &lt;tag&gt;.age when age_source is non-null.
+ * @param[in] s Borrowed spec selecting solver keyword, water-age flag, end token, single/chain
+ *     geometry, optional DWF, raw age-source rows and a nonzero J2 MASS extraction value in
+ *     authored pollutant inflow units.
+ */
+void write_deck(const std::string& path, const std::string& tag, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nD-NS1 X6\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << "QUALITY_SOLVER " << s.solver << "\n";
-    if (s.water_age) f << "WATER_AGE ON\n";
+    if (s.water_age)
+        f << "WATER_AGE ON\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << s.end_time << "\n"
       << "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n";
@@ -114,10 +142,10 @@ void write_deck(const std::string& path, const std::string& tag,
         a << "[WATER_AGE_SOURCES]\n" << s.age_source;
         a.close();
         f << "[PROCESS_COMPONENTS]\n"
-          << "org.hydrocouple.openswmm.waterage config=\"" << age_path
-          << "\"\n\n";
+          << "org.hydrocouple.openswmm.waterage config=\"" << age_path << "\"\n\n";
     }
-    if (s.dwf) f << "[DWF]\nJ0 FLOW " << kQ << "\n\n";
+    if (s.dwf)
+        f << "[DWF]\nJ0 FLOW " << kQ << "\n\n";
     f << "[INFLOWS]\n"
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n"
       << "J0 TSS  \"\" CONCEN 1.0 1.0 " << kCin << "\n";
@@ -128,28 +156,42 @@ void write_deck(const std::string& path, const std::string& tag,
 
 struct NsRun {
     double outfall_conc = 0.0;
-    double outfall_age = 0.0;      ///< seconds
-    double min_conc = 1.0e300;     ///< min over ALL nodes+links, ALL steps
-    double min_age = 1.0e300;      ///< min node age over all steps
-    double mb_init = 0.0, mb_ex_in = 0.0, mb_outflow = 0.0, mb_final = 0.0,
-           mb_reacted = 0.0;
+    double outfall_age = 0.0;  ///< seconds
+    double min_conc = 1.0e300; ///< min over ALL nodes+links, ALL steps
+    double min_age = 1.0e300;  ///< min node age over all steps
+    double mb_init = 0.0, mb_ex_in = 0.0, mb_outflow = 0.0, mb_final = 0.0, mb_reacted = 0.0;
     long clamp_events = 0, age_clamp_events = 0;
-    long clamp_events_10min = -1;  ///< counter when the run passed 600 s
+    long clamp_events_10min = -1; ///< counter when the run passed 600 s
     std::vector<std::string> warnings;
     bool ok = false;
 };
 
+/**
+ * @brief Run the negative-source fixture and collect minima/clamp/mass diagnostics.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status. Captures first
+ * available clamp count at elapsed>=600 s; guard exhaustion can still yield ok=true. Requires
+ * consistent expected internal array extents, and no independent finite/completeness check is
+ * added.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] s Deck choices with pollutant arrays and, when enabled, node age storage.
+ * @return Owned concentration minima, optional ages seconds, outfall state, native first-species
+ *     ledgers, clamp counts and warnings; ok=false on setup/step refusal.
+ */
 NsRun run_deck(const std::string& tag, const DeckSpec& s) {
     NsRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, tag, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -167,16 +209,13 @@ NsRun run_deck(const std::string& tag, const DeckSpec& s) {
             return r;
         }
         for (int l = 0; l < nl; ++l)
-            r.min_conc = std::min(
-                r.min_conc, ctx.links.conc[static_cast<std::size_t>(l * np)]);
+            r.min_conc = std::min(r.min_conc, ctx.links.conc[static_cast<std::size_t>(l * np)]);
         for (int j = 0; j < nn; ++j)
-            r.min_conc = std::min(
-                r.min_conc, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
+            r.min_conc = std::min(r.min_conc, ctx.nodes.conc[static_cast<std::size_t>(j * np)]);
         if (s.water_age)
             for (int j = 0; j < nn; ++j)
-                r.min_age = std::min(
-                    r.min_age,
-                    ctx.water_age_state.node_age[static_cast<std::size_t>(j)]);
+                r.min_age =
+                    std::min(r.min_age, ctx.water_age_state.node_age[static_cast<std::size_t>(j)]);
         if (r.clamp_events_10min < 0 && elapsed * 86400.0 >= 600.0)
             r.clamp_events_10min = ctx.negsrc.clamp_events;
     } while (elapsed > 0.0 && ++guard < 200000);
@@ -191,9 +230,7 @@ NsRun run_deck(const std::string& tag, const DeckSpec& s) {
         }
     }
     const auto& mb = ctx.mass_balance;
-    auto row0 = [](const std::vector<double>& v) {
-        return v.empty() ? 0.0 : v[0];
-    };
+    auto row0 = [](const std::vector<double>& v) { return v.empty() ? 0.0 : v[0]; };
     r.mb_init = row0(mb.qual_routing_init);
     r.mb_ex_in = row0(mb.qual_routing_ex_in);
     r.mb_outflow = row0(mb.qual_routing_outflow);
@@ -207,9 +244,18 @@ NsRun run_deck(const std::string& tag, const DeckSpec& s) {
     return r;
 }
 
+/**
+ * @brief Find a captured negative-source warning by substring.
+ *
+ * @param[in] r Borrowed run result containing captured warning strings.
+ * @param[in] needle Non-null null-terminated case-sensitive substring; borrowed only during the
+ *     scan.
+ * @return True when a warning contains needle; false if none do.
+ */
 bool has_warning(const NsRun& r, const char* needle) {
     for (const auto& w : r.warnings)
-        if (w.find(needle) != std::string::npos) return true;
+        if (w.find(needle) != std::string::npos)
+            return true;
     return false;
 }
 
@@ -221,7 +267,8 @@ const char* kSolvers[] = {"LEGACY", "EULERIAN_ARD", "LAGRANGIAN"};
 // ---------------------------------------------------------------------------
 TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
     for (const char* solver : kSolvers) {
-        DeckSpec ctrl;  ctrl.solver = solver;
+        DeckSpec ctrl;
+        ctrl.solver = solver;
         DeckSpec ext = ctrl;
         // MASS rows are mg/s; internal mass is mg/L*ft^3, so the row value
         // divides by 28.316846592 on the way in — MEASURED (X6 round): a
@@ -235,15 +282,14 @@ TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
         ASSERT_TRUE(a.ok && b.ok) << solver;
 
         // Premise: the control delivers the steady source.
-        ASSERT_GT(a.outfall_conc, 0.95 * kCin)
-            << solver << " control never reached steady state";
+        ASSERT_GT(a.outfall_conc, 0.95 * kCin) << solver << " control never reached steady state";
 
         // Extraction is real: measurably below the control, far above the
         // silently-dropped answer (== control, the old ARD defect) and
         // above zero (not runaway).
-        EXPECT_LT(b.outfall_conc, 0.92 * kCin)
-            << solver << ": extraction had no effect — the negative load "
-               "was dropped (the max(0,·) family)";
+        EXPECT_LT(b.outfall_conc, 0.92 * kCin) << solver
+                                               << ": extraction had no effect — the negative load "
+                                                  "was dropped (the max(0,·) family)";
         EXPECT_GT(b.outfall_conc, 0.50 * kCin)
             << solver << ": extraction removed far more than requested";
 
@@ -255,7 +301,8 @@ TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
         // chain wets, 20% extraction must never clamp again.
         ASSERT_GE(b.clamp_events_10min, 0) << solver;
         EXPECT_EQ(b.clamp_events, b.clamp_events_10min)
-            << solver << ": clamps fired after minute 10 — the clamp is "
+            << solver
+            << ": clamps fired after minute 10 — the clamp is "
                "triggering where mass is plainly available";
         const double in = b.mb_init + b.mb_ex_in;
         const double out = b.mb_outflow + b.mb_final + b.mb_reacted;
@@ -265,10 +312,8 @@ TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
 
         // The parse warning names the row (both runs' warning lists come
         // from open(): only the extraction deck carries it).
-        EXPECT_TRUE(has_warning(b, "the baseline is negative"))
-            << solver;
-        EXPECT_FALSE(has_warning(a, "the baseline is negative"))
-            << solver;
+        EXPECT_TRUE(has_warning(b, "the baseline is negative")) << solver;
+        EXPECT_FALSE(has_warning(a, "the baseline is negative")) << solver;
     }
 }
 
@@ -282,7 +327,8 @@ TEST(NegativeSourcesTest, NegativeInflowExtractsUnderAllThreeEngines) {
 // name contradicts its assertions is the trap this program keeps paying for.
 TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
     for (const char* solver : kSolvers) {
-        DeckSpec s;  s.solver = solver;
+        DeckSpec s;
+        s.solver = solver;
         // 10x the 500-internal-units/s throughflow, in mg/s (the MASS-row
         // unit, x28.316846592) — the X6 round recalibrated this from
         // -5000, which the units made a mere 0.35x (clamps were startup
@@ -292,12 +338,12 @@ TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
         const NsRun r = run_deck(std::string("_nx_over_") + solver, s);
         ASSERT_TRUE(r.ok) << solver;
 
-        EXPECT_GE(r.min_conc, -1.0e-12)
-            << solver << ": a concentration went negative under "
-               "over-extraction";
-        EXPECT_GT(r.clamp_events, 0)
-            << solver << ": over-extraction never clamped — the counter "
-               "has no observer path in this engine";
+        EXPECT_GE(r.min_conc, -1.0e-12) << solver
+                                        << ": a concentration went negative under "
+                                           "over-extraction";
+        EXPECT_GT(r.clamp_events, 0) << solver
+                                     << ": over-extraction never clamped — the counter "
+                                        "has no observer path in this engine";
         // DELIBERATE FLIP (2026-08-29, user-approved): this row asserted the
         // per-clamp runtime warning "clamped to the available amount". That
         // warning is GONE — it fired on every correct extraction deck,
@@ -308,8 +354,9 @@ TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
         // clamp_events counter above. See
         // plans/transport/P1_4_NEGATIVE_CELL_SOURCES_HANDOFF_2026-08-29.md.
         EXPECT_FALSE(has_warning(r, "clamped to the available amount"))
-            << solver << ": the per-clamp runtime warning is supposed to be "
-                         "gone — it fires on ordinary decks (lesson 148)";
+            << solver
+            << ": the per-clamp runtime warning is supposed to be "
+               "gone — it fires on ordinary decks (lesson 148)";
         EXPECT_TRUE(has_warning(r, "D-NS1 summary"))
             << solver << ": the end-of-run summary did not fire";
 
@@ -323,9 +370,9 @@ TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
         // 100 mg/L x 5 cfs = 500 internal units/s over the 4 h run.
         const double in = r.mb_init + r.mb_ex_in;
         const double out = r.mb_outflow + r.mb_final + r.mb_reacted;
-        ASSERT_GT(in, 0.0)
-            << solver << ": net booked inflow went negative — the full "
-               "extraction request is still booked (no un-booking)";
+        ASSERT_GT(in, 0.0) << solver
+                           << ": net booked inflow went negative — the full "
+                              "extraction request is still booked (no un-booking)";
         const double gross = kCin * kQ * 4.0 * 3600.0;
         const double miss = std::abs(out - in) / gross;
         std::printf("[ NEGSRC   ] %-13s over-extraction |out-in|/gross = "
@@ -336,9 +383,10 @@ TEST(NegativeSourcesTest, OverExtractionClampsSummarizesAndStaysNonNegative) {
         // un-booking) leaves ex_in at the full -64.8e6 request: in goes
         // NEGATIVE (the ASSERT above) and miss lands near 10 — three
         // orders outside.
-        EXPECT_LT(miss, 0.01)
-            << solver << ": the shortfall un-booking is not closing the "
-               "ledger (in=" << in << " out=" << out << ")";
+        EXPECT_LT(miss, 0.01) << solver
+                              << ": the shortfall un-booking is not closing the "
+                                 "ledger (in="
+                              << in << " out=" << out << ")";
     }
 }
 
@@ -355,12 +403,12 @@ TEST(NegativeSourcesTest, WarningsFireExactlyOnNegativeConfigs) {
     age.end_time = "00:30:00";
     const NsRun a = run_deck("_nx_warn_age", age);
     ASSERT_TRUE(a.ok);
-    EXPECT_TRUE(has_warning(a, "EXTRACTS age-volume"))
-        << "negative age source parsed silently";
+    EXPECT_TRUE(has_warning(a, "EXTRACTS age-volume")) << "negative age source parsed silently";
 
     // (b) An ordinary positive deck emits NOTHING of D-NS1's: no parse
     // warning, no clamp warning, no summary, zero counters.
-    DeckSpec pos;  pos.solver = "LEGACY";
+    DeckSpec pos;
+    pos.solver = "LEGACY";
     const NsRun b = run_deck("_nx_warn_pos", pos);
     ASSERT_TRUE(b.ok);
     EXPECT_FALSE(has_warning(b, "D-NS1"))
@@ -389,7 +437,7 @@ TEST(NegativeSourcesTest, NegativeAgeSourceLowersAgeAndFloorsAtZero) {
     base.single_conduit = true;
     base.dwf = true;
     base.age_source = "DWF NODE J0 2.0\n";
-    base.end_time = "00:40:00";  // steady well past the ~7 min transit
+    base.end_time = "00:40:00"; // steady well past the ~7 min transit
     DeckSpec neg = base;
     neg.age_source = "DWF NODE J0 2.0\nEXTERNAL_INFLOW NODE J0 -0.5\n";
 
@@ -400,10 +448,9 @@ TEST(NegativeSourcesTest, NegativeAgeSourceLowersAgeAndFloorsAtZero) {
     ASSERT_GT(a.outfall_age, 3000.0) << "the DWF age supply never arrived";
     // The mix arithmetic above says 900 s; ask for a comfortable half.
     EXPECT_LT(b.outfall_age, a.outfall_age - 450.0)
-        << "the negative age source did not extract age-volume (base "
-        << a.outfall_age << " s vs " << b.outfall_age << " s)";
-    EXPECT_GE(b.min_age, 0.0)
-        << "a node age went negative — the age floor failed";
+        << "the negative age source did not extract age-volume (base " << a.outfall_age << " s vs "
+        << b.outfall_age << " s)";
+    EXPECT_GE(b.min_age, 0.0) << "a node age went negative — the age floor failed";
 
     // Extreme extraction clamps and counts.
     DeckSpec extreme = base;
@@ -411,9 +458,8 @@ TEST(NegativeSourcesTest, NegativeAgeSourceLowersAgeAndFloorsAtZero) {
     const NsRun c = run_deck("_nx_age_extreme", extreme);
     ASSERT_TRUE(c.ok);
     EXPECT_GE(c.min_age, 0.0);
-    EXPECT_GT(c.age_clamp_events, 0)
-        << "extreme age extraction never clamped — no observer path";
+    EXPECT_GT(c.age_clamp_events, 0) << "extreme age extraction never clamped — no observer path";
     EXPECT_TRUE(has_warning(c, "age-volume"));
 }
 
-}  // namespace
+} // namespace

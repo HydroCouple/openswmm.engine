@@ -15,14 +15,14 @@
 // limitations under the License.
 
 /**
- * @file OptionsHandler.hpp
- * @brief [OPTIONS] section handler declaration.
+ * @file      OptionsHandler.hpp
+ * @brief     [OPTIONS] section handler declaration.
  * @see OptionsHandler.cpp for implementation and key mapping documentation.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_OPTIONS_HANDLER_HPP
@@ -32,7 +32,7 @@
 #include <string>
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::input {
@@ -47,8 +47,7 @@ namespace openswmm::input {
  * @param ctx    Simulation context to populate.
  * @param lines  Non-blank, comment-stripped lines from the [OPTIONS] section.
  */
-void handle_options(SimulationContext& ctx,
-                    const std::vector<std::string>& lines);
+void handle_options(SimulationContext& ctx, const std::vector<std::string>& lines);
 
 } /* namespace openswmm::input */
 

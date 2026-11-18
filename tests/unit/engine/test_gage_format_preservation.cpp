@@ -1,6 +1,6 @@
 /**
- * @file test_gage_format_preservation.cpp
- * @brief B1 regression — editing a USER_CSV gage's station id or filename
+ * @file      test_gage_format_preservation.cpp
+ * @brief     B1 regression — editing a USER_CSV gage's station id or filename
  *        must not corrupt its file format or column binding — plus the new
  *        file-column C API accessors.
  *
@@ -16,6 +16,10 @@
  *
  * @see src/engine/core/openswmm_gages_impl.cpp
  * @see plans/MULTICOLUMN_SERIES_SINGLE_READ_2026-08-17.md (B1)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -27,20 +31,34 @@
 
 namespace {
 
-constexpr int kStanPrcp = 5;  // RainFileFormat::STAN_PRCP
-constexpr int kUserCsv  = 6;  // RainFileFormat::USER_CSV
+constexpr int kStanPrcp = 5; // RainFileFormat::STAN_PRCP
+constexpr int kUserCsv = 6;  // RainFileFormat::USER_CSV
 
 class GageFormatPreservation : public ::testing::Test {
 protected:
     SWMM_Engine engine_ = nullptr;
 
+    /**
+     * @brief Create/open the US rainfall-format fixture.
+     *
+     * Requires engine_ initially null. Fatal create/open assertions leave partial handle ownership to
+     * TearDown and return only from this helper; no initialize/start call occurs.
+     *
+     * @param[in] rpt Report destination passed to open.
+     * @param[in] out Binary destination passed to open.
+     */
     void openModel(const char* rpt, const char* out) {
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        ASSERT_EQ(swmm_engine_open(engine_, "rain_series/rain_us.inp",
-                                   rpt, out, nullptr), SWMM_OK);
+        ASSERT_EQ(swmm_engine_open(engine_, "rain_series/rain_us.inp", rpt, out, nullptr), SWMM_OK);
     }
 
+    /**
+     * @brief Close and destroy the fixture model, then clear its handle.
+     *
+     * Checks for null, ignores close status and releases partial state after setup/test failure. No
+     * simulation report is requested here.
+     */
     void TearDown() override {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -49,16 +67,33 @@ protected:
         }
     }
 
+    /**
+     * @brief Read one fixture gage's external-file format enum.
+     *
+     * Records a nonfatal expectation; does not validate the enum, mutate the gage or return independent
+     * status.
+     *
+     * @param[in] idx Valid gage index in the opened engine.
+     * @return Returned format integer or initial -1 if the failed getter leaves it unchanged.
+     */
     int fileFormat(int idx) {
         int fmt = -1;
         EXPECT_EQ(swmm_gage_get_file_format(engine_, idx, &fmt), SWMM_OK);
         return fmt;
     }
 
+    /**
+     * @brief Copy one fixture gage's external-file column selector.
+     *
+     * Records a nonfatal expectation; no borrowed buffer escapes and no gage mutation occurs.
+     *
+     * @param[in] idx Valid gage index in the opened engine.
+     * @return Owned column string from a 128-byte zero-initialized buffer, possibly empty/partial on
+     *     getter failure.
+     */
     std::string fileColumn(int idx) {
         char buf[128] = {};
-        EXPECT_EQ(swmm_gage_get_file_column(engine_, idx, buf, sizeof(buf)),
-                  SWMM_OK);
+        EXPECT_EQ(swmm_gage_get_file_column(engine_, idx, buf, sizeof(buf)), SWMM_OK);
         return buf;
     }
 };
@@ -118,8 +153,7 @@ TEST_F(GageFormatPreservation, SetFilenameOnStanGageStaysStan) {
     const int std_g = swmm_gage_index(engine_, "STD_GAGE");
     ASSERT_GE(std_g, 0);
 
-    ASSERT_EQ(swmm_gage_set_filename(engine_, std_g, "rain2.dat", "STA_B"),
-              SWMM_OK);
+    ASSERT_EQ(swmm_gage_set_filename(engine_, std_g, "rain2.dat", "STA_B"), SWMM_OK);
     EXPECT_EQ(fileFormat(std_g), kStanPrcp);
 
     char buf[64] = {};
@@ -164,8 +198,7 @@ TEST_F(GageFormatPreservation, FileFormatRoundTripsOutOfAndBackIntoUserCsv) {
     // column could never return the gage to a standard rain file.
     ASSERT_EQ(swmm_gage_set_file_format(engine_, csv, kStanPrcp), SWMM_OK);
     EXPECT_EQ(fileFormat(csv), kStanPrcp);
-    EXPECT_EQ(fileColumn(csv), "")
-        << "a station-based format has no column selector";
+    EXPECT_EQ(fileColumn(csv), "") << "a station-based format has no column selector";
 
     // The station id is now settable and sticks.
     ASSERT_EQ(swmm_gage_set_station_id(engine_, csv, "STA_A"), SWMM_OK);
@@ -189,8 +222,7 @@ TEST_F(GageFormatPreservation, SetFileFormatValidatesTheCode) {
     const int csv = swmm_gage_index(engine_, "CSV_EAST");
     ASSERT_GE(csv, 0);
 
-    EXPECT_NE(swmm_gage_set_file_format(engine_, csv, 7), SWMM_OK)
-        << "7 is not a RainFileFormat";
+    EXPECT_NE(swmm_gage_set_file_format(engine_, csv, 7), SWMM_OK) << "7 is not a RainFileFormat";
     EXPECT_NE(swmm_gage_set_file_format(engine_, csv, -2), SWMM_OK);
     EXPECT_NE(swmm_gage_set_file_format(engine_, 99, kStanPrcp), SWMM_OK);
     // Rejected calls must not have changed anything.

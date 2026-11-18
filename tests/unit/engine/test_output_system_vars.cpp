@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_output_system_vars.cpp
- * @brief SWMM_OutSystemVar names address the slots the .out writer fills.
+ * @file      test_output_system_vars.cpp
+ * @brief     SWMM_OutSystemVar names address the slots the .out writer fills.
  *
  * DefaultOutputPlugin writes the 15 system values in legacy SysResults
  * order and stores TOTAL_INFLOW as the sum of RUNOFF, DW_INFLOW, GW_INFLOW,
@@ -28,9 +28,9 @@
  * checked-in .out predates the report-time runoff aggregation and can also
  * be overwritten by other test targets.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,9 +50,17 @@ constexpr const char* kInputPath = "site_drainage_model.inp";
 
 class OutputSystemVarsTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Run the reference deck and open its per-case binary output.
+     *
+     * Creates output_system_vars/&lt;case&gt;, runs kInputPath into run.rpt/.out and requires success before
+     * opening the output reader. Filesystem failures propagate; artifacts remain reviewable and fixture
+     * teardown owns reader closure. Fatal GoogleTest assertions return from this hook on failure; any
+     * created handle remains owned by the fixture for teardown.
+     */
     void SetUp() override {
         const auto output_dir = std::filesystem::path("output_system_vars") /
-            ::testing::UnitTest::GetInstance()->current_test_info()->name();
+                                ::testing::UnitTest::GetInstance()->current_test_info()->name();
         std::filesystem::create_directories(output_dir);
         const auto report = (output_dir / "run.rpt").string();
         const auto output = (output_dir / "run.out").string();
@@ -61,9 +69,27 @@ protected:
         handle_ = swmm_output_open(output.c_str());
         ASSERT_NE(handle_, nullptr) << "Failed to open generated output '" << output << "'";
     }
+    /**
+     * @brief Close the fixture output-reader handle when present.
+     *
+     * Releases reader-owned metadata/stream; does not clear the member pointer or free any separately
+     * allocated result arrays.
+     */
     void TearDown() override {
-        if (handle_) swmm_output_close(handle_);
+        if (handle_)
+            swmm_output_close(handle_);
     }
+    /**
+     * @brief Read one system-result scalar from the fixture output reader.
+     *
+     * Requires live handle_; records an EXPECT status and retains no reader ownership. No
+     * interpolation, conversion beyond widening or simulation mutation.
+     *
+     * @param[in] period Valid zero-based stored report-period index.
+     * @param[in] v Recognized system result variable selecting its output/project units.
+     * @return Float result widened to double, or initial NaN/unfilled output after nonfatal getter
+     *     failure.
+     */
     double sys(int period, SWMM_OutSystemVar v) {
         float value = NAN;
         EXPECT_EQ(swmm_output_get_system_result(handle_, period, v, &value), 0) << "var " << v;
@@ -74,15 +100,15 @@ protected:
 
 } // anonymous
 
-TEST_F(OutputSystemVarsTest, TotalInflowIsSumOfLateralSources)
-{
+TEST_F(OutputSystemVarsTest, TotalInflowIsSumOfLateralSources) {
     const int n = swmm_output_get_period_count(handle_);
     ASSERT_GT(n, 0);
     double peakRunoff = 0.0;
     for (int p = 0; p < n; ++p) {
         const double runoff = sys(p, SWMM_OUT_SYS_RUNOFF);
-        const double sum = runoff + sys(p, SWMM_OUT_SYS_DW_INFLOW) + sys(p, SWMM_OUT_SYS_GW_INFLOW) +
-                           sys(p, SWMM_OUT_SYS_RDII_INFLOW) + sys(p, SWMM_OUT_SYS_EXT_INFLOW);
+        const double sum = runoff + sys(p, SWMM_OUT_SYS_DW_INFLOW) +
+                           sys(p, SWMM_OUT_SYS_GW_INFLOW) + sys(p, SWMM_OUT_SYS_RDII_INFLOW) +
+                           sys(p, SWMM_OUT_SYS_EXT_INFLOW);
         const double total = sys(p, SWMM_OUT_SYS_TOTAL_INFLOW);
         EXPECT_NEAR(total, sum, 1e-5 * (1.0 + std::fabs(sum))) << "period " << p;
         peakRunoff = std::max(peakRunoff, runoff);
@@ -91,15 +117,16 @@ TEST_F(OutputSystemVarsTest, TotalInflowIsSumOfLateralSources)
     EXPECT_GT(peakRunoff, 0.0);
 }
 
-TEST_F(OutputSystemVarsTest, RunoffIsSumOfSubcatchmentRunoff)
-{
+TEST_F(OutputSystemVarsTest, RunoffIsSumOfSubcatchmentRunoff) {
     const int n = swmm_output_get_period_count(handle_);
     const int ns = swmm_output_get_subcatch_count(handle_);
     ASSERT_GT(ns, 0);
     std::vector<float> runoff(static_cast<size_t>(ns));
     double peak = 0.0;
     for (int p = 0; p < n; ++p) {
-        ASSERT_EQ(swmm_output_get_subcatch_result(handle_, p, SWMM_OUT_SUBCATCH_RUNOFF, runoff.data()), 0);
+        ASSERT_EQ(
+            swmm_output_get_subcatch_result(handle_, p, SWMM_OUT_SUBCATCH_RUNOFF, runoff.data()),
+            0);
         const double sum = std::accumulate(runoff.begin(), runoff.end(), 0.0);
         EXPECT_NEAR(sys(p, SWMM_OUT_SYS_RUNOFF), sum, 1e-5 * (1.0 + sum)) << "period " << p;
         peak = std::max(peak, sum);
@@ -107,8 +134,7 @@ TEST_F(OutputSystemVarsTest, RunoffIsSumOfSubcatchmentRunoff)
     EXPECT_GT(peak, 0.0);
 }
 
-TEST_F(OutputSystemVarsTest, LastSlotIsPetAndLatInflowAliasesTotal)
-{
+TEST_F(OutputSystemVarsTest, LastSlotIsPetAndLatInflowAliasesTotal) {
     EXPECT_EQ(SWMM_OUT_SYS_PET, 14);
     EXPECT_EQ(SWMM_OUT_SYS_LAT_INFLOW, SWMM_OUT_SYS_TOTAL_INFLOW);
     float value = NAN;

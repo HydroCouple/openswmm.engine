@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file InflowsHandler.hpp
- * @brief Section handlers for patterns, inflows, DWF, and RDII.
+ * @file      InflowsHandler.hpp
+ * @brief     Section handlers for patterns, inflows, DWF, and RDII.
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_INFLOWS_HANDLER_HPP
@@ -30,7 +30,9 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 

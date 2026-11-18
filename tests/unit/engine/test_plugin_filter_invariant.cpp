@@ -1,6 +1,6 @@
 /**
- * @file test_plugin_filter_invariant.cpp
- * @brief Verifies that every discovered plugin advertises file_filters()
+ * @file      test_plugin_filter_invariant.cpp
+ * @brief     Verifies that every discovered plugin advertises file_filters()
  *        consistent with its capability flags.
  *
  * @details The contract: if `info->has_input()` is true, the plugin must
@@ -12,6 +12,10 @@
  * @see include/openswmm/plugin_sdk/IPluginComponentInfo.hpp
  * @see src/engine/plugins/PluginFactory.cpp (validate_filter_invariant)
  * @ingroup engine_plugins
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -27,9 +31,19 @@ using openswmm::PluginRole;
 
 namespace {
 
+/**
+ * @brief Test whether any published file filter has the exact requested role.
+ *
+ * Does not validate extensions, load a plugin or transfer ownership.
+ *
+ * @param[in] filters Stable filter list, unchanged.
+ * @param[in] role Plugin role enum to match.
+ * @return True on first matching filter, otherwise false.
+ */
 bool has_role(const std::vector<FileFilter>& filters, PluginRole role) {
     for (const auto& f : filters) {
-        if (f.role == role) return true;
+        if (f.role == role)
+            return true;
     }
     return false;
 }
@@ -37,7 +51,7 @@ bool has_role(const std::vector<FileFilter>& filters, PluginRole role) {
 } // namespace
 
 TEST(PluginFilterInvariant, EveryDiscoveredPluginAdvertisesFiltersForItsCapabilities) {
-    PluginFactory factory;  // auto-discovers built-ins + any plugins on disk
+    PluginFactory factory; // auto-discovers built-ins + any plugins on disk
 
     const auto components = factory.discovered_components();
     ASSERT_FALSE(components.empty())
@@ -50,23 +64,27 @@ TEST(PluginFilterInvariant, EveryDiscoveredPluginAdvertisesFiltersForItsCapabili
 
         if (c.has_input) {
             EXPECT_TRUE(has_role(filters, PluginRole::INPUT_READ))
-                << "Plugin '" << c.id << "' has has_input() == true but no FileFilter "
+                << "Plugin '" << c.id
+                << "' has has_input() == true but no FileFilter "
                    "with role INPUT_READ.";
         }
         if (c.has_output) {
             EXPECT_TRUE(has_role(filters, PluginRole::OUTPUT_WRITE))
-                << "Plugin '" << c.id << "' has has_output() == true but no FileFilter "
+                << "Plugin '" << c.id
+                << "' has has_output() == true but no FileFilter "
                    "with role OUTPUT_WRITE.";
         }
         if (c.has_report) {
             EXPECT_TRUE(has_role(filters, PluginRole::REPORT_WRITE))
-                << "Plugin '" << c.id << "' has has_report() == true but no FileFilter "
+                << "Plugin '" << c.id
+                << "' has has_report() == true but no FileFilter "
                    "with role REPORT_WRITE.";
         }
         if (c.has_state_io) {
             EXPECT_TRUE(has_role(filters, PluginRole::STATE_READ) ||
                         has_role(filters, PluginRole::STATE_WRITE))
-                << "Plugin '" << c.id << "' has has_state_io() == true but no FileFilter "
+                << "Plugin '" << c.id
+                << "' has has_state_io() == true but no FileFilter "
                    "with role STATE_READ or STATE_WRITE.";
         }
     }
@@ -78,24 +96,25 @@ TEST(PluginFilterInvariant, BuiltinDefaultsAreRegisteredAndCarryFilters) {
 
     auto find_id = [&](const std::string& id) -> const PluginFactory::ComponentEntry* {
         for (const auto& c : components) {
-            if (c.id == id) return &c;
+            if (c.id == id)
+                return &c;
         }
         return nullptr;
     };
 
-    const auto* in    = find_id("org.hydrocouple.openswmm.builtin.input");
-    const auto* out   = find_id("org.hydrocouple.openswmm.builtin.output");
-    const auto* rpt   = find_id("org.hydrocouple.openswmm.builtin.report");
+    const auto* in = find_id("org.hydrocouple.openswmm.builtin.input");
+    const auto* out = find_id("org.hydrocouple.openswmm.builtin.output");
+    const auto* rpt = find_id("org.hydrocouple.openswmm.builtin.report");
     const auto* state = find_id("org.hydrocouple.openswmm.builtin.state_io");
 
-    ASSERT_NE(in,    nullptr) << "Builtin default input plugin info not registered";
-    ASSERT_NE(out,   nullptr) << "Builtin default output plugin info not registered";
-    ASSERT_NE(rpt,   nullptr) << "Builtin default report plugin info not registered";
+    ASSERT_NE(in, nullptr) << "Builtin default input plugin info not registered";
+    ASSERT_NE(out, nullptr) << "Builtin default output plugin info not registered";
+    ASSERT_NE(rpt, nullptr) << "Builtin default report plugin info not registered";
     ASSERT_NE(state, nullptr) << "Builtin default state-IO plugin info not registered";
 
-    EXPECT_TRUE(has_role(in->info->file_filters(),    PluginRole::INPUT_READ));
-    EXPECT_TRUE(has_role(out->info->file_filters(),   PluginRole::OUTPUT_WRITE));
-    EXPECT_TRUE(has_role(rpt->info->file_filters(),   PluginRole::REPORT_WRITE));
+    EXPECT_TRUE(has_role(in->info->file_filters(), PluginRole::INPUT_READ));
+    EXPECT_TRUE(has_role(out->info->file_filters(), PluginRole::OUTPUT_WRITE));
+    EXPECT_TRUE(has_role(rpt->info->file_filters(), PluginRole::REPORT_WRITE));
     EXPECT_TRUE(has_role(state->info->file_filters(), PluginRole::STATE_READ));
     EXPECT_TRUE(has_role(state->info->file_filters(), PluginRole::STATE_WRITE));
 }
@@ -107,9 +126,10 @@ TEST(PluginFilterInvariant, FilePatternsAreNonEmptyAndStartWithStarDot) {
         for (const auto& f : c.info->file_filters()) {
             EXPECT_FALSE(f.description.empty())
                 << "Plugin '" << c.id << "' returned a FileFilter with an empty description";
-            ASSERT_FALSE(f.patterns.empty())
-                << "Plugin '" << c.id << "' returned a FileFilter with no patterns "
-                   "(role=" << openswmm::plugin_role_to_string(f.role) << ")";
+            ASSERT_FALSE(f.patterns.empty()) << "Plugin '" << c.id
+                                             << "' returned a FileFilter with no patterns "
+                                                "(role="
+                                             << openswmm::plugin_role_to_string(f.role) << ")";
             for (const auto& p : f.patterns) {
                 EXPECT_GE(p.size(), 3u)
                     << "Plugin '" << c.id << "' has too-short pattern '" << p << "'";

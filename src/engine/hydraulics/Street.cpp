@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Street.cpp
- * @brief Street cross-section — numerically identical to legacy street.c.
+ * @file      Street.cpp
+ * @brief     Street cross-section — numerically identical to legacy street.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Street.hpp"
@@ -48,10 +48,10 @@ void buildTransect(const StreetParams& sp, transect::TransectData& td) {
     td.stations.clear();
     td.elevations.clear();
 
-    const double w1 = sp.back_width;                   // backing
-    const double w2 = sp.gutter_width;                 // depressed gutter
-    const double w3 = sp.width;                        // curb to crown
-    const double w4 = w3 - w2;                         // road, less the gutter
+    const double w1 = sp.back_width;   // backing
+    const double w2 = sp.gutter_width; // depressed gutter
+    const double w3 = sp.width;        // curb to crown
+    const double w4 = w3 - w2;         // road, less the gutter
     const double y3 = sp.gutter_depression + sp.slope * w2;
     const double y1 = sp.curb_height + sp.gutter_depression;
     const double y4 = y3 + sp.slope * w4;
@@ -64,20 +64,20 @@ void buildTransect(const StreetParams& sp, transect::TransectData& td) {
         td.elevations.push_back(y);
     };
 
-    pt(0.0,      ymax);   // 0: top of backing
-    pt(w1,       y1);     // 1: top of curb
-    pt(w1,       0.0);    // 2: bottom of curb (the thalweg)
-    pt(w1 + w2,  y3);     // 3: outer edge of the depressed gutter
-    pt(w1 + w3,  y4);     // 4: crown
+    pt(0.0, ymax);   // 0: top of backing
+    pt(w1, y1);      // 1: top of curb
+    pt(w1, 0.0);     // 2: bottom of curb (the thalweg)
+    pt(w1 + w2, y3); // 3: outer edge of the depressed gutter
+    pt(w1 + w3, y4); // 4: crown
 
     if (sp.sides == 1) {
         // A half street is closed by a vertical wall at the crown.
         pt(w1 + w3, ymax);
     } else {
         // The right side mirrors the left.
-        pt(w1 + w3 + w4,           y3);
-        pt(w1 + w3 + w4 + w2,      0.0);
-        pt(w1 + w3 + w4 + w2,      y1);
+        pt(w1 + w3 + w4, y3);
+        pt(w1 + w3 + w4 + w2, 0.0);
+        pt(w1 + w3 + w4 + w2, y1);
         pt(w1 + w3 + w4 + w2 + w1, ymax);
     }
 
@@ -85,17 +85,16 @@ void buildTransect(const StreetParams& sp, transect::TransectData& td) {
     // ALL main channel, keyed on backWidth — not on whether nBack was given).
     td.n_channel = sp.roughness;
     if (sp.back_width == 0.0) {
-        td.n_left  = sp.roughness;
+        td.n_left = sp.roughness;
         td.n_right = sp.roughness;
-        td.x_left_bank  = td.stations.front();
+        td.x_left_bank = td.stations.front();
         td.x_right_bank = td.stations.back();
     } else {
-        td.n_left  = sp.back_roughness;
+        td.n_left = sp.back_roughness;
         td.n_right = sp.back_roughness;
-        td.x_left_bank  = td.stations[1];
-        td.x_right_bank = (sp.sides == 2)
-                        ? td.stations[td.stations.size() - 2]
-                        : td.stations.back();
+        td.x_left_bank = td.stations[1];
+        td.x_right_bank =
+            (sp.sides == 2) ? td.stations[td.stations.size() - 2] : td.stations.back();
     }
 
     transect::buildTables(td, /*add_end_walls=*/false);

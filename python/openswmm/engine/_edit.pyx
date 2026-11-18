@@ -73,6 +73,7 @@ from ._exceptions import ElementNotFoundError
 from datetime import datetime
 
 from ._common cimport *
+from libc.stdlib cimport malloc, calloc, free
 from ._dates import datetime_to_oadate, oadate_to_datetime
 
 # =============================================================================
@@ -204,6 +205,45 @@ cdef list _impact_report_to_list(SWMM_ImpactReport* report):
     return result
 
 
+class TypeChange:
+    """One object's outcome in a batch conversion (L{ModelEditor.convert_types}).
+
+    @ivar source_type: The object's type before the call; for nodes 4 is a
+        virtual junction and 5 an inlet junction. -1 for an invalid index.
+    @ivar status: 0 when the object can be (or was) converted, otherwise the
+        engine error code of the refusal. A refused object is unchanged.
+    @ivar dependency_node: Index of a related node that causes a refusal, or -1.
+    @ivar details: L{ConversionResult} of an applied conversion; empty for a
+        preview, a refusal, or an object already of the target type.
+
+    @param source_type: Type before the call.
+    @type source_type: int
+    @param status: 0 or the refusal's engine error code.
+    @type status: int
+    @param dependency_node: Related node index or -1.
+    @type dependency_node: int
+    @param details: Result of the applied conversion.
+    @type details: L{ConversionResult}
+    """
+
+    __slots__ = ("source_type", "status", "dependency_node", "details")
+
+    def __init__(self, int source_type, int status, int dependency_node, details):
+        self.source_type     = source_type
+        self.status          = status
+        self.dependency_node = dependency_node
+        self.details         = details
+
+    def __repr__(self):
+        """Return a developer-readable representation.
+
+        @return: String with the source type, status and dependency node.
+        @rtype: str
+        """
+        return (f"TypeChange(source_type={self.source_type}, status={self.status}, "
+                f"dependency_node={self.dependency_node})")
+
+
 cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
     """Convert a SWMM_ConversionResult to a Python object and free C memory."""
     cdef list cleared = []
@@ -219,6 +259,101 @@ cdef object _conversion_result_to_py(SWMM_ConversionResult* res):
     new_type = res.new_type
     swmm_conversion_result_free(res)
     return ConversionResult(new_type, cleared, warnings)
+
+
+# =============================================================================
+# DeleteRecord
+# =============================================================================
+
+cdef class DeleteRecord:
+    """How to undo one recorded delete exactly.
+
+    Returned by the C{*_recorded} delete methods of L{ModelEditor}. It holds
+    every row the delete removed, with its original index, and every
+    reference the delete cleared or renumbered. L{restore} puts all of it
+    back, at most once, on the engine that made the delete.
+
+    The native record is released when this object is garbage-collected, or
+    earlier by L{close}. It cannot be constructed directly.
+    """
+
+    cdef SWMM_DeleteRecord _record
+    cdef object _owner
+    cdef bint _restored
+
+    def __cinit__(self):
+        self._record = NULL
+        self._owner = None
+        self._restored = False
+
+    def __init__(self):
+        raise TypeError("DeleteRecord is returned by ModelEditor's *_recorded delete methods.")
+
+    def __dealloc__(self):
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    @property
+    def restorable(self) -> bool:
+        """C{True} until L{restore} succeeds or L{close} is called.
+
+        @rtype: bool
+        """
+        return self._record != NULL and not self._restored
+
+    def restore(self) -> None:
+        """Undo the delete: reinsert every removed row at its original index
+        and restore every reference the delete cleared or renumbered.
+
+        The engine refuses, changing nothing, when the model no longer matches
+        the state the delete left (object counts, the name being free,
+        cleared references still clear); the record then stays restorable.
+        A successful restore spends the record and invalidates existing
+        element wrappers, as a delete does.
+
+        @raise ValueError: If the record was already restored or closed.
+        @raise BadHandleError: If the engine that made the record has been
+            destroyed.
+        @raise BadParamError: If the model no longer matches the state the
+            delete left.
+        @raise EngineError: On another C API failure, such as an engine that
+            is not in C{BUILDING} or C{OPENED} state.
+        """
+        if self._restored:
+            raise ValueError("This delete record was already restored.")
+        if self._record == NULL:
+            raise ValueError("This delete record was closed.")
+        cdef size_t address = self._owner.handle
+        if not address:
+            from ._exceptions import BadHandleError
+            from ._enums import ErrorCode
+            raise BadHandleError(ErrorCode.BADHANDLE, "Engine has been destroyed")
+        _check(swmm_delete_record_restore(<SWMM_Engine>address, self._record))
+        self._restored = True
+        self._owner._bump_generation()
+
+    def close(self) -> None:
+        """Release the native record; it can no longer be restored.
+
+        Safe to call more than once, and after the engine is destroyed.
+        """
+        if self._record != NULL:
+            swmm_delete_record_destroy(self._record)
+            self._record = NULL
+
+    def __repr__(self) -> str:
+        state = ("restored" if self._restored
+                 else "restorable" if self._record != NULL else "closed")
+        return f"DeleteRecord({state})"
+
+
+cdef DeleteRecord _delete_record(object owner, SWMM_DeleteRecord record):
+    """Wrap a record a recorded delete just created; the wrapper owns it."""
+    cdef DeleteRecord wrapped = DeleteRecord.__new__(DeleteRecord)
+    wrapped._record = record
+    wrapped._owner = owner
+    return wrapped
 
 
 # =============================================================================
@@ -357,6 +492,190 @@ cdef class ModelEditor:
         if indices.size():
             self._owner._bump_generation()
         return _impact_report_to_list(&report)
+
+    # =========================================================================
+    # Recorded deletion (undoable)
+    # =========================================================================
+
+    cdef tuple _recorded(self, int rc, SWMM_ImpactReport* report, SWMM_DeleteRecord record,
+                         bint changed):
+        """Raise on failure; otherwise return C{(impacts, DeleteRecord)}."""
+        if rc != 0:
+            swmm_impact_report_free(report)
+            _check(rc)
+        if changed:
+            self._owner._bump_generation()
+        return _impact_report_to_list(report), _delete_record(self._owner, record)
+
+    def delete_node_recorded(self, id_or_idx) -> tuple:
+        """Delete a node as L{delete_node} does, and record how to undo it.
+
+        The record covers the node's row, subtype and 2D coupling rows, name
+        and coordinates, every link it cascade-deletes, its inlet usages,
+        inflow, DWF and RDII rows, treatment, reaction rows, initial quality,
+        user flags and heat overrides, and every reference the delete cleared
+        or renumbered.
+
+        @param id_or_idx: Node name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}: the cascade report, as from
+            L{delete_node}, and the L{DeleteRecord} that undoes the delete.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the node is not found.
+        @raise EngineError: On C API failure, such as an engine that is not
+            in C{BUILDING} or C{OPENED} state.
+        """
+        cdef int idx = self._node_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_link_recorded(self, id_or_idx) -> tuple:
+        """Delete a link as L{delete_link} does, and record how to undo it.
+
+        The record covers the link's row, subtype row, name and geometry, its
+        inlet usages, LID node outlets, reaction rows, initial quality, user
+        flags and heat overrides, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Link name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the link is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._link_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_subcatch_recorded(self, id_or_idx) -> tuple:
+        """Delete a subcatchment as L{delete_subcatch} does, and record how to
+        undo it.
+
+        The record covers the subcatchment's row, name, polygon and patterns,
+        its LID usage rows, surface loadings, reaction laws, groundwater flow
+        expressions and user flags, and every reference the delete cleared or
+        renumbered.
+
+        @param id_or_idx: Subcatchment name (C{str}) or zero-based index
+            (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the subcatchment is not
+            found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._subcatch_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_gage_recorded(self, id_or_idx) -> tuple:
+        """Delete a rain gage as L{delete_gage} does, and record how to undo it,
+        including the subcatchment references the delete cleared.
+
+        @param id_or_idx: Gage name (C{str}) or zero-based index (C{int}).
+        @return: C{(impacts, record)}, as for L{delete_node_recorded}.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If C{id_or_idx} is a name and the gage is not found.
+        @raise EngineError: On C API failure.
+        """
+        cdef int idx = self._gage_idx(id_or_idx)
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_recorded(self._h(), idx, &report, &record)
+        return self._recorded(rc, &report, record, True)
+
+    def delete_nodes_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_nodes} does, and record how to undo the
+        whole batch: one L{DeleteRecord} restores every node at its original
+        index.
+
+        An empty batch deletes nothing and returns a record whose restore does
+        nothing.
+
+        @param keys: Pre-batch node names or zero-based indices.
+        @return: C{(impacts, record)}: the aggregate cascade report and the
+            record.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        @raise KeyError: If a name is not found; nothing is deleted.
+        @raise EngineError: On C API failure; nothing is deleted.
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._node_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_node_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_links_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_links} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch link names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._link_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_link_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_subcatchments_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_subcatchments} does, and record how to
+        undo the whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch subcatchment names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._subcatch_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_subcatch_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
+
+    def delete_gages_recorded(self, keys) -> tuple:
+        """Delete a batch as L{delete_gages} does, and record how to undo the
+        whole batch. See L{delete_nodes_recorded}.
+
+        @param keys: Pre-batch gage names or zero-based indices.
+        @rtype: tuple[list[L{ImpactEntry}], L{DeleteRecord}]
+        """
+        cdef vector[int] indices
+        for key in keys:
+            indices.push_back(self._gage_idx(key))
+        cdef SWMM_ImpactReport report
+        cdef SWMM_DeleteRecord record = NULL
+        report.entries = NULL
+        report.n_entries = 0
+        cdef int rc = swmm_gage_delete_many_recorded(
+            self._h(), indices.data(), <int>indices.size(), &report, &record)
+        return self._recorded(rc, &report, record, indices.size() > 0)
 
     # =========================================================================
     # Internal index resolution helpers
@@ -1175,6 +1494,66 @@ cdef class ModelEditor:
         self._owner._bump_generation()
         _check(swmm_node_convert(self._h(), idx, new_type, &res))
         return _conversion_result_to_py(&res)
+
+    def convert_types(self, bint nodes, int target, indices, bint apply=True,
+                      int design=-1, int capture=-1, int placement=0) -> list:
+        """Preview or convert several nodes or links to one type.
+
+        Each object gets its own L{TypeChange}: an object the engine refuses
+        is left unchanged and the others are still converted. An object
+        already of the target type is a no-op.
+
+        @param nodes: C{True} to convert nodes, C{False} to convert links.
+        @type nodes: bool
+        @param target: Target type code. For nodes, 4 makes a virtual junction
+            and 5 an inlet junction.
+        @type target: int
+        @param indices: Unique zero-based object indices.
+        @type indices: sequence of int
+        @param apply: C{False} only reports what would happen.
+        @type apply: bool
+        @param design: Inlet design index for target 5; -2 previews the
+            topology alone, before a design is chosen.
+        @type design: int
+        @param capture: Capture node index for target 5.
+        @type capture: int
+        @param placement: Inlet placement code for target 5.
+        @type placement: int
+        @return: One L{TypeChange} per index, in order.
+        @rtype: list[L{TypeChange}]
+        @raise RuntimeError: If the engine is not in C{BUILDING} or C{OPENED}
+            state.
+        @raise EngineError: On C API failure (an invalid target).
+        @see: L{openswmm.engine.NodeType}, L{openswmm.engine.LinkType}
+        """
+        cdef list idx = [int(i) for i in indices]
+        cdef int n = len(idx)
+        cdef int i
+        cdef int* c_idx = NULL
+        cdef SWMM_TypeChange* rows = NULL
+        cdef list out = []
+        if n:
+            c_idx = <int*>malloc(n * sizeof(int))
+            rows = <SWMM_TypeChange*>calloc(n, sizeof(SWMM_TypeChange))
+            if c_idx == NULL or rows == NULL:
+                free(c_idx)
+                free(rows)
+                raise MemoryError()
+        try:
+            for i in range(n):
+                c_idx[i] = idx[i]
+            if apply:
+                self._owner._bump_generation()
+            _check(swmm_convert_types(self._h(), nodes, target, c_idx, n, design, capture,
+                                      placement, apply, rows))
+            for i in range(n):
+                out.append(TypeChange(rows[i].source_type, rows[i].status,
+                                      rows[i].dependency_node,
+                                      _conversion_result_to_py(&rows[i].details)))
+        finally:
+            free(c_idx)
+            free(rows)
+        return out
 
     def convert_link(self, id_or_idx, int new_type) -> ConversionResult:
         """Convert a link to a different type in place.

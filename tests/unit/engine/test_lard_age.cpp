@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_lard_age.cpp
- * @brief X4: water age under the LARD engine, and the A5 cross-engine gate.
+ * @file      test_lard_age.cpp
+ * @brief     X4: water age under the LARD engine, and the A5 cross-engine gate.
  *
  * @details Subplan X4 (plans/transport/LARD_AGE_EXPEDITE_SUBPLAN_2026-08-23.md;
  *          water-age plan A5; strategy §8). The claims:
@@ -38,9 +38,9 @@
  *
  *          Scratch fixtures use the `_la_` prefix (collision-checked).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -57,6 +57,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -65,28 +76,56 @@ constexpr double kQ = 5.0;
 constexpr double kCin = 100.0;
 
 struct DeckSpec {
-    const char* solver = "LAGRANGIAN";  ///< LAGRANGIAN | EULERIAN_ARD | LEGACY
+    const char* solver = "LAGRANGIAN"; ///< LAGRANGIAN | EULERIAN_ARD | LEGACY
     bool water_age = true;
     bool pollutants = true;
-    bool single_conduit = false;        ///< J0 → C1(2000 ft) → OUT
+    bool single_conduit = false; ///< J0 → C1(2000 ft) → OUT
     const char* end_time = "06:00:00";
     int routing_step = 5;
     double kdecay = 0.0;                 ///< [POLLUTANTS] Kdecay column, 1/s
     const char* age_component = nullptr; ///< [WATER_AGE_SOURCES] body, or null
 };
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Borrowed destination path; an existing file is truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const std::string& path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-void write_deck(const std::string& path, const std::string& tag,
-                const DeckSpec& s) {
+/**
+ * @brief Write a Lagrangian/legacy age fixture and optional source sidecar.
+ *
+ * When pollutants are enabled, converts decay 1/s to the authored 1/day column and supplies kCin
+ * mg/L. A non-null age_component writes a separate WATER_AGE_SOURCES config through write_file;
+ * path and tag must resolve consistently for later loading. Opens/truncates the deck using a local
+ * ofstream; parent directories must exist. Stream open/write/close outcomes are not checked, and
+ * sidecar names/text are not escaped. Caller-owned inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] tag Filename prefix for &lt;tag&gt;_src.age when age_component is non-null; copied into the
+ *     component config reference.
+ * @param[in] s Borrowed spec selecting solver keyword, water-age flag, end/routing time tokens, one
+ *     long conduit versus five-link chain, pollutant flag/decay 1/s and optional raw age-source
+ *     rows.
+ */
+void write_deck(const std::string& path, const std::string& tag, const DeckSpec& s) {
     std::ofstream f(path);
     f << "[TITLE]\nLARD X4 age\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\n"
       << "QUALITY_SOLVER " << s.solver << "\n";
-    if (s.water_age) f << "WATER_AGE ON\n";
+    if (s.water_age)
+        f << "WATER_AGE ON\n";
     f << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << s.end_time << "\n"
       << "ROUTING_STEP " << s.routing_step << "\nREPORT_STEP 00:05:00\n\n";
@@ -110,15 +149,13 @@ void write_deck(const std::string& path, const std::string& tag,
           << "C5 CIRCULAR 2.0 0 0 0\n\n";
     }
     if (s.pollutants)
-        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0)  // 1/day column (KD1)
+        f << "[POLLUTANTS]\nTSS MG/L 0 0 0 " << (s.kdecay * 86400.0) // 1/day column (KD1)
           << " NO * 0 0 0\n\n";
     if (s.age_component != nullptr) {
         const std::string age_path = tag + "_src.age";
-        write_file(age_path,
-                   std::string("[WATER_AGE_SOURCES]\n") + s.age_component);
+        write_file(age_path, std::string("[WATER_AGE_SOURCES]\n") + s.age_component);
         f << "[PROCESS_COMPONENTS]\n"
-          << "org.hydrocouple.openswmm.waterage config=\"" << age_path
-          << "\"\n\n";
+          << "org.hydrocouple.openswmm.waterage config=\"" << age_path << "\"\n\n";
     }
     f << "[INFLOWS]\n"
       << "J0 FLOW \"\" FLOW 1.0 1.0 " << kQ << "\n";
@@ -128,28 +165,43 @@ void write_deck(const std::string& path, const std::string& tag,
 }
 
 struct AgeRun {
-    std::vector<double> node_age;   ///< seconds, final
-    std::vector<double> link_age;   ///< seconds, final
-    std::vector<double> tss_final;  ///< [link] mg/L (empty if no pollutants)
-    double outfall_age = 0.0;       ///< seconds
-    double head_node_age = 0.0;     ///< J0
-    double total_volume = 0.0;      ///< links + nodes, ft³ at end
-    double flow0 = 0.0;             ///< |Q| of link 0 at end
-    double elapsed_s = 0.0;         ///< simulated seconds
+    std::vector<double> node_age;  ///< seconds, final
+    std::vector<double> link_age;  ///< seconds, final
+    std::vector<double> tss_final; ///< [link] mg/L (empty if no pollutants)
+    double outfall_age = 0.0;      ///< seconds
+    double head_node_age = 0.0;    ///< J0
+    double total_volume = 0.0;     ///< links + nodes, ft³ at end
+    double flow0 = 0.0;            ///< |Q| of link 0 at end
+    double elapsed_s = 0.0;        ///< simulated seconds
     bool ok = false;
 };
 
+/**
+ * @brief Run the LARD age fixture and snapshot age/concentration/hydraulic state.
+ *
+ * Owns/destroys engine, caps at 200000 positive-time calls and ignores end status; guard exhaustion
+ * can still be ok. elapsed_s is the last API elapsed value times 86400 and may be zero at normal
+ * completion; the nearby recovery comment does not actually restore the configured duration. Last
+ * encountered outfall supplies outfall_age, missing age arrays default selected probes to zero.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] s Deck choices yielding at least link zero and compatible optional pollutant state.
+ * @return Owned node/link ages seconds, first-pollutant final link concentration, native system
+ *     volume ft3 and link-zero absolute flow ft3/s; ok=false on setup/step refusal.
+ */
 AgeRun run_deck(const std::string& tag, const DeckSpec& s) {
     AgeRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, tag, s);
 
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) { ADD_FAILURE() << "engine create"; return r; }
-    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(),
-                         (tag + ".out").c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr) {
+        ADD_FAILURE() << "engine create";
+        return r;
+    }
+    if (swmm_engine_open(e, inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str(), nullptr) !=
+            SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         ADD_FAILURE() << "open/init/start failed for " << inp;
         swmm_engine_destroy(e);
         return r;
@@ -166,7 +218,7 @@ AgeRun run_deck(const std::string& tag, const DeckSpec& s) {
             swmm_engine_destroy(e);
             return r;
         }
-        r.elapsed_s = elapsed * 86400.0;  // elapsed is days
+        r.elapsed_s = elapsed * 86400.0; // elapsed is days
     } while (elapsed > 0.0 && ++guard < 200000);
     // elapsed returns 0 at the end; recover the simulated span from options.
     swmm_engine_end(e);
@@ -221,8 +273,10 @@ TEST(LardAgeTest, SteadyOutfallAgeIsTheMeasuredResidenceTime) {
 // ---------------------------------------------------------------------------
 TEST(LardAgeTest, ThreeEnginesAgreeAtTheOutfallNode) {
     DeckSpec lard;
-    DeckSpec ard = lard;  ard.solver = "EULERIAN_ARD";
-    DeckSpec leg = lard;  leg.solver = "LEGACY";
+    DeckSpec ard = lard;
+    ard.solver = "EULERIAN_ARD";
+    DeckSpec leg = lard;
+    leg.solver = "LEGACY";
 
     const AgeRun a = run_deck("_la_a5_lard", lard);
     const AgeRun b = run_deck("_la_a5_ard", ard);
@@ -249,8 +303,9 @@ TEST(LardAgeTest, ThreeEnginesAgreeAtTheOutfallNode) {
 // Gate 3 — WATER_AGE ON leaves pollutants bit-identical under LARD.
 // ---------------------------------------------------------------------------
 TEST(LardAgeTest, PollutantsAreBitIdenticalUnderAgeTracking) {
-    DeckSpec on;                       // age on, TSS on
-    DeckSpec off = on;  off.water_age = false;
+    DeckSpec on; // age on, TSS on
+    DeckSpec off = on;
+    off.water_age = false;
 
     const AgeRun a = run_deck("_la_bit_on", on);
     const AgeRun b = run_deck("_la_bit_off", off);
@@ -272,9 +327,9 @@ TEST(LardAgeTest, PollutantsAreBitIdenticalUnderAgeTracking) {
     // age-row stride leak puts ~3.9e3-second values or zeros in the TSS
     // column (falsifier vi, verified loud).
     for (std::size_t l = 0; l < a.tss_final.size(); ++l)
-        EXPECT_NEAR(a.tss_final[l], b.tss_final[l],
-                    std::abs(b.tss_final[l]) * 1.0e-9)
-            << "TSS moved at link " << l << " when WATER_AGE turned on — "
+        EXPECT_NEAR(a.tss_final[l], b.tss_final[l], std::abs(b.tss_final[l]) * 1.0e-9)
+            << "TSS moved at link " << l
+            << " when WATER_AGE turned on — "
                "the age row leaked into the pollutant stride (the A2b "
                "conflation family)";
 }
@@ -338,7 +393,8 @@ TEST(LardAgeTest, AgeDoesNotDecayWithThePollutant) {
     DeckSpec k0;
     k0.single_conduit = true;
     k0.end_time = "04:00:00";
-    DeckSpec k1 = k0;  k1.kdecay = 1.0e-3;
+    DeckSpec k1 = k0;
+    k1.kdecay = 1.0e-3;
 
     const AgeRun a = run_deck("_la_k0", k0);
     const AgeRun b = run_deck("_la_k1", k1);
@@ -347,16 +403,15 @@ TEST(LardAgeTest, AgeDoesNotDecayWithThePollutant) {
 
     // The decay must be LIVE on the pollutant row (premise)...
     ASSERT_FALSE(b.tss_final.empty());
-    ASSERT_LT(b.tss_final[0], 80.0)
-        << "kdecay=1e-3 left TSS at " << b.tss_final[0]
-        << " — the decay premise is broken, not the age claim";
+    ASSERT_LT(b.tss_final[0], 80.0) << "kdecay=1e-3 left TSS at " << b.tss_final[0]
+                                    << " — the decay premise is broken, not the age claim";
 
     // ...and absent from the age row: the same deck, the same water, the
     // same clock. 1% absorbs segment-partition jitter (the A3 family).
     EXPECT_NEAR(b.outfall_age, a.outfall_age, a.outfall_age * 0.01)
-        << "outfall age moved when KDECAY turned on: " << a.outfall_age
-        << " -> " << b.outfall_age << " — the age row is being decayed "
+        << "outfall age moved when KDECAY turned on: " << a.outfall_age << " -> " << b.outfall_age
+        << " — the age row is being decayed "
            "like a pollutant";
 }
 
-}  // namespace
+} // namespace

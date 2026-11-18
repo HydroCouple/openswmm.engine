@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_sources_api.cpp
- * @brief Step 3 — the `[HEAT_SOURCES]` C API surface.
+ * @file      test_heat_sources_api.cpp
+ * @brief     Step 3 — the `[HEAT_SOURCES]` C API surface.
  *
  * @details H6a built `openswmm_heat.h` for the flux/radiative/solar/cloud
  *          sections; `[HEAT_SOURCES]` — the per-source inlet temperature
@@ -37,6 +37,10 @@
  *          `SourceEditsSurviveASaveAndReopen` is what replaced it.
  *
  *          Scratch fixtures use the `_hs_` prefix (collision-checked).
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -50,23 +54,43 @@
 
 namespace {
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Asserts open success and
+ * returns early from this void helper on a fatal assertion. Subsequent write/close failures are not
+ * checked; the local stream closes at scope exit and no path/content storage is retained.
+ * Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     ASSERT_TRUE(f.is_open()) << path;
     f << body;
 }
 
-/// Minimal deck: two junctions and an outfall, heat transport on, and a
-/// `[PROCESS_COMPONENTS]` row pointing at `heat_cfg` when non-empty.
+/**
+ * @brief Build the half-hour heat-source API configuration deck.
+ *
+ * No config file is created, no source default is validated and no engine is opened.
+ *
+ * @param[in] heat_cfg Optional config filename; null/empty omits component declaration, otherwise
+ *     copied in quotes without escaping.
+ * @return Owned CFS/DYNWAVE two-conduit deck with HEAT_TRANSPORT YES and no authored external
+ *     inflow.
+ */
 std::string deck(const char* heat_cfg) {
-    std::string s =
-        "[TITLE]\nheat sources API\n\n"
-        "[OPTIONS]\n"
-        "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
-        "HEAT_TRANSPORT       YES\n"
-        "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
-        "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
-        "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n";
+    std::string s = "[TITLE]\nheat sources API\n\n"
+                    "[OPTIONS]\n"
+                    "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n"
+                    "HEAT_TRANSPORT       YES\n"
+                    "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n"
+                    "END_DATE             01/01/2026\nEND_TIME             00:30:00\n"
+                    "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n";
     if (heat_cfg && *heat_cfg) {
         s += std::string("[PROCESS_COMPONENTS]\n"
                          "org.hydrocouple.openswmm.heat config=\"") +
@@ -80,17 +104,28 @@ std::string deck(const char* heat_cfg) {
     return s;
 }
 
-/// Opened engine on a deck, or nullptr with `why` set.
-SWMM_Engine open_deck(const char* tag, const char* heat_cfg,
-                      std::string* why) {
+/**
+ * @brief Write/open the heat-source fixture for configuration inspection.
+ *
+ * Does not initialize/start or verify write_file status. Errors use fixed diagnostics rather than
+ * copying full engine errors; retained artifacts remain for review.
+ *
+ * @param[in] tag Non-null safe prefix for overwritten .inp/.rpt/.out.
+ * @param[in] heat_cfg Optional heat config filename passed to deck.
+ * @param[out] why Required writable string set on create/open failure; unchanged on success.
+ * @return Caller-owned opened handle, or null after refusal and destruction.
+ */
+SWMM_Engine open_deck(const char* tag, const char* heat_cfg, std::string* why) {
     const std::string inp = std::string(tag) + ".inp";
     write_file(inp.c_str(), deck(heat_cfg));
     SWMM_Engine e = swmm_engine_create();
-    if (!e) { *why = "engine_create returned null"; return nullptr; }
+    if (!e) {
+        *why = "engine_create returned null";
+        return nullptr;
+    }
     const std::string rpt = std::string(tag) + ".rpt";
     const std::string out = std::string(tag) + ".out";
-    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr)
-        != SWMM_OK) {
+    if (swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr) != SWMM_OK) {
         *why = "open failed for " + inp;
         swmm_engine_destroy(e);
         return nullptr;
@@ -98,7 +133,7 @@ SWMM_Engine open_deck(const char* tag, const char* heat_cfg,
     return e;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // The table is readable on a model that configures no heat at all — the MCP's
@@ -120,7 +155,7 @@ TEST(HeatSourcesApiTest, ReadsCleanlyWithNoHeatConfig) {
 
     for (int s = 0; s < n; ++s) {
         double t = -999.0;
-        int    cfgd = -1;
+        int cfgd = -1;
         EXPECT_EQ(swmm_heat_get_source_temp(e, s, &t), SWMM_OK) << s;
         EXPECT_DOUBLE_EQ(t, 20.0) << "source " << s << " should read the default";
         EXPECT_EQ(swmm_heat_get_source_configured(e, s, &cfgd), SWMM_OK);
@@ -134,30 +169,26 @@ TEST(HeatSourcesApiTest, ReadsCleanlyWithNoHeatConfig) {
 // row from the default, and write a new value back into the session.
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, ReadsDeckRowsAndDistinguishesTheDefault) {
-    write_file("_hs_rw.heat",
-               "[HEAT_SOURCES]\n"
-               "DWF   GLOBAL 14.5\n"
-               "GW    GLOBAL  9.0\n"
-               "DWF   NODE J1 11.25\n");
+    write_file("_hs_rw.heat", "[HEAT_SOURCES]\n"
+                              "DWF   GLOBAL 14.5\n"
+                              "GW    GLOBAL  9.0\n"
+                              "DWF   NODE J1 11.25\n");
     std::string why;
     SWMM_Engine e = open_deck("_hs_rw", "_hs_rw.heat", &why);
     ASSERT_NE(e, nullptr) << why;
 
     double t = 0.0;
-    int    cfgd = -1;
+    int cfgd = -1;
     EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
     EXPECT_DOUBLE_EQ(t, 14.5);
-    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd), SWMM_OK);
     EXPECT_EQ(cfgd, 1);
 
     // RAINFALL had no row: same 20 °C, but NOT configured. An editor that
     // cannot tell these apart writes rows the user never asked for.
-    EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_RAINFALL, &t),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_RAINFALL, &t), SWMM_OK);
     EXPECT_DOUBLE_EQ(t, 20.0);
-    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_RAINFALL,
-                                              &cfgd), SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_RAINFALL, &cfgd), SWMM_OK);
     EXPECT_EQ(cfgd, 0);
 
     // The NODE override the deck carried.
@@ -173,12 +204,10 @@ TEST(HeatSourcesApiTest, ReadsDeckRowsAndDistinguishesTheDefault) {
     // The resolver, not a re-derivation: DWF at the overridden node takes the
     // override; DWF anywhere else takes the global.
     double eff = 0.0;
-    EXPECT_EQ(swmm_heat_get_effective_source_temp(e, SWMM_HEAT_SRC_DWF, node,
-                                                  &eff), SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_effective_source_temp(e, SWMM_HEAT_SRC_DWF, node, &eff), SWMM_OK);
     EXPECT_DOUBLE_EQ(eff, 11.25);
     const int other = (node == 0) ? 1 : 0;
-    EXPECT_EQ(swmm_heat_get_effective_source_temp(e, SWMM_HEAT_SRC_DWF, other,
-                                                  &eff), SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_effective_source_temp(e, SWMM_HEAT_SRC_DWF, other, &eff), SWMM_OK);
     EXPECT_DOUBLE_EQ(eff, 14.5) << "a node with no override takes the global";
 
     // Clearing returns the default AND unmarks it, without touching the
@@ -186,8 +215,7 @@ TEST(HeatSourcesApiTest, ReadsDeckRowsAndDistinguishesTheDefault) {
     EXPECT_EQ(swmm_heat_clear_source_temp(e, SWMM_HEAT_SRC_DWF), SWMM_OK);
     EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
     EXPECT_DOUBLE_EQ(t, 20.0);
-    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd), SWMM_OK);
     EXPECT_EQ(cfgd, 0);
     EXPECT_EQ(swmm_heat_node_override_count(e, &n), SWMM_OK);
     EXPECT_EQ(n, 1) << "clearing a GLOBAL must not delete NODE rows";
@@ -211,8 +239,7 @@ TEST(HeatSourcesApiTest, RefusesWhatTheDeckRefusesAndDoesNotMutate) {
     write_file(inp.c_str(), deck("_hs_hot.heat"));
     SWMM_Engine bad = swmm_engine_create();
     ASSERT_NE(bad, nullptr);
-    EXPECT_NE(swmm_engine_open(bad, inp.c_str(), "_hs_hot.rpt", "_hs_hot.out",
-                               nullptr), SWMM_OK)
+    EXPECT_NE(swmm_engine_open(bad, inp.c_str(), "_hs_hot.rpt", "_hs_hot.out", nullptr), SWMM_OK)
         << "the deck accepted 150 degC; the API's range copy is now the one "
            "that is wrong, and this gate is pointing at the wrong door";
     swmm_engine_destroy(bad);
@@ -223,23 +250,18 @@ TEST(HeatSourcesApiTest, RefusesWhatTheDeckRefusesAndDoesNotMutate) {
     ASSERT_NE(e, nullptr) << why;
 
     double before = 0.0;
-    ASSERT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &before),
-              SWMM_OK);
+    ASSERT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &before), SWMM_OK);
 
-    EXPECT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, 150.0),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, -80.0),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, 150.0), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, -80.0), SWMM_ERR_BADPARAM);
 
     double after = 0.0;
-    EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &after),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_temp(e, SWMM_HEAT_SRC_DWF, &after), SWMM_OK);
     EXPECT_DOUBLE_EQ(after, before)
         << "a REFUSED write mutated anyway — an API that errors and writes is "
            "worse than one that only errors";
     int cfgd = -1;
-    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_configured(e, SWMM_HEAT_SRC_DWF, &cfgd), SWMM_OK);
     EXPECT_EQ(cfgd, 0) << "a refused write marked the source configured";
 
     // The boundaries themselves are legal — a range gate that refuses its own
@@ -259,16 +281,12 @@ TEST(HeatSourcesApiTest, NodeOverrideScopeMatchesTheParsersRule) {
     SWMM_Engine e = open_deck("_hs_scope", "", &why);
     ASSERT_NE(e, nullptr) << why;
 
-    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 0, 12.0),
-              SWMM_OK);
-    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 0,
-                                          13.0), SWMM_OK);
+    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 0, 12.0), SWMM_OK);
+    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 0, 13.0), SWMM_OK);
     // Every other source takes GLOBAL in H1.
-    for (const int s : {SWMM_HEAT_SRC_RAINFALL, SWMM_HEAT_SRC_GW,
-                        SWMM_HEAT_SRC_RDII, SWMM_HEAT_SRC_IFACE,
-                        SWMM_HEAT_SRC_INITIAL_STATE}) {
-        EXPECT_EQ(swmm_heat_set_node_override(e, s, 0, 12.0),
-                  SWMM_ERR_BADPARAM)
+    for (const int s : {SWMM_HEAT_SRC_RAINFALL, SWMM_HEAT_SRC_GW, SWMM_HEAT_SRC_RDII,
+                        SWMM_HEAT_SRC_IFACE, SWMM_HEAT_SRC_INITIAL_STATE}) {
+        EXPECT_EQ(swmm_heat_set_node_override(e, s, 0, 12.0), SWMM_ERR_BADPARAM)
             << "source " << s << " accepted a NODE override it must refuse";
     }
     int n = -1;
@@ -277,8 +295,7 @@ TEST(HeatSourcesApiTest, NodeOverrideScopeMatchesTheParsersRule) {
 
     // Bad indices are BADINDEX, not BADPARAM — the codes carry meaning.
     EXPECT_EQ(swmm_heat_set_node_override(e, 99, 0, 12.0), SWMM_ERR_BADINDEX);
-    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 9999, 12.0),
-              SWMM_ERR_BADINDEX);
+    EXPECT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 9999, 12.0), SWMM_ERR_BADINDEX);
 
     swmm_engine_destroy(e);
 }
@@ -294,17 +311,14 @@ TEST(HeatSourcesApiTest, RepeatedNodeOverrideUpdatesRatherThanDuplicates) {
     SWMM_Engine e = open_deck("_hs_dup", "", &why);
     ASSERT_NE(e, nullptr) << why;
 
-    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 1, 10.0),
-              SWMM_OK);
-    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 1, 17.5),
-              SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 1, 10.0), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_DWF, 1, 17.5), SWMM_OK);
 
     int n = -1;
     EXPECT_EQ(swmm_heat_node_override_count(e, &n), SWMM_OK);
     EXPECT_EQ(n, 1) << "the second write duplicated the row instead of editing";
     double t = 0.0;
-    EXPECT_EQ(swmm_heat_get_node_override(e, 0, nullptr, nullptr, &t),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_node_override(e, 0, nullptr, nullptr, &t), SWMM_OK);
     EXPECT_DOUBLE_EQ(t, 17.5);
 
     // Removal shrinks the table and re-indexes.
@@ -338,22 +352,20 @@ TEST(HeatSourcesApiTest, SourceEditsSurviveASaveAndReopen) {
     // override the deck did not — so the gate covers "changed" and "added",
     // which serialize through different branches of saveHeatConfig.
     ASSERT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_DWF, 31.0), SWMM_OK);
-    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 1,
-                                          6.25), SWMM_OK);
+    ASSERT_EQ(swmm_heat_set_node_override(e, SWMM_HEAT_SRC_EXTERNAL_INFLOW, 1, 6.25), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_hs_save_out.inp"), SWMM_OK);
     swmm_engine_destroy(e);
 
     SWMM_Engine r = swmm_engine_create();
     ASSERT_NE(r, nullptr);
-    ASSERT_EQ(swmm_engine_open(r, "_hs_save_out.inp", "_hs_save2.rpt",
-                              "_hs_save2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_save_out.inp", "_hs_save2.rpt", "_hs_save2.out", nullptr),
+              SWMM_OK);
 
     double t = 0.0;
     ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
-    EXPECT_DOUBLE_EQ(t, 31.0)
-        << "the GLOBAL edit was lost on save — the component save hook did "
-           "not run, or it declined and the carry-alongside copy wrote the "
-           "ORIGINAL file back over it";
+    EXPECT_DOUBLE_EQ(t, 31.0) << "the GLOBAL edit was lost on save — the component save hook did "
+                                 "not run, or it declined and the carry-alongside copy wrote the "
+                                 "ORIGINAL file back over it";
 
     int n = -1;
     ASSERT_EQ(swmm_heat_node_override_count(r, &n), SWMM_OK);
@@ -369,8 +381,7 @@ TEST(HeatSourcesApiTest, SourceEditsSurviveASaveAndReopen) {
     // save. This is the half a naive serializer gets wrong: writing all seven
     // rows at their defaults makes every saved model look configured.
     int cfgd = -1;
-    EXPECT_EQ(swmm_heat_get_source_configured(r, SWMM_HEAT_SRC_RAINFALL,
-                                              &cfgd), SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_source_configured(r, SWMM_HEAT_SRC_RAINFALL, &cfgd), SWMM_OK);
     EXPECT_EQ(cfgd, 0) << "the save invented a row the model never set";
 
     swmm_engine_destroy(r);
@@ -382,12 +393,11 @@ TEST(HeatSourcesApiTest, SourceEditsSurviveASaveAndReopen) {
 // models nobody edited.
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, SaveIsIdempotent) {
-    write_file("_hs_idem.heat",
-               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\nGW GLOBAL 9.0\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n"
-               "ALBEDO GLOBAL 0.12\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL 0.4\n");
+    write_file("_hs_idem.heat", "[HEAT_SOURCES]\nDWF GLOBAL 14.5\nGW GLOBAL 9.0\n\n"
+                                "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                                "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n"
+                                "ALBEDO GLOBAL 0.12\n\n"
+                                "[CLOUD_COVER]\nFRACTION GLOBAL 0.4\n");
     std::string why;
     SWMM_Engine e = open_deck("_hs_idem", "_hs_idem.heat", &why);
     ASSERT_NE(e, nullptr) << why;
@@ -399,8 +409,7 @@ TEST(HeatSourcesApiTest, SaveIsIdempotent) {
     // exactly that (caught in the IO3a check round).
     auto slurp = [](const char* p) {
         std::ifstream f(p, std::ios::binary);
-        return std::string((std::istreambuf_iterator<char>(f)),
-                           std::istreambuf_iterator<char>());
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     };
 
     ASSERT_EQ(swmm_model_write(e, "_hs_idem_a.inp"), SWMM_OK);
@@ -410,14 +419,13 @@ TEST(HeatSourcesApiTest, SaveIsIdempotent) {
 
     SWMM_Engine r = swmm_engine_create();
     ASSERT_NE(r, nullptr);
-    ASSERT_EQ(swmm_engine_open(r, "_hs_idem_a.inp", "_hs_idem2.rpt",
-                              "_hs_idem2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_idem_a.inp", "_hs_idem2.rpt", "_hs_idem2.out", nullptr),
+              SWMM_OK);
     ASSERT_EQ(swmm_model_write(r, "_hs_idem_b.inp"), SWMM_OK);
     swmm_engine_destroy(r);
     const std::string second = slurp("_hs_idem.heat");
 
-    EXPECT_EQ(first, second)
-        << "a second save produced a different config file from the first";
+    EXPECT_EQ(first, second) << "a second save produced a different config file from the first";
 }
 
 // ---------------------------------------------------------------------------
@@ -429,10 +437,9 @@ TEST(HeatSourcesApiTest, SaveIsIdempotent) {
 // it is RENDERED, and the edit survives with it.
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, H6aSectionsRoundTripWithEditsThroughTheRenderer) {
-    write_file("_hs_h6a.heat",
-               "[HEAT_SOURCES]\nDWF GLOBAL 14.5\n\n"
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n");
+    write_file("_hs_h6a.heat", "[HEAT_SOURCES]\nDWF GLOBAL 14.5\n\n"
+                               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 317.5\n");
     std::string why;
     SWMM_Engine e = open_deck("_hs_h6a", "_hs_h6a.heat", &why);
     ASSERT_NE(e, nullptr) << why;
@@ -443,16 +450,14 @@ TEST(HeatSourcesApiTest, H6aSectionsRoundTripWithEditsThroughTheRenderer) {
 
     SWMM_Engine r = swmm_engine_create();
     ASSERT_NE(r, nullptr);
-    ASSERT_EQ(swmm_engine_open(r, "_hs_h6a_out.inp", "_hs_h6a2.rpt",
-                              "_hs_h6a2.out", nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(r, "_hs_h6a_out.inp", "_hs_h6a2.rpt", "_hs_h6a2.out", nullptr),
+              SWMM_OK);
 
     // The radiative section survived — RENDERED this time, not copied.
     double sw = 0.0;
-    ASSERT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SHORTWAVE, &sw),
-              SWMM_OK);
-    EXPECT_DOUBLE_EQ(sw, 317.5)
-        << "[RADIATIVE_FLUXES] was lost — the renderer dropped or mangled "
-           "the section it now claims to cover";
+    ASSERT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SHORTWAVE, &sw), SWMM_OK);
+    EXPECT_DOUBLE_EQ(sw, 317.5) << "[RADIATIVE_FLUXES] was lost — the renderer dropped or mangled "
+                                   "the section it now claims to cover";
 
     // ...and the edit survives WITH it: the step-3 loss is retired for
     // H6a-configured models. (At IO3b's base this reads 14.5 — the decline
@@ -460,9 +465,8 @@ TEST(HeatSourcesApiTest, H6aSectionsRoundTripWithEditsThroughTheRenderer) {
     // fails-at-base evidence.)
     double t = 0.0;
     ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_DWF, &t), SWMM_OK);
-    EXPECT_DOUBLE_EQ(t, 31.0)
-        << "the [HEAT_SOURCES] edit was lost on an H6a-configured model — "
-           "the save declined (or the renderer skipped the section)";
+    EXPECT_DOUBLE_EQ(t, 31.0) << "the [HEAT_SOURCES] edit was lost on an H6a-configured model — "
+                                 "the save declined (or the renderer skipped the section)";
 
     swmm_engine_destroy(r);
 }
@@ -474,22 +478,20 @@ TEST(HeatSourcesApiTest, H6aSectionsRoundTripWithEditsThroughTheRenderer) {
 // reopens, and every value must come back exactly.
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, EveryHeatSectionRoundTripsFieldByField) {
-    write_file("_hs_all.heat",
-               "[HEAT_SOURCES]\nGW GLOBAL 9.5\n\n"
-               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n"
-               "ALBEDO GLOBAL 0.12\nSKY_VIEW GLOBAL 0.8\n"
-               "ATM_LW_REFLECTION GLOBAL 0.05\n\n"
-               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
-               "LONGITUDE GLOBAL -111.8\nTIMEZONE GLOBAL -7\n"
-               "ELEVATION GLOBAL -430\nOZONE GLOBAL 0.41\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n"
-               "LW_CLOUD_K GLOBAL 0.3\n");
+    write_file("_hs_all.heat", "[HEAT_SOURCES]\nGW GLOBAL 9.5\n\n"
+                               "[HEAT_FLUXES]\nSURFACE_EXCHANGE ON\nRADIATIVE_EXCHANGE ON\n\n"
+                               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n"
+                               "ALBEDO GLOBAL 0.12\nSKY_VIEW GLOBAL 0.8\n"
+                               "ATM_LW_REFLECTION GLOBAL 0.05\n\n"
+                               "[SOLAR_RADIATION]\nLATITUDE GLOBAL 41.7\n"
+                               "LONGITUDE GLOBAL -111.8\nTIMEZONE GLOBAL -7\n"
+                               "ELEVATION GLOBAL -430\nOZONE GLOBAL 0.41\n\n"
+                               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n"
+                               "LW_CLOUD_K GLOBAL 0.3\n");
     // The deck needs the two named series.
     const std::string inp =
         std::string("[TITLE]\nIO3b all-sections round trip\n\n[OPTIONS]\n") +
-        "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n" +
-        "HEAT_TRANSPORT       YES\n" +
+        "FLOW_UNITS           CFS\nFLOW_ROUTING         DYNWAVE\n" + "HEAT_TRANSPORT       YES\n" +
         "START_DATE           01/01/2026\nSTART_TIME           00:00:00\n" +
         "END_DATE             01/01/2026\nEND_TIME             00:30:00\n" +
         "ROUTING_STEP         5\nREPORT_STEP          00:05:00\n\n" +
@@ -497,60 +499,55 @@ TEST(HeatSourcesApiTest, EveryHeatSectionRoundTripsFieldByField) {
         // TIMESERIES spellings resolve names during the component apply, so
         // a series declared later reads as missing (the same section-order
         // family as H7b's [INFLOWS]-before-[POLLUTANTS] finding).
-        "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n" +
-        "sw_ts 01/02/2026 00:00 700.0\n" +
+        "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n" + "sw_ts 01/02/2026 00:00 700.0\n" +
         "cloud_ts 01/01/2026 00:00 0.5\ncloud_ts 01/02/2026 00:00 0.5\n\n" +
-        "[PROCESS_COMPONENTS]\n" +
-        "org.hydrocouple.openswmm.heat config=\"_hs_all.heat\"\n\n" +
+        "[PROCESS_COMPONENTS]\n" + "org.hydrocouple.openswmm.heat config=\"_hs_all.heat\"\n\n" +
         "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\nJ1 9.0 10 0.5 0 0\n\n" +
         "[OUTFALLS]\nOUT 7.0 FREE NO\n\n" +
         "[CONDUITS]\nC1 J0 J1 400 0.013 0 0 0\nC2 J1 OUT 400 0.013 0 0 0\n\n" +
-        "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n" +
-        "[REPORT]\nINPUT NO\n";
+        "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\nC2 CIRCULAR 1.5 0 0 0\n\n" + "[REPORT]\nINPUT NO\n";
     write_file("_hs_all.inp", inp);
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_hs_all.inp", "_hs_all.rpt", "_hs_all.out",
-                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_hs_all.inp", "_hs_all.rpt", "_hs_all.out", nullptr), SWMM_OK);
     ASSERT_EQ(swmm_heat_set_source_temp(e, SWMM_HEAT_SRC_GW, 11.5), SWMM_OK);
     ASSERT_EQ(swmm_model_write(e, "_hs_all_out.inp"), SWMM_OK);
     swmm_engine_destroy(e);
 
     SWMM_Engine r = swmm_engine_create();
     ASSERT_NE(r, nullptr);
-    ASSERT_EQ(swmm_engine_open(r, "_hs_all_out.inp", "_hs_all2.rpt",
-                               "_hs_all2.out", nullptr), SWMM_OK);
-
-    double v = 0.0; int iv = -1;
-    ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_GW, &v), SWMM_OK);
-    EXPECT_DOUBLE_EQ(v, 11.5);                       // the edit
-    EXPECT_EQ(swmm_heat_get_module(r, SWMM_HEAT_SURFACE_EXCHANGE, &iv),
+    ASSERT_EQ(swmm_engine_open(r, "_hs_all_out.inp", "_hs_all2.rpt", "_hs_all2.out", nullptr),
               SWMM_OK);
-    EXPECT_EQ(iv, 1);                                // [HEAT_FLUXES]
+
+    double v = 0.0;
+    int iv = -1;
+    ASSERT_EQ(swmm_heat_get_source_temp(r, SWMM_HEAT_SRC_GW, &v), SWMM_OK);
+    EXPECT_DOUBLE_EQ(v, 11.5); // the edit
+    EXPECT_EQ(swmm_heat_get_module(r, SWMM_HEAT_SURFACE_EXCHANGE, &iv), SWMM_OK);
+    EXPECT_EQ(iv, 1); // [HEAT_FLUXES]
     EXPECT_EQ(swmm_heat_get_shortwave_mode(r, &iv), SWMM_OK);
-    EXPECT_EQ(iv, SWMM_HEAT_SW_TIMESERIES);          // TIMESERIES spelling
+    EXPECT_EQ(iv, SWMM_HEAT_SW_TIMESERIES); // TIMESERIES spelling
     EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_ALBEDO, &v), SWMM_OK);
-    EXPECT_DOUBLE_EQ(v, 0.12);                       // [RADIATIVE_FLUXES]
+    EXPECT_DOUBLE_EQ(v, 0.12); // [RADIATIVE_FLUXES]
     EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_SKY_VIEW, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 0.8);
-    EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_LW_REFLECTION, &v),
-              SWMM_OK);
+    EXPECT_EQ(swmm_heat_get_radiative(r, SWMM_HEAT_RAD_LW_REFLECTION, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 0.05);
     EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_LATITUDE, &v), SWMM_OK);
-    EXPECT_DOUBLE_EQ(v, 41.7);                       // [SOLAR_RADIATION]
+    EXPECT_DOUBLE_EQ(v, 41.7); // [SOLAR_RADIATION]
     EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_LONGITUDE, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, -111.8);
     EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_TIMEZONE, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, -7.0);
     EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_ELEVATION, &v), SWMM_OK);
-    EXPECT_DOUBLE_EQ(v, -430.0);                     // below sea level kept
+    EXPECT_DOUBLE_EQ(v, -430.0); // below sea level kept
     EXPECT_EQ(swmm_heat_get_solar(r, SWMM_HEAT_SOLAR_OZONE, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 0.41);
     EXPECT_EQ(swmm_heat_get_solar_sited(r, &iv), SWMM_OK);
-    EXPECT_EQ(iv, 1);                                // has_* flags survived
+    EXPECT_EQ(iv, 1); // has_* flags survived
     EXPECT_EQ(swmm_heat_get_cloud_configured(r, &iv), SWMM_OK);
-    EXPECT_EQ(iv, 1);                                // [CLOUD_COVER]
+    EXPECT_EQ(iv, 1); // [CLOUD_COVER]
     EXPECT_EQ(swmm_heat_get_cloud(r, SWMM_HEAT_CLOUD_LW_CLOUD_K, &v), SWMM_OK);
     EXPECT_DOUBLE_EQ(v, 0.3);
 
@@ -582,34 +579,31 @@ TEST(HeatSourcesApiTest, EveryHeatSectionRoundTripsFieldByField) {
 // and a one-byte buffer truncates to "" without writing past its end.
 // ---------------------------------------------------------------------------
 TEST(HeatSourcesApiTest, BoundTimeseriesNamesAreReadable) {
-    write_file("_hs_tsn.heat",
-               "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
-               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n\n"
-               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n");
-    write_file("_hs_tsn.inp",
-               "[TITLE]\nts-name getters\n\n[OPTIONS]\n"
-               "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
-               "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-               "END_DATE 01/01/2026\nEND_TIME 00:30:00\n"
-               "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n"
-               "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n"
-               "sw_ts 01/02/2026 00:00 700.0\n"
-               "cloud_ts 01/01/2026 00:00 0.5\n"
-               "cloud_ts 01/02/2026 00:00 0.5\n"
-               "alt_ts 01/01/2026 00:00 100.0\n"
-               "alt_ts 01/02/2026 00:00 100.0\n\n"
-               "[PROCESS_COMPONENTS]\n"
-               "org.hydrocouple.openswmm.heat config=\"_hs_tsn.heat\"\n\n"
-               "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
-               "[OUTFALLS]\nOUT 7.0 FREE NO\n\n"
-               "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
-               "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
-               "[REPORT]\nINPUT NO\n");
+    write_file("_hs_tsn.heat", "[HEAT_FLUXES]\nRADIATIVE_EXCHANGE ON\n\n"
+                               "[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL TIMESERIES sw_ts\n\n"
+                               "[CLOUD_COVER]\nFRACTION GLOBAL TIMESERIES cloud_ts\n");
+    write_file("_hs_tsn.inp", "[TITLE]\nts-name getters\n\n[OPTIONS]\n"
+                              "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nHEAT_TRANSPORT YES\n"
+                              "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
+                              "END_DATE 01/01/2026\nEND_TIME 00:30:00\n"
+                              "ROUTING_STEP 5\nREPORT_STEP 00:05:00\n\n"
+                              "[TIMESERIES]\nsw_ts 01/01/2026 00:00 700.0\n"
+                              "sw_ts 01/02/2026 00:00 700.0\n"
+                              "cloud_ts 01/01/2026 00:00 0.5\n"
+                              "cloud_ts 01/02/2026 00:00 0.5\n"
+                              "alt_ts 01/01/2026 00:00 100.0\n"
+                              "alt_ts 01/02/2026 00:00 100.0\n\n"
+                              "[PROCESS_COMPONENTS]\n"
+                              "org.hydrocouple.openswmm.heat config=\"_hs_tsn.heat\"\n\n"
+                              "[JUNCTIONS]\nJ0 10.0 10 0.5 0 0\n\n"
+                              "[OUTFALLS]\nOUT 7.0 FREE NO\n\n"
+                              "[CONDUITS]\nC1 J0 OUT 400 0.013 0 0 0\n\n"
+                              "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0\n\n"
+                              "[REPORT]\nINPUT NO\n");
 
     SWMM_Engine e = swmm_engine_create();
     ASSERT_NE(e, nullptr);
-    ASSERT_EQ(swmm_engine_open(e, "_hs_tsn.inp", "_hs_tsn.rpt", "_hs_tsn.out",
-                               nullptr), SWMM_OK);
+    ASSERT_EQ(swmm_engine_open(e, "_hs_tsn.inp", "_hs_tsn.rpt", "_hs_tsn.out", nullptr), SWMM_OK);
 
     char buf[64];
     ASSERT_EQ(swmm_heat_get_shortwave_timeseries(e, buf, sizeof buf), SWMM_OK);
@@ -629,8 +623,7 @@ TEST(HeatSourcesApiTest, BoundTimeseriesNamesAreReadable) {
     EXPECT_EQ(tiny[0], '\0');
     EXPECT_EQ(tiny[1], 'x') << "wrote past the end of a 1-byte buffer";
 
-    EXPECT_EQ(swmm_heat_get_shortwave_timeseries(e, nullptr, 8),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_heat_get_shortwave_timeseries(e, nullptr, 8), SWMM_ERR_BADPARAM);
     swmm_engine_destroy(e);
 
     // Unbound reads "": a fresh BUILDING engine has bound nothing.

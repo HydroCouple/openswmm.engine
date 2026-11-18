@@ -90,7 +90,7 @@ Species, coefficients, terms
      - Contents
    * - :attr:`Reactions.species`
      - :class:`ReactionSpecies` — ``name``, ``is_wall``, ``units``,
-       ``atol``, ``rtol``, ``initial``, and the two scope expressions.
+       ``atol``, ``rtol``, ``initial``, ``rain_conc``, and the two scope expressions.
    * - :attr:`Reactions.coefficients`
      - :class:`ReactionCoefficient` — ``name``, ``is_param``
        (PARAMETER vs CONSTANT), ``value``.
@@ -111,7 +111,12 @@ All three collections support ``len()``, iteration, ``in``, indexing by
     "CL2" in s.reactions.species          # True
     s.reactions.species.get_index("CL2")  # 0
 
-    s.reactions.terms.add("Kf", "1.5826e-4*RE^0.88/D")
+    s.reactions.terms.add("Kf", "0.5 * DT")
+
+``species.rain_conc`` reads or writes the ``[REACTION_RAINFALL]`` concentration
+in that species' units. It defaults to zero (clean rainfall), accepts nonnegative
+values before simulation start, and survives ``serialize()`` / ``apply_text()``.
+It remains readable during a simulation.
 
 Per-scope expressions
 ---------------------
@@ -201,3 +206,25 @@ See also
 * :doc:`process_components` — registering the ``.rxn`` config path.
 * :doc:`quality` — single-species buildup/washoff and treatment.
 * :doc:`error_handling` — what a refused mutation raises.
+
+----
+
+Node sources, parameter overrides and output selection
+======================================================
+
+The whole-file ``apply_text`` / ``serialize`` surface supports
+``[REACTION_SOURCES]`` (CONC/MASS), ``[REACTION_PATTERNS]`` (cyclic factors),
+``[REACTION_PARAMETERS]`` (NODE/LINK overrides of PARAMETER coefficients),
+and ``[REACTION_REPORT]`` (``SPECIES ALL|name YES|NO``). Structured collection
+wrappers for these sections are not yet provided; use whole-file text.
+The engine manual's input reference specifies grammar and units. MASS loads
+are in declared species mass units per second, independent of RATE_UNITS;
+PATTERN_TIMESTEP is in seconds and defaults to 3600.
+
+Hidden output species continue to react. Native output columns are selected
+without changing the internal species stride. WALL state stays attached under
+LEGACY; LAGRANGIAN refuses WALL systems and ARD falls back to LEGACY. Wet
+non-LID subcatchment pools are available through ``ReactionScope.SUBCATCHMENT``
+and ``[REACTION_SUBCATCHMENTS]``; they have a separate restricted context and
+mix/react/allocate splitting. Porous LID-layer reaction transport and exact
+native checkpoint/output continuation remain unsupported.

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file SurfaceStateData.hpp
- * @brief Structure-of-Arrays (SoA) storage for 2D surface routing state.
+ * @file      SurfaceStateData.hpp
+ * @brief     Structure-of-Arrays (SoA) storage for 2D surface routing state.
  *
  * @details Stores per-triangle overland flow depth, total head, gradient
  *          fields, edge fluxes, source/sink terms, and cumulative statistics.
@@ -24,38 +24,47 @@
  * @see TWO_DIMENSIONAL_SURFACE_ROUTING_IMPLEMENTATION_STRATEGY.md §2.2
  * @ingroup engine_2d
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_SURFACE_STATE_DATA_HPP
 #define OPENSWMM_ENGINE_2D_SURFACE_STATE_DATA_HPP
 
+#include "LazyArray.hpp"
 #include <vector>
 #include <cstring>
 #include <cmath>
+#include <limits>
 #include <algorithm>
 #include <vector>
 
 #include "../coupling/RuntimeCoupling.hpp"
-#include "SurfaceTransportState.hpp"   // S1 — species mass per cell
-#include "MeshData.hpp"                 // kMaxCellVerts edge-slot stride
+#include "../../hydrology/surface/MeshSnow.hpp"
+#include "SurfaceTransportState.hpp" // S1 — species mass per cell
+#include "../heat/MeshHeat.hpp"
+#include "MeshData.hpp" // kMaxCellVerts edge-slot stride
 
-namespace openswmm { struct NodeData; }  // 1D node data (held during a 2D advance)
+namespace openswmm {
+struct NodeData;
+namespace quality {
+class LivePassiveStorageExchange;
+class PassiveStorageAdmission;
+}
+} // 1D node data (held during a 2D advance)
 
 namespace openswmm::twoD {
 
-struct CouplingPoint;  // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
+struct CouplingPoint; // fwd decl — 1D↔2D coupling descriptor (NodeCoupling.hpp)
 
 /**
  * @brief SoA storage for 2D surface routing state variables.
  *
- * Per-triangle arrays are indexed [0, n_triangles).
- * Edge arrays are flat 2D: [cell * kMaxCellVerts + edge] (padded stride).
- * Vertex arrays are indexed [0, n_vertices).
+ * Per-triangle arrays are indexed [0, n_triangles). Edge arrays are flat 2D: [cell *
+ * kMaxCellVerts + edge] (padded stride). Vertex arrays are indexed [0, n_vertices).
  */
-struct BoundaryData;  // fwd decl — per-edge boundary conditions (BoundaryData.hpp)
+struct BoundaryData; // fwd decl — per-edge boundary conditions (BoundaryData.hpp)
 
 struct SurfaceStateData {
 
@@ -66,7 +75,7 @@ struct SurfaceStateData {
     /// Non-owning view of the per-edge boundary conditions (owned by
     /// SurfaceRouter2D). nullptr ⇒ all boundary edges are no-flux walls (the
     /// legacy behaviour, and what the unit-test call sites that build a bare
-    /// state get). When set, computeEdgeFluxes applies the per-type boundary
+    /// state get). When set, the explicit marcher applies the per-type boundary
     /// flux (NORMAL_FLOW / SPECIFIED_STAGE / SPECIFIED_FLOW / RATING_CURVE).
     /// The pointer is shallow-copied on assignment (it references config, not
     /// per-cell state), which is fine — both copies see the same BC config.
@@ -76,13 +85,29 @@ struct SurfaceStateData {
     /// the 1D↔2D orifice exchange per substep against the CURRENT 2D head (so
     /// it self-limits) and accumulates the exact ∫Q dt per point.
     /// `nodes_1d` is the 1D node data, frozen for the duration of the batch.
-    const NodeData*                   nodes_1d        = nullptr;
+    const NodeData* nodes_1d = nullptr;
+    /// Borrowed only during an explicitly owned first-order CPU advance.
+    quality::PassiveStorageAdmission* live_passive_exchange = nullptr;
     /// S4: the 1D nodes' PUBLISHED row values, `[node * n_species + s]` in the
     /// 2D transport row order (pollutant conc, MSX conc, age, temperature),
     /// assembled by the router before each advance and frozen for the batch.
     /// What a 1D→2D spill or outfall discharge arrives at.
-    const std::vector<double>*        node_row_conc   = nullptr;
-    const std::vector<CouplingPoint>* node_coupling   = nullptr;  ///< non-outfall points
+    const std::vector<double>* node_row_conc = nullptr;
+    const std::vector<CouplingPoint>* node_coupling = nullptr; ///< non-outfall points
+    /// Per-node volume (1D ft³) at which a coupled node's pond starts: what
+    /// the active 1D router books at the rim — `rpt_full_volume` under DW (0
+    /// for a plain junction), `full_volume` otherwise (FV holds MIN_SURFAREA ×
+    /// full depth below the pond). A 1D→2D spill may only draw volume above
+    /// it. Null falls back to `full_volume`.
+    const std::vector<double>* node_pond_base = nullptr;
+    /// Head-sampling cell lists of the coupling points (COUPLING_HEAD VERTEX /
+    /// STENCIL_WET_MEAN), indexed by CouplingPoint::head_begin/head_end.
+    const std::vector<int>* coupling_head_cells = nullptr;
+    /// COUPLING_EQUALIZE inputs, published by the router before each advance:
+    /// every coupled node's 1D surface area (m²) and the advance window (s)
+    /// over which the 1D heads are held.
+    const std::vector<double>* node_pond_area_m2 = nullptr;
+    double coupling_window_s = 0.0;
 
     /// S1 — overland species transport. `transport.active()` is false (and
     /// every marcher species branch is skipped) unless the router sized it,
@@ -90,19 +115,20 @@ struct SurfaceStateData {
     /// otherwise untouched. Embedded rather than pointed-to: it is per-cell
     /// STATE, sized with `volume`, and it is copied when the state is.
     SurfaceTransportState transport;
+    MeshHeatState heat;
 
-    std::vector<double> depth;          ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
-    std::vector<double> head;           ///< Free-surface elevation η (m) [reconstructed]
-    std::vector<double> volume;         ///< Cell water volume V (m³) — the integrated state
+    std::vector<double> depth;  ///< Mean wetted depth h̄ = V/A_wet (m) [reconstructed]
+    std::vector<double> head;   ///< Free-surface elevation η (m) [reconstructed]
+    std::vector<double> volume; ///< Cell water volume V (m³) — the integrated state
 
     // Gradient fields (per triangle)
-    std::vector<double> grad_hx;        ///< ∂h/∂x (unlimited gradient)
-    std::vector<double> grad_hy;        ///< ∂h/∂y (unlimited gradient)
-    std::vector<double> grad_hx_lim;    ///< Limited gradient X
-    std::vector<double> grad_hy_lim;    ///< Limited gradient Y
+    std::vector<double> grad_hx;     ///< ∂h/∂x (unlimited gradient)
+    std::vector<double> grad_hy;     ///< ∂h/∂y (unlimited gradient)
+    std::vector<double> grad_hx_lim; ///< Limited gradient X
+    std::vector<double> grad_hy_lim; ///< Limited gradient Y
 
     // Reconstructed head at vertices — [0, n_vertices)
-    std::vector<double> vert_head;      ///< Head reconstructed at vertices
+    std::vector<double> vert_head; ///< Head reconstructed at vertices
 
     /// Render/output-only SIGNED vertex depth η_v − z_v (m) — wet-masked,
     /// depth-weighted reconstruction (reconstructVertexRenderDepths). Unlike
@@ -114,19 +140,52 @@ struct SurfaceStateData {
     /// readers stay negative-tolerant. NOT used by the solver.
     std::vector<double> vert_depth_signed;
 
-    // Cell-centred velocity (RT0 reconstruction from edge fluxes) — per triangle
-    std::vector<double> face_vx;        ///< Cell velocity X component (m/s)
-    std::vector<double> face_vy;        ///< Cell velocity Y component (m/s)
+    // Output-only cell velocity: native FULL_SWE or wetted-edge reconstruction.
+    // Paired NaNs mark an unresolved wet-cell vector; dry cells carry zero.
+    std::vector<double> face_vx; ///< Cell velocity X component (m/s)
+    std::vector<double> face_vy; ///< Cell velocity Y component (m/s)
 
     // Per-cell continuity residual — per triangle (m³/s, ≈0 when conservative)
     std::vector<double> cell_continuity_err;
 
     // Fluxes — flat 2D: [cell * kMaxCellVerts + edge]
-    std::vector<double> edge_flux;      ///< Normal flux through each edge
+    std::vector<double> edge_flux; ///< Normal flux through each edge
 
     // Source/sink terms — per triangle
-    std::vector<double> rainfall;       ///< Rainfall intensity (m/s)
-    std::vector<double> evap_rate;      ///< Evaporation demand rate (m/s, >= 0)
+    // Snow owns precipitation only on its resolved weather footprints. The
+    // context is a non-owning forcing view, like nodes_1d; it is never archived.
+    surface::MeshSnow snow;
+    SimulationContext* snow_context = nullptr;
+    std::vector<double> snow_catch;
+    /// Frozen ground ([2D_FROZEN_GROUND]): slab enthalpy (J/m2) and infiltration factor per
+    /// cell. Both empty without the section; a cell no row covers holds 0 and 1.
+    std::vector<double> frost_enthalpy, frost_open;
+    /**
+     * @brief Resolve the liquid-water precipitation source for one cell.
+     * @param[in] i Valid zero-based mesh cell; rainfall and snow/runtime gather arrays must be
+     * sized.
+     * @return Liquid rate in m/s: snow-owned cells use the snow process's liquid output,
+     * otherwise runtime channel 1 resolves against raw rainfall.
+     * @note Read-only; does not advance snow, apply forcing expiry, or book precipitation.
+     * Caller supplies stable initialized owner state; no allocation/checks.
+     */
+    double liquidRainfall(int i) const {
+        return snow.owns(i) ? snow.liquidRates()[i] : runtime_forcings.rate(1, i, rainfall[i]);
+    }
+    /**
+     * @brief Resolve atmospheric evaporation demand over the snow-exposed surface.
+     * @param[in] i Valid zero-based mesh cell; evaporation/snow/runtime arrays are sized.
+     * @return Runtime-resolved channel-2 demand in m/s times snow exposed fraction when snow
+     * owns the cell, otherwise the full demand.
+     * @note Read-only demand, not actual extracted water. Does not clamp negatives, apply expiry
+     * or mutate ledgers; caller supplies stable initialized owner state.
+     */
+    double exposedEvaporation(int i) const {
+        return runtime_forcings.rate(2, i, evap_rate[i]) *
+               (snow.owns(i) ? snow.exposedFractions()[i] : 1.);
+    }
+    std::vector<double> rainfall;  ///< Raw precipitation intensity (m/s)
+    std::vector<double> evap_rate; ///< Evaporation demand rate (m/s, >= 0)
 
     /// Infiltration loss rate (m/s, >= 0) — a HELD rate (plan §5.5.2, D-I1):
     /// Infil2D::updateRates republishes it on the INFIL_STEP cadence and it is
@@ -148,7 +207,7 @@ struct SurfaceStateData {
     /// leave storage falling by more than the ledger books.
     std::vector<double> infil_applied;
 
-    std::vector<double> coupling_flux;  ///< Exchange with SWMM node (m/s, + = into 2D)
+    std::vector<double> coupling_flux; ///< Exchange with SWMM node (m/s, + = into 2D)
 
     /// SIGNED per-cell coupling exchange VOLUME (m³) accumulated since the
     /// last mass-balance read, then zeroed by it. Positive = water arrived in
@@ -168,21 +227,38 @@ struct SurfaceStateData {
     /// from end-of-step state is first-order and under-books the cells that
     /// dried mid-step.
     std::vector<double> coupling_applied;
-    std::vector<double> net_source;     ///< Net source/sink per cell (m/s)
+
+    // Plugin boundary transfers (m³), compacted in boundary_receipt_slots order. Allocated
+    // only by plugin solvers; additive until the router drains them into its
+    // engine-owned receipts after advance(). Separate directions preserve
+    // reversals within a window. CPU solvers book their receipts directly.
+    std::vector<int> boundary_receipt_slots; ///< padded edge slot for each transfer entry
+    std::vector<double> boundary_in_applied;
+    std::vector<double> boundary_out_applied;
+    std::vector<double> boundary_requested; ///< signed cumulative request pending receipt drain
+    std::vector<double> boundary_last_flow; ///< last applied substep flow (m³/s)
+    std::vector<double> boundary_last_dt;   ///< last boundary substep duration (s)
+    /// Plugin boundary species transfers, [entry * n_species + row], in the rows' own units
+    /// (concentration x m3). Signed like boundary_requested (+ = into the mesh); additive until
+    /// the router drains them into its receipts. Empty without transport rows.
+    std::vector<double> boundary_requested_mass;
+    std::vector<double> boundary_applied_mass;
+
+    std::vector<double> net_source; ///< Net source/sink per cell (m/s)
 
     // -----------------------------------------------------------------------
     // Forcing overrides (optional external control)
     // -----------------------------------------------------------------------
 
-    std::vector<int8_t> rainfall_forced;      ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> rainfall_persist;     ///< 0=reset, 1=persist
-    std::vector<double> rainfall_force_val;   ///< Forced rainfall value
-    std::vector<int8_t> evap_forced;          ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> evap_persist;         ///< 0=reset, 1=persist
-    std::vector<double> evap_force_val;       ///< Forced evaporation value
-    std::vector<int8_t> coupling_forced;      ///< 0=computed, 1=override, 2=add
-    std::vector<int8_t> coupling_persist;     ///< 0=reset, 1=persist
-    std::vector<double> coupling_force_val;   ///< Forced coupling value
+    LazyArray<int8_t> rainfall_forced;    ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> rainfall_persist;   ///< 0=reset, 1=persist
+    LazyArray<double> rainfall_force_val; ///< Forced rainfall value
+    LazyArray<int8_t> evap_forced;        ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> evap_persist;       ///< 0=reset, 1=persist
+    LazyArray<double> evap_force_val;     ///< Forced evaporation value
+    LazyArray<int8_t> coupling_forced;    ///< 0=computed, 1=override, 2=add
+    LazyArray<int8_t> coupling_persist;   ///< 0=reset, 1=persist
+    LazyArray<double> coupling_force_val; ///< Forced coupling value
 
     /// Set by the forcing API and by clear_reset_forcings() when any flag
     /// changes; consumed by the co-advance to bypass its coarse (30 s)
@@ -206,28 +282,60 @@ struct SurfaceStateData {
     // Previous step state
     // -----------------------------------------------------------------------
 
-    std::vector<double> old_depth;      ///< Mean depth at start of coupling interval
-    std::vector<double> old_volume;     ///< Volume at start of coupling interval (m³)
+    std::vector<double> old_depth;  ///< Mean depth at start of coupling interval
+    std::vector<double> old_volume; ///< Volume at start of coupling interval (m³)
 
     // -----------------------------------------------------------------------
     // Cumulative statistics
     // -----------------------------------------------------------------------
 
-    std::vector<double> stat_max_depth;     ///< Maximum depth ψ_o seen at each cell (m)
-    std::vector<double> stat_max_velocity;  ///< Max cell speed |v| = √(vx²+vy²) (m/s)
-    std::vector<double> stat_max_cont_err;  ///< Max |cell_continuity_err| (m³/s)
-    std::vector<double> stat_cum_volume;    ///< Cumulative volume through cell (m³)
+    std::vector<double> stat_max_depth;    ///< Maximum depth ψ_o seen at each cell (m)
+    std::vector<double> stat_max_velocity; ///< Max cell speed |v| = √(vx²+vy²) (m/s)
+    std::vector<double> stat_max_cont_err; ///< Max |cell_continuity_err| (m³/s)
+    std::vector<double> stat_cum_volume;   ///< Cumulative volume through cell (m³)
+
+    // Whole-run statistics written to the result file's ENVELOPES group, sampled with the
+    // maxima above. NaN marks a cell that has no sample of that kind yet.
+    std::vector<double> stat_max_head;          ///< Maximum free-surface elevation η (m)
+    std::vector<double> stat_min_head;          ///< Minimum free-surface elevation η (m)
+    std::vector<double> stat_depth_time;        ///< ∫ depth dt (m·s)
+    std::vector<double> stat_vx_time;           ///< ∫ face_vx dt (m); unresolved samples add 0
+    std::vector<double> stat_vy_time;           ///< ∫ face_vy dt (m); unresolved samples add 0
+    std::vector<double> stat_time_max_depth;    ///< stat_elapsed (s) when stat_max_depth was set
+    std::vector<double> stat_time_max_velocity; ///< stat_elapsed (s) when stat_max_velocity was set
+    std::vector<double> stat_peak_vx;           ///< face_vx at stat_max_velocity (m/s)
+    std::vector<double> stat_peak_vy;           ///< face_vy at stat_max_velocity (m/s)
+    double stat_elapsed = 0.0;                  ///< Time the statistics have integrated (s)
 
     /// Cumulative evaporation loss over the whole simulation (m³). Kept here
     /// (not in core's MassBalance2D, owned by another work stream) and folded
     /// into the API-level totals by Api2D.cpp.
     double evap_loss_total = 0.0;
+    /// Accepted RK2 rainfall awaiting one router/report consumption (m3/cell).
+    /// Empty preserves the historical no-runtime-forcing profile.
+    std::vector<double> rk2_rain_pending;
 
     // -----------------------------------------------------------------------
     // Lifecycle
     // -----------------------------------------------------------------------
 
+    /**
+     * @brief Reset main surface hydraulic arrays to a new mixed-cell/vertex extent.
+     * @param[in] n_triangles Nonnegative target mixed-cell count; historical name includes
+     * quads.
+     * @param[in] n_vertices Nonnegative target vertex count.
+     * @post Zeroes hydraulic state, source arrays, forcing slots, old-state buffers and
+     * statistics; clears mesh heat/snow and runtime source/forcing registries. Transport/other
+     * externally owned views and forcing summary flags are managed separately by initialization.
+     * @note Edge arrays use n_triangles*kMaxCellVerts. Allocations may throw after partial
+     * reset; all old storage references can be invalidated. Requires exclusive access; no
+     * topology/units validation or transactional rollback.
+     */
     void resize(int n_triangles, int n_vertices) {
+        heat.clear();
+        snow = {};
+        snow_context = nullptr;
+        snow_catch.clear();
         auto nt = static_cast<std::size_t>(n_triangles);
         auto nv = static_cast<std::size_t>(n_vertices);
         auto n3 = nt * static_cast<std::size_t>(kMaxCellVerts);
@@ -250,10 +358,19 @@ struct SurfaceStateData {
         infil_rate.assign(nt, 0.0);
         infil_applied.assign(nt, 0.0);
         coupling_applied.assign(nt, 0.0);
+        boundary_receipt_slots.clear();
+        boundary_in_applied.clear();
+        boundary_out_applied.clear();
+        boundary_requested.clear();
+        boundary_last_flow.clear();
+        boundary_last_dt.clear();
+        boundary_requested_mass.clear();
+        boundary_applied_mass.clear();
         coupling_flux.assign(nt, 0.0);
         coupling_native.clear();
         runtime_sources = {};
         runtime_forcings = {};
+        rk2_rain_pending.clear();
         net_source.assign(nt, 0.0);
 
         rainfall_forced.assign(nt, 0);
@@ -269,73 +386,137 @@ struct SurfaceStateData {
         old_depth.assign(nt, 0.0);
         old_volume.assign(nt, 0.0);
         stat_max_depth.assign(nt, 0.0);
-        stat_max_velocity.assign(nt, 0.0);
+        stat_max_velocity.assign(nt, std::numeric_limits<double>::quiet_NaN());
         stat_max_cont_err.assign(nt, 0.0);
         stat_cum_volume.assign(nt, 0.0);
+        reset_run_statistics();
         evap_loss_total = 0.0;
     }
 
+    /**
+     * @brief Clear the whole-run statistics added beside the maxima (max/min head, time
+     *   integrals, times of maximum, peak velocity) to their no-sample state.
+     * @post Sizes follow depth.size(); NaN where no sample exists yet, zero integrals and clock.
+     *   The depth/speed/continuity maxima and stat_cum_volume are untouched.
+     */
+    void reset_run_statistics() {
+        const std::size_t nt = depth.size();
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        stat_max_head.assign(nt, nan);
+        stat_min_head.assign(nt, nan);
+        stat_depth_time.assign(nt, 0.0);
+        stat_vx_time.assign(nt, 0.0);
+        stat_vy_time.assign(nt, 0.0);
+        stat_time_max_depth.assign(nt, nan);
+        stat_time_max_velocity.assign(nt, nan);
+        stat_peak_vx.assign(nt, nan);
+        stat_peak_vy.assign(nt, nan);
+        stat_elapsed = 0.0;
+    }
+
+    /**
+     * @brief Save the current depth and conserved-volume arrays for local rollback.
+     * @pre old_depth/old_volume are preallocated to matching source extents; copies must not
+     * overlap. Requires exclusive state access.
+     * @post Copies depth (m) and volume (m3) only. Does not save head, momentum, transport,
+     * sources, snow, heat or ledgers; no allocation or error status.
+     */
     void save_state() noexcept {
-        std::memcpy(old_depth.data(), depth.data(),
-                     depth.size() * sizeof(double));
-        std::memcpy(old_volume.data(), volume.data(),
-                     volume.size() * sizeof(double));
+        std::memcpy(old_depth.data(), depth.data(), depth.size() * sizeof(double));
+        std::memcpy(old_volume.data(), volume.data(), volume.size() * sizeof(double));
     }
 
+    /**
+     * @brief Restore only the saved depth and conserved-volume arrays.
+     * @pre Destinations match old_depth/old_volume extents and copies do not overlap.
+     * @post Replaces depth m and volume m3 without rebuilding head or any other dependent state.
+     * Caller performs any additional rollback/reconstruction. Exclusive access; no
+     * allocation/checks.
+     */
     void reset_state() noexcept {
-        std::memcpy(depth.data(), old_depth.data(),
-                     old_depth.size() * sizeof(double));
-        std::memcpy(volume.data(), old_volume.data(),
-                     old_volume.size() * sizeof(double));
+        std::memcpy(depth.data(), old_depth.data(), old_depth.size() * sizeof(double));
+        std::memcpy(volume.data(), old_volume.data(), old_volume.size() * sizeof(double));
     }
 
-    /// Clear RESET forcings after each step
+    /**
+     * @brief Clear RESET forcings after each step
+     *
+     * @post If forcing_ever_set is false, no-op. Otherwise disables
+     * rainfall/evaporation/coupling one-shot rows with zero persistence, zeroes their values and
+     * marks forcing_dirty when anything changed. Persistent rows and provider runtime registries
+     * are untouched.
+     * @pre All one-shot forcing vectors have matching cell extents. Requires exclusive
+     * between-step access; no allocation or expiry/time advancement.
+     */
     void clear_reset_forcings() noexcept {
-        if (!forcing_ever_set) return;
+        if (!forcing_ever_set)
+            return;
         for (std::size_t i = 0; i < rainfall_forced.size(); ++i) {
             if (rainfall_persist[i] == 0 && rainfall_forced[i] != 0) {
-                rainfall_forced[i] = 0;
-                rainfall_force_val[i] = 0.0;
+                rainfall_forced.set(i, 0);
+                rainfall_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
             if (evap_persist[i] == 0 && evap_forced[i] != 0) {
-                evap_forced[i] = 0;
-                evap_force_val[i] = 0.0;
+                evap_forced.set(i, 0);
+                evap_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
             if (coupling_persist[i] == 0 && coupling_forced[i] != 0) {
-                coupling_forced[i] = 0;
-                coupling_force_val[i] = 0.0;
+                coupling_forced.set(i, 0);
+                coupling_force_val.set(i, 0.0);
                 forcing_dirty = true;
             }
         }
     }
 
-    /// Update cumulative statistics / rendering envelopes.
-    ///
-    /// Aggregates once per model (routing) step at the accepted end-of-step
-    /// state. MUST be called after computeFaceVelocity and computeCellContinuity
-    /// so face_vx/vy and cell_continuity_err hold the accepted values. All
-    /// envelopes fuse into the single per-cell loop already walked for
-    /// stat_cum_volume — no extra passes, no sub-step sampling.
-    void update_statistics([[maybe_unused]] const std::vector<double>& tri_area,
-                           double dt,
+    /**
+     * @brief Update cumulative statistics / rendering envelopes.
+     *
+     * Aggregates once per model (routing) step at the accepted end-of-step state. MUST be called
+     * after computeFaceVelocity and computeCellContinuity so face_vx/vy and cell_continuity_err
+     * hold the accepted values. All envelopes fuse into the single per-cell loop already walked
+     * for stat_cum_volume — no extra passes, no sub-step sampling.
+     *
+     * @param[in] tri_area Compatibility area argument, currently unused; conserved volume is
+     * integrated directly.
+     * @param[in] dt Finite nonnegative accepted routing interval in seconds.
+     * @param[in] nthreads Positive OpenMP worker count; 1 serial, ignored without OpenMP.
+     * @post Updates cumulative depth/speed/absolute-continuity maxima and volume-time integral
+     * in m3*s; the head maximum/minimum over finite samples; the depth and velocity time
+     * integrals (an unresolved velocity adds nothing); and, where a maximum rises, its time
+     * (stat_elapsed after this span) and, for the speed, the velocity that set it. Advances
+     * stat_elapsed by dt. Statistic/velocity/continuity arrays are preallocated to
+     * depth.size(); no bounds checks/allocation.
+     * @note Read/write only this accepted-state statistics snapshot. Fixed per-cell operation
+     * order gives serial-equivalent gathers; caller keeps inputs stable and statistic outputs
+     * exclusive while the parallel loop runs.
+     */
+    void update_statistics([[maybe_unused]] const std::vector<double>& tri_area, double dt,
                            [[maybe_unused]] int nthreads = 1) noexcept {
         // Each cell updates only its own envelope slots (max/cum into [i]);
         // schedule(static) keeps this bit-identical to serial for any thread
         // count. int loop index for OpenMP canonical-loop form.
         const int n = static_cast<int>(depth.size());
+        // The sample stands for the end of the span it integrates.
+        const double now = stat_elapsed + dt;
 #if defined(SWMM_USE_OPENMP)
 #pragma omp parallel for schedule(static) num_threads(nthreads)
 #endif
         for (int i = 0; i < n; ++i) {
-            if (depth[i] > stat_max_depth[i])
+            if (depth[i] > stat_max_depth[i]) {
                 stat_max_depth[i] = depth[i];
+                stat_time_max_depth[i] = now;
+            }
 
-            const double speed = std::sqrt(face_vx[i] * face_vx[i]
-                                         + face_vy[i] * face_vy[i]);
-            if (speed > stat_max_velocity[i])
+            const double speed = std::sqrt(face_vx[i] * face_vx[i] + face_vy[i] * face_vy[i]);
+            if (std::isfinite(speed) &&
+                (!std::isfinite(stat_max_velocity[i]) || speed > stat_max_velocity[i])) {
                 stat_max_velocity[i] = speed;
+                stat_time_max_velocity[i] = now;
+                stat_peak_vx[i] = face_vx[i];
+                stat_peak_vy[i] = face_vy[i];
+            }
 
             const double aerr = std::abs(cell_continuity_err[i]);
             if (aerr > stat_max_cont_err[i])
@@ -343,7 +524,20 @@ struct SurfaceStateData {
 
             // Cell water volume × dt (VFR: V is the integrated state, not h̄·A).
             stat_cum_volume[i] += volume[i] * dt;
+
+            if (std::isfinite(head[i])) {
+                if (!(head[i] <= stat_max_head[i]))
+                    stat_max_head[i] = head[i];
+                if (!(head[i] >= stat_min_head[i]))
+                    stat_min_head[i] = head[i];
+            }
+            stat_depth_time[i] += depth[i] * dt;
+            if (std::isfinite(speed)) {
+                stat_vx_time[i] += face_vx[i] * dt;
+                stat_vy_time[i] += face_vy[i] * dt;
+            }
         }
+        stat_elapsed = now;
     }
 };
 

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeLid.hpp
- * @brief Phase A4 — water age through the LID layer stack.
+ * @file      WaterAgeLid.hpp
+ * @brief     Phase A4 — water age through the LID layer stack.
  *
  * @details Each layer of each LID unit is a complete-mix tank: what it holds
  *          ages by `dt`, what arrives mixes in by volume, and what leaves —
@@ -57,9 +57,9 @@
  * @see plans/transport/A4_IMPLEMENTATION_BRIEF_2026-08-17.md
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_WATERAGELID_HPP
@@ -67,14 +67,16 @@
 
 namespace openswmm {
 struct SimulationContext;
-namespace lid { class LIDSolver; }
-}  // namespace openswmm
+namespace lid {
+class LIDSolver;
+}
+} // namespace openswmm
 
 namespace openswmm::transport {
 
 /// Size the per-layer block against the model's LID units and seed the
-/// layers that already hold water at t = 0. Idempotent; safe to call once
-/// the LID manager has built its groups.
+/// layers that already hold water at t = 0. Call after the LID manager
+/// has built its groups; repeating reseeds existing wet-layer ages.
 void initLidLayerAge(SimulationContext& ctx, const lid::LIDSolver& solver);
 
 /// Flow-weighted age of the water arriving at each LID unit this step,
@@ -82,14 +84,13 @@ void initLidLayerAge(SimulationContext& ctx, const lid::LIDSolver& solver);
 /// `LIDGroupSoA::inflow` is assembled, because that is the only place the
 /// contributing rates (rain, captured impervious and pervious runoff,
 /// whole-subcatchment run-on) exist together.
-void setLidInflowAge(SimulationContext& ctx, int type_index, int unit,
-                     int subcatch, double rain_rate, double q_imperv,
-                     double q_perv, double q_runon, double lid_area);
+void setLidInflowAge(SimulationContext& ctx, int type_index, int unit, int subcatch,
+                     double rain_rate, double q_imperv, double q_perv, double q_runon,
+                     double lid_area);
 
 /// Advance the per-layer ages one runoff step, after `LIDSolver::execute`.
-void routeLidLayerAge(SimulationContext& ctx, const lid::LIDSolver& solver,
-                      double dt);
+void routeLidLayerAge(SimulationContext& ctx, const lid::LIDSolver& solver, double dt);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_WATERAGELID_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_WATERAGELID_HPP

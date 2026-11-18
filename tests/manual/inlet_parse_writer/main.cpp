@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file main.cpp
- * @brief Link-level harness for the inlet parse/write path (no gtest, no
+ * @file      main.cpp
+ * @brief     Link-level harness for the inlet parse/write path (no gtest, no
  *        engine runtime): drives handle_streets / handle_inlets /
  *        handle_inlet_usage / handle_inlet_junctions and InpWriter directly
  *        on a SimulationContext, then re-parses what it wrote.
@@ -27,9 +27,9 @@
  *          tests/manual/inlet_parse_writer/build.sh; output files land beside
  *          this file (CLAUDE.md §4.1).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <cstdio>
@@ -50,49 +50,106 @@ namespace {
 
 int failures = 0;
 
+/**
+ * @brief Print a named manual check and accumulate failures.
+ *
+ * Does not stop the harness after failure, so subsequent code still requires structurally valid
+ * fixture indices.
+ *
+ * @param[in] ok Condition outcome; false increments the translation-unit failure counter.
+ * @param[in] what Borrowed display description.
+ */
 void check(bool ok, const std::string& what) {
     std::printf("%-56s %s\n", what.c_str(), ok ? "ok" : "FAIL");
-    if (!ok) ++failures;
+    if (!ok)
+        ++failures;
 }
 
+/**
+ * @brief Copy a short list of handler input rows into owned strings.
+ *
+ * @param[in] l Initializer list of non-null string literals/pointers, borrowed only while
+ *     constructing the result.
+ * @return Owned vector of line strings in input order.
+ */
 std::vector<std::string> lines(std::initializer_list<const char*> l) {
     return std::vector<std::string>(l.begin(), l.end());
 }
 
+/**
+ * @brief Read an entire text file into an owned string.
+ *
+ * Default stream exception settings are used; allocation failure may propagate.
+ *
+ * @param[in] path Input filename borrowed during open/read.
+ * @return Collected stream text; empty for an empty/unopenable file, with no separate error status.
+ */
 std::string slurp(const std::string& path) {
     std::ifstream f(path);
-    std::stringstream ss; ss << f.rdbuf(); return ss.str();
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
 }
 
 // Split an .inp file into the raw line vectors the handlers consume.
+/**
+ * @brief Collect raw lines beneath matching section headers.
+ *
+ * Only headers whose first character is [ are recognized. Prefix matching accepts trailing
+ * characters after [name]; blank/comment rows inside the section are retained.
+ *
+ * @param[in] text Borrowed complete input text.
+ * @param[in] name Case-sensitive section name without brackets.
+ * @return Owned raw lines for every matching section until the next column-zero bracket header;
+ *     empty if absent.
+ */
 std::vector<std::string> section_of(const std::string& text, const std::string& name) {
     std::vector<std::string> out;
     std::istringstream in(text);
-    std::string line; bool inside = false;
+    std::string line;
+    bool inside = false;
     while (std::getline(in, line)) {
         if (!line.empty() && line[0] == '[') {
             inside = (line.rfind("[" + name + "]", 0) == 0);
             continue;
         }
-        if (inside) out.push_back(line);
+        if (inside)
+            out.push_back(line);
     }
     return out;
 }
 
 // Minimum network the inlet sections reference: J_IN -> IJ1 -> O_ST plus MH1.
+/**
+ * @brief Append the minimum fixed network referenced by inlet roundtrip checks.
+ *
+ * Calls section handlers directly, retaining parser errors in ctx. Does not resolve all deferred
+ * names or initialize runtime hydraulics.
+ *
+ * @param[in,out] ctx Context receiving J_IN/MH1 junctions, O_ST outfall, IJ1 inlet junction and two
+ *     STREET conduits; caller supplies compatible street/inlet definitions.
+ */
 void buildBase(SimulationContext& ctx) {
     input::handle_junctions(ctx, lines({"J_IN 10.0 5.0", "MH1 2.0 8.0"}));
     input::handle_outfalls(ctx, lines({"O_ST 8.0 FREE NO"}));
-    input::handle_inlet_junctions(ctx, lines({
-        "IJ1 9.0 0.5 Curb1 MH1 2 10 1.5 0.1 2.0 ON_SAG"}));
-    input::handle_conduits(ctx, lines({
-        "C_UP J_IN IJ1 100.0 0.016 0 0",
-        "C_DN IJ1 O_ST 100.0 0.016 0 0"}));
+    input::handle_inlet_junctions(ctx, lines({"IJ1 9.0 0.5 Curb1 MH1 2 10 1.5 0.1 2.0 ON_SAG"}));
+    input::handle_conduits(
+        ctx, lines({"C_UP J_IN IJ1 100.0 0.016 0 0", "C_DN IJ1 O_ST 100.0 0.016 0 0"}));
     input::handle_xsections(ctx, lines({"C_UP STREET ST1", "C_DN STREET ST1"}));
 }
 
 // Parse an existing .inp's inlet-relevant sections and report any errors.
 // Enough of the model to resolve the inlet references; not a full load.
+/**
+ * @brief Parse inlet-related sections of an existing deck without a full engine load.
+ *
+ * Builds a local context in handler dependency order and prints object counts/errors. Checks only
+ * streets/inlets/junctions/outfalls/conduits/xsections/usages; it is not complete deck validation
+ * or runtime simulation.
+ *
+ * @param[in] path Deck filename borrowed for the read.
+ * @return One for unreadable/empty input or any accumulated handler error; zero otherwise.
+ */
 int checkDeck(const std::string& path) {
     const std::string text = slurp(path);
     if (text.empty()) {
@@ -109,33 +166,43 @@ int checkDeck(const std::string& path) {
     input::handle_xsections(ctx, section_of(text, "XSECTIONS"));
     input::handle_inlet_usage(ctx, section_of(text, "INLET_USAGE"));
 
-    std::printf("%s\n  streets=%d inlets=%d usages=%d nodes=%d links=%d\n",
-                path.c_str(), ctx.streets.count(), ctx.inlets.count(),
-                ctx.inlet_usages.count(), ctx.n_nodes(), ctx.n_links());
-    for (const auto& e : ctx.errors) std::printf("  error: %s\n", e.c_str());
+    std::printf("%s\n  streets=%d inlets=%d usages=%d nodes=%d links=%d\n", path.c_str(),
+                ctx.streets.count(), ctx.inlets.count(), ctx.inlet_usages.count(), ctx.n_nodes(),
+                ctx.n_links());
+    for (const auto& e : ctx.errors)
+        std::printf("  error: %s\n", e.c_str());
     std::printf("  %s\n", ctx.errors.empty() ? "no parse errors" : "FAILED");
     return ctx.errors.empty() ? 0 : 1;
 }
 
 } // namespace
 
+/**
+ * @brief Check one deck or execute built-in inlet parse/write/reparse checks.
+ *
+ * Default mode constructs fixed inlet/network stores, manually resolves selected deferred
+ * references, writes written.inp and written2.inp under tests/manual/inlet_parse_writer, and checks
+ * values plus the second-write fixed point. Requires repository-root cwd/output path access. Checks
+ * accumulate failures and do not guard every later index after malformed fixture data.
+ *
+ * @param[in] argc Process argument count; any path argument selects checkDeck mode.
+ * @param[in] argv Borrowed first path argument; further arguments are ignored.
+ * @return Selected deck-check result, or one when any built-in check failed, otherwise zero.
+ */
 int main(int argc, char** argv) {
     // With a path argument, syntax-check that deck's inlet sections instead
     // of running the built-in round-trip checks.
-    if (argc > 1) return checkDeck(argv[1]);
+    if (argc > 1)
+        return checkDeck(argv[1]);
 
     SimulationContext ctx;
 
-    input::handle_streets(ctx, lines({
-        "ST1 20 0.5 4 0.016 0 0 1 20 4 0.016"}));
-    input::handle_inlets(ctx, lines({
-        "Combo1 GRATE 2.0 2.0 P_BAR-50",
-        "Combo1 CURB  3.0 0.5 HORIZONTAL",
-        "Curb1  CURB  2.0 0.5 VERTICAL",
-        "Cust1  CUSTOM DIV1"}));
+    input::handle_streets(ctx, lines({"ST1 20 0.5 4 0.016 0 0 1 20 4 0.016"}));
+    input::handle_inlets(ctx,
+                         lines({"Combo1 GRATE 2.0 2.0 P_BAR-50", "Combo1 CURB  3.0 0.5 HORIZONTAL",
+                                "Curb1  CURB  2.0 0.5 VERTICAL", "Cust1  CUSTOM DIV1"}));
     buildBase(ctx);
-    input::handle_inlet_usage(ctx, lines({
-        "C_UP Combo1 MH1 1 0 0 0 0 ON_GRADE"}));
+    input::handle_inlet_usage(ctx, lines({"C_UP Combo1 MH1 1 0 0 0 0 ON_GRADE"}));
 
     check(ctx.streets.count() == 1, "[STREETS] one row");
     check(ctx.inlets.count() == 3, "[INLETS] COMBO merged into one row");
@@ -150,22 +217,24 @@ int main(int argc, char** argv) {
     check(ctx.inlet_usages.link_index[1] == ctx.link_names.find("C_UP"),
           "[INLET_USAGE] row is link-hosted");
     check(ctx.nodes.is_inlet[static_cast<std::size_t>(ctx.node_names.find("IJ1"))] == 1 &&
-          ctx.nodes.is_virtual[static_cast<std::size_t>(ctx.node_names.find("IJ1"))] == 1,
+              ctx.nodes.is_virtual[static_cast<std::size_t>(ctx.node_names.find("IJ1"))] == 1,
           "IJ1 is both is_inlet and is_virtual");
     check(ctx.errors.empty(), "no parse errors");
-    for (const auto& e : ctx.errors) std::printf("    error: %s\n", e.c_str());
+    for (const auto& e : ctx.errors)
+        std::printf("    error: %s\n", e.c_str());
 
     // The writer needs the references the resolver normally fills in; do the
     // two the [INLET_JUNCTIONS] grammar defers, so the section can be emitted.
-    ctx.inlet_usages.design_index[0] = 1;                       // Curb1
-    ctx.inlet_usages.node_index[0]   = ctx.node_names.find("MH1");
+    ctx.inlet_usages.design_index[0] = 1; // Curb1
+    ctx.inlet_usages.node_index[0] = ctx.node_names.find("MH1");
     ctx.inlet_usages.pending_design_name[0].clear();
     ctx.inlet_usages.pending_capture_name[0].clear();
 
     const std::string out = "tests/manual/inlet_parse_writer/written.inp";
     std::vector<std::string> warnings;
     check(inp_writer::writeInpFile(ctx, out, &warnings) == 0, "InpWriter::write");
-    for (const auto& w : warnings) std::printf("    warning: %s\n", w.c_str());
+    for (const auto& w : warnings)
+        std::printf("    warning: %s\n", w.c_str());
     const std::string text = slurp(out);
     check(text.find("[INLET_JUNCTIONS]") != std::string::npos, "[INLET_JUNCTIONS] emitted");
     check(text.find("[INLET_USAGE]") != std::string::npos, "[INLET_USAGE] emitted");
@@ -188,7 +257,8 @@ int main(int argc, char** argv) {
     input::handle_inlet_usage(ctx2, section_of(text, "INLET_USAGE"));
 
     check(ctx2.errors.empty(), "re-parse has no errors");
-    for (const auto& e : ctx2.errors) std::printf("    error: %s\n", e.c_str());
+    for (const auto& e : ctx2.errors)
+        std::printf("    error: %s\n", e.c_str());
     check(ctx2.inlets.count() == ctx.inlets.count(), "inlet count round-trips");
     check(ctx2.inlets.inlet_type[0] == "COMBO", "COMBO round-trips");
     check(ctx2.inlets.curb_throat[0] == 0, "throat round-trips");
@@ -198,32 +268,30 @@ int main(int argc, char** argv) {
           "COMBO grate dimensions round-trip");
     check(ctx2.inlets.curve_id[2] == "DIV1", "CUSTOM curve id round-trips");
     check(ctx2.inlet_usages.count() == 2, "usage rows round-trip");
-    check(ctx2.inlet_usages.pending_capture_name[0] == "MH1",
-          "capture node name round-trips");
-    check(ctx2.inlet_usages.num_inlets[0] == 2 &&
-          ctx2.inlet_usages.placement[0] == 2,
+    check(ctx2.inlet_usages.pending_capture_name[0] == "MH1", "capture node name round-trips");
+    check(ctx2.inlet_usages.num_inlets[0] == 2 && ctx2.inlet_usages.placement[0] == 2,
           "[INLET_JUNCTIONS] tail round-trips");
     check(std::abs(ctx2.inlet_usages.clog_factor[0] - 0.9) < 1e-9 &&
-          std::abs(ctx2.inlet_usages.flow_limit[0] - 1.5) < 1e-9 &&
-          std::abs(ctx2.inlet_usages.local_depress[0] - 0.1) < 1e-9 &&
-          std::abs(ctx2.inlet_usages.local_width[0] - 2.0) < 1e-9,
+              std::abs(ctx2.inlet_usages.flow_limit[0] - 1.5) < 1e-9 &&
+              std::abs(ctx2.inlet_usages.local_depress[0] - 0.1) < 1e-9 &&
+              std::abs(ctx2.inlet_usages.local_width[0] - 2.0) < 1e-9,
           "%Clog / Qmax / aLocal / wLocal round-trip verbatim");
-    check(std::abs(ctx2.nodes.invert_elev[static_cast<std::size_t>(
-              ctx2.node_names.find("IJ1"))] - 9.0) < 1e-9 &&
-          std::abs(ctx2.nodes.rim_depth[static_cast<std::size_t>(
-              ctx2.node_names.find("IJ1"))] - 0.5) < 1e-9,
+    check(std::abs(ctx2.nodes.invert_elev[static_cast<std::size_t>(ctx2.node_names.find("IJ1"))] -
+                   9.0) < 1e-9 &&
+              std::abs(ctx2.nodes.rim_depth[static_cast<std::size_t>(ctx2.node_names.find("IJ1"))] -
+                       0.5) < 1e-9,
           "Elev / MaxDepth round-trip in display units");
 
     // Pass 2 must be a fixed point of pass 1.
     const std::string out2 = "tests/manual/inlet_parse_writer/written2.inp";
     ctx2.inlet_usages.design_index[0] = 1;
-    ctx2.inlet_usages.node_index[0]   = ctx2.node_names.find("MH1");
+    ctx2.inlet_usages.node_index[0] = ctx2.node_names.find("MH1");
     ctx2.inlet_usages.pending_design_name[0].clear();
     ctx2.inlet_usages.pending_capture_name[0].clear();
     check(inp_writer::writeInpFile(ctx2, out2, nullptr) == 0, "second write");
     check(slurp(out2) == text, "pass 2 is a fixed point of pass 1");
 
-    std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED",
-                failures, failures == 1 ? "" : "s");
+    std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "PASSED", failures,
+                failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

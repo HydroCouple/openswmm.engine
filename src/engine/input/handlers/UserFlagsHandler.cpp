@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file UserFlagsHandler.cpp
- * @brief [USER_FLAGS] section handler — parses flag schema definitions (R28).
+ * @file      UserFlagsHandler.cpp
+ * @brief     [USER_FLAGS] section handler — parses flag schema definitions (R28).
  *
  * Each row defines one flag name, its value type, and an optional description.
  * No per-object values are stored here; those come from [USER_FLAG_VALUES].
@@ -33,9 +33,9 @@
  * @see UserFlags.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "UserFlagsHandler.hpp"
@@ -46,23 +46,42 @@
 
 namespace openswmm::input {
 
+/**
+ * @brief Parse flag-schema names, types and optional descriptions.
+ *
+ * Uppercases schema names/type tokens with Tokenizer rules; duplicate names replace existing
+ * definitions. Fewer than two tokens skip silently. Unknown types become STRING and set
+ * warning_code=102 only if no warning exists. Description uses token three only. Existing
+ * schema/value state is retained; no lifecycle guard or object-value conversion.
+ *
+ * @param[in,out] ctx Model context receiving authored section state and any documented diagnostics;
+ *     not automatically reset before parsing.
+ * @param[in] lines Borrowed section data lines without the section heading, tokenized/copied
+ *     synchronously; may be empty. Caller serializes context mutation.
+ */
 void handle_user_flags(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 2) continue;  // Need at least Name + Type
+        if (tok.size() < 2)
+            continue; // Need at least Name + Type
 
         UserFlagDef def;
-        def.name        = Tokenizer::to_upper(tok[0]);
+        def.name = Tokenizer::to_upper(tok[0]);
         const std::string type_str = Tokenizer::to_upper(tok[1]);
 
-        if      (type_str == "BOOLEAN") def.type = UserFlagType::BOOLEAN;
-        else if (type_str == "INTEGER") def.type = UserFlagType::INTEGER;
-        else if (type_str == "REAL")    def.type = UserFlagType::REAL;
-        else if (type_str == "STRING")  def.type = UserFlagType::STRING;
+        if (type_str == "BOOLEAN")
+            def.type = UserFlagType::BOOLEAN;
+        else if (type_str == "INTEGER")
+            def.type = UserFlagType::INTEGER;
+        else if (type_str == "REAL")
+            def.type = UserFlagType::REAL;
+        else if (type_str == "STRING")
+            def.type = UserFlagType::STRING;
         else {
             // Unknown type — default to STRING and emit a warning
             def.type = UserFlagType::STRING;
-            if (ctx.warning_code == 0) ctx.warning_code = 102;
+            if (ctx.warning_code == 0)
+                ctx.warning_code = 102;
         }
 
         // Optional description in tok[2] (already unquoted by tokenizer)

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_geopackage_formats.cpp
- * @brief Slice IO-6 — round-trip parse/materialise for every external-file
+ * @file      test_geopackage_formats.cpp
+ * @brief     Slice IO-6 — round-trip parse/materialise for every external-file
  *        format the GeoPackage plugin consumes/emits.
  *
  * @details Each test writes a known-input file under
@@ -30,9 +30,9 @@
  *          routing-interface SWMM5 text, and hot-start HSF v4 binary
  *          (routing portion only — see HotstartFormat.hpp).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -57,16 +57,36 @@ namespace dt = openswmm::datetime;
 
 namespace {
 
+/**
+ * @brief Locate/create the retained GeoPackage-format artifact directory.
+ *
+ * Searches at most eight parents for the data tree and creates target even if missing. Existing
+ * artifacts remain, filesystem errors propagate and cwd is unchanged.
+ * @return Path ending tests/unit/engine/data/io6_formats under the located or final searched
+ *     ancestor.
+ */
 fs::path testDataDir() {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/io6_formats";
     fs::create_directories(dir);
     return dir;
 }
 
+/**
+ * @brief Compare two fixture scalars with a symmetric relative-plus-absolute band.
+ *
+ * No mutation or explicit finite handling; NaNs fail and infinity arithmetic follows ordinary
+ * floating-point comparisons.
+ *
+ * @param[in] a First value in the same units as b.
+ * @param[in] b Second value.
+ * @param[in] eps Nonnegative dimensionless multiplier, default 1e-6.
+ * @return True when abs(a-b)<=eps*(abs(a)+abs(b)+1).
+ */
 bool nearly_equal(double a, double b, double eps = 1e-6) {
     return std::fabs(a - b) <= eps * (std::fabs(a) + std::fabs(b) + 1.0);
 }
@@ -97,8 +117,12 @@ TEST(GpkgFormats_Timeseries, RoundTripSimple) {
     int y, mo, d, h, mi, s;
     dt::decodeDate(rows[0].timestamp_oa, y, mo, d);
     dt::decodeTime(rows[0].timestamp_oa, h, mi, s);
-    EXPECT_EQ(y, 2026); EXPECT_EQ(mo, 1); EXPECT_EQ(d, 1);
-    EXPECT_EQ(h, 0);    EXPECT_EQ(mi, 0); EXPECT_EQ(s, 0);
+    EXPECT_EQ(y, 2026);
+    EXPECT_EQ(mo, 1);
+    EXPECT_EQ(d, 1);
+    EXPECT_EQ(h, 0);
+    EXPECT_EQ(mi, 0);
+    EXPECT_EQ(s, 0);
 
     ASSERT_TRUE(writeTimeseriesText(dst.string(), rows).ok);
 
@@ -107,7 +131,7 @@ TEST(GpkgFormats_Timeseries, RoundTripSimple) {
     ASSERT_EQ(rows.size(), rows2.size());
     for (std::size_t i = 0; i < rows.size(); ++i) {
         EXPECT_NEAR(rows[i].timestamp_oa, rows2[i].timestamp_oa, 1e-9);
-        EXPECT_NEAR(rows[i].value,        rows2[i].value,        1e-9);
+        EXPECT_NEAR(rows[i].value, rows2[i].value, 1e-9);
     }
 }
 
@@ -197,12 +221,12 @@ TEST(GpkgFormats_RoutingInterface, RoundTripWithPollutants) {
     const fs::path dst = testDataDir() / "routing_iface.txt";
 
     RoutingInterfaceMetadata meta;
-    meta.title           = "IO-6b test interface";
+    meta.title = "IO-6b test interface";
     meta.report_step_sec = 60;
-    meta.flow_units      = "CFS";
-    meta.pollutant_ids   = {"TSS", "BOD"};
+    meta.flow_units = "CFS";
+    meta.pollutant_ids = {"TSS", "BOD"};
     meta.pollutant_units = {"MG/L", "MG/L"};
-    meta.object_ids      = {"J1", "J2"};
+    meta.object_ids = {"J1", "J2"};
 
     std::vector<RoutingInterfaceRow> rows;
     {
@@ -225,23 +249,21 @@ TEST(GpkgFormats_RoutingInterface, RoundTripWithPollutants) {
     std::vector<RoutingInterfaceRow> rows2;
     ASSERT_TRUE(parseRoutingInterfaceText(dst.string(), meta2, rows2).ok);
 
-    EXPECT_EQ(meta2.title,           meta.title);
+    EXPECT_EQ(meta2.title, meta.title);
     EXPECT_EQ(meta2.report_step_sec, meta.report_step_sec);
-    EXPECT_EQ(meta2.flow_units,      meta.flow_units);
-    ASSERT_EQ(meta2.pollutant_ids,   meta.pollutant_ids);
+    EXPECT_EQ(meta2.flow_units, meta.flow_units);
+    ASSERT_EQ(meta2.pollutant_ids, meta.pollutant_ids);
     EXPECT_EQ(meta2.pollutant_units, meta.pollutant_units);
-    ASSERT_EQ(meta2.object_ids,      meta.object_ids);
+    ASSERT_EQ(meta2.object_ids, meta.object_ids);
 
     ASSERT_EQ(rows2.size(), rows.size());
     for (std::size_t i = 0; i < rows.size(); ++i) {
         EXPECT_EQ(rows2[i].object_id, rows[i].object_id);
         EXPECT_NEAR(rows2[i].timestamp_oa, rows[i].timestamp_oa, 1e-6);
         EXPECT_NEAR(rows2[i].flow_value, rows[i].flow_value, 1e-4);
-        ASSERT_EQ(rows2[i].pollutant_values.size(),
-                  rows[i].pollutant_values.size());
+        ASSERT_EQ(rows2[i].pollutant_values.size(), rows[i].pollutant_values.size());
         for (std::size_t j = 0; j < rows[i].pollutant_values.size(); ++j)
-            EXPECT_NEAR(rows2[i].pollutant_values[j],
-                        rows[i].pollutant_values[j], 1e-4);
+            EXPECT_NEAR(rows2[i].pollutant_values[j], rows[i].pollutant_values[j], 1e-4);
     }
 }
 
@@ -253,27 +275,31 @@ TEST(GpkgFormats_Hotstart, RoutingPortionRoundTrip) {
     const fs::path dst = testDataDir() / "hotstart.hsf";
 
     HotstartSnapshot snap;
-    snap.header.file_stamp    = "SWMM5-HOTSTART4";
-    snap.header.file_version  = 4;
-    snap.header.num_subcatch  = 0;        // runoff state out of scope (Slice IO-6e)
-    snap.header.num_landuses  = 0;
-    snap.header.num_nodes     = 2;
-    snap.header.num_links     = 1;
-    snap.header.num_pollut    = 2;
-    snap.header.flow_units    = 0;        // CFS
+    snap.header.file_stamp = "SWMM5-HOTSTART4";
+    snap.header.file_version = 4;
+    snap.header.num_subcatch = 0; // runoff state out of scope (Slice IO-6e)
+    snap.header.num_landuses = 0;
+    snap.header.num_nodes = 2;
+    snap.header.num_links = 1;
+    snap.header.num_pollut = 2;
+    snap.header.flow_units = 0; // CFS
 
     {
         HotstartNodeState n;
-        n.depth = 0.50; n.lateral_inflow = 0.10;
+        n.depth = 0.50;
+        n.lateral_inflow = 0.10;
         n.concentration = {12.5, 3.2};
         snap.node_state.push_back(n);
-        n.depth = 0.30; n.lateral_inflow = 0.05;
-        n.concentration = {0.0,  4.1};
+        n.depth = 0.30;
+        n.lateral_inflow = 0.05;
+        n.concentration = {0.0, 4.1};
         snap.node_state.push_back(n);
     }
     {
         HotstartLinkState l;
-        l.flow = 1.75; l.depth = 0.40; l.setting = 1.0;
+        l.flow = 1.75;
+        l.depth = 0.40;
+        l.setting = 1.0;
         l.concentration = {6.6, 1.8};
         snap.link_state.push_back(l);
     }
@@ -283,35 +309,32 @@ TEST(GpkgFormats_Hotstart, RoutingPortionRoundTrip) {
     HotstartSnapshot snap2;
     ASSERT_TRUE(parseHotstartHsf(dst.string(), snap2).ok);
 
-    EXPECT_EQ(snap2.header.file_version,  4);
-    EXPECT_EQ(snap2.header.num_nodes,     snap.header.num_nodes);
-    EXPECT_EQ(snap2.header.num_links,     snap.header.num_links);
-    EXPECT_EQ(snap2.header.num_pollut,    snap.header.num_pollut);
-    EXPECT_EQ(snap2.header.flow_units,    snap.header.flow_units);
+    EXPECT_EQ(snap2.header.file_version, 4);
+    EXPECT_EQ(snap2.header.num_nodes, snap.header.num_nodes);
+    EXPECT_EQ(snap2.header.num_links, snap.header.num_links);
+    EXPECT_EQ(snap2.header.num_pollut, snap.header.num_pollut);
+    EXPECT_EQ(snap2.header.flow_units, snap.header.flow_units);
 
     ASSERT_EQ(snap2.node_state.size(), 2u);
     for (std::size_t i = 0; i < 2; ++i) {
-        EXPECT_NEAR(snap2.node_state[i].depth,
-                    snap.node_state[i].depth, 1e-5);
-        EXPECT_NEAR(snap2.node_state[i].lateral_inflow,
-                    snap.node_state[i].lateral_inflow, 1e-5);
+        EXPECT_NEAR(snap2.node_state[i].depth, snap.node_state[i].depth, 1e-5);
+        EXPECT_NEAR(snap2.node_state[i].lateral_inflow, snap.node_state[i].lateral_inflow, 1e-5);
         for (std::size_t j = 0; j < 2; ++j)
-            EXPECT_NEAR(snap2.node_state[i].concentration[j],
-                        snap.node_state[i].concentration[j], 1e-3);
+            EXPECT_NEAR(snap2.node_state[i].concentration[j], snap.node_state[i].concentration[j],
+                        1e-3);
     }
     ASSERT_EQ(snap2.link_state.size(), 1u);
-    EXPECT_NEAR(snap2.link_state[0].flow,    snap.link_state[0].flow,    1e-5);
-    EXPECT_NEAR(snap2.link_state[0].depth,   snap.link_state[0].depth,   1e-5);
+    EXPECT_NEAR(snap2.link_state[0].flow, snap.link_state[0].flow, 1e-5);
+    EXPECT_NEAR(snap2.link_state[0].depth, snap.link_state[0].depth, 1e-5);
     EXPECT_NEAR(snap2.link_state[0].setting, snap.link_state[0].setting, 1e-5);
-    EXPECT_NEAR(snap2.link_state[0].target_setting,
-                snap.link_state[0].setting, 1e-5);
+    EXPECT_NEAR(snap2.link_state[0].target_setting, snap.link_state[0].setting, 1e-5);
 }
 
 TEST(GpkgFormats_Hotstart, RejectsTruncatedFile) {
     const fs::path dst = testDataDir() / "hotstart_trunc.hsf";
     {
         std::ofstream out(dst, std::ios::binary);
-        out << "SWMM5-HOTSTART4";  // stamp only — no counts
+        out << "SWMM5-HOTSTART4"; // stamp only — no counts
     }
     HotstartSnapshot snap;
     auto r = parseHotstartHsf(dst.string(), snap);
@@ -326,7 +349,8 @@ TEST(GpkgFormats_Hotstart, RejectsHeaderMismatch) {
     snap.header.num_links = 0;
     snap.header.num_pollut = 0;
     snap.node_state.resize(2);
-    for (auto& n : snap.node_state) n.concentration.resize(0);
+    for (auto& n : snap.node_state)
+        n.concentration.resize(0);
     auto r = writeHotstartHsf((testDataDir() / "mismatch.hsf").string(), snap);
     EXPECT_FALSE(r.ok);
 }

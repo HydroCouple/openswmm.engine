@@ -1,3 +1,15 @@
+# A previous directory can create GLOBAL imported targets without propagating
+# its ordinary *_FOUND variables. Re-establish the result in every caller,
+# including Kokkos find_dependency() on a clean configure.
+if(APPLE AND TARGET OpenMP::OpenMP_CXX)
+    set(OpenMP_FOUND TRUE)
+    set(OpenMP_CXX_FOUND TRUE)
+    if(TARGET OpenMP::OpenMP_C)
+        set(OpenMP_C_FOUND TRUE)
+    endif()
+    return()
+endif()
+
 include_guard(GLOBAL)
 
 # Apple-specific: try Homebrew locations.

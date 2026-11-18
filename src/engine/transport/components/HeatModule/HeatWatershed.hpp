@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file HeatWatershed.hpp
- * @brief Phase H5a — temperature on subcatchment surfaces.
+ * @file      HeatWatershed.hpp
+ * @brief     Phase H5a — temperature on subcatchment surfaces.
  *
  * @details This is A3's `WaterAgeWatershed` with the same complete-mix
  *          bookkeeping and three deliberate differences, which are the
@@ -76,9 +76,9 @@
  * @see src/engine/transport/components/WaterAgeModule/WaterAgeWatershed.hpp
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_HEAT_WATERSHED_HPP
@@ -96,54 +96,46 @@ namespace openswmm::transport {
 /**
  * @brief Accumulate run-on temperature from `donor_sc` onto `receiver_sc`.
  *
- * @details The RATE convention every loader uses: donors add `q · T`, the
- *          consumer divides by the total rate. Mirrors `addRunonAge`, and
- *          must be called at **every** contributor to `runon_inflow` — the
- *          subcatchment cascade, the LID underdrain return, and the outfall
- *          return. A3 filled this numerator from one of the three and
- *          divided by all three, which produced arriving water younger than
- *          anything entering the model. The temperature analogue of that
- *          defect is quieter and worse: a missing contributor pulls the
- *          arriving temperature toward 0 °C, which is a plausible number.
+ * @details The RATE convention every loader uses: donors add `q · T`, the consumer divides by
+ * the total rate. Mirrors `addRunonAge`, and must be called at **every** contributor to
+ * `runon_inflow` — the subcatchment cascade, the LID underdrain return, and the outfall return.
+ * A3 filled this numerator from one of the three and divided by all three, which produced
+ * arriving water younger than anything entering the model. The temperature analogue of that
+ * defect is quieter and worse: a missing contributor pulls the arriving temperature toward 0 °C,
+ * which is a plausible number.
  *
- * @param q Volumetric flow rate, ft³/s.
+ * - Argument q: Volumetric flow rate, ft³/s.
  */
-void addRunonTemperature(SimulationContext& ctx, int donor_sc,
-                         int receiver_sc, double q);
+void addRunonTemperature(SimulationContext& ctx, int donor_sc, int receiver_sc, double q);
 
 /**
  * @brief Accumulate run-on at an explicitly supplied temperature.
  *
- * @details For contributors whose donor is not another subcatchment: the
- *          outfall return (which carries `heat_state.node_temp`) and, from
- *          H5b, the LID underdrain. Adds to the numerator **and** the rate
- *          together — the pairing is why this is one function and not two
- *          array writes at each call site.
+ * @details For contributors whose donor is not another subcatchment: the outfall return (which
+ * carries `heat_state.node_temp`) and, from H5b, the LID underdrain. Adds to the numerator
+ * **and** the rate together — the pairing is why this is one function and not two array writes
+ * at each call site.
  *
- * @param q      Volumetric flow rate, ft³/s.
- * @param temp_c Temperature of that flow, °C.
+ * - Argument q: Volumetric flow rate, ft³/s.
+ * - Argument temp_c: Temperature of that flow, °C.
  */
-void addRunonTemperatureAt(SimulationContext& ctx, int receiver_sc, double q,
-                           double temp_c);
+void addRunonTemperatureAt(SimulationContext& ctx, int receiver_sc, double q, double temp_c);
 
 /**
  * @brief Advance ponded subarea temperatures one runoff step.
  *
- * @details Per subarea, in order: apply the surface energy balance to the
- *          water that was already there, mix in what arrived by GROSS
- *          inflow volume, then publish the subcatchment's runoff
- *          temperature as the volume-weighted mean of the subareas holding
- *          water. Outflow leaves at the subarea's own temperature, so only
- *          the inflow is needed — the same complete-mix argument A3 arrived
- *          at after its net-gain estimate proved to be a 6.3× defect.
+ * @details Per subarea, in order: apply the surface energy balance to the water that was already
+ * there, mix in what arrived by GROSS inflow volume, then publish the subcatchment's runoff
+ * temperature as the volume-weighted mean of the subareas holding water. Outflow leaves at the
+ * subarea's own temperature, so only the inflow is needed — the same complete-mix argument A3
+ * arrived at after its net-gain estimate proved to be a 6.3× defect.
  *
- * @param soa The solver's own SoA. `ctx.subcatches.ponded_depth` is declared
- *            but written by nobody; reading it would give zeros.
- * @param dt  Runoff timestep, seconds.
+ * - Argument soa: The solver's own SoA. `ctx.subcatches.ponded_depth` is declared but written by
+ * nobody; reading it would give zeros.
+ * - Argument dt: Runoff timestep, seconds.
  */
-void routeSubcatchmentTemperature(SimulationContext& ctx,
-                                  const runoff::RunoffSoA& soa, double dt);
+void routeSubcatchmentTemperature(SimulationContext& ctx, const runoff::RunoffSoA& soa, double dt);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_HEAT_WATERSHED_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_HEAT_WATERSHED_HPP

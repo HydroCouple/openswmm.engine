@@ -18,6 +18,16 @@
 //   - Support added for multiple infiltration methods within a project.
 //-----------------------------------------------------------------------------
 
+/**
+ * @file      infil.h
+ * @brief     Legacy subcatchment infiltration models and state.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #ifndef INFIL_H
 #define INFIL_H
 
@@ -25,89 +35,83 @@
 // Enumerated Constants
 //---------------------
 enum InfilType {
-     HORTON,                      // Horton infiltration
-     MOD_HORTON,                  // Modified Horton infiltration
-     GREEN_AMPT,                  // Green-Ampt infiltration
-     MOD_GREEN_AMPT,              // Modified Green-Ampt infiltration
-     CURVE_NUMBER};               // SCS Curve Number infiltration
+    HORTON,         // Horton infiltration
+    MOD_HORTON,     // Modified Horton infiltration
+    GREEN_AMPT,     // Green-Ampt infiltration
+    MOD_GREEN_AMPT, // Modified Green-Ampt infiltration
+    CURVE_NUMBER
+}; // SCS Curve Number infiltration
 
 //---------------------
 // Horton Infiltration
 //---------------------
-typedef struct
-{
-   double        f0;              // initial infil. rate (ft/sec)
-   double        fmin;            // minimum infil. rate (ft/sec)
-   double        Fmax;            // maximum total infiltration (ft);
-   double        decay;           // decay coeff. of infil. rate (1/sec)
-   double        regen;           // regeneration coeff. of infil. rate (1/sec)
-   //-----------------------------
-   double        tp;              // present time on infiltration curve (sec)
-   double        Fe;              // cumulative infiltration (ft)
-   double        Fmh;             // mod Horton cumulative infiltration (ft)   //(5.2.5)
-}  THorton;
-
+typedef struct {
+    double f0;    // initial infil. rate (ft/sec)
+    double fmin;  // minimum infil. rate (ft/sec)
+    double Fmax;  // maximum total infiltration (ft);
+    double decay; // decay coeff. of infil. rate (1/sec)
+    double regen; // regeneration coeff. of infil. rate (1/sec)
+    //-----------------------------
+    double tp;  // present time on infiltration curve (sec)
+    double Fe;  // cumulative infiltration (ft)
+    double Fmh; // mod Horton cumulative infiltration (ft)   //(5.2.5)
+} THorton;
 
 //-------------------------
 // Green-Ampt Infiltration
 //-------------------------
-typedef struct
-{
-   double        S;               // avg. capillary suction (ft)
-   double        Ks;              // saturated conductivity (ft/sec)
-   double        IMDmax;          // max. soil moisture deficit (ft/ft)
-   //-----------------------------
-   double        IMD;             // current initial soil moisture deficit
-   double        F;               // current cumulative infiltrated volume (ft)
-   double        Fu;              // current upper zone infiltrated volume (ft)
-   double        Lu;              // depth of upper soil zone (ft)
-   double        T;               // time until start of next rain event (sec)
-   char          Sat;             // saturation flag
-}  TGrnAmpt;
-
+typedef struct {
+    double S;      // avg. capillary suction (ft)
+    double Ks;     // saturated conductivity (ft/sec)
+    double IMDmax; // max. soil moisture deficit (ft/ft)
+    //-----------------------------
+    double IMD; // current initial soil moisture deficit
+    double F;   // current cumulative infiltrated volume (ft)
+    double Fu;  // current upper zone infiltrated volume (ft)
+    double Lu;  // depth of upper soil zone (ft)
+    double T;   // time until start of next rain event (sec)
+    char Sat;   // saturation flag
+} TGrnAmpt;
 
 //--------------------------
 // Curve Number Infiltration
 //--------------------------
-typedef struct
-{
-   double        Smax;            // max. infiltration capacity (ft)
-   double        regen;           // infil. capacity regeneration constant (1/sec)
-   double        Tmax;            // maximum inter-event time (sec)
-   //-----------------------------
-   double        S;               // current infiltration capacity (ft)
-   double        F;               // current cumulative infiltration (ft)
-   double        P;               // current cumulative precipitation (ft)
-   double        T;               // current inter-event time (sec)
-   double        Se;              // current event infiltration capacity (ft)
-   double        f;               // previous infiltration rate (ft/sec)
+typedef struct {
+    double Smax;  // max. infiltration capacity (ft)
+    double regen; // infil. capacity regeneration constant (1/sec)
+    double Tmax;  // maximum inter-event time (sec)
+    //-----------------------------
+    double S;  // current infiltration capacity (ft)
+    double F;  // current cumulative infiltration (ft)
+    double P;  // current cumulative precipitation (ft)
+    double T;  // current inter-event time (sec)
+    double Se; // current event infiltration capacity (ft)
+    double f;  // previous infiltration rate (ft/sec)
 
-}  TCurveNum;
+} TCurveNum;
 
 //-----------------------------------------------------------------------------
 //   Exported Variables
 //-----------------------------------------------------------------------------
-extern THorton*   HortInfil;
-extern TGrnAmpt*  GAInfil;
+extern THorton* HortInfil;
+extern TGrnAmpt* GAInfil;
 extern TCurveNum* CNInfil;
 
 //-----------------------------------------------------------------------------
 //   Infiltration Methods
 //-----------------------------------------------------------------------------
-void    infil_create(int n);
-void    infil_delete(void);
-int     infil_readParams(int m, char* tok[], int ntoks);
-void    infil_initState(int j);
-void    infil_getState(int j, double x[]);
-void    infil_setState(int j, double x[]);
-void    infil_setInfilFactor(int j);
-double  infil_getInfil(int area, double tstep, double rainfall, double runon,
-        double depth);
+void infil_create(int n);
+void infil_delete(void);
+int infil_readParams(int m, char* tok[], int ntoks);
+void infil_initState(int j);
+void infil_getState(int j, double x[]);
+void infil_setState(int j, double x[]);
+void infil_setInfilFactor(int j);
+double infil_getInfil(int area, double tstep, double rainfall, double runon, double depth);
 
-void    grnampt_getParams(int j, double p[]);
-int     grnampt_setParams(TGrnAmpt *infil, double p[]);
-void    grnampt_initState(TGrnAmpt *infil);
-double  grnampt_getInfil(TGrnAmpt *infil, double tstep, double irate,
-        double depth, int modelType);
+void grnampt_getParams(int j, double p[]);
+int grnampt_setParams(TGrnAmpt* infil, double p[]);
+void grnampt_initState(TGrnAmpt* infil);
+double grnampt_getInfil(TGrnAmpt* infil, double tstep, double irate, double depth, int modelType);
 
 #endif

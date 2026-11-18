@@ -289,12 +289,17 @@ wall-clock of the default. Two further switches belong to it:
 \f$(\eta,h,u,v)\f$: Green–Gauss in connected wet interiors and a
 conditioned wet-neighbour depth/surface fit at shorelines, with limited
 face depths, cell-centred shoreline velocity and SSP-RK2 time stepping
-in global-step mode (§9.5.6, §9.5.10), and is refused with a notice when
-overland transport is active; `FRONT_REBUILD` (§9.5.7) is switched on
+in global-step mode (§9.5.6, §9.5.10). Overland transport rows keep
+second order in time: each stage carries them on its own mass fluxes,
+upwind in space, and the two-stage step averages them with the water.
+`FRONT_REBUILD` (§9.5.7) is switched on
 automatically, because a Godunov front outruns the fixed rebuild cadence.
-The Kokkos plugin backends serve only the all-triangle local-inertial
-scheme; a `FULL_SWE` model is announced and run on the CPU marcher
-(§9.11.1).
+The Kokkos plugin backends serve all three closures on triangle, quad
+and mixed meshes, `FULL_SWE` at both reconstruction orders (§9.11.1).
+At second order each stage of the two-stage step evaluates the junction
+exchange law (§9.7) at the state the stage starts from and books half of
+what it moved; node heads are held for the batch, so the exchange is
+second order in time at held network state.
 
 `FULL_SWE` keeps every property of §9.5: the lake at rest is exact —
 the Audusse correction cancels the \f$\tfrac{1}{2} g h^{*2}\f$ pressure flux
@@ -342,9 +347,9 @@ preceded `FULL_SWE`.
 
 | Closure | Prognostic state | Face law | Valid regime | Cost | Status |
 |---|---|---|---|---|---|
-| `LOCAL_INERTIAL` (default) | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
-| `FULL_SWE` | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher only | \status{Implemented} |
-| `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher only | \status{Implemented} |
+| `LOCAL_INERTIAL` | \f$V\f$ per cell, \f$q\f$ per face | de Almeida and Bates, (9-7)–(9-10) | \f$Fr \lesssim 0.5\f$: ponds, streets, floodplains | 1× | \status{Implemented} |
+| `FULL_SWE` (default) | \f$V\f$, \f$hu\f$, \f$hv\f$ per cell | hydrostatic reconstruction (9-36), rotated HLLC (9-38), bed-slope correction (9-39), semi-implicit friction per cell (9-40) | all Froude numbers: transcritical control, jumps, dam breaks, drawdown over crests | ≈ 2–3× (Courant ≤ ½ on \f$2A/P\f$, (9-41)); CPU marcher and Kokkos plugins | \status{Implemented} |
+| `DIFFUSIVE_WAVE` | \f$V\f$ per cell | Manning quasi-steady balance (9-42) with a slope floor | slow floodplain inundation; steady uniform flow (exact) | \f$\Delta x^{2}\f$-bound steps (9-43), carried by the LTS tiers; CPU marcher and Kokkos plugins | \status{Implemented} |
 | `ADVECTION YES` | as `LOCAL_INERTIAL` | (9-7) plus a staggered upwind convective term (Stelling and Duinmeijer, 2003) | — | — | \status{Retired} |
 
 *Table 9-2 Momentum closures of the 2D marcher*
@@ -440,6 +445,41 @@ the cell velocities. Without the latter a model can only start from
 rest, which excludes solutions such as Thacker's oscillating basins
 whose initial state has \f$\mathbf{u} \neq 0\f$.
 
+A cell's initial state can instead be given as a water-surface elevation
+in the optional `[2D_INITIAL_HGL]` section:
+
+```
+[2D_INITIAL_HGL]
+;;CELL  HGL
+*       12.50
+1042    13.10
+```
+
+`HGL` is an absolute elevation in mesh units on the `[2D_VERTICES]` Z
+datum. `CELL` is a cell index, or `*` for every cell; rows apply in file
+order, so a `*` row followed by cell rows sets a level pool with local
+overrides. The section must follow the cell sections it refers to; when
+the mesh is in a `[2D_MESH_FILE]`, it goes in that file. A
+cell with an HGL ignores its `INIT_DEPTH`. At
+initialization the elevation is converted to a cell volume through the
+closure of §9.4 and clamped at the cell invert: an HGL at or below the
+bed (the lowest vertex under `VFR`, the centroid bed under `FLAT`)
+starts the cell dry. A warning is issued when the HGL leaves every cell
+it is prescribed for dry, which usually means a datum or unit mismatch.
+A coupled 1D node is not initialized from the 2D level; give it a
+matching initial depth to avoid an exchange in the first step.
+
+For a finite local mesh bed, `[2D_INITIAL_BED_QUALITY]` seeds the bed
+porewater separately from the overland water. It uses the same `*`, `TAG`
+and one-based `CELL` scopes and `* < TAG < CELL` precedence as
+`[2D_INITIAL_QUALITY]`; each concentration is multiplied by that cell's
+bed pore volume (area × bed thickness × porosity). Pollutants use their
+declared concentration units, and `__WATER_AGE__` is authored in hours.
+This section requires coupled heat with `BED_HEAT_MODEL LOCAL_STORAGE`.
+Temperature remains owned by the heat state. For groundwater-owned
+`GROUND_COLUMN` porewater, seed `SAT` or `UNSAT` through
+`[GW_INITIAL_QUALITY]` instead.
+
 ### 9.3.1 Quadrilateral cells
 
 The mesh may mix triangles with convex quadrilaterals. Quads are listed
@@ -456,7 +496,7 @@ tag columns as `[2D_TRIANGLES]`:
 **Cells are numbered triangles first, then quads**, each in file order:
 the \f$j\f$-th quad row is cell \f$n_{tri} + j\f$. Every cell-addressed
 section — `[2D_BOUNDARY_CONDITIONS]`, `[2D_BOUNDARY_QUALITY]`,
-`[2D_INITIAL_VELOCITY]`, `[2D_TRIANGLE_NODE_MAP]`, `[2D_INFILTRATION]` —
+`[2D_INITIAL_VELOCITY]`, `[2D_INITIAL_HGL]`, `[2D_TRIANGLE_NODE_MAP]`, `[2D_INFILTRATION]` —
 uses this unified index, and their column headers keep the word `TRI`. A
 `[2D_TRIANGLES]` row appearing after a `[2D_QUADS]` row is a parse error,
 which is what keeps the numbering unambiguous. A non-convex or
@@ -513,8 +553,7 @@ Under `CELL_CLOSURE VFR` a quad uses the two-plane storage model of
 `Mesh2_face_nv` vertex-count array — and the edge datasets and the bulk
 C-API edge arrays use stride 4; an all-triangle mesh keeps the
 `[nFace, 3]`, stride-3 layout byte for byte. The Kokkos plugin backends
-serve all-triangle meshes only; a mixed mesh is announced and run on the
-CPU marcher (§9.11.1).
+serve mixed meshes with the same closures as the CPU marcher (§9.11.1).
 
 <!-- figure spec: a quad beside a triangle sharing one face: local edge numbering k = 0..3 with endpoints v[(k+1)%nv], v[(k+2)%nv]; the padded slot layout 4t + k with the unused fourth slot of the triangle greyed; the centroid-to-edge normal distance d_e of (9-33) drawn for both cells -->
 ![Figure 9-4](figures/png/hydraulics_ch9_mesh_stencil.png)
@@ -832,6 +871,34 @@ formulation of de Almeida et al. (2012). The default \f$\theta = 0.8\f$
 applies enough diffusion to suppress the oscillation without visibly
 smearing fronts.
 
+**Smoothing over a fixed time interval.** By default,
+`THETA_REFERENCE_STEP = 0`: the authored weight is applied on every face
+firing. Shortening a routing window can create more face firings per second
+and increase this numerical damping. A positive `THETA_REFERENCE_STEP`
+\f$T_\theta\f$, in seconds, instead defines the retention over that interval:
+
+\f[
+\theta_f = \exp\!\left(\frac{\Delta t_f}{T_\theta}\ln\theta\right),\qquad
+\widehat q = q_f + (1-\theta_f)(q_{reconstructed}-q_f).
+\f]
+
+Here \f$\Delta t_f\f$ is the actual face step, including local-timestep tiers
+and shortened window tails. For a fixed reconstructed target, subdividing
+an interval gives the same total relaxation. The implementation evaluates
+the blend fraction with `expm1` to retain precision at small steps; CPU and
+Kokkos use the same scalar function. `THETA = 1` still disables blending
+and retains the existing no-vector-friction branch described above.
+
+For example, `THETA 0.8` with `THETA_REFERENCE_STEP 1` retains 80% of the
+momentum difference over one second, independently of the number of face
+steps. The equivalent relaxation timescale is
+\f$-T_\theta/\ln\theta\f$. This is a numerical stabilization control, not a
+discharge coefficient or a calibration to measured flow. Select the interval
+explicitly and check timestep refinement, stability, heads and conservation.
+Omitting it preserves the historical calculation and restart identity;
+positive values are included in checkpoint compatibility checks. Surface
+plugins must be rebuilt for GPU ABI v9, which includes the new option layout.
+
 Finally the result is clamped:
 
 | | | | |
@@ -986,6 +1053,18 @@ fully quiescent active set falls back to \f$\Delta t_0 =\f$ `MAX_TIMESTEP`.
 The advective augmentation \f$\lvert\mathbf{u}_i\rvert = \lvert\mathbf{q}_i\rvert/h_i\f$ is evaluated from the Perot vector when
 the depth exceeds \f$10^{-6}\f$ m and \f$\theta < 1\f$, and taken as zero
 otherwise.
+
+Under the local-inertial law the augmentation is limited to
+\f$\lvert\mathbf{u}_i\rvert \le Fr_{max}\sqrt{g h_i}\f$, the clamp of (9-10) applied at
+the cell depth, so \f$\Delta t_i \ge \alpha L_{char,i} / \left((1 + Fr_{max})\sqrt{g h_i}\right)\f$.
+The limit is needed because \f$\mathbf{q}_i\f$ is built from face discharges that
+are clamped at the *face* depth while it is divided by the *cell mean*
+depth. A cell that holds a film while deeper neighbors feed it — an inlet
+cell draining to the 1D network, or a partly wet cell on a steep bank —
+then reports a quotient of hundreds to thousands of m/s that no water
+travels at, and without the limit that one cell collapses
+\f$\Delta t_0\f$ for the whole mesh. `FULL_SWE` and `DIFFUSIVE_WAVE` do not
+apply the limit.
 
 \f$L_{char}\f$ is the operator-derived length of (9-4) rather than a
 geometric proxy, and the difference matters. The face update couples cells through \f$g h \xi_f/(A\,d_{n,f})\f$;
@@ -1596,12 +1675,14 @@ must not count two complete time intervals. Friction is applied through
 the cell momentum update.
 
 Requested second order reduces `LTS_TIERS` to 1 with a notice. Active
-surface transport falls back to first order with a notice; the tier
-reduction occurs before that fallback, so request order 1 explicitly
-when transport should retain multiple tiers. Groundwater attached to an
-active second-order RK2 route is rejected at initialization, because the
-RK2 surface route does not advance groundwater. These are implementation
-limits, not recommendations to discard the corresponding physics.
+surface transport keeps second order: each of the two stages carries the
+rows on its own first-order upwind mass fluxes, and the stage results are
+averaged with the water, so the rows are second order in time and upwind
+in space (concentrations are not reconstructed). Request order 1
+explicitly when transport should retain multiple tiers. Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA groundwater supports
+the shared RK2 transaction, authored wells and HEAD/FLOW edges. Groundwater
+reactions/heat and network/catchment/runtime owners remain guarded; see
+Hydrology §9.11 and the groundwater transport design for the exact profile.
 
 Implementation: `src/engine/2d/solver/SweKernels.hpp` — `faceFlux`
 (first order), `faceFluxReconBed` (second order; `faceFluxRecon` retains the constant-bed compatibility entry point), `hllcFlux`, `waveSpeeds`,
@@ -1753,7 +1834,12 @@ a momentum change for the cell.
 
   rather than a bare copy of the interior velocity; under supercritical
   outflow (\f$u_n \ge \sqrt{g h_i}\f$) no characteristic enters and the
-  ghost is transmissive — the prescribed stage cannot act.
+  ghost is transmissive — the prescribed stage cannot act. Inflow is
+  held to at most critical at the prescribed depth,
+  \f$u_{n,g} \ge -\sqrt{g h_{g}}\f$: a stage is one quantity and cannot
+  supply a supercritical stream, and under supercritical inflow no
+  characteristic leaves, so (9-44) would copy the interior's inflow
+  speed back and let the stream feed itself.
 - `SPECIFIED_FLOW` and `RATING_CURVE` are flux boundaries: the mass flux
   is the prescribed value verbatim, because the Riemann solve's own
   mass flux is a wave-speed-weighted blend of the interior and
@@ -1811,8 +1897,8 @@ junctions and one for outfalls.
 
 `[2D_VERTEX_NODE_MAP]` and `[2D_TRIANGLE_NODE_MAP]` associate a mesh
 vertex or cell with a SWMM node, with a discharge coefficient \f$C_d\f$
-(default 0.65) and an exchange area. Exchange is an orifice law on the
-head difference:
+(default 0.65) and an exchange area. With the legacy
+`COUPLING_LAW ORIFICE`, exchange is an orifice law on the head difference:
 
 | | | | |
 |---|---|---|---|
@@ -1872,6 +1958,197 @@ one.
 Exchange volumes reach the 1D side through the lateral-inflow **delivery
 queue**, drained at a uniform rate over the batch span rather than as a
 single-step pulse.
+
+#### Regime-aware exchange and fine-scale ponding {#hydraulics_ref_regime_exchange}
+
+`COUPLING_LAW WEIR_ORIFICE` combines free and submerged weir control with
+orifice control. Heads and geometry are evaluated in metres; Q > 0 denotes
+surface-to-network flow. With crest z, surface head h2, network head h1,
+surface depth hs = max(h2-z,0), crest perimeter L and opening area A:
+
+- Free drainage uses Qw = (2/3) Cw L sqrt(2g) hs phi(hs).
+- Submerged drainage uses Qw = Csw L sqrt(2g) hs phi(h2-h1).
+- Inward orifice control uses Qo = Coi A sqrt(2g) phi(hs), or the
+  submerged head difference. The drainage rate is the p-norm minimum
+  `(Qw^-16 + Qo^-16)^(-1/16)`. It is no greater than either control and is
+  about 4.2% below either when the two are equal.
+- Outward flow uses an orifice rate with coefficient Coo and blends the
+  dry-surface head h1-z into the wet-surface difference h1-h2.
+
+The free/submerged transition is smoothed over a submergence ratio of 0.1.
+The regularised root phi equals sqrt(x) above its head threshold and is
+quadratic below, with a finite derivative at zero. The routed implementation
+uses a 0.02 m threshold. That is a numerical regularisation scale, and is
+large relative to the heads of the Rubinato laboratory rig. A comparison
+using a smaller threshold only in the isolated law test does not validate
+the routed model at that scale.
+
+The dynamic-wave head sensitivity is a nonnegative damping approximation:
+blend-weight and availability-ramp derivatives are dropped. It should not
+be described as the exact derivative of the blended expression.
+
+| Preset | Cw | Csw | Coi | Coo |
+|---|---|---|---|---|
+| DEFAULT | 0.540 | 0.360 | 0.167 | 0.160 |
+| RUBINATO2017 | 0.540 | 0.056 | 0.167 | 0.160 |
+| RUBINATO2017_LOWER | 0.493 | 0.055 | 0.160 | 0.159 |
+| RUBINATO2017_UPPER | 0.587 | 0.057 | 0.174 | 0.161 |
+
+These are implementation presets, not four independently calibrated
+physical regimes. Rubinato et al. calibrated free drainage (S1), submerged
+weir drainage (S2), wet outward orifice flow (S3, expected 0.167) and dry
+outward flow (S4, expected 0.160). The implementation uses Coo = 0.160 for
+both outward cases. Coi is borrowed by analogy; inward orifice flow was not
+calibrated in that paper. The default Csw = (2/3) Cw is a continuity choice,
+not the paper's submerged-weir calibration. Per-node coefficients override
+the selected preset; authored mapping-row Cd/Area can override the orifice
+terms and opening geometry.
+
+`COUPLING_HEAD CELL`, `VERTEX` and `STENCIL_WET_MEAN` select different head
+representations. The wet stencil excludes dry bed elevations from a water
+surface estimate; it is not the same as averaging all numerical cells
+within a circular opening, as in the paper's HMho construction.
+
+`[2D_NODE_COUPLING]` describes node eligibility and structure geometry before
+mesh mapping. `NONE` excludes a node; `MANHOLE`, `GRATE`, `CURB`, `OPEN` and
+`OUTFALL` distinguish the applicable geometry or boundary treatment.
+Geometry is authored in project length/area units and converted at routing.
+
+For non-storage coupled junctions, `COUPLING_POND_MODE FOOTPRINT`, `CHAMBER`
+and `TRACKING` select the effective above-rim storage. The smoothed area
+transition lies above the rim. Storage nodes retain their storage curves.
+`COUPLING_EQUALIZE` bounds the 1D-side exchange over the interval for which
+its head is held; the surface state evolves within that interval. It is
+not a proof that a frozen two-reservoir equilibrium is never crossed.
+Availability budgets still prevent spending donor water twice.
+
+#### Node configuration, defaults and mesh registration {#hydraulics_node_coupling_configuration}
+
+A coupling configuration has three independent inputs: `[2D_NODE_COUPLING]`
+selects the eligible structure and optional node overrides; a vertex/cell map
+selects its position on the surface; `[2D_OPTIONS]` supplies global law and
+numerical defaults. A node setting alone creates no hydraulic exchange. A
+`NONE` node is excluded even if an old map still names it; initialization warns
+about ignored rows. An explicitly eligible node without a map also produces a
+warning. Node overrides persist independently of mesh regeneration.
+
+| Node class | Default without an authored row | Allowed explicit structures |
+| --- | --- | --- |
+| Ordinary junction, divider | `MANHOLE` | `NONE`, `MANHOLE`, `GRATE`, `CURB` |
+| Inlet or virtual junction | `NONE` | `NONE`, `MANHOLE`, `GRATE`, `CURB` (explicit enabling requires a deliberate hydraulic representation) |
+| Storage | `OPEN` | `NONE`, `MANHOLE`, `GRATE`, `CURB`, `OPEN` |
+| Outfall | `OUTFALL` | `NONE`, `OUTFALL` |
+
+An inlet junction already receives street drainage through its inlet
+representation; its default avoids adding a second surface route. A virtual
+junction is a conduit split point without a physical rim. `OPEN` uses storage
+geometry; `OUTFALL` follows the link/tailwater exchange described in §9.7.2,
+not the junction weir/orifice law.
+
+Each row is `NodeID TYPE KEY=value ...`. Omitted parameters inherit the defaults
+below. Clearing an override differs from entering zero. Node lengths are in
+project length units (m for SI flow units; ft for US flow units) and node areas
+in their square. An SI mesh tag (`;; UNITS: SI (m)`) does not convert these node inputs to metres on
+a US project. By contrast, map-row areas follow the mesh units. Coefficients and
+lid fractions are dimensionless in the exchange equations used in this chapter;
+tailwater relaxation is in seconds.
+
+| Parameter | Interpretation, range and default |
+| --- | --- |
+| `D` | Positive opening diameter; default 1.2 m or 4 ft. A manhole starts with \f$A=\pi D^2/4\f$, \f$L=\pi D\f$ |
+| `AREA` | Positive hydraulic opening area. For `MANHOLE`, replaces the diameter area; for `GRATE`/`CURB`, supplies opening area (fallback: authored map area, then diameter area). For `OPEN`, overrides storage surface area at full depth |
+| `PERIMETER` | Positive effective weir length. Overrides derived length. Without it, `GRATE`/`CURB` use \f$4\sqrt A\f$, `OPEN` uses \f$\sqrt{4\pi A}\f$, and `MANHOLE` uses \f$\pi D\f$ |
+| `CHAMBER_AREA` | Positive chamber plan area. Under `WEIR_ORIFICE`, defaults to resolved opening area before lid scaling; under `ORIFICE`, defaults to the map area at structure resolution. Used by chamber/tracking storage treatment; storage-node curves remain authoritative |
+| `LID_OPEN_FRACTION` | In (0,1], default 1. Scales resolved opening area and weir length, not chamber area. A zero value is invalid; use `NONE` for no exchange |
+| `CREST` | `NODE_RIM` default: invert + full depth. `MESH_BED`: mapped vertex bed or cell-centroid bed. `MAX` or `MIN`: maximum/minimum of those elevations |
+| `LAW` | `ORIFICE` or `WEIR_ORIFICE`; absent inherits global `COUPLING_LAW`. Orifice mode retains map/global Cd and area; the weir geometry/crest/preset inputs do not redefine it |
+| `COEFFS` | `DEFAULT`, `RUBINATO2017`, `RUBINATO2017_LOWER`, `RUBINATO2017_UPPER`; absent inherits the global preset, subject to the `OPEN` rule below |
+| `CW`, `CSW` | Positive overrides for free-weir and submerged-weir drainage coefficients |
+| `COI`, `COO` | Positive overrides for surface-to-sewer and sewer-to-surface orifice coefficients |
+| `SPREAD` | Outfalls only: nonnegative discharge radius, default 0. Expands receivers to connected cells within the radius that are wet or below/equal to the highest original receiving bed; discharge is area weighted. Withdrawal uses original donor reservations |
+| `TAILWATER_RELAX` | Outfalls only: nonnegative relaxation time, default 0. Cached head updates by \f$h_{tw}\leftarrow h_{tw}+\min(1,\Delta t/\tau)(h_{2D}-h_{tw})\f$ for positive τ; zero applies the current surface head immediately. First initialization uses the surface head |
+
+For `WEIR_ORIFICE`, coefficient resolution uses the following values before
+individual overrides:
+
+| Preset | CW | CSW | COI | COO |
+| --- | ---: | ---: | ---: | ---: |
+| `DEFAULT` | 0.540 | 2CW/3 = 0.360 | 0.167 | 0.160 |
+| `RUBINATO2017` | 0.540 | 0.056 | 0.167 | 0.160 |
+| `RUBINATO2017_LOWER` | 0.493 | 0.055 | 0.160 | 0.159 |
+| `RUBINATO2017_UPPER` | 0.587 | 0.057 | 0.174 | 0.161 |
+| `OPEN` with no node `COEFFS` override | 1 | 2/3 | 1 | 1 |
+
+`OPEN` applies its special coefficients even when the global preset differs;
+a node `COEFFS` override selects a preset explicitly. Individual CW/CSW/COI/COO
+then override the result. With `DEFAULT` or the special `OPEN` rule, CSW is
+computed as 2CW/3 after any CW override, unless CSW is explicitly supplied.
+The Rubinato ranges are laboratory coefficient alternatives, not confidence
+bounds on predictions at another site. The low experimental CSW is not the
+continuous-join DEFAULT value; see the comparison's limitations.
+
+Finally, an authored map-row Cd overrides both COI and COO, and an authored
+map-row area overrides the resolved opening area. The perimeter is derived
+before this final area override; changing only map area does not resize an
+independently derived/authored perimeter. Chamber area defaults from the final
+opening area before lid scaling unless explicitly supplied. Thus a map inherited
+from a legacy model can mask changes to a node's coefficients or opening area.
+`COUPLING_AREA AUTO` applies only to `ORIFICE`: it derives 1.25 times the largest
+connected-conduit area, bounded to 0.05–2.0 m², where a positive conduit area is
+available. `WEIR_ORIFICE` retains its structure geometry.
+
+In SWMMVis, set **2D Coupleable**, the structure and its parameters in node
+properties or the node attribute table. **NO** authors `NONE`; **YES** restores
+the class default (or explicit `MANHOLE` when that default is `NONE`). Switching
+structure/eligibility clears prior structure parameters; Undo restores the full
+state. Blank editors restore inheritance; the table displays `NULL` for an
+unauthored numeric override. Node-table booleans display YES/NO
+and support single-value/selected-row paste; spreadsheet blocks can supply
+multiple geometry values. Set type before pasting parameters.
+
+During mesh generation, **1D geometry influence** controls Steiner points and
+constraints, while **Map model nodes to the mesh after generation** independently
+runs spatial registration. **Map only coupleable nodes** normally stays on;
+**Set coupleable…** edits the candidate set. Coincident nodes map to vertices;
+other in-domain nodes map to containing cells. Nodes not pinned because of
+minimum separation remain available for cell mapping. Outside nodes are reported.
+
+**Mesh 2D → Remap 1D↔2D** previews Current/Proposed mappings and |rim − bed|.
+Preserve existing retains eligible mappings and fills missing ones; Clear &
+rebuild remaps by coordinate, retaining Cd/Area for a node returning to the same
+location. Apply records undoable edits. Use this after remeshing or changing
+coordinates; a node attribute edit alone does not relocate its map. The mapper
+leaves new Cd/Area fields unauthored when the *global* law is WEIR_ORIFICE;
+per-node law changes alone do not remove existing map overrides.
+
+Neither a selected structure nor a fine mesh guarantees experimental accuracy.
+Verify opening dimensions and rim/terrain datum, inspect map overrides, compare
+routing timesteps and check continuity and exchange hydrographs. Head-sampling
+stencils and delivery cells are numerical supports; they do not automatically
+represent a spatial average over the physical opening footprint.
+
+#### Laboratory comparison and qualification
+
+The accompanying @ref hydraulics_ref_rubinato2017 "Rubinato comparison" compares all 36 steady
+measurements with the bare paper equations, a junction reconstruction and
+an actual-shaft-storage sensitivity. It preserves the fit, continuity,
+head residuals and successive-window drift separately. The paper's printed
+regression slopes have nonzero intercepts; matching the slopes does not
+establish absolute flow agreement.
+
+The nine transient demonstration shapes use Table 1 peak ratios and
+durations. Their boundary forcing is synthetic and must not be labelled
+validation against the measured events or Figure 11. The 0.0125 m local
+mesh check demonstrates that the equalisation cap does not choke exchange;
+it does not establish mesh convergence or footprint-resolved delivery.
+The current comparison is a qualified numerical example. It does not
+support an experimental validation claim.
+
+Reference: Rubinato et al. (2017), *Journal of Hydrology* 552, 421-432,
+[doi:10.1016/j.jhydrol.2017.06.024](https://doi.org/10.1016/j.jhydrol.2017.06.024).
+
+
+@subpage hydraulics_ref_rubinato2017 — measured steady comparisons, synthetic events, report and example downloads.
 
 ### 9.7.2 Outfalls
 
@@ -2219,6 +2496,49 @@ the free surface limited by the Jawahar–Kamath (2000) limiter, whose
 regularization is `LIMITER_EPSILON`; the limiter affects the output
 fields only and enters no solver update.
 
+`FULL_SWE` cell velocities come from the accepted conserved cell momentum,
+including the initial snapshot and runs with all optional momentum processes
+disabled. Local-inertial and diffusive-wave cell velocities are output-only
+area-weighted least-squares fits to wet edge-normal velocities. For edge
+volume flux Q and hydraulic cross-sectional area A, the fit minimizes
+`sum A (n dot u - Q/A)^2`. A uses the selected MEAN/VFR face depth, edge length
+and interior transmissivity; stage boundaries use their own closure depths.
+Accumulating `sum A n n^T` and `sum n Q` avoids division by tiny edge sections
+and by the whole-cell mean depth. There is no diagnostic discharge clip or
+speed cap. The fit is a representative vector and need not reproduce every
+edge flux exactly; original edge fluxes remain the conserved hydraulic data.
+
+Dry-cell vectors are zero. Wet-cell vectors are paired NaNs when wet edge
+normals cannot determine two components (relative determinant tolerance
+`1e-10 * trace^2`), input is nonfinite, or an accepted averaged flow has no
+currently wet section. NaN means unavailable, not zero velocity. Velocity
+maxima use finite samples only, retain NaN if none exist, and cannot bound
+speeds during unavailable intervals. Depth and speed envelopes are sampled
+independently; their peaks need not occur at the same time. Good water
+continuity alone does not establish velocity accuracy.
+
+The same refresh keeps whole-run statistics of each cell, written with the
+envelopes: maximum and minimum free-surface elevation, the time-weighted mean
+depth and mean velocity (integrals over the refresh spans divided by the time
+they cover; an unavailable velocity adds nothing), the velocity at the
+maximum speed, and the times of the maximum depth and the maximum speed in
+hours from the start of the simulation. A cell without a sample of a kind is
+NaN there: a time of maximum depth exists only once the cell has held water.
+Each dataset names its statistic in `cell_methods` (`time: maximum`,
+`time: minimum`, `time: mean`). Checkpoints carry the statistics, so a resumed
+run continues them; a checkpoint written before they existed restarts them at
+the restore.
+
+Saved rendering uses available stored velocity arrays as authoritative,
+including their NaNs. Edge reconstruction is retained only for sources or
+frames without a stored pair. The bulk C API `swmm_2d_get_velocities_bulk`
+exposes the same physical Cartesian SI vectors and NaN convention. The GUI
+streams all three closures' vectors before the matching depth packet,
+including them in bounded history and sparse regional reads. Arrows and
+particles omit unavailable vectors and never borrow a neighboring vector
+into an unavailable cell. These output rules change no solver flux, momentum,
+wetting threshold, depth or water balance.
+
 Two distinct vertex reconstructions exist and must not be confused. The
 **solver** field is the pseudo-Laplacian stencil of Kumar et al. (2009),
 built once from cell-centre geometry with Lagrange multipliers enforcing
@@ -2247,7 +2567,9 @@ CF/UGRID-aware reader. Four keys shape it:
   byte-shuffle filter, to the chunked time-varying datasets; 0 writes
   them uncompressed.
 - **`REPORT_2D_STEP`** — the cadence of the time-varying datasets, in
-  the `HH:MM:SS` spelling of `REPORT_STEP`. It must be a positive
+  `HH:MM:SS` or numeric seconds. Fractional values survive API queries
+  and INP save/reopen; numeric seconds also apply to `INFIL_STEP`.
+  It must be a positive
   multiple of `REPORT_STEP`; unset, the 2D file follows the report
   step.
 - **`REPORT_2D_VARIABLES`** — which dataset groups are written. The
@@ -2271,12 +2593,17 @@ CF/UGRID-aware reader. Four keys shape it:
 | `COUPLING` | `Mesh2_face_coupling_flux`, `Mesh2_face_net_source` | no |
 | `GRADIENTS` | `Mesh2_face_grad_hx`, `Mesh2_face_grad_hy` and their limited pair (solver diagnostics) | no |
 | `CONTINUITY` | `Mesh2_face_continuity_err` (solver diagnostic) | no |
-| `ENVELOPES` | `Mesh2_face_max_depth`, `Mesh2_face_max_velocity`, `Mesh2_face_max_continuity_err` | yes |
+| `ENVELOPES` | `Mesh2_face_max_depth`, `Mesh2_face_max_velocity`, `Mesh2_face_max_continuity_err` (with `CONTINUITY`), `Mesh2_face_max_head`, `Mesh2_face_min_head`, `Mesh2_face_mean_depth`, `Mesh2_face_mean_vx`, `Mesh2_face_mean_vy`, `Mesh2_face_peak_vx`, `Mesh2_face_peak_vy`, `Mesh2_face_time_max_depth`, `Mesh2_face_time_max_velocity` (one value per face; see above) | yes |
 | `BUILDUP` | `Mesh2_face_buildup`, when `[2D_COVERAGES]` rows resolved | yes |
 | `GROUNDWATER` | the per-cell `Mesh2_face_gw_*` fields, the groundwater ledger and the node-exchange cumulative, when a mesh aquifer resolved | yes |
 | `GW_DETAILED` | `Mesh2_face_gw_theta_sigma` per layer and face — \f$m\f$ layers × nFace per step | no |
+| `HEAT` | Water, mesh bed, soil, and mesh-connected LID temperature/energy/capacity fields; fixed-grid soil layers; signed cumulative thermal receipts and residuals | no |
 
-*Table 9-4 The fourteen `REPORT_2D_VARIABLES` tokens*
+*Table 9-4 The fifteen `REPORT_2D_VARIABLES` tokens*
+
+`HEAT` is opt-in and writes fields only when the corresponding thermal owner is initialized. Face fields use the `[time, face]` layout; soil-layer fields use `[time, layer, face]`, with the top layer first and a static center-depth field in metres. Mesh-connected LID physical cells are reported on a separate `[time, lid_layer]` axis. The static `Mesh2_lid_layer_*` mapping datasets identify each LID layer's network node, mesh face, physical cell, control, authored layer, elevation bounds, and area. A zero-capacity physical layer has zero energy and capacity and a NaN temperature; this is distinct from an unowned mesh face, which is NaN in face-based fields. `Mesh2_lid_layer_ground_contact_energy` is cumulative signed energy in joules, positive into that LID layer from its mesh-ground contact. It is the equal-and-opposite per-layer counterpart to `ground_heat_budget`'s `lid_contact_j` term. `mesh_heat_budget` and `ground_heat_budget` use `[time, face, term]`, units of joules, and carry named term/sign-convention attributes. Their receipts are cumulative from initialization; internal water/bed and water/channel contacts are signed and cancel in the combined owner balance. The groundwater budget residual is stored energy minus initial energy and the listed cumulative receipts.
+
+When `BED_HEAT_MODEL LOCAL_STORAGE` is active, `HEAT` writes the local bed's initial and current sensible energy, heat capacity, temperature, and fixed porewater volume. With transported species it also writes porewater concentrations, initial species amounts, cumulative surface-to-bed species exchange, and generated bed age. Species dimensions follow each dataset's `species_names` and `species_units` attributes; the temperature row is excluded, age concentration is in hours, amount fields multiply the species units by m³, and exchange is positive from surface water into the bed. Initial energy and initial species amounts are constant since-initialization fields; cells without local bed porewater are NaN. These fields use the model's local finite-bed storage; they do not include groundwater-owned channel contacts. The thermal result schema version is 6. `HEAT` is excluded from `DEFAULT` to preserve existing results-file contents; add it explicitly or select `ALL` to write it.
 
 **`REPORT_2D_SPECIES`** narrows the `SPECIES` group to a list of species
 names (`ALL`, the default, writes every transported species). The
@@ -2441,6 +2768,7 @@ sections at @ref engine_manual_sect_2D_BOUNDARY_CONDITIONS,
 | `RECONSTRUCTION_ORDER` | §9.5.10, §9.5.6 |
 | `FRONT_REBUILD` | §9.5.7 |
 | `THETA` | §9.5.1 |
+| `THETA_REFERENCE_STEP` | §9.5.1; zero keeps the per-firing weight, positive seconds define physical-time retention |
 | `CFL_NUMBER` | §9.5.5; clamped to ½ under `FULL_SWE`, §9.5.10; the diffusion safety fraction of §9.5.11 |
 | `H_MOVE` | §9.5.7 |
 | `LTS_TIERS` | §9.5.6 |
@@ -2491,12 +2819,54 @@ likewise problem-dependent (§9.7.3: every routing step is a host↔device
 round trip, and the junction-exchange and boundary passes run serially),
 so a model that measures slower on `AUTO` should pin `BACKEND CPU`.
 
-The plugins implement the all-triangle local-inertial scheme without
-transport. A model that mixes in quads (§9.3.1), selects `FULL_SWE` or
-`DIFFUSIVE_WAVE` (§9.2), or carries species, age or temperature rows is
+The plugins implement the local-inertial, diffusive-wave and full
+shallow-water schemes, the last at first and second order, on triangle,
+quad and mixed meshes, with or without transport rows. On
+the OpenMP plugin all three reproduce the CPU marcher's depths, heads,
+face fluxes and (under `FULL_SWE`) cell velocities bit for bit; a device
+backend agrees to its platform's rounding. Under `FULL_SWE` the front
+rebuild's tier pull-down (§9.5.7) is an edge-ordered sweep, so the
+plugin runs it on the host at each rebuild. The optional momentum
+physics (Coriolis, eddy-viscosity mixing, wall drag) runs on the plugin
+as well: the face stresses are gathered per cell in face order, the few
+corner cells that borrow a neighbor's gradient stencil are processed in
+order on one thread, and the kinetic-energy total that accepts or rejects
+a mixing sub-step is summed on the host in cell order, so each decision
+matches the CPU marcher's.
+
+Transport rows (pollutants, reaction species, water age and a passive
+temperature row) ride the same kernels. Each face books its advective and
+dispersive transfers into its own two accumulator slots, each cell gathers
+its faces in the CPU marcher's order, and boundary edges and junction
+exchange points carry the rows inside the runs and groups that already
+keep their water in serial order. On the OpenMP plugin the cell masses,
+the runoff volumes and the per-point drained mass match the CPU marcher
+bit for bit under every closure. Run totals (the mass ledgers) are summed
+on the host from one slot per cell, boundary edge or exchange point, so
+they do not depend on the thread count; they agree with the CPU marcher's
+to rounding, because the CPU marcher adds per-thread subtotals.
+
+The stage that follows each advance also runs in the plugin: water
+aging, first-order pollutant decay and, for a reaction system of `RATE`
+and `FORMULA` species under `SOLVER EUL` or `RK5`, the reactions
+themselves, one wet cell per kernel thread. The host integrator and the
+plugin run the same kernel source, and the decayed mass is summed on the
+host in cell order, so the result matches the host stage bit for bit on
+OpenMP. A system with an `EQUIL` species, an implicit solver (`ROS2`,
+`BDF2`) or more than 16 species or 48 terms keeps its reactions on the
+host, on the masses the plugin copies back; the run log says which side
+runs them. A cell whose reaction step fails keeps its state and is
+reported, as on the host, except that the plugin does not integrate dry
+cells and so never reports one. Buildup and washoff run on the host.
+
+A model that exchanges heat between the surface water and the atmosphere
+or the bed (`HEAT_MODEL COUPLED`) is
 refused by the plugin loudly — under `AUTO` as well, since a model that
 silently lost its plugin would look like a performance regression — and
-served by the CPU marcher. There is no silent physics substitution.
+served by the CPU marcher. There is no silent physics substitution. The
+same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, coupled
+groundwater and porous heat. The run notice names each missing capability, and such a
+model loads no plugin at all.
 
 ### 9.11.2 Retired keys
 
@@ -2535,7 +2905,7 @@ behaviour it once configured is now described.
   momentum-dominated contractions fall outside the local-inertial
   model's validity rather than merely being under-resolved in it. §9.10
   quantifies this; `MOMENTUM_EQUATION FULL_SWE` (§9.2.2) restores the
-  term, at the cost of a half-Courant step and CPU-only execution.
+  term, at the cost of a half-Courant step.
 - **Infiltration on the mesh is a hydrology process, not a hydraulic
   one.** The face laws of this chapter know nothing of the soil; what
   leaves the surface downward, and where it goes, is set by the
@@ -2560,18 +2930,38 @@ behaviour it once configured is now described.
   point can set the substep for the entire mesh — and under
   `DIFFUSIVE_WAVE` the penalty is quadratic in the cell size (9-43).
 - **Second-order feature limits.** `RECONSTRUCTION_ORDER 2` runs in
-  global-step mode and falls back to first order when overland transport
-  is active. An active RK2 route with groundwater is rejected at
-  initialization (§9.5.10). Long-period damping remains, and the
+  global-step mode. Overland transport keeps it, with the rows carried
+  upwind in space. Groundwater RK2 has a standalone CPU water-only profile;
+  reactions/heat and borrowed owners remain guarded (§9.5.10). Long-period damping remains, and the
   shoreline fallback does not establish uniform second-order convergence
   on arbitrary meshes.
-- **The Kokkos backends serve one configuration.** All-triangle meshes
-  under the local-inertial closure without transport; everything else
-  runs on the CPU marcher (§9.11.1).
+- **The Kokkos backends do not serve heat exchange or groundwater.**
+  They run all three closures, the optional momentum physics and
+  transport rows; surface heat exchange, coupled groundwater and porous
+  heat run on the CPU marcher (§9.11.1).
 - **Frozen 1D heads within a batch.** With `COUPLING_SYNC` > 0 the 1D
   heads a 2D advance sees are held for the batch. The error grows with
   the span.
-- **Hot start files do not carry 2D state.**
+- **Hot start files do not carry 2D state.** Neither the native nor EPA
+  SWMM5 hot start format stores mesh water, aquifer columns, bed or soil heat,
+  or queued surface–groundwater exchange. When coupled mesh/ground heat is
+  active, the engine refuses hot start save and restore so a partial restart
+  cannot silently discard that state.
+- **Coupled thermal continuation uses an engine checkpoint.** The available
+  engine-session route is `SWMMEngine::saveCheckpoint` and
+  `SWMMEngine::loadCheckpoint`, with the same attached 2D common-source stage
+  kept alive for the session. Restore is same-platform and requires a freshly
+  initialized matching model and mesh/contact identity. The checkpoint profile
+  accepts supported in-memory climate sources; active runtime forcing
+  overrides and file-backed climate sources are refused. The input-file
+  `SAVE HOTSTART` / `USE HOTSTART` commands do not create or restore this joint
+  checkpoint. For the qualified attached 2D session, the engine checkpoint
+  preserves shared 1D node/link temperatures and bed state together with the
+  mesh soil columns and pending thermal receipts. Mapped open conduits using
+  `MESH_CONTACTS` can therefore resume their channel-to-ground hyporheic heat
+  exchange with the same mesh/contact identity. Restore is same-platform into
+  a freshly initialized matching engine and attached mesh session. Direct
+  hydraulic-component checkpoint files do not include thermal state.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1443-1471 (retained text); src/engine/2d/solver/ExplicitInertialSolver.cpp:89-114; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; src/engine/2d/input/SectionHandlers2D.cpp:311-346 -->
 
@@ -2675,3 +3065,102 @@ with application to Voronoi polytopes." *The Computer Journal*, 24(2),
 167–172.
 
 <!-- source: docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1473-1540 (retained entries); new entries cited from src/engine/2d/solver/SweKernels.hpp:17-47 (Audusse, Toro, Liang and Marche), src/engine/2d/solver/DiffusiveKernels.hpp:17-39 (Hunter), src/engine/2d/solver/ExplicitInertialSolver.cpp:1790-1795,1859-1861 (Barth–Jespersen, SSP-RK2), src/engine/2d/solver/InertialKernels.hpp:277-292 (Stelling and Duinmeijer) -->
+
+
+## Optional rotating flow and Smagorinsky horizontal mixing
+
+The CPU full shallow-water solver accepts the following `[2D_OPTIONS]` keys. Defaults preserve the existing solver path.
+
+| Key | Values and units | Default |
+| --- | --- | --- |
+| `CORIOLIS` | `OFF`, `LATITUDE`, `CONSTANT_F` | `OFF` |
+| `CORIOLIS_LATITUDE` | Finite degrees north, −90 to 90; required in latitude mode | Unset |
+| `CORIOLIS_F` | Finite signed s⁻¹; required in direct-parameter mode | Unset |
+| `TURBULENCE_MODEL` | `NONE`, `SMAGORINSKY`, `MIXING_LENGTH` | `NONE` |
+| `SMAGORINSKY_CS` | Finite nonnegative dimensionless value | 0.10 |
+| `EDDY_VISCOSITY_BACKGROUND` | Finite nonnegative m²/s; inactive with `NONE` | 0 |
+| `MIXING_LENGTH_COEFFICIENT` | Finite nonnegative dimensionless value; active only with `MIXING_LENGTH` | 0.5 |
+
+`UNSET` clears either optional Coriolis input through the extended option API. Inactive values can remain authored; the active mode selects the parameter. The input writer omits default process switches and preserves authored parameters. Generic extended-option access also makes the controls available to programmatic clients without changing C ABI option structures.
+
+Qualification is limited to CPU `FULL_SWE`, `LTS_TIERS 1`, first-order or second-order reconstruction. Unsupported momentum modes and coupled surface/source profiles produce a diagnostic. Inertial and diffusive-wave closures and accelerator kernels do not acquire these processes implicitly. A selected accelerator follows the established full-SWE CPU fallback policy.
+
+In a right-handed horizontal frame, Coriolis adds `(f hv, -f hu)` to the two momentum equations, with `f = 2 Ω sin(latitude)` and `Ω = 7.2921158553 × 10⁻⁵ s⁻¹`. Exact local momentum rotations are symmetrically composed around the hydrodynamic step. Isolated rotation preserves kinetic energy up to floating-point roundoff. This source integration is not a claim of exact geostrophic well-balancing; rotating pressure equilibria must be checked for convergence.
+
+For Smagorinsky, `Δ = sqrt(A)`, `νt = ν0 + (Cs Δ)² |S|`, and
+
+`|S| = sqrt(2 ux² + 2 vy² + (uy + vx)²)`.
+
+Here `ν0` is `EDDY_VISCOSITY_BACKGROUND`, a constant horizontal eddy viscosity. With `Cs = 0` it gives constant-viscosity mixing; under Froude similarity a physically equivalent value scales as length^1.5, so one value does not transfer between model scales.
+
+`TURBULENCE_MODEL MIXING_LENGTH` uses the same stress operator with a shear-based mixing length: `νt = ν0 + l² |ω|` with `l = min(c h, κ d)`, where `h` is the cell depth, `c` is `MIXING_LENGTH_COEFFICIENT`, `κ = 0.41`, `d` is the distance from the cell centroid to the nearest mesh boundary edge and `|ω| = |vx − uy|` uses the same least-squares gradients as `|S|`.
+
+- **Depth scale.** A horizontal mixing length tied to depth follows Stansby (2003), whose horizontal length is a multiple of the vertical mixing length; in depth-averaged form this is about half the depth (Stansby 2006), the default `c = 0.5`.
+- **Vorticity.** Mixing-length theory acts on shear. Using `|ω|` instead of `|S|` gives no eddy viscosity in irrotational strain, such as converging flow into a contraction, and keeps it in shear layers and curved jumps. A strain-based depth length put up to several m²/s of viscosity into a deep reservoir and its outlet during UK Test 6A development.
+- **Boundary cap.** `κ d` limits the length near walls, as in common depth-averaged mixing-length models. Here `d` is measured to every exterior edge, including open boundaries; there the cap only acts within about `c h/κ` (≈ 1.2 depths) of the edge.
+- **Mesh dependence.** `νt` depends on depth, distance and the flow, not on cell size, so refining a mesh converges toward a fixed eddy viscosity. The Smagorinsky value falls with cell area.
+
+The model has no transported state and no bed-generated term. It is intended for shallow flows, where horizontal eddies are limited by depth.
+
+The added term is the conservative depth-integrated stress divergence `div(2 h νt S)`. Unrestricted least-squares velocity gradients are separate from shock-limited MUSCL reconstruction. Shared-face gradients include an over-relaxed normal correction reproducing the centroid velocity difference on nonorthogonal cells. Face coefficients use interpolated cell viscosity, connected wet depth and conveyance. Each face transfers equal/opposite momentum; dry sills, holes and zero-conveyance edges transmit no turbulent momentum. Rank-deficient corner gradients borrow a connected complete stencil where available. Otherwise their cell gradient remains zero. Walls and open boundaries have zero turbulent traction; no wall-friction or wall-damping model is included.
+
+The mixing operator is integrated with SSP-RK2 at fixed water storage inside symmetric source splitting. Its timestep uses absolute row sums of the reconstructed face operator, including cross stresses. Nonlinear stage coefficients are reevaluated; a tighter bound or increasing kinetic energy retries the unpublished momentum substep. Viscosity is never clipped to meet a desired timestep. A mesh/state for which no dissipative admissible substep can be found is refused. Both stage checks and energy checks are necessary: conservation alone does not prove a skew-mesh stress discretization is accurate or dissipative.
+
+The optional global mode includes all cells in the schedule and evaluates exterior Riemann states at the same beginning-of-stage time as interior states. This prevents boundary splitting from generating a nonuniform flow in the uniform inertial-oscillation test. The disabled path retains its prior numerical behavior.
+
+`REPORT_2D_VARIABLES TURBULENCE` adds `Mesh2_face_eddy_viscosity` (m²/s) and `Mesh2_face_strain_rate` (s⁻¹) when mixing is enabled. They are computed from the accepted reported state. Root attributes record the effective `f`, turbulence model, the Smagorinsky coefficient and filter or the mixing-length coefficient, and the background viscosity (`eddy_viscosity_background_m2ps`). Optional-process reported velocity comes from accepted cell momentum; edge fluxes continue to represent hydraulic transfers and boundary window means. No plugin snapshot or C ABI structure is enlarged by this output extension.
+
+A depth-averaged closure does not resolve vertical turbulence, nonhydrostatic pressure or three-dimensional obstacle wakes. Bed-generated mixing, dynamic Smagorinsky, scalar turbulent diffusivity and wall damping are separate future closures. Suggested coefficient sensitivity is 0.05, 0.10 and 0.20; mesh and timestep convergence remain necessary. Adding mixing does not automatically resolve the UK Test 6 gauge discrepancy.
+
+
+### Selective tangential wall friction
+
+`WALL` remains impermeable and free-slip. Select a solid exterior edge with
+`WALL_DRAG Cw` in `[2D_BOUNDARY_CONDITIONS]` to add tangential traction:
+
+```ini
+[2D_BOUNDARY_CONDITIONS]
+;; TRI EDGE TYPE       PARAM_1 PARAM_2 GROUP
+12     1    WALL_DRAG  0.01    *       THROAT
+```
+
+The example coefficient is a diagnostic value, not a material recommendation.
+The convention is `tau_t/rho = -Cw |u_t| u_t` (no factor of one half; Darcy
+friction factor `f` corresponds to `Cw=f/8`). `Cw` must be finite and
+nonnegative; zero is free-slip. It is independent of bed Manning roughness.
+The finite-volume force uses edge length times wetted wall height; VFR
+integrates the edge endpoint elevations against the current water surface.
+Only wall-parallel momentum is changed. Exact scalar drag decay, composed
+symmetrically over wall faces, removes kinetic energy without reversing the
+wall-parallel component in a single wall update. Normal impermeability and
+resolved pressure/form drag are retained. Do not also assign a duplicate
+empirical contraction/form-loss term for the same resolved geometry.
+
+Initial support: CPU `MOMENTUM_EQUATION FULL_SWE`, `LTS_TIERS 1`, orders 1/2,
+uncoupled surface hydraulics. Smagorinsky may be on or off. Its interior stress
+has zero exterior traction; `WALL_DRAG` supplies the selected wall traction
+once. Unsupported closures, coupling and wall checkpoint profiles are refused.
+Wall coefficients can be authored through `swmm_2d_get_edge_wall_drag` and
+`swmm_2d_set_edge_wall_drag` (OPENED/BUILDING only), and Python
+`Surface2D.get_edge_wall_drag` / `set_edge_wall_drag`. INP, mesh sidecars and
+GeoPackage preserve the prescription. Runtime wall edits are unsupported.
+
+The run log reports selected face count and cumulative wall energy removal
+divided by density, in m5/s2. A constant prescribed Cw is a partial-slip drag
+closure; it is not a smooth/rough log-law wall function or a resolved no-slip
+boundary layer. Mesh, timestep and coefficient sensitivity remain necessary.
+
+For authoring APIs, first call `swmm_2d_prepare_for_edit` (Python
+`Surface2D.prepare_for_edit()`) after opening the model. Positive wall drag
+and nonempty groups are checked against authored edge connectivity, before
+runtime neighbours have been built. Triangle INP/sidecar/GeoPackage wall
+round trips are qualified. For quad wall edge 3, use INP: the existing
+GeoPackage boundary table restricts local edge indices to 0–2.
+
+For subsecond reports, use an explicit clock such as
+`REPORT_STEP 0:00:00.1`. Fractional clock seconds are preserved for
+`REPORT_STEP`, `WET_STEP` and `DRY_STEP`, including save/reopen. Bare numeric
+values for these options retain legacy decimal-hour semantics; for example,
+`REPORT_STEP 0.1` means six minutes. `ROUTING_STEP` retains its numeric-second
+convention. The Test 6 sensitivity runner verifies the actual native HDF5
+report grid before starting the long cases.

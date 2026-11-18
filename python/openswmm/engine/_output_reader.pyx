@@ -64,6 +64,10 @@ from ._enums import (
 )
 
 
+cdef extern from "openswmm/engine/openswmm_output.h":
+    int swmm_output_has_subcatch_variable(SWMM_Output,int)
+    int swmm_output_get_pollut_units(SWMM_Output, int)
+
 cdef class OutputReader:
     """Read a SWMM binary ``.out`` file.
 
@@ -117,6 +121,10 @@ cdef class OutputReader:
             from ._enums import ErrorCode
             raise BadHandleError(ErrorCode.BADHANDLE, "OutputReader is closed")
         return self._handle
+
+    def has_subcatch_variable(self, int code):
+        """Whether this file contains a core/optional subcatchment variable."""
+        return bool(swmm_output_has_subcatch_variable(self._h(),code))
 
     @property
     def is_live(self):
@@ -244,6 +252,15 @@ cdef class OutputReader:
             self._pollutant_ids = self._read_pollutant_ids()
         return list(self._pollutant_ids)
 
+    @property
+    def pollutant_units(self):
+        """Unit labels in species-column order, including reserved age/heat."""
+        cdef SWMM_Output h = self._h()
+        labels = {0: 'mg/L', 1: 'ug/L', 2: 'count/L'}
+        reserved = {'__WATER_AGE__': 'h', '__TEMPERATURE__': 'degC'}
+        return [reserved.get(name, labels.get(swmm_output_get_pollut_units(h, i)))
+                for i, name in enumerate(self.pollutant_ids)]
+
     cdef list _read_node_ids(self):
         cdef int n = swmm_output_get_node_count(self._h())
         cdef const char* raw
@@ -290,6 +307,7 @@ cdef class OutputReader:
 
         Computed lazily and cached so the second access is free.
         """
+        self._h()
         if self._period_times is not None:
             return self._period_times
         cdef int n = swmm_output_get_period_count(self._h())

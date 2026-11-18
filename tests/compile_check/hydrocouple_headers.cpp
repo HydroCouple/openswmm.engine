@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file hydrocouple_headers.cpp
- * @brief D1 (program plan §C.1) — compile-check of every HydroCouple interface
+ * @file      hydrocouple_headers.cpp
+ * @brief     D1 (program plan §C.1) — compile-check of every HydroCouple interface
  *        header with the engine's toolchain, and the pin's ABI as a
  *        static_assert.
  *
@@ -30,10 +30,14 @@
  *     local install before the pinned fetch, so this assert is the only thing
  *     that makes the pin binding on a developer machine: without it, a
  *     sibling checkout at a different ABI compiles silently.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <hydrocouple.h>
-#include <hydrocouplecomponentabi.h>   // D0: the loader contract, upstreamed 2026-09-30
+#include <hydrocouplecomponentabi.h> // D0: the loader contract, upstreamed 2026-09-30
 #include <hydrocoupledistributed.h>
 #include <hydrocouplehelpers.h>
 #include <hydrocouplespatial.h>
@@ -42,7 +46,8 @@
 #include <hydrocoupletemporal.h>
 
 #ifndef OPENSWMM_HYDROCOUPLE_EXPECTED_ABI
-#error "OPENSWMM_HYDROCOUPLE_EXPECTED_ABI must be defined by the build (cmake/FetchHydroCouple.cmake)"
+#error                                                                                             \
+    "OPENSWMM_HYDROCOUPLE_EXPECTED_ABI must be defined by the build (cmake/FetchHydroCouple.cmake)"
 #endif
 
 static_assert(HydroCouple::HYDROCOUPLE_ABI_VERSION == OPENSWMM_HYDROCOUPLE_EXPECTED_ABI,
@@ -58,4 +63,14 @@ static_assert(HydroCouple::HYDROCOUPLE_ABI_VERSION == OPENSWMM_HYDROCOUPLE_EXPEC
               "together.");
 
 // Referenced so the object is not empty on toolchains that warn about it.
-int openswmm_hydrocouple_header_check() { return HydroCouple::HYDROCOUPLE_ABI_VERSION; }
+/**
+ * @brief Expose the included HydroCouple ABI after compile-time header compatibility checks.
+ *
+ * This source is only built with HydroCouple enabled. The enclosing static_assert enforces equality
+ * with the build expected ABI; this function merely makes the object nonempty and performs no
+ * runtime loading.
+ * @return HydroCouple::HYDROCOUPLE_ABI_VERSION.
+ */
+int openswmm_hydrocouple_header_check() {
+    return HydroCouple::HYDROCOUPLE_ABI_VERSION;
+}

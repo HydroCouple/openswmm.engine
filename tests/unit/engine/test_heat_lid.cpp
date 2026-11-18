@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_heat_lid.cpp
- * @brief Phase H5b gates — temperature through the LID layer stack.
+ * @file      test_heat_lid.cpp
+ * @brief     Phase H5b gates — temperature through the LID layer stack.
  *
  * @note LID layer parameters are in the section's user units (inches,
  *       in/hr, void RATIO) since PR #103 made the solver convert them; the
@@ -34,9 +34,9 @@
  *          shape lesson 72 asks for.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6 H5b, §6.1 D-H5b/D-H5c
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -55,49 +55,83 @@ namespace tr = openswmm::transport;
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
 
-constexpr int kNL   = openswmm::LidLayerSpeciesState::kLayerCount;
+constexpr int kNL = openswmm::LidLayerSpeciesState::kLayerCount;
 constexpr int kTemp = static_cast<int>(openswmm::LidSpecies::TEMPERATURE);
-constexpr int kAge  = static_cast<int>(openswmm::LidSpecies::AGE);
+constexpr int kAge = static_cast<int>(openswmm::LidSpecies::AGE);
 
+/**
+ * @brief Write fixture content to a caller-selected file.
+ *
+ * The parent directory must already exist. Uses ordinary text output mode. Open failure is not
+ * reported by this helper. Subsequent write/close failures are not checked; the local stream closes
+ * at scope exit and no path/content storage is retained. Allocation exceptions can propagate.
+ *
+ * @param[in] path Non-null null-terminated destination path; an existing file is
+ *     truncated/overwritten.
+ * @param[in] body Borrowed content copied verbatim through the output stream; no newline is
+ *     appended.
+ */
 void write_file(const char* path, const std::string& body) {
     std::ofstream f(path);
     f << body;
 }
 
-/// One value per interval — an INTENSITY gage reads one per gage interval,
-/// not one per hour (A3's round learned this the expensive way).
-std::string series(const char* name, int last_min, double v,
-                   int stop_min = -1) {
-    if (stop_min < 0) stop_min = last_min;
+/**
+ * @brief Build named five-minute forcing rows with optional zero-valued tail.
+ *
+ * Does not roll dates beyond the fixed fixture day or validate numeric ranges.
+ *
+ * @param[in] name Non-null time-series identifier, copied without escaping.
+ * @param[in] last_min Nonnegative final minute on 01/01/2026, sampled every five minutes.
+ * @param[in] v Constant value in the named series units: in/hr for rain or degrees F for air in
+ *     this fixture.
+ * @param[in] stop_min Inclusive final minute retaining v; negative uses last_min, later samples are
+ *     zero.
+ * @return Owned forcing rows formatted to four decimals with a trailing blank line.
+ */
+std::string series(const char* name, int last_min, double v, int stop_min = -1) {
+    if (stop_min < 0)
+        stop_min = last_min;
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
-        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n",
-                      name, m / 60, m % 60, m <= stop_min ? v : 0.0);
+        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n", name, m / 60, m % 60,
+                      m <= stop_min ? v : 0.0);
         s += buf;
     }
     return s + "\n";
 }
 
 struct Opts {
-    bool water_age  = false;
-    bool heat       = true;
+    bool water_age = false;
+    bool heat = true;
     bool conduction = false;
-    bool surface    = false;
-    bool radiative  = false;
-    double air_f    = 68.0;
-    double rain_c   = 5.0;
-    double init_c   = 25.0;
-    int    end_min  = 60;
+    bool surface = false;
+    bool radiative = false;
+    double air_f = 68.0;
+    double rain_c = 5.0;
+    double init_c = 25.0;
+    int end_min = 60;
     /// Last minute that rains; -1 rains for the whole run. Used by the
     /// conservation ledger, which needs the column to stop exchanging water
     /// with the rest of the model before it can attribute a change in heat
     /// content to conduction alone.
-    int    rain_stop_min = -1;
+    int rain_stop_min = -1;
     /// Underdrain coefficient. Zeroing it, with the storm stopped, leaves a
     /// column that holds its water: no advection, no drainage, so the only
     /// operator left is the one being measured.
@@ -105,25 +139,35 @@ struct Opts {
     /// Route the outfall's discharge back onto S1 as run-on. On by default
     /// because most gates want the LID fed; OFF for the ledger, which needs
     /// the column to stop exchanging water with the rest of the model.
-    bool   outfall_routes_back = true;
+    bool outfall_routes_back = true;
     /// `[LID_USAGE]` FromImp — the percentage of the subcatchment's
     /// impervious runoff routed onto the unit. At 0 the LID receives only
     /// rain on its own footprint, so when the storm stops its inflow is
     /// EXACTLY zero. At the default 100 the subcatchment trickles into it
     /// indefinitely and no layer ever reaches the dry-but-present state.
-    int    from_imperv = 100;
+    int from_imperv = 100;
     const char* dry_policy = nullptr;
 };
 
-/// A bioretention cell on one subcatchment, with an underdrain returning as
-/// run-on and an outfall routing discharge back — so all three run-on
-/// contributors are live, the third of them (the drain) only from H5b.
+/**
+ * @brief Write the biocell runoff/drain heat and age fixture.
+ *
+ * Uses fixed US CFS geometry, two in/hr rain until its stop and a one-acre replicated footprint.
+ * References _h5lid.heat/_h5lid.age when enabled; those configs must be written separately.
+ * Opens/truncates the deck using a local ofstream; parent directories must exist. Stream
+ * open/write/close outcomes are not checked, and sidecar names/text are not escaped. Caller-owned
+ * inputs are not retained.
+ *
+ * @param[in] path Destination deck filename, non-null when a character pointer; borrowed only
+ *     during this call. Existing files are truncated.
+ * @param[in] o Borrowed options selecting heat/water-age registration, end/rain-stop minutes, air
+ *     F, authored drain coefficient, impervious-capture percent and optional outfall return to S1.
+ */
 void write_deck(const char* path, const Opts& o) {
     std::ofstream f(path);
     f << "[TITLE]\nH5b LID heat gate deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
-      << (o.water_age ? "WATER_AGE ON\n" : "")
-      << (o.heat ? "HEAT_TRANSPORT ON\n" : "")
+      << (o.water_age ? "WATER_AGE ON\n" : "") << (o.heat ? "HEAT_TRANSPORT ON\n" : "")
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << (o.end_min / 60) << ":"
       << (o.end_min % 60 < 10 ? "0" : "") << (o.end_min % 60) << ":00\n"
@@ -131,14 +175,15 @@ void write_deck(const char* path, const Opts& o) {
       << "ROUTING_STEP 10\nREPORT_STEP 00:05:00\n\n"
       << "[TEMPERATURE]\nTIMESERIES air_ts\n"
       << "WINDSPEED MONTHLY";
-    for (int m = 0; m < 12; ++m) f << " 5.0";
+    for (int m = 0; m < 12; ++m)
+        f << " 5.0";
     f << "\nHUMIDITY";
-    for (int m = 0; m < 12; ++m) f << " 50.0";
+    for (int m = 0; m < 12; ++m)
+        f << " 50.0";
     f << "\n\n[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
       << "[TIMESERIES]\n"
       << series("rain_ts", o.end_min + 5, 2.0, o.rain_stop_min)
-      << series("air_ts", o.end_min + 5, o.air_f)
-      << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
+      << series("air_ts", o.end_min + 5, o.air_f) << "[SUBCATCHMENTS]\nS1 RG1 J1 5 50 500 0.5 0\n\n"
       << "[SUBAREAS]\nS1 0.01 0.1 0.02 0.02 25 OUTLET\n\n"
       << "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
       // User units (in, in/hr, void ratio) — see the file note.
@@ -150,8 +195,7 @@ void write_deck(const char* path, const Opts& o) {
       << "BC1 DRAIN    " << o.drain_coeff << " 0.5  0    0\n\n"
       << "[LID_USAGE]\nS1 BC1 1 43560 500 50 " << o.from_imperv << " 0\n\n"
       << "[JUNCTIONS]\nJ1 10.0 10 0 0 0\n\n"
-      << "[OUTFALLS]\nOUT 9.0 FREE  NO"
-      << (o.outfall_routes_back ? "  S1" : "") << "\n\n"
+      << "[OUTFALLS]\nOUT 9.0 FREE  NO" << (o.outfall_routes_back ? "  S1" : "") << "\n\n"
       << "[CONDUITS]\nC1 J1 OUT 400 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\n\n"
       << "[PROCESS_COMPONENTS]\n";
@@ -162,48 +206,77 @@ void write_deck(const char* path, const Opts& o) {
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
+/**
+ * @brief Overwrite the fixed heat and water-age sidecars for the LID fixture.
+ *
+ * Always writes _h5lid.heat plus _h5lid.age, even when the deck will not register both components.
+ * Age config uses rainfall one hour and initial state four hours. write_file ignores IO failures;
+ * fixed paths prevent concurrent identical fixture runs and are not removed here.
+ *
+ * @param[in] o Borrowed rain/initial temperatures in degrees C, surface/radiative/conduction flags
+ *     and optional raw dry-policy keyword; other options do not affect these config files.
+ */
 void write_cfg(const Opts& o) {
     std::string s = "[HEAT_SOURCES]\n";
     s += "RAINFALL GLOBAL " + std::to_string(o.rain_c) + "\n";
     s += "INITIAL_STATE GLOBAL " + std::to_string(o.init_c) + "\n\n";
     s += "[HEAT_FLUXES]\n";
-    s += std::string("SURFACE_EXCHANGE ")   + (o.surface   ? "ON" : "OFF") + "\n";
+    s += std::string("SURFACE_EXCHANGE ") + (o.surface ? "ON" : "OFF") + "\n";
     s += std::string("RADIATIVE_EXCHANGE ") + (o.radiative ? "ON" : "OFF") + "\n";
-    s += std::string("LAYER_CONDUCTION ")   + (o.conduction? "ON" : "OFF") + "\n";
+    s += std::string("LAYER_CONDUCTION ") + (o.conduction ? "ON" : "OFF") + "\n";
     if (o.dry_policy != nullptr)
         s += std::string("DRY_ELEMENT_TEMPERATURE ") + o.dry_policy + "\n";
     write_file("_h5lid.heat", s);
     // INITIAL_STATE is not decoration. `initLidLayerAge` seeds a wet layer
     // with it, so with no row the seed is 0 — and a wipe of a zero seed is
     // invisible. Gate 2's both-on leg exists to catch exactly that wipe.
-    write_file("_h5lid.age",
-               "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL 1.0\n"
-               "INITIAL_STATE GLOBAL 4.0\n");
+    write_file("_h5lid.age", "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL 1.0\n"
+                             "INITIAL_STATE GLOBAL 4.0\n");
 }
 
+/**
+ * @brief Write configs/deck, run a LID heat fixture and retain its engine.
+ *
+ * Uses fixed _h5lid artifacts and saved results. Stops on completion, step failure or a 20000-step
+ * guard, then calls end without checking status. A non-null result alone does not prove the run
+ * completed; later test setup/ledger assertions establish useful coverage.
+ *
+ * @param[in] o Borrowed options used by write_cfg/write_deck; defines forcing, duration, heat/age
+ *     ownership and LID geometry settings.
+ * @return Owned raw handle after successful allocation/open/initialize/start, or null after a
+ *     failed setup; caller must destroy the returned handle.
+ */
 SWMM_Engine run(const Opts& o) {
     write_cfg(o);
     write_deck("_h5lid.inp", o);
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return nullptr;
-    if (swmm_engine_open(e, "_h5lid.inp", "_h5lid.rpt", "_h5lid.out", nullptr)
-            != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr)
+        return nullptr;
+    if (swmm_engine_open(e, "_h5lid.inp", "_h5lid.rpt", "_h5lid.out", nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return nullptr;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 20000);
     swmm_engine_end(e);
     return e;
 }
 
-/// SETUP shared by every gate: a LID unit must actually have been built, or
-/// every value below is an untouched seed (lesson 59).
+/**
+ * @brief Require active LID layer/species storage before checking its thermal values.
+ *
+ * This checks allocated state presence, not runoff, heat exchange magnitude or numerical
+ * correctness; those require separate assertions.
+ *
+ * @param[in] c Borrowed context after model initialization/run.
+ * @return AssertionSuccess when lid_layer_state.active() (positive unit and species counts),
+ *     otherwise failure with a setup diagnostic.
+ */
 ::testing::AssertionResult HasLidUnit(const openswmm::SimulationContext& c) {
     if (!c.lid_layer_state.active())
         return ::testing::AssertionFailure()
@@ -212,7 +285,7 @@ SWMM_Engine run(const Opts& o) {
     return ::testing::AssertionSuccess();
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — the TEMPERATURE row exists beside AGE, and every layer is seeded.
@@ -223,26 +296,25 @@ TEST(HeatLidTest, TemperatureRowIsAllocatedAndEveryLayerSeeded) {
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& st  = ctx.lid_layer_state;
+    const auto& st = ctx.lid_layer_state;
     ASSERT_TRUE(HasLidUnit(ctx));
 
     ASSERT_EQ(st.n_species, static_cast<int>(openswmm::LidSpecies::COUNT_))
-        << "the species stride is " << st.n_species << ", expected 2 — A4 "
+        << "the species stride is " << st.n_species
+        << ", expected 2 — A4 "
            "reserved it for exactly this row";
-    ASSERT_EQ(static_cast<int>(st.value.size()),
-              st.n_units * kNL * st.n_species);
+    ASSERT_EQ(static_cast<int>(st.value.size()), st.n_units * kNL * st.n_species);
 
     // EVERY layer, wet or dry. The age row leaves a dry layer at 0 because 0
     // is age's "nothing here"; a temperature row must not, because 0 C is a
     // freezing layer and nothing distinguishes it from the sentinel.
     for (int u = 0; u < st.n_units; ++u)
         for (int k = 0; k < kNL; ++k) {
-            const double t = st.value[st.layer_index(
-                u, static_cast<openswmm::LidLayer>(k), kTemp)];
-            EXPECT_NE(t, 0.0)
-                << "unit " << u << " layer " << k << " reports exactly 0 C — "
-                   "A4's 'no water, no value' sentinel leaked into the heat "
-                   "row";
+            const double t = st.value[st.layer_index(u, static_cast<openswmm::LidLayer>(k), kTemp)];
+            EXPECT_NE(t, 0.0) << "unit " << u << " layer " << k
+                              << " reports exactly 0 C — "
+                                 "A4's 'no water, no value' sentinel leaked into the heat "
+                                 "row";
             EXPECT_TRUE(std::isfinite(t));
         }
     swmm_engine_destroy(e);
@@ -253,20 +325,24 @@ TEST(HeatLidTest, TemperatureRowIsAllocatedAndEveryLayerSeeded) {
 //          must each work. This is the eighth instance of lesson 20.
 // ---------------------------------------------------------------------------
 TEST(HeatLidTest, EitherCapabilityAloneSizesAndSeedsItsOwnRow) {
-    {   // HEAT only — A4's initLidLayerAge would never have sized the block.
-        Opts o{}; o.water_age = false; o.heat = true; o.init_c = 21.0;
+    { // HEAT only — A4's initLidLayerAge would never have sized the block.
+        Opts o{};
+        o.water_age = false;
+        o.heat = true;
+        o.init_c = 21.0;
         SWMM_Engine e = run(o);
         ASSERT_NE(e, nullptr);
         const auto& ctx = as_cpp_engine(e).context();
         ASSERT_FALSE(ctx.options.water_age);
-        ASSERT_TRUE(HasLidUnit(ctx))
-            << "a HEAT-only deck did not size the LID layer block — the "
-               "sizing is still behind a water_age guard";
+        ASSERT_TRUE(HasLidUnit(ctx)) << "a HEAT-only deck did not size the LID layer block — the "
+                                        "sizing is still behind a water_age guard";
         swmm_engine_destroy(e);
     }
-    {   // AGE only — the temperature row must not be left at 0 C, and the
+    { // AGE only — the temperature row must not be left at 0 C, and the
         // age row must still be correct.
-        Opts o{}; o.water_age = true; o.heat = false;
+        Opts o{};
+        o.water_age = true;
+        o.heat = false;
         SWMM_Engine e = run(o);
         ASSERT_NE(e, nullptr);
         const auto& ctx = as_cpp_engine(e).context();
@@ -276,15 +352,13 @@ TEST(HeatLidTest, EitherCapabilityAloneSizesAndSeedsItsOwnRow) {
         bool any_age = false;
         for (int u = 0; u < st.n_units; ++u)
             for (int k = 0; k < kNL; ++k)
-                if (st.value[st.layer_index(
-                        u, static_cast<openswmm::LidLayer>(k), kAge)] > 0.0)
+                if (st.value[st.layer_index(u, static_cast<openswmm::LidLayer>(k), kAge)] > 0.0)
                     any_age = true;
-        EXPECT_TRUE(any_age)
-            << "adding the temperature row broke the age row — the stride "
-               "widened but the age indices did not follow";
+        EXPECT_TRUE(any_age) << "adding the temperature row broke the age row — the stride "
+                                "widened but the age indices did not follow";
         swmm_engine_destroy(e);
     }
-    {   // BOTH — the only configuration in which the two initialisers run
+    { // BOTH — the only configuration in which the two initialisers run
         // against the same block, and therefore the only one where `resize`
         // differs from `ensureSized` at all. Neither leg above reaches it:
         // heat-only never runs the age initialiser, age-only never runs the
@@ -295,39 +369,46 @@ TEST(HeatLidTest, EitherCapabilityAloneSizesAndSeedsItsOwnRow) {
         // STORAGE and drain 17917.45 -> 17750.90, and the subcatchment's
         // runoff age 16453.76 -> 16337.80. Silent, and every gate in this
         // file and in A4's passed through it.
-        auto ages = [](bool heat, double (&out)[kNL], double* drain) {
-            Opts o{}; o.water_age = true; o.heat = heat;
+        auto ages = [](bool heat, double(&out)[kNL], double* drain) {
+            Opts o{};
+            o.water_age = true;
+            o.heat = heat;
             SWMM_Engine e = run(o);
-            if (e == nullptr) return false;
+            if (e == nullptr)
+                return false;
             const auto& ctx = as_cpp_engine(e).context();
-            const auto& st  = ctx.lid_layer_state;
-            if (!st.active()) { swmm_engine_destroy(e); return false; }
+            const auto& st = ctx.lid_layer_state;
+            if (!st.active()) {
+                swmm_engine_destroy(e);
+                return false;
+            }
             for (int k = 0; k < kNL; ++k)
-                out[k] = st.value[st.layer_index(
-                    0, static_cast<openswmm::LidLayer>(k), kAge)];
-            *drain = st.drain_value[static_cast<std::size_t>(st.n_species) *
-                                    0 + static_cast<std::size_t>(kAge)];
+                out[k] = st.value[st.layer_index(0, static_cast<openswmm::LidLayer>(k), kAge)];
+            *drain = st.drain_value[static_cast<std::size_t>(st.n_species) * 0 +
+                                    static_cast<std::size_t>(kAge)];
             swmm_engine_destroy(e);
             return true;
         };
         auto ctx_age_init = []() {
-            Opts o{}; o.water_age = true; o.heat = false;
+            Opts o{};
+            o.water_age = true;
+            o.heat = false;
             SWMM_Engine e = run(o);
-            if (e == nullptr) return 0.0;
-            const double a = as_cpp_engine(e).context().water_age_config
-                                 .global_age[static_cast<int>(
-                                     openswmm::WaterAgeSource::INITIAL_STATE)];
+            if (e == nullptr)
+                return 0.0;
+            const double a =
+                as_cpp_engine(e).context().water_age_config.global_age[static_cast<int>(
+                    openswmm::WaterAgeSource::INITIAL_STATE)];
             swmm_engine_destroy(e);
             return a;
         };
         double age_only[kNL] = {}, age_both[kNL] = {};
         double drain_only = 0.0, drain_both = 0.0;
         ASSERT_TRUE(ages(false, age_only, &drain_only));
-        ASSERT_TRUE(ages(true,  age_both, &drain_both));
+        ASSERT_TRUE(ages(true, age_both, &drain_both));
 
         // SETUP: the ages must be non-trivial, or "unchanged" is vacuous.
-        ASSERT_GT(age_only[static_cast<int>(openswmm::LidLayer::STORAGE)],
-                  0.0)
+        ASSERT_GT(age_only[static_cast<int>(openswmm::LidLayer::STORAGE)], 0.0)
             << "the age-only run produced no storage-layer age";
         // SETUP, and the reason this leg was blind on the deck as delivered:
         // the wipe replaces the seed with 0, so it can only be seen if the
@@ -340,14 +421,15 @@ TEST(HeatLidTest, EitherCapabilityAloneSizesAndSeedsItsOwnRow) {
 
         for (int k = 0; k < kNL; ++k)
             EXPECT_DOUBLE_EQ(age_both[k], age_only[k])
-                << "layer " << k << ": enabling HEAT_TRANSPORT changed the "
-                   "water AGE from " << age_only[k] << " s to "
-                << age_both[k] << " s. Heat writes a different species row "
+                << "layer " << k
+                << ": enabling HEAT_TRANSPORT changed the "
+                   "water AGE from "
+                << age_only[k] << " s to " << age_both[k]
+                << " s. Heat writes a different species row "
                    "and must not perturb the age row at all; a difference "
                    "here means one initialiser re-sized the shared block and "
                    "wiped what the other had seeded.";
-        EXPECT_DOUBLE_EQ(drain_both, drain_only)
-            << "the drain's AGE moved when heat was enabled";
+        EXPECT_DOUBLE_EQ(drain_both, drain_only) << "the drain's AGE moved when heat was enabled";
     }
 }
 
@@ -358,26 +440,24 @@ TEST(HeatLidTest, EitherCapabilityAloneSizesAndSeedsItsOwnRow) {
 TEST(HeatLidTest, TheDrainLeavesAtTheStorageTemperatureNotTheRains) {
     Opts o{};
     o.rain_c = 5.0;
-    o.init_c = 25.0;   // distinct, so "carried" and "borrowed" differ
+    o.init_c = 25.0; // distinct, so "carried" and "borrowed" differ
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& st  = ctx.lid_layer_state;
+    const auto& st = ctx.lid_layer_state;
     ASSERT_TRUE(HasLidUnit(ctx));
 
-    const double drain = st.drain_value[
-        static_cast<std::size_t>(st.n_species) * 0 +
-        static_cast<std::size_t>(kTemp)];
-    const double storage = st.value[st.layer_index(
-        0, openswmm::LidLayer::STORAGE, kTemp)];
+    const double drain = st.drain_value[static_cast<std::size_t>(st.n_species) * 0 +
+                                        static_cast<std::size_t>(kTemp)];
+    const double storage = st.value[st.layer_index(0, openswmm::LidLayer::STORAGE, kTemp)];
 
-    EXPECT_NEAR(drain, storage, 1.0e-12)
-        << "the drain reports " << drain << " C while the storage layer it "
-           "draws from is at " << storage << " C";
-    EXPECT_NE(drain, o.rain_c)
-        << "the drain is still reporting the configured RAINFALL "
-           "temperature — the H5 marker on HeatSource::RAINFALL was retired "
-           "in the comment but not in the code";
+    EXPECT_NEAR(drain, storage, 1.0e-12) << "the drain reports " << drain
+                                         << " C while the storage layer it "
+                                            "draws from is at "
+                                         << storage << " C";
+    EXPECT_NE(drain, o.rain_c) << "the drain is still reporting the configured RAINFALL "
+                                  "temperature — the H5 marker on HeatSource::RAINFALL was retired "
+                                  "in the comment but not in the code";
     swmm_engine_destroy(e);
 }
 
@@ -395,11 +475,11 @@ TEST(HeatLidTest, ConductionConservesTheColumnsHeatContent) {
     o.conduction = true;
     o.surface = false;
     o.radiative = false;
-    o.end_min = 30;          // short: advection must not dominate the ledger
+    o.end_min = 30; // short: advection must not dominate the ledger
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& st  = ctx.lid_layer_state;
+    const auto& st = ctx.lid_layer_state;
     ASSERT_TRUE(HasLidUnit(ctx));
     ASSERT_TRUE(ctx.heat_config.layer_conduction)
         << "LAYER_CONDUCTION did not parse — this gate would be asserting "
@@ -414,11 +494,9 @@ TEST(HeatLidTest, ConductionConservesTheColumnsHeatContent) {
     const auto& gsoa = as_cpp_engine(e).lid().group(0);
     double cap_total = 0.0;
     for (int k = 0; k < kNL; ++k) {
-        const double t = st.value[st.layer_index(
-            0, static_cast<openswmm::LidLayer>(k), kTemp)];
+        const double t = st.value[st.layer_index(0, static_cast<openswmm::LidLayer>(k), kTemp)];
         EXPECT_TRUE(std::isfinite(t)) << "layer " << k << " is not finite";
-        EXPECT_GE(t, lo) << "layer " << k << " at " << t
-                         << " C is below every source in the model";
+        EXPECT_GE(t, lo) << "layer " << k << " at " << t << " C is below every source in the model";
         EXPECT_LE(t, hi) << "layer " << k << " at " << t
                          << " C is above every source in the model. "
                             "Conduction can only move layers TOWARD each "
@@ -426,9 +504,8 @@ TEST(HeatLidTest, ConductionConservesTheColumnsHeatContent) {
                             "the operator is creating energy";
         cap_total += tr::lidLayerHeatCapacity(ctx, gsoa, 0, k);
     }
-    ASSERT_GT(cap_total, 0.0)
-        << "every layer reports zero heat capacity, so the conservation "
-           "claim above is about an empty column";
+    ASSERT_GT(cap_total, 0.0) << "every layer reports zero heat capacity, so the conservation "
+                                 "claim above is about an empty column";
     swmm_engine_destroy(e);
 
     // ---- The LEDGER. Everything above brackets the answer; none of it
@@ -450,22 +527,25 @@ TEST(HeatLidTest, ConductionConservesTheColumnsHeatContent) {
         o.surface = false;
         o.radiative = false;
         o.rain_c = 2.0;
-        o.init_c = 30.0;             // a real gradient for conduction to move
-        o.rain_stop_min = 10;        // and then nothing enters
-        o.drain_coeff = 0.0;         // and nothing leaves through the drain
+        o.init_c = 30.0;      // a real gradient for conduction to move
+        o.rain_stop_min = 10; // and then nothing enters
+        o.drain_coeff = 0.0;  // and nothing leaves through the drain
         o.outfall_routes_back = false;
         o.end_min = end_min;
         SWMM_Engine e2 = run(o);
-        if (e2 == nullptr) return false;
-        const auto& c   = as_cpp_engine(e2).context();
+        if (e2 == nullptr)
+            return false;
+        const auto& c = as_cpp_engine(e2).context();
         const auto& st2 = c.lid_layer_state;
-        if (!st2.active()) { swmm_engine_destroy(e2); return false; }
+        if (!st2.active()) {
+            swmm_engine_destroy(e2);
+            return false;
+        }
         const auto& g2 = as_cpp_engine(e2).lid().group(0);
         double total = 0.0;
         for (int k = 0; k < kNL; ++k)
             total += tr::lidLayerHeatCapacity(c, g2, 0, k) *
-                     st2.value[st2.layer_index(
-                         0, static_cast<openswmm::LidLayer>(k), kTemp)];
+                     st2.value[st2.layer_index(0, static_cast<openswmm::LidLayer>(k), kTemp)];
         *out = total;
         swmm_engine_destroy(e2);
         return true;
@@ -476,8 +556,9 @@ TEST(HeatLidTest, ConductionConservesTheColumnsHeatContent) {
     ASSERT_GT(std::fabs(c90), 0.0)
         << "the column carries no heat content, so the ledger is vacuous";
     EXPECT_LT(std::fabs(c120 - c90) / std::fabs(c90), 0.01)
-        << "the column's heat content moved from " << c90 << " to " << c120
-        << " J/m2 (" << (100.0 * (c120 - c90) / c90) << "%) over half an "
+        << "the column's heat content moved from " << c90 << " to " << c120 << " J/m2 ("
+        << (100.0 * (c120 - c90) / c90)
+        << "%) over half an "
            "hour in which no flux module was enabled, the storm was over, "
            "the underdrain was shut and the outfall did not return. "
            "Conduction only moves heat BETWEEN layers, so the total cannot "
@@ -493,39 +574,42 @@ TEST(HeatLidTest, ConductionNarrowsTheSpreadBetweenLayers) {
     auto spread = [](bool conduction, double* out_lo, double* out_hi) {
         Opts o{};
         o.conduction = conduction;
-        o.rain_c = 2.0;     // cold rain onto a warm column: a real gradient
+        o.rain_c = 2.0; // cold rain onto a warm column: a real gradient
         o.init_c = 30.0;
         o.end_min = 30;
         SWMM_Engine e = run(o);
-        if (e == nullptr) return false;
+        if (e == nullptr)
+            return false;
         const auto& ctx = as_cpp_engine(e).context();
-        const auto& st  = ctx.lid_layer_state;
-        if (!st.active()) { swmm_engine_destroy(e); return false; }
+        const auto& st = ctx.lid_layer_state;
+        if (!st.active()) {
+            swmm_engine_destroy(e);
+            return false;
+        }
         double lo = 1.0e30, hi = -1.0e30;
         for (int k = 0; k < kNL; ++k) {
-            const double t = st.value[st.layer_index(
-                0, static_cast<openswmm::LidLayer>(k), kTemp)];
+            const double t = st.value[st.layer_index(0, static_cast<openswmm::LidLayer>(k), kTemp)];
             lo = std::min(lo, t);
             hi = std::max(hi, t);
         }
-        *out_lo = lo; *out_hi = hi;
+        *out_lo = lo;
+        *out_hi = hi;
         swmm_engine_destroy(e);
         return true;
     };
 
     double off_lo = 0, off_hi = 0, on_lo = 0, on_hi = 0;
     ASSERT_TRUE(spread(false, &off_lo, &off_hi));
-    ASSERT_TRUE(spread(true,  &on_lo,  &on_hi));
+    ASSERT_TRUE(spread(true, &on_lo, &on_hi));
 
     // SETUP: without conduction there must BE a gradient, or there is
     // nothing for conduction to narrow and the gate proves nothing.
-    ASSERT_GT(off_hi - off_lo, 0.1)
-        << "the advection-only column spans only " << (off_hi - off_lo)
-        << " C, so this deck has no gradient for conduction to act on";
+    ASSERT_GT(off_hi - off_lo, 0.1) << "the advection-only column spans only " << (off_hi - off_lo)
+                                    << " C, so this deck has no gradient for conduction to act on";
 
     EXPECT_LT(on_hi - on_lo, off_hi - off_lo)
-        << "conduction ON spans " << (on_hi - on_lo) << " C against "
-        << (off_hi - off_lo) << " C with it OFF — the operator is not "
+        << "conduction ON spans " << (on_hi - on_lo) << " C against " << (off_hi - off_lo)
+        << " C with it OFF — the operator is not "
            "moving heat between layers at all";
 }
 
@@ -536,16 +620,19 @@ TEST(HeatLidTest, DryLayersTakeTheDeckPolicy) {
     auto perv_of = [](const char* policy, double* out) {
         Opts o{};
         o.dry_policy = policy;
-        o.end_min = 120;      // long dry tail after a 5-minute storm
-        o.air_f   = 95.0;     // 35 C: far from both 20 C and the last wet
+        o.end_min = 120; // long dry tail after a 5-minute storm
+        o.air_f = 95.0;  // 35 C: far from both 20 C and the last wet
         SWMM_Engine e = run(o);
-        if (e == nullptr) return false;
+        if (e == nullptr)
+            return false;
         const auto& ctx = as_cpp_engine(e).context();
-        const auto& st  = ctx.lid_layer_state;
-        if (!st.active()) { swmm_engine_destroy(e); return false; }
+        const auto& st = ctx.lid_layer_state;
+        if (!st.active()) {
+            swmm_engine_destroy(e);
+            return false;
+        }
         // PAVEMENT is absent on a bioretention cell — the clearest dry case.
-        *out = st.value[st.layer_index(0, openswmm::LidLayer::PAVEMENT,
-                                       kTemp)];
+        *out = st.value[st.layer_index(0, openswmm::LidLayer::PAVEMENT, kTemp)];
         swmm_engine_destroy(e);
         return true;
     };
@@ -557,8 +644,7 @@ TEST(HeatLidTest, DryLayersTakeTheDeckPolicy) {
 
     EXPECT_NEAR(dflt, openswmm::HeatConfigData::kDefaultTemp, 1.0e-9)
         << "DEFAULT did not fall to kDefaultTemp on an absent layer";
-    EXPECT_NEAR(air, 35.0, 0.5)
-        << "AIR did not track the air temperature (95 F = 35 C)";
+    EXPECT_NEAR(air, 35.0, 0.5) << "AIR did not track the air temperature (95 F = 35 C)";
     EXPECT_GT(std::fabs(hold - dflt), 1.0e-6)
         << "HOLD and DEFAULT agree — the policy is not reaching the LID "
            "dry branch, only the watershed one";
@@ -582,13 +668,13 @@ TEST(HeatLidTest, TheUnderdrainContributesToRunonTemperature) {
     // counted rate, so a contributor added to the numerator without the
     // denominator would show up here as a rate exceeding the total.
     const auto& hs = ctx.heat_state;
-    for (std::size_t i = 0; i < hs.subcatch_runon_temp_rate.size() &&
-                            i < ctx.subcatches.runon_inflow.size(); ++i)
-        EXPECT_LE(hs.subcatch_runon_temp_rate[i],
-                  ctx.subcatches.runon_inflow[i] + 1.0e-9)
-            << "subcatchment " << i << ": the run-on rate whose temperature "
-               "is counted (" << hs.subcatch_runon_temp_rate[i]
-            << ") exceeds the total run-on ("
+    for (std::size_t i = 0;
+         i < hs.subcatch_runon_temp_rate.size() && i < ctx.subcatches.runon_inflow.size(); ++i)
+        EXPECT_LE(hs.subcatch_runon_temp_rate[i], ctx.subcatches.runon_inflow[i] + 1.0e-9)
+            << "subcatchment " << i
+            << ": the run-on rate whose temperature "
+               "is counted ("
+            << hs.subcatch_runon_temp_rate[i] << ") exceeds the total run-on ("
             << ctx.subcatches.runon_inflow[i]
             << "). A contributor is being added to the numerator without "
                "its rate, which is A3's defect inverted";
@@ -619,8 +705,8 @@ TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
     o.init_c = 25.0;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
-    const auto& ctx  = as_cpp_engine(e).context();
-    const auto& st   = ctx.lid_layer_state;
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& st = ctx.lid_layer_state;
     const auto& gsoa = as_cpp_engine(e).lid().group(0);
     ASSERT_TRUE(HasLidUnit(ctx));
     ASSERT_TRUE(st.active());
@@ -628,7 +714,7 @@ TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
 
     // SETUP: the drain is flowing at the final step, or nothing below is
     // under test.
-    const double q_dr = gsoa.drain_flow[0] * gsoa.area[0];   // cfs
+    const double q_dr = gsoa.drain_flow[0] * gsoa.area[0]; // cfs
     ASSERT_GT(q_dr, 0.0) << "the underdrain never flowed";
 
     // (1) WATER: the drain reaches the node through its own channel and is
@@ -647,18 +733,17 @@ TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
         << "legacy books an underdrain as wet-weather inflow, not external";
 
     // (2) TEMPERATURE: paired at the storage layer's temperature, as q·T.
-    const double t_stor = st.drain_value[
-        static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
-        static_cast<std::size_t>(kTemp)];
+    const double t_stor =
+        st.drain_value[static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
+                       static_cast<std::size_t>(kTemp)];
     ASSERT_GT(t_stor, 0.0);
-    EXPECT_NEAR(ctx.heat_state.node_lid_drain_temp_vol_in[0], q_dr * t_stor,
-                1.0e-9 * q_dr * t_stor)
+    EXPECT_NEAR(ctx.heat_state.node_lid_drain_temp_vol_in[0], q_dr * t_stor, 1.0e-9 * q_dr * t_stor)
         << "the drain's temperature-volume at J1 is not q * T_storage";
 
     // (3) AGE: the same pairing on the age row.
-    const double a_stor = st.drain_value[
-        static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
-        static_cast<std::size_t>(kAge)];
+    const double a_stor =
+        st.drain_value[static_cast<std::size_t>(0) * static_cast<std::size_t>(st.n_species) +
+                       static_cast<std::size_t>(kAge)];
     ASSERT_GT(a_stor, 0.0);
     EXPECT_NEAR(ctx.water_age_state.node_lid_drain_age_vol_in[0], q_dr * a_stor,
                 1.0e-9 * q_dr * a_stor)
@@ -679,7 +764,9 @@ TEST(HeatLidTest, ATargetlessUnderdrainReachesTheOutletNodePaired) {
 // Gate 8 — HEAT_TRANSPORT off touches nothing.
 // ---------------------------------------------------------------------------
 TEST(HeatLidTest, HeatOffLeavesTheTemperatureRowUntouched) {
-    Opts o{}; o.water_age = true; o.heat = false;
+    Opts o{};
+    o.water_age = true;
+    o.heat = false;
     SWMM_Engine e = run(o);
     ASSERT_NE(e, nullptr);
     const auto& ctx = as_cpp_engine(e).context();
@@ -688,8 +775,7 @@ TEST(HeatLidTest, HeatOffLeavesTheTemperatureRowUntouched) {
     ASSERT_TRUE(HasLidUnit(ctx));
     for (int u = 0; u < st.n_units; ++u)
         for (int k = 0; k < kNL; ++k)
-            EXPECT_EQ(st.value[st.layer_index(
-                          u, static_cast<openswmm::LidLayer>(k), kTemp)], 0.0)
+            EXPECT_EQ(st.value[st.layer_index(u, static_cast<openswmm::LidLayer>(k), kTemp)], 0.0)
                 << "the temperature row was written on a deck with "
                    "HEAT_TRANSPORT off (lesson 52)";
     swmm_engine_destroy(e);
@@ -727,13 +813,13 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     auto build = [](int end_min) {
         Opts o{};
         o.conduction = true;
-        o.surface = true;        // drive the column, or nothing moves
+        o.surface = true; // drive the column, or nothing moves
         o.dry_policy = "DEFAULT";
-        o.air_f = 104.0;         // 40 C — far from kDefaultTemp
+        o.air_f = 104.0; // 40 C — far from kDefaultTemp
         o.rain_c = 4.0;
         o.init_c = 34.0;
         o.rain_stop_min = 10;
-        o.from_imperv = 0;       // see the note above: this is the whole trick
+        o.from_imperv = 0; // see the note above: this is the whole trick
         o.outfall_routes_back = false;
         o.end_min = end_min;
         return o;
@@ -745,8 +831,8 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     // present state SETUP 2 asserts only exists once the soil has settled.
     SWMM_Engine e = run(build(720));
     ASSERT_NE(e, nullptr);
-    const auto& ctx  = as_cpp_engine(e).context();
-    const auto& st   = ctx.lid_layer_state;
+    const auto& ctx = as_cpp_engine(e).context();
+    const auto& st = ctx.lid_layer_state;
     const auto& gsoa = as_cpp_engine(e).lid().group(0);
     ASSERT_TRUE(HasLidUnit(ctx));
     ASSERT_TRUE(ctx.heat_config.layer_conduction);
@@ -764,25 +850,23 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     // SETUP 2 — and it is DRY by the predicate the code actually uses:
     // no stored water AND no inflow. Asserting depth alone is what let two
     // earlier versions of this gate pass without entering the branch.
-    ASSERT_LT(gsoa.stor_depth[0], 1.0e-9)
-        << "storage still holds " << gsoa.stor_depth[0] << " ft";
+    ASSERT_LT(gsoa.stor_depth[0], 1.0e-9) << "storage still holds " << gsoa.stor_depth[0] << " ft";
     ASSERT_LT(gsoa.in_stor[0], 1.0e-12)
-        << "storage is still receiving " << gsoa.in_stor[0] << " ft/s of "
+        << "storage is still receiving " << gsoa.in_stor[0]
+        << " ft/s of "
            "inflow, so `live` is TRUE and the dry-but-present branch is "
            "never entered. Depth alone is not the predicate — do NOT relax "
            "this, close the inflow instead (FromImp = 0)";
 
-    const double storage = st.value[st.layer_index(
-        0, openswmm::LidLayer::STORAGE, kTemp)];
-    const double soil = st.value[st.layer_index(
-        0, openswmm::LidLayer::SOIL, kTemp)];
-    const double surface = st.value[st.layer_index(
-        0, openswmm::LidLayer::SURFACE, kTemp)];
+    const double storage = st.value[st.layer_index(0, openswmm::LidLayer::STORAGE, kTemp)];
+    const double soil = st.value[st.layer_index(0, openswmm::LidLayer::SOIL, kTemp)];
+    const double surface = st.value[st.layer_index(0, openswmm::LidLayer::SURFACE, kTemp)];
 
     // SETUP 3 — the neighbour must differ from the policy value, or "reset
     // to 20" and "conducted to 20" coincide.
     ASSERT_GT(std::fabs(soil - openswmm::HeatConfigData::kDefaultTemp), 0.5)
-        << "soil sits at " << soil << " C, within half a degree of "
+        << "soil sits at " << soil
+        << " C, within half a degree of "
            "kDefaultTemp — a reset and a conduction result would be "
            "indistinguishable here";
 
@@ -793,9 +877,12 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     //     back within the same step, so the reset lands at 20.004 rather
     //     than 20. An exact `EXPECT_NE` passes on that and did.
     EXPECT_GT(std::fabs(storage - openswmm::HeatConfigData::kDefaultTemp), 0.5)
-        << "the drained storage layer sits at " << storage << " C, within "
+        << "the drained storage layer sits at " << storage
+        << " C, within "
            "half a degree of kDefaultTemp. It has a matrix, a heat capacity "
-           "and a neighbour at " << soil << " C, so its temperature is a "
+           "and a neighbour at "
+        << soil
+        << " C, so its temperature is a "
            "physical state governed by conduction, not a D-H5c case — the "
            "policy is resetting it every step";
 
@@ -809,11 +896,12 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     SWMM_Engine e2 = run(build(120));
     ASSERT_NE(e2, nullptr);
     const auto& st2 = as_cpp_engine(e2).context().lid_layer_state;
-    const double storage_earlier = st2.value[st2.layer_index(
-        0, openswmm::LidLayer::STORAGE, kTemp)];
+    const double storage_earlier =
+        st2.value[st2.layer_index(0, openswmm::LidLayer::STORAGE, kTemp)];
     swmm_engine_destroy(e2);
     EXPECT_NE(storage, storage_earlier)
-        << "the drained storage layer reads " << storage << " C at 180 min "
+        << "the drained storage layer reads " << storage
+        << " C at 180 min "
            "and exactly the same at 120 min. A layer with thermal mass and a "
            "neighbour at a different temperature must keep exchanging with "
            "it; a frozen value means it was dropped from the coupled solve";
@@ -826,7 +914,8 @@ TEST(HeatLidTest, ADrainedLayerStillConductsAndIsNotResetByThePolicy) {
     ASSERT_LT(gsoa.surf_depth[0], 1.0e-9)
         << "the surface layer is not dry, so this leg is about nothing";
     EXPECT_EQ(surface, openswmm::HeatConfigData::kDefaultTemp)
-        << "the dry surface layer reports " << surface << " C rather than "
+        << "the dry surface layer reports " << surface
+        << " C rather than "
            "the policy value. It is ponded water over a face: dry it has no "
            "matrix and no thermal mass, and giving it one lets a layer with "
            "cap ~ 0 hit the solver's fallback and equilibrate instantly with "

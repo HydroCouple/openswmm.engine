@@ -76,6 +76,33 @@ REPORT_2D        NO
 
 
 class TwoDTriangleCouplingTest(unittest.TestCase):
+    def test_exterior_edges_are_inspectable_without_starting_solver(self):
+        d = artifact_dir(self)
+        inp = os.path.join(d, "exterior.inp")
+        rpt, out = inp + ".rpt", inp + ".out"
+        for path in (rpt, out):
+            if os.path.exists(path):
+                os.remove(path)
+        with open(inp, "w") as f:
+            f.write(_MODEL.format(extra_sections=""))
+        s = Solver(inp, rpt, out)
+        s.open_metadata()
+        self.addCleanup(s.close)
+        surf = s.surface2d
+        with self.assertRaises(BadParamError):
+            surf.edge_is_exterior(0, 0)
+        surf.prepare_for_edit()
+        self.assertEqual(
+            [[surf.edge_is_exterior(c, e) for e in range(3)] for c in range(2)],
+            [[True, False, True], [True, True, False]],
+        )
+        for cell, edge in ((-1, 0), (2, 0), (0, -1), (0, 3)):
+            with self.assertRaises(BadIndexError):
+                surf.edge_is_exterior(cell, edge)
+        self.assertFalse(surf.is_active)
+        self.assertFalse(os.path.exists(rpt))
+        self.assertFalse(os.path.exists(out))
+
     def _open_model(self, name: str, extra_sections: str = "") -> Solver:
         d = artifact_dir(self)
         inp = os.path.join(d, name + ".inp")
@@ -100,6 +127,21 @@ class TwoDTriangleCouplingTest(unittest.TestCase):
         self.assertGreaterEqual(node, 0)  # J1 resolved
         self.assertAlmostEqual(cd, 0.7)
         self.assertAlmostEqual(area, 2.0)
+
+    def test_results_destination_binds_before_initialization(self):
+        s = self._open_model("results")
+        path = os.path.abspath(os.path.join(artifact_dir(self), "fresh.h5"))
+        if os.path.exists(path):
+            os.remove(path)
+        with self.assertRaises(BadParamError):
+            s.surface2d.set_results_file("relative.h5")
+        s.surface2d.set_results_file(path)
+        self.assertFalse(os.path.exists(path))
+        s.initialize()
+        s.start()
+        s.end()
+        s.close()
+        self.assertTrue(os.path.exists(path))
 
     def test_add_appends_rows(self):
         s = self._open_model("append")

@@ -15,12 +15,12 @@
 // limitations under the License.
 
 /**
- * @file PluginDiscovery.cpp
- * @brief Public filter-discovery facade — implementation.
+ * @file      PluginDiscovery.cpp
+ * @brief     Public filter-discovery facade — implementation.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "../../../include/openswmm/plugin_sdk/PluginDiscovery.hpp"
@@ -33,18 +33,19 @@
 namespace openswmm {
 
 std::vector<DiscoveredFilter> discover_all_filters() {
-    PluginFactory factory;  // constructor scans built-ins + on-disk libraries
+    PluginFactory factory; // constructor scans built-ins + on-disk libraries
     std::vector<DiscoveredFilter> out;
 
     for (const auto& c : factory.discovered_components()) {
-        if (!c.info) continue;
+        if (!c.info)
+            continue;
         for (auto& f : c.info->file_filters()) {
             DiscoveredFilter df;
-            df.plugin_id      = c.id;
+            df.plugin_id = c.id;
             df.plugin_version = c.version;
             df.plugin_caption = c.info->caption();
-            df.is_builtin     = c.is_builtin;   // Slice RC.3
-            df.filter         = std::move(f);
+            df.is_builtin = c.is_builtin; // Slice RC.3
+            df.filter = std::move(f);
             out.push_back(std::move(df));
         }
     }
@@ -64,10 +65,10 @@ std::vector<DiscoveredPlugin> discover_plugins_by_id() {
         DiscoveredPlugin* dp;
         if (it == idx.end()) {
             DiscoveredPlugin entry;
-            entry.plugin_id      = df.plugin_id;
+            entry.plugin_id = df.plugin_id;
             entry.plugin_version = df.plugin_version;
             entry.plugin_caption = df.plugin_caption;
-            entry.is_builtin     = df.is_builtin;   // Slice RC.3
+            entry.is_builtin = df.is_builtin; // Slice RC.3
             out.push_back(std::move(entry));
             idx.emplace(df.plugin_id, out.size() - 1);
             dp = &out.back();

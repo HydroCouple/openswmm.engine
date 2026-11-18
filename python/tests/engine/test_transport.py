@@ -88,3 +88,31 @@ def test_authored_transport_units_and_roundtrip(tmp_path, units):
             cleanup(reopened)
     finally:
         cleanup(solver)
+
+
+class TestTransportPreview(EngineSolverCase):
+    def test_draft_matrix_is_side_effect_free(self):
+        s = self.opened_solver()
+        before = s.transport_matrix
+        options = {key: s.options[key] for key in ('IGNORE_QUALITY', 'HEAT_TRANSPORT', 'WATER_AGE', 'IGNORE_2D')}
+        preview = s.transport.preview_matrix(ignore_quality=False, heat=True, age=True,
+            ignore_2d=True, surface_classes=(1, 1, 1, 1))
+        self.assertEqual(set(preview), set(TransportDomain))
+        self.assertEqual(set(preview[TransportDomain.NETWORK_1D]), set(TransportClass))
+        self.assertEqual(s.transport_matrix, before)
+        self.assertEqual({key: s.options[key] for key in options}, options)
+        self.assertEqual(preview[TransportDomain.NETWORK_1D][TransportClass.TEMPERATURE].state, TransportState.ENABLED)
+
+    def test_invalid_drafts_leave_the_matrix_unchanged(self):
+        s = self.opened_solver()
+        before = s.transport_matrix
+        fields = dict(ignore_quality=False, heat=False, age=False,
+            ignore_2d=False, surface_classes=(1, 1, 1, 1), groundwater=-1)
+        for key, value in [('heat', 2), ('age', -1), ('groundwater', 2), ('surface_classes', (1, 2, 1, 1))]:
+            with self.subTest(key=key), self.assertRaises(BadParamError):
+                s.transport.preview_matrix(**dict(fields, **{key: value}))
+        with self.assertRaises(ValueError):
+            s.transport.preview_matrix(**dict(fields, surface_classes=(1, 1)))
+        with self.assertRaises(TypeError):
+            s.transport.preview_matrix(**dict(fields, heat=.5))
+        self.assertEqual(s.transport_matrix, before)

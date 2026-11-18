@@ -15,27 +15,27 @@
 // limitations under the License.
 
 /**
- * @file GpuPluginAbi.h
- * @brief Stable C ABI between the core engine and an optional GPU solver plugin.
+ * @file      GpuPluginAbi.h
+ * @brief     Stable C ABI between the core engine and an optional GPU solver plugin.
  *
  * @details The GPU backend
  *          ships as a SEPARATE shared library that the core discovers and
  *          dlopen()s at runtime; it is never linked into openswmm_engine.
- *          Communication therefore crosses a plain C ABI so it is robust to
- *          compiler/toolchain differences between the core and the plugin
- *          (which may be built with nvcc/hipcc/icpx against Kokkos).
+ *          Discovery uses C symbols, but solver calls cross a C++ ABI.
+ *          The core requires matching headers, host toolchain and build
+ *          configuration before probing or constructing a solver.
  *
- *          Two symbols form the contract:
+ *          The principal entry points are:
  *            - openswmm_gpu_probe()              — cheap capability query
  *            - openswmm_make_gpu_explicit_solver() — marcher factory
  *
  *          The factory returns an ISurfaceSolver* as a void* (the core casts
- *          it back); ownership transfers to the core, which deletes through
- *          the ISurfaceSolver virtual destructor.
+ *          it back); the core adapter dispatches calls and plugin-owned
+ *          destruction through a single controlling thread.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_GPU_PLUGIN_ABI_H
@@ -54,55 +54,98 @@
  * a no-op marker.
  */
 #if defined(_WIN32)
-#  if defined(OPENSWMM_GPU_PLUGIN_BUILD)
-#    define OPENSWMM_GPU_ABI __declspec(dllexport)
-#  else
-#    define OPENSWMM_GPU_ABI
-#  endif
-#elif defined(__GNUC__)
-#  define OPENSWMM_GPU_ABI __attribute__((visibility("default")))
+#if defined(OPENSWMM_GPU_PLUGIN_BUILD)
+#define OPENSWMM_GPU_ABI __declspec(dllexport)
 #else
-#  define OPENSWMM_GPU_ABI
+#define OPENSWMM_GPU_ABI
+#endif
+#elif defined(__GNUC__)
+#define OPENSWMM_GPU_ABI __attribute__((visibility("default")))
+#else
+#define OPENSWMM_GPU_ABI
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** ABI version. The core refuses a plugin whose abi_version disagrees,
- *  except that a v3 plugin is still accepted through the thread-count
- *  environment fallback (see requested_threads below).
- *  v3: CVODE/ARKODE plugin solvers retired (D2, 2026-07-29) — the explicit
- *  marcher factory is the only solver entry, and SurfaceStateData dropped the
- *  active_set pointer, so a v2 plugin would mis-read the struct layout.
- *  v4: OpenSwmmGpuProbe gained requested_threads (core → plugin, appended
- *  so the v3 prefix layout is unchanged) and the optional entry point
- *  openswmm_gpu_host_threads() (plugin → core). */
-#define OPENSWMM_GPU_ABI_VERSION 4
-#define OPENSWMM_GPU_ABI_VERSION_ENV_THREADS_FALLBACK 3
+/**
+ * v3: CVODE/ARKODE plugin solvers retired (D2, 2026-07-29) — the explicit marcher factory is the
+ * only solver entry, and SurfaceStateData dropped the active_set pointer, so a v2 plugin would
+ * mis-read the struct layout. v4: OpenSwmmGpuProbe gained requested_threads (core → plugin,
+ * appended so the v3 prefix layout is unchanged) and the optional entry point
+ */
+/* v5: reject v3/v4 C++ vtables predating completedSourceTime and the current
+ * state layouts. A matching build contract and plugin-owned destruction are
+ * mandatory. Never accept an older version through a thread-count fallback. */
+/* v6: SurfaceTransportState adds the canonical RK2 age-generation ledger;
+ * SurfaceStateData offsets therefore change. Rebuild every surface plugin.
+ * The independent C-only groundwater raw-recharge ABI remains v1. */
+/* v7: SurfaceStateData adds accepted runtime-forcing rainfall receipts.
+ * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
+/* v8: SurfaceStateData adds gross applied boundary-water transfer arrays.
+ * Rebuild surface plugins; independent raw groundwater recharge remains v1. */
+/* v9: SolverOptions2D adds the physical-time momentum smoothing reference
+ * interval. Rebuild surface plugins to match the changed option layout. */
+/* v10: ISurfaceSolver adds pinExternalSourceCells, so the vtable changes.
+ * Rebuild surface plugins. */
+/* v11: ISurfaceSolver adds last_coupling_interval (vtable change). */
+/* v12: OpenSwmmGpuProbe gains capabilities (appended), the set of 2D configurations the plugin's
+ * solver implements. The core refuses a plugin that lacks any capability the model requires.
+ * ISurfaceSolver adds syncPinnedVolumes (vtable change). */
+/* v13: ISurfaceSolver adds publishMomentumVelocity (vtable change). */
+/* v14: SurfaceStateData adds the boundary species receipt arrays a plugin publishes
+ * (boundary_requested_mass, boundary_applied_mass), so its layout changes. Capability bit 12
+ * (surface heat exchange) is new. Rebuild surface plugins. */
+/* v15: SurfaceTransportState adds the reaction stage request (SurfaceReactionStage), so the
+ * SurfaceStateData layout changes. Rebuild surface plugins. */
+#define OPENSWMM_GPU_ABI_VERSION 15
+
+/**
+ * @name Surface solver capabilities (OpenSwmmGpuProbe::capabilities)
+ * One bit per 2D configuration a solver implements. The model's required set is computed by
+ * requiredSurfaceCapabilities() (SurfaceCapabilities.hpp); a plugin serves a model only when it
+ * advertises every required bit.
+ * @{
+ */
+#define OPENSWMM_GPU_CAP_LOCAL_INERTIAL (1ull << 0)   /**< MOMENTUM_EQUATION LOCAL_INERTIAL */
+#define OPENSWMM_GPU_CAP_DIFFUSIVE_WAVE (1ull << 1)   /**< MOMENTUM_EQUATION DIFFUSIVE_WAVE */
+#define OPENSWMM_GPU_CAP_FULL_SWE (1ull << 2)         /**< MOMENTUM_EQUATION FULL_SWE, order 1 */
+#define OPENSWMM_GPU_CAP_SWE_ORDER2 (1ull << 3)       /**< FULL_SWE with RECONSTRUCTION_ORDER 2 */
+#define OPENSWMM_GPU_CAP_QUADS (1ull << 4)            /**< meshes with quadrilateral cells */
+#define OPENSWMM_GPU_CAP_MOMENTUM_PHYSICS (1ull << 5) /**< Coriolis, turbulence, wall drag */
+#define OPENSWMM_GPU_CAP_FRONT_REBUILD (1ull << 6)    /**< FRONT_REBUILD YES outside FULL_SWE */
+#define OPENSWMM_GPU_CAP_TRANSPORT_LI (1ull << 7)     /**< transport rows, LOCAL_INERTIAL */
+#define OPENSWMM_GPU_CAP_TRANSPORT_DW (1ull << 8)     /**< transport rows, DIFFUSIVE_WAVE */
+#define OPENSWMM_GPU_CAP_TRANSPORT_SWE (1ull << 9)    /**< transport rows, FULL_SWE */
+#define OPENSWMM_GPU_CAP_GROUNDWATER (1ull << 10)     /**< coupled 2D aquifer */
+#define OPENSWMM_GPU_CAP_POROUS_HEAT (1ull << 11)     /**< porous ground heat */
+#define OPENSWMM_GPU_CAP_SURFACE_HEAT (1ull << 12)    /**< surface heat exchange (COUPLED_HEAT) */
+/** @} */
 
 /** GPU vendor / backend identifier reported by a plugin. */
 typedef enum OpenSwmmGpuVendor {
-    OPENSWMM_GPU_VENDOR_NONE   = 0, /**< no usable device / stub          */
-    OPENSWMM_GPU_VENDOR_CUDA   = 1, /**< NVIDIA (Kokkos CUDA)             */
-    OPENSWMM_GPU_VENDOR_HIP    = 2, /**< AMD (Kokkos HIP)                 */
-    OPENSWMM_GPU_VENDOR_SYCL   = 3, /**< Intel (Kokkos SYCL)             */
-    OPENSWMM_GPU_VENDOR_OPENMP = 4  /**< CPU multithreaded (Kokkos OpenMP, Phase 1) */
+    OPENSWMM_GPU_VENDOR_NONE = 0,  /**< no usable device / stub          */
+    OPENSWMM_GPU_VENDOR_CUDA = 1,  /**< NVIDIA (Kokkos CUDA)             */
+    OPENSWMM_GPU_VENDOR_HIP = 2,   /**< AMD (Kokkos HIP)                 */
+    OPENSWMM_GPU_VENDOR_SYCL = 3,  /**< Intel (Kokkos SYCL)             */
+    OPENSWMM_GPU_VENDOR_OPENMP = 4 /**< CPU multithreaded (Kokkos OpenMP, Phase 1) */
 } OpenSwmmGpuVendor;
 
 /** Result of a capability probe. Filled by openswmm_gpu_probe(). */
 typedef struct OpenSwmmGpuProbe {
-    int                abi_version;       /**< must equal OPENSWMM_GPU_ABI_VERSION */
-    int                device_count;      /**< number of usable devices (0 = none) */
-    int                vendor;            /**< an OpenSwmmGpuVendor value           */
-    char               device_name[128];  /**< human-readable device name           */
+    int abi_version;                     /**< must equal OPENSWMM_GPU_ABI_VERSION */
+    int device_count;                    /**< number of usable devices (0 = none) */
+    int vendor;                          /**< an OpenSwmmGpuVendor value           */
+    char device_name[128];               /**< human-readable device name           */
     unsigned long long device_mem_bytes; /**< global memory of selected device     */
-    /** v4, core → plugin: [OPTIONS] THREADS for the host (OpenMP) backend.
-     *  0 = plugin default. Written by the core AFTER openswmm_gpu_probe()
-     *  returns and BEFORE openswmm_make_gpu_explicit_solver() is called; the
-     *  plugin zero-fills it in the probe. Device backends ignore it. The
-     *  OPENSWMM_2D_THREADS environment variable still overrides it. */
-    int                requested_threads;
+    /**
+     * 0 = plugin default. Written by the core AFTER openswmm_gpu_probe() returns and BEFORE
+     * openswmm_make_gpu_explicit_solver() is called; the plugin zero-fills it in the probe.
+     * Device backends ignore it. The
+     */
+    int requested_threads;
+    unsigned long long capabilities; /**< OPENSWMM_GPU_CAP_* bits the solver implements (v12) */
 } OpenSwmmGpuProbe;
 
 /**
@@ -110,32 +153,79 @@ typedef struct OpenSwmmGpuProbe {
  *
  * Must be cheap and side-effect-free beyond backend initialization.
  *
- * @param out  Caller-allocated struct to fill. Zero-initialized on entry by
- *             the plugin.
- * @return 0 on success with at least one usable device; non-zero if no
- *         device is available or the probe failed. A non-zero return tells
- *         the core to fall back to the CPU solver.
+ * @param out  Caller-allocated struct to fill. Zero-initialized on entry by the plugin.
+ * @return 0 on success with at least one usable device; non-zero if no device is available or
+ * the probe failed. A non-zero return tells the core to fall back to the CPU solver.
+ *
+ * @note out must be non-NULL and point to a full current-ABI record; NULL returns nonzero.
+ * Successful metadata strings are bounded NUL-terminated copies and requested_threads is reset
+ * to zero.
+ * @note Does not construct a solver or retain the record. Device probes may initialize driver
+ * query state; the OpenMP probe advertises one host backend without initializing Kokkos. A
+ * failed non-NULL probe can still overwrite metadata.
  */
 OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out);
 
 /**
  * @brief Construct the Kokkos explicit LTS marcher surface solver.
  *
- * The only solver factory in the contract: the core dlsym()s it and falls
- * back to the serial CPU ExplicitInertialSolver when a plugin does not
- * export it. Implements BOTH cell closures (FLAT and VFR). Returns an
- * ISurfaceSolver* (as void*) owned by the caller, or NULL.
+ * The only solver factory in the contract: the core dlsym()s it and falls back to the serial CPU
+ * ExplicitInertialSolver when a plugin does not export it. Implements BOTH cell closures (FLAT
+ * and VFR). Returns an ISurfaceSolver* (as void*) owned by the caller, or NULL.
+ *
+ * @param[in] probe Optional borrowed current-ABI probe; OpenMP reads requested_threads and
+ * device plugins ignore it. NULL selects backend defaults.
+ * @return Plugin-allocated ISurfaceSolver pointer represented as void*, or NULL for
+ * initialization/allocation failure. Obtain diagnostic text from openswmm_gpu_last_error().
+ * @note No probe pointer is retained. The core must dispatch use and destruction on its
+ * execution-owner thread, call openswmm_destroy_gpu_explicit_solver() exactly once, and keep the
+ * library loaded until destruction. Kokkos initializes lazily and is not finalized by solver
+ * destruction.
  */
 OPENSWMM_GPU_ABI void* openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* probe);
 
 /**
- * @brief (v4, optional) Host thread count the plugin's Kokkos runtime is
- *        initialised with; 0 when not yet initialised or not a host backend.
+ * @brief v5 compatibility check, called BEFORE probe or factory.
  *
- * Kokkos initialises once per process, so this is the number every later
- * solver in the process will run with regardless of requested_threads. The
- * core dlsym()s it optionally — a plugin that does not export it is still
- * accepted.
+ * @details Borrow the plugin's generated C++ compatibility fingerprint.
+ * @return Immutable NUL-terminated build-contract string owned by the loaded plugin, valid until
+ * library unload. Do not modify/free it; copy if retained beyond unload.
+ * @note Must be checked before probing or creating a solver. No runtime initialization,
+ * allocation or solver ownership transfer.
+ */
+OPENSWMM_GPU_ABI const char* openswmm_gpu_build_contract(void);
+/**
+ * @brief Destroy on the execution owner through the allocating plugin.
+ *
+ * @details Destroy a solver using the same plugin that allocated it.
+ * @param[in] solver Owned factory result from this loaded plugin; NULL is safe.
+ * Foreign/already-destroyed pointers are unsupported.
+ * @post Releases solver-owned host/device state without finalizing the process Kokkos runtime.
+ * @note Call on the controlling execution-owner thread after all solver work/callers finish,
+ * before unloading the plugin. Consumes the pointer; no status is returned.
+ */
+OPENSWMM_GPU_ABI void openswmm_destroy_gpu_explicit_solver(void* solver);
+/**
+ * @brief Last construction error on this controlling thread; plugin-owned text.
+ *
+ * @details Borrow the controlling thread's most recent factory diagnostic.
+ * @return Plugin-owned NUL-terminated thread-local error text, empty after a successful factory
+ * call. Do not free/modify; copy before the next factory call on that thread, thread exit, or
+ * library unload.
+ * @note Does not report arbitrary solver/runtime errors or clear the diagnostic.
+ */
+OPENSWMM_GPU_ABI const char* openswmm_gpu_last_error(void);
+
+/**
+ * @brief (v4, optional) Host thread count the plugin's Kokkos runtime is initialised with; 0
+ * when not yet initialised or not a host backend.
+ *
+ * Kokkos initialises once per process, so this is the number every later solver in the process
+ * will run with regardless of requested_threads. The core dlsym()s it optionally — a plugin that
+ * does not export it is still accepted.
+ *
+ * @return Effective initialized host worker count, or zero before initialization/on a device
+ * backend. Read-only process-level query; no runtime is initialized by this call.
  */
 OPENSWMM_GPU_ABI int openswmm_gpu_host_threads(void);
 

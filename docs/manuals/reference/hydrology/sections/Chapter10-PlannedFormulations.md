@@ -43,14 +43,14 @@ Linear series use absolute model time and endpoint hold. Native pollutant MASS
 is mg/s, ug/s or count/s for MG/L, UG/L or #/L. Groundwater age is seconds.
 Extraction is availability-limited and removes existing dissolved quality.
 
-The remaining unsupported cases are explicit: initial LAYER quality is refused
-by active bulk transport, @ref engine_manual_sect_GW_BOUNDARY_QUALITY lacks a
-hydraulic groundwater edge binding and fails initialization, and coupled
-surface RK2 is refused rather than silently disabling groundwater. Per-layer
-transport, thermal conduction and additional reaction-scope work remain distinct
-from the operational source and bulk-transport paths. See the input reference
-for the exact current contracts rather than treating the older plan as runtime
-capability evidence.
+Initial LAYER quality is refused by active bulk transport; explicit SIGMA
+LAYERED transport provides separate layer inventories. Hydraulic HEAD/FLOW
+edges bind groundwater boundary quality, and selected porous thermal/reaction
+profiles are implemented. Standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA
+aquifers also support coupled surface RK2; reactions, heat and borrowed owners
+retain first-order coupling. See Hydrology Chapter 9 and
+`docs/design/groundwater-transport.md` for the current contracts and
+qualification limits; the older design below does not establish runtime capability.
 
 **What the design intends.** The plan of record moves every species class the
 project carries through the two-zone aquifer of

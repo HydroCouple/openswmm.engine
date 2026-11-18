@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file LidLayerCommon.hpp
- * @brief LID layer topology and geometry, shared by every species track.
+ * @file      LidLayerCommon.hpp
+ * @brief     LID layer topology and geometry, shared by every species track.
  *
  * @details A4 wrote these as file-local helpers in `WaterAgeLid.cpp`, when
  *          age was the only species. H5b adds temperature and needs the same
@@ -39,9 +39,9 @@
  * @see src/engine/data/LidLayerSpeciesData.hpp
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_LID_LAYER_COMMON_HPP
@@ -58,7 +58,7 @@ constexpr int kNL = LidLayerSpeciesState::kLayerCount;
 
 /// -1 means "external to the unit"; -2 means "this type has no such layer".
 constexpr int kExternal = -1;
-constexpr int kAbsent   = -2;
+constexpr int kAbsent = -2;
 
 constexpr int kSurf = static_cast<int>(LidLayer::SURFACE);
 constexpr int kPave = static_cast<int>(LidLayer::PAVEMENT);
@@ -69,18 +69,19 @@ constexpr int kStor = static_cast<int>(LidLayer::STORAGE);
 /// physically adjacent. Explicit per type rather than inferred: the eight
 /// stacks genuinely differ, and the solver is itself written one routine per
 /// type.
-struct Donors { int surface, pavement, soil, storage; };
+struct Donors {
+    int surface, pavement, soil, storage;
+};
 
 Donors donorsFor(lid::LIDType t, bool has_soil);
 
 /// Void-weighted water held in each layer, as a depth per unit area (ft).
 /// The four terms are exactly those `LIDSolver::storedVolume()` sums.
-void layerVolumes(const lid::LIDGroupSoA& g, std::size_t ui,
-                  double (&v)[kNL]);
+void layerVolumes(const lid::LIDGroupSoA& g, std::size_t ui, double (&v)[kNL]);
 
 /// Flat index of each per-type group's first unit; `back() == n_units`.
 std::vector<int> buildOffsets(const lid::LIDSolver& solver);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_LID_LAYER_COMMON_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_LID_LAYER_COMMON_HPP

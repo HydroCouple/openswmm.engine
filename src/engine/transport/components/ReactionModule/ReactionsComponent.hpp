@@ -15,29 +15,26 @@
 // limitations under the License.
 
 /**
- * @file ReactionsComponent.hpp
- * @brief The `org.hydrocouple.openswmm.reactions` process component —
+ * @file      ReactionsComponent.hpp
+ * @brief     The `org.hydrocouple.openswmm.reactions` process component —
  *        phase R1: parse `model.rxn` [REACTION_*] sections into
  *        ReactionData + the species registry.
  *
  * @details R1 scope: structure and references are fully validated (species
  *          declared before use, unique names, no collision with pollutant
  *          names, valid forms/kinds/options); expression BODIES are stored
- *          as source and compiled by phase R2's Tier-1 VM. Sections whose
- *          semantics land in later phases ([REACTION_SOURCES],
- *          [REACTION_PARAMETERS], [REACTION_PATTERNS], [REACTION_REPORT],
- *          [REACTION_SUBCATCHMENTS]) produce a precise
- *          "arrives with plan phase …" error rather than being silently
- *          accepted. Embedded [REACTION_*] sections in the legacy .inp are
+ *          as source and compiled by the Tier-1 VM. Pipe, tank and wet
+ *          non-LID subcatchment scopes have separate validated contexts.
+ *          Embedded [REACTION_*] sections in the legacy .inp are
  *          honored with a style warning when no external component is
  *          registered; the external file wins wholesale on conflict
  *          (TRANSPORT_IO_PLUGIN_CONFIG_PLAN §3.2).
  *
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP
@@ -59,7 +56,7 @@ namespace openswmm::transport {
 /// registry (idempotent; called from SWMMEngine::open before resolution).
 void registerReactionsComponent();
 
-/// The 12 [REACTION_*] tags (upper-case, no brackets) — shared by the
+/// The recognised [REACTION_*] tags (upper-case, no brackets) — shared by the
 /// embedded-fallback handlers and the config parser.
 const std::vector<std::string>& reactionSectionTags();
 
@@ -75,8 +72,7 @@ void applyReactionSections(SimulationContext& ctx,
 /// apply them with a style warning — unless an external reactions component
 /// was registered, in which case the external file wins wholesale and the
 /// embedded sections are reported ignored.
-void applyEmbeddedReactionSections(SimulationContext& ctx,
-                                   bool external_component_registered,
+void applyEmbeddedReactionSections(SimulationContext& ctx, bool external_component_registered,
                                    std::vector<std::string>& errors);
 
 /// Recompile every reaction expression (terms, pipes, tanks) into a fresh
@@ -85,9 +81,8 @@ void applyEmbeddedReactionSections(SimulationContext& ctx,
 /// D-RC4, no second compiler). Returns true and sets rx.compiled on
 /// success; on failure appends diagnostics and leaves rx.compiled false
 /// (the pool/spans hold the partial result — callers roll back or clear).
-bool recompileReactionSystem(SimulationContext& ctx,
-                             std::vector<std::string>& errors);
+bool recompileReactionSystem(SimulationContext& ctx, std::vector<std::string>& errors);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_REACTIONS_COMPONENT_HPP

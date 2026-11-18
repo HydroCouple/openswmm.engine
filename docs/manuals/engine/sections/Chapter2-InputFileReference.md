@@ -170,8 +170,9 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 |---|---|---|---|
 | MAX_TRIALS | number | 8 | Maximum trials per time step for the nodal head iteration to converge. |
 | HEAD_TOLERANCE | number | 0 | Head change between trials, in project length units, below which the step has converged; 0 selects 0.005 ft (0.0015 m). |
-| MIN_SURFAREA | number | 0 | Minimum node surface area, in project units, used in depth updates; 0 selects 12.566 ft² (1.167 m²), a 4-ft manhole. |
+| MIN_SURFAREA | number | 0 | Numerical stability area for legacy junction depth updates; 0 selects 12.566 ft² (1.167 m²). This is not the authored physical junction StorageArea. |
 | MIN_SLOPE | number | 0 | Minimum conduit slope in percent; 0 imposes none, though the elevation drop is still floored at 0.001 ft (0.00035 m). |
+| SLOPE_WEIGHTING | YES / NO / TRUE / FALSE / 1 / 0 | — | Retired compatibility option with no solver effect. YES and NO also accept legacy prefix matches; other values are rejected. When supplied, the value is retained in the extension-options map and can be read through `swmm_options_get_ext()`. |
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
 | NORMAL_FLOW_LIMITED | SLOPE / FROUDE / BOTH / NEITHER | BOTH | Test that flags supercritical flow to be limited to normal flow: water-surface slope, Froude number, both, or neither. Hydraulics §3.3.4. |
 | NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. Hydraulics §3.5. |
@@ -204,7 +205,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_LIMITER | MINMOD / VANLEER / SUPERBEE | MINMOD | Slope limiter used with FV_ORDER 2; MINMOD is most robust, SUPERBEE sharpest. Hydraulics §8.5.7. |
 | FV_SCALAR_SCHEME | UPWIND / MUSCL / QUICKEST_ULTIMATE / QUICKEST | MUSCL | Reconstruction of the advected scalar field on the finite-volume mesh. Hydraulics §8.8. |
 | FV_TIME_INTEGRATION | EULER / RK2 | EULER | Time integrator: forward Euler or SSP-RK2 (Heun); RK2 disables local time stepping. Hydraulics §8.5.5. |
-| FV_SLOT_CELERITY | number | 100 | Pressurised wave celerity in project length units per second; sets the slot width and doubles as the TPA acoustic celerity. Hydraulics §8.4.1. |
+| FV_SLOT_CELERITY | number | 100 ft/s (30.48 m/s) | Pressurised wave celerity in project length units per second; sets the slot width and doubles as the TPA acoustic celerity. When the key is absent or 0 the default is the same physical speed in either unit system. Hydraulics §8.4.1. |
 | FV_PRESSURIZED_IMPLICIT | YES / TRUE / ON / 1 / NO | NO | Integrates the slot's acoustic pair implicitly on pressurised cells, removing the celerity from the time-step law; CPU only, local time stepping stands down. Hydraulics §8.4.4. \status{Experimental} |
 | FV_PRESSURE_CLOSURE | SLOT / TPA | SLOT | Pressurisation closure: the Preissmann slot, or the two-component pressure approach that allows sub-atmospheric full-pipe flow. Hydraulics §8.4.5. \status{Experimental} |
 | FV_DISPERSION | number | 0 | Longitudinal dispersion coefficient in project length squared per second; 0 disables it. Accepted but inert until finite-volume transport is connected; non-zero warns at open. Hydraulics §8.8. |
@@ -252,7 +253,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 
 | Keyword | Values | Default | Description |
 |---|---|---|---|
-| THREADS | number | 1 | OpenMP thread count for dynamic-wave and 2D loops; 0 resolves to the runtime maximum, and larger values oversubscribe with a warning. |
+| THREADS | number | 1 | OpenMP thread count for dynamic-wave and 2D loops; 0 resolves to the runtime maximum, and larger values oversubscribe with a warning. Dynamic wave keeps at least 2,000 conduits per thread (a smaller model runs serial, with a warning when the request was explicit): below that size extra threads only cost. |
 | SKIP_STEADY_STATE | YES / NO | NO | Skips routing during steady periods, reusing the last flows, when system flow and lateral inflows change by less than SYS_FLOW_TOL and LAT_FLOW_TOL. |
 | SYS_FLOW_TOL | number | 5 | Maximum percent difference between total system inflow and outflow for SKIP_STEADY_STATE to take effect. |
 | LAT_FLOW_TOL | number | 5 | Maximum percent difference between current and previous lateral inflows for SKIP_STEADY_STATE to take effect. |
@@ -264,7 +265,7 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_NODE_COUPLING | \status{Retired} | Parsed; the value EXPLICIT warns and is treated as SEMI_IMPLICIT (storage nodes are always coupled semi-implicitly); any other value is silently ignored. |
 | FV_NODE_DT | \status{Retired} | Parsed; the value NONE warns and is treated as STABILITY (the node accuracy bound is always armed); any other value is silently ignored. |
 | FV_NODE_PICARD | \status{Retired} | Parsed; a value above 1 warns and is treated as 1 (the semi-implicit node correction is always a single sweep); 1 or less is silently accepted. |
-| FV_NODE_CELL_COUPLING | \status{Retired} | Accepted and silently ignored; junctions are always algebraic interfaces (hydraulics §8.6.1). |
+| FV_NODE_CELL_COUPLING | \status{Retired} | Accepted and silently ignored; the junction model follows from each node's connectivity (hydraulics §8.6.1). |
 | FV_JUNCTION_MODEL | \status{Retired} | Accepted and silently ignored; the BUCKET junction model was removed in favour of the algebraic interface (hydraulics §8.6.1). |
 | VIRTUAL_JUNCTION_MOMENTUM | \status{Retired} | Parsed; FULL warns and is treated as BASIC (its cross-junction momentum term was not mass conserving); every value maps to BASIC and the key is never written back. |
 | COMPATIBILITY | \status{Retired} | Accepted and silently ignored; a legacy SWMM compatibility flag with no effect in this engine. |
@@ -306,16 +307,22 @@ Identifies optional interface files used or saved by a run.
 Formats:
 USE / SAVE    RAINFALL        Fname        
 USE / SAVE    RUNOFF        Fname        
-USE / SAVE    HOTSTART        Fname        
+USE           HOTSTART        Fname
+SAVE          HOTSTART        Fname   (Date Time)   (LEGACY / NATIVE)
 USE / SAVE    RDII            Fname
 USE      INFLOWS                Fname
 SAVE    OUTFLOWS                Fname
 
 Parameters:
 Fname     is the name of an interface file.
+Date Time  is the optional date (month/day/year) and time (hours:minutes:seconds) at which a Hot Start file is saved: the file is written from the state at the end of the first time step that reaches that moment, and not at all if the run ends first. Without it the file is saved at the end of the run.
+LEGACY / NATIVE  (OpenSWMM extension) is the optional file format of a saved Hot Start file. LEGACY is the EPA SWMM 5 format, which holds subcatchment, node and link state; OpenSWMM applies all of it when it reads one. NATIVE is the OpenSWMM format, which also holds water age, reaction species, LID units at storage nodes and the 2D aquifer, but not link control settings, node lateral inflows or subcatchment buildup — see @ref engine_manual_ch3_files. Without the keyword a SWMM 5 file is written, or a native one when water age, heat transport, an independent groundwater clock or LID units at storage nodes require it.
 
 Remarks:
 Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
+A LEGACY save is refused when age, heat, LID-layer scalars, UEB snow, an active 2D surface or runtime coupling would be lost. Record-format NATIVE saves cannot preserve heat, conventional LID-layer scalars or ARD/LAGRANGIAN transport inventories; those combinations require a qualified full engine checkpoint. CLI SAVE HOTSTART requests using ARD/LAGRANGIAN transport currently fail explicitly. Thermal CLI saves also fail if a full checkpoint cannot be prepared. An unsupported save never replaces an existing restart file.
+
+USE HOTSTART reads either format, recognising it from the file itself. The format keyword must follow the date and time when both are given. Any other word in its place is ignored with a warning, and the default format is used. A row with exactly a date after the file name and one more item must give a valid date and time, or it is an error (ERROR 213), as in EPA SWMM. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files; it gives them back unchanged, subcatchment state included.
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  
@@ -417,7 +424,100 @@ Temperatures supplied from NOAA's latest Climate Data Online GHCN files should h
 Wind speed can be specified either by monthly average values or by the same Climate file used for air temperature. If neither option appears, then wind speed is assumed to be 0.
 Separate Areal Depletion Curves (ADC) can be defined for impervious and pervious subareas. The ADC parameters will default to 1.0 (meaning no depletion) if no data are supplied for a particular type of subarea.
 
- 
+#### Energy-balance snow and shared radiation
+
+The following additional [TEMPERATURE] rows configure UEB snow and the radiation forcing shared with heat transport:
+
+```
+SNOWMELT_MODEL  DEGREE_DAY / UEB
+SNOW_STEP      Step
+SITE           Latitude Longitude Timezone Elevation
+SHORTWAVE      COMPUTED / FILE
+SHORTWAVE      TIMESERIES Series
+LONGWAVE       COMPUTED / FILE
+LONGWAVE       TIMESERIES Series
+MET_FILE       "Path"
+```
+
+| Key | Default | Meaning and units |
+| --- | --- | --- |
+| SNOWMELT_MODEL | DEGREE_DAY | Shared snow formulation; an individual [SNOWPACKS] UEB row can override it. |
+| SNOW_STEP | 3600 | Snow update interval in seconds or HH:MM[:SS], from 1 to 21600 seconds. Mesh snow can choose a separate interval in [2D_SNOW_OPTIONS]. |
+| SITE | legacy climate/solar site | Latitude in degrees north, longitude in degrees east, UTC offset in hours, and elevation in metres in both US and SI projects. Bounds are ±90 degrees latitude, ±180 degrees longitude, ±14 hours and -500 to 10000 m elevation. An explicit SITE takes precedence over conflicting legacy site values and emits a warning. |
+| SHORTWAVE | COMPUTED | Incoming horizontal shortwave radiation; a named series supplies W/m². FILE uses the hourly MET_FILE. |
+| LONGWAVE | COMPUTED | Incoming longwave radiation; a named series supplies W/m². FILE uses the hourly MET_FILE. |
+| MET_FILE | none | Hourly meteorology path, resolved relative to the input file. Quote a path containing spaces. |
+
+MET_FILE is distinct from the legacy daily climate FILE row. Each record has seven fields: `MM/DD/YYYY HH:00 Temperature_C RH_percent Wind_m/s Shortwave_W/m2 Longwave_W/m2`. Records must be finite, consecutive, unique whole hours and cover the simulation interval; each record describes the following hour. These quantities always use the displayed SI units, independent of project units. An hourly MET_FILE supplies all five quantities and takes precedence over other air-temperature and radiation selectors while it is active. A radiation FILE selector requires MET_FILE. Named radiation series must exist in [TIMESERIES].
+
+Computed shortwave uses the Bristow–Campbell parameters in [UEB_OPTIONS]. Forcing is averaged over the snow interval; UEB snow site parameters are supplied by [SNOWPACKS]. The legacy TIMESERIES, FILE, WINDSPEED, SNOWMELT and ADC rows remain available.
+
+<!-- source: src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/UebForcing.cpp; src/engine/hydrology/HourlyMeteorology.cpp -->
+
+### Section: [UEB_OPTIONS] {#engine_manual_sect_UEB_OPTIONS}
+
+Purpose:
+Sets shared Utah Energy Balance snow parameters and computed-radiation coefficients. These rows do not by themselves select UEB; use SNOWMELT_MODEL in [TEMPERATURE] or a per-pack model in [SNOWPACKS].
+
+Formats:
+```
+SURFACE_TEMP  MODIFIED_FORCE_RESTORE / EQUILIBRIUM
+PRECIP_SPLIT  UEB / DIVT
+Key           Value
+BC_MONTHLY    Month Range
+```
+
+| Key | Default | Meaning and units |
+| --- | --- | --- |
+| SURFACE_TEMP | MODIFIED_FORCE_RESTORE | Surface-temperature scheme; EQUILIBRIUM selects the alternative equilibrium solve. |
+| PRECIP_SPLIT | UEB | UEB partitions precipitation between the TB and TR temperatures. DIVT uses the legacy SNOWMELT division temperature for an all-snow/all-rain split. |
+| Z0 | 0.01 | Aerodynamic roughness length (m). |
+| ZM | 2 | Measurement height above the surface (m); must exceed Z0. |
+| KS | 0.02 | Equilibrium heat-exchange conductance (m/h). |
+| KSAT | 200 | Snow drainage conductivity (m/h). |
+| LC | 0.02 | Liquid-water retention parameter (dimensionless). |
+| DE | 0.1 | Thermally active soil depth (m). |
+| RHO_S | 200 | Snow density (kg/m³), greater than zero and less than 917. |
+| RHO_G | 1700 | Soil density (kg/m³). |
+| CG | 2.09 | Soil specific heat capacity (kJ/(kg K)). |
+| LAMBDA_S | 0.33 | Snow thermal conductivity (kJ/(m K h)). |
+| LAMBDA_G | 6.5 | Soil thermal conductivity (kJ/(m K h)). |
+| OMEGA_LF | 0.0654 | Low-frequency parameter for modified force restore (1/h). |
+| R | 1 | Modified force-restore amplitude factor (dimensionless). |
+| FSTAB | 1 | Atmospheric stability factor (fraction from 0 to 1). |
+| TR | 3 | Temperature at which precipitation is entirely rain under PRECIP_SPLIT UEB (°C); must exceed TB. |
+| TB | -1 | Temperature at which precipitation is entirely snow under PRECIP_SPLIT UEB (°C); must exceed absolute zero. |
+| ABG | 0.25 | Bare-ground albedo (fraction from 0 to 1). |
+| ALPHA_VO | 0.85 | New-snow visible albedo (fraction from 0 to 1). |
+| ALPHA_IRO | 0.65 | New-snow infrared albedo (fraction from 0 to 1). |
+| EPSILON | 0.99 | Snow emissivity (fraction from 0 to 1). |
+| DNEWS | 0.002 | New-snow depth scale for resetting snow age (m water equivalent). |
+| R3 | 0.03 | Snow-age dust parameter (nonnegative, dimensionless). |
+| CV | 0.2 | Visible snow-age coefficient (fraction from 0 to 1). |
+| CIR | 0.5 | Infrared snow-age coefficient (fraction from 0 to 1). |
+| BC_A | 0.8 | Bristow–Campbell maximum transmittance, greater than zero and at most 1. |
+| BC_C | 2.4 | Positive Bristow–Campbell exponent. |
+| BC_MONTHLY | unspecified | Month (integer 1–12) and positive daily temperature range in °C, at most 100. Supply one row per month to override that month's range. |
+
+Remarks:
+All parameter units are fixed as listed, including in US projects; the conductivity and conductance units retain the UEB reference model's hour-based convention. Every numeric value must be finite. Lengths, densities, heat capacities, thermal conductivities, KS, OMEGA_LF and R must be positive; KSAT, DNEWS and R3 may be zero. LC must be nonnegative and less than `1000/RHO_S - 1000/917`. The complete parameter set is validated before initialization.
+
+An unspecified BC_MONTHLY value uses the available daily temperature range; it does not invent a monthly climatology. Unknown keys or extra fields are errors. The input writer emits only values that differ from their defaults and explicitly supplied monthly ranges.
+
+Example:
+```
+[UEB_OPTIONS]
+SURFACE_TEMP MODIFIED_FORCE_RESTORE
+PRECIP_SPLIT UEB
+BC_A 0.8
+BC_C 2.4
+BC_MONTHLY 1 10
+```
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/surface/UebSnow.hpp; src/engine/hydrology/surface/UebSnow.cpp -->
+
 ### Section: [ADJUSTMENTS] {#engine_manual_sect_ADJUSTMENTS}
 
 Purpose:
@@ -507,10 +607,22 @@ p3    time it takes for a fully saturated soil to dry (days). 
 ### Section: [LID_NODES] {#engine_manual_sect_LID_NODES}
 
 A LID node remains an ordinary storage node. Assign a compatible BC, RG, IT,
-PP, or NODE control using `Node Control InitialSaturationPercent` in
-`[LID_NODES]`. The supported routing formulation is `FLOW_ROUTING DYNWAVE`.
+PP, or NODE control in `[LID_NODES]` using
+`Node Control InitialSaturationPercent [BOTTOM CURRENT|SEALED|MESH_AQUIFER]`.
+Omitting the optional bottom fields selects `CURRENT`. The supported routing
+formulation is `FLOW_ROUTING DYNWAVE`.
 The storage's maximum depth must equal the sum of the physical layer
 thicknesses, converted to the node's length units.
+
+`BOTTOM MESH_AQUIFER` is supported for a NODE control with an enabled
+`[LID_RICHARDS]` profile and a resolved `[2D_AQUIFER_NODE]` bed on the active
+mesh aquifer. Accepted bottom water is exchanged with that groundwater owner.
+When coupled 2D heat and ground-column conduction are enabled, each physical
+LID layer has persistent heat capacity and energy, configured vertical layer
+conduction, and a reciprocal bottom contact with the soil column. The signed
+contact energy is included in the mesh heat results when `HEAT` is selected.
+The `CURRENT` and `SEALED` bottom modes retain their existing non-mesh
+ownership behavior.
 
 A NODE control contains any number of ordered physical layers, written from
 top to bottom. MEDIA and AGGREGATE may repeat without a fixed layer limit.
@@ -894,14 +1006,27 @@ The PLOWABLE line contains parameters for the impervious area of a subcatchment 
 The REMOVAL line describes how snow removed from the plowable area is transferred onto other areas. The various transfer fractions should sum to no more than 1.0. If the line is omitted then no snow removal takes place.
 
 
- 
+#### UEB site and model override
+
+An additional row supplies the UEB site parameters of a named pack:
+
+```
+Name UEB Fc F Qg Aep (U0) (MODEL UEB / DEGREE_DAY)
+```
+
+Fc is forest-cover fraction (0 to 1); F is the nonnegative precipitation drift multiplier; Qg is ground heat flux (W/m²); Aep is positive extinction depth (m); and optional U0 is initial snow energy (kJ/m², default 0). These units are fixed in both US and SI projects. All values must be finite. An authored UEB row selects UEB for that pack unless MODEL DEGREE_DAY is appended. A pack without this row follows the shared SNOWMELT_MODEL in [TEMPERATURE].
+
+The PLOWABLE, IMPERVIOUS and PERVIOUS rows still supply initial snow and free water. Their SD0 and SD100 columns are water-equivalent depths, distinct from geometric snow thickness. Mesh assignments in [2D_SNOW_DEFAULTS] and [2D_SNOW] reference these same named packs but maintain independent state per cell; mesh initialization uses the pack's PERVIOUS row. Mesh FC, F, QG and AEP overrides do not edit the named pack.
+
+<!-- source: src/engine/input/handlers/HydrologyHandler.cpp; src/engine/hydrology/surface/UebConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
 ### Section: [JUNCTIONS] {#engine_manual_sect_JUNCTIONS}
 
 Purpose:
 Identifies each junction node of the drainage system.  Junctions are points in space where channels and pipes connect together. For sewer systems they can be either connection fittings or manholes.
 
 Format:
-Name  Elev  (Ymax  Y0  Ysur  Apond)
+Name  Elev  (Ymax  Y0  Ysur  Apond  StorageArea)
 
 Parameters:
 Name    name assigned to junction node.
@@ -910,8 +1035,23 @@ Ymax    depth from ground to invert elevation (ft or m) (default is 0).
 Y0    water depth at the start of the simulation (ft or m) (default is 0).
 Ysur    maximum additional pressure head above the ground elevation that the junction can sustain under surcharge conditions (ft or m) (default is 0).
 Apond    area subjected to surface ponding once water depth exceeds Ymax + Ysur  (ft2 or m2) (default is 0).
+StorageArea    physical constant-area junction chamber (ft2 or m2), optional seventh token; default 0 retains legacy behavior.
 
 Remarks:
+Positive StorageArea is supported by updated OpenSWMM 5.3.0 dynamic wave and qualified 6.0.0 dynamic-wave/finite-volume paths. It preserves the node's JUNCTION identity. Below the rim, physical volume is StorageArea times depth, including surcharge above pipe crowns. Shaft volume is capped at the rim; ponding adds separate above-rim volume using Apond. Ysur is pressure allowance and does not extend physical shaft volume. Omission or zero preserves prior behavior. Kinematic/steady routing rejects a positive area rather than ignoring it. Physical chamber continuity uses a tighter internal head tolerance. If a small chamber cannot resolve its water budget within the configured routing step and trial limit, the run stops; reduce ROUTING_STEP or increase MAX_TRIALS instead of increasing the physical area to stabilize the calculation.
+
+Physical junctions in finite-volume routing require the CPU backend and zero `SurDepth`; explicit ponding and rim flooding are supported. Above-rim pressure allowance requires dynamic wave. A selected device plugin refuses physical junctions until its closure is qualified. Positive chamber areas are not yet qualified with DYNAMIC_SLOT; select EXTRAN or SLOT instead.
+
+MIN_SURFAREA remains the numerical stability area, not the physical chamber area. Explicit physical areas are not enlarged to that global value. Virtual/inlet junctions, storage nodes, outfalls and dividers do not accept this ordinary-junction parameter. Stock EPA export refuses positive StorageArea because older parsers can silently ignore the additional token. Use the OpenSWMM 5.3.0 compatibility profile instead.
+
+Example (US units):
+
+```text
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded StorageArea
+MH1    100  10       0         0        0       12.566
+```
+
 If Ymax is 0 then SWMM sets the junction’s maximum depth to the distance from its invert to the top of the highest connecting link.
 If the junction is part of a force main section of the system then set Ysur to the maximum pressure that the system can sustain.
 Surface ponding can only occur when Apond is non-zero and the ALLOW_PONDING analysis option is turned on.
@@ -2004,6 +2144,61 @@ Remarks:
 The writer preserves the section spelling: rows read from [PROFILES] are written under [PROFILES], and rows read from [PROFILE] remain under [PROFILE]. Neither spelling changes the simulation.
 
  
+### Section: [FROZEN_GROUND] {#engine_manual_sect_FROZEN_GROUND}
+
+Purpose:
+Turns on the frozen-ground model for the pervious area of a subcatchment: a ground slab that conducts heat, freezes and thaws, and reduces infiltration to zero as it freezes.
+
+Format:
+    Subcatch  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
+
+Parameters:
+Subcatch    name of a subcatchment, or * for a row that applies to every subcatchment without a row of its own.
+Thickness    thickness of the frost-active ground layer (m). Default 0.15.
+Conductivity    bulk thermal conductivity of the ground (W/m·K). Default 1.5.
+HeatCapacity    bulk volumetric heat capacity of the ground (J/m³·K). Default 2.4e6.
+WaterContent    volume fraction of water in the layer that can freeze (0 to 1). Default 0.30.
+DeepTemp    ground temperature at DeepDepth (°C). Default 8.
+DeepDepth    depth below the surface at which DeepTemp holds (m); must exceed half of Thickness. Default 3.
+InitTemp    temperature of the layer at the start of the run (°C); a value below zero starts it fully frozen. Default 5.
+Exponent    exponent m of the infiltration factor (1 − frozen fraction)^m; at least 1. Default 11.
+SnowConductivity    thermal conductivity of snow (W/m·K). Default 0.25.
+SnowDensity    density of snow, used to turn snow water equivalent into depth (kg/m³). Default 250.
+
+Remarks:
+All values are in SI units and degrees Celsius whatever the project's FLOW_UNITS. Trailing values may be omitted and keep their defaults. A named row takes precedence over the * row in either order. The section applies to all infiltration methods and to the LID units of the subcatchment (surface infiltration into a unit's soil, pavement permeability and exfiltration to native soil). Groundwater percolation, LID storage nodes and the 2D mesh are not changed by this section; the mesh has its own, [2D_FROZEN_GROUND].
+
+The model reads the air temperature from the [TEMPERATURE] section; without one a warning is issued and the ground follows the default air temperature. A row naming an unknown subcatchment, or holding an out-of-range value, stops the run with a message naming it.
+
+A model with this section saves hot start files in the native full-state format, which requires FLOW_ROUTING DYNWAVE.
+
+See @ref hydrology_ref_frozen_ground for the formulation.
+
+This section has no counterpart in SWMM 5 and is omitted when a model is written in the SWMM 5 profile.
+
+ 
+### Section: [2D_FROZEN_GROUND] {#engine_manual_sect_2D_FROZEN_GROUND}
+
+Purpose:
+Turns on the frozen-ground model for cells of the 2D mesh.
+
+Format:
+    Tag  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
+
+Parameters:
+Tag    a mesh tag, or * for a row that applies to every cell.
+The values, units and defaults are those of the [FROZEN_GROUND] section (@ref engine_manual_sect_FROZEN_GROUND).
+
+Remarks:
+A tag row takes precedence over the * row in either order; a cell that no row covers is not limited. A row naming a tag that no cell carries, or holding an out-of-range value, stops the run with a message.
+
+The ground is advanced once per INFIL_STEP. The factor limits the per-cell infiltration methods of [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], and the intake of a [2D_AQUIFER] where one owns the cell. Snow on a cell insulates the ground. Infiltration rates prescribed at run time are not limited. The slab state is saved in surface checkpoints.
+
+See @ref hydrology_ref_frozen_ground for the formulation.
+
+This section has no counterpart in SWMM 5 and is omitted when a model is written in the SWMM 5 profile.
+
+ 
 ### Section: [USER_FLAGS] {#engine_manual_sect_USER_FLAGS}
 
 Purpose:
@@ -2258,9 +2453,10 @@ Solver
 |---|---|---|---|
 | MOMENTUM_EQUATION | LOCAL_INERTIAL (LI) / FULL_SWE (SWE, FULL) / DIFFUSIVE_WAVE (DW, DIFFUSIVE) | LOCAL_INERTIAL | Face law of the explicit marcher. LOCAL_INERTIAL is the de Almeida and Bates update; FULL_SWE is the conservative shallow-water form with the convective term (hydrostatic reconstruction, rotated HLLC flux, shock capturing); DIFFUSIVE_WAVE is the Manning quasi-steady flux with no inertia. |
 | INTEGRATOR | EXPLICIT | EXPLICIT | The explicit marcher is the only 2D integrator. Any other value is a retired selection (see the Retired keys table). |
-| RECONSTRUCTION_ORDER | 1 / 2 | 1 | FULL_SWE only. 1 is piecewise constant (first-order Godunov, forward Euler); 2 reconstructs (eta, h, u, v), using limited Green-Gauss gradients in connected wet interiors and a conditioned eta/depth fit with cell-centred velocity at shorelines; SSP-RK2 uses global stepping (LTS_TIERS is reduced to 1 with a warning). Active surface transport falls back to order 1; an active RK2 route with groundwater is rejected. See @ref engine_manual_2d_cpu and @ref hydraulics_ref_ch9_two_dimensional §9.5.10. |
+| RECONSTRUCTION_ORDER | 1 / 2 | 1 | FULL_SWE only. 1 is piecewise constant (first-order Godunov, forward Euler); 2 reconstructs (eta, h, u, v), using limited Green-Gauss gradients in connected wet interiors and a conditioned eta/depth fit with cell-centred velocity at shorelines; SSP-RK2 uses global stepping (LTS_TIERS is reduced to 1 with a warning). Active surface transport keeps order 2, with the rows carried upwind in space and averaged by the two-stage step; groundwater RK2 supports only standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA with authored wells and HEAD/FLOW edges (Hydrology §9.11). See @ref engine_manual_2d_cpu and @ref hydraulics_ref_ch9_two_dimensional §9.5.10. |
 | THETA | (0, 1] | 0.8 | Face-update weighting of the local-inertial law: 1 is the pure Bates 2010 update, below 1 blends the reconstructed neighbour discharge to damp thin-film checkerboarding. |
-| FROUDE_MAX | > 0 | 1.5 | Clamp on the face Froude number of the local-inertial law. |
+| THETA_REFERENCE_STEP | finite seconds ≥ 0 | 0 | Zero applies THETA on each face firing. A positive interval makes THETA the retention over that many seconds; each face uses `theta_eff = exp(log(THETA)*dt_face/reference_step)`. The actual local face step and window tails are used. THETA=1 disables blending. Positive values persist in model files and checkpoint identities; zero is omitted by the writer. |
+| FROUDE_MAX | > 0 | 1.5 | Clamp on the face Froude number of the local-inertial law. The same bound limits the cell speed in its CFL time step. |
 | CELL_CLOSURE | FLAT / VFR | FLAT | Volume-to-free-surface closure of a cell. FLAT is the flat-cell relation; VFR is the planar-bed volume/free-surface relationship, which restores the lake-at-rest property at shorelines at the cost of more substeps. |
 | FACE_RECONSTRUCTION | MEAN / VFR_FACE | MEAN | Conveyance depth at a shared edge. MEAN uses the upwind cell-mean depth; VFR_FACE reconstructs the wetted depth over the edge's own endpoint elevations, so a crest resolved as a line of high vertices blocks flow until the water reaches it. |
 | VFR_MIN_WET_FRAC | (0, 0.5] | 0.01 | Wetted-area-fraction floor of the regularised VFR closure. Used only under CELL_CLOSURE VFR. |
@@ -2268,6 +2464,20 @@ Solver
 | LIMITER_EPSILON | number | 1.0e-6 | Regularisation of the slope limiter applied to the reported gradient fields. |
 | ADVECTION | YES / ON / TRUE / NO / OFF / FALSE | NO | Deprecated spelling of MOMENTUM_EQUATION FULL_SWE (2026-09-06). Still honoured so an old deck keeps its physics; a file load warns and names the replacement. |
 | BACKEND | AUTO / CPU / OMP / CUDA / HIP / SYCL | AUTO | Which marcher implementation runs the mesh. CPU is the built-in host marcher; OMP, CUDA, HIP and SYCL name a Kokkos plugin and bypass the mesh-size floors (an absent plugin or device falls back to CPU with a notice). AUTO picks a device plugin above the device floor, the OpenMP plugin above its own floor, else CPU. The OPENSWMM_2D_BACKEND environment variable overrides the key. |
+
+Optional rotating flow and horizontal mixing
+
+These processes require CPU FULL_SWE with LTS_TIERS 1 and uncoupled surface hydraulics; active groundwater, transport, heat, snow or 1D node coupling is refused. Defaults leave both processes disabled. See @ref hydraulics_ref_ch9_two_dimensional for the momentum sources, numerical qualification and limitations.
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| CORIOLIS | OFF / LATITUDE / CONSTANT_F | OFF | Selects no rotation, a Coriolis parameter computed from latitude, or a directly authored parameter. LATITUDE requires CORIOLIS_LATITUDE; CONSTANT_F requires CORIOLIS_F. |
+| CORIOLIS_LATITUDE | finite degrees north in [-90, 90] / UNSET | Unset | Latitude used in LATITUDE mode; UNSET clears the authored value. Inactive values remain stored. |
+| CORIOLIS_F | finite number, s⁻¹ / UNSET | Unset | Signed Coriolis parameter used in CONSTANT_F mode; UNSET clears the authored value. Inactive values remain stored. |
+| TURBULENCE_MODEL | NONE / SMAGORINSKY / MIXING_LENGTH | NONE | Selects no horizontal mixing, conservative depth-integrated Smagorinsky momentum mixing (filter width from cell area), or the same operator with a shear-based depth mixing length (vorticity times a length set by water depth, capped near boundaries). This does not add scalar turbulent diffusivity or a wall-damping model. |
+| SMAGORINSKY_CS | finite dimensionless number ≥ 0 | 0.10 | Smagorinsky coefficient, used with filter width equal to the square root of cell area; 0 gives zero eddy viscosity. Only active under TURBULENCE_MODEL SMAGORINSKY. |
+| EDDY_VISCOSITY_BACKGROUND | finite number ≥ 0, m²/s | 0 | Constant horizontal eddy viscosity ν0 added to the closure's eddy viscosity (SMAGORINSKY or MIXING_LENGTH). It is a user parameter, not a calibrated constant: it does not scale with depth, velocity or model size. Inactive under TURBULENCE_MODEL NONE; an inactive value remains stored. |
+| MIXING_LENGTH_COEFFICIENT | finite dimensionless number ≥ 0 | 0.5 | Coefficient c of the mixing length l = min(c·h, κ·d) used by TURBULENCE_MODEL MIXING_LENGTH, where h is the cell depth, κ = 0.41 and d the distance to the nearest mesh boundary edge; νt = ν0 + l² times the vorticity magnitude in each cell. The default 0.5 is the depth-averaged horizontal mixing length reported by Stansby (2003, 2006). Only active under MIXING_LENGTH; an inactive value remains stored. |
 
 Time control
 
@@ -2293,6 +2503,13 @@ Coupling to the 1D network
 | COUPLING_AREA | AUTO / DEFAULT | DEFAULT | AUTO derives the exchange area of each coupling row that did not author an AREA from the largest connected conduit (1.25 times its full-flow area, clamped to 0.05 .. 2.0 square metres). DEFAULT keeps the authored or default area. |
 | COUPLING_SYNC | >= 0, seconds | 0 | 0 co-advances the 2D domain every routing step. A positive value batches the 2D advance over roughly that span (clamped at run time to the routing step .. 60 s); the held-exchange error grows with the span. |
 | COUPLING_IN_FLOODING | YES / TRUE / NO / FALSE | NO | YES books the 1D-to-2D spill into the 1D report's Flooding Loss row instead of its own 2D Coupling Outflow row. Changes the report only; routed volumes are identical. |
+| COUPLING_LAW | ORIFICE / WEIR_ORIFICE | ORIFICE | Exchange law for junction/storage coupling points. WEIR_ORIFICE selects the structure-aware weir/orifice law; a node's LAW in [2D_NODE_COUPLING] overrides this choice. |
+| COUPLING_HEAD | CELL / VERTEX / STENCIL_WET_MEAN | CELL | Surface head sampled for coupling: the mapped cell, vertex reconstruction, or wet-cell stencil mean. |
+| COUPLING_COEFFS | DEFAULT / RUBINATO2017 / RUBINATO2017_LOWER / RUBINATO2017_UPPER | DEFAULT | Coefficient preset for WEIR_ORIFICE. A node's COEFFS and individual CW, CSW, COI and COO values override the global preset; an authored legacy map-row Cd overrides both orifice coefficients. |
+| COUPLING_POND_MODE | FOOTPRINT / CHAMBER / TRACKING | FOOTPRINT | Above-rim pond-area policy: the mapped surface footprint, the 1D chamber area, or a relaxed tracking area. |
+| COUPLING_POND_RELAX | >= 0, seconds | 0 | Relaxation time for TRACKING; 0 selects five routing steps. |
+| COUPLING_RIM_BAND | DEFAULT or >= 0, metres | DEFAULT | Height above the rim over which pond area ramps in smoothly. DEFAULT selects 0 for FOOTPRINT and 0.05 m for CHAMBER or TRACKING. Always metres. |
+| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for WEIR_ORIFICE and disables it for ORIFICE. |
 
 Rainfall, evaporation and infiltration
 
@@ -2312,6 +2529,15 @@ Groundwater
 | GROUNDWATER | YES / ON / NO / OFF / AUTO | AUTO | Process enable for the integrated 2D subsurface. AUTO runs the kernel when any [2D_AQUIFER_OPTIONS], [2D_AQUIFER] or [2D_AQUIFER_NODE] row was authored; NO keeps the rows and runs without the subsurface; YES with no rows warns. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Alias of the [2D_AQUIFER_OPTIONS] key of the same name. A value spelled here is folded into [2D_AQUIFER_OPTIONS] when the model opens and is never stored in two places. |
 
+Heat
+
+| Keyword | Values | Default | Description |
+|---|---|---|---|
+| HEAT_MODEL | TRANSPORT_ONLY / COUPLED | TRANSPORT_ONLY | COUPLED enables the mesh water/bed energy solver. Both modes require [OPTIONS] HEAT_TRANSPORT and an active temperature row; TRANSPORT_ONLY carries temperature without the coupled mesh energy model. |
+| BED_HEAT_MODEL | NONE / LOCAL_STORAGE / GROUND_COLUMN | NONE | Selects no bed store, a finite local bed store, or a ground column. LOCAL_STORAGE cannot overlap an active aquifer; use GROUND_COLUMN for the shared porous thermal column. |
+| HEAT_SURFACE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's surface exchange setting; YES or NO overrides it for the mesh. |
+| HEAT_RADIATIVE_EXCHANGE | AUTO / YES / NO | AUTO | AUTO inherits the project heat module's radiative exchange setting; YES or NO overrides it for the mesh. |
+
 Transport
 
 | Keyword | Values | Default | Description |
@@ -2330,7 +2556,7 @@ Output
 | OUTPUT_FILE | path (one token; quote a path containing spaces) | none | 2D results file (HDF5, CF/UGRID), resolved relative to the input file's directory. When absent no 2D results file is written. |
 | OUTPUT_PRECISION | FLOAT32 (F32, SINGLE) / FLOAT64 (F64, DOUBLE) | FLOAT32 | Storage type of the time-varying datasets and envelopes of the results file. Mesh geometry always stays float64. |
 | OUTPUT_COMPRESSION | 0 .. 9 | 4 | zlib level of the chunked datasets; the byte-shuffle filter precedes it whenever the level is above 0. 0 is none. |
-| REPORT_2D_VARIABLES | DEFAULT / MINIMAL / ALL / NONE, or any list of DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION COUPLING GRADIENTS CONTINUITY ENVELOPES BUILDUP GROUNDWATER GW_DETAILED | DEFAULT | Dataset groups written to the results file (space- or comma-separated; presets and tokens may be mixed). DEPTH is always included. DEFAULT is DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION ENVELOPES BUILDUP GROUNDWATER; MINIMAL is DEPTH NODE_HEAD ENVELOPES. Unselected groups are not created in the file. |
+| REPORT_2D_VARIABLES | DEFAULT / MINIMAL / ALL / NONE, or any list of DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION COUPLING GRADIENTS CONTINUITY ENVELOPES BUILDUP GROUNDWATER GW_DETAILED HEAT | DEFAULT | Dataset groups written to the results file (space- or comma-separated; presets and tokens may be mixed). DEPTH is always included. DEFAULT is DEPTH VELOCITY EDGE_FLUX NODE_HEAD SPECIES RAINFALL INFILTRATION ENVELOPES BUILDUP GROUNDWATER; MINIMAL is DEPTH NODE_HEAD ENVELOPES. HEAT adds optional water, bed, soil, and mesh-connected LID temperature/energy/capacity fields, static LID-to-node/face/physical-layer mapping, signed cumulative LID/ground contact energy, and cumulative energy-budget fields when thermal owners are active. Contact receipts are positive into the LID layer and equal-and-opposite to the soil-side `lid_contact_j` budget. Zero-capacity LID cells report zero energy/capacity and NaN temperature. Unselected groups are not created in the file. |
 | REPORT_2D_SPECIES | ALL, or a list of species names | ALL | Species rows written to the results file. ALL writes every row the transport layout carries. |
 | REPORT_2D_STEP | HH:MM:SS, HH:MM or seconds | 0 | 2D-only report interval. 0 follows [OPTIONS] REPORT_STEP; otherwise it must be a positive multiple of REPORT_STEP (checked at start). |
 
@@ -2416,7 +2642,7 @@ InitDepth    initial water depth in the mesh's length units (ft or m); must be >
 Tag    optional classification name of the cell, matched by [2D_INFILTRATION_DEFAULTS] and by the TAG scope of the aquifer, quality and groundwater sections, and usable instead of the index in [2D_TRIANGLE_NODE_MAP].
 
 Remarks:
-Cells are numbered 0, 1, 2, ... in file order, triangles first and then every [2D_QUADS] row; that unified 0-based index is the TRI column of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY], and the CELL column (1-based) of the other cell-addressed sections. A triangle row that follows a quad row is a parse error.
+Cells are numbered 0, 1, 2, ... in file order, triangles first and then every [2D_QUADS] row; that unified 0-based index is the TRI column of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] and the Cell column of [2D_INITIAL_HGL], and the CELL column (1-based) of the other cell-addressed sections. A triangle row that follows a quad row is a parse error.
 
 The fifth column is ambiguous by design: when it parses as a number it is InitDepth and the sixth column is Tag; otherwise it is Tag. The engine's writer emits InitDepth on every row whenever any cell carries a depth or a tag, so files it wrote are unambiguous.
 
@@ -2469,7 +2695,7 @@ Parameters:
 Path    absolute path, or a path relative to the directory of the input file. Surrounding double quotes are stripped; an unquoted path containing spaces is rejoined from its tokens.
 
 Remarks:
-Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
+Only the first FILE line of the section is read. The conventional extension is `.2dm`, but the file is plain input-file text: any of [2D_OPTIONS], [2D_VERTICES], [2D_TRIANGLES], [2D_QUADS], [2D_INITIAL_VELOCITY], [2D_INITIAL_HGL], [2D_VERTEX_NODE_MAP], [2D_TRIANGLE_NODE_MAP], [2D_BOUNDARY_CONDITIONS], [2D_EDGE_CONVEYANCE], [2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_BOUNDARY_QUALITY], [2D_INFILTRATION_OPTIONS], [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], with the same grammar as here. It may not contain [2D_MESH_FILE] itself, and it does not carry the aquifer, coverage, loading, curb-length or [GW_*] sections, which stay in the main file.
 
 The external file is parsed after the main file. Per section, the external file wins: a section present in both replaces the inline rows rather than adding to them, and its [2D_OPTIONS] values override inline ones. Its own `;; UNITS:` header is honoured (see [2D_VERTICES]). A missing or unreadable file is fatal when the model is opened for a run.
 
@@ -2534,6 +2760,61 @@ The exchange law, the rim gate and the outfall behaviour are those of [2D_VERTEX
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:769-820 (registration 1267-1270) -->
+
+### Section: [2D_NODE_COUPLING] {#engine_manual_sect_2D_NODE_COUPLING}
+
+Purpose:
+Assigns a node's 1D/2D coupling structure type and optional local parameters.
+The row is node data and is retained even when no mesh is present; spatial
+coupling still requires [2D_VERTEX_NODE_MAP] or [2D_TRIANGLE_NODE_MAP].
+
+Format:
+```
+Node  Type  (KEY=VALUE ...)
+```
+
+Parameters:
+Node    name of an existing 1D node; at most one row per node.
+Type    NONE, MANHOLE, GRATE, CURB, OPEN or OUTFALL.
+
+| Key | Values / units | Meaning |
+|---|---|---|
+| D | > 0, project length units | Manhole diameter. |
+| PERIMETER | > 0, project length units | Weir crest length. |
+| AREA | > 0, project area units | Orifice/open area. |
+| CHAMBER_AREA | > 0, project area units | 1D chamber plan area above the rim. |
+| LID_OPEN_FRACTION | > 0 and <= 1 | Open fraction of the lid. |
+| CREST | NODE_RIM / MESH_BED / MAX / MIN | Crest elevation policy; MAX/MIN choose between node rim and mapped mesh bed. Default NODE_RIM. |
+| COEFFS | DEFAULT / RUBINATO2017 / RUBINATO2017_LOWER / RUBINATO2017_UPPER | Local WEIR_ORIFICE coefficient preset. |
+| CW / CSW | > 0 | Free/submerged weir coefficients. |
+| COI / COO | > 0 | Surface-to-sewer / sewer-to-surface orifice coefficients. |
+| LAW | ORIFICE / WEIR_ORIFICE | Local exchange law, overriding [2D_OPTIONS] COUPLING_LAW. |
+| SPREAD | >= 0, project length units | OUTFALL discharge spread radius. |
+| TAILWATER_RELAX | >= 0, seconds | OUTFALL tailwater relaxation time. |
+
+Remarks:
+NONE accepts no keys and suppresses that node's map rows. OUTFALL accepts
+only SPREAD and TAILWATER_RELAX; those keys are refused for all other types.
+An outfall may be OUTFALL or NONE, and OPEN requires a storage node.
+Unspecified types default to OUTFALL for outfalls, OPEN for storage, MANHOLE
+for dividers and ordinary junctions, and NONE for inlet or virtual junctions.
+
+All numeric parameters must be finite; duplicate nodes, duplicate keys,
+unknown keys and invalid type/key combinations are errors. Keys use the
+single-token KEY=VALUE spelling. WEIR_ORIFICE resolves its geometry and
+coefficients from these overrides and the global defaults; a legacy map-row
+Area or Cd retains precedence over the corresponding resolved area or
+orifice coefficients. These parameters do not turn an unmapped node into
+a spatial coupling point.
+
+Example:
+```
+[2D_NODE_COUPLING]
+J1 MANHOLE LAW=WEIR_ORIFICE D=1.2 CREST=NODE_RIM
+OUT OUTFALL SPREAD=2 TAILWATER_RELAX=5
+```
+
+<!-- source: src/engine/core/NodeCoupling2D.cpp; src/engine/2d/coupling/ExchangeStructure.cpp -->
 
 ### Section: [2D_BOUNDARY_CONDITIONS] {#engine_manual_sect_2D_BOUNDARY_CONDITIONS}
 
@@ -2621,6 +2902,29 @@ This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:702-725 (registration 1257-1260) -->
 
+### Section: [2D_INITIAL_HGL] {#engine_manual_sect_2D_INITIAL_HGL}
+
+Purpose:
+Sets the initial water-surface elevation of selected cells, as an alternative to the InitDepth column of [2D_TRIANGLES] and [2D_QUADS].
+
+Format:
+```
+Cell  HGL
+```
+
+Parameters:
+Cell    0-based unified cell index (the TRI column of files the engine writes), or `*` for every cell.
+HGL    initial water-surface elevation, in the mesh's length units (ft or m), on the datum of the [2D_VERTICES] Z column.
+
+Remarks:
+Rows apply in file order and a later row overrides an earlier one, so a `*` row followed by cell rows gives a level pool with local overrides. A cell with an HGL ignores its InitDepth; unlisted cells keep theirs. HGL must be a finite number, and a cell index outside the mesh is a parse error. Rows refer to cells already read, so the section must follow [2D_TRIANGLES] and [2D_QUADS] in the same file; when the mesh is in a [2D_MESH_FILE], put the section in that file. Extra tokens are ignored.
+
+HGL is scaled like the vertex elevations, so the `;; UNITS: SI (m)` header of [2D_VERTICES] applies to it too. When the model initializes, each HGL is converted to a cell volume and clamped at the cell invert, so an HGL at or below the bed starts the cell dry. If the HGL leaves every cell it is given for dry, the engine issues a warning, which usually means a datum or unit mismatch. A coupled 1D node does not take its initial depth from the 2D level; give it a matching initial depth to avoid an exchange in the first step. See @ref hydraulics_ref_ch9_two_dimensional, section 9.3.
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/input/SectionHandlers2D.cpp:1392-1431 (registration 2320-2324) -->
+
 ### Section: [2D_INFILTRATION_OPTIONS] {#engine_manual_sect_2D_INFILTRATION_OPTIONS}
 
 Purpose:
@@ -2699,13 +3003,109 @@ P1 .. P5    the method's positional parameters, laid out exactly as in [2D_INFIL
 Dest    LOST (default), SUBCATCH_AQUIFER or AQUIFER_2D.
 
 Remarks:
-Among the [2D_*] sections that address a cell by a bare index column, this is the only 1-based one; the sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY] are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
+The bare cell-index columns in [2D_INFILTRATION] and [2D_SNOW] are 1-based. The sections that spell CELL as a scope keyword ([2D_INITIAL_QUALITY], [2D_INITIAL_BED_QUALITY], [2D_AQUIFER], the quality and [GW_*] sections) are 1-based as well, whereas the TRI columns of [2D_INITIAL_VELOCITY], [2D_BOUNDARY_CONDITIONS] and [2D_BOUNDARY_QUALITY], and the Cell column of [2D_INITIAL_HGL], are 0-based. Only the lower bound is checked at parse; a cell beyond the mesh is reported at initialise. A cell row wins over any tag or `*` row of [2D_INFILTRATION_DEFAULTS].
 
 The section may also be placed in the external mesh file, where it replaces the inline rows.
 
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:982-1019,1093-1117 (registration 1296-1297) -->
+
+### Section: [2D_SNOW_OPTIONS] {#engine_manual_sect_2D_SNOW_OPTIONS}
+
+Purpose:
+Controls mesh snow processing and its update interval independently of subcatchment snow.
+
+Formats:
+```
+SNOWMELT   AUTO / YES / NO
+SNOW_STEP  DEFAULT / Step
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| SNOWMELT | AUTO | AUTO processes assigned cells; NO retains authored assignments without running mesh snow. YES requires an assignment and at least one active cell with a weather footprint at initialization. |
+| SNOW_STEP | DEFAULT | Inherits [TEMPERATURE] SNOW_STEP. An explicit interval uses seconds or HH:MM[:SS] and must be from 1 to 21600 seconds. DEFAULT restores inheritance. |
+
+Remarks:
+[OPTIONS] IGNORE_SNOWMELT YES disables both subcatchment and mesh snow, including when mesh SNOWMELT is YES. Selecting YES does not assign a snowpack. Assign cells through [2D_SNOW_DEFAULTS] or [2D_SNOW]; cells with no resolved pack pass precipitation through without mesh snow processing.
+
+When degree-day mesh snow and 2D ground conduction are both active, the soil column retains its configured top boundary independently of degree-day melt. AIR, FIXED, TIMESERIES, HEAT_FLUX and FLUX_TIMESERIES are soil-side external energy terms; SURFACE_WATER keeps its existing surface-water/soil coupling. Degree-day snow has no energy state, so no combined snow/soil energy closure is reported. For assigned UEB cells with an active 2D ground column, modeled contact replaces the pack's prescribed `QG` over the accepted snow-covered contact area. The contact uses UEB surface temperature and the soil top half-layer plus authored surface resistance; accepted soil joules are applied with the opposite sign to the UEB energy ledger. Cells or area without a modeled UEB contact keep their configured external soil boundary.
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
+### Section: [2D_SNOW_DEFAULTS] {#engine_manual_sect_2D_SNOW_DEFAULTS}
+
+Purpose:
+Assigns a named snowpack to the whole mesh or to cells carrying a specific tag.
+
+Formats:
+```
+*          SNOWPACK Name (Key Value ...)
+Tag        SNOWPACK Name (Key Value ...)
+TAG Tag    SNOWPACK Name (Key Value ...)
+```
+
+Parameters:
+Tag    exact cell tag from [2D_TRIANGLES] or [2D_QUADS]; `*` is the mesh-wide fallback. The TAG prefix is optional; quote tags or names containing spaces.
+Name    named pack from [SNOWPACKS], or NONE to disable snow for this scope.
+
+| Override key | Units and accepted range | When omitted |
+| --- | --- | --- |
+| FC | Forest-cover fraction, 0 to 1 | Inherit from the named pack or a broader mesh row. |
+| F | Nonnegative precipitation drift multiplier | Inherit from the named pack or a broader mesh row. |
+| QG | Ground heat flux in W/m², either sign | Inherit from the named pack or a broader mesh row. |
+| AEP | Positive extinction depth in m | Inherit from the named pack or a broader mesh row. |
+| SLOPE | Degrees, at least 0 and less than 90 | Use cell geometry, unless supplied by a broader mesh row. |
+| ASPECT | Degrees, 0 to 360 | Use cell geometry, unless supplied by a broader mesh row. |
+
+Remarks:
+Override units are fixed in both US and SI projects. Keys on a row must be unique and values finite. Supply SLOPE and ASPECT together, or omit both. A row's pack replaces the broader assignment; explicitly supplied override fields replace broader fields, while omitted fields retain them. Resolution applies the `*` row first, then the exact tag, then the cell row in [2D_SNOW]. A later authored row with the same tag replaces that tag's entire earlier row. NONE disables snow even when a broader row assigned a pack.
+
+Example:
+```
+[2D_SNOW_DEFAULTS]
+* SNOWPACK SP
+TAG Forest SNOWPACK SP FC 0.6
+TAG Road SNOWPACK NONE
+```
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
+
+### Section: [2D_SNOW] {#engine_manual_sect_2D_SNOW}
+
+Purpose:
+Overrides the snowpack assignment and optional site fields of an individual mesh cell.
+
+Formats:
+```
+Cell       SNOWPACK Name (Key Value ...)
+CELL Cell  SNOWPACK Name (Key Value ...)
+```
+
+Parameters:
+Cell    positive, one-based index in the combined triangle/quad cell ordering. The CELL prefix is optional. Cells beyond the loaded mesh are refused at initialization when mesh snow is enabled.
+Name    named pack from [SNOWPACKS], or NONE to disable this cell's snow processing.
+
+Remarks:
+The FC, F, QG, AEP, SLOPE and ASPECT keys and inheritance rules are those of [2D_SNOW_DEFAULTS]. A cell row has highest priority; SLOPE and ASPECT must be supplied together. A later row for the same cell replaces its entire earlier row. Input-file indices are one-based; Python and C API snapshot indices are zero-based.
+
+Example:
+```
+[2D_SNOW]
+CELL 1 SNOWPACK SP SLOPE 15 ASPECT 180
+CELL 2 SNOWPACK NONE
+```
+
+Each assigned cell keeps its own snow water, energy, thermal history and accepted ledger. It shares the named pack's parameters with subcatchments, not their snow state. The pack's resolved model may be DEGREE_DAY or UEB; energy-balance fields unavailable for degree-day cells are reported as NaN. Liquid released by snow becomes surface input rather than being counted as a second precipitation source.
+
+This section requires a build with 2D support and has no counterpart in SWMM 5.
+
+<!-- source: src/engine/hydrology/surface/MeshSnowConfig.cpp; src/engine/hydrology/surface/MeshSnow.cpp -->
 
 ### Section: [2D_SURFACE_OWNERSHIP] {#engine_manual_sect_2D_SURFACE_OWNERSHIP}
 
@@ -2764,10 +3164,24 @@ Parameters:
 | MODE | MESH / PER_SUBCATCH | MESH | MESH runs one aquifer cell under every mesh cell. PER_SUBCATCH runs one degenerate cell per subcatchment with no lateral flow, exchanging with the outlet node. |
 | DUNNE | YES / TRUE / 1 / NO / FALSE / 0 | YES | Saturation-excess transfer from the aquifer to the surface cell above it. Exists for comparison runs; NO breaks the mass balance between the two domains. |
 | GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. |
+| GW_CLOCK | SHARED / INDEPENDENT | SHARED | SHARED schedules groundwater on the surface time steps. The experimental INDEPENDENT mode schedules each aquifer cell from its stability limit and elapsed simulation time. It requires first-order CPU integration. |
+| GW_BASE_STEP | AUTO / positive seconds | AUTO | Base interval for the independent clock. Cell periods are powers of two times this interval. Stiff cells can take shorter steps. AUTO uses 1 s, and 0.125 s for the cells that hold a node bed exchanging with the aquifer (the ladder's base is then 0.125 s, and every other cell keeps 1 s as its accuracy floor). |
+| GW_BUDGET_FRACTION | (0,1] | 0.5 | Fraction of directional storage/head room consumed before an independent update. |
+| GW_HEAD_TOLERANCE | (0,1) | 0.05 | Relative head-change budget, with a fixed 0.01 m head floor. |
+| GW_MAX_STEP | Positive seconds | 3600 | Maximum elapsed groundwater step. Its own period constraint is separate from physical and accuracy check allowances. Long surface intervals can contain internal groundwater checks that gather previously completed receipts. |
+| GW_BINDS_SURFACE_DT | YES / NO | YES under SHARED, NO under INDEPENDENT | YES includes the groundwater stability limit when selecting the surface step. SHARED always includes this limit. |
 | LINK_SEEPAGE | AUTO / NONE / TWO_WAY | AUTO | AUTO delivers conduit seepage to the aquifer cells crossed by the conduit, weighted by the length in each cell. NONE leaves seepage as a system loss. TWO_WAY uses a signed conductance law, allowing a conduit below the water table to gain water. Per-conduit overrides are set in [2D_AQUIFER_LINKS]. |
 
 Remarks:
 Authoring any [2D_AQUIFER_OPTIONS], [2D_AQUIFER], [2D_AQUIFER_NODE] or [2D_AQUIFER_LINKS] row turns the kernel on unless [2D_OPTIONS] GROUNDWATER NO is set. A value of GW_ET spelled in [2D_OPTIONS] is folded into this section when the model opens. The writer emits only the keys that differ from their defaults.
+
+With the independent clock, reported groundwater head is the last completed cell state. Water received since that update is included in storage and continuity. Incoming and outgoing transfers have separate budgets; layered contacts use the room in their receiving layer. The native head-rate estimate includes internal column recharge as well as lateral and boundary flow and deep loss. `GW_HEAD_TOLERANCE` controls a scheduling budget, rather than guaranteeing a global solution error. Accuracy limits alone never shorten the groundwater period below `GW_BASE_STEP`; physical stability can require shorter steps. Use a smaller base interval when rapid exchange needs finer accuracy. Node exchange is the case AUTO covers: at a 1 s base, the per-window exchange of a rapidly filling node bed differed from SHARED by up to 7.9%, while at 0.125 s it matched.
+
+For CLOSED_FORM columns thinner than 1 mm, INDEPENDENT computes recharge from the actual column storage geometry while retaining the existing 1 mm rate-coefficient guard. SHARED retains the legacy length floor in both calculations, so terminal filling transfers can differ between the modes.
+
+The CPU marcher targets absolute producer checks at the base cadence when base or shorter groundwater periods are occupied, and for the first coupled check before delivered rates are known. An authored `GW_MAX_STEP` that selects a period below the base also refines these producer checks to that ceiling-selected period. This keeps an entire producer packet from being concentrated into the last of several finer groundwater updates. Physical stiffness alone retains internal subcycling and the base producer cadence. Infiltration capacity is refreshed at absolute `INFIL_STEP` crossings and after cell updates.
+
+Clock statistics report budget-triggered updates, maximum incoming/outgoing budget exceedance in m³, exceedance histograms and the largest single-update return depth in m. Histogram bins count scheduler detections; physical firing counts include forcing-knot subintervals. Checkpoints preserve receipt-rate limits, rebuild per-cell deadline ordering, and validate scheduling-policy identity along with clock tolerances. In a CLOSED_FORM cell, the independent clock settles the soil column before releasing excess water at the ground surface. `INDEPENDENT` remains experimental: the complete accuracy, convergence and event-performance qualification is still open. `SHARED` remains the default.
 
 The kernel is described in hydrology Chapter 9 (mesh groundwater).
 
@@ -2886,6 +3300,44 @@ This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseAquiferLinkLine, resolveLinkSeepage, writeSubsurfaceSections); src/engine/2d/subsurface/SubsurfaceData.hpp (GwLinkRow, GwLinkMode); src/engine/2d/SurfaceRouter2D.cpp (publishLinkCoupling) -->
 
+### Section: [2D_AQUIFER_BOUNDARIES] {#engine_manual_sect_2D_AQUIFER_BOUNDARIES}
+
+Purpose:
+Prescribes hydraulic forcing at exterior edges of the integrated mesh aquifer.
+An unspecified edge is no-flow. These boundaries require MODE MESH in
+[2D_AQUIFER_OPTIONS] and an active aquifer covering the boundary cell.
+
+Format:
+```
+CELL Cell EDGE Edge HEAD CONST Head
+CELL Cell EDGE Edge HEAD SERIES Tseries
+CELL Cell EDGE Edge FLOW CONST Flow
+CELL Cell EDGE Edge FLOW SERIES Tseries
+```
+
+Parameters:
+Cell    1-based unified mesh cell index.
+Edge    0-based local edge: 0 .. 2 for triangles, 0 .. 3 for quads.
+Head    prescribed groundwater head elevation, in project length units.
+Flow    total discharge across the edge, in cubic metres per second, positive inward; always SI, including in US-unit projects.
+Tseries    a [TIMESERIES] supplying head or flow in the same units as its constant counterpart.
+
+Remarks:
+Each row has exactly seven tokens. Constants must be finite. Duplicate
+hydraulic edges, interior edges, out-of-range cell/edge indices and cells
+without active aquifer coverage are refused. Local edge e joins vertices
+(e+1) modulo the cell's vertex count and (e+2) modulo that count.
+
+HEAD and time-varying FLOW may reverse. Whenever inflow is possible, every
+enabled groundwater species needs an explicit concentration in
+[GW_BOUNDARY_QUALITY], including zero. Extraction uses interior donor
+composition. Quality rows need a matching hydraulic boundary; a quality row
+alone supplies no water. A concentration and one independent imposed
+mass/heat flux may coexist for each edge/species. FLOW is a total edge
+rate, unlike the per-length imposed species fluxes in [GW_BOUNDARY_QUALITY].
+
+<!-- source: src/engine/2d/subsurface/SubsurfaceSections.cpp (parseAquiferBoundaryLine); src/engine/2d/gw/GwBoundaryForcing.cpp -->
+
 ### Section: [2D_INITIAL_QUALITY] {#engine_manual_sect_2D_INITIAL_QUALITY}
 
 Purpose:
@@ -2912,6 +3364,33 @@ The section may also be placed in the external mesh file. The surface transport 
 This section has no counterpart in SWMM 5.
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:1124-1167 (registration 1213-1216); src/engine/2d/SurfaceRouter2D.cpp:1104-1160 -->
+
+### Section: [2D_INITIAL_BED_QUALITY] {#engine_manual_sect_2D_INITIAL_BED_QUALITY}
+
+Purpose:
+Sets initial pollutant or water-age concentration in the finite porewater of a local 2D mesh bed.
+
+Format:
+```
+*          Species  Conc
+TAG name   Species  Conc
+CELL n     Species  Conc
+```
+
+Parameters:
+name    a cell tag from [2D_TRIANGLES] or [2D_QUADS].
+n    1-based unified cell index.
+Species    name of a carried pollutant or reaction species, or `__WATER_AGE__` when water age is on. `__TEMPERATURE__` is not a bed species; bed temperature is initialized by the heat model.
+Conc    concentration in the species' units, or water age in hours. Must be finite and >= 0.
+
+Remarks:
+The same `*`, then TAG, then CELL precedence applies as in [2D_INITIAL_QUALITY]. The seeded mass is concentration × local-bed pore volume (cell area × bed thickness × porosity), and the seed is saved as the bed's initial mass for exchange accounting. This section requires `HEAT_MODEL COUPLED` and `BED_HEAT_MODEL LOCAL_STORAGE`. Groundwater-owned `GROUND_COLUMN` porewater is initialized through [GW_INITIAL_QUALITY]. Unknown species, unmatched tags, out-of-range cells or an inactive local bed are fatal at initialise.
+
+The section may also be placed in the external mesh file. The mesh bed and hyporheic formulation is in @ref hydraulics_ref_ch9_two_dimensional.
+
+This section has no counterpart in SWMM 5.
+
+<!-- source: src/engine/2d/input/SectionHandlers2D.cpp (2D_INITIAL_BED_QUALITY registration); src/engine/2d/SurfaceRouter2D.cpp (local bed porewater initialization) -->
 
 ### Section: [2D_BOUNDARY_QUALITY] {#engine_manual_sect_2D_BOUNDARY_QUALITY}
 
@@ -3030,7 +3509,9 @@ CONDUCTION             YES / NO
 SURFACE_THERMAL_BC     AIR
 SURFACE_THERMAL_BC     SURFACE_WATER
 SURFACE_THERMAL_BC     FIXED  Temp
+SURFACE_THERMAL_BC     HEAT_FLUX  Flux
 SURFACE_THERMAL_BC     TIMESERIES  Tseries
+SURFACE_THERMAL_BC     FLUX_TIMESERIES  Tseries
 DEEP_THERMAL_BC        GEOTHERMAL_FLUX  Flux   (DEPTH z)
 DEEP_THERMAL_BC        FIXED_TEMP       Temp   (DEPTH z)
 DEEP_THERMAL_BC        TIMESERIES       Tseries  (DEPTH z)
@@ -3048,7 +3529,7 @@ Parameters:
 | TRANSPORT_TEMPERATURE | YES / ON / NO / OFF | YES | Carry temperature in the aquifer. |
 | DISPERSION | YES / ON / NO / OFF | YES | Activate the dispersivities and molecular diffusivity of [GW_TRANSPORT_PARAMS]. |
 | CONDUCTION | YES / ON / NO / OFF | YES | Activate vertical and lateral heat conduction. |
-| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / TIMESERIES Tseries | AIR | Temperature at the top of the column when it is not inundated: the air temperature, the surface water, a fixed value (degrees C) or a [TIMESERIES]. |
+| SURFACE_THERMAL_BC | AIR / SURFACE_WATER / FIXED Temp / HEAT_FLUX Flux / TIMESERIES Tseries / FLUX_TIMESERIES Tseries | AIR | Top condition when the column is not inundated: air or surface-water temperature, a fixed value (degrees C), a heat flux (W/m²), or a temperature/flux [TIMESERIES]. |
 | DEEP_THERMAL_BC | GEOTHERMAL_FLUX Flux / FIXED_TEMP Temp / TIMESERIES Tseries, each optionally followed by DEPTH z | GEOTHERMAL_FLUX | Condition at the bottom of the column: a geothermal heat flux (W per sq m), a fixed temperature (degrees C) or a [TIMESERIES]; DEPTH z (>= 0, metres) places it. |
 | THERMAL_MIXING | ARITHMETIC / GEOMETRIC | ARITHMETIC | How the effective thermal conductivity of the soil-water mixture is averaged. |
 | C_DIFF | (0, 1] | 0.4 | Explicit diffusion Courant number bounding the transport step. |
@@ -3056,7 +3537,7 @@ Parameters:
 Remarks:
 FIXED and FIXED_TEMP require a number and GEOTHERMAL_FLUX a number; TIMESERIES requires a series name. DEPTH is read only as the fourth and fifth tokens of a DEEP_THERMAL_BC line. Naming a [GW_*] section preserves its authored configuration for the writer; active support depends on the specific option and aquifer kernel.
 
-The bulk aquifer transport kernel consumes enabled class switches and dispersion settings. CONDUCTION, thermal boundary conditions and the fuller thermal model remain separate implementation gaps; they must not be inferred from parser acceptance. Active named forcing is documented under [GW_SOURCES].
+When [OPTIONS] HEAT_TRANSPORT, [2D_OPTIONS] GROUNDWATER and the porous-equilibrium thermal model are active, CONDUCTION controls heat transfer within the thermal columns and supported boundaries are applied by the selected thermal owner. A parsed key alone does not establish activation: check the parent process, transport temperature state, model selection and surface coupling options. Active named forcing is documented under [GW_SOURCES].
 
 The intended formulation is described in hydrology Chapter 9 (mesh groundwater).
 
@@ -3219,7 +3700,7 @@ Value    finite constant or [TIMESERIES] name.
 Remarks:
 Series interpolate linearly and hold their endpoints outside the recorded range. Their absolute times are anchored to the complete model start datetime, including a non-midnight start. Flow times concentration is integrated over common linear intervals. Flow sign reversals are applied chronologically; extraction is limited by drainable water available at that interval, and its ledger records actual rather than requested delivery. Existing cross-cadence water and species transfers are apportioned by interval duration. This remains a numerically split groundwater scheme, not a claim of timestep-independent concentrations.
 
-Duplicate source names, duplicate species terms within a source, empty matched scopes, disabled or unknown species, unreadable or non-monotonic series, and invalid values produce diagnostics rather than successful inert forcing. Groundwater coupled to surface reconstruction order two is refused because that RK2 route does not yet advance the aquifer; select reconstruction order one.
+Duplicate source names, duplicate species terms within a source, empty matched scopes, disabled or unknown species, unreadable or non-monotonic series, and invalid values produce diagnostics rather than successful inert forcing. Reactive/thermal groundwater forcing requires reconstruction order one. The standalone CPU passive pollutant/age CLOSED_FORM/ENSLAVED/SIGMA RK2 profile accepts authored wells and hydraulic HEAD/FLOW edges; reactions, heat and borrowed owners remain guarded (Hydrology §9.11).
 
 Source injection/extraction and species inflow/outflow append separate public API, report, and HDF5 ledger terms without renumbering historical terms. HDF5 groundwater water/species ledger axes now have 14/15 terms, identified by their `terms` metadata. Native hotstarts carrying source species ledgers use version 7; new readers continue reading versions 1–6, including the original eleven-term version 6 species ledger. Version 7 is not readable by older engines.
 
@@ -3289,7 +3770,7 @@ matter.
 
 | Component id | Configuration file | Sections | Status |
 |---|---|---|---|
-| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` `[REACTION_SUBCATCHMENTS]` are recognised and refused until their phases | \status{Implemented} |
+| `org.hydrocouple.openswmm.reactions` | `model.rxn` (or embedded in the `.inp`) | `[REACTION_OPTIONS]` `[REACTION_SPECIES]` `[REACTION_COEFFICIENTS]` `[REACTION_TERMS]` `[REACTION_PIPES]` `[REACTION_TANKS]` `[REACTION_QUALITY]`; `[REACTION_SOURCES]` `[REACTION_PARAMETERS]` `[REACTION_PATTERNS]` `[REACTION_REPORT]` are supported as described below; `[REACTION_SUBCATCHMENTS]` supplies wet non-LID pool laws | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.ard` | `model.ard` | `[TRANSPORT_OPTIONS]` `[CONDUIT_DISPERSION]` `[TRANSPORT_BOUNDARIES]` `[TRANSPORT_SOURCES]`; `[STORAGE_MIXING]` is refused until phase E2b | \status{Implemented} |
 | `org.hydrocouple.openswmm.transport.lard` | none | none — the Lagrangian engine is selected by `[OPTIONS] QUALITY_SOLVER LAGRANGIAN` (alias `LARD`) and reads no component file; registering this id is refused with "arrives with plan phase T5" | \status{Planned} |
 | `org.hydrocouple.openswmm.heat` | `model.heat` | `[HEAT_SOURCES]` `[HEAT_FLUXES]` `[RADIATIVE_FLUXES]` `[SOLAR_RADIATION]` `[CLOUD_COVER]` `[SEDIMENT_EXCHANGE]` | \status{Implemented} |
@@ -3313,7 +3794,9 @@ SOLVER        EUL / RK5 / ROS2 / BDF2
 COUPLING      NONE / FULL
 RATE_UNITS    SEC / MIN / HR / DAY
 AREA_UNITS    FT2 / M2 / CM2
+WALL_GEOMETRY YES / NO
 TIMESTEP      value
+PATTERN_TIMESTEP value
 ATOL          value
 RTOL          value
 TEMPERATURE   value
@@ -3324,10 +3807,12 @@ Parameters:
 | Parameter | Meaning | Units / values | Default |
 |---|---|---|---|
 | `SOLVER` | Integrator for the RATE species. RK5 is explicit and cheapest for non-stiff kinetics; ROS2 and BDF2 are implicit and are the remedy when RK5 reports its substep cap. | EUL, RK5, ROS2 or BDF2 | RK5 |
-| `COUPLING` | NONE integrates one RATE species at a time with the others frozen at their start-of-step values (EPANET-MSX semantics); FULL integrates all RATE species simultaneously. A system with a single RATE species is always coupled. | NONE or FULL | NONE |
+| `COUPLING` | RATE species always integrate simultaneously. NONE updates EQUIL/FORMULA species at the end of the reaction step; FULL also updates them at every intermediate rate evaluation (EPANET-MSX coupling semantics). | NONE or FULL | NONE |
 | `RATE_UNITS` | Time unit of every RATE expression. The evaluated rate is multiplied by 1, 1/60, 1/3600 or 1/86400 to give a per-second rate. | SEC, MIN, HR or DAY | HR |
-| `AREA_UNITS` | Area unit recorded for wall-species expressions. | FT2, M2 or CM2 | FT2 |
+| `AREA_UNITS` | Area basis for WALL geometry and dry buildup density. | FT2, M2 or CM2 | FT2 |
+| `WALL_GEOMETRY` | Enable contact-area geometry and AV. Requires FULL coupling for WALL species. | YES or NO | NO |
 | `TIMESTEP` | Reaction step; 0 means follow the quality step. | value, 0 or greater | 0 |
+| `PATTERN_TIMESTEP` | Cyclic source-pattern interval, independent of RATE_UNITS. | seconds, > 0 | 3600 |
 | `ATOL` | Absolute tolerance of the integrator, used for every species that does not carry its own in `[REACTION_SPECIES]`. | value, greater than 0 | 1.0e-6 |
 | `RTOL` | Relative tolerance of the integrator, likewise. | value, greater than 0 | 1.0e-4 |
 | `TEMPERATURE` | Value of the expression variable `TEMP` for an element that has no heat-transport temperature (`HEAT_TRANSPORT OFF`, or before the heat state is seeded). | degrees C, any finite value | 20 |
@@ -3385,7 +3870,7 @@ Parameters:
 
 | Parameter | Meaning | Units / values | Default |
 |---|---|---|---|
-| Kind | PARAMETER: a coefficient that may later be overridden per element. CONSTANT: a fixed value. | PARAMETER or CONSTANT | required |
+| Kind | PARAMETER: a coefficient that may be overridden per node or link. CONSTANT: a fixed value. | PARAMETER or CONSTANT | required |
 | `Name` | Coefficient name, unique among coefficients and species. | text | required |
 | `Value` | Numeric value. | value | required |
 
@@ -3527,118 +4012,276 @@ refused as an unknown section.
 
 <!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:297-390,399,449-453; src/engine/transport/MsxInitialQuality.hpp:17-40 -->
 
-### Component section: [REACTION_SOURCES] {#engine_manual_sect_REACTION_SOURCES}
+### Component section: [REACTION_RAINFALL] {#engine_manual_sect_REACTION_RAINFALL}
 
-Purpose: \status{Planned}
-Reserved for per-element species sources of the reaction system. The tag is
-recognised so that a typo cannot hide behind it, but no row is parsed.
+Purpose: \status{Implemented}
+Sets the concentration of each reaction species in rainfall, corresponding
+to the rain concentration column of `[POLLUTANTS]`.
 
 Format:
 ```
-[REACTION_SOURCES]
-;; no row grammar is defined in this release
+Species   Concentration
 ```
 
 Parameters:
-None. No row is read.
+
+| Parameter | Meaning | Units / values | Default |
+|---|---|---|---|
+| `Species` | A species declared in `[REACTION_SPECIES]`. | text | required |
+| `Concentration` | Species concentration in rainfall. | species' own concentration units, 0 or greater | 0 |
 
 Remarks:
-Presence of the section in a `.rxn` file, or embedded in the `.inp`, is an
-error — "recognised but not yet supported — arrives with plan phase
-R-sources (post-R3)" — and the whole reactions configuration is rejected.
-Until it lands, species mass enters through the transport component's
-`[TRANSPORT_BOUNDARIES]` and `[TRANSPORT_SOURCES]`.
+Omitted species have zero rainfall concentration; omitting the section gives
+clean rainfall for every reaction species. A row missing its concentration,
+an undeclared species, a nonnumeric or negative concentration, or a second
+row for the same species is an error. These values describe rainfall quality;
+initial concentrations are set separately in `[REACTION_QUALITY]`
+(@ref engine_manual_sect_REACTION_QUALITY). On save, only nonzero rainfall
+concentrations are written.
 
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:399,455-468 -->
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:402-431,497-500; src/engine/transport/components/ReactionModule/ReactionsWriter.cpp:165-178; src/engine/data/ReactionData.hpp:126-128 -->
+
+### Component section: [REACTION_SOURCES] {#engine_manual_sect_REACTION_SOURCES}
+
+Purpose: \status{Implemented}
+Adds species load at a named network node through the external mass-rate seam
+shared by LEGACY, EULERIAN_ARD and LAGRANGIAN.
+
+Format:
+```
+CONC   Node   Species   Concentration   [Pattern]
+MASS   Node   Species   MassRate        [Pattern]
+FLOWPACED Node Species Concentration   [Pattern]
+SETPOINT  Node Species Concentration   [Pattern]
+```
+
+`CONC` multiplies the concentration by positive external and dry-weather
+inflow water at that node. It creates no water. `MASS` is a rate in the
+species' declared mass units per **second**, independent of `RATE_UNITS` and
+project flow units. The engine divides it by 28.317 litres/ft³ at the load
+seam. These rows add to any `[INFLOWS]` and `[DWF]` species loads; avoid
+specifying the same intended load in both places. Values must be finite and
+nonnegative. Only BULK species are accepted; duplicate node/species rows,
+unknown nodes, species or patterns, and unknown source kinds are errors. Omitted pattern or `*` means constant.
+
+FLOWPACED adds the specified concentration times arriving water volume to the mixed mass. Retained tank water is not dosed again merely because it remains in storage. SETPOINT adds the deficit needed to raise the complete mixed concentration to its target, only during positive water exchange; concentrations above the target are retained. Both require a physical mixing node and do nothing without arriving water or a wet mixed store. ARD applies its booster after each explicit node exchange, so the next face update uses that concentration. Patterns use the routing interval clock. The continuity report lists actual cumulative booster injection in declared species mass units. These semantics follow the [EPA MSX manual](https://nepis.epa.gov/Exe/ZyPURL.cgi?Dockey=P10188CK.TXT).
 
 ### Component section: [REACTION_PARAMETERS] {#engine_manual_sect_REACTION_PARAMETERS}
 
-Purpose: \status{Planned}
-Reserved for per-element overrides of PARAMETER coefficients. The tag is
-recognised; no row is parsed.
+Purpose: \status{Implemented}
+Overrides a PARAMETER coefficient on one network element.
 
 Format:
 ```
-[REACTION_PARAMETERS]
-;; no row grammar is defined in this release
+NODE   Node   Parameter   Value
+LINK   Link   Parameter   Value
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section is an error — "arrives with plan phase R-parameters
-(post-R3)" — and the whole reactions configuration is rejected. Until it
-lands, a `[REACTION_COEFFICIENTS]` PARAMETER behaves exactly like a CONSTANT.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:400,455-468 -->
+Values must be finite. CONSTANT coefficients cannot be overridden. Unknown
+references and duplicate element/parameter rows are errors. A missing row uses
+the current global coefficient. Terms and RATE, EQUIL and FORMULA expressions
+all see the element's override. An ARD cell uses its parent link's values; a
+Lagrangian segment uses its link's values. These overrides do not set 2D-cell,
+groundwater or LID-layer coefficients. Rows survive `.rxn` serialization.
 
 ### Component section: [REACTION_PATTERNS] {#engine_manual_sect_REACTION_PATTERNS}
 
-Purpose: \status{Planned}
-Reserved for time patterns applied to reaction sources. The tag is
-recognised; no row is parsed.
+Purpose: \status{Implemented}
+Defines cyclic, piecewise-constant multipliers for reaction node sources.
 
 Format:
 ```
-[REACTION_PATTERNS]
-;; no row grammar is defined in this release
+Pattern   Factor1   [Factor2 ...]
 ```
 
-Parameters:
-None. No row is read.
-
-Remarks:
-Presence of the section is an error — "arrives with plan phase R-sources
-(post-R3)" — and the whole reactions configuration is rejected. A
-time-varying boundary or source is available today as a `TIMESERIES` row of
-`[TRANSPORT_BOUNDARIES]` or `[TRANSPORT_SOURCES]`.
-
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:400,455-468 -->
+Repeating a pattern name appends factors, allowing continuation rows. Factors
+must be finite and nonnegative. `[REACTION_OPTIONS] PATTERN_TIMESTEP` sets the
+interval in **seconds**, default 3600, and must be positive. Factor zero is
+selected at simulation start, subsequent factors at successive intervals,
+then the list wraps. The current inflow-assembly date selects the factor;
+use routing steps that resolve changes. The clock is derived from simulation
+time and needs no mutable pattern cursor. A new hotstart run starts its own
+pattern clock; exact native checkpoint continuation of reaction models is
+not yet supported.
 
 ### Component section: [REACTION_REPORT] {#engine_manual_sect_REACTION_REPORT}
 
-Purpose: \status{Planned}
-Reserved for reaction-system reporting options. The tag is recognised; no row
-is parsed.
+Purpose: \status{Implemented}
+Selects reaction species columns in native output and output plugins using
+the engine's reported species list.
 
 Format:
 ```
-[REACTION_REPORT]
-;; no row grammar is defined in this release
+SPECIES   ALL       YES / NO
+SPECIES   Species   YES / NO
+```
+
+The default is all species. An optional ALL baseline must precede named
+species overrides. Duplicate baselines or species, undeclared species, and
+values other than YES or NO are errors. Selected species retain declaration
+order and trail pollutants, water age and temperature. Hidden species still
+react and participate in other expressions. Their removal from output does
+not change the internal species stride or the selected columns' unit codes.
+Ordinary `[REPORT]` options continue to select nodes, links and subcatchments;
+this section does not independently select elements. The routing continuity
+summary reports BULK species only: a WALL density is not a water-volume mass.
+
+### Component section: [REACTION_SUBSURFACE] {#engine_manual_sect_REACTION_SUBSURFACE}
+
+Purpose: \status{Implemented}
+Defines explicit groundwater BULK-species reactions independently of the
+network pipe/tank and surface reaction laws.
+
+Format:
+```
+*          SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+TAG  Name  SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+CELL Index SAT / UNSAT     Species RATE / EQUIL / FORMULA Expression
+*          LAYER Layer    Species RATE / EQUIL / FORMULA Expression
+TAG  Name  LAYER Layer    Species RATE / EQUIL / FORMULA Expression
+CELL Index LAYER Layer    Species RATE / EQUIL / FORMULA Expression
 ```
 
 Parameters:
-None. No row is read.
+Name    a mesh cell tag.
+Index    1-based unified mesh cell index.
+Layer    1-based unsaturated SIGMA layer index, counted from the surface downward.
+Species    a declared BULK species from [REACTION_SPECIES]; WALL targets are refused.
+Expression    kinetic rate, equilibrium residual or formula, according to the form; RATE follows [REACTION_OPTIONS] RATE_UNITS.
 
 Remarks:
-Presence of the section is an error — "arrives with plan phase R5" — and the
-whole reactions configuration is rejected. Species results are written with
-the pollutant results under the ordinary `[REPORT]` options.
+Precedence is global `*`, then TAG, then CELL. Under layered unsaturated
+transport, UNSAT laws run independently in each active layer; explicit
+LAYER laws override them. A LAYER request must resolve to a valid SIGMA layer.
+No PIPE or TANK expression is silently substituted when this section is absent.
+The model must enable the aquifer and corresponding groundwater transport.
 
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:401,455-468 -->
+Expressions may use supported species, coefficients and intermediate terms,
+plus DT (seconds), TEMP (degrees C), GW_THETA, GW_POROSITY, GW_SE and
+GW_DEPTH_M (metres). Pipe-only variables, reachable WALL dependencies,
+disabled pollutant dependencies and duplicate first-order decay ownership
+are refused. Aqueous RATE kinetics use aqueous volume, rather than reacting
+sorbed inventory at the same rate.
+
+Example (A and B must already be declared BULK species):
+```
+[REACTION_SUBSURFACE]
+* SAT A RATE -0.001*A
+* SAT B RATE 0.001*A
+```
+
+<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp (parseSubsurface); docs/design/groundwater-transport.md -->
 
 ### Component section: [REACTION_SUBCATCHMENTS] {#engine_manual_sect_REACTION_SUBCATCHMENTS}
 
-Purpose: \status{Planned}
-Reserved for reaction expressions in the subcatchment (runoff) scope. The tag
-is recognised; no row is parsed.
+Purpose: \status{Implemented}
+Defines a separate wet-pool reactor for each non-LID subcatchment.
 
 Format:
 ```
-[REACTION_SUBCATCHMENTS]
-;; no row grammar is defined in this release
+RATE / EQUIL / FORMULA   Species   Expression
+SUBCATCHMENT Name RATE / EQUIL / FORMULA Species Expression
 ```
 
-Parameters:
-None. No row is read.
+Global rows apply everywhere; a named row overrides that species on that subcatchment. Without global rows, unselected subcatchments retain their ordinary surface-quality closure. Duplicate named subcatchment/species rows are errors.
 
-Remarks:
-Presence of the section is an error — "arrives with plan phase R6" — and the
-whole reactions configuration is rejected. Reactions run in the pipe and tank
-scopes only.
+Only BULK targets and BULK dependencies are supported. Constants, global
+PARAMETER coefficients, terms, `DT` (seconds) and `TEMP` (degrees C) are
+available. With heat enabled TEMP is the beginning-of-step published runoff
+temperature; otherwise it is the configured fallback. Other hydraulic
+variables, pollutant references and WALL references (including through terms)
+are refused. NODE/LINK parameter overrides do not affect this scope.
 
-<!-- source: src/engine/transport/components/ReactionModule/ReactionsComponent.cpp:401,455-468 -->
+Each runoff step mixes retained ponded mass with rainfall and run-on inputs,
+integrates that pool over the runoff interval, then allocates its mass to
+infiltration, runoff and retained storage. Closing storage carries the
+remaining **mass**; evaporation removes water without removing solute. This
+is a first-order split batch model: incoming mass is mixed before reacting
+for the full interval. Resolve kinetic and forcing time scales with WET_STEP
+and check timestep sensitivity. It is not an exact continuously fed CSTR.
+
+Zero-volume pools do not react. Pools at or below one litre retain and route
+their mass without integrating concentrations. Dry residual mass is booked
+as remaining dry mass through the existing ponded-loss ledger. RATE
+overshoots are clamped with separate reaction-loss and clamp-addition rows;
+failed or negative algebraic steps retain the unreacted mixed inventory and
+warn. Reaction mass changes are recorded in runoff quality continuity.
+
+Dry buildup has its own scope below. Network pipe/tank laws do not substitute
+for surface laws. LID units must explicitly opt into their layer adapter.
+Full native checkpoints carry wet/dry inventories in the qualified 1D profile.
+
+### Component section: [REACTION_BUILDUP] {#engine_manual_sect_REACTION_BUILDUP}
+
+Purpose: \status{Implemented}
+React the dry inventory on a covered land-use patch before accrual, sweeping
+and washoff. This is a first-order operator split.
+
+```
+LANDUSE Name RATE / EQUIL / FORMULA Species Expression
+SUBCATCHMENT Name LANDUSE Name RATE / EQUIL / FORMULA Species Expression
+```
+
+A named-subcatchment row overrides a global land-use row for that species.
+Targets/dependencies must be BULK; global coefficients, terms, DT and fallback
+TEMP are available. Values are declared species mass per AREA_UNITS. Each
+species' area/curb normalizer and project mass conversion are applied before
+and after integration, so mixed normalizers share one physical patch area.
+A zero curb normalizer cannot retain reaction products: the solve is refused
+with a warning and original inventory retained. Failed algebraic solves and
+RATE clamps follow wet-pool containment and explicit mass accounting. Reaction
+products persist even without a buildup accrual function. Equal mass-unit,
+unit-yield networks conserve parent plus product; different units require
+explicit conversion in the authored law.
+
+### Component section: [REACTION_WALLS] {#engine_manual_sect_REACTION_WALLS}
+
+```
+NODE / LINK Name ContactArea
+```
+
+Areas must be finite/nonnegative in AREA_UNITS and require WALL_GEOMETRY YES.
+Conduits without an override use actual wetted perimeter times physical length
+times barrel count. Their fixed reference is full-section contact. Storage-node
+WALL tank laws require explicit NODE area; other storage shape is not inferred.
+AV is active contact area / litres of water. WALL density is declared mass /
+reference area. WALL RATE expressions scale by active/reference contact; dry
+and sub-litre geometry-mode pools retain attached mass and skip kinetics.
+WALL EQUIL/FORMULA projections are refused because no conservative wet/dry
+area projection is defined. ARD WALL systems use LEGACY; LARD refuses WALL.
+
+### Component section: [REACTION_LIDS] {#engine_manual_sect_REACTION_LIDS}
+
+```
+CONTROL Name TRANSPORT
+CONTROL Name LAYER Number RATE / EQUIL / FORMULA Species Expression
+```
+
+TRANSPORT opts a control into BULK mobile/retained species inventories; a law
+also opts it in. Layer 0 supplies defaults; a specific layer overrides that
+species. Conventional layers are 1 surface, 2 pavement, 3 soil, 4 storage.
+Storage-node layers use authored stack numbers. Missing layers do not react.
+Only BULK references, global coefficients, terms, DT and beginning-of-step
+published layer TEMP (fallback TEMPERATURE) are supported. Laws apply per
+retained pool and mobile layer share; pipe/tank laws do not replace them.
+
+Storage-node bucket/Richards reactors require LEGACY quality and non-Mesh
+bottoms. Conventional units require full subcatchment coverage (the hydraulic
+0.1% area tolerance) and every unit to opt in; uncovered barrels are permitted.
+Partial capture, covered barrels, WALL species and 2D-owned reactive conventional
+units are refused. Transport consumes accepted hydraulic transfers with donor
+limits, water-only evaporation, separate infiltration/surface/drain receipts,
+BMP removals and dry residual mass. Pools at or below one litre do not react;
+zero-storage throughflow layers transport mass without inventing a reactor.
+Bioretention and permeable-pavement stacks, plus bucket/Richards storage nodes,
+have explicit conservation/restart checks; wider configurations still need
+qualification. State-only and legacy routing hotstarts refuse these inventories;
+use a full native engine checkpoint.
+
+Full reaction continuation currently qualifies native CPU 1D chemistry without
+pollutants, heat/age, active 2D surface chemistry, subsurface laws or detailed
+ARD/LID output. It preserves source clocks, inventories, ledgers and native
+output prefixes; changed chemistry or corrupt state is refused before install.
 
 ### Component section: [HEAT_SOURCES] {#engine_manual_sect_HEAT_SOURCES}
 

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file Culvert.hpp
- * @brief Culvert inlet control — FHWA HEC-5 equations.
+ * @file      Culvert.hpp
+ * @brief     Culvert inlet control — FHWA HEC-5 equations.
  *
  * @details Three flow regimes:
  *   - Unsubmerged (y <= 0.95*yFull): Q = AD * (h/yFull/K)^(1/M)
@@ -28,9 +28,9 @@
  * @note Legacy reference: src/legacy/engine/culvert.c
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_CULVERT_HPP
@@ -55,29 +55,37 @@ struct CulvertCoeffs {
     double Y = 0.0;
 };
 
-/// Get coefficients for a culvert type code (1-57).
+/**
+ * @brief Copy an FHWA culvert inlet coefficient record.
+ *
+ * @param[in] culvert_code Active coefficient-table code 1..57; every other value selects the
+ *     inactive record.
+ * @return Coefficient copy; all five members are zero for an invalid code.
+ */
 CulvertCoeffs getCoeffs(int culvert_code);
 
 /**
- * @brief legacy culvert_getInflow (culvert.c): FHWA HDS-5 inlet-controlled
- *        flow through a culvert, as the dynamic wave applies it inside
- *        dwflow_findConduitFlow once per iteration.
+ * @brief Apply an FHWA inlet-capacity limit to a proposed conduit flow.
  *
- * @param q0     The conduit's dynamic-wave flow (cfs, positive).
- * @param y      Upstream head above the culvert's upstream invert (ft):
- *               legacy `h - (Node[n1].invertElev + Link.offset1)`.
- * @param xs     The culvert's cross section (form1Eqn evaluates its area and
- *               top width at the trial critical depth).
- * @param slope  Conduit slope (the slope correction factor).
- * @param code   Culvert type code (1-57).
- * @param[out] dqdh      Legacy culvert.dQdH — replaces the link's dqdh when
- *                       the inlet controls.
- * @param[out] controls  TRUE when the inlet flow is below q0 (legacy
- *                       Link.inletControl).
- * @returns The inlet flow when it is below q0, else q0.
+ * Uses the submerged equation above its FHWA threshold, unsubmerged equation at/below 0.95*y_full,
+ * and a secant transition between. Form-1 root status is not propagated and no separate
+ * finite/geometry validation or nonnegative clamp is performed. No pointer is retained.
+ *
+ * @param[in] q0 Positive proposed per-barrel flow in ft3/s.
+ * @param[in] y Positive upstream head above the inlet invert in ft.
+ * @param[in] xs Borrowed valid per-barrel geometry with positive full depth/area and valid Form-1
+ *     width evaluations.
+ * @param[in] slope Dimensionless conduit slope; correction is -7*slope for codes 5/37/46, otherwise
+ *     0.5*slope.
+ * @param[in] code FHWA inlet code 1..57; invalid codes return q0 with controls=false.
+ * @param[in,out] dqdh Existing flow/head derivative in ft2/s; replaced only when inlet capacity is
+ *     strictly below q0.
+ * @param[out] controls Always reset to false; set true only if the computed inlet capacity is
+ *     strictly below q0.
+ * @return The computed inlet capacity when smaller than q0; otherwise q0.
  */
-double getInflow(double q0, double y, const XSectParams& xs, double slope,
-                 int code, double& dqdh, bool& controls);
+double getInflow(double q0, double y, const XSectParams& xs, double slope, int code, double& dqdh,
+                 bool& controls);
 
 } // namespace culvert
 } // namespace openswmm

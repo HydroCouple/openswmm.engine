@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: Apache-2.0
+ * Copyright 2026 Caleb Buahin */
+/**
+ * @file openswmm_abi_tag.h
+ * @brief Build-generated expected identity of the installed engine's public C ABI.
+ * @details Compare this value with swmm_engine_abi_tag() before sharing native engine handles.
+ * The identity conservatively includes public header content, compiler/platform properties and
+ * enabled 2D, GeoPackage and HDF5 modules, including the 2D results writer;
+ * it is independent of the engine's marketing version. Never edit this generated header.
+ * @author Caleb Buahin <caleb.buahin@gmail.com>
+ * @date 2026
+ * @copyright Copyright (c) 2026 Caleb Buahin
+ * @license Apache-2.0
+ */
+#ifndef OPENSWMM_ABI_TAG_H
+#define OPENSWMM_ABI_TAG_H
+/** @brief ABI identity schema; incompatible identity formats use a new schema number. */
+#define OPENSWMM_ENGINE_ABI_SCHEMA 1
+/** @brief Expected runtime tag for the engine distributed with these headers. */
+#define OPENSWMM_ENGINE_ABI_TAG "@OPENSWMM_ENGINE_ABI_TAG@"
+/** @brief Public C header fingerprint, excluding private/generated implementation headers. */
+#define OPENSWMM_ENGINE_API_SHA256 "@OPENSWMM_ABI_API_SHA256@"
+#endif

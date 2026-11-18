@@ -16,6 +16,15 @@ vcpkg_from_github(
     REF "${VERSION}"
     SHA512 34825f2d0f202f49fecc24050a4790cb721f3a4cca21381fd0eb0c302bbafe90f997dc96130c2b2479c4344d11dbb062d4b41f2aaab11e49f5bd1da2c9e5d929
     HEAD_REF master
+    PATCHES
+        # MSVC defines `_OPENMP` as 200203 even under `/openmp:llvm`, so Kokkos'
+        # `execute_in_serial()` falls back to the deprecated `omp_get_nested()`.
+        # MSVC's LLVM runtime (libomp140) prints "OMP: Info #276 ... deprecated"
+        # on every call (every kernel launch); in a GUI host it AllocConsole()s a
+        # console window to print it, and closing that window terminates the
+        # host (HydroCouple/openswmm.engine#160). The patch takes the
+        # `omp_get_max_active_levels()` path on MSVC. Drop once fixed upstream.
+        msvc-openmp-active-levels.patch
 )
 
 # Kokkos' shared (DLL) build is broken on MSVC: kokkoscore.dll exports no

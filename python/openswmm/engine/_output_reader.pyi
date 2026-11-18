@@ -49,6 +49,8 @@ class _OutputNodeStats:
 class OutputReader:
     """Read a SWMM binary ``.out`` file."""
 
+    def has_subcatch_variable(self, code: int) -> bool: ...
+
     @property
     def is_live(self) -> bool: ...
     def refresh(self) -> int: ...
@@ -70,6 +72,7 @@ class OutputReader:
     link_ids: List[str]
     subcatchment_ids: List[str]
     pollutant_ids: List[str]
+    pollutant_units: List[Optional[str]]
 
     # Time axis
     period_times: NDArray[Any]  # dtype = datetime64[s]

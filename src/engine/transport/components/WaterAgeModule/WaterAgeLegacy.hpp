@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeLegacy.hpp
- * @brief Phase A1b — the LEGACY (CSTR) engine's water-age mirror.
+ * @file      WaterAgeLegacy.hpp
+ * @brief     Phase A1b — the LEGACY (CSTR) engine's water-age mirror.
  *
  * @details A single-scalar rerun of the CSTR quality stages for the
  *          reserved age quantity, in the same order the pollutant arrays
@@ -49,9 +49,9 @@
  * @see plans/transport/WATER_AGE_TRACKING_PLAN.md §5, §7 A1
  * @ingroup engine_transport
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_LEGACY_HPP
@@ -67,6 +67,6 @@ namespace openswmm::transport {
 /// after qual_vol_in is fully accumulated). No-op when WATER_AGE is off.
 void routeLegacyAge(SimulationContext& ctx, double dt);
 
-}  // namespace openswmm::transport
+} // namespace openswmm::transport
 
-#endif  // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_LEGACY_HPP
+#endif // OPENSWMM_ENGINE_TRANSPORT_WATER_AGE_LEGACY_HPP

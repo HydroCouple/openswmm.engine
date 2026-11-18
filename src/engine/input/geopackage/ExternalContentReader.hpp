@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file ExternalContentReader.hpp
- * @brief Slice IO-8 — hydrate `SimulationContext` external-file slots from
+ * @file      ExternalContentReader.hpp
+ * @brief     Slice IO-8 — hydrate `SimulationContext` external-file slots from
  *        the Part D GeoPackage tables and materialise scratch files in
  *        the legacy on-disk format so legacy `fopen` sites keep working.
  *
@@ -43,9 +43,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_EXTERNAL_CONTENT_READER_HPP
@@ -56,32 +56,40 @@
 struct sqlite3;
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::gpkg {
 
 /**
- * @brief Hydrate every external-file slot on `ctx` from the Part D tables
- *        and materialise scratch files in `scratch_dir`.
+ * @brief Hydrate model external slots from embedded GeoPackage content and scratch files.
  *
- * @details `scratch_dir` is created if missing. When `scratch_dir` is
- *          empty the call is a no-op — the function is then equivalent
- *          to skipping external-content hydration entirely (useful in
- *          read_model callers that don't have a `.gpkg` path context).
+ * Hydrates time series, rain gages, climate, routing interfaces then hot starts. Writes per-role
+ * scratch files, stores resolved scratch paths and original <gpkg:...> sentinels; SAVE pending
+ * hot-start slots receive future paths. Caller owns scratch-directory lifetime/cleanup. Throws
+ * GpkgError on checked schema/materializer failures; earlier files/context bindings remain on later
+ * failure. Does not initialize the simulation or guarantee every legacy text writer detects late IO
+ * errors.
  *
- * @throws GpkgError on materialiser failures.
+ * @param[in,out] db Borrowed open connection with schema-compatible Part D content and model rows;
+ *     no transaction is begun here.
+ * @param[in,out] ctx Coherent parsed model whose matching external file slots and selected metadata
+ *     are rebound incrementally.
+ * @param[in] simulation_id Simulation key used to select only this model's embedded rows.
+ * @param[in] scratch_dir UTF-8 materialization directory created as needed; empty makes the entire
+ *     call a no-op.
  */
-void read_external_content(sqlite3*                          db,
-                            openswmm::SimulationContext&      ctx,
-                            const std::string&                simulation_id,
-                            const std::string&                scratch_dir);
+void read_external_content(sqlite3* db, openswmm::SimulationContext& ctx,
+                           const std::string& simulation_id, const std::string& scratch_dir);
 
 /**
- * @brief Compute the canonical scratch-dir path for a given `.gpkg` file.
+ * @brief Construct the portable sibling scratch-directory name for a GeoPackage path.
  *
- * @details Sibling directory named `<basename>.scratch/`. Pure string
- *          transformation — no filesystem touch.
+ * Pure lexical transformation: does not canonicalize, create or check the directory;
+ * allocation/path conversion may throw.
+ *
+ * @param[in] gpkg_path Borrowed UTF-8 source path, relative or absolute.
+ * @return Parent/stem.scratch with forward separators; empty stem falls back to gpkg.scratch.
  */
 std::string scratchDirFor(const std::string& gpkg_path);
 

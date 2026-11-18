@@ -40,6 +40,7 @@ and performing spatial analysis.
 import numpy as np
 cimport numpy as np
 
+from ._common cimport _TextBufs, _tb_open, _tb_retry, _tb_str, _tb_close
 from openswmm.engine._enums import ErrorCode
 from openswmm.engine._exceptions import GeoPackageError, LifecycleError
 
@@ -267,11 +268,17 @@ cdef class GeoPackage:
         @rtype: list
         """
         cdef int n = swmm_gpkg_simulation_count(self._h())
-        cdef char buf[256]
+        cdef _TextBufs t
         result = []
-        for i in range(n):
-            if swmm_gpkg_simulation_id(self._h(), i, buf, 256) == 0:
-                result.append(buf.decode('utf-8'))
+        _tb_open(&t, 1)
+        try:
+            for i in range(n):
+                while swmm_gpkg_simulation_id(self._h(), i, t.p[0], t.size) == 0:
+                    if not _tb_retry(&t):
+                        result.append(_tb_str(&t, 0))
+                        break
+        finally:
+            _tb_close(&t)
         return result
 
     def object_counts(self, str sim_id) -> dict:

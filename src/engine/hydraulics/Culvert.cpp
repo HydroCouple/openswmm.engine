@@ -15,13 +15,13 @@
 // limitations under the License.
 
 /**
- * @file Culvert.cpp
- * @brief Culvert inlet control — numerically identical to legacy culvert.c.
+ * @file      Culvert.cpp
+ * @brief     Culvert inlet control — numerically identical to legacy culvert.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include "Culvert.hpp"
@@ -40,112 +40,114 @@ namespace culvert {
 /// Each entry stores {K, M, C, Y} (FORM is handled via the code ranges).
 static const CulvertCoeffs COEFFS[] = {
     // 0: unused
-    {0.0, 0.0,    0.0,   0.0,    0.00},
+    {0.0, 0.0, 0.0, 0.0, 0.00},
 
     // Circular concrete
-    {1.0, 0.0098, 2.00,  0.0398, 0.67},   //  1: Square edge w/headwall
-    {1.0, 0.0018, 2.00,  0.0292, 0.74},   //  2: Groove end w/headwall
-    {1.0, 0.0045, 2.00,  0.0317, 0.69},   //  3: Groove end projecting
+    {1.0, 0.0098, 2.00, 0.0398, 0.67}, //  1: Square edge w/headwall
+    {1.0, 0.0018, 2.00, 0.0292, 0.74}, //  2: Groove end w/headwall
+    {1.0, 0.0045, 2.00, 0.0317, 0.69}, //  3: Groove end projecting
 
     // Circular Corrugated Metal Pipe
-    {1.0, 0.0078, 2.00,  0.0379, 0.69},   //  4: Headwall
-    {1.0, 0.0210, 1.33,  0.0463, 0.75},   //  5: Mitered to slope
-    {1.0, 0.0340, 1.50,  0.0553, 0.54},   //  6: Projecting
+    {1.0, 0.0078, 2.00, 0.0379, 0.69}, //  4: Headwall
+    {1.0, 0.0210, 1.33, 0.0463, 0.75}, //  5: Mitered to slope
+    {1.0, 0.0340, 1.50, 0.0553, 0.54}, //  6: Projecting
 
     // Circular Pipe, Beveled Ring Entrance
-    {1.0, 0.0018, 2.50,  0.0300, 0.74},   //  7: Beveled ring, 45 deg bevels
-    {1.0, 0.0018, 2.50,  0.0243, 0.83},   //  8: Beveled ring, 33.7 deg bevels
+    {1.0, 0.0018, 2.50, 0.0300, 0.74}, //  7: Beveled ring, 45 deg bevels
+    {1.0, 0.0018, 2.50, 0.0243, 0.83}, //  8: Beveled ring, 33.7 deg bevels
 
     // Rectangular Box with Flared Wingwalls
-    {1.0, 0.026,  1.0,   0.0347, 0.81},   //  9: 30-75 deg wingwall flares
-    {1.0, 0.061,  0.75,  0.0400, 0.80},   // 10: 90 or 15 deg wingwall flares
-    {1.0, 0.061,  0.75,  0.0423, 0.82},   // 11: 0 deg wingwall flares (straight sides)
+    {1.0, 0.026, 1.0, 0.0347, 0.81},  //  9: 30-75 deg wingwall flares
+    {1.0, 0.061, 0.75, 0.0400, 0.80}, // 10: 90 or 15 deg wingwall flares
+    {1.0, 0.061, 0.75, 0.0423, 0.82}, // 11: 0 deg wingwall flares (straight sides)
 
     // Rectangular Box with Flared Wingwalls & Top Edge Bevel
-    {2.0, 0.510,  0.667, 0.0309, 0.80},   // 12: 45 deg flare; 0.43D top edge bevel
-    {2.0, 0.486,  0.667, 0.0249, 0.83},   // 13: 18-33.7 deg flare; 0.083D top edge bevel
+    {2.0, 0.510, 0.667, 0.0309, 0.80}, // 12: 45 deg flare; 0.43D top edge bevel
+    {2.0, 0.486, 0.667, 0.0249, 0.83}, // 13: 18-33.7 deg flare; 0.083D top edge bevel
 
     // Rectangular Box; 90-deg Headwall; Chamfered or Beveled Inlet Edges
-    {2.0, 0.515,  0.667, 0.0375, 0.79},   // 14: chamfered 3/4-in
-    {2.0, 0.495,  0.667, 0.0314, 0.82},   // 15: beveled 1/2-in/ft at 45 deg (1:1)
-    {2.0, 0.486,  0.667, 0.0252, 0.865},  // 16: beveled 1-in/ft at 33.7 deg (1:1.5)
+    {2.0, 0.515, 0.667, 0.0375, 0.79},  // 14: chamfered 3/4-in
+    {2.0, 0.495, 0.667, 0.0314, 0.82},  // 15: beveled 1/2-in/ft at 45 deg (1:1)
+    {2.0, 0.486, 0.667, 0.0252, 0.865}, // 16: beveled 1-in/ft at 33.7 deg (1:1.5)
 
     // Rectangular Box; Skewed Headwall; Chamfered or Beveled Inlet Edges
-    {2.0, 0.545,  0.667, 0.04505,0.73},   // 17: 3/4" chamfered edge, 45 deg skewed headwall
-    {2.0, 0.533,  0.667, 0.0425, 0.705},  // 18: 3/4" chamfered edge, 30 deg skewed headwall
-    {2.0, 0.522,  0.667, 0.0402, 0.68},   // 19: 3/4" chamfered edge, 15 deg skewed headwall
-    {2.0, 0.498,  0.667, 0.0327, 0.75},   // 20: 45 deg beveled edge, 10-45 deg skewed headwall
+    {2.0, 0.545, 0.667, 0.04505, 0.73}, // 17: 3/4" chamfered edge, 45 deg skewed headwall
+    {2.0, 0.533, 0.667, 0.0425, 0.705}, // 18: 3/4" chamfered edge, 30 deg skewed headwall
+    {2.0, 0.522, 0.667, 0.0402, 0.68},  // 19: 3/4" chamfered edge, 15 deg skewed headwall
+    {2.0, 0.498, 0.667, 0.0327, 0.75},  // 20: 45 deg beveled edge, 10-45 deg skewed headwall
 
     // Rectangular box, Non-offset Flared Wingwalls; 3/4" Chamfer at Top of Inlet
-    {2.0, 0.497,  0.667, 0.0339, 0.803},  // 21: 45 deg (1:1) wingwall flare
-    {2.0, 0.493,  0.667, 0.0361, 0.806},  // 22: 18.4 deg (3:1) wingwall flare
-    {2.0, 0.495,  0.667, 0.0386, 0.71},   // 23: 18.4 deg (3:1) wingwall flare, 30 deg inlet skew
+    {2.0, 0.497, 0.667, 0.0339, 0.803}, // 21: 45 deg (1:1) wingwall flare
+    {2.0, 0.493, 0.667, 0.0361, 0.806}, // 22: 18.4 deg (3:1) wingwall flare
+    {2.0, 0.495, 0.667, 0.0386, 0.71},  // 23: 18.4 deg (3:1) wingwall flare, 30 deg inlet skew
 
     // Rectangular box, Offset Flared Wingwalls, Beveled Edge at Inlet Top
-    {2.0, 0.497,  0.667, 0.0302, 0.835},  // 24: 45 deg (1:1) flare, 0.042D top edge bevel
-    {2.0, 0.495,  0.667, 0.0252, 0.881},  // 25: 33.7 deg (1.5:1) flare, 0.083D top edge bevel
-    {2.0, 0.493,  0.667, 0.0227, 0.887},  // 26: 18.4 deg (3:1) flare, 0.083D top edge bevel
+    {2.0, 0.497, 0.667, 0.0302, 0.835}, // 24: 45 deg (1:1) flare, 0.042D top edge bevel
+    {2.0, 0.495, 0.667, 0.0252, 0.881}, // 25: 33.7 deg (1.5:1) flare, 0.083D top edge bevel
+    {2.0, 0.493, 0.667, 0.0227, 0.887}, // 26: 18.4 deg (3:1) flare, 0.083D top edge bevel
 
     // Corrugated Metal Box
-    {1.0, 0.0083, 2.00,  0.0379, 0.69},   // 27: 90 deg headwall
-    {1.0, 0.0145, 1.75,  0.0419, 0.64},   // 28: Thick wall projecting
-    {1.0, 0.0340, 1.50,  0.0496, 0.57},   // 29: Thin wall projecting
+    {1.0, 0.0083, 2.00, 0.0379, 0.69}, // 27: 90 deg headwall
+    {1.0, 0.0145, 1.75, 0.0419, 0.64}, // 28: Thick wall projecting
+    {1.0, 0.0340, 1.50, 0.0496, 0.57}, // 29: Thin wall projecting
 
     // Horizontal Ellipse Concrete
-    {1.0, 0.0100, 2.00,  0.0398, 0.67},   // 30: Square edge w/headwall
-    {1.0, 0.0018, 2.50,  0.0292, 0.74},   // 31: Grooved end w/headwall
-    {1.0, 0.0045, 2.00,  0.0317, 0.69},   // 32: Grooved end projecting
+    {1.0, 0.0100, 2.00, 0.0398, 0.67}, // 30: Square edge w/headwall
+    {1.0, 0.0018, 2.50, 0.0292, 0.74}, // 31: Grooved end w/headwall
+    {1.0, 0.0045, 2.00, 0.0317, 0.69}, // 32: Grooved end projecting
 
     // Vertical Ellipse Concrete
-    {1.0, 0.0100, 2.00,  0.0398, 0.67},   // 33: Square edge w/headwall
-    {1.0, 0.0018, 2.50,  0.0292, 0.74},   // 34: Grooved end w/headwall
-    {1.0, 0.0095, 2.00,  0.0317, 0.69},   // 35: Grooved end projecting
+    {1.0, 0.0100, 2.00, 0.0398, 0.67}, // 33: Square edge w/headwall
+    {1.0, 0.0018, 2.50, 0.0292, 0.74}, // 34: Grooved end w/headwall
+    {1.0, 0.0095, 2.00, 0.0317, 0.69}, // 35: Grooved end projecting
 
     // Pipe Arch, 18" Corner Radius, Corrugated Metal
-    {1.0, 0.0083, 2.00,  0.0379, 0.69},   // 36: 90 deg headwall
-    {1.0, 0.0300, 1.00,  0.0463, 0.75},   // 37: Mitered to slope
-    {1.0, 0.0340, 1.50,  0.0496, 0.57},   // 38: Projecting
+    {1.0, 0.0083, 2.00, 0.0379, 0.69}, // 36: 90 deg headwall
+    {1.0, 0.0300, 1.00, 0.0463, 0.75}, // 37: Mitered to slope
+    {1.0, 0.0340, 1.50, 0.0496, 0.57}, // 38: Projecting
 
     // Pipe Arch, 18" Corner Radius, Corrugated Metal (cont.)
-    {1.0, 0.0300, 1.50,  0.0496, 0.57},   // 39: Projecting
-    {1.0, 0.0088, 2.00,  0.0368, 0.68},   // 40: No bevels
-    {1.0, 0.0030, 2.00,  0.0269, 0.77},   // 41: 33.7 deg bevels
+    {1.0, 0.0300, 1.50, 0.0496, 0.57}, // 39: Projecting
+    {1.0, 0.0088, 2.00, 0.0368, 0.68}, // 40: No bevels
+    {1.0, 0.0030, 2.00, 0.0269, 0.77}, // 41: 33.7 deg bevels
 
     // Pipe Arch, 31" Corner Radius, Corrugated Metal
-    {1.0, 0.0300, 1.50,  0.0496, 0.57},   // 42: Projecting
-    {1.0, 0.0088, 2.00,  0.0368, 0.68},   // 43: No bevels
-    {1.0, 0.0030, 2.00,  0.0269, 0.77},   // 44: 33.7 deg bevels
+    {1.0, 0.0300, 1.50, 0.0496, 0.57}, // 42: Projecting
+    {1.0, 0.0088, 2.00, 0.0368, 0.68}, // 43: No bevels
+    {1.0, 0.0030, 2.00, 0.0269, 0.77}, // 44: 33.7 deg bevels
 
     // Arch, Corrugated Metal
-    {1.0, 0.0083, 2.00,  0.0379, 0.69},   // 45: 90 deg headwall
-    {1.0, 0.0300, 1.00,  0.0473, 0.75},   // 46: Mitered to slope
-    {1.0, 0.0340, 1.50,  0.0496, 0.57},   // 47: Thin wall projecting
+    {1.0, 0.0083, 2.00, 0.0379, 0.69}, // 45: 90 deg headwall
+    {1.0, 0.0300, 1.00, 0.0473, 0.75}, // 46: Mitered to slope
+    {1.0, 0.0340, 1.50, 0.0496, 0.57}, // 47: Thin wall projecting
 
     // Circular Culvert
-    {2.0, 0.534,  0.555, 0.0196, 0.90},   // 48: Smooth tapered inlet throat
-    {2.0, 0.519,  0.640, 0.0210, 0.90},   // 49: Rough tapered inlet throat
+    {2.0, 0.534, 0.555, 0.0196, 0.90}, // 48: Smooth tapered inlet throat
+    {2.0, 0.519, 0.640, 0.0210, 0.90}, // 49: Rough tapered inlet throat
 
     // Elliptical Inlet Face
-    {2.0, 0.536,  0.622, 0.0368, 0.83},   // 50: Tapered inlet, beveled edges
-    {2.0, 0.5035, 0.719, 0.0478, 0.80},   // 51: Tapered inlet, square edges
-    {2.0, 0.547,  0.800, 0.0598, 0.75},   // 52: Tapered inlet, thin edge projecting
+    {2.0, 0.536, 0.622, 0.0368, 0.83},  // 50: Tapered inlet, beveled edges
+    {2.0, 0.5035, 0.719, 0.0478, 0.80}, // 51: Tapered inlet, square edges
+    {2.0, 0.547, 0.800, 0.0598, 0.75},  // 52: Tapered inlet, thin edge projecting
 
     // Rectangular
-    {2.0, 0.475,  0.667, 0.0179, 0.97},   // 53: Tapered inlet throat
+    {2.0, 0.475, 0.667, 0.0179, 0.97}, // 53: Tapered inlet throat
 
     // Rectangular Concrete
-    {2.0, 0.560,  0.667, 0.0446, 0.85},   // 54: Side tapered, less favorable edges
-    {2.0, 0.560,  0.667, 0.0378, 0.87},   // 55: Side tapered, more favorable edges
+    {2.0, 0.560, 0.667, 0.0446, 0.85}, // 54: Side tapered, less favorable edges
+    {2.0, 0.560, 0.667, 0.0378, 0.87}, // 55: Side tapered, more favorable edges
 
     // Rectangular Concrete
-    {2.0, 0.500,  0.667, 0.0446, 0.65},   // 56: Slope tapered, less favorable edges
-    {2.0, 0.500,  0.667, 0.0378, 0.71},   // 57: Slope tapered, more favorable edges
+    {2.0, 0.500, 0.667, 0.0446, 0.65}, // 56: Slope tapered, less favorable edges
+    {2.0, 0.500, 0.667, 0.0378, 0.71}, // 57: Slope tapered, more favorable edges
 };
 static constexpr int MAX_CULVERT_CODE = 57;
 static constexpr int N_COEFFS = sizeof(COEFFS) / sizeof(COEFFS[0]);
 
+// Public coefficient lookup contract is documented in Culvert.hpp.
 CulvertCoeffs getCoeffs(int code) {
-    if (code >= 1 && code <= MAX_CULVERT_CODE) return COEFFS[code];
+    if (code >= 1 && code <= MAX_CULVERT_CODE)
+        return COEFFS[code];
     return COEFFS[0];
 }
 
@@ -157,20 +159,31 @@ CulvertCoeffs getCoeffs(int code) {
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr double BIG = 1.0e10;   // legacy consts.h
+constexpr double BIG = 1.0e10; // legacy consts.h
 
 struct TCulvert {
-    double yFull = 0.0;   // full depth of culvert (ft)
-    double scf   = 0.0;   // slope correction factor
-    double dQdH  = 0.0;   // derivative of flow w.r.t. head
-    double qc    = 0.0;   // unsubmerged critical flow
-    double kk = 0.0, mm = 0.0;   // coeffs. for unsubmerged flow
-    double ad    = 0.0;
-    double hPlus = 0.0;   // intermediate terms
+    double yFull = 0.0;        // full depth of culvert (ft)
+    double scf = 0.0;          // slope correction factor
+    double dQdH = 0.0;         // derivative of flow w.r.t. head
+    double qc = 0.0;           // unsubmerged critical flow
+    double kk = 0.0, mm = 0.0; // coeffs. for unsubmerged flow
+    double ad = 0.0;
+    double hPlus = 0.0; // intermediate terms
     const XSectParams* xsect = nullptr;
 };
 
 // h/yFull + 0.5*s = yc/yFull + yh/2/yFull + K[ac/aFull*sqrt(g*yh/yFull)]^M
+/**
+ * @brief Evaluate the Form-1 critical-depth residual and cache its critical flow.
+ *
+ * No geometry or finite checks are made. The caller deliberately uses the flow from the last
+ * residual evaluation, rather than deriving a new flow from the returned root.
+ *
+ * @param[in] yc Positive trial critical depth in ft with nonzero top width.
+ * @param[in,out] culvert Non-null initialized workspace with borrowed cross-section geometry and
+ *     positive yFull/ad; qc is overwritten in ft3/s.
+ * @return Dimensionless difference between available inlet head and the Form-1 energy expression.
+ */
 double form1Eqn(double yc, TCulvert* culvert) {
     const double ac = xsect::getAofY(*culvert->xsect, yc);
     const double wc = xsect::getWofY(*culvert->xsect, yc);
@@ -180,25 +193,59 @@ double form1Eqn(double yc, TCulvert* culvert) {
            culvert->kk * std::pow(culvert->qc / culvert->ad, culvert->mm);
 }
 
+/**
+ * @brief Run the legacy critical-depth bracket search for unsubmerged Form-1 flow.
+ *
+ * Ridder searches [0.01*h,h] with 0.001-ft tolerance. Its root/status is discarded; failure is not
+ * reported separately and the workspace can retain a last-evaluated flow.
+ *
+ * @param[in] h Positive head above inlet invert in ft.
+ * @param[in,out] culvert Non-null initialized workspace; hPlus and the last residual-evaluated qc
+ *     are changed.
+ * @return Last residual-evaluated critical flow qc in ft3/s.
+ */
 double getForm1Flow(double h, TCulvert* culvert) {
     culvert->hPlus = h / culvert->yFull + culvert->scf;
     // Ridder's method between 0.01h and h; the result is culvert->qc
-    findroot::ridder(0.01 * h, h, 0.001,
-                     [culvert](double yc) { return form1Eqn(yc, culvert); });
+    findroot::ridder(0.01 * h, h, 0.001, [culvert](double yc) { return form1Eqn(yc, culvert); });
     return culvert->qc;
 }
 
+/**
+ * @brief Evaluate the selected unsubmerged FHWA inlet equation.
+ *
+ * Form 1 invokes critical-depth search; other forms use the direct power law. Stores the legacy
+ * approximation dQdH=q/(h*M), in ft2/s, even for Form 1; no input or convergence status is checked.
+ *
+ * @param[in] P Valid active coefficient record; K/M and full geometry must be nonzero.
+ * @param[in] h Positive upstream head above inlet invert in ft.
+ * @param[in,out] culvert Non-null initialized workspace; K/M, dQdH and Form-1 root scratch are
+ *     updated.
+ * @return Unsubmerged inlet capacity in ft3/s.
+ */
 double getUnsubmergedFlow(const CulvertCoeffs& P, double h, TCulvert* culvert) {
     culvert->kk = P.K;
     culvert->mm = P.M;
     const double arg = h / culvert->yFull / culvert->kk;
     double q;
-    if (P.form == 1.0) q = getForm1Flow(h, culvert);
-    else               q = culvert->ad * std::pow(arg, 1.0 / culvert->mm);
+    if (P.form == 1.0)
+        q = getForm1Flow(h, culvert);
+    else
+        q = culvert->ad * std::pow(arg, 1.0 / culvert->mm);
     culvert->dQdH = q / h / culvert->mm;
     return q;
 }
 
+/**
+ * @brief Evaluate submerged inlet capacity and its head derivative.
+ *
+ * @param[in] P Valid coefficient record with positive C.
+ * @param[in] h Head above inlet invert in ft.
+ * @param[in,out] culvert Non-null workspace with positive yFull and ad; dQdH is overwritten in
+ *     ft2/s.
+ * @return Submerged flow in ft3/s, or the legacy BIG=1e10 sentinel when the square-root argument is
+ *     nonpositive.
+ */
 double getSubmergedFlow(const CulvertCoeffs& P, double h, TCulvert* culvert) {
     const double cc = P.C;
     const double yy = P.Y;
@@ -212,6 +259,20 @@ double getSubmergedFlow(const CulvertCoeffs& P, double h, TCulvert* culvert) {
     return q;
 }
 
+/**
+ * @brief Linearly join unsubmerged and submerged inlet capacities.
+ *
+ * Endpoint failure sentinels participate directly in interpolation; no additional error status is
+ * produced.
+ *
+ * @param[in] P Valid active inlet coefficient record.
+ * @param[in] h Evaluation head in ft; normally within [h1,h2], but not clamped.
+ * @param[in] h1 Positive unsubmerged endpoint head in ft.
+ * @param[in] h2 Submerged endpoint head in ft, distinct from h1.
+ * @param[in,out] culvert Non-null initialized workspace; both endpoint evaluations mutate scratch,
+ *     then dQdH is replaced with the secant slope.
+ * @return Interpolated flow in ft3/s; the stored derivative is (q2-q1)/(h2-h1) in ft2/s.
+ */
 double getTransitionFlow(const CulvertCoeffs& P, double h, double h1, double h2,
                          TCulvert* culvert) {
     const double q1 = getUnsubmergedFlow(P, h1, culvert);
@@ -223,21 +284,27 @@ double getTransitionFlow(const CulvertCoeffs& P, double h, double h1, double h2,
 
 } // namespace
 
-double getInflow(double q0, double y, const XSectParams& xs, double slope,
-                 int code, double& dqdh, bool& controls) {
+double getInflow(double q0, double y, const XSectParams& xs, double slope, int code, double& dqdh,
+                 bool& controls) {
     controls = false;
-    if (code <= 0 || code > MAX_CULVERT_CODE) return q0;
+    if (code <= 0 || code > MAX_CULVERT_CODE)
+        return q0;
     const CulvertCoeffs P = COEFFS[code];
 
     TCulvert culvert;
     culvert.xsect = &xs;
     culvert.yFull = xs.y_full;
-    culvert.ad    = xs.a_full * std::sqrt(culvert.yFull);
+    culvert.ad = xs.a_full * std::sqrt(culvert.yFull);
 
     // slope correction factor (-7 for mitered inlets, 0.5 for others)
     switch (code) {
-        case 5: case 37: case 46: culvert.scf = -7.0 * slope; break;
-        default:                  culvert.scf =  0.5 * slope;
+    case 5:
+    case 37:
+    case 46:
+        culvert.scf = -7.0 * slope;
+        break;
+    default:
+        culvert.scf = 0.5 * slope;
     }
 
     double q;
@@ -248,8 +315,10 @@ double getInflow(double q0, double y, const XSectParams& xs, double slope,
     } else {
         // unsubmerged below the arbitrary 0.95-full limit, transition between
         const double y1 = 0.95 * culvert.yFull;
-        if (y <= y1) q = getUnsubmergedFlow(P, y, &culvert);
-        else         q = getTransitionFlow(P, y, y1, y2, &culvert);
+        if (y <= y1)
+            q = getUnsubmergedFlow(P, y, &culvert);
+        else
+            q = getTransitionFlow(P, y, y1, y2, &culvert);
     }
 
     if (q < q0) {

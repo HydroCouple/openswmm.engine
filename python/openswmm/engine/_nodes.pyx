@@ -342,6 +342,42 @@ cdef class OutfallView:
         _check(swmm_node_set_outfall_route_to(
             _h(self._node._solver), self._node._index, subcatch_idx))
 
+    @property
+    def export_receipt(self) -> dict:
+        """Copied cumulative committed export, independent of REPORT_START.
+
+        Keys: exported_m3, reversed_m3, exported_heat_j, flags,
+        pollutant_amounts and pollutant_amount_units. Pollutants use stable IDs
+        and kg for MG/L or UG/L, counts for #/L. Heat is J relative to 0 degC.
+        Capability flags are 1 water, 2 LEGACY pollutants, 4 native heat.
+        Exports have already left the donor; never debit them a second time.
+        Native rerouting/2D ownership and pre-start reads raise EngineError.
+        No MSX or ARD/LARD mass capability is implied.
+        """
+        _check_fresh(self._node)
+        cdef SWMM_Engine handle = _h(self._node._solver)
+        cdef int count = swmm_pollutant_count(handle)
+        cdef SWMM_OutfallExportReceipt receipt
+        cdef np.ndarray[np.float64_t, ndim=1] amounts = np.empty(max(count, 0), dtype=np.float64)
+        _check(swmm_node_get_export_receipt(handle, self._node._index,
+                                           &receipt, <double*>amounts.data, count))
+        cdef int i, units
+        values = {}
+        amount_units = {}
+        for i in range(count):
+            name = swmm_pollutant_id(handle, i).decode('utf-8')
+            _check(swmm_pollutant_get_units(handle, i, &units))
+            values[name] = float(amounts[i])
+            amount_units[name] = 'counts' if units == 2 else 'kg'
+        return {
+            'exported_m3': receipt.exported_m3,
+            'reversed_m3': receipt.reversed_m3,
+            'exported_heat_j': receipt.exported_heat_j,
+            'flags': receipt.flags,
+            'pollutant_amounts': values,
+            'pollutant_amount_units': amount_units,
+        }
+
     def __repr__(self) -> str:
         return f"<OutfallView for {self._node!r}>"
 
@@ -364,6 +400,28 @@ cdef class DividerView:
     def type(self, int value) -> None:
         _check_fresh(self._node)
         _check(swmm_node_set_divider_type(_h(self._node._solver), self._node._index, value))
+
+    @property
+    def params(self):
+        """Complete divider record; flow and height use project display units."""
+        _check_fresh(self._node)
+        cdef SWMM_DividerParams value
+        _check(swmm_node_get_divider_params(_h(self._node._solver), self._node._index, &value))
+        return {'method': value.method, 'diversion_link': value.diversion_link, 'curve': value.curve, 'cutoff_flow': value.cutoff_flow, 'weir_height': value.weir_height, 'weir_coefficient': value.weir_coefficient}
+
+    @params.setter
+    def params(self, record):
+        cdef SWMM_DividerParams value
+        with self._node._solver._operation():
+            _check_fresh(self._node)
+            value.method = record['method']
+            value.diversion_link = record['diversion_link']
+            value.curve = record['curve']
+            value.cutoff_flow = record['cutoff_flow']
+            value.weir_height = record['weir_height']
+            value.weir_coefficient = record['weir_coefficient']
+            _check_fresh(self._node)
+            _check(swmm_node_set_divider_params(_h(self._node._solver), self._node._index, &value))
 
     def __repr__(self) -> str:
         return f"<DividerView for {self._node!r}>"
@@ -427,9 +485,8 @@ cdef class Node:
         @rtype: str
         """
         _check_fresh(self)
-        cdef char buf[256]
-        _check(swmm_node_get_tag(_h(self._solver), self._index, buf, 256))
-        return buf.decode('utf-8')
+        return _read_engine_index_string(_h(self._solver), self._index,
+                                         swmm_node_get_tag)
 
     @tag.setter
     def tag(self, value) -> None:
@@ -612,6 +669,19 @@ cdef class Node:
     def surcharge_depth(self, double value) -> None:
         _check_fresh(self)
         _check(swmm_node_set_surcharge_depth(_h(self._solver), self._index, value))
+
+    @property
+    def storage_area(self) -> float:
+        """Physical junction chamber area (ft2/m2); zero retains legacy behavior."""
+        _check_fresh(self)
+        cdef double v = 0.0
+        _check(swmm_node_get_storage_area(_h(self._solver), self._index, &v))
+        return v
+
+    @storage_area.setter
+    def storage_area(self, double value) -> None:
+        _check_fresh(self)
+        _check(swmm_node_set_storage_area(_h(self._solver), self._index, value))
 
     @property
     def ponded_area(self) -> float:

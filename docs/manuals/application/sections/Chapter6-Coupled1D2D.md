@@ -96,22 +96,22 @@ five boundary types, and the circled vertex is the drain inlet mapped to
 node `J1`. Panel (b) is the maximum depth each cell reached.
 
 The run's 2D continuity block is the first thing to read after a coupled
-run:
+run (the deck as written, so the default `FULL_SWE` closure):
 
 | Term | Volume (m³) |
 |---|---|
-| Rainfall inflow | 0.334 |
-| 1D → 2D spill inflow | 2 746.7 |
-| Boundary inflow | 4 735.4 |
-| 2D → 1D drain outflow | 4 630.3 |
-| Boundary outflow | 2 739.8 |
-| Final stored volume | 112.3 |
-| **Continuity error** | **−0.000 %** |
+| Rainfall inflow | 0.333 |
+| 1D → 2D spill inflow | 3 430.4 |
+| Boundary inflow | 422 427.9 |
+| 2D → 1D drain outflow | 8 157.5 |
+| Boundary outflow | 417 549.4 |
+| Final stored volume | 151.7 |
+| **Continuity error** | **0.000 %** |
 
 *Table 6-1 The 2D Surface Routing Continuity block for this run*
 
-Both coupling directions are active: the network spills 2 747 m³ onto the
-surface and drains 4 630 m³ back off it. A coupled model whose spill and
+Both coupling directions are active: the network spills 3 430 m³ onto the
+surface and drains 8 158 m³ back off it. A coupled model whose spill and
 drain rows are both zero is not coupled, whatever its maps say — that is
 the first check.
 
@@ -121,18 +121,20 @@ the first check.
 
 *Figure 6-2 One cell's depth history under the three momentum closures*
 
-| `MOMENTUM_EQUATION` | Peak depth in cell 4 |
-|---|---|
-| `LOCAL_INERTIAL` | 0.499 m |
-| `FULL_SWE` | 0.912 m |
-| `DIFFUSIVE_WAVE` | 0.642 m |
+| `MOMENTUM_EQUATION` | Peak depth in cell 4 | Mean over the run |
+|---|---|---|
+| `LOCAL_INERTIAL` | 0.790 m | 0.619 m |
+| `FULL_SWE` | 0.790 m | 0.784 m |
+| `DIFFUSIVE_WAVE` | 0.686 m | 0.677 m |
 
 *Table 6-2 What each closure gives on this mesh*
 
 The three closures share everything else — the same mesh, the same time
 stepping, the same coupling, the same boundaries — and they disagree here
-by nearly half a metre, holding that disagreement through the run. The
-closure is not a cosmetic choice.
+by up to 0.23 m at the same moment, holding that disagreement through the
+run. Two of them reach the same peak, so the peak alone hides it: full
+shallow water holds the cell near 0.78 m while local inertial flickers
+between 0.55 and 0.79 m. The closure is not a cosmetic choice.
 
 **What this comparison is not.** Eight cells under strong boundary forcing
 is a feature demonstration, and a spread this large on it says more about

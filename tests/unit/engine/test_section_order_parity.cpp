@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_section_order_parity.cpp
- * @brief .inp section-order independence for sections that reference objects
+ * @file      test_section_order_parity.cpp
+ * @brief     .inp section-order independence for sections that reference objects
  *        declared elsewhere — legacy two-pass parsing parity.
  *
  * @details The legacy engine parses the .inp in two passes, so a section
@@ -40,9 +40,9 @@
  * @see Legacy: src/legacy/engine/project.c (two-pass), inflow.c, rdii.c
  * @ingroup engine_tests
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -174,6 +174,12 @@ protected:
     SWMM_Engine engine_ = nullptr;
     std::vector<std::string> scratch_;
 
+    /**
+     * @brief Destroy the fixture engine and remove registered section-order scratch files.
+     *
+     * Calls destroy_engine then removes each scratch_ path through ignored error codes. Destruction
+     * semantics are those of destroy_engine; no broader directory cleanup occurs.
+     */
     void TearDown() override {
         destroy_engine();
         for (const auto& p : scratch_) {
@@ -182,6 +188,12 @@ protected:
         }
     }
 
+    /**
+     * @brief Close/destroy the current section-order fixture engine and clear its handle.
+     *
+     * No action when null; ignores close status and can clean partial setup state. Does not remove
+     * tracked scratch files or write a report.
+     */
     void destroy_engine() {
         if (engine_) {
             swmm_engine_close(engine_);
@@ -190,15 +202,36 @@ protected:
         }
     }
 
+    /**
+     * @brief Track an absolute artifact path for later fixture cleanup.
+     *
+     * Does not create a file or reserve the name; current_path/allocation exceptions propagate. Caller
+     * must scope names to expendable fixture artifacts.
+     *
+     * @param[in] name Controlled relative filename appended to current_path; absolute input overrides
+     *     the base.
+     * @return Owned native path string also appended to scratch_.
+     */
     std::string scratch(const std::string& name) {
         auto p = (fs::current_path() / name).string();
         scratch_.push_back(p);
         return p;
     }
 
-    /// Open + run to completion; returns the requested routing total (ft3).
-    double run_total(const std::string& tag, const std::string& inp_text,
-                     int component) {
+    /**
+     * @brief Run one section-order deck and read a selected routing volume total.
+     *
+     * Requires no current owned engine. Nonfatal expectations permit later setup calls after failure;
+     * steps until error/completion without a cap, ends, reads the total and destroys the handle.
+     * Scratch filenames remain tracked for teardown; no separate success indicator is returned.
+     *
+     * @param[in] tag Safe suffix for three tracked secorder_ artifact names.
+     * @param[in] inp_text Complete input text written without checking final stream status.
+     * @param[in] component SWMM_ROUTING_* selector passed to swmm_get_routing_total.
+     * @return Requested native volume in ft3 for this CFS fixture, possibly zero/partial after recorded
+     *     API failure.
+     */
+    double run_total(const std::string& tag, const std::string& inp_text, int component) {
         const auto inp = scratch("secorder_" + tag + ".inp");
         const auto rpt = scratch("secorder_" + tag + ".rpt");
         const auto out = scratch("secorder_" + tag + ".out");
@@ -210,18 +243,18 @@ protected:
 
         engine_ = swmm_engine_create();
         EXPECT_NE(engine_, nullptr);
-        EXPECT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
-                                   out.c_str(), nullptr), SWMM_OK)
+        EXPECT_EQ(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
+                  SWMM_OK)
             << swmm_get_last_error_msg(engine_);
         EXPECT_EQ(swmm_engine_initialize(engine_), SWMM_OK);
-        EXPECT_EQ(swmm_engine_start(engine_, 0), SWMM_OK)
-            << swmm_get_last_error_msg(engine_);
+        EXPECT_EQ(swmm_engine_start(engine_, 0), SWMM_OK) << swmm_get_last_error_msg(engine_);
 
         double elapsed = 0.0;
         for (;;) {
             const int rc = swmm_engine_step(engine_, &elapsed);
             EXPECT_EQ(rc, SWMM_OK) << swmm_get_last_error_msg(engine_);
-            if (rc != SWMM_OK || elapsed <= 0.0) break;
+            if (rc != SWMM_OK || elapsed <= 0.0)
+                break;
         }
         EXPECT_EQ(swmm_engine_end(engine_), SWMM_OK);
 
@@ -237,14 +270,12 @@ protected:
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, RdiiBeforeNetwork_MatchesNetworkFirst) {
-    const double conventional = run_total(
-        "rdii_conv", std::string(kOptions) + kNetwork + kRdii,
-        SWMM_ROUTING_RDII);
+    const double conventional =
+        run_total("rdii_conv", std::string(kOptions) + kNetwork + kRdii, SWMM_ROUTING_RDII);
     ASSERT_GT(conventional, 0.0) << "fixture produced no RDII";
 
-    const double reversed = run_total(
-        "rdii_rev", std::string(kOptions) + kRdii + kNetwork,
-        SWMM_ROUTING_RDII);
+    const double reversed =
+        run_total("rdii_rev", std::string(kOptions) + kRdii + kNetwork, SWMM_ROUTING_RDII);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[RDII] before [JUNCTIONS] must parse identically (legacy parity)";
@@ -255,14 +286,12 @@ TEST_F(SectionOrderParityTest, RdiiBeforeNetwork_MatchesNetworkFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, DwfBeforeNetwork_MatchesNetworkFirst) {
-    const double conventional = run_total(
-        "dwf_conv", std::string(kOptions) + kNetwork + kDwf,
-        SWMM_ROUTING_DRY_WEATHER);
+    const double conventional =
+        run_total("dwf_conv", std::string(kOptions) + kNetwork + kDwf, SWMM_ROUTING_DRY_WEATHER);
     ASSERT_GT(conventional, 0.0) << "fixture produced no DWF";
 
-    const double reversed = run_total(
-        "dwf_rev", std::string(kOptions) + kDwf + kNetwork,
-        SWMM_ROUTING_DRY_WEATHER);
+    const double reversed =
+        run_total("dwf_rev", std::string(kOptions) + kDwf + kNetwork, SWMM_ROUTING_DRY_WEATHER);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[DWF] before [JUNCTIONS] must parse identically (legacy parity)";
@@ -273,14 +302,12 @@ TEST_F(SectionOrderParityTest, DwfBeforeNetwork_MatchesNetworkFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, InflowsBeforeNetwork_MatchesNetworkFirst) {
-    const double conventional = run_total(
-        "inf_conv", std::string(kOptions) + kNetwork + kInflows,
-        SWMM_ROUTING_EXTERNAL);
+    const double conventional =
+        run_total("inf_conv", std::string(kOptions) + kNetwork + kInflows, SWMM_ROUTING_EXTERNAL);
     ASSERT_GT(conventional, 0.0) << "fixture produced no external inflow";
 
-    const double reversed = run_total(
-        "inf_rev", std::string(kOptions) + kInflows + kNetwork,
-        SWMM_ROUTING_EXTERNAL);
+    const double reversed =
+        run_total("inf_rev", std::string(kOptions) + kInflows + kNetwork, SWMM_ROUTING_EXTERNAL);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[INFLOWS] before [JUNCTIONS] must parse identically (legacy parity)";
@@ -291,14 +318,14 @@ TEST_F(SectionOrderParityTest, InflowsBeforeNetwork_MatchesNetworkFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, XsectionsBeforeConduits_MatchesConduitsFirst) {
-    const double conventional = run_total(
-        "xsect_conv", std::string(kOptions) + kLinkNodes + kConduitOnly + kConduitXsect,
-        SWMM_ROUTING_OUTFLOW);
+    const double conventional =
+        run_total("xsect_conv", std::string(kOptions) + kLinkNodes + kConduitOnly + kConduitXsect,
+                  SWMM_ROUTING_OUTFLOW);
     ASSERT_GT(conventional, 0.0) << "fixture routed nothing";
 
-    const double reversed = run_total(
-        "xsect_rev", std::string(kOptions) + kLinkNodes + kConduitXsect + kConduitOnly,
-        SWMM_ROUTING_OUTFLOW);
+    const double reversed =
+        run_total("xsect_rev", std::string(kOptions) + kLinkNodes + kConduitXsect + kConduitOnly,
+                  SWMM_ROUTING_OUTFLOW);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[XSECTIONS] before [CONDUITS] must parse identically (legacy parity)";
@@ -311,14 +338,14 @@ TEST_F(SectionOrderParityTest, XsectionsBeforeConduits_MatchesConduitsFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, XsectionsBeforeOrifices_MatchesOrificesFirst) {
-    const double conventional = run_total(
-        "orif_conv", std::string(kOptions) + kLinkNodes + kOrificeOnly + kOrificeXsect,
-        SWMM_ROUTING_OUTFLOW);
+    const double conventional =
+        run_total("orif_conv", std::string(kOptions) + kLinkNodes + kOrificeOnly + kOrificeXsect,
+                  SWMM_ROUTING_OUTFLOW);
     ASSERT_GT(conventional, 0.0) << "fixture routed nothing through the orifice";
 
-    const double reversed = run_total(
-        "orif_rev", std::string(kOptions) + kLinkNodes + kOrificeXsect + kOrificeOnly,
-        SWMM_ROUTING_OUTFLOW);
+    const double reversed =
+        run_total("orif_rev", std::string(kOptions) + kLinkNodes + kOrificeXsect + kOrificeOnly,
+                  SWMM_ROUTING_OUTFLOW);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[XSECTIONS] before [ORIFICES] must parse identically (legacy parity)";
@@ -330,16 +357,16 @@ TEST_F(SectionOrderParityTest, XsectionsBeforeOrifices_MatchesOrificesFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, LossesBeforeConduits_MatchesConduitsFirst) {
-    const double conventional = run_total(
-        "loss_conv",
-        std::string(kOptions) + kLinkNodes + kConduitOnly + kConduitXsect + kConduitLosses,
-        SWMM_ROUTING_SEEP_LOSS);
+    const double conventional = run_total("loss_conv",
+                                          std::string(kOptions) + kLinkNodes + kConduitOnly +
+                                              kConduitXsect + kConduitLosses,
+                                          SWMM_ROUTING_SEEP_LOSS);
     ASSERT_GT(conventional, 0.0) << "fixture produced no seepage";
 
-    const double reversed = run_total(
-        "loss_rev",
-        std::string(kOptions) + kLinkNodes + kConduitLosses + kConduitOnly + kConduitXsect,
-        SWMM_ROUTING_SEEP_LOSS);
+    const double reversed = run_total("loss_rev",
+                                      std::string(kOptions) + kLinkNodes + kConduitLosses +
+                                          kConduitOnly + kConduitXsect,
+                                      SWMM_ROUTING_SEEP_LOSS);
 
     EXPECT_DOUBLE_EQ(reversed, conventional)
         << "[LOSSES] before [CONDUITS] must parse identically (legacy parity)";
@@ -351,8 +378,11 @@ TEST_F(SectionOrderParityTest, LossesBeforeConduits_MatchesConduitsFirst) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, UnknownLinkFailsOpen) {
-    const struct { const char* tag; const char* section; } cases[] = {
-        {"bad_xsect",  "\n[XSECTIONS]\nNO_SUCH_LINK  CIRCULAR  1.5  0  0  0  1\n"},
+    const struct {
+        const char* tag;
+        const char* section;
+    } cases[] = {
+        {"bad_xsect", "\n[XSECTIONS]\nNO_SUCH_LINK  CIRCULAR  1.5  0  0  0  1\n"},
         {"bad_losses", "\n[LOSSES]\nNO_SUCH_LINK  0  0  0  NO  0.50\n"},
     };
 
@@ -367,8 +397,8 @@ TEST_F(SectionOrderParityTest, UnknownLinkFailsOpen) {
         }
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        EXPECT_NE(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
-                                   out.c_str(), nullptr), SWMM_OK)
+        EXPECT_NE(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
+                  SWMM_OK)
             << c.tag << ": unknown link must fail open (legacy ERR_NAME)";
         destroy_engine();
     }
@@ -380,7 +410,10 @@ TEST_F(SectionOrderParityTest, UnknownLinkFailsOpen) {
 // ---------------------------------------------------------------------------
 
 TEST_F(SectionOrderParityTest, UnknownNodeFailsOpen) {
-    const struct { const char* tag; const char* section; } cases[] = {
+    const struct {
+        const char* tag;
+        const char* section;
+    } cases[] = {
         {"bad_rdii", "\n[RAINGAGES]\nRG1  INTENSITY  0:05  1.0  TIMESERIES  TS1\n"
                      "\n[HYDROGRAPHS]\nUH1  RG1\nUH1  ALL  SHORT  0.30  1.0  2.0  0  0  0\n"
                      "\n[RDII]\nNO_SUCH_NODE  UH1  5.0\n"
@@ -401,8 +434,8 @@ TEST_F(SectionOrderParityTest, UnknownNodeFailsOpen) {
         }
         engine_ = swmm_engine_create();
         ASSERT_NE(engine_, nullptr);
-        EXPECT_NE(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(),
-                                   out.c_str(), nullptr), SWMM_OK)
+        EXPECT_NE(swmm_engine_open(engine_, inp.c_str(), rpt.c_str(), out.c_str(), nullptr),
+                  SWMM_OK)
             << c.tag << ": unknown node must fail open (legacy ERR_NAME)";
         destroy_engine();
     }

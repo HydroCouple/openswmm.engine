@@ -219,7 +219,8 @@ def check_section_coverage():
     for f in src.rglob("*.cpp"):
         text = f.read_text(errors="replace")
         registered |= set(re.findall(r'register_builtin\(\s*"([A-Z0-9_]+)"', text))
-        registered |= set(re.findall(r'register_custom\(\s*"([A-Z0-9_]+)"', text))
+        # register_custom_views() registers a handler that reads line views.
+        registered |= set(re.findall(r'register_custom(?:_views)?\(\s*"([A-Z0-9_]+)"', text))
     if not registered:
         print("ERROR section coverage: parsed no registered sections — "
               "the registration call's shape changed")
@@ -278,7 +279,7 @@ def _documented_keys(chapter_text, section):
 OPTIONS_COVERAGE = [
     ("engine/input/handlers/OptionsHandler.cpp", r"^void handle_options\(",
      r'key\s*==\s*"([A-Z][A-Z0-9_]*)"', "[OPTIONS]"),
-    ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DOptionKey\(",
+    ("engine/2d/input/SectionHandlers2D.cpp", r"^std::span<const char\* const> current2DOptionKeys\(",
      r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),
     ("engine/2d/input/SectionHandlers2D.cpp", r"^bool is2DRetiredOptionKey\(",
      r'"([A-Z][A-Z0-9_]*)"', "[2D_OPTIONS]"),

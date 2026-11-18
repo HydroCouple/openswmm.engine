@@ -1,6 +1,6 @@
 /**
- * @file test_tokenizer.cpp
- * @brief Unit tests for the multi-delimiter Tokenizer.
+ * @file      test_tokenizer.cpp
+ * @brief     Unit tests for the multi-delimiter Tokenizer.
  *
  * @details Tests the openswmm::input::Tokenizer class which splits SWMM input
  *          lines on comma, horizontal tab, and one-or-more spaces. This class
@@ -9,6 +9,10 @@
  * @see src/engine/input/Tokenizer.hpp
  * @see Legacy reference: src/solver/input.c — getToken() function
  * @ingroup engine_input
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -134,13 +138,16 @@ TEST(TokenizerTest, QuotedPathWithColon) {
 }
 
 TEST(TokenizerTest, QuotedKeyValuePreservesSpacesAndComments) {
-    auto tokens = Tokenizer::tokenize(R"(component config="Config  Folder/model; v1.rxn" version="1.0" ; comment)");
-    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config  Folder/model; v1.rxn")", R"(version="1.0")"));
+    auto tokens = Tokenizer::tokenize(
+        R"(component config="Config  Folder/model; v1.rxn" version="1.0" ; comment)");
+    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config  Folder/model; v1.rxn")",
+                                    R"(version="1.0")"));
 }
 
 TEST(TokenizerTest, QuotedKeyValueInCsvPreservesCommaAndSpaces) {
     auto tokens = Tokenizer::tokenize(R"(component,config="Config Folder/a, b.rxn",version=1)");
-    EXPECT_THAT(tokens, ElementsAre("component", R"(config="Config Folder/a, b.rxn")", "version=1"));
+    EXPECT_THAT(tokens,
+                ElementsAre("component", R"(config="Config Folder/a, b.rxn")", "version=1"));
 }
 
 // ============================================================================
@@ -261,8 +268,8 @@ TEST(TokenizerTest, ParseBooleanFalse) {
 
 TEST(TokenizerTest, CommaInsideANameIsNotADelimiter) {
     // The row that exposed this, from semi-real-models/3005-h-h-elements.
-    auto tokens = Tokenizer::tokenize(
-        "Land-4425 return2yr S-2-M20-L109/link2,6-201-9(u) 0.00 100 3 1.000 0");
+    auto tokens =
+        Tokenizer::tokenize("Land-4425 return2yr S-2-M20-L109/link2,6-201-9(u) 0.00 100 3 1.000 0");
     ASSERT_EQ(tokens.size(), 8u);
     EXPECT_EQ(tokens[2], "S-2-M20-L109/link2,6-201-9(u)");
     EXPECT_EQ(tokens[3], "0.00") << "the area must not be a fragment of the name";

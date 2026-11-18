@@ -1,11 +1,12 @@
 /**
- * @file ThreadInfo.cpp
- * @brief Process-wide hardware / OpenMP thread capability query.
+ * @file      ThreadInfo.cpp
+ * @brief     Process-wide hardware / OpenMP thread capability query.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
+
 #include "ThreadInfo.hpp"
 
 #include <atomic>
@@ -72,7 +73,8 @@ void setKokkosOmpThreads(int n) {
 
 int hostReservedThreads() {
     const char* s = std::getenv("OPENSWMM_HOST_RESERVED_THREADS");
-    if (!s || !*s) return 0;
+    if (!s || !*s)
+        return 0;
     const int n = std::atoi(s);
     return n > 0 ? n : 0;
 }
@@ -82,38 +84,39 @@ bool isOversubscribed(int threads) {
     return logical > 0 && threads + hostReservedThreads() > logical;
 }
 
-int resolveRequested(int requested, const char* what,
-                     std::vector<std::string>* warnings) {
+int resolveRequested(int requested, const char* what, std::vector<std::string>* warnings) {
     const int omp_max = ompMaxThreads();
-    if (requested <= 0) return omp_max;
+    if (requested <= 0)
+        return omp_max;
 
     const int nt = requested;
-    if (!warnings) return nt;
+    if (!warnings)
+        return nt;
 
     char buf[512];
-    const int logical  = logicalCpus();
+    const int logical = logicalCpus();
     const int reserved = hostReservedThreads();
     if (logical > 0 && nt + reserved > logical) {
         if (reserved > 0)
             std::snprintf(buf, sizeof buf,
-                "THREADS = %d plus the %d threads the host application reserves "
-                "for itself exceed the %d logical processors on this machine "
-                "(%s). The run is oversubscribed and is likely to be slower; "
-                "active spin-wait is disabled for this run.",
-                nt, reserved, logical, what);
+                          "THREADS = %d plus the %d threads the host application reserves "
+                          "for itself exceed the %d logical processors on this machine "
+                          "(%s). The run is oversubscribed and is likely to be slower; "
+                          "active spin-wait is disabled for this run.",
+                          nt, reserved, logical, what);
         else
             std::snprintf(buf, sizeof buf,
-                "THREADS = %d exceeds the %d logical processors on this machine "
-                "(%s). The run will be oversubscribed and is likely to be slower; "
-                "active spin-wait is disabled for this run.",
-                nt, logical, what);
+                          "THREADS = %d exceeds the %d logical processors on this machine "
+                          "(%s). The run will be oversubscribed and is likely to be slower; "
+                          "active spin-wait is disabled for this run.",
+                          nt, logical, what);
         warnings->emplace_back(buf);
     } else if (nt > omp_max) {
         std::snprintf(buf, sizeof buf,
-            "THREADS = %d exceeds the OpenMP limit of %d in this process "
-            "(OMP_NUM_THREADS / OMP_THREAD_LIMIT / CPU affinity) for the %s; "
-            "requesting %d anyway.",
-            nt, omp_max, what, nt);
+                      "THREADS = %d exceeds the OpenMP limit of %d in this process "
+                      "(OMP_NUM_THREADS / OMP_THREAD_LIMIT / CPU affinity) for the %s; "
+                      "requesting %d anyway.",
+                      nt, omp_max, what, nt);
         warnings->emplace_back(buf);
     }
 
@@ -121,10 +124,10 @@ int resolveRequested(int requested, const char* what,
     const int pcores = perfCores();
     if (pcores > 0 && nt > pcores) {
         std::snprintf(buf, sizeof buf,
-            "THREADS = %d exceeds the %d performance cores on this Mac (%s). "
-            "Efficiency cores slow barrier-synchronised solvers (measured up "
-            "to 3-4x slower). Use THREADS = 0 (auto) or <= %d.",
-            nt, pcores, what, pcores);
+                      "THREADS = %d exceeds the %d performance cores on this Mac (%s). "
+                      "Efficiency cores slow barrier-synchronised solvers (measured up "
+                      "to 3-4x slower). Use THREADS = 0 (auto) or <= %d.",
+                      nt, pcores, what, pcores);
         warnings->emplace_back(buf);
     }
 #endif
@@ -139,14 +142,15 @@ int dwThreads(int requested, int n_conduits, std::vector<std::string>* warnings)
     // requests too — a 16-thread team on 40 conduits is never useful.
     if (nt > 1) {
         int cap = n_conduits / kMinConduitsPerThread;
-        if (cap < 1) cap = 1;
+        if (cap < 1)
+            cap = 1;
         if (cap < nt) {
             if (requested > 0 && warnings) {
                 char buf[256];
                 std::snprintf(buf, sizeof buf,
-                    "THREADS = %d reduced to %d for dynamic wave: the model has "
-                    "only %d conduits (%d per thread minimum).",
-                    requested, cap, n_conduits, kMinConduitsPerThread);
+                              "THREADS = %d reduced to %d for dynamic wave: the model has "
+                              "only %d conduits (%d per thread minimum).",
+                              requested, cap, n_conduits, kMinConduitsPerThread);
                 warnings->emplace_back(buf);
             }
             nt = cap;
@@ -160,7 +164,8 @@ int dwThreads(int requested, int n_conduits, std::vector<std::string>* warnings)
     // warned by resolveRequested() instead.
     if (requested == 0 && nt > 1) {
         const int pcores = perfCores();
-        if (pcores > 2 && nt > pcores - 2) nt = pcores - 2;
+        if (pcores > 2 && nt > pcores - 2)
+            nt = pcores - 2;
     }
     return nt;
 }
@@ -173,15 +178,16 @@ int twoDThreads(int requested, int n_triangles, std::vector<std::string>* warnin
     // barrier into a straggler wait. Leave two P-cores for the OS / IO thread.
     if (requested == 0 && nt > 1) {
         const int pcores = perfCores();
-        if (pcores > 2 && nt > pcores - 2) nt = pcores - 2;
+        if (pcores > 2 && nt > pcores - 2)
+            nt = pcores - 2;
     }
     if (n_triangles < 4 * nt) {
         if (requested > 0 && nt > 1 && warnings) {
             char buf[256];
             std::snprintf(buf, sizeof buf,
-                "THREADS = %d reduced to 1 for the 2D surface: the mesh has only "
-                "%d triangles (need >= 4 per thread).",
-                requested, n_triangles);
+                          "THREADS = %d reduced to 1 for the 2D surface: the mesh has only "
+                          "%d triangles (need >= 4 per thread).",
+                          requested, n_triangles);
             warnings->emplace_back(buf);
         }
         nt = 1;

@@ -58,6 +58,8 @@ class StorageView:
 
 
 class OutfallView:
+    @property
+    def export_receipt(self) -> dict[str, Any]: ...
     type: OutfallType
     param: float
     flap_gate: bool
@@ -72,6 +74,7 @@ class OutfallView:
 
 class DividerView:
     type: int
+    params: dict[str, int | float]
 
 
 class Node:
@@ -93,6 +96,7 @@ class Node:
     max_depth: float
     rim_depth: float
     surcharge_depth: float
+    storage_area: float
     ponded_area: float
     initial_depth: float
     crown_elev: float

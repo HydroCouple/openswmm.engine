@@ -216,6 +216,52 @@ def test_prepare_file_id_mapping_errors_and_cancellation(tmp_path):
         assert exc.value.code == TraceStatus.MISMATCH
 
 
+def test_prepare_live_uses_complete_periods_and_refreshes(tmp_path):
+    path = write_output(tmp_path / 'growing.out')
+    content = path.read_bytes()[:-24]  # no closing footer
+    period_size = 8 + 4 * (2 * 6 + 5)
+    last_period = content[-period_size:]
+    path.write_bytes(content[:-period_size] + last_period[:9])
+    with two_nodes() as trace:
+        seen = []
+        trace.prepare_live(path, progress=lambda fraction, stage: seen.append((fraction, stage)))
+        assert seen
+        assert trace.info.periods == 2
+        assert trace.info.cache_loaded == 0
+        with path.open('ab') as stream:
+            stream.write(last_period[9:])
+        trace.prepare_live(path)
+        assert trace.info.periods == 3
+        assert trace.info.duration_s == pytest.approx(10800)
+        assert trace.averages[1][0].net_flow_m3s == pytest.approx(8 / 3)
+        with pytest.raises(TraceError):
+            trace.prepare(path)
+
+
+def test_prepare_live_callbacks_errors_and_lifetime(tmp_path):
+    path = write_output(tmp_path / 'live.out')
+    trace = two_nodes()
+    with trace:
+        with pytest.raises(TypeError, match='callable'):
+            trace.prepare_live(path, progress=42)
+        with pytest.raises(TraceError) as exc:
+            trace.prepare_live(path, progress=lambda fraction, stage: True)
+        assert exc.value.code == TraceStatus.CANCELLED
+        def fail(fraction, stage):
+            raise ValueError('live callback failed')
+        with pytest.raises(ValueError, match='live callback failed'):
+            trace.prepare_live(path, progress=fail)
+        with pytest.raises(RuntimeError, match='in use'):
+            trace.prepare_live(path, progress=lambda fraction, stage: trace.close())
+        with pytest.raises(TraceError) as exc:
+            trace.prepare_live(tmp_path / 'missing.out')
+        assert exc.value.code == TraceStatus.IO
+        trace.prepare_live(path)
+        assert trace.info.periods == 3
+    with pytest.raises(RuntimeError, match='closed'):
+        trace.prepare_live(path)
+
+
 def test_output_cache_and_restoring_averages(tmp_path):
     path = write_output(tmp_path / 'hydraulics.out')
     digest = hashlib.sha256(path.read_bytes()).hexdigest()

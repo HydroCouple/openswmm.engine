@@ -1,3 +1,4 @@
+from ._snow2d import MeshSnow
 
 from typing import Any, Mapping
 from ._coupling import DomainSources, SourceReceipt
@@ -46,10 +47,24 @@ from ._enums import (
     SurfaceForcingMode,
     ForcingPersist,
     SurfaceBoundaryType,
+    NodeCoupling2DType,
     SurfaceInfilMethod,
     SurfaceInfilDest,
 )
 
+
+class InitialQuality2D(NamedTuple):
+    scope: int
+    tag: str
+    cell: int
+    species: str
+    conc: float
+
+class BoundaryQuality2D(NamedTuple):
+    cell: int
+    edge: int
+    species: str
+    conc: float
 
 class Surface2D:
     """Read/write interface to the optional 2D surface routing module.
@@ -94,6 +109,9 @@ class Surface2D:
     @property
     def groundwater(self) -> Groundwater: ...
 
+    @property
+    def snow(self) -> MeshSnow: ...
+
     def __init__(self, owner: Solver | ModelBuilder | int) -> None:
         """Construct an accessor retaining its engine owner. Raw registered
         pointers are deprecated; use ``solver.surface2d``.
@@ -119,6 +137,9 @@ class Surface2D:
     # ====================================================================
     # Mesh definition - geometry
     # ====================================================================
+
+    @property
+    def geometry_scale_to_si(self) -> float: ...
 
     @property
     def n_vertices(self) -> int:
@@ -182,6 +203,10 @@ class Surface2D:
         @rtype: tuple[np.ndarray, np.ndarray, np.ndarray]
         @raise EngineError: If the C API call fails.
         """
+        ...
+
+    def set_results_file(self, path: str) -> None:
+        """Bind a fresh absolute HDF5 destination before initialize; opens at start."""
         ...
 
     def prepare_for_edit(self) -> None:
@@ -286,6 +311,14 @@ class Surface2D:
 
     def set_triangle_init_depth(self, idx: int, depth: float) -> None:
         """Set the initial water depth of a triangle (mesh length units, M{>= 0})."""
+        ...
+
+    def get_triangle_init_hgl(self, idx: int) -> float:
+        """Return a cell's prescribed initial water-surface elevation (NaN if unset)."""
+        ...
+
+    def set_triangle_init_hgl(self, idx: int, hgl: float) -> None:
+        """Prescribe a cell's initial water-surface elevation (NaN clears it)."""
         ...
 
     def get_triangle_init_velocity(self, idx: int) -> tuple[float, float]:
@@ -435,6 +468,36 @@ class Surface2D:
         ...
 
     # ====================================================================
+    # Per-node coupling type ([2D_NODE_COUPLING])
+    # ====================================================================
+
+    def validate_node_coupling(self, node_idx: int, coupling_type: int, params: dict[str, object] | None = ..., *, authored: bool = ...) -> None: ...
+    def replace_node_coupling(self, node_idx: int, coupling_type: int, params: dict[str, object] | None = ..., *, authored: bool = ...) -> None: ...
+    def get_node_coupling_type(self, node_idx: int) -> tuple[NodeCoupling2DType, bool]:
+        """Effective coupling type and whether it is authored (else the class default)."""
+        ...
+
+    def get_node_coupling_default_type(self, node_idx: int) -> NodeCoupling2DType:
+        """Class default coupling type of a node."""
+        ...
+
+    def set_node_coupling_type(self, node_idx: int, coupling_type: int) -> None:
+        """Author a node's coupling type (drops parameters that do not apply)."""
+        ...
+
+    def reset_node_coupling(self, node_idx: int) -> None:
+        """Remove a node's [2D_NODE_COUPLING] row."""
+        ...
+
+    def get_node_coupling_param(self, node_idx: int, key: str) -> str:
+        """Authored parameter token, or "" when not authored."""
+        ...
+
+    def set_node_coupling_param(self, node_idx: int, key: str, value: object) -> None:
+        """Author a parameter from its token; None or "" clears it."""
+        ...
+
+    # ====================================================================
     # State (depth/velocity) - per triangle bulk arrays
     #
     # Every bulk getter in this section releases the GIL for the C call.
@@ -459,6 +522,17 @@ class Surface2D:
         @return: Array of shape C{(n_triangles,)} with dtype C{float64}, in m.
         @rtype: np.ndarray
         @raise EngineError: If the C API call fails.
+        """
+        ...
+
+    def get_velocities(self) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Independent physical Cartesian X/Y velocity arrays in m/s.
+
+        Both float64 arrays have shape ``(n_cells,)`` and match native output.
+        FULL_SWE uses accepted momentum; other closures use native diagnostic
+        reconstruction. Dry cells return zero; indeterminate wet cells retain
+        paired NaNs. Refreshing does not advance hydraulics and releases the
+        GIL. Requires an initialized surface; stale views are rejected.
         """
         ...
 
@@ -877,6 +951,14 @@ class Surface2D:
         """
         ...
 
+    def edge_is_exterior(self, cell: int, edge: int) -> bool:
+        """Inspect native exterior-edge classification after prepare_for_edit().
+
+        Invalid indices or unprepared storage raise EngineError. Does not
+        initialize the solver, resolve neighbours or validate manifold topology.
+        """
+        ...
+
     def get_edge_bc_type(self, tri_idx: int, edge: int) -> SurfaceBoundaryType:
         """Return the boundary condition type for a triangle edge.
 
@@ -904,6 +986,21 @@ class Surface2D:
     def clear_boundary(self, cell: int, edge: int) -> None: ...
     def boundary_flow(self, cell: int, edge: int) -> float: ...
     def set_edge_bc_concentrations(self, cell: int, edge: int, concentrations: Mapping[str, float]) -> None: ...
+    @property
+    def initial_quality(self) -> tuple[InitialQuality2D, ...]: ...
+    def set_initial_quality(self, species: str, conc: float, *, tag: str | None = ...,
+                            cell: int | None = ...) -> None: ...
+    def remove_initial_quality(self, index: int) -> None: ...
+    @property
+    def initial_bed_quality(self) -> tuple[InitialQuality2D, ...]: ...
+    def set_initial_bed_quality(self, species: str, conc: float, *, tag: str | None = ...,
+                            cell: int | None = ...) -> None: ...
+    def remove_initial_bed_quality(self, index: int) -> None: ...
+    def set_auto_backend_cpu(self, enabled: bool = ...) -> None: ...
+    @property
+    def boundary_quality(self) -> tuple[BoundaryQuality2D, ...]: ...
+    def set_boundary_quality(self, cell: int, edge: int, species: str, conc: float) -> None: ...
+    def remove_boundary_quality(self, index: int) -> None: ...
     def clear_edge_bc(self, cell: int, edge: int) -> None: ...
 
     def set_edge_bc_type(
@@ -944,6 +1041,27 @@ class Surface2D:
         @param head: Boundary head value.
         @type head: float
         @raise EngineError: If the C API rejects the assignment.
+        """
+        ...
+
+    def set_edge_bc_group(self, tri_idx: int, edge: int, group: str) -> None:
+        """Author or clear a UTF-8 group token in OPENED/BUILDING state.
+
+        Call ``prepare_for_edit()`` first. Nonempty groups require an exterior
+        edge and cannot contain whitespace, INP delimiters or NUL. Hydraulic
+        boundary values are preserved; an empty name clears the group.
+        """
+        ...
+
+    def get_edge_wall_drag(self, tri_idx: int, edge: int) -> float:
+        """Return dimensionless tangential WALL Cw; zero means free slip."""
+        ...
+
+    def set_edge_wall_drag(self, tri_idx: int, edge: int, cw: float) -> None:
+        """Author finite nonnegative WALL Cw in OPENED/BUILDING state.
+
+        Requires prepared storage and an exterior WALL edge for positive Cw.
+        Positive drag runs with CPU FULL_SWE, one tier and uncoupled hydraulics.
         """
         ...
 
@@ -1234,6 +1352,12 @@ class Infiltration2DView:
 
     def rate(self) -> npt.NDArray[np.float64]:
         """Held per-cell infiltration rate (m/s), one entry per triangle."""
+        ...
+
+    def frozen_ground(
+        self,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Ground temperature (C), frozen fraction and infiltration factor per triangle."""
         ...
 
     def cumulative(self) -> npt.NDArray[np.float64]:

@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file PluginsHandler.hpp
- * @brief [PLUGINS] section handler (Phase 4, R12).
+ * @file      PluginsHandler.hpp
+ * @brief     [PLUGINS] section handler (Phase 4, R12).
  *
  * @details Parses plugin library paths and per-plugin init arguments.
  *          The parsed specs are stored in SimulationContext and consumed by
@@ -38,9 +38,9 @@
  * @see src/engine/plugins/PluginFactory.hpp
  * @ingroup engine_input
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_PLUGINS_HANDLER_HPP
@@ -49,7 +49,9 @@
 #include <vector>
 #include <string>
 
-namespace openswmm { struct SimulationContext; }
+namespace openswmm {
+struct SimulationContext;
+}
 
 namespace openswmm::input {
 

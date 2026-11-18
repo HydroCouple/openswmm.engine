@@ -2,7 +2,7 @@ Offline flow tracing
 ====================
 
 ``FlowTracer`` estimates upstream or downstream flow paths and travel times
-from completed hydraulic output or supplied averages. It owns its topology,
+from completed or still-growing hydraulic output, or supplied averages. It owns its topology,
 works independently of a live solver, and closes through a ``with`` block.
 All dimensional inputs and results use SI units, even when the source output
 uses US units.
@@ -50,6 +50,12 @@ The reader matches output records by ID, regardless of their row order.
        trace.prepare("completed.out")
        result = trace.estimate("S")
 
+For running or cancelled simulations, ``trace.prepare_live("growing.out")``
+scans the complete reporting periods already written without requiring a closing
+footer. The scan uses the available prefix and ignores later appends; call it
+again to refresh. ``trace.info.periods`` reports the period count. This mode
+writes no cache and accepts the same progress callback as ``prepare``.
+
 An optional HDF5 cache requires a verified content fingerprint. For example,
 compute SHA-256 from the completed output bytes and pass its hexadecimal
 digest as ``fingerprint=`` alongside ``cache_path="completed.trace.h5"``.
@@ -68,7 +74,7 @@ unreachable elements, and trapped circulation. Index
 ``summary.terminal`` with ``TraceTerminal`` for terminal accounting.
 ``terminal_kind`` is ``None`` for results without a terminal classification.
 
-``prepare`` and ``estimate`` accept ``progress(fraction, stage)``. Returning
+``prepare``, ``prepare_live`` and ``estimate`` accept ``progress(fraction, stage)``. Returning
 true cancels and raises ``TraceError`` with ``code == TraceStatus.CANCELLED``.
 A callback exception is re-raised after the native operation stops. Long
 native operations release the GIL, but each handle permits only one operation

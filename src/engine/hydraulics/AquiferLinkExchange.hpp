@@ -1,6 +1,6 @@
 /**
- * @file AquiferLinkExchange.hpp
- * @brief G-X4 (2026-09-20) — the signed conduit ⇄ two-zone-aquifer
+ * @file      AquiferLinkExchange.hpp
+ * @brief     G-X4 (2026-09-20) — the signed conduit ⇄ two-zone-aquifer
  *        conductance law, shared by the two places that compute a conduit's
  *        seepage rate (DynamicWave's fused kernel and
  *        routing::computeConduitLosses for KINWAVE / STEADY / FV).
@@ -37,7 +37,12 @@
  *          it hands over the table elevation already relative to the
  *          conduit's mid invert, so neither loss site needs node inverts or
  *          the mesh datum.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
+
 #ifndef OPENSWMM_ENGINE_HYDRAULICS_AQUIFER_LINK_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_HYDRAULICS_AQUIFER_LINK_EXCHANGE_HPP
 
@@ -49,49 +54,68 @@
 namespace openswmm::hydraulics {
 
 /**
- * @brief The signed multiplier on `K · W · L` for an aquifer-coupled conduit.
+ * @brief Compute the signed conductance multiplier for conduit-to-aquifer seepage.
  *
- * @param depth       water depth in the conduit (project length units).
- * @param gw_head_rel water-table elevation minus the conduit's mid invert
- *                    (project length units; negative = table under the pipe).
- * @param d_c         bed thickness / characteristic path (project length).
- * @returns `> 0` losing, `< 0` gaining, `1.0` exactly the legacy loss.
+ * Does not bound gaining magnitude or reject nonfinite inputs; caller applies donor/gain caps
+ * separately. All three lengths may share another consistent unit without changing the
+ * dimensionless result.
+ *
+ * @param[in] depth Conduit water depth, normally native ft.
+ * @param[in] gw_head_rel Aquifer table elevation relative to conduit mid-invert in matching length
+ *     units; negative means below bed.
+ * @param[in] d_c Positive characteristic bed path length in matching units; nonpositive or NaN
+ *     selects legacy factor1.
+ * @return min((depth-max(gw_head_rel,0))/d_c,1); positive loses conduit water, negative gains it.
  */
-inline double aquiferSeepFactor(double depth, double gw_head_rel,
-                                double d_c) noexcept {
-    if (!(d_c > 0.0)) return 1.0;                  // no path length: legacy
+inline double aquiferSeepFactor(double depth, double gw_head_rel, double d_c) noexcept {
+    if (!(d_c > 0.0))
+        return 1.0; // no path length: legacy
     const double h_eff = (gw_head_rel > 0.0) ? gw_head_rel : 0.0;
     return std::min((depth - h_eff) / d_c, 1.0);
 }
 
 /**
- * @brief Apply the aquifer's per-step gain budget to a signed seepage rate.
+ * @brief Limit the gaining direction of a signed conduit seepage rate.
  *
- * @param seep_rate signed rate for ONE barrel (project flow units).
- * @param gain_max  the cap on the gaining direction, one barrel, `≥ 0`.
+ * No finite/nonnegative validation or inventory booking; caller supplies a physically valid cap.
+ *
+ * @param[in] seep_rate Signed cfs for one barrel: positive conduit loss, negative aquifer gain.
+ * @param[in] gain_max Nonnegative available aquifer gain cap in the same cfs/barrel convention.
+ * @return max(seep_rate,-gain_max); positive loss is not limited.
  */
 inline double capAquiferGain(double seep_rate, double gain_max) noexcept {
     return (seep_rate < -gain_max) ? -gain_max : seep_rate;
 }
 
 /**
- * @brief Apply a host's `swmm_forcing_link_seepage` to a conduit's rate.
+ * @brief Apply the registered host seepage override or addition to a conduit rate.
  *
- * @details OVERRIDE replaces the computed exchange, ADD superimposes one —
- *          the same two modes every other forcing channel offers. The sign
- *          convention is `seep_loss_rate`'s: `+` out of the conduit.
+ * Other modes leave the rate unchanged. Does not validate values, enforce donor/gain caps or
+ * consume SINGLE forcing; routing invokes it after physical caps. Caller serializes forcing edits
+ * and evaluation.
+ *
+ * @param[in] ctx Borrowed aligned forcing mode/value vectors, stored in native cfs.
+ * @param[in] link Zero-based global link slot; out-of-mode-vector range is a no-op.
+ * @param[in,out] seep_rate Signed native cfs rate, positive out of conduit; OVERRIDE replaces and
+ *     ADD increments.
  */
 inline void applySeepageForcing(const SimulationContext& ctx, std::size_t link,
                                 double& seep_rate) noexcept {
     const auto& f = ctx.forcing;
-    if (link >= f.link_seepage_mode.size()) return;
+    if (link >= f.link_seepage_mode.size())
+        return;
     switch (f.link_seepage_mode[link]) {
-        case ForcingMode::OVERRIDE: seep_rate  = f.link_seepage_value[link]; break;
-        case ForcingMode::ADD:      seep_rate += f.link_seepage_value[link]; break;
-        default: break;
+    case ForcingMode::OVERRIDE:
+        seep_rate = f.link_seepage_value[link];
+        break;
+    case ForcingMode::ADD:
+        seep_rate += f.link_seepage_value[link];
+        break;
+    default:
+        break;
     }
 }
 
-}  // namespace openswmm::hydraulics
+} // namespace openswmm::hydraulics
 
-#endif  // OPENSWMM_ENGINE_HYDRAULICS_AQUIFER_LINK_EXCHANGE_HPP
+#endif // OPENSWMM_ENGINE_HYDRAULICS_AQUIFER_LINK_EXCHANGE_HPP

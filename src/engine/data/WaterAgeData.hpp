@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file WaterAgeData.hpp
- * @brief Water-age tracking data (water age plan §1–§2, phase A1a).
+ * @file      WaterAgeData.hpp
+ * @brief     Water-age tracking data (water age plan §1–§2, phase A1a).
  *
  * @details Age is the reserved species `__WATER_AGE__` (registry kind
  *          RESERVED_AGE): zero-order growth d(age)/dt = 1 in every water
@@ -34,9 +34,9 @@
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_DATA_WATER_AGE_DATA_HPP
@@ -50,14 +50,14 @@ namespace openswmm {
 /// Source pathways with configurable initial age ([WATER_AGE_SOURCES]).
 /// Order is the storage index of WaterAgeConfigData::global_age.
 enum class WaterAgeSource : int {
-    RAINFALL        = 0,  ///< washoff runoff (and LID drains until A4)
-    DWF             = 1,
-    GW              = 2,
-    RDII            = 3,
+    RAINFALL = 0, ///< washoff runoff (and LID drains until A4)
+    DWF = 1,
+    GW = 2,
+    RDII = 3,
     EXTERNAL_INFLOW = 4,
-    IFACE           = 5,
-    INITIAL_STATE   = 6,  ///< water in the network at t = 0
-    COUNT_          = 7
+    IFACE = 5,
+    INITIAL_STATE = 6, ///< water in the network at t = 0
+    COUNT_ = 7
 };
 
 /**
@@ -76,15 +76,22 @@ struct WaterAgeConfigData {
     double global_age[static_cast<int>(WaterAgeSource::COUNT_)] = {};
 
     // NODE-scope overrides (DWF / EXTERNAL_INFLOW), parallel arrays.
-    std::vector<int>    node_over_source;  ///< WaterAgeSource as int
-    std::vector<int>    node_over_node;    ///< node index
-    std::vector<double> node_over_age;     ///< seconds
+    std::vector<int> node_over_source; ///< WaterAgeSource as int
+    std::vector<int> node_over_node;   ///< node index
+    std::vector<double> node_over_age; ///< seconds
 
-    /// Age of `source` water entering `node` (seconds).
+    /**
+     * @brief Read the first matching node/source age override or global fallback.
+     *
+     * Requires aligned override columns; no nonnegative/finite validation or unit conversion here.
+     *
+     * @param[in] s Valid WaterAgeSource excluding COUNT_; unchecked array index on fallback.
+     * @param[in] node Stored node key, not validated against the model.
+     * @return Age in seconds; first matching override wins, otherwise global_age[s].
+     */
     double source_age(WaterAgeSource s, int node) const noexcept {
         for (std::size_t i = 0; i < node_over_source.size(); ++i)
-            if (node_over_source[i] == static_cast<int>(s) &&
-                node_over_node[i] == node)
+            if (node_over_source[i] == static_cast<int>(s) && node_over_node[i] == node)
                 return node_over_age[i];
         return global_age[static_cast<int>(s)];
     }
@@ -102,16 +109,16 @@ struct WaterAgeConfigData {
 /// three ponded depths (`depth_imperv0/1/perv`, `Runoff.hpp:86-88`) so the
 /// age array can be indexed the same way the water is.
 enum class SubArea : int {
-    IMPERV0 = 0,  ///< impervious, no depression storage
-    IMPERV1 = 1,  ///< impervious with depression storage
-    PERV    = 2,
-    COUNT_  = 3
+    IMPERV0 = 0, ///< impervious, no depression storage
+    IMPERV1 = 1, ///< impervious with depression storage
+    PERV = 2,
+    COUNT_ = 3
 };
 
 struct WaterAgeState {
-    std::vector<double> node_age_vol_in;  ///< [node], age·ft³/s
-    std::vector<double> node_age;         ///< [node], seconds
-    std::vector<double> link_age;         ///< [link], seconds
+    std::vector<double> node_age_vol_in; ///< [node], age·ft³/s
+    std::vector<double> node_age;        ///< [node], seconds
+    std::vector<double> link_age;        ///< [link], seconds
 
     /// A1b: the LEGACY mirror seeds INITIAL_STATE on its first step
     /// (the ARD engine seeds at its own init instead).
@@ -177,14 +184,19 @@ struct WaterAgeState {
     /// INITIAL_STATE (the ARD engine consumes and clears it at init).
     bool hotstart_loaded = false;
 
-    /// @note `n_subcatch` is deliberately NOT defaulted. A default would
-    ///       let a two-argument call compile and silently empty the
-    ///       watershed arrays at runtime — and every one of the five call
-    ///       sites is guarded by a size mismatch, so the wipe would be
-    ///       repaired by the next `routeSubcatchmentAge` and never show up
-    ///       in any assertion. Requiring the argument moves the trap from
-    ///       runtime to the compiler, which is the only observer that can
-    ///       actually see it.
+    /**
+     * @brief Replace network and watershed age state while preserving shaped inflow prescriptions.
+     *
+     * Zeroes published ages (seconds), age-volume input rates, subarea volume history and pending
+     * LID/outfall accumulators. Preserves node_ext_inflow_age values if its length matches n_nodes,
+     * otherwise fills NaNs. Resets legacy_seeded/hotstart_loaded=false. Counts are unchecked and
+     * allocation failures may interrupt independent assignments; caller seeds initial ages afterward.
+     *
+     * @param[in] n_nodes Nonnegative node count.
+     * @param[in] n_links Nonnegative link count.
+     * @param[in] n_subcatch Nonnegative subcatchment count, explicitly required; subarea product must
+     *     fit size_t.
+     */
     void resize(int n_nodes, int n_links, int n_subcatch) {
         node_age_vol_in.assign(static_cast<std::size_t>(n_nodes), 0.0);
         node_age.assign(static_cast<std::size_t>(n_nodes), 0.0);
@@ -199,26 +211,28 @@ struct WaterAgeState {
         // Z1 equivalence gate). init() re-asserts NaN on every re-init,
         // so a removed row cannot leave a stale age behind.
         if (node_ext_inflow_age.size() != static_cast<std::size_t>(n_nodes))
-            node_ext_inflow_age.assign(
-                static_cast<std::size_t>(n_nodes),
-                std::numeric_limits<double>::quiet_NaN());
-        const auto ns3 = static_cast<std::size_t>(n_subcatch) *
-                         static_cast<std::size_t>(SubArea::COUNT_);
+            node_ext_inflow_age.assign(static_cast<std::size_t>(n_nodes),
+                                       std::numeric_limits<double>::quiet_NaN());
+        const auto ns3 =
+            static_cast<std::size_t>(n_subcatch) * static_cast<std::size_t>(SubArea::COUNT_);
         subarea_age.assign(ns3, 0.0);
         subarea_vol_prev.assign(ns3, 0.0);
         subcatch_runoff_age.assign(static_cast<std::size_t>(n_subcatch), 0.0);
-        subcatch_runon_age_vol_in.assign(
-            static_cast<std::size_t>(n_subcatch), 0.0);
-        subcatch_lid_drain_age_cfs.assign(
-            static_cast<std::size_t>(n_subcatch), 0.0);
-        subcatch_outfall_age_vol.assign(
-            static_cast<std::size_t>(n_subcatch), 0.0);
-        legacy_seeded   = false;
+        subcatch_runon_age_vol_in.assign(static_cast<std::size_t>(n_subcatch), 0.0);
+        subcatch_lid_drain_age_cfs.assign(static_cast<std::size_t>(n_subcatch), 0.0);
+        subcatch_outfall_age_vol.assign(static_cast<std::size_t>(n_subcatch), 0.0);
+        legacy_seeded = false;
         hotstart_loaded = false;
     }
+    /**
+     * @brief Release all water-age arrays and reset seeding/hotstart flags.
+     *
+     * Restores an empty default state, invalidating borrowed elements; source-age configuration is
+     * stored separately and unchanged.
+     */
     void clear() { *this = WaterAgeState{}; }
 };
 
-}  // namespace openswmm
+} // namespace openswmm
 
-#endif  // OPENSWMM_ENGINE_DATA_WATER_AGE_DATA_HPP
+#endif // OPENSWMM_ENGINE_DATA_WATER_AGE_DATA_HPP

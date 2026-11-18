@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_transport_dt_reference.cpp
- * @brief The timestep-refinement instrument — ONE mechanism, FOUR owed items.
+ * @file      test_transport_dt_reference.cpp
+ * @brief     The timestep-refinement instrument — ONE mechanism, FOUR owed items.
  *
  * @details Four falsifiers accumulated across A4, H5a, D-H5e and H5b that no
  *          single-run gate can observe, because each is a **`dt`-order
@@ -92,9 +92,9 @@
  *       measured floors, not widened — see gate 4.
  *
  * @see plans/transport/HEAT_TRANSPORT_PLAN.md §6.2 D-H5d, §6.3 D-H5e
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -112,6 +112,17 @@
 
 namespace {
 
+/**
+ * @brief Borrow the concrete engine behind an opaque test handle.
+ *
+ * This exact helper performs only an unchecked static_cast and dereference. It does not validate
+ * lifecycle, retain the handle or transfer ownership; fixture code may use the reference to inspect
+ * or seed internal state.
+ *
+ * @param[in] engine Live non-null new-engine handle whose concrete allocation is SWMMEngine; caller
+ *     keeps ownership.
+ * @return Mutable engine reference that remains valid until handle destruction or replacement.
+ */
 openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
     return *static_cast<openswmm::SWMMEngine*>(engine);
 }
@@ -120,43 +131,69 @@ openswmm::SWMMEngine& as_cpp_engine(SWMM_Engine engine) {
 /// cannot be refined below one second — 60/20/5 is the deepest 4x-per-level
 /// ladder the deck format allows. Deeper was not needed: every one of the
 /// five call sites separates its falsifier at this depth.
-struct Level { int wet_s; int routing_s; };
+struct Level {
+    int wet_s;
+    int routing_s;
+};
 constexpr Level kCoarse{60, 20};
-constexpr Level kMid   {20,  5};
-constexpr Level kFine  { 5,  1};
+constexpr Level kMid{20, 5};
+constexpr Level kFine{5, 1};
 
+/**
+ * @brief Format an intended nonnegative interval as hours:minutes:seconds.
+ *
+ * Negative values are not rejected and follow C++ signed division/remainder formatting. Does not
+ * parse dates or account for calendar rollover.
+ *
+ * @param[in] seconds Nonnegative total seconds; formatted output must fit the fixed 16-byte buffer
+ *     for complete text.
+ * @return Owned snprintf result with each field minimum width two; hours are not capped at 23.
+ */
 std::string hhmmss(int seconds) {
     char buf[16];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", seconds / 3600,
-                  (seconds % 3600) / 60, seconds % 60);
+    std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60,
+                  seconds % 60);
     return buf;
 }
 
+/**
+ * @brief Construct five-minute constant-then-zero dated signal rows.
+ *
+ * Minutes can format hours beyond 23 without date rollover; no validity checks or truncation
+ * diagnostic occur. Does not create a file or load a time series.
+ *
+ * @param[in] name Non-null short signal identifier fitting the 80-byte per-row formatting buffer.
+ * @param[in] last_min Inclusive final minute index; negative yields only a trailing blank line and
+ *     loop arithmetic must not overflow.
+ * @param[in] v Signal value in its authored native units, formatted to four decimals.
+ * @param[in] stop_min Last minute with value v; later emitted rows use zero.
+ * @return Owned rows dated 01/01/2026 at minutes 0,5,...<=last_min, followed by a blank line.
+ */
 std::string series(const char* name, int last_min, double v, int stop_min) {
     std::string s;
     char buf[80];
     for (int m = 0; m <= last_min; m += 5) {
-        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n",
-                      name, m / 60, m % 60, m <= stop_min ? v : 0.0);
+        std::snprintf(buf, sizeof(buf), "%s 01/01/2026 %02d:%02d %.4f\n", name, m / 60, m % 60,
+                      m <= stop_min ? v : 0.0);
         s += buf;
     }
     return s + "\n";
 }
 
 struct Deck {
-    bool   water_age  = false;
-    bool   heat       = false;
-    bool   lid        = false;
-    bool   surface    = false;
-    bool   radiative  = false;
-    bool   conduction = false;
-    double rain_c     = 5.0;
-    double init_c     = 30.0;
-    double rain_h     = 4.0;
-    double init_h     = 0.0;
-    double air_f      = 86.0;
-    int    end_min    = 30;
-    int    rain_stop_min = 30;
+    bool water_age = false;
+    bool heat = false;
+    bool lid = false;
+    bool surface = false;
+    bool radiative = false;
+    bool conduction = false;
+    double rain_c = 5.0;
+    double init_c = 30.0;
+    double rain_h = 4.0;
+    double init_h = 0.0;
+    double air_f = 86.0;
+    int end_min = 30;
+    int rain_stop_min = 30;
     /// Underdrain coefficient. See the file warning: this is what decides
     /// whether the storage layer holds water, and so whether the two LID
     /// gates measure the transport scheme or the LID solver's own step
@@ -164,39 +201,56 @@ struct Deck {
     double drain_coeff = 1.24708;
 };
 
-/// The spread the answer lives in, taken from the DECK's own sources. Gate
-/// bands are fractions of this rather than absolute temperatures, so the
-/// same band means the same thing if a deck's forcing changes.
+/**
+ * @brief Compute source contrast in the observed heat or water-age units.
+ *
+ * Does not add a nonzero floor, inspect routed results or validate finite source values.
+ *
+ * @param[in] d Deck specification containing initial/rain temperature C and age hours.
+ * @param[in] heat True uses temperature contrast; false uses age contrast converted from hours to
+ *     seconds.
+ * @return Absolute initial-minus-rain contrast in degrees C or seconds, respectively.
+ */
 double sourceSpread(const Deck& d, bool heat) {
     // The age configuration is read in HOURS but `subcatch_runoff_age` is
     // published in SECONDS, so the age spread has to be carried into the
     // observable's own unit or the band means something 3600x tighter than
     // it reads.
-    return heat ? std::fabs(d.init_c - d.rain_c)
-                : std::fabs(d.init_h - d.rain_h) * 3600.0;
+    return heat ? std::fabs(d.init_c - d.rain_c) : std::fabs(d.init_h - d.rain_h) * 3600.0;
 }
 
+/**
+ * @brief Write fixed-name input, heat and age configuration artifacts for a refinement run.
+ *
+ * Overwrites _dtref.heat/.age/.inp in cwd with CFS/DYNWAVE/Horton network, optional LID, fixed
+ * weather/rain series and selected process components. Temperature sources use C, age sources
+ * hours, air series F and shortwave 600 W/m2 when enabled. All stream statuses are unchecked; tests
+ * using fixed names must be serialized. Does not open/run the generated deck.
+ *
+ * @param[in] d Deck choices controlling source values, weather/modules, duration and optional
+ *     bioretention; times/counts fit formatting arithmetic.
+ * @param[in] lv Positive wet/routing step lengths in seconds for this resolution level.
+ */
 void write_files(const Deck& d, const Level& lv) {
     {
         std::ofstream f("_dtref.heat");
-        f << "[HEAT_SOURCES]\nRAINFALL GLOBAL " << d.rain_c
-          << "\nINITIAL_STATE GLOBAL " << d.init_c << "\n\n[HEAT_FLUXES]\n"
-          << "SURFACE_EXCHANGE "   << (d.surface   ? "ON" : "OFF") << "\n"
+        f << "[HEAT_SOURCES]\nRAINFALL GLOBAL " << d.rain_c << "\nINITIAL_STATE GLOBAL " << d.init_c
+          << "\n\n[HEAT_FLUXES]\n"
+          << "SURFACE_EXCHANGE " << (d.surface ? "ON" : "OFF") << "\n"
           << "RADIATIVE_EXCHANGE " << (d.radiative ? "ON" : "OFF") << "\n"
-          << "LAYER_CONDUCTION "   << (d.conduction? "ON" : "OFF") << "\n";
+          << "LAYER_CONDUCTION " << (d.conduction ? "ON" : "OFF") << "\n";
         if (d.radiative)
             f << "\n[RADIATIVE_FLUXES]\nSHORTWAVE GLOBAL 600\n";
     }
     {
         std::ofstream f("_dtref.age");
-        f << "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " << d.rain_h
-          << "\nINITIAL_STATE GLOBAL " << d.init_h << "\n";
+        f << "[WATER_AGE_SOURCES]\nRAINFALL GLOBAL " << d.rain_h << "\nINITIAL_STATE GLOBAL "
+          << d.init_h << "\n";
     }
     std::ofstream f("_dtref.inp");
     f << "[TITLE]\ndt-refinement reference deck\n\n[OPTIONS]\n"
       << "FLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nINFILTRATION HORTON\n"
-      << (d.water_age ? "WATER_AGE ON\n" : "")
-      << (d.heat ? "HEAT_TRANSPORT ON\n" : "")
+      << (d.water_age ? "WATER_AGE ON\n" : "") << (d.heat ? "HEAT_TRANSPORT ON\n" : "")
       << "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
       << "END_DATE 01/01/2026\nEND_TIME " << hhmmss(d.end_min * 60) << "\n"
       << "WET_STEP " << hhmmss(lv.wet_s) << "\n"
@@ -204,9 +258,11 @@ void write_files(const Deck& d, const Level& lv) {
       << "ROUTING_STEP " << lv.routing_s << "\n"
       << "REPORT_STEP 00:05:00\n\n"
       << "[TEMPERATURE]\nTIMESERIES air_ts\nWINDSPEED MONTHLY";
-    for (int m = 0; m < 12; ++m) f << " 20.0";
+    for (int m = 0; m < 12; ++m)
+        f << " 20.0";
     f << "\nHUMIDITY";
-    for (int m = 0; m < 12; ++m) f << " 20.0";
+    for (int m = 0; m < 12; ++m)
+        f << " 20.0";
     f << "\n\n[RAINGAGES]\nRG1 INTENSITY 0:05 1.0 TIMESERIES rain_ts\n\n"
       << "[TIMESERIES]\n"
       << series("rain_ts", d.end_min + 5, 2.0, d.rain_stop_min)
@@ -230,61 +286,71 @@ void write_files(const Deck& d, const Level& lv) {
       << "C2 ST1 OUT 200 0.013 0 0 0\n\n"
       << "[XSECTIONS]\nC1 CIRCULAR 3.0 0 0 0\nC2 CIRCULAR 3.0 0 0 0\n\n"
       << "[PROCESS_COMPONENTS]\n";
-    if (d.heat)      f << "org.hydrocouple.openswmm.heat config=\"_dtref.heat\"\n";
-    if (d.water_age) f << "org.hydrocouple.openswmm.waterage config=\"_dtref.age\"\n";
+    if (d.heat)
+        f << "org.hydrocouple.openswmm.heat config=\"_dtref.heat\"\n";
+    if (d.water_age)
+        f << "org.hydrocouple.openswmm.waterage config=\"_dtref.age\"\n";
     f << "\n[REPORT]\nINPUT NO\n";
 }
 
 /// What one run publishes. Every gate picks one field; they are gathered
 /// together so a single run serves whichever gate needs it.
 struct Result {
-    bool   ok = false;
-    double subcatch_temp = 0.0;   ///< H5a — subarea flux/mix ordering
-    double storage_temp  = 0.0;   ///< D-H5e — relaxation over a long step
-    double lid_storage_temp = 0.0;///< H5b — conduction composition
+    bool ok = false;
+    double subcatch_temp = 0.0;    ///< H5a — subarea flux/mix ordering
+    double storage_temp = 0.0;     ///< D-H5e — relaxation over a long step
+    double lid_storage_temp = 0.0; ///< H5b — conduction composition
     double lid_soil_temp = 0.0;
     double lid_storage_age = 0.0; ///< A4  — donor mix order
 };
 
+/**
+ * @brief Run one transport refinement level and copy selected final heat/age observations.
+ *
+ * Writes fixed artifacts, opens/initializes/starts with output and steps until error/completion or
+ * 2000000-iteration guard. Step error/guard exhaustion still permits end, final observations and
+ * ok=true; ok is not independent proof of completion. Checks array presence for some observations,
+ * assumes active LID layer indices exist, ignores end status and destroys the handle.
+ *
+ * @param[in] d Compatible source/module/deck specification passed to write_files.
+ * @param[in] lv Requested wet/routing resolution in seconds.
+ * @return Owned temperatures in degrees C and LID water age in seconds with ok flag;
+ *     defaults/ok=false on creation/startup failure.
+ */
 Result runAt(const Deck& d, const Level& lv) {
     write_files(d, lv);
     Result r{};
     SWMM_Engine e = swmm_engine_create();
-    if (e == nullptr) return r;
-    if (swmm_engine_open(e, "_dtref.inp", "_dtref.rpt", "_dtref.out",
-                         nullptr) != SWMM_OK ||
-        swmm_engine_initialize(e) != SWMM_OK ||
-        swmm_engine_start(e, 1) != SWMM_OK) {
+    if (e == nullptr)
+        return r;
+    if (swmm_engine_open(e, "_dtref.inp", "_dtref.rpt", "_dtref.out", nullptr) != SWMM_OK ||
+        swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 1) != SWMM_OK) {
         swmm_engine_destroy(e);
         return r;
     }
     double elapsed = 0.0;
     int guard = 0;
     do {
-        if (swmm_engine_step(e, &elapsed) != SWMM_OK) break;
+        if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+            break;
     } while (elapsed > 0.0 && ++guard < 2000000);
     swmm_engine_end(e);
 
     const auto& ctx = as_cpp_engine(e).context();
-    const auto& hs  = ctx.heat_state;
+    const auto& hs = ctx.heat_state;
     if (!hs.subcatch_runoff_temp.empty())
         r.subcatch_temp = hs.subcatch_runoff_temp[0];
     // The storage node is index 1 (J1, ST1, OUT).
-    if (hs.node_temp.size() > 1) r.storage_temp = hs.node_temp[1];
+    if (hs.node_temp.size() > 1)
+        r.storage_temp = hs.node_temp[1];
     const auto& st = ctx.lid_layer_state;
     if (st.active()) {
-        r.lid_storage_temp =
-            st.value[st.layer_index(0, openswmm::LidLayer::STORAGE,
-                                    static_cast<int>(
-                                        openswmm::LidSpecies::TEMPERATURE))];
-        r.lid_soil_temp =
-            st.value[st.layer_index(0, openswmm::LidLayer::SOIL,
-                                    static_cast<int>(
-                                        openswmm::LidSpecies::TEMPERATURE))];
-        r.lid_storage_age =
-            st.value[st.layer_index(0, openswmm::LidLayer::STORAGE,
-                                    static_cast<int>(
-                                        openswmm::LidSpecies::AGE))];
+        r.lid_storage_temp = st.value[st.layer_index(
+            0, openswmm::LidLayer::STORAGE, static_cast<int>(openswmm::LidSpecies::TEMPERATURE))];
+        r.lid_soil_temp = st.value[st.layer_index(
+            0, openswmm::LidLayer::SOIL, static_cast<int>(openswmm::LidSpecies::TEMPERATURE))];
+        r.lid_storage_age = st.value[st.layer_index(0, openswmm::LidLayer::STORAGE,
+                                                    static_cast<int>(openswmm::LidSpecies::AGE))];
     }
     r.ok = true;
     swmm_engine_destroy(e);
@@ -300,33 +366,31 @@ Result runAt(const Deck& d, const Level& lv) {
  * @param band     max `|a − c|` as a fraction of `spread`. **MEASURE THIS.**
  * @param what     name, for the failure message.
  */
-void ExpectConverged(double a, double b, double c, double spread,
-                     double band, const char* what) {
+void ExpectConverged(double a, double b, double c, double spread, double band, const char* what) {
     const double d1 = std::fabs(a - b);
     const double d2 = std::fabs(b - c);
     const double total = std::fabs(a - c);
 
     ASSERT_TRUE(std::isfinite(a) && std::isfinite(b) && std::isfinite(c))
         << what << ": non-finite (" << a << ", " << b << ", " << c << ")";
-    ASSERT_GT(spread, 1.0e-9)
-        << what << ": the deck's sources span nothing, so there is no scale "
-                   "to measure convergence against and this gate is vacuous";
+    ASSERT_GT(spread, 1.0e-9) << what
+                              << ": the deck's sources span nothing, so there is no scale "
+                                 "to measure convergence against and this gate is vacuous";
 
     // SETUP — the observable must actually MOVE with the timestep. If it
     // does not, the term under test is not active on this deck and the gate
     // proves nothing (lesson 59, and lesson 96: assert the whole predicate).
     ASSERT_GT(d1 / spread, 1.0e-9)
-        << what << ": the answer is identical at coarse and mid steps ("
-        << a << " vs " << b << "), so this deck does not exercise a "
+        << what << ": the answer is identical at coarse and mid steps (" << a << " vs " << b
+        << "), so this deck does not exercise a "
            "timestep-dependent term at all";
 
     // (1) Contraction — reference-free. A first-order scheme on a 4x ladder
     // contracts by roughly 4; anything that does not contract is not
     // converging and no band below is meaningful.
-    EXPECT_LT(d2, d1)
-        << what << ": refining made the answer move MORE (" << d2
-        << " vs " << d1 << "). The sequence is not converging, so the "
-           "scheme is not consistent with the ODE it claims";
+    EXPECT_LT(d2, d1) << what << ": refining made the answer move MORE (" << d2 << " vs " << d1
+                      << "). The sequence is not converging, so the "
+                         "scheme is not consistent with the ODE it claims";
 
     // (2) Already close at the coarse step, measured against the deck's own
     // scale. This is the leg a splitting or mix-order defect fails: it stays
@@ -337,17 +401,15 @@ void ExpectConverged(double a, double b, double c, double spread,
     // to the schemes should not require editing the gate to see the numbers.
     std::printf("[ dt-ref   ] %-44s coarse %.10g  mid %.10g  fine %.10g  "
                 "| ratio %.3g  err/spread %.6g  (band %.6g)\n",
-                what, a, b, c, (d2 > 0.0 ? d1 / d2 : 0.0), total / spread,
-                band);
+                what, a, b, c, (d2 > 0.0 ? d1 / d2 : 0.0), total / spread, band);
 
     EXPECT_LT(total / spread, band)
         << what << ": |coarse - fine| = " << total << " over a source "
-        << "spread of " << spread << " = " << (total / spread)
-        << " of scale, against a band of " << band << ". Coarse " << a
-        << ", mid " << b << ", fine " << c;
+        << "spread of " << spread << " = " << (total / spread) << " of scale, against a band of "
+        << band << ". Coarse " << a << ", mid " << b << ", fine " << c;
 }
 
-}  // namespace
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Gate 1 — A4 falsifier iii. Mix ORDER in the LID column: the donor's old
@@ -378,9 +440,8 @@ TEST(TransportDtReferenceTest, LidColumnAgeConvergesUnderRefinement) {
     const auto c = runAt(d, kFine);
     ASSERT_TRUE(a.ok && b.ok && c.ok) << "a refinement level failed to run";
 
-    ExpectConverged(a.lid_storage_age, b.lid_storage_age, c.lid_storage_age,
-                    sourceSpread(d, false), 0.0080,
-                    "LID storage age (A4 falsifier iii)");
+    ExpectConverged(a.lid_storage_age, b.lid_storage_age, c.lid_storage_age, sourceSpread(d, false),
+                    0.0080, "LID storage age (A4 falsifier iii)");
 }
 
 // ---------------------------------------------------------------------------
@@ -402,8 +463,7 @@ TEST(TransportDtReferenceTest, SubareaTemperatureConvergesUnderRefinement) {
     const auto c = runAt(d, kFine);
     ASSERT_TRUE(a.ok && b.ok && c.ok);
 
-    ExpectConverged(a.subcatch_temp, b.subcatch_temp, c.subcatch_temp,
-                    sourceSpread(d, true), 0.014,
+    ExpectConverged(a.subcatch_temp, b.subcatch_temp, c.subcatch_temp, sourceSpread(d, true), 0.014,
                     "subarea runoff temperature (H5a falsifier vi)");
 }
 
@@ -422,7 +482,7 @@ TEST(TransportDtReferenceTest, StorageNodeTemperatureConvergesUnderRefinement) {
     Deck d{};
     d.heat = true;
     d.surface = true;
-    d.radiative = true;      // both families: the composition D-H5e merged
+    d.radiative = true; // both families: the composition D-H5e merged
     d.rain_c = 5.0;
     d.init_c = 30.0;
 
@@ -431,8 +491,7 @@ TEST(TransportDtReferenceTest, StorageNodeTemperatureConvergesUnderRefinement) {
     const auto c = runAt(d, kFine);
     ASSERT_TRUE(a.ok && b.ok && c.ok);
 
-    ExpectConverged(a.storage_temp, b.storage_temp, c.storage_temp,
-                    sourceSpread(d, true), 0.030,
+    ExpectConverged(a.storage_temp, b.storage_temp, c.storage_temp, sourceSpread(d, true), 0.030,
                     "storage node temperature (D-H5e linearization)");
 }
 
@@ -448,8 +507,8 @@ TEST(TransportDtReferenceTest, LidColumnTemperatureConvergesUnderRefinement) {
     d.heat = true;
     d.lid = true;
     d.conduction = true;
-    d.surface = true;        // BOTH operators live, or there is nothing to
-    d.rain_c = 5.0;          // compose and the splitting error is zero
+    d.surface = true; // BOTH operators live, or there is nothing to
+    d.rain_c = 5.0;   // compose and the splitting error is zero
     d.init_c = 30.0;
     // A working underdrain, but slow enough that the storage layer stays
     // two thirds full. Sealing it as gate 1 does leaves the soil leg barely
@@ -471,14 +530,12 @@ TEST(TransportDtReferenceTest, LidColumnTemperatureConvergesUnderRefinement) {
     // 0.0196 at 1.93. The temperature legs contract at ~1.9 on a 4x ladder
     // — closer to first order than the age leg — which is recorded as a
     // finding about the conduction/advection composition, not absorbed here.
-    ExpectConverged(a.lid_storage_temp, b.lid_storage_temp,
-                    c.lid_storage_temp, sourceSpread(d, true), 0.0095,
-                    "LID storage temperature (H5b falsifier ii)");
+    ExpectConverged(a.lid_storage_temp, b.lid_storage_temp, c.lid_storage_temp,
+                    sourceSpread(d, true), 0.0095, "LID storage temperature (H5b falsifier ii)");
     // Soil band re-pinned 2026-09-13 (legacy lidproc kernel port): the
     // bio-cell's soil moisture now follows legacy's flux limiters and its
     // own Green-Ampt surface infiltration, and the soil leg measures 0.0235
     // at a contraction ratio of 1.82 (was 0.0196 at 1.93). Same headroom.
-    ExpectConverged(a.lid_soil_temp, b.lid_soil_temp, c.lid_soil_temp,
-                    sourceSpread(d, true), 0.028,
+    ExpectConverged(a.lid_soil_temp, b.lid_soil_temp, c.lid_soil_temp, sourceSpread(d, true), 0.028,
                     "LID soil temperature (H5b falsifier ii)");
 }

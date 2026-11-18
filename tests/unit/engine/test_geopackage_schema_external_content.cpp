@@ -15,8 +15,8 @@
 // limitations under the License.
 
 /**
- * @file test_geopackage_schema_external_content.cpp
- * @brief Slice IO-5 — structured external-file content schema + FK integrity.
+ * @file      test_geopackage_schema_external_content.cpp
+ * @brief     Slice IO-5 — structured external-file content schema + FK integrity.
  *
  * @details Pins the contract documented in
  *          openswmm.gui/docs/IO_PORTABILITY_PLAN.md §3.4:
@@ -39,9 +39,9 @@
  *          written under tests/unit/engine/data/io5_schema/ so a
  *          reviewer can open it with QGIS / sqlite3 after the run.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -65,16 +65,39 @@ using openswmm::gpkg::bind_int;
 
 namespace {
 
+/**
+ * @brief Locate/create the retained external-content schema artifact directory.
+ *
+ * Searches at most eight parents from current_path for the test-data tree, then creates the output
+ * directory even if no tree was found. Filesystem errors propagate; existing contents are retained,
+ * and cwd is unchanged.
+ *
+ * @param[in] stem Filesystem-safe database basename, without .gpkg.
+ * @return Path ending tests/unit/engine/data/io5_schema/stem.gpkg beneath the located or final
+ *     searched ancestor.
+ */
 fs::path testDbPath(const std::string& stem) {
     fs::path here = fs::current_path();
     for (int i = 0; i < 8 && !fs::exists(here / "tests/unit/engine/data"); ++i) {
-        if (here.has_parent_path()) here = here.parent_path();
+        if (here.has_parent_path())
+            here = here.parent_path();
     }
     fs::path dir = here / "tests/unit/engine/data/io5_schema";
     fs::create_directories(dir);
     return dir / (stem + ".gpkg");
 }
 
+/**
+ * @brief Remove the selected schema artifact and create a database with maintained schema.
+ *
+ * Ignores remove error_code, so an unremovable existing database may be reopened instead of reset.
+ * Schema/open exceptions propagate; file/schema changes are persistent and no transaction rollback
+ * is supplied by this helper.
+ *
+ * @param[in] stem Safe database basename passed to testDbPath.
+ * @return Owning SQLite connection after open_database/create_schema complete; DbPtr deleter closes
+ *     it.
+ */
 DbPtr freshDb(const std::string& stem) {
     auto path = testDbPath(stem);
     std::error_code ec;
@@ -84,13 +107,33 @@ DbPtr freshDb(const std::string& stem) {
     return db;
 }
 
+/**
+ * @brief Check for an exactly named SQLite table using a bound parameter.
+ *
+ * prepare/bind helper exceptions propagate; temporary statement is owned locally and no schema
+ * mutation occurs.
+ *
+ * @param[in] db Borrowed valid open database; ownership remains with caller.
+ * @param[in] name Exact table name bound to the sqlite_master query.
+ * @return True for SQLITE_ROW; false for absence or sqlite3_step error.
+ */
 bool tableExists(sqlite3* db, const std::string& name) {
-    auto stmt = prepare(db,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?");
+    auto stmt = prepare(db, "SELECT name FROM sqlite_master WHERE type='table' AND name=?");
     bind_text(stmt.get(), 1, name);
     return sqlite3_step(stmt.get()) == SQLITE_ROW;
 }
 
+/**
+ * @brief Query pragma_table_info for the named table's column count.
+ *
+ * Ignores step status before reading the integer. prepare/bind errors can propagate; no schema
+ * mutation or database ownership transfer occurs.
+ *
+ * @param[in] db Borrowed valid SQLite connection.
+ * @param[in] table Table name bound as a parameter rather than interpolated.
+ * @return Integer column count from result column0, with no separate status for sqlite3_step
+ *     failure.
+ */
 int columnCount(sqlite3* db, const std::string& table) {
     auto stmt = prepare(db, "SELECT COUNT(*) FROM pragma_table_info(?)");
     bind_text(stmt.get(), 1, table);
@@ -98,6 +141,16 @@ int columnCount(sqlite3* db, const std::string& table) {
     return sqlite3_column_int(stmt.get(), 0);
 }
 
+/**
+ * @brief Read the connection's foreign-key enforcement flag.
+ *
+ * Does not enable enforcement or modify the database. prepare helper exceptions propagate; local
+ * statement is released at scope exit.
+ *
+ * @param[in] db Borrowed valid open SQLite connection.
+ * @return True when pragma result column0 is1; false otherwise, including an unchecked step
+ *     failure.
+ */
 bool fkActive(sqlite3* db) {
     auto stmt = prepare(db, "PRAGMA foreign_keys");
     sqlite3_step(stmt.get());
@@ -105,28 +158,42 @@ bool fkActive(sqlite3* db) {
 }
 
 // Plant a minimal simulation + one node/link/subcatch/gage/pollutant.
+/**
+ * @brief Insert the reference simulation/object rows required by foreign-key tests.
+ *
+ * Inserts simulation metadata, J1/O1 nodes, L1 conduit, S1 catchment, G1 gage and TSS pollutant.
+ * exec exceptions propagate after any earlier successful inserts; no transaction/rollback or
+ * identifier escaping is performed here.
+ *
+ * @param[in,out] db Borrowed writable database with maintained schema and no conflicting fixed
+ *     fixture rows.
+ * @param[in] sim_id Trusted simulation identifier inserted through literal SQL concatenation; must
+ *     contain no unescaped single quotes.
+ */
 void planMinimalModel(sqlite3* db, const std::string& sim_id) {
-    exec(db, std::string(
-        "INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
-        "VALUES ('" + sim_id + "', 't', '2026-01-01T00:00:00Z', '6.0.0')"));
-    exec(db, std::string(
-        "INSERT INTO nodes (simulation_id, node_id, node_type) "
-        "VALUES ('" + sim_id + "', 'J1', 'JUNCTION')"));
-    exec(db, std::string(
-        "INSERT INTO nodes (simulation_id, node_id, node_type) "
-        "VALUES ('" + sim_id + "', 'O1', 'OUTFALL')"));
-    exec(db, std::string(
-        "INSERT INTO links (simulation_id, link_id, link_type, from_node, to_node) "
-        "VALUES ('" + sim_id + "', 'L1', 'CONDUIT', 'J1', 'O1')"));
-    exec(db, std::string(
-        "INSERT INTO subcatchments (simulation_id, subcatch_id) "
-        "VALUES ('" + sim_id + "', 'S1')"));
-    exec(db, std::string(
-        "INSERT INTO rain_gages (simulation_id, gage_id) "
-        "VALUES ('" + sim_id + "', 'G1')"));
-    exec(db, std::string(
-        "INSERT INTO pollutants (simulation_id, pollutant_id, units) "
-        "VALUES ('" + sim_id + "', 'TSS', 'MG/L')"));
+    exec(db,
+         std::string("INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
+                     "VALUES ('" +
+                     sim_id + "', 't', '2026-01-01T00:00:00Z', '6.0.0')"));
+    exec(db, std::string("INSERT INTO nodes (simulation_id, node_id, node_type) "
+                         "VALUES ('" +
+                         sim_id + "', 'J1', 'JUNCTION')"));
+    exec(db, std::string("INSERT INTO nodes (simulation_id, node_id, node_type) "
+                         "VALUES ('" +
+                         sim_id + "', 'O1', 'OUTFALL')"));
+    exec(db,
+         std::string("INSERT INTO links (simulation_id, link_id, link_type, from_node, to_node) "
+                     "VALUES ('" +
+                     sim_id + "', 'L1', 'CONDUIT', 'J1', 'O1')"));
+    exec(db, std::string("INSERT INTO subcatchments (simulation_id, subcatch_id) "
+                         "VALUES ('" +
+                         sim_id + "', 'S1')"));
+    exec(db, std::string("INSERT INTO rain_gages (simulation_id, gage_id) "
+                         "VALUES ('" +
+                         sim_id + "', 'G1')"));
+    exec(db, std::string("INSERT INTO pollutants (simulation_id, pollutant_id, units) "
+                         "VALUES ('" +
+                         sim_id + "', 'TSS', 'MG/L')"));
 }
 
 } // namespace
@@ -177,8 +244,8 @@ TEST(GpkgSchemaIO5, InputTimeseriesHasProvenanceColumns) {
     auto db = freshDb("ts_provenance");
     // pragma_table_info row exists for each new column.
     auto col_present = [&](const char* col) -> bool {
-        auto stmt = prepare(db.get(),
-            "SELECT 1 FROM pragma_table_info('input_timeseries') WHERE name=?");
+        auto stmt =
+            prepare(db.get(), "SELECT 1 FROM pragma_table_info('input_timeseries') WHERE name=?");
         bind_text(stmt.get(), 1, col);
         return sqlite3_step(stmt.get()) == SQLITE_ROW;
     };
@@ -194,16 +261,14 @@ TEST(GpkgSchemaIO5, InputTimeseriesHasProvenanceColumns) {
 TEST(GpkgSchemaIO5, OrphanHotstartNodeStateRejected) {
     auto db = freshDb("orphan_reject");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO hotstart_slots "
-        "(simulation_id, slot_name, direction, format_version, num_pollutants) "
-        "VALUES ('sim1', 'use', 'USE', 1, 1)");
+    exec(db.get(), "INSERT INTO hotstart_slots "
+                   "(simulation_id, slot_name, direction, format_version, num_pollutants) "
+                   "VALUES ('sim1', 'use', 'USE', 1, 1)");
 
     // No node named "GHOST" — FK to nodes(simulation_id, node_id) must reject.
-    auto stmt = prepare(db.get(),
-        "INSERT INTO hotstart_node_state "
-        "(simulation_id, slot_name, node_id, depth) "
-        "VALUES ('sim1', 'use', 'GHOST', 0.5)");
+    auto stmt = prepare(db.get(), "INSERT INTO hotstart_node_state "
+                                  "(simulation_id, slot_name, node_id, depth) "
+                                  "VALUES ('sim1', 'use', 'GHOST', 0.5)");
     int rc = sqlite3_step(stmt.get());
     EXPECT_EQ(rc, SQLITE_CONSTRAINT)
         << "orphan hotstart_node_state row should be rejected, got rc=" << rc;
@@ -212,67 +277,56 @@ TEST(GpkgSchemaIO5, OrphanHotstartNodeStateRejected) {
 TEST(GpkgSchemaIO5, DeleteNodeCascadesHotstartState) {
     auto db = freshDb("cascade_delete");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO hotstart_slots "
-        "(simulation_id, slot_name, direction, format_version, num_pollutants) "
-        "VALUES ('sim1', 'use', 'USE', 1, 1)");
-    exec(db.get(),
-        "INSERT INTO hotstart_node_state "
-        "(simulation_id, slot_name, node_id, depth) "
-        "VALUES ('sim1', 'use', 'J1', 1.0)");
+    exec(db.get(), "INSERT INTO hotstart_slots "
+                   "(simulation_id, slot_name, direction, format_version, num_pollutants) "
+                   "VALUES ('sim1', 'use', 'USE', 1, 1)");
+    exec(db.get(), "INSERT INTO hotstart_node_state "
+                   "(simulation_id, slot_name, node_id, depth) "
+                   "VALUES ('sim1', 'use', 'J1', 1.0)");
 
     auto count_state = [&]() -> int {
-        auto stmt = prepare(db.get(),
-            "SELECT COUNT(*) FROM hotstart_node_state "
-            "WHERE simulation_id='sim1' AND node_id='J1'");
+        auto stmt = prepare(db.get(), "SELECT COUNT(*) FROM hotstart_node_state "
+                                      "WHERE simulation_id='sim1' AND node_id='J1'");
         sqlite3_step(stmt.get());
         return sqlite3_column_int(stmt.get(), 0);
     };
     ASSERT_EQ(count_state(), 1);
 
     exec(db.get(), "DELETE FROM nodes WHERE simulation_id='sim1' AND node_id='J1'");
-    EXPECT_EQ(count_state(), 0)
-        << "deleting J1 should have cascaded its hotstart_node_state row";
+    EXPECT_EQ(count_state(), 0) << "deleting J1 should have cascaded its hotstart_node_state row";
 }
 
 TEST(GpkgSchemaIO5, RenameNodePropagatesToHotstartState) {
     auto db = freshDb("cascade_update");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO hotstart_slots "
-        "(simulation_id, slot_name, direction, format_version, num_pollutants) "
-        "VALUES ('sim1', 'use', 'USE', 1, 1)");
-    exec(db.get(),
-        "INSERT INTO hotstart_node_state "
-        "(simulation_id, slot_name, node_id, depth) "
-        "VALUES ('sim1', 'use', 'J1', 1.0)");
+    exec(db.get(), "INSERT INTO hotstart_slots "
+                   "(simulation_id, slot_name, direction, format_version, num_pollutants) "
+                   "VALUES ('sim1', 'use', 'USE', 1, 1)");
+    exec(db.get(), "INSERT INTO hotstart_node_state "
+                   "(simulation_id, slot_name, node_id, depth) "
+                   "VALUES ('sim1', 'use', 'J1', 1.0)");
 
-    exec(db.get(),
-        "UPDATE nodes SET node_id='J1_renamed' "
-        "WHERE simulation_id='sim1' AND node_id='J1'");
+    exec(db.get(), "UPDATE nodes SET node_id='J1_renamed' "
+                   "WHERE simulation_id='sim1' AND node_id='J1'");
 
-    auto stmt = prepare(db.get(),
-        "SELECT node_id FROM hotstart_node_state WHERE simulation_id='sim1'");
+    auto stmt =
+        prepare(db.get(), "SELECT node_id FROM hotstart_node_state WHERE simulation_id='sim1'");
     ASSERT_EQ(sqlite3_step(stmt.get()), SQLITE_ROW);
-    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0)),
-                 "J1_renamed");
+    EXPECT_STREQ(reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0)), "J1_renamed");
 }
 
 TEST(GpkgSchemaIO5, DeleteSimulationCascadesAllPartD) {
     auto db = freshDb("cascade_sim");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO hotstart_slots "
-        "(simulation_id, slot_name, direction, format_version, num_pollutants) "
-        "VALUES ('sim1', 'use', 'USE', 1, 1)");
-    exec(db.get(),
-        "INSERT INTO climate_data "
-        "(simulation_id, record_date, tmin, tmax) "
-        "VALUES ('sim1', '2026-01-01', 32.0, 50.0)");
-    exec(db.get(),
-        "INSERT INTO raingage_data "
-        "(simulation_id, gage_id, record_time, rainfall_value) "
-        "VALUES ('sim1', 'G1', '2026-01-01T00:00:00Z', 0.5)");
+    exec(db.get(), "INSERT INTO hotstart_slots "
+                   "(simulation_id, slot_name, direction, format_version, num_pollutants) "
+                   "VALUES ('sim1', 'use', 'USE', 1, 1)");
+    exec(db.get(), "INSERT INTO climate_data "
+                   "(simulation_id, record_date, tmin, tmax) "
+                   "VALUES ('sim1', '2026-01-01', 32.0, 50.0)");
+    exec(db.get(), "INSERT INTO raingage_data "
+                   "(simulation_id, gage_id, record_time, rainfall_value) "
+                   "VALUES ('sim1', 'G1', '2026-01-01T00:00:00Z', 0.5)");
 
     exec(db.get(), "DELETE FROM simulations WHERE simulation_id='sim1'");
 
@@ -293,18 +347,19 @@ TEST(GpkgSchemaIO5, DeleteSimulationCascadesAllPartD) {
     // tables they reference. The G1 gage row (and the raingage_data row
     // inserted above) therefore deliberately SURVIVE the simulation delete:
     EXPECT_EQ(count("SELECT COUNT(*) FROM rain_gages "
-                     "WHERE simulation_id='sim1' AND gage_id='G1'"), 1);
+                    "WHERE simulation_id='sim1' AND gage_id='G1'"),
+              1);
     EXPECT_EQ(count("SELECT COUNT(*) FROM raingage_data "
-                     "WHERE simulation_id='sim1' AND gage_id='G1'"), 1);
+                    "WHERE simulation_id='sim1' AND gage_id='G1'"),
+              1);
 
     // Test the model-object cascade path instead, using the surviving gage.
-    exec(db.get(),
-        "INSERT INTO raingage_data (simulation_id, gage_id, record_time, "
-        " rainfall_value) VALUES ('sim1','G1','2026-02-01T00:00:00Z', 0.7)");
-    exec(db.get(),
-        "DELETE FROM rain_gages WHERE simulation_id='sim1' AND gage_id='G1'");
+    exec(db.get(), "INSERT INTO raingage_data (simulation_id, gage_id, record_time, "
+                   " rainfall_value) VALUES ('sim1','G1','2026-02-01T00:00:00Z', 0.7)");
+    exec(db.get(), "DELETE FROM rain_gages WHERE simulation_id='sim1' AND gage_id='G1'");
     EXPECT_EQ(count("SELECT COUNT(*) FROM raingage_data "
-                     "WHERE simulation_id='sim1' AND gage_id='G1'"), 0)
+                    "WHERE simulation_id='sim1' AND gage_id='G1'"),
+              0)
         << "deleting a rain_gages row should cascade to raingage_data";
 }
 
@@ -315,22 +370,20 @@ TEST(GpkgSchemaIO5, DeleteSimulationCascadesAllPartD) {
 TEST(GpkgSchemaIO5, HotstartSubcatchStateAcceptsFullRow) {
     auto db = freshDb("subcatch_state_shape");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO hotstart_slots "
-        "(simulation_id, slot_name, direction, format_version, num_pollutants) "
-        "VALUES ('sim1', 'use', 'USE', 1, 1)");
+    exec(db.get(), "INSERT INTO hotstart_slots "
+                   "(simulation_id, slot_name, direction, format_version, num_pollutants) "
+                   "VALUES ('sim1', 'use', 'USE', 1, 1)");
 
     // All 17 state columns supplied with valid REAL values.
-    auto stmt = prepare(db.get(),
-        "INSERT INTO hotstart_subcatch_state "
-        "(simulation_id, slot_name, subcatch_id, runoff, infil_model, "
-        " infil_state_0, infil_state_1, infil_state_2, infil_state_3, "
-        " infil_state_4, infil_state_5, gw_theta_upper, gw_lower_depth, "
-        " snow_we_plowable, snow_we_imperv, snow_we_perv, "
-        " snow_fw_plowable, snow_fw_imperv, snow_fw_perv, snow_ati) "
-        "VALUES ('sim1','use','S1',0.1,0,"
-        "        0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,"
-        "        1.0,1.1,1.2,1.3,1.4,1.5,1.6)");
+    auto stmt = prepare(db.get(), "INSERT INTO hotstart_subcatch_state "
+                                  "(simulation_id, slot_name, subcatch_id, runoff, infil_model, "
+                                  " infil_state_0, infil_state_1, infil_state_2, infil_state_3, "
+                                  " infil_state_4, infil_state_5, gw_theta_upper, gw_lower_depth, "
+                                  " snow_we_plowable, snow_we_imperv, snow_we_perv, "
+                                  " snow_fw_plowable, snow_fw_imperv, snow_fw_perv, snow_ati) "
+                                  "VALUES ('sim1','use','S1',0.1,0,"
+                                  "        0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,"
+                                  "        1.0,1.1,1.2,1.3,1.4,1.5,1.6)");
     int rc = sqlite3_step(stmt.get());
     EXPECT_EQ(rc, SQLITE_DONE) << "valid subcatch state row should insert";
 }
@@ -338,35 +391,31 @@ TEST(GpkgSchemaIO5, HotstartSubcatchStateAcceptsFullRow) {
 TEST(GpkgSchemaIO5, RoutingInterfaceNodePollutantsFkChain) {
     auto db = freshDb("routing_iface_node_polls");
     planMinimalModel(db.get(), "sim1");
-    exec(db.get(),
-        "INSERT INTO routing_interface_node "
-        "(simulation_id, role, direction, node_id, record_time, flow_value) "
-        "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z', 0.5)");
+    exec(db.get(), "INSERT INTO routing_interface_node "
+                   "(simulation_id, role, direction, node_id, record_time, flow_value) "
+                   "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z', 0.5)");
     // Valid pollutant row — references both parent row and pollutants(TSS).
     int rc = 0;
     {
-        auto stmt = prepare(db.get(),
-            "INSERT INTO routing_interface_node_pollutants "
-            "(simulation_id, role, direction, node_id, record_time, "
-            " pollutant_id, concentration) "
-            "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z',"
-            "        'TSS', 12.5)");
+        auto stmt = prepare(db.get(), "INSERT INTO routing_interface_node_pollutants "
+                                      "(simulation_id, role, direction, node_id, record_time, "
+                                      " pollutant_id, concentration) "
+                                      "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z',"
+                                      "        'TSS', 12.5)");
         rc = sqlite3_step(stmt.get());
     }
     EXPECT_EQ(rc, SQLITE_DONE);
 
     // Orphan pollutant id rejected.
     {
-        auto stmt = prepare(db.get(),
-            "INSERT INTO routing_interface_node_pollutants "
-            "(simulation_id, role, direction, node_id, record_time, "
-            " pollutant_id, concentration) "
-            "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z',"
-            "        'GHOST', 1.0)");
+        auto stmt = prepare(db.get(), "INSERT INTO routing_interface_node_pollutants "
+                                      "(simulation_id, role, direction, node_id, record_time, "
+                                      " pollutant_id, concentration) "
+                                      "VALUES ('sim1','INFLOWS','USE','J1','2026-01-01T00:00:00Z',"
+                                      "        'GHOST', 1.0)");
         rc = sqlite3_step(stmt.get());
     }
-    EXPECT_EQ(rc, SQLITE_CONSTRAINT)
-        << "orphan pollutant_id should be FK-rejected";
+    EXPECT_EQ(rc, SQLITE_CONSTRAINT) << "orphan pollutant_id should be FK-rejected";
 }
 
 // ---------------------------------------------------------------------------

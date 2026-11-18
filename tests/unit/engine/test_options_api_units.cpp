@@ -1,6 +1,6 @@
 /**
- * @file test_options_api_units.cpp
- * @brief Unit tests for the value units/grammar of numeric [OPTIONS] keys on
+ * @file      test_options_api_units.cpp
+ * @brief     Unit tests for the value units/grammar of numeric [OPTIONS] keys on
  *        the public swmm_options_get / swmm_options_set API.
  *
  * @details Added 2026-08-06 alongside the Simulation Options dialog
@@ -17,6 +17,10 @@
  *             stored fraction while the setter divided by 100, so a
  *             get → set(returned) cycle shrank the value 100× per pass.  The
  *             idempotence test below guards that class of bug.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -38,40 +42,83 @@ protected:
     SWMM_Engine engine = nullptr;
     SWMM_Engine reopened = nullptr;
 
+    /**
+     * @brief Build a minimal editable junction-to-outfall conduit for input round trips.
+     *
+     * Adds J1/O1/L1, connects endpoints and sets length100, roughness.013 and circular diameter1 in
+     * current display length units. Does not finalize, initialize or simulate the model. Fatal
+     * GoogleTest assertions return from this hook on failure; any created handle remains owned by the
+     * fixture for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
         // Minimal valid topology so swmm_model_write / reopen succeed in the
         // disk round-trip test.
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL),  SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT),  SWMM_OK);
+        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT), SWMM_OK);
         const int l1 = swmm_link_index(engine, "L1");
-        ASSERT_EQ(swmm_link_set_nodes(engine, l1,
-                      swmm_node_index(engine, "J1"),
-                      swmm_node_index(engine, "O1")), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, l1, swmm_node_index(engine, "J1"),
+                                      swmm_node_index(engine, "O1")),
+                  SWMM_OK);
         ASSERT_EQ(swmm_link_set_length(engine, l1, 100.0), SWMM_OK);
         ASSERT_EQ(swmm_link_set_roughness(engine, l1, 0.013), SWMM_OK);
-        ASSERT_EQ(swmm_link_set_xsect(engine, l1, SWMM_XSECT_CIRCULAR,
-                                      1.0, 0.0, 0.0, 0.0), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_xsect(engine, l1, SWMM_XSECT_CIRCULAR, 1.0, 0.0, 0.0, 0.0),
+                  SWMM_OK);
     }
+    /**
+     * @brief Release both reopened and original fixture engines.
+     *
+     * Closes/destroys reopened when present, then destroys engine. Ignores close status and leaves
+     * member pointer values unchanged; fixture lifetime ends after teardown.
+     */
     void TearDown() override {
-        if (reopened) { swmm_engine_close(reopened); swmm_engine_destroy(reopened); }
-        if (engine) swmm_engine_destroy(engine);
+        if (reopened) {
+            swmm_engine_close(reopened);
+            swmm_engine_destroy(reopened);
+        }
+        if (engine)
+            swmm_engine_destroy(engine);
     }
 
+    /**
+     * @brief Read one option into owned text for units assertions.
+     *
+     * Records a nonfatal expectation and retains no handle ownership; no independent status or numeric
+     * parsing.
+     *
+     * @param[in] e Live engine handle, borrowed.
+     * @param[in] key Non-null recognized option key.
+     * @return String from a zero-initialized 512-byte output buffer; may be empty/partial after getter
+     *     refusal.
+     */
     std::string getopt(SWMM_Engine e, const char* key) {
         char buf[512] = {};
-        EXPECT_EQ(swmm_options_get(e, key, buf, sizeof(buf)), SWMM_OK)
-            << "get failed for " << key;
+        EXPECT_EQ(swmm_options_get(e, key, buf, sizeof(buf)), SWMM_OK) << "get failed for " << key;
         return std::string(buf);
     }
-    double getd(SWMM_Engine e, const char* key) {
-        return std::stod(getopt(e, key));
-    }
+    /**
+     * @brief Parse one textual fixture option as double.
+     *
+     * Propagates invalid_argument/out_of_range and ignores trailing parse text; getter failure can
+     * first record a nonfatal expectation. Does not change the model.
+     *
+     * @param[in] e Live engine handle passed to getopt.
+     * @param[in] key Non-null option key expected to yield numeric text.
+     * @return stod conversion in that option's project/API units.
+     */
+    double getd(SWMM_Engine e, const char* key) { return std::stod(getopt(e, key)); }
 
     // Artifacts go under the test's working directory (build tree) so they
     // stay reviewable after a run, per project testing conventions.
+    /**
+     * @brief Create the retained option-units artifact directory beneath cwd.
+     *
+     * Creates missing directories, retains existing contents and propagates filesystem errors. Does not
+     * change cwd or create individual artifacts.
+     * @return Absolute current_path()/test_options_api_units_artifacts path.
+     */
     static fs::path artifactDir() {
         fs::path d = fs::current_path() / "test_options_api_units_artifacts";
         fs::create_directories(d);
@@ -119,8 +166,7 @@ TEST_F(OptionsApiUnitsTest, FlowTolerancesIdempotentEcho) {
     ASSERT_EQ(swmm_options_set(engine, "LAT_FLOW_TOL", "5"), SWMM_OK);
     for (int i = 0; i < 2; ++i) {
         const std::string echoed = getopt(engine, "LAT_FLOW_TOL");
-        ASSERT_EQ(swmm_options_set(engine, "LAT_FLOW_TOL", echoed.c_str()),
-                  SWMM_OK);
+        ASSERT_EQ(swmm_options_set(engine, "LAT_FLOW_TOL", echoed.c_str()), SWMM_OK);
     }
     EXPECT_NEAR(getd(engine, "LAT_FLOW_TOL"), 5.0, 1e-9);
 }
@@ -152,10 +198,10 @@ TEST_F(OptionsApiUnitsTest, ThreadsRoundTrip) {
 // ---------------------------------------------------------------------------
 
 TEST_F(OptionsApiUnitsTest, DiskRoundTrip) {
-    ASSERT_EQ(swmm_options_set(engine, "MINIMUM_STEP", "2"),   SWMM_OK);
-    ASSERT_EQ(swmm_options_set(engine, "LAT_FLOW_TOL", "3"),   SWMM_OK);
-    ASSERT_EQ(swmm_options_set(engine, "SYS_FLOW_TOL", "3"),   SWMM_OK);
-    ASSERT_EQ(swmm_options_set(engine, "THREADS",      "8"),   SWMM_OK);
+    ASSERT_EQ(swmm_options_set(engine, "MINIMUM_STEP", "2"), SWMM_OK);
+    ASSERT_EQ(swmm_options_set(engine, "LAT_FLOW_TOL", "3"), SWMM_OK);
+    ASSERT_EQ(swmm_options_set(engine, "SYS_FLOW_TOL", "3"), SWMM_OK);
+    ASSERT_EQ(swmm_options_set(engine, "THREADS", "8"), SWMM_OK);
 
     const fs::path inp = artifactDir() / "options_units_roundtrip.inp";
     const fs::path rpt = artifactDir() / "options_units_roundtrip.rpt";
@@ -166,16 +212,15 @@ TEST_F(OptionsApiUnitsTest, DiskRoundTrip) {
 
     // The .inp surface carries the same numbers.
     std::ifstream f(inp);
-    const std::string text((std::istreambuf_iterator<char>(f)),
-                           std::istreambuf_iterator<char>());
+    const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     EXPECT_NE(text.find("MINIMUM_STEP"), std::string::npos);
     EXPECT_NE(text.find("LAT_FLOW_TOL"), std::string::npos);
 
     reopened = swmm_engine_create();
     ASSERT_NE(reopened, nullptr);
-    ASSERT_EQ(swmm_engine_open(reopened, inp.string().c_str(),
-                               rpt.string().c_str(), out.string().c_str(),
-                               nullptr), SWMM_OK)
+    ASSERT_EQ(swmm_engine_open(reopened, inp.string().c_str(), rpt.string().c_str(),
+                               out.string().c_str(), nullptr),
+              SWMM_OK)
         << "reopen failed: " << swmm_get_last_error_msg(reopened);
 
     EXPECT_NEAR(getd(reopened, "MINIMUM_STEP"), 2.0, 1e-9);
@@ -223,7 +268,6 @@ TEST_F(OptionsApiUnitsTest, UnsteadyFrictionUnknownTokenIsBadParam) {
     // BADPARAM specifically, not just "not OK" — the [OPTIONS] parser silently
     // ignores an unknown token (accepted-and-inert posture), so the API is the
     // only surface that reports the typo back to a caller.
-    EXPECT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "BOGUS"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_options_set(engine, "UNSTEADY_FRICTION", "BOGUS"), SWMM_ERR_BADPARAM);
     EXPECT_EQ(getopt(engine, "UNSTEADY_FRICTION"), "VITKOVSKY");
 }

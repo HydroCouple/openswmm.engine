@@ -5,10 +5,15 @@ LAYER zones use a one-based layer number. Source flow is m³/s; parameter rows
 use SI thermal/material units, and sorption uses L/kg and 1/day.
 """
 from dataclasses import dataclass
+from libc.math cimport isfinite
+from ._exceptions import BadParamError
 from collections.abc import MutableMapping
 from ._access import EngineView
-from ._common cimport SWMM_Engine, _check
-from ._enums import CellScope, GroundwaterTransportZone
+from ._common cimport SWMM_Engine, _check, _TextBufs, _tb_open, _tb_retry, _tb_str, _tb_close
+from ._enums import CellScope, GroundwaterTransportZone, ErrorCode
+
+cdef extern from "openswmm/engine/openswmm_2d.h":
+    int swmm_2d_cell_count(SWMM_Engine engine, int* count)
 
 cdef extern from "openswmm/engine/openswmm_gw_transport.h":
     ctypedef struct SWMM_GwParams:
@@ -49,6 +54,8 @@ cdef extern from "openswmm/engine/openswmm_gw_transport.h":
     int swmm_gw_source_set(SWMM_Engine engine, const char* name, int scope, const char* tag, int cell, double flow, const char* flow_ts)
     int swmm_gw_source_scale_get(SWMM_Engine engine, int idx, double* value)
     int swmm_gw_source_scale_set(SWMM_Engine engine, int idx, double value)
+    int swmm_gw_source_xy_get(SWMM_Engine engine, int idx, int* by_xy, double* x, double* y)
+    int swmm_gw_source_xy_set(SWMM_Engine engine, int idx, double x, double y)
     int swmm_gw_source_remove(SWMM_Engine engine, int idx)
     int swmm_gw_source_species_count(SWMM_Engine engine, int src_idx)
     int swmm_gw_source_species_get(SWMM_Engine engine, int src_idx, int term_idx, char* species_buf, int species_len, char* kind_buf, int kind_len, double* value, char* ts_buf, int ts_len)
@@ -118,6 +125,9 @@ class GroundwaterSource:
     cell: int = 0
     flow: float = 0.0
     flow_timeseries: str = ''
+    by_xy: bool = False
+    x: float = 0.0
+    y: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -131,9 +141,12 @@ class GroundwaterSourceTerm:
 
 class GroundwaterTransportOptions(EngineView, MutableMapping):
     """Native GW_TRANSPORT_OPTIONS text keys; values preserve INP spelling."""
-    _keys = ('TRANSPORT_POLLUTANTS', 'TRANSPORT_MSX', 'TRANSPORT_AGE',
+    _keys = ('UNSAT_TRANSPORT', 'TRANSPORT_POLLUTANTS', 'TRANSPORT_MSX', 'TRANSPORT_AGE',
              'TRANSPORT_TEMPERATURE', 'DISPERSION', 'CONDUCTION',
-             'SURFACE_THERMAL_BC', 'DEEP_THERMAL_BC', 'THERMAL_MIXING', 'C_DIFF')
+             'SURFACE_THERMAL_BC', 'DEEP_THERMAL_BC', 'THERMAL_MIXING', 'C_DIFF',
+             'THERMAL_MODEL', 'THERMAL_LAYERS', 'LATERAL_CONDUCTION', 'THERMAL_MAX_STEP',
+             'WATER_THERMAL_CONDUCTIVITY', 'AIR_THERMAL_CONDUCTIVITY',
+             'SURFACE_THERMAL_RESISTANCE', 'SOIL_ET_HEAT')
     def __len__(self):
         return len(self._keys)
     def __iter__(self):
@@ -176,12 +189,19 @@ class GroundwaterTransport(EngineView):
         """Thermal/material/dispersion parameter snapshots, all in native SI units."""
         cdef SWMM_Engine h = _h(self)
         cdef SWMM_GwParams row
-        cdef char tag[512]
+        cdef _TextBufs t
         rows = []
-        for index in range(swmm_gw_params_count(h)):
-            _check(swmm_gw_params_get(h, index, &row, tag, 512))
-            rows.append(GroundwaterParameters(CellScope(row.scope), row.cell,
-                row.rho_s, row.c_s, row.lambda_s, row.a_s, row.alpha_L, row.alpha_T, row.D_m, row.D_v, row.geo_flux, tag.decode('utf-8')))
+        _tb_open(&t, 1)
+        try:
+            for index in range(swmm_gw_params_count(h)):
+                while True:
+                    _check(swmm_gw_params_get(h, index, &row, t.p[0], t.size))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(GroundwaterParameters(CellScope(row.scope), row.cell,
+                    row.rho_s, row.c_s, row.lambda_s, row.a_s, row.alpha_L, row.alpha_T, row.D_m, row.D_v, row.geo_flux, _tb_str(&t, 0)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_parameters(self, row):
@@ -209,18 +229,24 @@ class GroundwaterTransport(EngineView):
         """Immutable authored row snapshots in native order."""
         cdef SWMM_Engine h = _h(self)
         cdef int scope=0
-        cdef char tag[512]
         cdef int cell=0
-        cdef char species[512]
         cdef double kd=0
         cdef double decay=0
+        cdef _TextBufs t
         cdef int count = swmm_gw_sorption_count(h)
         if count < 0:
             raise IndexError("Invalid native row owner/index")
         rows = []
-        for index in range(count):
-            _check(swmm_gw_sorption_get(h, index, &scope, tag, 512, &cell, species, 512, &kd, &decay))
-            rows.append(GroundwaterSorption(CellScope(scope), tag.decode('utf-8'), cell, species.decode('utf-8'), kd, decay))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw_sorption_get(h, index, &scope, t.p[0], t.size, &cell, t.p[1], t.size, &kd, &decay))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(GroundwaterSorption(CellScope(scope), _tb_str(&t, 0), cell, _tb_str(&t, 1), kd, decay))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_sorption(self, row):
@@ -238,19 +264,25 @@ class GroundwaterTransport(EngineView):
         """Immutable authored row snapshots in native order."""
         cdef SWMM_Engine h = _h(self)
         cdef int scope=0
-        cdef char tag[512]
         cdef int cell=0
         cdef int zone=0
         cdef int layer=0
-        cdef char species[512]
         cdef double value=0
+        cdef _TextBufs t
         cdef int count = swmm_gw_init_quality_count(h)
         if count < 0:
             raise IndexError("Invalid native row owner/index")
         rows = []
-        for index in range(count):
-            _check(swmm_gw_init_quality_get(h, index, &scope, tag, 512, &cell, &zone, &layer, species, 512, &value))
-            rows.append(GroundwaterInitialQuality(CellScope(scope), tag.decode('utf-8'), cell, GroundwaterTransportZone(zone), layer, species.decode('utf-8'), value))
+        _tb_open(&t, 2)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw_init_quality_get(h, index, &scope, t.p[0], t.size, &cell, &zone, &layer, t.p[1], t.size, &value))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(GroundwaterInitialQuality(CellScope(scope), _tb_str(&t, 0), cell, GroundwaterTransportZone(zone), layer, _tb_str(&t, 1), value))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_initial_quality(self, row):
@@ -269,17 +301,22 @@ class GroundwaterTransport(EngineView):
         cdef SWMM_Engine h = _h(self)
         cdef int cell=0
         cdef int edge=0
-        cdef char species[512]
-        cdef char kind[512]
         cdef double value=0
-        cdef char timeseries[512]
+        cdef _TextBufs t
         cdef int count = swmm_gw_boundary_quality_count(h)
         if count < 0:
             raise IndexError("Invalid native row owner/index")
         rows = []
-        for index in range(count):
-            _check(swmm_gw_boundary_quality_get(h, index, &cell, &edge, species, 512, kind, 512, &value, timeseries, 512))
-            rows.append(GroundwaterBoundary(cell, edge, species.decode('utf-8'), kind.decode('utf-8'), value, timeseries.decode('utf-8')))
+        _tb_open(&t, 3)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw_boundary_quality_get(h, index, &cell, &edge, t.p[0], t.size, t.p[1], t.size, &value, t.p[2], t.size))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(GroundwaterBoundary(cell, edge, _tb_str(&t, 0), _tb_str(&t, 1), value, _tb_str(&t, 2)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_boundary(self, row):
@@ -297,19 +334,28 @@ class GroundwaterTransport(EngineView):
     def sources(self):
         """Immutable authored row snapshots in native order."""
         cdef SWMM_Engine h = _h(self)
-        cdef char name[512]
+        cdef int by_xy=0
+        cdef double x=0, y=0
         cdef int scope=0
-        cdef char tag[512]
         cdef int cell=0
         cdef double flow=0
-        cdef char flow_timeseries[512]
+        cdef _TextBufs t
         cdef int count = swmm_gw_source_count(h)
         if count < 0:
             raise IndexError("Invalid native row owner/index")
         rows = []
-        for index in range(count):
-            _check(swmm_gw_source_get(h, index, name, 512, &scope, tag, 512, &cell, &flow, flow_timeseries, 512))
-            rows.append(GroundwaterSource(name.decode('utf-8'), CellScope(scope), tag.decode('utf-8'), cell, flow, flow_timeseries.decode('utf-8')))
+        _tb_open(&t, 3)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw_source_get(h, index, t.p[0], t.size, &scope, t.p[1], t.size, &cell, &flow, t.p[2], t.size))
+                    if not _tb_retry(&t):
+                        break
+                x = y = 0
+                _check(swmm_gw_source_xy_get(h, index, &by_xy, &x, &y))
+                rows.append(GroundwaterSource(_tb_str(&t, 0), CellScope(scope), _tb_str(&t, 1), cell, flow, _tb_str(&t, 2), bool(by_xy), x, y))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_source(self, row):
@@ -317,7 +363,20 @@ class GroundwaterTransport(EngineView):
         cdef bytes name = row.name.encode('utf-8')
         cdef bytes tag = row.tag.encode('utf-8')
         cdef bytes flow_timeseries = row.flow_timeseries.encode('utf-8')
-        _check(swmm_gw_source_set(_h(self), name, int(CellScope(row.scope)), tag, row.cell, row.flow, flow_timeseries))
+        cdef SWMM_Engine h = _h(self)
+        cdef int count = 0
+        cdef int index = -1
+        if row.by_xy:
+            _check(swmm_2d_cell_count(h, &count))
+            if (CellScope(row.scope) != CellScope.CELL or count == 0 or
+                    not isfinite(row.x) or not isfinite(row.y)):
+                raise BadParamError(ErrorCode.BADPARAM, "XY sources require CELL scope, a mesh and finite coordinates")
+        _check(swmm_gw_source_set(h, name, int(CellScope(row.scope)), tag, row.cell, row.flow, flow_timeseries))
+        if row.by_xy:
+            for index, source in enumerate(self.sources):
+                if source.name == row.name:
+                    _check(swmm_gw_source_xy_set(h, index, row.x, row.y))
+                    break
 
     def remove_source(self, int index):
         """Remove a row; subsequent indices shift."""
@@ -336,20 +395,46 @@ class GroundwaterTransport(EngineView):
         """
         _check(swmm_gw_source_scale_set(_h(self), source_index, value))
 
+    def source_xy(self, int source_index):
+        """Return authored (X, Y) in project map units, or None for a non-XY source.
+
+        The native sources table reports an XY source as CELL scope with its
+        resolved cell. This accessor preserves its original map coordinates.
+        """
+        cdef int by_xy = 0
+        cdef double x = 0
+        cdef double y = 0
+        _check(swmm_gw_source_xy_get(_h(self), source_index, &by_xy, &x, &y))
+        return (x, y) if by_xy else None
+
+    def set_source_xy(self, int source_index, double x, double y):
+        """Locate a source by finite X/Y coordinates in project map units.
+
+        Requires BUILDING or OPENED and a mesh with cells. The nearest cell
+        centroid selects the CELL scope; the writer retains XY coordinates.
+        Flow, scale and species terms remain unchanged.
+        """
+        _check(swmm_gw_source_xy_set(_h(self), source_index, x, y))
+
     def source_species(self, int source_index):
         """Immutable authored row snapshots in native order."""
         cdef SWMM_Engine h = _h(self)
-        cdef char species[512]
-        cdef char kind[512]
         cdef double value=0
-        cdef char timeseries[512]
+        cdef _TextBufs t
         cdef int count = swmm_gw_source_species_count(h, source_index)
         if count < 0:
             raise IndexError("Invalid native row owner/index")
         rows = []
-        for index in range(count):
-            _check(swmm_gw_source_species_get(h, source_index, index, species, 512, kind, 512, &value, timeseries, 512))
-            rows.append(GroundwaterSourceTerm(species.decode('utf-8'), kind.decode('utf-8'), value, timeseries.decode('utf-8')))
+        _tb_open(&t, 3)
+        try:
+            for index in range(count):
+                while True:
+                    _check(swmm_gw_source_species_get(h, source_index, index, t.p[0], t.size, t.p[1], t.size, &value, t.p[2], t.size))
+                    if not _tb_retry(&t):
+                        break
+                rows.append(GroundwaterSourceTerm(_tb_str(&t, 0), _tb_str(&t, 1), value, _tb_str(&t, 2)))
+        finally:
+            _tb_close(&t)
         return tuple(rows)
 
     def set_source_species(self, int source_index, row):

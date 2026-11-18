@@ -30,9 +30,14 @@ the solution — so the deck doubles as a virtual-junction composition check.
 | `e2_velocity_9p9.csv` | velocity, m/s | x = 9.9 m (link `C2`) |
 | `e2_surgetank_level.csv` | water level, m | surge tank (node `ST`) |
 
-All three were digitised from the figures of the published paper at native
-raster resolution; each file's header records the figure, the extraction and
-any datum shift applied. The pressure series is gauge head at the transducer:
+The file headers identify different publications: `e2_pressure_9p9.csv` cites
+Vasconcelos et al. (2006), Fig. 3; `e2_velocity_9p9.csv` and
+`e2_surgetank_level.csv` cite Pinto et al. (2025), Figs. 6–7. They describe
+digitisation at native raster resolution and record extraction/datum details.
+The 2006 deck and the later study parameterization must be distinguished when
+scoring these traces. Cross-publication equivalence, time alignment and raster
+uncertainty have not been established.
+The pressure series is gauge head at the transducer:
 the paper plots head *variation*, and the initial water level of 0.073 m has
 been added back.
 

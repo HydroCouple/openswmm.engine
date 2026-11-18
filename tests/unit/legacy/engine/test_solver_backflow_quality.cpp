@@ -1,6 +1,6 @@
-/*!
- * @file test_solver_backflow_quality.cpp
- * @brief Legacy-engine gates for `[OPTIONS] OUTFALL_BACKFLOW_QUALITY
+/**
+ * @file      test_solver_backflow_quality.cpp
+ * @brief     Legacy-engine gates for `[OPTIONS] OUTFALL_BACKFLOW_QUALITY
  *        LAST|ZERO` — the quality carried by reverse flow at outfalls.
  *
  * @details Same two-phase deck as the refactored engine's
@@ -11,9 +11,9 @@
  *          hours. LAST (default, stock qualrout.c behavior) re-injects the
  *          held ~100 mg/L; ZERO delivers a fresh boundary.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  Apache-2.0
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -26,8 +26,26 @@
 
 namespace {
 
-void write_deck(const std::string& path, const char* bfq_line,
-                bool reversing, bool constant_inflow = false) {
+/**
+ * @brief Write the legacy three-hour storage/outfall backflow-quality fixture.
+ *
+ * Uses a 100 ft2 storage with two outfalls so rising stage can drive a continuing flushing circuit.
+ * API globals are not touched; only the deck file is written. Uses a local ofstream and requires
+ * existing parent directories. Open/write/close failures are unchecked; owned input strings are not
+ * retained and raw tokens/config paths are not escaped. Optional sidecar files are also overwritten
+ * when described.
+ *
+ * @param[in] path Borrowed destination filename; character pointers must be non-null.
+ *     Opens/truncates this file for the generated deck.
+ * @param[in] bfq_line Optional raw complete backflow-quality OPTIONS line; null preserves engine
+ *     default.
+ * @param[in] reversing True raises O1 stage after one hour; false keeps a fixed 0.2 ft stage
+ *     series.
+ * @param[in] constant_inflow True maintains 3 cfs for three hours; false ends the 100 mg/L
+ *     tracer-bearing supply at one hour.
+ */
+void write_deck(const std::string& path, const char* bfq_line, bool reversing,
+                bool constant_inflow = false) {
     std::ofstream f(path);
     f << "[TITLE]\nLegacy outfall backflow quality gate deck\n\n"
       << "[OPTIONS]\n"
@@ -39,7 +57,8 @@ void write_deck(const std::string& path, const char* bfq_line,
       << "REPORT_START_DATE    01/01/2026\nREPORT_START_TIME    00:00:00\n"
       << "END_DATE             01/01/2026\nEND_TIME             03:00:00\n"
       << "ROUTING_STEP         0:00:05\nREPORT_STEP          0:05:00\n";
-    if (bfq_line != nullptr) f << bfq_line << "\n";
+    if (bfq_line != nullptr)
+        f << bfq_line << "\n";
     // O2 (FREE, low) keeps phase 2 a continuous flushing circuit
     // O1 -> C1 -> J1 -> C2 -> O2 (same shape as the refactored engine's
     // test — without it the backflow stalls once heads equalize).
@@ -77,13 +96,27 @@ struct LegacyRun {
     double o1_conc = -1.0;
 };
 
-LegacyRun run_deck(const std::string& tag, const char* bfq_line,
-                   bool reversing = true, bool constant_inflow = false) {
+/**
+ * @brief Run the global legacy backflow-quality fixture and sample named-node concentration.
+ *
+ * Requires exclusive global legacy state. Caps at 200000 positive-time calls; guard exhaustion can
+ * still be ok. Records nonfatal failures, closes after start/step paths, and ignores end/close
+ * status. Open refusal returns without a close; artifacts remain and no full-run guarantee is
+ * returned.
+ *
+ * @param[in] tag Safe cwd artifact prefix.
+ * @param[in] bfq_line Raw backflow-quality option row passed to write_deck.
+ * @param[in] reversing Fixture forcing-direction selection.
+ * @param[in] constant_inflow Fixture constant-supply selection.
+ * @return Owned J1/O1 first-pollutant concentrations, ok only when lifecycle/step/lookup checks
+ *     succeed.
+ */
+LegacyRun run_deck(const std::string& tag, const char* bfq_line, bool reversing = true,
+                   bool constant_inflow = false) {
     LegacyRun r;
     const std::string inp = tag + ".inp";
     write_deck(inp, bfq_line, reversing, constant_inflow);
-    if (swmm_open(inp.c_str(), (tag + ".rpt").c_str(),
-                  (tag + ".out").c_str()) != 0) {
+    if (swmm_open(inp.c_str(), (tag + ".rpt").c_str(), (tag + ".out").c_str()) != 0) {
         ADD_FAILURE() << "swmm_open failed for " << inp;
         return r;
     }
@@ -106,13 +139,10 @@ LegacyRun run_deck(const std::string& tag, const char* bfq_line,
     const int j1 = swmm_getIndex(swmm_NODE, "J1");
     const int o1 = swmm_getIndex(swmm_NODE, "O1");
     if (j1 < 0 || o1 < 0) {
-        ADD_FAILURE() << "node lookup failed (j1=" << j1 << " o1=" << o1
-                      << ")";
+        ADD_FAILURE() << "node lookup failed (j1=" << j1 << " o1=" << o1 << ")";
     } else {
-        r.j1_conc = swmm_getValueExpanded(
-            swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, j1, 0, 0);
-        r.o1_conc = swmm_getValueExpanded(
-            swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, o1, 0, 0);
+        r.j1_conc = swmm_getValueExpanded(swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, j1, 0, 0);
+        r.o1_conc = swmm_getValueExpanded(swmm_NODE, swmm_NODE_POLLUTANT_CONCENTRATION, o1, 0, 0);
         r.ok = true;
     }
     swmm_end();
@@ -124,27 +154,21 @@ LegacyRun run_deck(const std::string& tag, const char* bfq_line,
 // of backflow; ZERO flushes it with clean boundary water and the supplying
 // outfall itself reads zero.
 TEST(LegacyOutfallBackflowQuality, LastVsZeroSeparateDecisively) {
-    const LegacyRun rl =
-        run_deck("_lbq_last", "OUTFALL_BACKFLOW_QUALITY LAST");
-    const LegacyRun rz =
-        run_deck("_lbq_zero", "OUTFALL_BACKFLOW_QUALITY ZERO");
+    const LegacyRun rl = run_deck("_lbq_last", "OUTFALL_BACKFLOW_QUALITY LAST");
+    const LegacyRun rz = run_deck("_lbq_zero", "OUTFALL_BACKFLOW_QUALITY ZERO");
     ASSERT_TRUE(rl.ok && rz.ok);
     RecordProperty("last_j1_conc", std::to_string(rl.j1_conc));
     RecordProperty("zero_j1_conc", std::to_string(rz.j1_conc));
-    EXPECT_GT(rl.j1_conc, 50.0)
-        << "LAST: held boundary re-injection should keep J1 polluted";
-    EXPECT_LT(rz.j1_conc, 15.0)
-        << "ZERO: fresh boundary water should flush J1";
+    EXPECT_GT(rl.j1_conc, 50.0) << "LAST: held boundary re-injection should keep J1 polluted";
+    EXPECT_LT(rz.j1_conc, 15.0) << "ZERO: fresh boundary water should flush J1";
     EXPECT_GT(rl.j1_conc, rz.j1_conc * 4.0);
-    EXPECT_LE(rz.o1_conc, 1e-9)
-        << "ZERO: a supplying outfall's held state must read zero";
+    EXPECT_LE(rz.o1_conc, 1e-9) << "ZERO: a supplying outfall's held state must read zero";
 }
 
 // The default (no option line) is the stock LAST behavior, exactly.
 TEST(LegacyOutfallBackflowQuality, DefaultIsLast) {
     const LegacyRun rd = run_deck("_lbq_default", nullptr);
-    const LegacyRun rl =
-        run_deck("_lbq_explicit_last", "OUTFALL_BACKFLOW_QUALITY LAST");
+    const LegacyRun rl = run_deck("_lbq_explicit_last", "OUTFALL_BACKFLOW_QUALITY LAST");
     ASSERT_TRUE(rd.ok && rl.ok);
     EXPECT_EQ(rd.j1_conc, rl.j1_conc);
     EXPECT_EQ(rd.o1_conc, rl.o1_conc);
@@ -154,12 +178,8 @@ TEST(LegacyOutfallBackflowQuality, DefaultIsLast) {
 // inflow, stage held low); it bites whenever an outfall takes no inflow —
 // idle as well as supplying — so the zero-inflow tail is not used here.
 TEST(LegacyOutfallBackflowQuality, InertWithoutBackflow) {
-    const LegacyRun rl = run_deck("_lbq_inert_last",
-                                  "OUTFALL_BACKFLOW_QUALITY LAST",
-                                  false, true);
-    const LegacyRun rz = run_deck("_lbq_inert_zero",
-                                  "OUTFALL_BACKFLOW_QUALITY ZERO",
-                                  false, true);
+    const LegacyRun rl = run_deck("_lbq_inert_last", "OUTFALL_BACKFLOW_QUALITY LAST", false, true);
+    const LegacyRun rz = run_deck("_lbq_inert_zero", "OUTFALL_BACKFLOW_QUALITY ZERO", false, true);
     ASSERT_TRUE(rl.ok && rz.ok);
     EXPECT_EQ(rl.j1_conc, rz.j1_conc);
     EXPECT_EQ(rl.o1_conc, rz.o1_conc);
@@ -168,9 +188,8 @@ TEST(LegacyOutfallBackflowQuality, InertWithoutBackflow) {
 // An unknown value is a keyword error at open, like every other enum option.
 TEST(LegacyOutfallBackflowQuality, UnknownValueIsRefused) {
     write_deck("_lbq_bogus.inp", "OUTFALL_BACKFLOW_QUALITY SOMETIMES", true);
-    EXPECT_NE(swmm_open("_lbq_bogus.inp", "_lbq_bogus.rpt",
-                        "_lbq_bogus.out"), 0);
+    EXPECT_NE(swmm_open("_lbq_bogus.inp", "_lbq_bogus.rpt", "_lbq_bogus.out"), 0);
     swmm_close();
 }
 
-}  // namespace
+} // namespace
