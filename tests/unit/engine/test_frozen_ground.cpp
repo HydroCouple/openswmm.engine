@@ -1024,6 +1024,28 @@ TEST(FrozenGroundMesh, TheResultsFileCarriesTheSlabState) {
     EXPECT_GT(read("mesh_results_plain", "Mesh2_face_infil_rate", none), 1);
 }
 
+// The memory of a per-cell infiltration method (Horton's decay, Green-Ampt's wetting front) is in
+// no surface archive. That is safe only because a mesh whose cells keep their own method cannot
+// be checkpointed: the session is refused with its reason, with or without frozen ground.
+TEST(FrozenGroundMesh, AMeshWithItsOwnCellMethodsCannotStartACheckpointSession) {
+    for (const bool frozen : {false, true}) {
+        MeshDeck d;
+        if (frozen)
+            d.frozen_ground = "*  0.15  1.5  2.4e6  0.30  8  3  -4  11";
+        fs::create_directories(kArtifactDir);
+        const std::string tag = frozen ? "mesh_session_frozen" : "mesh_session_plain";
+        const auto inp = kArtifactDir / (tag + ".inp");
+        std::ofstream(inp, std::ios::trunc) << meshModel(d);
+        SWMMEngine e;
+        ASSERT_EQ(
+            e.open(inp.string().c_str(), (kArtifactDir / (tag + ".rpt")).string().c_str(), nullptr),
+            SWMM_OK);
+        const std::string error =
+            e.startCheckpointSession(SWMM_CHECKPOINT_OUTPUT_NONE, "", false, "");
+        EXPECT_NE(error.find("aquifer"), std::string::npos) << tag << ": " << error;
+    }
+}
+
 // With only a tag row, the other cells have no slab and behave as if the section were absent.
 TEST(FrozenGroundMesh, CellsWithoutARowAreNotLimited) {
     MeshDeck d;
