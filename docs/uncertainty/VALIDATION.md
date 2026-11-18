@@ -3901,3 +3901,13 @@ Open: four shallow laterals 1.1–1.6 m wide with MC ≈ 0 (G70S213/214, G62F012
 (G70F11P, G71O020, G71R090, G80F11B — the shared linear plane's own level at junction wet wells, see
 PORT_HAMILTONIAN §6 O-9); the 2D street band. The hook `rom1dStorageMembersEnabled()` still defaults OFF pending
 the owner's default decision.
+
+### Phase 5 after the plane conservation fix (O-14, 2026-11-18) — OFF is calibrated at the basins; hook stays OFF
+
+The H19 additive plane carried head across node-storage changes and created water at pipe crowns (O-14). With it
+fixed, the shipped path (per-member OFF) scores on Bellinge vs `mc_v3`: 1D all manholes 0.949/1.261 calibrated,
+**storage 0.811/0.948 calibrated** (was 0.845/1.99), trunk 0.839/1.269, 2D street 0.659/0.181 ranking only,
+P(>20 cm) Brier 0.0363 vs 0.1117 no-skill; wall 1,955 s. Per-member ON on the same code: 1D 0.945/1.534
+conservative, storage 0.787/0.690 ranking, Brier 0.0216/0.1041, wall 2,405 s (1.23×); six shallow laterals stay
+1.4–3.7 m wide against MC ≤ 0.03 m (OFF 0.02–0.08) — the per-member near-rim spill loop, now isolated from the plane.
+The per-member path stays behind `rom1dStorageMembersEnabled()` (default OFF).

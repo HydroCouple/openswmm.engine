@@ -703,3 +703,15 @@ cases the current code excludes). Acceptance gates as in the table.
   C is closed but G72UD11 is not (its band needs the downstream-pipe nonlinearity, O-13 open item); (b) G72R33Bb below-invert rose
   (a gain scales a near-empty store's deficit up; s has no cap beyond the dry threshold) — owner call whether a floor on the solved
   level, not just the carried volume, is wanted; (c) Bellinge not run, per instruction.
+- 2026-11-18: **Bellinge on O-14 code, OFF and ON, same machine back to back** (OFF 1,955 s; ON 2,405 s → 1.23×).
+  **OFF (the shipped path) improved markedly from the plane's conservation fix**: 1D all 0.957/1.40 → 0.949/1.261
+  CALIBRATED; storage 0.845/1.99 → **0.811/0.948 CALIBRATED**; trunk 0.839/1.269; near rim 0.873/1.118; far
+  0.957/1.283; 2D street 0.698/0.21 → 0.659/0.181 (ranking); Brier 0.0363 vs no-skill 0.1117 (0.32; was 0.39).
+  **ON** (O-14 code, O-15 not yet in this binary): 1D all 0.945/1.534 conservative; storage 0.787/0.690 ranking
+  (narrower than the MC now); trunk 0.783/1.053; far 0.953/1.599; 2D 0.654/0.158; Brier 0.0216/0.1041 (0.21);
+  solver 240 fallbacks, 14 rejected, k_max 551, admitted 15 by closure; G71O020 still −206 ft (plane). The six
+  laterals are UNCHANGED with ON (G62F012 1.390, G71F043 1.370, G70S213 1.714, G70S214 1.480, G73F430 3.715,
+  G62F113 1.959 vs OFF 0.015–0.078 and MC ≤ 0.03): with the plane honest, their bands are the per-member path's own
+  near-rim admission → spill → pond-drain loop. G72UD11: OFF 0.099 (was 0.916; the plane fix narrowed it), ON 0.334
+  (MC 1.105). **Reading**: per-member ON now adds only probability skill (0.21 vs 0.32) and costs 1D width, storage
+  coverage and the laterals; the basins are calibrated OFF. Default stays OFF; O-15 rerun pending.
