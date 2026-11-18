@@ -230,6 +230,7 @@ private:
     int n_polluts_ = 0;
     int n_subcatch_vars_ = 0;
     bool snow_process_ = false;
+    bool frozen_ground_ = false; ///< the file carries the frozen-ground extension columns
     int n_node_vars_ = 0;
     int n_link_vars_ = 0;
     int flow_units_code_ = 0;

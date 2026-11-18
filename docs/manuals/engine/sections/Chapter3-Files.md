@@ -271,7 +271,9 @@ and in `h5py`:
   the gradient fields `Mesh2_face_grad_hx`, `Mesh2_face_grad_hy` and their
   limited counterparts, `Mesh2_face_continuity_err`, and the species field
   `Mesh2_face_species_conc` (faces × species) — each present only when its
-  group is selected by `REPORT_2D_VARIABLES`.
+  group is selected by `REPORT_2D_VARIABLES`. A model with a
+  `[2D_FROZEN_GROUND]` section adds `Mesh2_face_frozen_fraction` and
+  `Mesh2_face_frozen_ground_temperature` to the infiltration group.
 - **Groundwater**, when the mesh carries an aquifer and the `GROUNDWATER`
   group is selected: `Mesh2_face_gw_table_elev`, `Mesh2_face_gw_hg`
   (saturated thickness), `Mesh2_face_gw_hu` (unsaturated storage),

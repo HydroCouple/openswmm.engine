@@ -578,6 +578,10 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
             markMissing(snap.thermal2d_bed_species_exchange);
         else if (name == "Mesh2_face_soil_temperature")
             markMissing(snap.thermal2d_ground_temperature);
+        else if (name == "Mesh2_face_frozen_fraction")
+            markMissing(snap.surface_frozen_fraction);
+        else if (name == "Mesh2_face_frozen_ground_temperature")
+            markMissing(snap.surface_frozen_ground_temperature);
         else if (name == "Mesh2_face_soil_energy")
             markMissing(snap.thermal2d_ground_energy);
         else if (name == "Mesh2_face_soil_heat_capacity")

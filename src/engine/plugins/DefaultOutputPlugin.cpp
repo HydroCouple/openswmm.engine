@@ -212,6 +212,13 @@ int DefaultOutputPlugin::update(const SimulationSnapshot& snapshot) {
                                                   ? snapshot.subcatch.snow_process[i]
                                                   : std::numeric_limits<double>::quiet_NaN()));
             }
+        if (frozen_ground_)
+            for (int field = 0; field < SubcatchSnapshot::frozen_ground_count; ++field) {
+                const auto i = uj * SubcatchSnapshot::frozen_ground_count + field;
+                writeReal4(static_cast<float>(i < snapshot.subcatch.frozen_ground.size()
+                                                  ? snapshot.subcatch.frozen_ground[i]
+                                                  : std::numeric_limits<double>::quiet_NaN()));
+            }
     }
 
     // -----------------------------------------------------------------------
@@ -363,9 +370,10 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     n_polluts_ = ctx.options.ignore_quality ? 0 : ctx.n_reported_species();
 
     snow_process_ = surface::hasUebSnow(ctx);
-    n_subcatch_vars_ = 8 + n_polluts_ +
-                       (snow_process_ ? SubcatchSnapshot::snow_process_count
-                                      : 0); // rainfall..soilmoist + pollutants
+    frozen_ground_ = !ctx.frozen_ground.rows.empty();
+    n_subcatch_vars_ = 8 + n_polluts_ + (snow_process_ ? SubcatchSnapshot::snow_process_count : 0) +
+                       (frozen_ground_ ? SubcatchSnapshot::frozen_ground_count
+                                       : 0); // rainfall..soilmoist + pollutants + extensions
     n_node_vars_ = 6 + n_polluts_;          // depth..overflow + pollutants
     n_link_vars_ = 5 + n_polluts_;          // flow..capacity + pollutants
 
@@ -507,6 +515,9 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     if (snow_process_)
         for (int v = 0; v < SubcatchSnapshot::snow_process_count; ++v)
             writeInt4(SWMM_OUT_SUBCATCH_SNOW_SWE + v);
+    if (frozen_ground_)
+        for (int v = 0; v < SubcatchSnapshot::frozen_ground_count; ++v)
+            writeInt4(SWMM_OUT_SUBCATCH_FROZEN_FRACTION + v);
 
     writeInt4(n_node_vars_);
     for (int v = 0; v < n_node_vars_; ++v)

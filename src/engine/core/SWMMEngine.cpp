@@ -7808,6 +7808,22 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
                 }
             }
 
+            // Frozen-ground slab state; a subcatchment without a row stays NaN.
+            if (ctx_.frozen_ground.enabled()) {
+                const auto& fg = ctx_.frozen_ground;
+                snap.subcatch.frozen_ground.assign(static_cast<std::size_t>(ctx_.n_subcatches()) *
+                                                       SubcatchSnapshot::frozen_ground_count,
+                                                   std::numeric_limits<double>::quiet_NaN());
+                for (std::size_t sc = 0; sc < fg.active.size(); ++sc)
+                    if (fg.active[sc]) {
+                        snap.subcatch.frozen_ground[sc * SubcatchSnapshot::frozen_ground_count] =
+                            fg.frozen[sc];
+                        snap.subcatch
+                            .frozen_ground[sc * SubcatchSnapshot::frozen_ground_count + 1] =
+                            fg.temperature[sc];
+                    }
+            }
+
             // Report subcatchment RUNOFF time-interpolated between the old/new
             // WET_STEP values, matching legacy subcatch_getResults (subcatch.c:865)
             // + output.c:323 which use f = (reportTime-OldRunoffTime)/span. The
@@ -8537,6 +8553,20 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
     // resolved — publish zeros then, so both sidecar variables always carry
     // one full [nFace] row per time step.
     snap.surface_infil_rate = st.infil_rate;
+    // Mesh frozen-ground slab state; a cell no [2D_FROZEN_GROUND] row covers stays NaN.
+    if (!st.frost_enthalpy.empty()) {
+        const auto cells = st.frost_enthalpy.size();
+        snap.surface_frozen_fraction.assign(cells, std::numeric_limits<double>::quiet_NaN());
+        snap.surface_frozen_ground_temperature.assign(cells,
+                                                      std::numeric_limits<double>::quiet_NaN());
+        for (std::size_t i = 0; i < cells; ++i)
+            if (const frost::Slab* slab = surface_router_.frozenGroundSlab(i)) {
+                snap.surface_frozen_fraction[i] =
+                    frost::frozenFraction(*slab, st.frost_enthalpy[i]);
+                snap.surface_frozen_ground_temperature[i] =
+                    frost::temperatureOf(*slab, st.frost_enthalpy[i]);
+            }
+    }
     // Overland transport S1: species concentration per cell, derived from the
     // mass store behind the hydraulics' own dry threshold. Species-major, one
     // block per species, so the plugin can write a [time, species, face]

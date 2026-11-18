@@ -121,7 +121,11 @@ typedef enum SWMM_OutSubcatchVar {
     SWMM_OUT_SUBCATCH_SNOW_MELT = 65542,         /**< m/s. */
     SWMM_OUT_SUBCATCH_SNOW_INPUT = 65543,        /**< m/s, liquid reaching surface. */
     SWMM_OUT_SUBCATCH_SNOW_SUBLIMATION = 65544,  /**< m/s, negative is condensation. */
-    SWMM_OUT_SUBCATCH_SNOW_TIME = 65545          /**< accepted seconds since run start. */
+    SWMM_OUT_SUBCATCH_SNOW_TIME = 65545,         /**< accepted seconds since run start. */
+    /* Optional frozen-ground fields, present when the model has a [FROZEN_GROUND]
+       section. Codes, not positional indices. A subcatchment with no row is NaN. */
+    SWMM_OUT_SUBCATCH_FROZEN_FRACTION = 65546,   /**< fraction of the slab's water frozen. */
+    SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP = 65547 /**< degC, frozen-ground slab. */
 } SWMM_OutSubcatchVar;
 
 /**

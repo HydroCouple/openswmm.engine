@@ -256,6 +256,7 @@ int Default2DOutputPlugin::prepare(const SimulationContext& ctx) {
     // `[OPTIONS] CRS`; prefer the spatial frame, which is what the spatial API
     // mutates at runtime. Empty is legitimate — models need not declare a CRS.
     model_crs_ = !ctx.spatial.crs.empty() ? ctx.spatial.crs : ctx.options.crs;
+    frozen_ground_ = !ctx.frozen_ground.mesh_rows.empty();
 
     // Concentration units belong to species identities. The groundwater
     // row set can differ from the surface row set (including surface off).
@@ -750,6 +751,15 @@ void Default2DOutputPlugin::prepareMeshAndDatasets(const MeshData& mesh) {
             createFaceDS("Mesh2_face_infil_rate", "infiltration loss rate", "m s-1");
         ds_face_infil_cum_ =
             createFaceDS("Mesh2_face_infil_cum", "cumulative infiltrated depth", "m");
+        // Frozen-ground slab state, only with a [2D_FROZEN_GROUND] section; a cell no row
+        // covers is NaN.
+        if (frozen_ground_) {
+            ds_face_frozen_fraction_ = createFaceDS(
+                "Mesh2_face_frozen_fraction", "frozen fraction of the frozen-ground slab", "1");
+            ds_face_frozen_ground_temp_ =
+                createFaceDS("Mesh2_face_frozen_ground_temperature",
+                             "frozen-ground slab temperature", "degree_Celsius");
+        }
     }
     if (mixing_enabled_ && want(report2d::TURBULENCE)) {
         ds_face_eddy_viscosity_ =
@@ -972,6 +982,8 @@ int Default2DOutputPlugin::update(const SimulationSnapshot& snap) {
     face(ds_face_net_source_, snap.surface_net_source);
     face(ds_face_infil_rate_, snap.surface_infil_rate);
     face(ds_face_infil_cum_, snap.surface_infil_cum);
+    face(ds_face_frozen_fraction_, snap.surface_frozen_fraction);
+    face(ds_face_frozen_ground_temp_, snap.surface_frozen_ground_temperature);
     face(ds_face_rain_cum_, snap.surface_rain_cum);
     if (want(report2d::RAINFALL) && !snap.surface_snow[0].empty()) {
         createSnowDatasets(snap);
@@ -2168,6 +2180,8 @@ std::vector<hid_t*> Default2DOutputPlugin::checkpointDatasets() {
                             &ds_face_net_source_,
                             &ds_face_infil_rate_,
                             &ds_face_infil_cum_,
+                            &ds_face_frozen_fraction_,
+                            &ds_face_frozen_ground_temp_,
                             &ds_face_rain_cum_,
                             &ds_face_species_conc_,
                             &ds_face_buildup_,
@@ -2253,6 +2267,8 @@ void Default2DOutputPlugin::closeDatasets() noexcept {
     closeDS(ds_face_net_source_);
     closeDS(ds_face_infil_rate_);
     closeDS(ds_face_infil_cum_);
+    closeDS(ds_face_frozen_fraction_);
+    closeDS(ds_face_frozen_ground_temp_);
     closeDS(ds_face_rain_cum_);
     for (auto& id : ds_snow_)
         closeDS(id);

@@ -23,6 +23,10 @@ retroactive.
 
 ## [Unreleased]
 
+- Frozen-ground state is now written to the result files. A model with a `[FROZEN_GROUND]` section adds two subcatchment variables to the binary output, frozen fraction (code 65546) and slab temperature in °C (code 65547), identified by code after the pollutant and snow process columns. A model with a `[2D_FROZEN_GROUND]` section adds `Mesh2_face_frozen_fraction` and `Mesh2_face_frozen_ground_temperature` to the infiltration group of the 2D results file. Objects no row covers are NaN, and models without the sections keep their file layout. The plugin SDK snapshot gained fields for these at the end of `SubcatchSnapshot` and `SimulationSnapshot`; output plugins built against the older header must be rebuilt.
+- The Kokkos 2D marcher sums the transport-row ledgers on the device before publication, so one value per 64 cells crosses to the host instead of four per row and cell. Ledger totals change at round-off only.
+- Device kernels no longer call `std::isfinite`. Under MSVC it is host-only, and nvcc pruned the code after it, which made every reaction case abort on the CUDA plugin.
+
 - Frozen ground now reaches three places it missed. On the 2D mesh, cells whose intake a `[2D_AQUIFER]` owns are limited under every closure at first and second order; LID units take the factor of their subcatchment at surface infiltration into the unit's soil, pavement permeability and exfiltration to native soil; and the native infiltration rate used when LID units cover a subcatchment's whole pervious area is limited (it was computed on a path that never read the factor). **Results change** for models that already have a `[FROZEN_GROUND]` or `[2D_FROZEN_GROUND]` section with LID units or a 2D aquifer.
 
 - `[2D_FROZEN_GROUND]` rows may name mesh tags as well as `*` (a tag row wins; a cell no row covers is not limited), each cell reads its own air temperature, snow on a cell insulates the ground, and the slab state is carried by surface checkpoints, which were refused before. `swmm_infil2d_get_frozen_ground_bulk` and Python `Infil2D.frozen_ground()` report ground temperature, frozen fraction and factor per cell.

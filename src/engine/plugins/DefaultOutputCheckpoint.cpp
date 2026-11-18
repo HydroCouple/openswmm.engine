@@ -126,7 +126,7 @@ void DefaultOutputPlugin::validateCheckpoint(const SimulationContext& ctx, doubl
                 "Binary output checkpoint report date differs.");
         for (std::size_t v = 0; v < values; ++v) {
             const float value = scalar<float>(bytes, offset + sizeof(double) + v * sizeof(float));
-            const bool optional = snow_process_ &&
+            const bool optional = (snow_process_ || frozen_ground_) &&
                                   v < std::size_t(n_subcatch_) * n_subcatch_vars_ &&
                                   v % n_subcatch_vars_ >= std::size_t(8 + n_polluts_);
             require(std::isfinite(value) || (optional && std::isnan(value)),
@@ -247,7 +247,7 @@ void DefaultOutputPlugin::validateFileCheckpoint(FILE* file, uint64_t bytes,
                     "Binary file checkpoint is truncated.");
             for (uint64_t i = 0; i < n; ++i) {
                 const uint64_t v = values - left + i;
-                const bool optional = snow_process_ &&
+                const bool optional = (snow_process_ || frozen_ground_) &&
                                       v < uint64_t(n_subcatch_) * n_subcatch_vars_ &&
                                       v % n_subcatch_vars_ >= uint64_t(8 + n_polluts_);
                 require(std::isfinite(buffer[i]) || (optional && std::isnan(buffer[i])),

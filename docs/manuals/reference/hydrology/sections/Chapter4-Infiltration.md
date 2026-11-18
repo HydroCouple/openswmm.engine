@@ -1618,6 +1618,14 @@ The following limits apply:
 -   A model with a `[FROZEN_GROUND]` section saves its hot start files in the
     native full-state format, which requires dynamic wave routing.
 
+**Results.** A model with a `[FROZEN_GROUND]` section writes two more subcatchment variables to
+the binary output file at each report time: the frozen fraction of the slab
+(`SWMM_OUT_SUBCATCH_FROZEN_FRACTION`, code 65546) and its temperature in °C
+(`SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP`, code 65547). They follow the pollutant columns, and the
+snow process columns when those are present, and are identified by code, not by position. A
+subcatchment with no row of its own and no `*` row is NaN. A model without the section writes
+neither, so its file layout is unchanged.
+
 ### 4.7.5 Mesh Cells
 
 A `[2D_FROZEN_GROUND]` section (see @ref engine_manual_sect_2D_FROZEN_GROUND)
@@ -1649,6 +1657,11 @@ differences from the subcatchment form:
     slab are separate stores: the slab, not the column, decides freezing.
 
 The state of every cell is available from `swmm_infil2d_get_frozen_ground_bulk`.
+
+With the `INFILTRATION` group of `REPORT_2D_VARIABLES` selected, the 2D results file also
+carries the slab state at each report time as `Mesh2_face_frozen_fraction` (0 to 1) and
+`Mesh2_face_frozen_ground_temperature` (°C). Both datasets exist only when the model has a
+`[2D_FROZEN_GROUND]` section, and a cell that no row covers is NaN.
 
 ### 4.7.6 LID Units
 

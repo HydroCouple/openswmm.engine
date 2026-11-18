@@ -418,6 +418,7 @@ Two `REPORT_2D_VARIABLES` groups, both in `DEFAULT`, carry the per-cell series:
 |---|---|---|
 | `RAINFALL` | `Mesh2_face_rainfall`, `Mesh2_face_rain_cum` | Per-cell rate after forcing (m/s) and cumulative depth |
 | `INFILTRATION` | `Mesh2_face_infil_rate`, `Mesh2_face_infil_cum` | The held rate (m/s) and the ledger-consistent applied cumulative depth (m) |
+| `INFILTRATION`, with `[2D_FROZEN_GROUND]` | `Mesh2_face_frozen_fraction`, `Mesh2_face_frozen_ground_temperature` | Frozen fraction (0 to 1) and temperature (°C) of the frozen-ground slab; NaN on a cell no row covers |
 
 The cumulative series is `SurfaceRouter2D::infilCumulative()`, which drains
 the same applied-depth accumulator the ledger books, so

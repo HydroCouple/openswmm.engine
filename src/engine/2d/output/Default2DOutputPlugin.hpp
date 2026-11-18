@@ -120,6 +120,9 @@ class SourceResultHistory;
  * - /Mesh2_face_net_source         [nTime, nFace] net source/sink (m/s)
  * - /Mesh2_face_infil_rate         [nTime, nFace] held infiltration rate (m/s)
  * - /Mesh2_face_infil_cum          [nTime, nFace] cumulative infiltrated depth (m)
+ * - /Mesh2_face_frozen_fraction    [nTime, nFace] frozen fraction of the frozen-ground slab
+ * - /Mesh2_face_frozen_ground_temperature [nTime, nFace] slab temperature (degC)
+ *   (both only with [2D_FROZEN_GROUND]; NaN where no row covers the cell)
  * - /Mesh2_face_rain_cum           [nTime, nFace] cumulative rainfall volume (m³)
  * - /Mesh2_face_vx                 [nTime, nFace] cell velocity X (m/s)
  * - /Mesh2_face_vy                 [nTime, nFace] cell velocity Y (m/s)
@@ -410,6 +413,9 @@ private:
     hid_t ds_face_net_source_ = H5I_INVALID_HID;
     hid_t ds_face_infil_rate_ = H5I_INVALID_HID;
     hid_t ds_face_infil_cum_ = H5I_INVALID_HID;
+    hid_t ds_face_frozen_fraction_ = H5I_INVALID_HID;
+    hid_t ds_face_frozen_ground_temp_ = H5I_INVALID_HID;
+    bool frozen_ground_ = false; ///< the model has a [2D_FROZEN_GROUND] section
     hid_t ds_face_rain_cum_ = H5I_INVALID_HID;
     std::array<hid_t, meshSnowFields.size()> ds_snow_ = [] {
         std::array<hid_t, meshSnowFields.size()> ids;

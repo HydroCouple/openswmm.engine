@@ -45,6 +45,8 @@
 #include <openswmm/engine/openswmm_gw2d.h>
 #include <openswmm/engine/openswmm_infil2d.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_output.h>
+#include <openswmm/engine/openswmm_output2d.h>
 #include <openswmm/engine/openswmm_subcatchments.h>
 
 #include "core/SWMMEngine.hpp"
@@ -202,6 +204,7 @@ struct Deck {
     std::string snowpack;                    // "SP1" assigns a pack to S1
     std::string frozen_ground;               // [FROZEN_GROUND] rows, empty = no section
     int hours = 12;
+    bool report = false; // report every object to the binary output
 };
 
 std::string model(const Deck& d) {
@@ -265,6 +268,8 @@ std::string model(const Deck& d) {
              ";;Subcatch Thickness Conductivity HeatCapacity WaterContent DeepTemp DeepDepth "
              "InitTemp Exponent SnowConductivity SnowDensity\n"
           << d.frozen_ground << "\n";
+    if (d.report)
+        s << "\n[REPORT]\nSUBCATCHMENTS ALL\nNODES ALL\nLINKS ALL\n";
     return s.str();
 }
 
@@ -634,6 +639,46 @@ TEST(FrozenGroundDeck, TheGetterReportsTheSlabState) {
 }
 
 // Rows can be read, replaced, added and removed through the public API.
+// The binary output carries frozen fraction and slab temperature as extension variables; a model
+// without the section has neither and keeps its layout.
+TEST(FrozenGroundDeck, TheBinaryOutputCarriesTheSlabState) {
+    Deck d, plain_deck;
+    d.report = plain_deck.report = true;
+    d.frozen_ground = kFrozenRow;
+    const Result cold = run("out_frozen", d), open = run("out_open", plain_deck);
+    ASSERT_TRUE(cold.initialized && open.initialized) << cold.error << open.error;
+    SWMM_Output plain = swmm_output_open((kArtifactDir / "out_open.out").string().c_str());
+    ASSERT_NE(plain, nullptr);
+    EXPECT_EQ(swmm_output_has_subcatch_variable(plain, SWMM_OUT_SUBCATCH_FROZEN_FRACTION), 0);
+    EXPECT_EQ(swmm_output_has_subcatch_variable(plain, SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP), 0);
+    const int periods = swmm_output_get_period_count(plain);
+    ASSERT_EQ(swmm_output_get_subcatch_count(plain), 1);
+    swmm_output_close(plain);
+
+    SWMM_Output out = swmm_output_open((kArtifactDir / "out_frozen.out").string().c_str());
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(swmm_output_has_subcatch_variable(out, SWMM_OUT_SUBCATCH_FROZEN_FRACTION), 1);
+    EXPECT_EQ(swmm_output_has_subcatch_variable(out, SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP), 1);
+    ASSERT_EQ(swmm_output_get_period_count(out), periods);
+    ASSERT_EQ(swmm_output_get_subcatch_count(out), 1);
+    ASSERT_GT(periods, 1);
+    float frozen = -99, temperature = -99, rain = -99;
+    ASSERT_EQ(swmm_output_get_subcatch_result(out, periods - 1, SWMM_OUT_SUBCATCH_FROZEN_FRACTION,
+                                              &frozen),
+              0);
+    ASSERT_EQ(swmm_output_get_subcatch_result(out, periods - 1,
+                                              SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP, &temperature),
+              0);
+    EXPECT_EQ(frozen, static_cast<float>(cold.frozen));
+    EXPECT_EQ(temperature, static_cast<float>(cold.temperature));
+    EXPECT_EQ(frozen, 1.0f);
+    EXPECT_LT(temperature, 0.0f);
+    // The standard columns are still where readers expect them: it rains at 02:30.
+    ASSERT_EQ(swmm_output_get_subcatch_result(out, 9, SWMM_OUT_SUBCATCH_RAINFALL, &rain), 0);
+    EXPECT_GT(rain, 0.0f);
+    swmm_output_close(out);
+}
+
 TEST(FrozenGroundDeck, TheRowsCanBeAuthoredThroughTheApi) {
     Deck d;
     d.frozen_ground = "*  0.2  1.3";
@@ -699,6 +744,7 @@ struct MeshDeck {
     int hours = 2;
     double rain_hours = 1.0; // 20 mm/h from the start
     bool snow = false;       // a degree-day pack with 100 mm of water on every cell
+    bool results = false;    // write <tag>.2d.h5 beside the other files
 };
 
 std::string meshModel(const MeshDeck& d) {
@@ -782,8 +828,15 @@ MeshResult runMesh(const std::string& tag, const MeshDeck& deck) {
     };
     if (swmm_engine_open(engine, inp.string().c_str(),
                          (kArtifactDir / (tag + ".rpt")).string().c_str(),
-                         (kArtifactDir / (tag + ".out")).string().c_str(), nullptr) != SWMM_OK ||
-        swmm_engine_initialize(engine) != SWMM_OK || swmm_engine_start(engine, 1) != SWMM_OK)
+                         (kArtifactDir / (tag + ".out")).string().c_str(), nullptr) != SWMM_OK)
+        return fail();
+    if (deck.results) {
+        const auto h5 = fs::absolute(kArtifactDir / (tag + ".2d.h5"));
+        fs::remove(h5);
+        if (swmm_2d_set_results_file(engine, h5.string().c_str()) != SWMM_OK)
+            return fail();
+    }
+    if (swmm_engine_initialize(engine) != SWMM_OK || swmm_engine_start(engine, 1) != SWMM_OK)
         return fail();
     r.started = true;
     const auto& router = static_cast<SWMMEngine*>(engine)->surfaceRouter2D();
@@ -913,6 +966,62 @@ TEST(FrozenGroundMesh, ATagRowOverridesTheDefaultRow) {
                 EXPECT_GT(r.infiltration[i], 0.0) << i;
         }
     }
+}
+
+// The 2D results file carries the slab state per cell and report time; a cell no row covers is
+// NaN, and a model without the section has neither dataset.
+TEST(FrozenGroundMesh, TheResultsFileCarriesTheSlabState) {
+    if (!swmm_output2d_available())
+        GTEST_SKIP() << "2D results reader not built";
+    MeshDeck d;
+    d.results = true;
+    d.frozen_ground = "WOODS  0.15  1.5  2.4e6  0.30  8  3  -4";
+    MeshDeck plain;
+    plain.results = true;
+    const MeshResult r = runMesh("mesh_results", d), c = runMesh("mesh_results_plain", plain);
+    ASSERT_TRUE(r.started && c.started) << r.error << c.error;
+    const auto read = [](const std::string& tag, const char* name, std::vector<double>& last) {
+        SWMM_Output2D out = nullptr;
+        if (swmm_output2d_open((kArtifactDir / (tag + ".2d.h5")).string().c_str(), &out) != SWMM_OK)
+            return -1;
+        int rank = 0, integer = 0;
+        uint64_t dims[4] = {}, unlimited = 0;
+        int steps = 0;
+        if (swmm_output2d_shape(out, name, &rank, dims, &integer, &unlimited) == SWMM_OK &&
+            rank == 2 && dims[0] > 0) {
+            steps = static_cast<int>(dims[0]);
+            last.assign(dims[1], -99.0);
+            const uint64_t start[2] = {dims[0] - 1, 0}, count[2] = {1, dims[1]};
+            const uint64_t stride[2] = {1, 1};
+            if (swmm_output2d_read_double(out, name, start, count, stride, last.data(),
+                                          last.size()) != SWMM_OK)
+                steps = -1;
+        }
+        swmm_output2d_close(out);
+        return steps;
+    };
+    std::vector<double> frozen, temperature, none;
+    ASSERT_GT(read("mesh_results", "Mesh2_face_frozen_fraction", frozen), 1);
+    ASSERT_GT(read("mesh_results", "Mesh2_face_frozen_ground_temperature", temperature), 1);
+    ASSERT_EQ(frozen.size(), 4u);
+    ASSERT_EQ(temperature.size(), 4u);
+    for (std::size_t i = 0; i < 4; ++i) {
+        if (i % 2 == 1) { // WOODS
+            // The file holds single precision.
+            EXPECT_EQ(static_cast<float>(frozen[i]), static_cast<float>(r.api_frozen[i])) << i;
+            EXPECT_EQ(static_cast<float>(temperature[i]), static_cast<float>(r.api_temperature[i]))
+                << i;
+            EXPECT_EQ(frozen[i], 1.0) << i;
+            EXPECT_LT(temperature[i], 0.0) << i;
+        } else {
+            EXPECT_TRUE(std::isnan(frozen[i])) << i;
+            EXPECT_TRUE(std::isnan(temperature[i])) << i;
+        }
+    }
+    EXPECT_EQ(read("mesh_results_plain", "Mesh2_face_frozen_fraction", none), 0);
+    EXPECT_EQ(read("mesh_results_plain", "Mesh2_face_frozen_ground_temperature", none), 0);
+    // The plain model still has its infiltration datasets.
+    EXPECT_GT(read("mesh_results_plain", "Mesh2_face_infil_rate", none), 1);
 }
 
 // With only a tag row, the other cells have no slab and behave as if the section were absent.

@@ -101,6 +101,11 @@ struct SubcatchSnapshot {
     std::vector<double> gw_flow;      ///< Groundwater outflow [display flow units]
     std::vector<double> gw_elev;      ///< Groundwater elevation [display length units]
     std::vector<double> soil_moist;   ///< Soil moisture [-]
+    // Appended for plugin-ABI compatibility: optional frozen-ground columns, in
+    // SWMM_OUT_SUBCATCH_FROZEN_* order. Empty without [FROZEN_GROUND]; a subcatchment
+    // with no row is NaN.
+    static constexpr int frozen_ground_count = 2;
+    std::vector<double> frozen_ground; // [subcatch * frozen_ground_count + field]
 };
 
 /**
@@ -488,6 +493,10 @@ struct SimulationSnapshot {
     // Appended for plugin-ABI compatibility: groundwater Darcy specific discharge
     // (m/s), cell reconstruction of the last gathered lateral face flows (held).
     std::vector<double> gw2d_qx, gw2d_qy;
+    // Appended for plugin-ABI compatibility: mesh frozen-ground slab state per face.
+    // Empty without [2D_FROZEN_GROUND]; a cell no row covers is NaN.
+    std::vector<double> surface_frozen_fraction;           ///< Frozen fraction of the slab, 0..1
+    std::vector<double> surface_frozen_ground_temperature; ///< Slab temperature, degC
 };
 
 } /* namespace openswmm */
