@@ -449,8 +449,11 @@ OPENSWMM_KERNEL_FN void faceFlux(const Arrays& A, int f, bool mass_only) noexcep
         const double accepted = cl < 0 ? std::min(fl.mass, cap) : std::max(fl.mass, -cap);
         if (accepted != fl.mass) {
             const k::FaceState& up = cl < 0 ? L : R;
+            // Local copy: std::max takes const&, and binding it to the namespace constant
+            // is a reference to a host variable, which nvcc rejects in device code.
+            constexpr double dry_area = k::kDryArea;
             fl.mass = accepted;
-            fl.mom = accepted * accepted / std::max(up.a, k::kDryArea) + k::kGravity * up.i1;
+            fl.mom = accepted * accepted / std::max(up.a, dry_area) + k::kGravity * up.i1;
         }
     }
     A.f_mass[f] = fl.mass;
@@ -690,7 +693,8 @@ OPENSWMM_KERNEL_FN void solveAlgebraicNode(const Arrays& A, int n, double dt) no
 
     const double dir = (r > 0.0) ? 1.0 : -1.0;
     const double res0 = algResistAt(A, b, e, h);
-    double step = 2.0 * std::max(kAlgHeadTol, (res0 > 0.0) ? std::fabs(r) / res0 : kAlgHeadTol);
+    constexpr double head_tol = kAlgHeadTol; // local copy: std::max takes const&
+    double step = 2.0 * std::max(head_tol, (res0 > 0.0) ? std::fabs(r) / res0 : head_tol);
     double h_a = h, r_a = r;
     bool bracketed = false;
     for (int it = 0; it < kAlgMaxExpand; ++it) {
@@ -770,8 +774,9 @@ OPENSWMM_KERNEL_FN void positivityCapFace(const Arrays& A, int f) noexcept {
         const double accepted = left ? std::min(A.f_mass[f], cap) : std::max(A.f_mass[f], -cap);
         if (accepted != A.f_mass[f]) {
             const k::FaceState& up = left ? A.f_state_l[f] : A.f_state_r[f];
+            constexpr double dry_area = k::kDryArea; // local copy: std::max takes const&
             A.f_mass[f] = accepted;
-            A.f_mom[f] = accepted * accepted / std::max(up.a, k::kDryArea) + k::kGravity * up.i1;
+            A.f_mom[f] = accepted * accepted / std::max(up.a, dry_area) + k::kGravity * up.i1;
         }
     }
 }
