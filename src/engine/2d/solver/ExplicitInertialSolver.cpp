@@ -2177,7 +2177,8 @@ void ExplicitInertialSolver::bookFaceSpecies(int e, int a, int b, double dM, dou
     // before the divisions below — this runs once per face evaluation.
     if (!species_on_)
         return;
-    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_species);
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_species,
+                                     perf::ProcessTimer::PerItem{});
     const auto& ed = edges_;
     const double beta3 = opts_->exchange_beta / 3.0;
     const double beta4 = opts_->exchange_beta / 4.0;
@@ -2484,7 +2485,8 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 has_sources = prepareCellSources(i, dt_c, source);
         }
         if (species) {
-            perf::ProcessTimer species_timer(perf::ProcessPhase::surface_species_cells);
+            perf::ProcessTimer species_timer(perf::ProcessPhase::surface_species_cells,
+                                             perf::ProcessTimer::PerItem{});
             auto& tr = state_->transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             if constexpr (!kFuse) {

@@ -3,11 +3,14 @@
 #pragma once
 
 #include "PerfTimers.hpp"
+#include <array>
 #include <atomic>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <cstdint>
 #include <unordered_set>
+#include <vector>
 #if defined(__APPLE__)
 #include <dlfcn.h>
 #endif
@@ -144,12 +147,87 @@ inline unsigned long long value(ProcessCounter counter) noexcept {
     return process_counts[std::size_t(counter)].load(std::memory_order_relaxed);
 }
 
+// Totals of scopes entered once per face or cell inside a worksharing loop. Each thread
+// books into its own cache-line-aligned block, so the hot loop never writes a counter another
+// thread writes. The blocks are folded into the process totals when a thread ends and before
+// the totals are reported or cleared.
+struct alignas(64) ThreadProcessTotals {
+    std::array<std::atomic<double>, std::size_t(ProcessPhase::count)> seconds{};
+    std::array<std::atomic<unsigned long long>, std::size_t(ProcessPhase::count)> calls{};
+    bool registered = false;
+    ThreadProcessTotals() noexcept;
+    ~ThreadProcessTotals() noexcept;
+    ThreadProcessTotals(const ThreadProcessTotals&) = delete;
+    ThreadProcessTotals& operator=(const ThreadProcessTotals&) = delete;
+    /// Move this block's totals into the process totals. The owning thread must not be inside
+    /// a scope.
+    void fold() noexcept {
+        for (std::size_t i = 0; i < seconds.size(); ++i) {
+            const double sec = seconds[i].exchange(0.0, std::memory_order_relaxed);
+            const auto n = calls[i].exchange(0, std::memory_order_relaxed);
+            if (n == 0)
+                continue;
+            auto& total = process_seconds[i];
+            double old = total.load(std::memory_order_relaxed);
+            while (!total.compare_exchange_weak(old, old + sec, std::memory_order_relaxed)) {
+            }
+            process_calls[i].fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+};
+// The registry is never destroyed: a thread's block can be destroyed after the statics of this
+// library at process exit, and must still find its mutex.
+struct ThreadProcessRegistry {
+    std::mutex mutex;
+    std::vector<ThreadProcessTotals*> blocks;
+};
+inline ThreadProcessRegistry& thread_process_registry() {
+    static auto* registry = new ThreadProcessRegistry;
+    return *registry;
+}
+inline ThreadProcessTotals::ThreadProcessTotals() noexcept {
+    try {
+        auto& registry = thread_process_registry();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        registry.blocks.push_back(this);
+        registered = true;
+    } catch (...) {
+        // Unregistered blocks are not used: their scopes book into the process totals directly.
+    }
+}
+inline ThreadProcessTotals::~ThreadProcessTotals() noexcept {
+    if (!registered)
+        return;
+    auto& registry = thread_process_registry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    fold();
+    for (auto& block : registry.blocks)
+        if (block == this) {
+            block = registry.blocks.back();
+            registry.blocks.pop_back();
+            break;
+        }
+}
+/// Fold every thread's per-item totals into the process totals. Call with no active scopes or
+/// worksharing regions.
+inline void fold_thread_process_totals() noexcept {
+    try {
+        auto& registry = thread_process_registry();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        for (auto* block : registry.blocks)
+            block->fold();
+    } catch (...) {
+        // No registry could be made, so no block was ever registered.
+    }
+}
+
 // GatedTimer preserves nested_wall across module boundaries. Each scope books
 // into private storage before merging, including scopes inside OMP face loops.
 // With profiling disabled there are no clock reads, allocations or atomic writes.
 class ProcessTimer {
     double seconds_ = 0;
     ProcessPhase phase_;
+    bool per_item_ = false;
     std::optional<GatedTimer> timer_;
     AllocationSnapshot allocations_ = nullptr;
     std::uint64_t allocations_begin_ = 0, bytes_begin_ = 0;
@@ -163,6 +241,10 @@ public:
             timer_.emplace(seconds_);
         }
     }
+    /// Tag for a scope entered once per face or cell inside a worksharing loop: its time and
+    /// call are booked into the calling thread's own block (see ThreadProcessTotals).
+    struct PerItem {};
+    ProcessTimer(ProcessPhase phase, PerItem) noexcept : ProcessTimer(phase) { per_item_ = true; }
     void stop() noexcept {
         if (!timer_)
             return;
@@ -176,6 +258,18 @@ public:
                                                                std::memory_order_relaxed);
             process_allocated_bytes[std::size_t(phase_)].fetch_add(bytes - bytes_begin_,
                                                                    std::memory_order_relaxed);
+        }
+        if (per_item_) {
+            thread_local ThreadProcessTotals mine;
+            if (mine.registered) {
+                // Single writer: a plain load and store, not a locked read-modify-write.
+                auto& sec = mine.seconds[std::size_t(phase_)];
+                auto& n = mine.calls[std::size_t(phase_)];
+                sec.store(sec.load(std::memory_order_relaxed) + seconds_,
+                          std::memory_order_relaxed);
+                n.store(n.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+                return;
+            }
         }
         auto& total = process_seconds[std::size_t(phase_)];
         double old = total.load(std::memory_order_relaxed);
@@ -211,6 +305,7 @@ struct SigmaEvaluations {
 
 // Called between simulations, with no active scopes/worksharing regions.
 inline void clear_process_totals() noexcept {
+    fold_thread_process_totals();
     for (auto& seconds : process_seconds)
         seconds.store(0, std::memory_order_relaxed);
     for (auto& calls : process_calls)
@@ -259,6 +354,7 @@ inline void dump_process() noexcept {
         std::fprintf(stderr, "[PERF-PROCESS-INVALID] reason=overlapping_engine_lifetimes\n");
         return;
     }
+    fold_thread_process_totals();
     for (const char* group : {"2D", "GW2D", "HYD"}) {
         bool any = false;
         for (std::size_t i = 0; i < process_names.size(); ++i)

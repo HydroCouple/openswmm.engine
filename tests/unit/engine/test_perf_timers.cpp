@@ -134,6 +134,39 @@ TEST(ProcessPerf, ParallelScopesAndExceptionExitRetainCounts) {
     EXPECT_EQ(perf::process_calls[std::size_t(perf::ProcessPhase::gw_cells)].load(), 1);
 }
 
+TEST(ProcessPerf, PerItemScopesAreExactAfterAFold) {
+    if (!perf::enabled())
+        GTEST_SKIP() << "run with OPENSWMM_PERF=1";
+    perf::reset_process();
+    const auto phase = std::size_t(perf::ProcessPhase::surface_species_cells);
+    // Scopes on this thread stay in its own block until a fold.
+    for (int i = 0; i < 500; ++i)
+        perf::ProcessTimer timer(perf::ProcessPhase::surface_species_cells,
+                                 perf::ProcessTimer::PerItem{});
+    EXPECT_EQ(perf::process_calls[phase].load(), 0);
+    // A thread that ends folds its block without being asked.
+    std::vector<std::thread> threads;
+    for (int worker = 0; worker < 8; ++worker)
+        threads.emplace_back([] {
+            for (int i = 0; i < 1000; ++i)
+                perf::ProcessTimer timer(perf::ProcessPhase::surface_species_cells,
+                                         perf::ProcessTimer::PerItem{});
+        });
+    for (auto& thread : threads)
+        thread.join();
+    EXPECT_EQ(perf::process_calls[phase].load(), 8000);
+    perf::fold_thread_process_totals();
+    EXPECT_EQ(perf::process_calls[phase].load(), 8500);
+    EXPECT_GE(perf::process_seconds[phase].load(), 0);
+    // Clearing the totals also clears what the threads still hold.
+    for (int i = 0; i < 10; ++i)
+        perf::ProcessTimer timer(perf::ProcessPhase::surface_species_cells,
+                                 perf::ProcessTimer::PerItem{});
+    perf::reset_process();
+    perf::fold_thread_process_totals();
+    EXPECT_EQ(perf::process_calls[phase].load(), 0);
+}
+
 TEST(ProcessPerf, DisabledProfilingDoesNotAccumulate) {
     if (perf::enabled())
         GTEST_SKIP() << "run without OPENSWMM_PERF";
