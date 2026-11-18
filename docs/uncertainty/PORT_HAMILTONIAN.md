@@ -738,3 +738,11 @@ cases the current code excludes). Acceptance gates as in the table.
   rejected member-steps per the `[PH-ports]` line, G71O020 −206 ft (plane). **Verdict**: ON equals OFF at the
   basins, wins at G72UD11 and on probability skill, loses on 1D width (1.57) and at the shallow laterals (its
   near-rim spill loop). Default stays OFF; the per-member path stays behind the hook as diagnostic infrastructure.
+- 2026-11-18: **full non-slow ctest on ph/structured-skew (8aed185e)**: 285 passed; reds = 4 of the 6 known upstream
+  failures (inp_writer_roundtrip, msx_buildup_washoff, transport_policy, surface_processes) + hdf5_model (env);
+  test_engine_checkpoint excluded as the documented > 1 h Debug case. **feature/uncertainty-sidecar fast-forwarded
+  to 8aed185e and pushed.** Upstream merge (origin/swmm6_rel f297e9b0, 542 commits) resolved on
+  merge/swmm6-rel-2026-11 (a2c010f6 + 13791c66): 18 conflicts, 4 API adaptations (register2DSections takes
+  UncertaintyConfig*, GeoPackage model_supplement [2D_ROM]/[UNCERTAINTY] not parsed — recorded gap; RunoffElasticity
+  snapshots lid_return_applied_cfs; MeshData::edge_mx/my accessors; upstream registers site_drainage_model itself);
+  audits clean; 1D sidecar gates identical; W3/W4 + Bellinge OFF on the merged line running.
