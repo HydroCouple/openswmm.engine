@@ -243,6 +243,9 @@ cdef extern from "openswmm_infil2d.h":
     int swmm_infil2d_set_cells(void* engine, const int* tris, int n,
                                 const SWMM_Infil2DRow* row)
     int swmm_infil2d_get_rate_bulk(void* engine, double* f, int n) nogil
+    int swmm_infil2d_get_frozen_ground_bulk(void* engine, double* temperature,
+                                            double* frozen_fraction,
+                                            double* infiltration_factor, int n) nogil
     int swmm_infil2d_get_cum_bulk(void* engine, double* F, int n) nogil
     int swmm_infil2d_get_total_volume(void* engine, double* volume)
 

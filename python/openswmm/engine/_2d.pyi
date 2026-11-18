@@ -1354,6 +1354,12 @@ class Infiltration2DView:
         """Held per-cell infiltration rate (m/s), one entry per triangle."""
         ...
 
+    def frozen_ground(
+        self,
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Ground temperature (C), frozen fraction and infiltration factor per triangle."""
+        ...
+
     def cumulative(self) -> npt.NDArray[np.float64]:
         """Cumulative infiltrated depth (m), one entry per triangle."""
         ...

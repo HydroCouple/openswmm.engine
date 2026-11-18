@@ -291,12 +291,13 @@ from the end-of-step depth, is what the ledger and the cumulative output read.
 
 ### 8.3.5 Frozen ground
 
-With a `[2D_FROZEN_GROUND]` section, each cell that carries one of these
-methods also carries a frozen-ground slab. At every infiltration step the
-held rate of a cell is multiplied by the slab's infiltration factor, and a
-fully frozen cell is not advanced by its method and holds a zero rate. The
-formulation and its mesh-specific limits are given in
-@ref hydrology_ref_frozen_ground (Section 4.7.5).
+With a `[2D_FROZEN_GROUND]` section, the cells its rows cover (all cells for
+the `*` row, or the cells of a mesh tag) carry a frozen-ground slab. At every
+infiltration step the held rate of a cell is multiplied by the slab's
+infiltration factor, and a fully frozen cell is not advanced by its method
+and holds a zero rate. The same factor limits the intake of a 2D aquifer
+where one owns the cell. The formulation and its mesh-specific details are
+given in @ref hydrology_ref_frozen_ground (Section 4.7.5).
 
 ## 8.4 Infiltration destination
 

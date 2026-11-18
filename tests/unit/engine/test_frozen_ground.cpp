@@ -764,6 +764,8 @@ struct MeshResult {
     std::vector<double> infiltration; // cumulative depth per cell, m
     std::vector<double> factor, enthalpy;
     std::vector<double> first_factor; // after the first engine step
+    std::vector<double> api_temperature, api_frozen, api_factor; // the public bulk getter
+    int api_status = -1;
     frost::Slab slab;
 };
 
@@ -801,6 +803,10 @@ MeshResult runMesh(const std::string& tag, const MeshDeck& deck) {
     }
     r.infiltration.assign(static_cast<std::size_t>(cells), 0.0);
     swmm_infil2d_get_cum_bulk(engine, r.infiltration.data(), cells);
+    r.api_temperature.assign(static_cast<std::size_t>(cells), -99.0);
+    r.api_frozen = r.api_factor = r.api_temperature;
+    r.api_status = swmm_infil2d_get_frozen_ground_bulk(
+        engine, r.api_temperature.data(), r.api_frozen.data(), r.api_factor.data(), cells);
     r.factor = router.frozenGroundFactor();
     r.enthalpy = router.frozenGroundEnthalpy();
     if (const frost::Slab* slab = router.frozenGroundSlab(0))
@@ -918,10 +924,21 @@ TEST(FrozenGroundMesh, CellsWithoutARowAreNotLimited) {
     const MeshResult r = runMesh("mesh_partial", d), c = runMesh("mesh_partial_control", control);
     ASSERT_TRUE(r.started && c.started) << r.error << c.error;
     ASSERT_EQ(r.factor.size(), 4u);
+    ASSERT_EQ(r.api_status, SWMM_OK);
+    ASSERT_EQ(c.api_status, SWMM_OK);
     for (std::size_t i = 0; i < 4; ++i) {
         const bool woods = i % 2 == 1;
         EXPECT_EQ(r.factor[i], woods ? 0.0 : 1.0) << i;
         EXPECT_EQ(r.enthalpy[i] == 0.0, !woods) << i;
+        // The public getter reports the slab, and 0, 0, 1 where there is none.
+        EXPECT_EQ(r.api_factor[i], r.factor[i]) << i;
+        EXPECT_EQ(r.api_frozen[i], woods ? 1.0 : 0.0) << i;
+        if (woods)
+            EXPECT_LT(r.api_temperature[i], 0.0) << i;
+        else
+            EXPECT_EQ(r.api_temperature[i], 0.0) << i;
+        EXPECT_EQ(c.api_factor[i], 1.0) << i;
+        EXPECT_EQ(c.api_frozen[i], 0.0) << i;
         if (woods)
             EXPECT_EQ(r.infiltration[i], 0.0) << i;
         else

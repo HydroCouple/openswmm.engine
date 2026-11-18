@@ -2166,7 +2166,7 @@ SnowConductivity    thermal conductivity of snow (W/m·K). Default 0.25.
 SnowDensity    density of snow, used to turn snow water equivalent into depth (kg/m³). Default 250.
 
 Remarks:
-All values are in SI units and degrees Celsius whatever the project's FLOW_UNITS. Trailing values may be omitted and keep their defaults. A named row takes precedence over the * row in either order. The section applies to all infiltration methods; a subcatchment with no pervious area is unaffected. It does not change LID units, groundwater or the 2D mesh.
+All values are in SI units and degrees Celsius whatever the project's FLOW_UNITS. Trailing values may be omitted and keep their defaults. A named row takes precedence over the * row in either order. The section applies to all infiltration methods and to the LID units of the subcatchment (surface infiltration into a unit's soil, pavement permeability and exfiltration to native soil). Groundwater percolation, LID storage nodes and the 2D mesh are not changed by this section; the mesh has its own, [2D_FROZEN_GROUND].
 
 The model reads the air temperature from the [TEMPERATURE] section; without one a warning is issued and the ground follows the default air temperature. A row naming an unknown subcatchment, or holding an out-of-range value, stops the run with a message naming it.
 
@@ -2180,18 +2180,19 @@ This section has no counterpart in SWMM 5 and is omitted when a model is written
 ### Section: [2D_FROZEN_GROUND] {#engine_manual_sect_2D_FROZEN_GROUND}
 
 Purpose:
-Turns on the frozen-ground model for the cells of the 2D mesh that carry a per-cell infiltration method.
+Turns on the frozen-ground model for cells of the 2D mesh.
 
 Format:
-    *  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
+    Tag  (Thickness  Conductivity  HeatCapacity  WaterContent  DeepTemp  DeepDepth  InitTemp  Exponent  SnowConductivity  SnowDensity)
 
 Parameters:
+Tag    a mesh tag, or * for a row that applies to every cell.
 The values, units and defaults are those of the [FROZEN_GROUND] section (@ref engine_manual_sect_FROZEN_GROUND).
 
 Remarks:
-The section takes exactly one row, and its first token must be *; the row applies to every mesh cell with a [2D_INFILTRATION_DEFAULTS] or [2D_INFILTRATION] method. Any other row, or an out-of-range value, stops the run with a message.
+A tag row takes precedence over the * row in either order; a cell that no row covers is not limited. A row naming a tag that no cell carries, or holding an out-of-range value, stops the run with a message.
 
-The ground is advanced once per INFIL_STEP. Snow on the mesh does not yet insulate the ground, the two snow values are read but unused, and cells whose infiltration is owned by a [2D_AQUIFER] are not limited. A surface checkpoint of a model with this section is refused.
+The ground is advanced once per INFIL_STEP. The factor limits the per-cell infiltration methods of [2D_INFILTRATION_DEFAULTS] and [2D_INFILTRATION], and the intake of a [2D_AQUIFER] where one owns the cell. Snow on a cell insulates the ground. Infiltration rates prescribed at run time are not limited. The slab state is saved in surface checkpoints.
 
 See @ref hydrology_ref_frozen_ground for the formulation.
 

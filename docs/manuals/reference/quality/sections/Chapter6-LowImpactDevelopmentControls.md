@@ -1104,6 +1104,15 @@ layer at a user-specified interval) is also present in
 `LIDSolver::batchPavementFlux()`, but its regeneration degree is
 currently only settable programmatically and defaults to zero.
 
+### 6.2.12 Frozen Ground
+
+When the subcatchment that holds a LID unit has a `[FROZEN_GROUND]` row, the
+unit takes that subcatchment's infiltration factor. The factor multiplies
+surface infiltration into the unit's soil layer, the permeability of a
+pavement layer and exfiltration from the storage layer to native soil, and is
+zero on fully frozen ground. The other layer fluxes of this section are
+unchanged. See @ref hydrology_ref_frozen_ground (Section 4.7.6).
+
 ## 6.3 LID Deployment
 
 Before discussing the computational steps used to solve the governing

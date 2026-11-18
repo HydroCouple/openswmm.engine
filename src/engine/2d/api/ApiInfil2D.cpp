@@ -705,6 +705,31 @@ int swmm_infil2d_get_rate_bulk(SWMM_Engine engine, double* f, int n) {
     return SWMM_OK;
 }
 
+int swmm_infil2d_get_frozen_ground_bulk(SWMM_Engine engine, double* temperature,
+                                        double* frozen_fraction, double* infiltration_factor,
+                                        int n) {
+    GET_ENGINE(engine);
+    CHECK_2D_MESH(eng);
+    if (n <= 0)
+        return SWMM_ERR_BADPARAM;
+    const int count = std::min(n, router2d.mesh().n_triangles());
+    const auto& enthalpy = router2d.frozenGroundEnthalpy();
+    const auto& open = router2d.frozenGroundFactor();
+    for (int i = 0; i < count; ++i) {
+        const auto u = static_cast<std::size_t>(i);
+        // A cell no [2D_FROZEN_GROUND] row covers reports 0, 0 and 1.
+        const openswmm::frost::Slab* slab = router2d.frozenGroundSlab(u);
+        const bool on = slab && u < enthalpy.size() && u < open.size();
+        if (temperature)
+            temperature[i] = on ? openswmm::frost::temperatureOf(*slab, enthalpy[u]) : 0.0;
+        if (frozen_fraction)
+            frozen_fraction[i] = on ? openswmm::frost::frozenFraction(*slab, enthalpy[u]) : 0.0;
+        if (infiltration_factor)
+            infiltration_factor[i] = on ? open[u] : 1.0;
+    }
+    return SWMM_OK;
+}
+
 int swmm_infil2d_get_cum_bulk(SWMM_Engine engine, double* F, int n) {
     GET_ENGINE(engine);
     CHECK_2D_MESH(eng);

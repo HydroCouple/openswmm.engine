@@ -463,6 +463,24 @@ SWMM_ENGINE_API int swmm_infil2d_set_cells(SWMM_Engine engine, const int* tris, 
  *  @ingroup engine_infil2d */
 SWMM_ENGINE_API int swmm_infil2d_get_rate_bulk(SWMM_Engine engine, double* f, int n);
 
+/** @brief Bulk get the frozen-ground state of mesh cells ([2D_FROZEN_GROUND]).
+ *
+ *  Values are those after the last infiltration interval; the factor scales the next one.
+ *  Fills `min(n, triangle_count)` entries of every non-NULL buffer. A cell that no row covers,
+ *  and every cell of a model without the section, reports 0 C, 0 and 1.
+ *
+ *  @param[in] engine Engine handle.
+ *  @param[out] temperature Ground slab temperature per cell, degrees Celsius; may be NULL.
+ *  @param[out] frozen_fraction Frozen share of the slab's freezable water, 0 to 1; may be NULL.
+ *  @param[out] infiltration_factor Multiplier applied to the cell's intake, 0 to 1; may be NULL.
+ *  @param[in] n Capacity of each buffer in doubles.
+ *  @return SWMM_OK; SWMM_ERR_BADHANDLE for a null engine, SWMM_ERR_BADPARAM for n <= 0, or the
+ *      2D availability error of the other bulk getters when the model has no mesh.
+ */
+SWMM_ENGINE_API int swmm_infil2d_get_frozen_ground_bulk(SWMM_Engine engine, double* temperature,
+                                                        double* frozen_fraction,
+                                                        double* infiltration_factor, int n);
+
 /** @brief Bulk get the cumulative infiltrated depth per cell (m).
  *
  *  The `infil_cum` sidecar variable: the running time-integral of the loss the

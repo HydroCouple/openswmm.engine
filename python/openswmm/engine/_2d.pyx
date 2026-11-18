@@ -2705,6 +2705,33 @@ cdef class Infiltration2DView:
         _check(err)
         return np.asarray(out)[:nt]
 
+    def frozen_ground(self):
+        """Return the frozen-ground state of the mesh cells as three NumPy arrays.
+
+        ``(temperature, frozen_fraction, infiltration_factor)``: the ground slab temperature in
+        degrees Celsius, the frozen share of its freezable water (0 to 1) and the multiplier
+        applied to the cell's intake (0 to 1), one entry per triangle. A cell that no
+        ``[2D_FROZEN_GROUND]`` row covers reports 0, 0 and 1.
+
+        @rtype: tuple[np.ndarray, np.ndarray, np.ndarray]
+        @raise EngineError: If the C API call fails.
+        """
+        cdef int nt = 0
+        _check(swmm_2d_triangle_count(self._h(), &nt))
+        cdef double[::1] t = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double[::1] frozen = np.zeros(max(nt, 1), dtype=np.float64)
+        cdef double[::1] factor = np.ones(max(nt, 1), dtype=np.float64)
+        cdef double* pt = &t[0]
+        cdef double* pf = &frozen[0]
+        cdef double* po = &factor[0]
+        cdef void* eng = self._h()
+        cdef int err
+        with self._owner._operation(<uintptr_t>eng):
+            with nogil:
+                err = swmm_infil2d_get_frozen_ground_bulk(eng, pt, pf, po, nt if nt > 0 else 1)
+        _check(err)
+        return np.asarray(t)[:nt], np.asarray(frozen)[:nt], np.asarray(factor)[:nt]
+
     def cumulative(self):
         """Return the cumulative infiltrated depth per cell as a NumPy array.
 
