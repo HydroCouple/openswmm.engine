@@ -3911,3 +3911,6 @@ P(>20 cm) Brier 0.0363 vs 0.1117 no-skill; wall 1,955 s. Per-member ON on the sa
 conservative, storage 0.787/0.690 ranking, Brier 0.0216/0.1041, wall 2,405 s (1.23×); six shallow laterals stay
 1.4–3.7 m wide against MC ≤ 0.03 m (OFF 0.02–0.08) — the per-member near-rim spill loop, now isolated from the plane.
 The per-member path stays behind `rom1dStorageMembersEnabled()` (default OFF).
+Per-member ON on the O-15 code (final): 1D 0.947/1.574 conservative, storage 0.818/0.957 calibrated, 2D
+0.663/0.158, Brier 0.0231/0.1025, wall 2,632 s (1.35× OFF). ON equals OFF at the basins and is better only on
+flood-probability skill; the six shallow laterals remain 1.4–3.9 m wide (per-member near-rim spill loop). Hook OFF.

@@ -715,3 +715,11 @@ cases the current code excludes). Acceptance gates as in the table.
   near-rim admission → spill → pond-drain loop. G72UD11: OFF 0.099 (was 0.916; the plane fix narrowed it), ON 0.334
   (MC 1.105). **Reading**: per-member ON now adds only probability skill (0.21 vs 0.32) and costs 1D width, storage
   coverage and the laterals; the basins are calibrated OFF. Default stays OFF; O-15 rerun pending.
+- 2026-11-18: **Bellinge ON on O-15 code** (final per-member table; OFF unchanged by O-15): wall 2,632 s (1.35× OFF
+  1,955 s); 1D all 0.947/1.574 conservative; **storage 0.818/0.957 calibrated** (= OFF 0.811/0.948); trunk
+  0.789/1.155; near rim 0.867/1.278; far 0.955/1.626; 2D 0.663/0.158; Brier 0.0231/0.1025 (0.23 vs OFF 0.32).
+  Nodes: G72UD11 0.662 (OFF 0.099, MC 1.105 — the ratchet fix widened it as predicted); G72R83B 0.156 (OFF 0.188,
+  MC 0.062); G72R150 0.625 (OFF 0.451, MC 0.454); six laterals unchanged 1.4–3.9 m. Solver: 1.39 M Newton,
+  rejected member-steps per the `[PH-ports]` line, G71O020 −206 ft (plane). **Verdict**: ON equals OFF at the
+  basins, wins at G72UD11 and on probability skill, loses on 1D width (1.57) and at the shallow laterals (its
+  near-rim spill loop). Default stays OFF; the per-member path stays behind the hook as diagnostic infrastructure.
