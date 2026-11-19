@@ -2227,6 +2227,7 @@ int SWMMEngine::start(int save_results) noexcept {
 
     // No dated SAVE HOTSTART row has been written in this run yet.
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
+    end_checkpoint_saves_done_ = false;
 
     ctx_.state = EngineState::RUNNING;
     if (process_component_host_) {
@@ -2453,6 +2454,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     if (hydraulics::TimestepController::simulation_complete(ctx_)) {
         if (elapsed_time)
             *elapsed_time = 0.0;
+        // End-of-run saves that need the engine checkpoint are written while
+        // the engine still runs: the checkpoint can be taken only from a
+        // running engine, and end() follows this ENDED step.
+        if (const auto error = writeEndOfRunCheckpointSaves(); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART, error.c_str());
+            return CFFI_ERR_HOTSTART;
+        }
         ctx_.state = EngineState::ENDED;
         return SWMM_OK;
     }
@@ -9397,17 +9405,11 @@ int SWMMEngine::end() noexcept {
     }
     // A SAVE HOTSTART row that cannot be written fails the run once teardown is done.
     std::string hotstart_error;
-    // Native thermal hotstarts use the last accepted full engine checkpoint.
-    // Capture before teardown's partial 2D flush so clocks, water and energy
-    // describe the same accepted boundary.
-    if (ctx_.state == EngineState::RUNNING && ctx_.options.heat_transport) {
-        // Save full checkpoints before detaching source histories or finalizing
-        // the surface router. This is the last accepted coupled state.
-        for (const auto& entry : ctx_.files.hotstart_saves) {
-            if (entry.datetime == 0.0 && hotstart_error.empty())
-                hotstart_error = writeHotstartSave(entry);
-        }
-    }
+    // A run ended before the step that finds it complete writes its
+    // checkpoint-based end-of-run saves here, before teardown's partial 2D
+    // flush, so clocks, water and energy describe the same accepted boundary.
+    if (ctx_.state == EngineState::RUNNING)
+        hotstart_error = writeEndOfRunCheckpointSaves();
 
 #ifdef OPENSWMM_HAS_2D
     // Histories close at the last accepted engine checkpoint. Teardown may
@@ -9532,7 +9534,8 @@ int SWMMEngine::end() noexcept {
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0) {
-            if (!ctx_.options.heat_transport && hotstart_error.empty())
+            // Rows that need the engine checkpoint were written before teardown.
+            if (!endOfRunNeedsCheckpoint() && hotstart_error.empty())
                 hotstart_error = writeHotstartSave(entry);
         } else if (k >= hotstart_save_done_.size() || !hotstart_save_done_[k]) {
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
@@ -9636,6 +9639,26 @@ std::string SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     }
     if (rc != 0)
         return "SAVE HOTSTART: '" + sp + "' was not written: " + HotStartManager::last_io_error();
+    return {};
+}
+
+bool SWMMEngine::endOfRunNeedsCheckpoint() const {
+    bool full_continuation = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    return full_continuation && checkpoint_enabled_;
+}
+
+std::string SWMMEngine::writeEndOfRunCheckpointSaves() {
+    if (end_checkpoint_saves_done_)
+        return {};
+    end_checkpoint_saves_done_ = true;
+    if (endOfRunNeedsCheckpoint())
+        for (const auto& entry : ctx_.files.hotstart_saves)
+            if (entry.datetime == 0.0)
+                if (auto error = writeHotstartSave(entry); !error.empty())
+                    return error;
     return {};
 }
 

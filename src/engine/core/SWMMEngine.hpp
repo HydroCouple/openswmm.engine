@@ -1178,6 +1178,20 @@ private:
     std::string checkpoint_model_;
     std::string pending_hotstart_checkpoint_;
     std::string hotstart_checkpoint_error_;
+
+    // End-of-run saves that need the engine checkpoint are written once per run.
+    bool end_checkpoint_saves_done_ = false;
+    /**
+     * @brief True when end-of-run SAVE HOTSTART rows need the engine checkpoint (heat, frozen
+     *        ground or an independent groundwater clock, with checkpointing on).
+     */
+    bool endOfRunNeedsCheckpoint() const;
+    /**
+     * @brief Write the end-of-run SAVE HOTSTART rows that need the engine checkpoint while the
+     *        engine still runs. Runs once per run.
+     * @return Empty on success, otherwise the first failure's reason.
+     */
+    std::string writeEndOfRunCheckpointSaves();
     /**
      * @brief Attach native restart resources at the initial RUNNING boundary.
      *

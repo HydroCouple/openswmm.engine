@@ -3047,6 +3047,24 @@ TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineSta
     ASSERT_EQ(target_api.engine.end(), SWMM_OK);
 }
 
+// A run stepped to its end writes its end-of-run native hot start. The step that finds the run
+// complete marks it ENDED before end(), and end() wrote checkpoint-based saves only while the run
+// was RUNNING, so the file was silently never written.
+TEST(EngineCheckpoint, CoupledThermalEndOfRunHotstartIsWrittenWhenSteppedToTheEnd) {
+    const auto path = root() / "surface-thermal-native-end.hsf";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    ThermalSurfaceSession source;
+    ASSERT_NO_THROW(source.startNativeHotstart("surface-thermal-native-end", path.string(), true));
+    double elapsed = 0.0;
+    while (swmm_engine_step(&source.engine, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    ASSERT_EQ(source.engine.end(), SWMM_OK) << source.engine.context().error_message;
+    std::unique_ptr<HotStartFile> scheduled(HotStartManager::open(path.string()));
+    ASSERT_TRUE(scheduled) << HotStartManager::last_io_error();
+    EXPECT_FALSE(scheduled->engine_checkpoint.empty());
+}
+
 // A native hot start that restores a full engine checkpoint starts the run
 // at the saved time. A dated SAVE HOTSTART row due before that time was the
 // saving run's to write; it must not fire again on the first step and
