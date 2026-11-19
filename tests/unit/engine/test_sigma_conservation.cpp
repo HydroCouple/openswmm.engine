@@ -604,6 +604,29 @@ TEST(SigmaConservation, PreparedTrialsMatchEveryOutputBitAcrossLawsAndMovingGeom
                         }
 }
 
+TEST(SoilRetention, SuctionInvertsEffectiveSaturationDownToAMillimetre) {
+    // Russo's inverse has no closed form. Started from -ln t alone it was wrong by 69 % at 1 cm
+    // and 14x at 1 mm (2026-11-19); the closed-form laws are the control.
+    for (auto law : laws)
+        for (double alpha : {.5, 2., 10.})
+            for (int k = -30; k <= 15; ++k) {
+                soil::Params p;
+                p.law = law;
+                p.alpha = alpha;
+                const double psi = std::pow(10., k / 10.);
+                if ((law == SoilChar::BROOKS_COREY && psi <= p.psi_b) || alpha * psi > 18)
+                    continue; // saturated inside the fringe, or at a retention floor
+                const double se = soil::effectiveSaturation(p, psi);
+                if (se >= 1. - 1e-12)
+                    continue; // read as saturated
+                SCOPED_TRACE(std::to_string(int(law)) + "/" + std::to_string(alpha) + "/" +
+                             std::to_string(psi));
+                // Se carries 1 - Se to roundoff, which bounds any inverse near saturation.
+                EXPECT_NEAR(soil::suctionAtSaturation(p, se), psi,
+                            (1e-9 + 1e-15 / (1. - se)) * psi);
+            }
+}
+
 TEST(SigmaLayerTransport, ReusedWorkspaceRetainsFreshPartialOutputsAfterRefusal) {
     LayerTransportScratch scratch;
     const auto same = [](const LayerTransportResult& a, const LayerTransportResult& b) {

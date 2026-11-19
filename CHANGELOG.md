@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- The Russo soil law's suction-from-saturation inverse was wrong near saturation: it overstated suction by 69 % at 1 cm, 14 times at 1 mm and 3.5 % at 3 cm. It now converges to roundoff over the whole range. Russo is the default soil law; SIGMA layer suctions and conductivities near saturation change, and so, slightly, the ET stress and infiltration capacity of nearly saturated columns under every closure.
 - A GeoPackage project now keeps every finite volume option. Only the pressure closure was saved before, so the backend, the order, the limiter, the time stepping choices, the cell length and the rest came back as defaults when a project was reopened. The rows are the `[OPTIONS]` tokens and are read by the same parser as an input file; a GeoPackage without them opens on the defaults as before.
 - `swmm_backend_info` reports whether a compute backend (`OMP`, `CUDA`, `HIP`, `SYCL`) is installed, built for this engine and has a device, for the 1D finite volume solver or the 2D surface solver, without creating a solver. `swmm_fv_device_supported` reports whether a model's options are ones the 1D device backend integrates, and names the first that is not.
 - The 1D finite volume plugin is now refused when it was built from different engine headers, as the 2D plugin already was, and receives the `THREADS` request (an automatic request uses the performance cores). The `FV Solver Statistics` block of the report names the backend that ran the substeps.
