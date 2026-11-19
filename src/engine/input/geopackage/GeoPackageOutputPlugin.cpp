@@ -165,15 +165,19 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
         std::ostringstream ts;
         ts << std::put_time(std::gmtime(&now_t), "%Y-%m-%dT%H:%M:%SZ");
 
-        auto stmt =
-            gpkg::prepare(db_.get(), "INSERT OR REPLACE INTO simulations "
-                                     "(simulation_id, name, created_at, engine_version, status) "
-                                     "VALUES (?, ?, ?, ?, 'running')");
+        // write_model() created the row. Update it in place: replacing it would
+        // delete it first and cascade its hot start slots and climate rows away.
+        auto stmt = gpkg::prepare(
+            db_.get(), "INSERT INTO simulations "
+                       "(simulation_id, name, created_at, engine_version, status) "
+                       "VALUES (?, ?, ?, ?, 'running') ON CONFLICT(simulation_id) DO UPDATE SET "
+                       "created_at=excluded.created_at, engine_version=excluded.engine_version, "
+                       "status='running'");
         bind_text(stmt.get(), 1, simulation_id_);
         bind_text(stmt.get(), 2, simulation_id_);
         bind_text(stmt.get(), 3, ts.str());
         bind_text(stmt.get(), 4, OPENSWMM_VERSION_FULL);
-        sqlite3_step(stmt.get());
+        checked_model_step(db_.get(), stmt.get());
 
         populate_default_variables(db_.get());
 

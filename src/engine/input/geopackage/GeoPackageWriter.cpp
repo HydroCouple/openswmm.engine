@@ -15,6 +15,7 @@
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
+#include <version.h>
 
 #include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
@@ -3218,6 +3219,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
                               "inlet_usage",
                               "raingage_data",
                               "climate_data",
+                              "hotstart_slots",
                               "routing_interface_node",
                               "routing_interface_subcatch",
                               "routing_interface_gage",
@@ -3234,6 +3236,19 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
         auto remove = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
         bind_text(remove.get(), 1, simulation_id);
         checked_model_step(db, remove.get());
+    }
+    // Hot start slots and climate rows reference their simulations row, so it
+    // must exist inside this transaction. A saved project model is marked
+    // 'model' and is not listed as a run; a run's writer marks its own row.
+    {
+        auto parent = prepare(db, "INSERT INTO simulations "
+                                  "(simulation_id, name, created_at, engine_version, status) "
+                                  "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, 'model') "
+                                  "ON CONFLICT(simulation_id) DO NOTHING");
+        bind_text(parent.get(), 1, simulation_id);
+        bind_text(parent.get(), 2, simulation_id);
+        bind_text(parent.get(), 3, OPENSWMM_VERSION_FULL);
+        checked_model_step(db, parent.get());
     }
 
     // Register CRS and feature tables

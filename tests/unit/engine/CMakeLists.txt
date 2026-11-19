@@ -1569,6 +1569,34 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     set_tests_properties(test_engine_geopackage_external_content_writer
         PROPERTIES LABELS "unit")
 
+    # Project saves and runs through the public C API, with no parent row planted.
+    add_executable(test_engine_geopackage_run_lifecycle test_geopackage_run_lifecycle.cpp)
+    target_link_libraries(test_engine_geopackage_run_lifecycle
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_run_lifecycle
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_run_lifecycle
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_run_lifecycle)
+    add_test(
+        NAME    test_engine_geopackage_run_lifecycle
+        COMMAND $<TARGET_FILE:test_engine_geopackage_run_lifecycle>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_run_lifecycle PROPERTIES LABELS "unit")
+
     # Slice IO-8 — Part D content → ctx slot hydration + scratch materialise.
     add_executable(test_engine_geopackage_external_content_reader
         test_geopackage_external_content_reader.cpp)

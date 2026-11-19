@@ -56,8 +56,11 @@ int GeoPackageInputPlugin::read(const std::string& path, SimulationContext& ctx)
             has_default_model = sqlite3_step(saved.get()) == SQLITE_ROW;
         }
         if (simulation_id_ == "default" && !has_default_model) {
-            // Check if there's a simulations table with entries
-            auto stmt = prepare(db.get(), "SELECT simulation_id FROM simulations LIMIT 1");
+            // The first simulation that holds a model. A saved project's own
+            // row exists even when its rows were moved to another simulation.
+            auto stmt = prepare(db.get(), "SELECT s.simulation_id FROM simulations s WHERE "
+                                          "EXISTS (SELECT 1 FROM options o WHERE "
+                                          "o.simulation_id = s.simulation_id) LIMIT 1");
             if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
                 simulation_id_ = column_text(stmt.get(), 0);
             } else {

@@ -1595,15 +1595,42 @@ TEST_F(GeoPackageTest, FileBackedTimeseriesIsStoredOnce) {
     std::remove(src.string().c_str());
 }
 
-// Save writes the model under "default" with no simulations row; a run adds a
-// simulations row with its own snapshot. Reopening must load the saved model.
+// A saved project whose rows were moved to a run (the GUI's save-in-place test does this)
+// keeps its own, now empty, "default" row. Opening reads the run's model, not the empty one.
+TEST_F(GeoPackageTest, OpenSkipsAnEmptyProjectRowForTheModelThatHasRows) {
+    auto saved_ctx = build_test_context();
+    GeoPackageInputPlugin writer;
+    ASSERT_EQ(writer.write(db_path_, saved_ctx), 0);
+    {
+        auto db = open_database(db_path_);
+        exec(db.get(), "PRAGMA foreign_keys=OFF");
+        std::vector<std::string> tables;
+        {
+            auto list = prepare(db.get(), "SELECT m.name FROM sqlite_master m JOIN "
+                                          "pragma_table_info(m.name) p ON p.name='simulation_id' "
+                                          "WHERE m.type='table' AND m.name<>'simulations'");
+            while (sqlite3_step(list.get()) == SQLITE_ROW)
+                tables.push_back(column_text(list.get(), 0));
+        }
+        for (const auto& table : tables)
+            exec(db.get(), "UPDATE " + table + " SET simulation_id='run_1'");
+        exec(db.get(), "INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
+                       "VALUES ('run_1', 'run_1', '2026-11-11T00:00:00Z', 'test')");
+    }
+    SimulationContext ctx{};
+    GeoPackageInputPlugin reader;
+    ASSERT_EQ(reader.read(db_path_, ctx), 0);
+    EXPECT_GT(ctx.n_nodes(), 0);
+}
+
+// Save writes the model under "default", marked as a model; a run's snapshot has
+// a run row. Reopening must load the saved model.
 TEST_F(GeoPackageTest, SavedModelWinsOverRunSnapshotOnOpen) {
     auto run_ctx = build_test_context();
     ASSERT_EQ(write_to_file(db_path_, run_ctx, "run_1"), 0);
     {
         auto db = open_database(db_path_);
-        exec(db.get(), "INSERT INTO simulations (simulation_id, name, created_at, engine_version) "
-                       "VALUES ('run_1', 'run_1', '2026-11-11T00:00:00Z', 'test')");
+        exec(db.get(), "UPDATE simulations SET status='completed' WHERE simulation_id='run_1'");
     }
     GeoPackageInputPlugin plugin;
     {

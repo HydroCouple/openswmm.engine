@@ -211,6 +211,8 @@ SWMM_ENGINE_API int swmm_gpkg_is_registered(void);
 /**
  * @brief Count stored simulation-run rows.
  *
+ * A project model saved to the file has a row marked 'model' and is not counted.
+ *
  * @param[in] gpkg Non-null live GeoPackage handle; caller serializes access and retains ownership
  *     until swmm_gpkg_close().
  * @return Nonnegative count, or -1 for null handle/caught query error.
@@ -219,6 +221,8 @@ SWMM_ENGINE_API int swmm_gpkg_simulation_count(SWMM_Gpkg gpkg);
 
 /**
  * @brief Copy one simulation-run ID in creation-time order.
+ *
+ * Saved project models are skipped, as in swmm_gpkg_simulation_count().
  *
  * @param[in] gpkg Non-null live GeoPackage handle; caller serializes access and retains ownership
  *     until swmm_gpkg_close().

@@ -12,15 +12,6 @@
 #include <iomanip>
 
 namespace openswmm::gpkg {
-inline void checked_model_step(sqlite3* db, sqlite3_stmt* statement) {
-    const int rc = sqlite3_step(statement);
-    if (rc != SQLITE_DONE) {
-        const std::string error = sqlite3_errmsg(db);
-        sqlite3_reset(statement);
-        throw GpkgError(error, rc);
-    }
-}
-
 // Relational columns remain authoritative. Native sections supply only fields
 // the relational schema cannot represent, so GIS edits to existing tables still
 // take effect. Numeric sections use the same internal-unit convention as tables.

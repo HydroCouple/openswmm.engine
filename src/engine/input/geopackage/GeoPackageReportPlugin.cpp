@@ -53,10 +53,12 @@ int GeoPackageReportPlugin::prepare(const SimulationContext& ctx) {
         // A report writer may be selected independently of the results writer.
         if (!hasRun) {
             write_model(db_.get(), ctx, simulation_id_);
+            // write_model() created the row as a model; mark it as this run.
             auto insert = gpkg::prepare(
                 db_.get(), "INSERT INTO simulations "
                            "(simulation_id,name,created_at,engine_version,status) "
-                           "VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,'running')");
+                           "VALUES (?,?,strftime('%Y-%m-%dT%H:%M:%SZ','now'),?,'running') "
+                           "ON CONFLICT(simulation_id) DO UPDATE SET status='running'");
             bind_text(insert.get(), 1, simulation_id_);
             bind_text(insert.get(), 2, simulation_id_);
             bind_text(insert.get(), 3, OPENSWMM_VERSION_FULL);
