@@ -3286,7 +3286,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     }
     if (journal_) {
         if (clock_telemetry_.active())
-            journal_->fired.push_back(i);
+            journal_->fired.push_back({i, time, dt});
     } else {
         clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
     }
@@ -4613,9 +4613,16 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
                                       GwFiringOrigin origin, double intake_through) {
     perf::ProcessTimer process_timer(perf::ProcessPhase::gw_cells);
     prepareRechargeBatch(cells);
-    if (fireGwCellsParallel(cells, dt, surf, time, origin, intake_through))
+    if (fireGwCellsParallel(cells, dt, surf, time, accepted_end, origin, intake_through))
         return;
-    for (const int i : cells) {
+    for (const int i : cells)
+        fireListedCell(i, dt, surf, time, accepted_end, origin, intake_through);
+}
+
+void SubsurfaceSolver::fireListedCell(int i, double dt, SurfaceStateData& surf, double time,
+                                      double accepted_end, GwFiringOrigin origin,
+                                      double intake_through) {
+    {
         const auto u = static_cast<std::size_t>(i);
         const bool exact =
             accepted_end >= 0 && (clock_state_ || source_owned_[u] || lid_receipts_enabled_);
@@ -4629,7 +4636,7 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
                 source_cell_end_[u] = accepted_end;
             if (clock_state_)
                 cell_completed_[u] = accepted_end;
-            continue;
+            return;
         }
         const double end = exact ? accepted_end : time + dt;
         const double start = cell_time;
@@ -4692,14 +4699,16 @@ bool SubsurfaceSolver::parallelCellSweepAvailable() noexcept {
 }
 
 bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double dt,
-                                           SurfaceStateData& surf, double time,
+                                           SurfaceStateData& surf, double time, double accepted_end,
                                            GwFiringOrigin origin, double intake_through) {
 #if defined(SWMM_USE_OPENMP)
     // Eligible only where a cell's firing touches its own cell, bed and edge-side
     // slots plus the journaled run-wide accumulators. Every other profile keeps
     // the serial loop: heat and layered transport, the independent clock and
-    // LID receipts (dated shared queues), sources/boundaries/paired cells
-    // (shared receipts), RK2 stages and reaction laws (one shared workspace).
+    // LID receipts (dated shared queues), runtime source rows, RK2 stages and
+    // reaction laws (one shared workspace). Cells with sources, boundaries or
+    // paired receipts touch shared receipts and the shared gather fraction, so
+    // they fire serially after the parallel part, journaled like the rest.
     const int threads = opts_ ? opts_->num_threads : 1;
     const int count = static_cast<int>(cells.size());
     if (threads < 2 || count < 512 || heat_.active() || tr_.n_layers > 0 || clock_state_ ||
@@ -4707,12 +4716,18 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         (opts_ && opts_->reconstruction_order == 2) || (reactions_ && !reactors_.empty()) ||
         !runtime_sources_.rows.empty())
         return false;
-    for (const int i : cells) {
-        const auto u = static_cast<std::size_t>(i);
+    std::vector<int> serial; // list positions fired by fireListedCell
+    for (int k = 0; k < count; ++k) {
+        const auto u = static_cast<std::size_t>(cells[static_cast<std::size_t>(k)]);
         if (source_owned_[u] || (u < cell_sources_.size() && !cell_sources_[u].empty()) ||
             (u < cell_boundaries_.size() && !cell_boundaries_[u].empty()))
-            return false;
+            serial.push_back(k);
     }
+    if (count - static_cast<int>(serial.size()) < 512)
+        return false;
+    std::vector<unsigned char> is_serial(static_cast<std::size_t>(count), 0);
+    for (const int k : serial)
+        is_serial[static_cast<std::size_t>(k)] = 1;
 
     // gatherNode's shared scratch: the serial sweep's first gather clears the
     // previous owner's bed slots, and every later gather clears its
@@ -4723,12 +4738,14 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
             bed_gathered_[b] = 0.0;
     bed_gathered_cell_ = -1;
 
+    // One journal per thread, then one for the serial cells.
     auto& journals = journal_scratch_.journals;
-    journals.resize(static_cast<std::size_t>(threads));
+    journals.resize(static_cast<std::size_t>(threads) + 1);
     for (auto& j : journals) {
         j.adds.clear();
         j.pending_surface.clear();
         j.fired.clear();
+        j.marks.clear();
         j.node_refunds = 0;
     }
     std::vector<std::exception_ptr> errors(static_cast<std::size_t>(threads));
@@ -4742,9 +4759,10 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         journal_ = &journals[tid];
 #pragma omp for schedule(static)
         for (int k = 0; k < count; ++k) {
-            if (errors[tid])
+            if (errors[tid] || is_serial[static_cast<std::size_t>(k)])
                 continue;
             try {
+                journal_->mark(k);
                 fireCell(cells[static_cast<std::size_t>(k)], dt, surf, time, origin,
                          intake_through);
             } catch (...) {
@@ -4754,17 +4772,58 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         }
         journal_ = nullptr;
     }
-    for (const auto& j : journals) {
-        for (const auto& [total, amount] : j.adds)
-            *total += amount;
-        pending_surface_.insert(pending_surface_.end(), j.pending_surface.begin(),
-                                j.pending_surface.end());
-        node_refunds_ += j.node_refunds;
-        // Eligible cells fire over the batch's own (time, dt), as in fireCell.
-        for (const int c : j.fired)
-            clock_telemetry_.fired(c, state_.closure[static_cast<std::size_t>(c)], time, dt,
-                                   state_.dt_cell[static_cast<std::size_t>(c)], origin);
+    // The serial cells, in list order, up to the earliest parallel failure.
+    auto& later = journals.back();
+    const int stop = *std::min_element(error_at.begin(), error_at.end());
+    std::exception_ptr serial_error;
+    int serial_error_at = count;
+    journal_ = &later;
+    for (const int k : serial) {
+        if (k >= stop)
+            break;
+        try {
+            later.mark(k);
+            fireListedCell(cells[static_cast<std::size_t>(k)], dt, surf, time, accepted_end, origin,
+                           intake_through);
+        } catch (...) {
+            serial_error = std::current_exception();
+            serial_error_at = k;
+            break;
+        }
     }
+    journal_ = nullptr;
+    // Replay in list order. The thread journals, concatenated in thread order,
+    // are in list order; merge them with the serial journal position by position.
+    const auto replay = [&](const LedgerJournal& j, std::size_t m) {
+        const auto& a = j.marks[m];
+        const bool last = m + 1 == j.marks.size();
+        const auto& b = last ? LedgerJournal::Mark{count, j.adds.size(), j.pending_surface.size(),
+                                                   j.fired.size()}
+                             : j.marks[m + 1];
+        for (std::size_t e = a.adds; e < b.adds; ++e)
+            *j.adds[e].first += j.adds[e].second;
+        pending_surface_.insert(pending_surface_.end(),
+                                j.pending_surface.begin() + static_cast<std::ptrdiff_t>(a.pending),
+                                j.pending_surface.begin() + static_cast<std::ptrdiff_t>(b.pending));
+        for (std::size_t e = a.fired; e < b.fired; ++e) {
+            const auto& f = j.fired[e];
+            clock_telemetry_.fired(f.cell, state_.closure[static_cast<std::size_t>(f.cell)], f.time,
+                                   f.dt, state_.dt_cell[static_cast<std::size_t>(f.cell)], origin);
+        }
+    };
+    std::size_t s_mark = 0;
+    for (std::size_t t = 0; t + 1 < journals.size(); ++t)
+        for (std::size_t m = 0; m < journals[t].marks.size(); ++m) {
+            for (; s_mark < later.marks.size() &&
+                   later.marks[s_mark].position < journals[t].marks[m].position;
+                 ++s_mark)
+                replay(later, s_mark);
+            replay(journals[t], m);
+        }
+    for (; s_mark < later.marks.size(); ++s_mark)
+        replay(later, s_mark);
+    for (const auto& j : journals)
+        node_refunds_ += j.node_refunds;
     for (int k = 0; k + 1 < count; ++k)
         for (const auto b : cell_beds_[cells[static_cast<std::size_t>(k)]])
             bed_gathered_[b] = 0.0;
@@ -4772,12 +4831,15 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
     // As in the serial loop, a failure leaves the firings that did complete in
     // place for the caller's enclosing transaction; report the earliest one.
     const auto first = std::min_element(error_at.begin(), error_at.end());
+    if (serial_error && serial_error_at < *first)
+        std::rethrow_exception(serial_error);
     if (*first < count)
         std::rethrow_exception(errors[static_cast<std::size_t>(first - error_at.begin())]);
     ++parallel_cell_sweeps_;
     return true;
 #else
-    (void)cells, (void)dt, (void)surf, (void)time, (void)origin, (void)intake_through;
+    (void)cells, (void)dt, (void)surf, (void)time, (void)accepted_end, (void)origin,
+        (void)intake_through;
     return false;
 #endif
 }

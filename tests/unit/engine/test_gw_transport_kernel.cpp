@@ -5879,7 +5879,9 @@ TEST(GwCompletion, LayerColumnsPreserveBothPendingNativeSeamsAndPublicRestart) {
 namespace gw_thread_fixture {
 /// An n-by-n grid of triangle pairs (10 m cells) over a bulk aquifer with a
 /// sorbing, decaying pollutant, dispersion, rain, infiltration and one node bed.
-inline std::string deck(int n, const char* closure, int threads) {
+/// With `forcing`, also a well whose flow reverses mid-run (its cell fires at
+/// knots) and a head boundary on cell 1's exterior edge.
+inline std::string deck(int n, const char* closure, int threads, bool forcing = false) {
     std::ostringstream s;
     s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
          "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:05:00\n"
@@ -5891,6 +5893,7 @@ inline std::string deck(int n, const char* closure, int threads) {
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n"
          "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n"
          "[TIMESERIES]\nRAIN 0:00 20.0\nRAIN 0:10 0.0\n"
+         "WELLQ 0:00 0.0005\nWELLQ 0:02 -0.0005\nWELLQ 0:04 0.0002\n"
          "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 3\n"
          "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\nRAINFALL_MODE SYSTEM\n"
          "[2D_VERTICES]\n";
@@ -5916,8 +5919,12 @@ inline std::string deck(int n, const char* closure, int threads) {
     s << "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\n"
          "[GW_SORPTION]\n* TSS 0.2 1.0\n"
          "[GW_INITIAL_QUALITY]\n* SAT TSS 5.0\n* UNSAT TSS 2.0\nCELL 1 SAT TSS 25.0\n"
-         "[2D_AQUIFER_NODE]\nJ1 1\n"
-         "[COORDINATES]\nJ1 5.0 5.0\nO1 400.0 400.0\n[REPORT]\nINPUT NO\n";
+         "[2D_AQUIFER_NODE]\nJ1 1\n";
+    if (forcing)
+        s << "[GW_SOURCES]\nWell1 CELL " << n + 3 << " FLOW WELLQ TSS CONC 100.0\n"
+          << "[2D_AQUIFER_BOUNDARIES]\nCELL 1 EDGE 2 HEAD CONST -0.6\n"
+             "[GW_BOUNDARY_QUALITY]\n1 2 TSS CONC 3.0\n";
+    s << "[COORDINATES]\nJ1 5.0 5.0\nO1 400.0 400.0\n[REPORT]\nINPUT NO\n";
     return s.str();
 }
 struct Capture {
@@ -5927,9 +5934,9 @@ struct Capture {
 };
 /// Run the deck to its end and serialize the aquifer checkpoint, the run-wide
 /// water and species ledgers, and the surface volume and species mass.
-inline Capture run(const std::string& tag, const char* closure, int threads) {
+inline Capture run(const std::string& tag, const char* closure, int threads, bool forcing = false) {
     Capture result;
-    auto r = open(tag, deck(18, closure, threads));
+    auto r = open(tag, deck(18, closure, threads, forcing));
     result.ok = ::run(r);
     if (result.ok) {
         auto& gw = r.eng->surfaceRouter2D().subsurface();
@@ -5969,6 +5976,34 @@ TEST(GwParallelSweep, BulkAquiferIsBitIdenticalAcrossThreadCounts) {
             // The comparison means nothing unless the parallel sweep actually ran.
             if (openswmm::twoD::SubsurfaceSolver::parallelCellSweepAvailable())
                 EXPECT_GT(parallel.parallel_sweeps, 0) << closure << " threads " << threads;
+            EXPECT_TRUE(parallel.bytes == serial.bytes) << closure << " threads " << threads;
+        }
+    }
+}
+
+TEST(GwParallelSweep, WellAndBoundaryCellsFireSeriallyInsideAParallelSweep) {
+    // One well (flow reversing mid-run, so its cell fires at knots) and one
+    // head boundary used to send every batch holding either cell to the serial
+    // loop. They now fire serially after the parallel part, journaled, and the
+    // journals replay in list order: still bit-identical at any thread count.
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"}) {
+        const std::string stem = std::string("gw_threads_forced_") + closure + "_t";
+        const auto serial = gw_thread_fixture::run(stem + "1", closure, 1, true);
+        ASSERT_TRUE(serial.ok) << closure;
+        for (int threads : {4, 8}) {
+            const auto parallel =
+                gw_thread_fixture::run(stem + std::to_string(threads), closure, threads, true);
+            ASSERT_TRUE(parallel.ok) << closure << " threads " << threads;
+            // Every batch the unforced deck sweeps in parallel is still swept in
+            // parallel: none is refused for holding the well or boundary cell.
+            const auto plain = gw_thread_fixture::run(std::string("gw_threads_plain_") + closure +
+                                                          "_t" + std::to_string(threads),
+                                                      closure, threads);
+            ASSERT_TRUE(plain.ok) << closure << " threads " << threads;
+            if (openswmm::twoD::SubsurfaceSolver::parallelCellSweepAvailable())
+                EXPECT_GT(parallel.parallel_sweeps, 0) << closure << " threads " << threads;
+            EXPECT_EQ(parallel.parallel_sweeps, plain.parallel_sweeps)
+                << closure << " threads " << threads;
             EXPECT_TRUE(parallel.bytes == serial.bytes) << closure << " threads " << threads;
         }
     }

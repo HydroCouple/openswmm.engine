@@ -2091,8 +2091,21 @@ private:
     struct LedgerJournal {
         std::vector<std::pair<double*, double>> adds;
         std::vector<int> pending_surface;
-        std::vector<int> fired; ///< cells to report to clock telemetry
+        struct Fired {
+            int cell;
+            double time, dt; ///< this firing's own interval (source cells split at knots)
+        };
+        std::vector<Fired> fired; ///< firings to report to clock telemetry
+        /// Where each list position's entries start, so journals replay in list order.
+        struct Mark {
+            int position;
+            std::size_t adds, pending, fired;
+        };
+        std::vector<Mark> marks;
         long node_refunds = 0;
+        void mark(int position) {
+            marks.push_back({position, adds.size(), pending_surface.size(), fired.size()});
+        }
     };
     static inline thread_local LedgerJournal* journal_ = nullptr;
     /// Add to a run-wide accumulator, or record the addition in the active journal.
@@ -2111,7 +2124,11 @@ private:
     /// Fire `cells` concurrently when the bulk profile makes that equivalent to
     /// the serial loop; returns false (having done nothing) otherwise.
     bool fireGwCellsParallel(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
-                             double time, GwFiringOrigin origin, double intake_through);
+                             double time, double accepted_end, GwFiringOrigin origin,
+                             double intake_through);
+    /// One cell of fireGwCellList: its exact horizon, then source/boundary knots.
+    void fireListedCell(int cell, double dt, SurfaceStateData& surf, double time,
+                        double accepted_end, GwFiringOrigin origin, double intake_through);
     long parallel_cell_sweeps_ = 0; ///< diagnostic count of sweeps fired in parallel
     // Per-thread journals; transient within one sweep, never copied or saved.
     struct JournalScratch {
