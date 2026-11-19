@@ -74,6 +74,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 
@@ -3814,6 +3815,10 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     // static-slot kink) are non-smooth in the link-level sumdqdh inputs — not in
     // the node-continuity branch — so the dedicated walks below still skip them
     // in BOTH continuity modes.
+    //
+    // is_surcharged still holds the PREVIOUS evaluation's branch here (set
+    // inside setNodeDepth from its input depth); updateNodeDepthsTeam skips the
+    // node as well when the current evaluation takes the surcharge branch.
     if (surcharge_method == SurchargeMethod::EXTRAN &&
         node_continuity == NodeContinuity::EXPLICIT) {
         for (int i = 0; i < n_nodes_; ++i) {
@@ -3959,6 +3964,8 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                                     int& unconv_shared) {
     auto& nodes = ctx.nodes;
     const bool use_anderson = anderson_accel;
+    const bool extran_explicit =
+        surcharge_method == SurchargeMethod::EXTRAN && node_continuity == NodeContinuity::EXPLICIT;
     int local_unconv = 0; // per-thread partial of the unconverged-node count
 
 // Phase 1: Compute G(y) for each node via setNodeDepth.
@@ -3994,14 +4001,27 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         setNodeDepth(ctx, i, dt, step);
         double g_k = nodes.depth[ui]; // G(y_k) — the Picard update
 
-        // --- Anderson acceleration (depth-2 mixing) ---
+        // --- Anderson acceleration (two-point mixing, one stored iterate) ---
         // On step 0: just record state for next iteration.
         // On step 1+: use previous iterate to compute optimal blend.
         // Skip AA when the fixed-point operator G is non-smooth at this node
         // (see computeAASkipFlags for the enumerated conditions) or when the
         // residual is too large to trust the linear-convergence assumption
         // AA is built on.
-        if (use_anderson && step >= 1 && !aa_skip_[ui] && nodes.storage_area[ui] == 0.0 &&
+        //
+        // Two exclusions can only be decided now, from this evaluation:
+        //  - aa_skip_ was formed before this pass from the surcharge flag of
+        //    the PREVIOUS evaluation (setNodeDepth sets it from its input
+        //    depth). The blend mixes that evaluation with this one, so under
+        //    EXTRAN + EXPLICIT it is valid only if neither took the dQ/dH
+        //    surcharge branch.
+        //  - Overflow and ponded volume are booked only at or above the flood
+        //    limit. A blend landing below it books neither, and the water the
+        //    plain update sent to flooding is lost, so a plain update at the
+        //    limit is kept.
+        const bool surcharge_branch_now = extran_explicit && xnode_.is_surcharged[ui] != 0;
+        if (use_anderson && step >= 1 && !aa_skip_[ui] && !surcharge_branch_now &&
+            g_k < floodLimitDepth(ctx, ui) && nodes.storage_area[ui] == 0.0 &&
             !lidnode::active(ctx, i)) {
             double r_k = g_k - y_last; // residual at current iterate
 
@@ -4593,6 +4613,34 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
 }
 
 // ============================================================================
+// floodLimitDepth -- depth at which a node starts to flood
+// ============================================================================
+//
+// A committed depth above this books overflow (or, where ponding is allowed,
+// ponded volume) instead of storage. A sealed virtual junction never floods.
+
+double DWSolver::floodLimitDepth(const SimulationContext& ctx, std::size_t ui) const {
+    const NodeTile& t = node_tile_[ui];
+    const bool is_inlet_node = (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui] != 0);
+    if (t.is_virtual != 0 && !is_inlet_node)
+        return std::numeric_limits<double>::infinity();
+
+    const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+    const bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
+
+    // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
+    // MaxDepth token when one was supplied (carried on NodeData::rim_depth),
+    // else the derived street y_full. Never below the derived depth, so a
+    // rendering-only rim cannot make the node flood early.
+    double y_max = t.full_depth;
+    if (is_inlet_node && ctx.nodes.rim_depth[ui] > 0.0)
+        y_max = std::max(y_max, ctx.nodes.rim_depth[ui]);
+    if (!can_pond)
+        y_max += t.sur_depth;
+    return y_max;
+}
+
+// ============================================================================
 // commitNodeDepthState -- canonical commit of an accepted node depth
 // ============================================================================
 //
@@ -4649,15 +4697,7 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
     const bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
 
     // --- Determine max non-flooded depth ---
-    // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
-    // MaxDepth token when one was supplied (carried on NodeData::rim_depth),
-    // else the derived street y_full. Never below the derived depth, so a
-    // rendering-only rim cannot make the node flood early.
-    double y_max = t.full_depth;
-    if (is_inlet_node && nodes.rim_depth[ui] > 0.0)
-        y_max = std::max(y_max, nodes.rim_depth[ui]);
-    if (!can_pond)
-        y_max += t.sur_depth;
+    const double y_max = floodLimitDepth(ctx, ui);
 
     // --- Flooding logic (matching legacy getFloodedDepth) ---
     // Reset first so a re-commit (accepted Anderson mix after the raw Picard

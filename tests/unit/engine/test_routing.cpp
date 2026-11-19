@@ -944,6 +944,95 @@ TEST_F(AASkipFlagTest, SemiImplicitSumdqdhDampsDepthUpdate) {
         << "sumdqdh term must damp, not amplify, the depth update";
 }
 
+// ============================================================================
+// Anderson mixing exclusions decided from the current evaluation
+//
+// Each test computes the plain Picard update of J0 once (setNodeDepthForTest),
+// restores the input depth, seeds a history whose residual has the opposite
+// sign (mixing coefficient 0.5), and runs one node-update pass. A node that
+// must not be mixed keeps the plain update exactly.
+// ============================================================================
+
+namespace {
+/// J0 state: input depth y, inflow q (cfs) at old_net_inflow q, surface area, sumdqdh.
+void setJ0(SimulationContext& ctx, DWSolver& solver, double y, double q, double area,
+           double sumdqdh) {
+    ctx.nodes.old_depth[0] = y;
+    ctx.nodes.depth[0] = y;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + y;
+    ctx.nodes.inflow[0] = q;
+    ctx.nodes.outflow[0] = 0.0;
+    ctx.nodes.old_net_inflow[0] = q;
+    solver.nodeNewSurfAreaDataMut()[0] = area;
+    solver.nodeSumDqdh(0) = sumdqdh;
+}
+} // namespace
+
+TEST_F(AASkipFlagTest, AndersonKeepsPlainUpdateAtFloodLimit) {
+    // SEMI_IMPLICIT: a surcharged junction is eligible, so only the flood
+    // limit (J0 full depth 6 ft, no surcharge depth, no ponding) can stop the mix.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::SEMI_IMPLICIT);
+    solver.execute(ctx, 10.0);
+    ASSERT_EQ(solver.aaSkipFlags()[0], 0);
+    const double dt = 10.0;
+    const double y = 5.98;
+
+    // Plain update: 5.98 + 500 ft3 / 50 ft2, relaxed, is far above 6 ft -> capped, overflow.
+    setJ0(ctx, solver, y, 50.0, 50.0, 0.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    const double g = ctx.nodes.depth[0];
+    const double overflow = ctx.nodes.overflow[0];
+    ASSERT_DOUBLE_EQ(g, 6.0);
+    ASSERT_GT(overflow, 0.0);
+    const double r = g - y;
+    ASSERT_LE(std::fabs(r), 20.0 * solver.head_tol);
+
+    setJ0(ctx, solver, y, 50.0, 50.0, 0.0);
+    solver.seedAndersonHistoryForTest(0, 6.0, 6.0 - r); // previous residual -r
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_EQ(ctx.nodes.depth[0], g) << "a blend below the flood limit books no overflow";
+    EXPECT_EQ(ctx.nodes.overflow[0], overflow) << "the plain update's flooding must be kept";
+
+    // Control: below the flood limit the same kind of history is mixed.
+    setJ0(ctx, solver, 3.0, 0.5, 50.0, 0.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    const double g_low = ctx.nodes.depth[0];
+    const double r_low = g_low - 3.0;
+    ASSERT_GT(std::fabs(r_low), 1e-6);
+    ASSERT_LE(std::fabs(r_low), 20.0 * solver.head_tol);
+    setJ0(ctx, solver, 3.0, 0.5, 50.0, 0.0);
+    solver.seedAndersonHistoryForTest(0, 3.0, 3.0 - r_low);
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_NEAR(ctx.nodes.depth[0], 0.5 * g_low + 0.5 * (3.0 - r_low), 1e-12)
+        << "an eligible node must still be mixed";
+}
+
+TEST_F(AASkipFlagTest, ExtranExplicitSkipsMixWhenCurrentEvaluationSurcharges) {
+    // EXTRAN + EXPLICIT: the history evaluation was below the crown (skip flag
+    // clear), but this evaluation's input is above it, so the update takes the
+    // dQ/dH surcharge branch. Mixing the two branches is what the surcharge
+    // exclusion forbids.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::EXPLICIT);
+    solver.execute(ctx, 10.0);
+    ASSERT_EQ(solver.aaSkipFlags()[0], 0) << "precondition: previous evaluation not surcharged";
+    const double dt = 10.0;
+    const double y = 2.1; // J0 crown depth is 2 ft
+
+    setJ0(ctx, solver, y, 0.05, 50.0, 5.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    ASSERT_EQ(solver.nodeSurchargedFlag(0), 1);
+    const double g = ctx.nodes.depth[0];
+    const double r = g - y;
+    ASSERT_GT(std::fabs(r), 1e-6);
+    ASSERT_LE(std::fabs(r), 20.0 * solver.head_tol);
+
+    setJ0(ctx, solver, y, 0.05, 50.0, 5.0);
+    solver.seedAndersonHistoryForTest(0, 1.9, 1.9 - r); // free-surface history, residual -r
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_EQ(ctx.nodes.depth[0], g)
+        << "a surcharge-branch update must not be blended with a free-surface one";
+}
+
 TEST(DPS, DeltaAsFromDhs) {
     // Head-first form of Eq. 19: dAs = T_s · dhs, where T_s = g·A_C·P²/c_pT².
     // In the link-node solver, dhs is set by the node-depth update and dAs

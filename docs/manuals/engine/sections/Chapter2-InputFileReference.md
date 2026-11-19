@@ -176,7 +176,7 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
 | NORMAL_FLOW_LIMITED | SLOPE / FROUDE / BOTH / NEITHER | BOTH | Test that flags supercritical flow to be limited to normal flow: water-surface slope, Froude number, both, or neither. Hydraulics §3.3.4. |
 | NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. Hydraulics §3.5. |
-| ANDERSON_ACCEL | YES / TRUE / 1 / NO | NO | Accelerates the Picard head iteration with depth-2 Anderson mixing, typically cutting trials by 25 to 50 percent. Hydraulics §3.6. |
+| ANDERSON_ACCEL | YES / TRUE / 1 / NO | NO | Blends each node's two most recent Picard head updates (two-point Anderson mixing) where the update is smooth. Whether it saves trials depends on the network; compare the report's Routing Time Step Summary with the option on and off. Hydraulics §3.6. |
 
 #### Pressurisation and friction
 

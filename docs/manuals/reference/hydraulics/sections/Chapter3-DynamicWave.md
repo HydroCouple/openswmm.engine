@@ -1654,8 +1654,9 @@ estimate entering iteration *k*. The iteration residual is
 
 and convergence is declared when its magnitude falls within the head
 tolerance. Rather than simply accepting \f$G\left( H_{k} \right)\f$ as the
-next iterate, Anderson acceleration of depth two (equivalently,
-Aitken's secant update) blends the two most recent operator outputs so
+next iterate, two-point Anderson acceleration with one stored iterate
+(equivalently, Aitken's secant update) blends the two most recent
+operator outputs so
 as to cancel the residual predicted by a linear model of the
 iteration. The mixing coefficient is
 
@@ -1679,9 +1680,14 @@ has no history to mix). When a mixed head is accepted it is committed
 through the same routine as an ordinary update, so the node's volume,
 overflow and rate of depth change — quantities that feed flooding
 totals, the mass balance and the variable time step — always describe
-the head actually accepted. In practice the acceleration reduces trial
-counts by roughly 25 to 50 percent per routing step on networks that
-otherwise iterate to the trial limit.
+the head actually accepted. Whether the acceleration saves trials
+depends on why a network is slow to converge. It shortens a slow, smooth
+approach to the solution; it cannot converge a node that alternates
+between two branches of a non-smooth update, such as a weir or orifice
+between two nodes at nearly equal heads or a flow regulator draining a
+nearly empty storage unit. Where those nodes are what exhaust the trial
+allotment, the acceleration can raise the trial count. Compare the
+report's Routing Time Step Summary with the option on and off.
 
 The acceleration is justified only where the operator \f$G\f$ is smooth —
 where small head changes produce proportionally small changes in the
@@ -1705,7 +1711,8 @@ pair well.
 
 | Condition | Applies when | Reason |
 |---|---|---|
-| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT` | The head update switches from Equation 3-15 to Equation 3-28 at the crown. |
+| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT`; the head entering either of the two blended iterations is above the crown | The head update switches from Equation 3-15 to Equation 3-28 at the crown, and a blend must not combine updates from the two branches. |
+| Node at its flood limit | The plain iterate is at or above the depth where the node floods (full depth plus surcharge depth, or full depth where it can pond) | Overflow and ponded volume are booked only at or above that depth; a blend landing below it would discard the water the plain iterate sent to flooding. |
 | Active dynamic slot | `SURCHARGE_METHOD DYNAMIC_SLOT`; node touches a conduit with *A*<sub>s</sub> > 0 | The slot geometry of Section 3.3.9 is rewritten each iteration, so the operator differs between iterates. |
 | Near the static slot cutoff | `SURCHARGE_METHOD SLOT`; node touches a closed conduit with \f$0.98 \leq \overline{Y}/Y_{full} \leq 1.02\f$ | The slot width of Equation 3-30 engages abruptly at the crown cutoff. |
 | TPA latch transition | `SURCHARGE_METHOD TPA`; node touches a conduit whose pressurized latch changed this routing step | A latch transition is a discrete operator switch (Section 3.3.11). Steadily latched or steadily free conduits remain eligible. |
@@ -1754,8 +1761,11 @@ successive-approximation loop (rendered diagram)*
 two-condition convergence test are implemented in
 `updateNodeDepthsTeam` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`), with the exclusion flags of
-Table 3-2 computed once per iteration in `computeAASkipFlags` and the
-canonical state commit in `commitNodeDepthState`. The option is
+Table 3-2 computed once per iteration in `computeAASkipFlags`, except
+the two that depend on the current plain iterate (its surcharge branch
+and the flood limit, `floodLimitDepth`), which `updateNodeDepthsTeam`
+tests after each node's update, and the canonical state commit in
+`commitNodeDepthState`. The option is
 declared in @ref openswmm::SimulationOptions "SimulationOptions"
 (`src/engine/core/SimulationOptions.hpp`).
 

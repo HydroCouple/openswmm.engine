@@ -513,9 +513,11 @@ struct SimulationOptions {
     int virtual_junction_momentum = 0;
 
     /** @brief Enable Anderson acceleration for Picard iteration convergence.
-     *  @details When true, uses depth-2 Anderson mixing to accelerate node
-     *           depth convergence, typically reducing iteration count by 25-50%.
-     *           Falls back to standard Picard for nodes that violate physical bounds.
+     *  @details When true, blends each node's two most recent Picard updates
+     *           (two-point Anderson / Aitken mixing, one stored iterate) to
+     *           accelerate smooth node depth convergence. Falls back to standard
+     *           Picard for nodes where the update is non-smooth (hydraulics
+     *           manual Table 3-2), at the flood limit, or would turn negative.
      *  @code
      *  ANDERSON_ACCEL  YES   ;; enable Anderson acceleration
      *  ANDERSON_ACCEL  NO    ;; standard Picard iteration (default)
