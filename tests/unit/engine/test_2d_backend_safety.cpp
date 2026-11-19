@@ -17,6 +17,7 @@
 #include "2d/solver/SurfaceSolverFactory.hpp"
 #include "2d/solver/SurfaceCapabilities.hpp"
 #include "2d/solver/PluginSurfaceSolver.hpp"
+#include "2d/gpu/CudaArchitectureMatch.hpp"
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <atomic>
@@ -460,4 +461,24 @@ TEST(BackendSafety, PriorSurfaceAbiIsRejectedBeforeFactoryConstruction) {
     EXPECT_EQ(label.substr(0, 3), "cpu");
     EXPECT_GT(openswmm_test_probe_count(), probes);
     EXPECT_EQ(openswmm_test_factory_count(), factories);
+}
+
+// A relocatable device binary for X.y runs on X.z with z >= y and on no other major revision.
+TEST(BackendSafety, CudaDeviceMustMatchABuiltArchitecture) {
+    using openswmm::twoD::gpu::cudaDeviceRunsBuiltCode;
+    const int ada[] = {89};
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(ada, 1, 8, 9));
+    EXPECT_FALSE(cudaDeviceRunsBuiltCode(ada, 1, 12, 0)); // Blackwell on an Ada-only build
+    EXPECT_FALSE(cudaDeviceRunsBuiltCode(ada, 1, 8, 6));  // older minor revision
+    EXPECT_FALSE(cudaDeviceRunsBuiltCode(ada, 1, 7, 5));
+    const int shipped[] = {75, 80, 89, 90, 100, 120};
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(shipped, 6, 7, 5));
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(shipped, 6, 8, 6));
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(shipped, 6, 8, 9));
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(shipped, 6, 10, 0));
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(shipped, 6, 12, 0));
+    EXPECT_FALSE(cudaDeviceRunsBuiltCode(shipped, 6, 6, 1)); // Pascal
+    EXPECT_FALSE(cudaDeviceRunsBuiltCode(shipped, 6, 7, 0)); // Volta
+    const int unrecorded[] = {0};
+    EXPECT_TRUE(cudaDeviceRunsBuiltCode(unrecorded, 1, 12, 0));
 }
