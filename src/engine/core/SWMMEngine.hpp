@@ -1802,22 +1802,25 @@ private:
     /**
      * @brief Write one authored SAVE HOTSTART entry from the current state.
      *
-     * AUTO selects native for assigned node LIDs or heat, otherwise legacy. Converts normal save
-     * refusals into warnings; full-engine checkpoint capture is used for qualified heat/native restart.
-     * Filesystem/allocation exceptions can propagate from this internal helper.
+     * AUTO selects native for assigned node LIDs or heat, otherwise legacy. Full-engine checkpoint
+     * capture is used for qualified heat/native restart. Filesystem/allocation exceptions can
+     * propagate from this internal helper.
      *
      * @param[in] entry Borrowed authored format/path/date row; resolved path is preferred, original
      *     token fallback, empty path is a no-op.
+     * @return Empty on success, otherwise the reason naming the file; the caller fails the run.
      */
-    void writeHotstartSave(const HotstartSaveEntry& entry);
+    std::string writeHotstartSave(const HotstartSaveEntry& entry);
 
     /**
-     * @brief Attempt each dated hotstart save once when the accepted clock reaches its date.
+     * @brief Write each dated hotstart save once when the accepted clock reaches its date.
      *
-     * Uses elapsed milliseconds with a one-millisecond due tolerance. Marks a row done BEFORE calling
-     * its save, so a failed save is not retried by later steps. Undated rows are skipped here.
+     * Uses elapsed milliseconds with a one-millisecond due tolerance. A row is marked done only after
+     * its file is written. Undated rows are skipped here.
+     *
+     * @return Empty when every due row was written, otherwise the first failure's reason.
      */
-    void writeDueHotstartSaves();
+    std::string writeDueHotstartSaves();
 
     /**
      * @brief Deep-copy the active 2D surface state into a snapshot.

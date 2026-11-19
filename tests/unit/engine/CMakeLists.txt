@@ -273,6 +273,7 @@ add_gtest_unit(test_engine_climate
 # ANSI code page, so every engine open goes through core/FileIO.hpp.
 add_gtest_unit(test_engine_utf8_paths        test_utf8_paths.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
+add_gtest_unit(test_engine_hotstart_save_failures test_hotstart_save_failures.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
 add_gtest_unit(test_engine_user_flags

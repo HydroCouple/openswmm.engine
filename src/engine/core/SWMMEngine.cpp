@@ -2865,8 +2865,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // Dated SAVE HOTSTART rows: legacy swmm_step calls hotstart_save()
         // after routing and saveResults. With engine checkpointing on (coupled
         // heat) the save needs the accepted step boundary, so it waits for it.
-        if (!checkpoint_enabled_)
-            writeDueHotstartSaves();
+        if (!checkpoint_enabled_) {
+            auto error = writeDueHotstartSaves();
+            if (!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART, error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        }
 
         // Keep a one-step API prescription through the output snapshot, then
         // expire it before callbacks can prescribe the following routing step.
@@ -2916,7 +2921,11 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     throw std::runtime_error(error);
             }
 #endif
-            writeDueHotstartSaves();
+            auto error = writeDueHotstartSaves();
+            if (!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART, error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
         }
         if (elapsed_time)
             *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
@@ -9386,6 +9395,8 @@ int SWMMEngine::end() noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
+    // A SAVE HOTSTART row that cannot be written fails the run once teardown is done.
+    std::string hotstart_error;
     // Native thermal hotstarts use the last accepted full engine checkpoint.
     // Capture before teardown's partial 2D flush so clocks, water and energy
     // describe the same accepted boundary.
@@ -9393,8 +9404,8 @@ int SWMMEngine::end() noexcept {
         // Save full checkpoints before detaching source histories or finalizing
         // the surface router. This is the last accepted coupled state.
         for (const auto& entry : ctx_.files.hotstart_saves) {
-            if (entry.datetime == 0.0)
-                writeHotstartSave(entry);
+            if (entry.datetime == 0.0 && hotstart_error.empty())
+                hotstart_error = writeHotstartSave(entry);
         }
     }
 
@@ -9521,8 +9532,8 @@ int SWMMEngine::end() noexcept {
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0) {
-            if (!ctx_.options.heat_transport)
-                writeHotstartSave(entry);
+            if (!ctx_.options.heat_transport && hotstart_error.empty())
+                hotstart_error = writeHotstartSave(entry);
         } else if (k >= hotstart_save_done_.size() || !hotstart_save_done_[k]) {
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
             datetime::decodeDate(entry.datetime, y, mo, d);
@@ -9547,6 +9558,10 @@ int SWMMEngine::end() noexcept {
                   plugin_io_error(plugins_, "Cannot finish writing results").c_str());
         return SWMM_ERR_PLUGIN;
     }
+    if (!hotstart_error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, hotstart_error.c_str());
+        return CFFI_ERR_HOTSTART;
+    }
     if (split_ && split_->material)
         split_->material_finalized = true;
     return SWMM_OK;
@@ -9560,7 +9575,7 @@ int SWMMEngine::end() noexcept {
 // legacy .hsf, or native when node LIDs need it. Either round-trips through
 // USE HOTSTART, which reads the file's stamp.
 
-void SWMMEngine::writeDueHotstartSaves() {
+std::string SWMMEngine::writeDueHotstartSaves() {
     // Each dated row is written once, from the state at the end of the first
     // step that reaches its time, the same test legacy hotstart_save() makes.
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
@@ -9570,16 +9585,18 @@ void SWMMEngine::writeDueHotstartSaves() {
         const double due_ms = (entry.datetime - ctx_.options.start_date) * 86400000.0;
         if (ctx_.elapsed_ms + 1.0 < due_ms)
             continue;
+        if (auto error = writeHotstartSave(entry); !error.empty())
+            return error;
         hotstart_save_done_[k] = 1;
-        writeHotstartSave(entry);
     }
+    return {};
 }
 
-void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
+std::string SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const std::string& sp =
         !entry.path.absolute.empty() ? entry.path.absolute : entry.path.original;
     if (sp.empty())
-        return;
+        return {};
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
@@ -9600,10 +9617,8 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
         if (full_continuation && checkpoint_enabled_) {
             std::string snapshot;
             const std::string error = checkpointBytes(snapshot, false);
-            if (!error.empty()) {
-                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " + error);
-                return;
-            }
+            if (!error.empty())
+                return "SAVE HOTSTART: '" + sp + "': incomplete native continuation: " + error;
             hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, sp,
                                                                   snapshot));
         } else {
@@ -9617,9 +9632,9 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
         const auto runoff = legacyRunoffSection();
         rc = HotStartManager::save_legacy_routing(sp, ctx_, &runoff);
     }
-    if (rc != 0) {
-        ctx_.warnings.push_back("SAVE HOTSTART: " + HotStartManager::last_io_error());
-    }
+    if (rc != 0)
+        return "SAVE HOTSTART: '" + sp + "' was not written: " + HotStartManager::last_io_error();
+    return {};
 }
 
 // ============================================================================
