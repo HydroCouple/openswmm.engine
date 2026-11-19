@@ -612,7 +612,7 @@ GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts, int n_cells
             auto query =
                 reinterpret_cast<Capabilities>(platform_sym(handle, "openswmm_gw_capabilities_v1"));
             auto evaluate = reinterpret_cast<GwRechargeBackend::Evaluate>(
-                platform_sym(handle, "openswmm_gw_recharge_v1"));
+                platform_sym(handle, "openswmm_gw_recharge_v2"));
             auto threads = reinterpret_cast<GwRechargeBackend::Threads>(
                 platform_sym(handle, "openswmm_gpu_host_threads"));
             if (!query || !evaluate || !threads)

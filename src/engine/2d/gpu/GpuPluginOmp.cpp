@@ -152,7 +152,7 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gw_capabilities_v1(OpenSwmmGwCapabiliti
 /**
  * @brief Evaluate validated raw recharge rates using the shared soil law on OpenMP.
  * @param[in] input Borrowed count-element host input records; SI units and bounds are specified
- * by openswmm_gw_recharge_v1's ABI contract. NULL only for count zero.
+ * by openswmm_gw_recharge_v2's ABI contract. NULL only for count zero.
  * @param[in] count Nonnegative batch cell count; zero returns success without initialization.
  * @param[out] output Caller-owned count-double recharge array, m/s downward-positive. NULL only
  * for zero count; must not overlap inputs.
@@ -165,7 +165,7 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gw_capabilities_v1(OpenSwmmGwCapabiliti
  * water/quality/heat state or receipts are mutated, and no pointers retained. The core owns
  * availability limits and acceptance.
  */
-extern "C" OPENSWMM_GPU_ABI int openswmm_gw_recharge_v1(const OpenSwmmGwRechargeInputV1* input,
+extern "C" OPENSWMM_GPU_ABI int openswmm_gw_recharge_v2(const OpenSwmmGwRechargeInputV1* input,
                                                         int count, double* output, int threads) {
     if (count < 0 || (count > 0 && (!input || !output)))
         return 1;

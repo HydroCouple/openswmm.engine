@@ -17,9 +17,13 @@
 extern "C" {
 #endif
 /* Optional, independent extension to the surface ABI. Missing exports mean
- * CPU execution. Version1 is host-parallel CLOSED_FORM recharge only;
- * it never owns water, quality, heat, clocks or pending transfer receipts. */
-#define OPENSWMM_GW_RECHARGE_ABI_VERSION 1
+ * CPU execution. It is host-parallel CLOSED_FORM recharge only and never owns
+ * water, quality, heat, clocks or pending transfer receipts.
+ * Version 2 (2026-11-18) changed the recharge sign to gravity drainage: positive
+ * when the column holds more than hydrostatic storage. Version 1 carried the
+ * opposite sign; the engine refuses a plugin reporting version 1 and looks up
+ * only openswmm_gw_recharge_v2, so a stale backend cannot silently invert. */
+#define OPENSWMM_GW_RECHARGE_ABI_VERSION 2
 #define OPENSWMM_GW_OPERATOR_CLOSED_FORM_RECHARGE 1u
 #define OPENSWMM_GW_HOST_WATER_AND_RECEIPTS 1u
 #define OPENSWMM_GW_HOST_TRANSPORT 2u
@@ -66,7 +70,8 @@ OPENSWMM_GPU_ABI int openswmm_gw_capabilities_v1(OpenSwmmGwCapabilitiesV1*);
  * nonnegative hu m of water.
  * - Argument 2 (in): Nonnegative cell count.
  * - Argument 3 (out): Caller-owned count-double host array, NULL only for zero count. Receives
- * raw recharge in m/s, positive downward and negative capillary rise. Must not overlap inputs.
+ * raw recharge in m/s, positive downward (a column above hydrostatic storage drains) and
+ * negative capillary rise (a column below it draws water up). Must not overlap inputs.
  * - Argument 4 (in): Requested host worker count; positive requests participate in
  * first-initialization selection, nonpositive uses defaults, and OPENSWMM_2D_THREADS takes
  * precedence.
@@ -77,7 +82,7 @@ OPENSWMM_GPU_ABI int openswmm_gw_capabilities_v1(OpenSwmmGwCapabilitiesV1*);
  * initialization uses a separate mutex and its effective thread count is process-wide. No
  * accepted water/quality/heat state is committed and no pointers are retained.
  */
-OPENSWMM_GPU_ABI int openswmm_gw_recharge_v1(const OpenSwmmGwRechargeInputV1*, int, double*, int);
+OPENSWMM_GPU_ABI int openswmm_gw_recharge_v2(const OpenSwmmGwRechargeInputV1*, int, double*, int);
 #ifdef __cplusplus
 }
 #endif
