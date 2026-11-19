@@ -124,6 +124,11 @@ SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path) {
         return SWMM_ERR_LIFECYCLE;
     }
 
+    // An existing file that is not a hot start file (a GeoPackage, an HDF5
+    // file, anything else) is refused and left as it is.
+    if (!openswmm::HotStartManager::may_write_hotstart(path))
+        return SWMM_ERR_HOTSTART;
+
     // A heat model with a full engine checkpoint attached writes the V15
     // file; without one it writes the record-based file like any other
     // model (which refuses coupled mesh/ground heat with a message).

@@ -9597,6 +9597,8 @@ std::string SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
         !entry.path.absolute.empty() ? entry.path.absolute : entry.path.original;
     if (sp.empty())
         return {};
+    if (!HotStartManager::may_write_hotstart(sp))
+        return "SAVE HOTSTART: " + HotStartManager::last_io_error();
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });

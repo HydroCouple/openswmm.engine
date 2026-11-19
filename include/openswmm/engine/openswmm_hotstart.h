@@ -298,13 +298,15 @@ SWMM_ENGINE_API int swmm_hotstart_saves_clear(SWMM_Engine engine);
  * fallback when no state plugin is registered. Record files match objects by ID; full-engine
  * checkpoints require matching model/provider/runtime state and are restored at a subsequent start.
  * This is not the exclusive new-path checkpoint API and does not promise no-replace publication.
+ * The target is tested first: a missing file or an existing hot start file is written; any other
+ * existing file is refused, left byte-identical, and named by swmm_hotstart_last_io_error().
  *
  * @param[in] engine Non-null engine in RUNNING or ENDED; exclusive access is required.
  * @param[in] path Non-null, nonempty NUL-terminated destination path, borrowed for the synchronous
  *     call.
  * @return SWMM_OK on successful write; SWMM_ERR_BADHANDLE for null engine, SWMM_ERR_BADPARAM for
- *     null/empty path, SWMM_ERR_LIFECYCLE outside RUNNING/ENDED, or SWMM_ERR_HOTSTART on
- *     checkpoint/state-writer failure.
+ *     null/empty path, SWMM_ERR_LIFECYCLE outside RUNNING/ENDED, or SWMM_ERR_HOTSTART for a
+ *     refused target or a checkpoint/state-writer failure.
  */
 SWMM_ENGINE_API int swmm_hotstart_save(SWMM_Engine engine, const char* path);
 

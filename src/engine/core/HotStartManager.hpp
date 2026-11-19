@@ -474,6 +474,18 @@ public:
      */
     static bool is_native_file(const std::string& path) noexcept;
 
+    /**
+     * @brief Test whether a hot start may be written to @p path without destroying other data.
+     *
+     * A missing or empty file, or one that starts with the native or a SWMM5 hot start stamp, may
+     * be written. Anything else, such as a GeoPackage, an HDF5 file or a directory, is refused so
+     * it stays byte-identical; last_io_error() then names the path.
+     *
+     * @param[in] path Borrowed UTF-8 destination path.
+     * @return True when a hot start writer may create or replace the file.
+     */
+    static bool may_write_hotstart(const std::string& path) noexcept;
+
     // -----------------------------------------------------------------------
     // Apply
     // -----------------------------------------------------------------------

@@ -1803,8 +1803,9 @@ private:
      * @brief Write one authored SAVE HOTSTART entry from the current state.
      *
      * AUTO selects native for assigned node LIDs or heat, otherwise legacy. Full-engine checkpoint
-     * capture is used for qualified heat/native restart. Filesystem/allocation exceptions can
-     * propagate from this internal helper.
+     * capture is used for qualified heat/native restart. An existing target that is not a hot start
+     * file is refused and left unchanged. Filesystem/allocation exceptions can propagate from this
+     * internal helper.
      *
      * @param[in] entry Borrowed authored format/path/date row; resolved path is preferred, original
      *     token fallback, empty path is a no-op.

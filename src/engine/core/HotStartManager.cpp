@@ -67,6 +67,7 @@
 #include <functional>
 #include <memory>
 #include <limits>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -2056,6 +2057,32 @@ HotStartFile* HotStartManager::open(const std::string& path) {
         return nullptr;
     }
     return hs;
+}
+
+bool HotStartManager::may_write_hotstart(const std::string& path) noexcept {
+    try {
+        std::error_code ec;
+        const auto target = openswmm::io::utf8_path(path);
+        if (!std::filesystem::exists(target, ec))
+            return true;
+        if (std::filesystem::is_regular_file(target, ec)) {
+            if (std::filesystem::file_size(target, ec) == 0 && !ec)
+                return true;
+            std::ifstream file(target, std::ios::binary);
+            char stamp[15] = {};
+            file.read(stamp, sizeof(stamp));
+            const auto n = file.gcount();
+            if (n >= 15 && std::memcmp(stamp, "OPENSWMM_HS_V1", 14) == 0)
+                return true;
+            if (n >= 14 && std::memcmp(stamp, "SWMM5-HOTSTART", 14) == 0)
+                return true;
+        }
+        tl_last_io_error =
+            "'" + path + "' exists and is not a hot start file; it was left unchanged.";
+    } catch (...) {
+        tl_last_io_error = "cannot test hot start destination '" + path + "'";
+    }
+    return false;
 }
 
 bool HotStartManager::is_native_file(const std::string& path) noexcept {
