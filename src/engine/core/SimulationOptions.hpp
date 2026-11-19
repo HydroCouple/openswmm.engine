@@ -137,7 +137,12 @@ enum class RunoffModel : int {
  *    a single equation, linearized about the latest iterate y_last:
  *    y_new = y_last + (surfArea * (y_old - y_last) + dV) /
  *    (surfArea + 0.5 * dt * sumdqdh). Below the crown it converges to the
- *    same depths as EXPLICIT.
+ *    same depths as EXPLICIT. It also changes three regulator laws that
+ *    keep the iteration from converging (HydStructures.cpp,
+ *    SI_SMOOTH_HEAD): submerged orifices and weirs run linearly below a
+ *    0.05 ft head difference and report the submergence factor's slope,
+ *    a bottom orifice under tailwater is corrected for submergence once,
+ *    and outlets ramp linearly below a 0.05 ft head.
  *
  * Specified in [OPTIONS] as:
  * @code

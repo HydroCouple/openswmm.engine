@@ -1621,6 +1621,27 @@ smoothness of the iteration operator, and it is the recommended node
 continuity setting for models containing virtual junctions
 (Section 3.3.10).
 
+**Regulator laws under semi-implicit continuity.** Equation 3-45 can
+only converge where each link's flow is a continuous function of the
+heads whose slope the flow derivatives report. Three of the SWMM 5
+regulator laws of @ref hydraulics_ref_ch6_pumps_regulators "Chapter 6"
+break this, and a node they join then fails to converge step after
+step. Under `SEMI_IMPLICIT`, which has no SWMM 5 counterpart, OpenSWMM
+changes them as follows; under `EXPLICIT` they are exactly as in SWMM 5.
+\f$\delta\f$ is 0.05 ft.
+
+| SWMM 5 law | Why the iteration fails | Under `SEMI_IMPLICIT` |
+|---|---|---|
+| Villemonte factor (Equations 6-13 and 6-26) on submerged orifices and weirs | Its slope is unbounded as \f$H_{2} \to H_{1}\f$, while \f$dQ/dH\f$ (Equation 6-17, Table 6-4) is taken before the factor: the head update overshoots and the flow reverses from one trial to the next | The factor is evaluated at a head difference of at least \f$\delta\f$; below \f$\delta\f$ the flow runs linearly to zero, and \f$dQ/dH\f$ is the slope of that line. Above \f$\delta\f$ \f$dQ/dH\f$ is the larger of the SWMM 5 value times the factor and the flow's sensitivity to the downstream head. A full side orifice or a surcharged weir driven by the head difference (Equations 6-5 and 6-30) gets the same linear segment below \f$\delta\f$ |
+| Bottom orifice in its weir regime with \f$H_{2}\f$ above the opening | Its head is already the head difference \f$H_{1} - H_{2}\f$ (Equation 6-6), and the factor of Equation 6-13 is applied as well, so submergence is counted twice; at \f$H^{*}\f$ the flow jumps by \f$1/f_{S}\f$, and an inflow inside the jump has no steady state | The factor is not applied, so the weir and orifice formulas meet at \f$H^{*}\f$ (Equation 6-10) |
+| Outlet rating at small heads | A rating that starts at a nonzero flow (a flow regulator), or a power below one, switches an outlet on a nearly empty node between its rated flow and none, and its \f$dQ/dH\f$ is 0 | Below an effective head of \f$\delta\f$ the flow runs linearly from zero to the rating's value at \f$\delta\f$, and \f$dQ/dH\f$ is the slope of that line |
+
+Apart from the bottom orifice, the flow laws are those of SWMM 5
+wherever the head difference across a submerged regulator, or an
+outlet's head, is at least \f$\delta\f$; there only the flow derivatives
+differ. Stepped (Type 2) pump curves and the conduit end surface areas
+of Section 3.3.2 are unchanged.
+
 **Implementation.** The unified branch is implemented in
 `setNodeDepth` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`); the option is declared in

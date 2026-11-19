@@ -106,6 +106,10 @@ add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 add_gtest_unit(test_engine_semi_implicit_continuity test_semi_implicit_continuity.cpp)
 target_compile_definitions(test_engine_semi_implicit_continuity PRIVATE
     SEMI_IMPLICIT_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/semi_implicit_continuity_out")
+# NODE_CONTINUITY SEMI_IMPLICIT structure laws: fixed points and slopes; EXPLICIT stays legacy.
+add_gtest_unit(test_engine_si_structure_laws test_si_structure_laws.cpp)
+target_compile_definitions(test_engine_si_structure_laws PRIVATE
+    SI_STRUCTURE_LAWS_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/si_structure_laws_out")
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
