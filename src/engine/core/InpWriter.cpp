@@ -62,6 +62,7 @@
 #include "SimulationContext.hpp"
 #include "../data/StorageGeometry.hpp"
 #include "DateTime.hpp"
+#include "FvOptionRows.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../input/Tokenizer.hpp"
@@ -2208,43 +2209,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         // Preserve finite-volume settings in native files even while another
         // routing method is selected; the keys remain inert until FV is active.
         if (!swmm5) {
-            static const char* sRiemann[] = {"HLL", "HLLC"};
-            static const char* sLimiter[] = {"MINMOD", "VANLEER", "SUPERBEE"};
-            static const char* sScalar[] = {"UPWIND", "MUSCL", "QUICKEST_ULTIMATE"};
-            static const char* sTime[] = {"EULER", "RK2"};
-            static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
-            const auto& fvo = o.fv;
-            std::fprintf(f, "%-20s %.17g\n", "FV_CELL_LENGTH", fvo.cell_length);
-            std::fprintf(f, "%-20s %d\n", "FV_MIN_CELLS", fvo.min_cells);
-            std::fprintf(f, "%-20s %.17g\n", "FV_CFL", fvo.cfl);
-            std::fprintf(f, "%-20s %s\n", "FV_RIEMANN", sRiemann[static_cast<int>(fvo.riemann)]);
-            std::fprintf(f, "%-20s %d\n", "FV_ORDER", fvo.order);
-            std::fprintf(f, "%-20s %s\n", "FV_LIMITER", sLimiter[static_cast<int>(fvo.limiter)]);
-            std::fprintf(f, "%-20s %s\n", "FV_SCALAR_SCHEME",
-                         sScalar[static_cast<int>(fvo.scalar_scheme)]);
-            std::fprintf(f, "%-20s %s\n", "FV_TIME_INTEGRATION",
-                         sTime[static_cast<int>(fvo.time_integration)]);
-            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY",
-                         fv::slotCelerityProject(fvo.slot_celerity, ucf::UCF(ucf::LENGTH, o)));
-            if (fvo.pressurized_implicit)
-                std::fprintf(f, "%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
-            if (fvo.node_feedback_dt) // non-default only
-                std::fprintf(f, "%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
-            if (fvo.pressure_closure == 1) // issue #156: non-default only
-                std::fprintf(f, "%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
-            if (fvo.dispersion > 0.0)
-                std::fprintf(f, "%-20s %.17g\n", "FV_DISPERSION", fvo.dispersion);
-            if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
-                std::fprintf(f, "%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
-            if (!fvo.compaction)
-                std::fprintf(f, "%-20s %s\n", "FV_COMPACTION", "NO");
-            std::fprintf(f, "%-20s %s\n", "FV_BACKEND", sBackend[static_cast<int>(fvo.backend)]);
-            std::fprintf(f, "%-20s %ld\n", "FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
-            if (!fvo.lts)
-                std::fprintf(f, "%-20s %s\n", "FV_LTS", "NO");
-            std::fprintf(f, "%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
-            if (fvo.cfl_census_interval != 1)
-                std::fprintf(f, "%-20s %d\n", "FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
+            // One list for this file and the GeoPackage options table
+            // (FvOptionRows.hpp), so neither format can drop a key.
+            for (const auto& [key, value] : fvOptionRows(o))
+                std::fprintf(f, "%-20s %s\n", key.c_str(), value.c_str());
         }
         // The spatial frame is the only CRS store a GeoPackage open fills, so
         // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.

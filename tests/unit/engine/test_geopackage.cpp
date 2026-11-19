@@ -548,6 +548,105 @@ TEST_F(GeoPackageTest, OptionsRoundTrip) {
     EXPECT_EQ(ctx_in.spatial.crs, "EPSG:4326");
 }
 
+// Every finite volume option survives a GeoPackage save and reopen. Before
+// the shared row list (core/FvOptionRows.hpp) the writer stored the pressure
+// closure alone, so a reopened project ran on the solver's defaults: the
+// backend, the order, the time stepping choices and the mesh resolution were
+// all lost. Each field is set away from its default so a dropped key shows.
+// The file is kept beside the test binary for inspection.
+TEST_F(GeoPackageTest, FvOptionsSurviveSaveReopen) {
+    const fs::path folder = fs::current_path() / "gpkg_fv_options_roundtrip";
+    fs::create_directories(folder);
+    const std::string path = (folder / "fv_options.gpkg").string();
+    std::remove(path.c_str());
+
+    auto ctx_out = build_test_context();
+    // Read back through the [OPTIONS] parser, which also finishes the section
+    // (a report start not given is reset to the start date). The options read
+    // before it must survive that.
+    ctx_out.options.report_start = ctx_out.options.start_date + 0.25;
+    auto& fvo = ctx_out.options.fv;
+    fvo.cell_length = 12.5;
+    fvo.min_cells = 7;
+    fvo.cfl = 0.375;
+    fvo.riemann = openswmm::fv::RiemannSolver::HLL;
+    fvo.order = 2;
+    fvo.limiter = openswmm::fv::Limiter::SUPERBEE;
+    fvo.scalar_scheme = openswmm::fv::ScalarScheme::QUICKEST_ULTIMATE;
+    fvo.time_integration = openswmm::fv::TimeIntegration::RK2;
+    fvo.slot_celerity = 61.25;
+    fvo.pressurized_implicit = true;
+    fvo.node_feedback_dt = true;
+    fvo.pressure_closure = 1;
+    fvo.dispersion = 3.5;
+    fvo.structure_coupling = openswmm::fv::StructureCoupling::ROUTING_STEP;
+    fvo.compaction = false;
+    fvo.backend = openswmm::fv::Backend::CUDA;
+    fvo.min_parallel_cells = 12345;
+    fvo.lts = false;
+    fvo.lts_max_tiers = 3;
+    fvo.cfl_census_interval = 4;
+    ASSERT_EQ(write_to_file(path, ctx_out, "test_run"), 0);
+
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(path, ctx_in, "test_run"), 0);
+    const auto& got = ctx_in.options.fv;
+    EXPECT_DOUBLE_EQ(got.cell_length, 12.5);
+    EXPECT_EQ(got.min_cells, 7);
+    EXPECT_DOUBLE_EQ(got.cfl, 0.375);
+    EXPECT_EQ(got.riemann, openswmm::fv::RiemannSolver::HLL);
+    EXPECT_EQ(got.order, 2);
+    EXPECT_EQ(got.limiter, openswmm::fv::Limiter::SUPERBEE);
+    EXPECT_EQ(got.scalar_scheme, openswmm::fv::ScalarScheme::QUICKEST_ULTIMATE);
+    EXPECT_EQ(got.time_integration, openswmm::fv::TimeIntegration::RK2);
+    EXPECT_DOUBLE_EQ(got.slot_celerity, 61.25);
+    EXPECT_TRUE(got.pressurized_implicit);
+    EXPECT_TRUE(got.node_feedback_dt);
+    EXPECT_EQ(got.pressure_closure, 1);
+    EXPECT_DOUBLE_EQ(got.dispersion, 3.5);
+    EXPECT_EQ(got.structure_coupling, openswmm::fv::StructureCoupling::ROUTING_STEP);
+    EXPECT_FALSE(got.compaction);
+    EXPECT_EQ(got.backend, openswmm::fv::Backend::CUDA);
+    EXPECT_EQ(got.min_parallel_cells, 12345);
+    EXPECT_FALSE(got.lts);
+    EXPECT_EQ(got.lts_max_tiers, 3);
+    EXPECT_EQ(got.cfl_census_interval, 4);
+    EXPECT_DOUBLE_EQ(ctx_in.options.report_start, ctx_out.options.report_start);
+    EXPECT_DOUBLE_EQ(ctx_in.options.start_date, ctx_out.options.start_date);
+    EXPECT_EQ(ctx_in.options.routing_model, ctx_out.options.routing_model);
+    EXPECT_TRUE(ctx_in.warnings.empty()) << ctx_in.warnings.front();
+}
+
+// A GeoPackage written before the finite volume rows existed carries none of
+// them and must open on the defaults, as it always did.
+TEST_F(GeoPackageTest, FileWithoutFvRowsOpensOnDefaults) {
+    const fs::path folder = fs::current_path() / "gpkg_fv_options_roundtrip";
+    fs::create_directories(folder);
+    const std::string path = (folder / "no_fv_rows.gpkg").string();
+    std::remove(path.c_str());
+
+    auto ctx_out = build_test_context();
+    ctx_out.options.fv.backend = openswmm::fv::Backend::OMP;
+    ASSERT_EQ(write_to_file(path, ctx_out, "test_run"), 0);
+    {
+        sqlite3* db = nullptr;
+        ASSERT_EQ(sqlite3_open(path.c_str(), &db), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(db,
+                               "DELETE FROM options WHERE key LIKE 'FV\\_%' ESCAPE '\\' "
+                               "AND key <> 'FV_PRESSURE_CLOSURE'",
+                               nullptr, nullptr, nullptr),
+                  SQLITE_OK);
+        EXPECT_GT(sqlite3_changes(db), 10);
+        sqlite3_close(db);
+    }
+    SimulationContext ctx_in{};
+    ASSERT_EQ(read_from_file(path, ctx_in, "test_run"), 0);
+    const openswmm::fv::FvOptions defaults{};
+    EXPECT_EQ(ctx_in.options.fv.backend, defaults.backend);
+    EXPECT_EQ(ctx_in.options.fv.order, defaults.order);
+    EXPECT_EQ(ctx_in.options.fv.lts, defaults.lts);
+}
+
 // Climate settings ([TEMPERATURE]/[WINDSPEED]/SNOWMELT/ADC) round-trip,
 // including snow_elev and snow_dtlong (added to the climate_settings schema).
 TEST_F(GeoPackageTest, ClimateSettingsRoundTrip) {
