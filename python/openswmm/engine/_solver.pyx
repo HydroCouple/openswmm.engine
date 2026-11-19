@@ -98,6 +98,26 @@ from ._exceptions import (
 _SECONDS_PER_DAY = 86400.0
 
 
+def backend_info(solver, backend: str) -> dict:
+    """Whether a compute backend is installed and usable on this machine, without a model.
+
+    *solver* is a :class:`BackendSolver` (or its integer value); *backend* is a name as written
+    in an input file: ``"CPU"``, ``"AUTO"``, ``"OMP"``, ``"CUDA"``, ``"HIP"`` or ``"SYCL"``.
+    Returns ``usable`` (bool), ``device_name``, ``device_mem_bytes`` (0 when unknown) and
+    ``reason`` (empty when usable). A model that asks for an unusable backend still runs on the
+    CPU solver.
+    """
+    cdef SWMM_BackendInfo info
+    cdef bytes name = str(backend).encode("utf-8")
+    _check(swmm_backend_info(int(solver), name, &info))
+    return {
+        "usable": info.usable != 0,
+        "device_name": (<bytes>info.device_name).decode("utf-8", "replace"),
+        "device_mem_bytes": int(info.device_mem_bytes),
+        "reason": (<bytes>info.reason).decode("utf-8", "replace"),
+    }
+
+
 def abi_tag() -> str:
     """Return the immutable C ABI identity of the engine loaded by these bindings.
 
@@ -1290,6 +1310,28 @@ cdef class Solver:
         """ARD transport configuration and authored boundary/source rows."""
         from ._transport import Transport
         return Transport(self)
+
+    def fv_device_supported(self) -> tuple:
+        """Whether the model's options are in the 1D finite volume device backend's scope.
+
+        Returns ``(supported, why)``: *why* names the first option out of scope, and is empty
+        when supported. A model out of scope still runs; the CPU solver integrates it.
+        """
+        cdef int supported = 0
+        cdef int size = 256
+        cdef char* why
+        while True:
+            why = <char*>malloc(size)
+            if why == NULL:
+                raise MemoryError()
+            try:
+                why[0] = 0
+                _check(swmm_fv_device_supported(self._handle, &supported, why, size))
+                if strlen(why) < <size_t>(size - 1) or size >= 64 * 1024:
+                    return supported != 0, (<bytes>why).decode("utf-8", "replace")
+            finally:
+                free(why)
+            size *= 2
 
     @property
     def thread_info(self):

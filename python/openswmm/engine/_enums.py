@@ -237,6 +237,12 @@ class NodeType(IntEnum):
     DIVIDER = 3
 
 
+class BackendSolver(IntEnum):
+    """Solver a compute backend is asked about (``SWMM_BackendSolver``)."""
+    FV_NETWORK = 0  #: 1D finite volume network solver ([OPTIONS] FV_BACKEND)
+    SURFACE_2D = 1  #: 2D surface solver ([2D_OPTIONS] BACKEND); C name SWMM_BACKEND_SOLVER_2D_SURFACE
+
+
 class LinkType(IntEnum):
     """SWMM link type codes.
 

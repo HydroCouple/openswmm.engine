@@ -37,6 +37,7 @@ from ._coupling import Coupling as Coupling, DomainSources as DomainSources, Run
 from ._solver import (
     Solver as Solver,
     abi_tag as abi_tag,
+    backend_info as backend_info,
     run as run,
     run_with_callback as run_with_callback,
 )
@@ -231,7 +232,7 @@ __all__: list[str]
 
 # Native climate, transport, writer and unit-system selectors.
 from ._enums import (
-    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
+    Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem, BackendSolver as BackendSolver
 )
 
 from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)

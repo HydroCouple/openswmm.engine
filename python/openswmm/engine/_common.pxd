@@ -52,6 +52,14 @@ cdef extern from "openswmm_engine.h":
 
     # --- Engine lifecycle ---
     cdef const char* swmm_engine_abi_tag() noexcept nogil
+    # Compute backends (a backend's plugin, device and the 1D device scope)
+    ctypedef struct SWMM_BackendInfo:
+        int usable
+        char device_name[128]
+        unsigned long long device_mem_bytes
+        char reason[256]
+    cdef int swmm_backend_info(int solver, const char* backend, SWMM_BackendInfo* out)
+    cdef int swmm_fv_device_supported(SWMM_Engine e, int* supported, char* why, int buflen)
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)

@@ -221,6 +221,11 @@ class NodeType(IntEnum):
     DIVIDER = 3
 
 
+class BackendSolver(IntEnum):
+    FV_NETWORK = 0
+    SURFACE_2D = 1
+
+
 class LinkType(IntEnum):
     """Link type codes for L{openswmm.engine.ModelBuilder.add_link}.
 

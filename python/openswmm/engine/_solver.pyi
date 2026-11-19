@@ -200,6 +200,11 @@ class EventsView(MutableSequence[Event]):
 # ---------------------------------------------------------------------------
 
 
+def backend_info(solver: int, backend: str) -> dict[str, Any]:
+    """Whether a compute backend is installed and usable on this machine, without a model."""
+    ...
+
+
 def abi_tag() -> str:
     """Return the immutable C ABI identity of the engine loaded by these bindings.
 
@@ -261,6 +266,7 @@ class Solver:
     def write_staged(self, final_path: _PathLike, mapper: Callable[[str, int], _PathLike | None]) -> None: ...
     def write_compat(self, path: _PathLike, profile: InpProfile) -> None: ...
 
+    def fv_device_supported(self) -> tuple[bool, str]: ...
     @property
     def thread_info(self) -> ThreadInfo: ...
     def effective_threads(self, requested: int = ...) -> EffectiveThreads: ...
