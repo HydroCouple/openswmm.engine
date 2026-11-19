@@ -97,7 +97,10 @@ set_tests_properties(test_engine_abi_features PROPERTIES LABELS "unit;abi")
 add_gtest_unit(test_engine_outfalls
     test_outfall_export_receipts.cpp
     test_outfall_stage_data.cpp
+    test_outfall_nonconduit_depth.cpp
 )
+target_compile_definitions(test_engine_outfalls PRIVATE
+    OUTFALL_DEPTH_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/outfall_nonconduit_depth_out")
 add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).

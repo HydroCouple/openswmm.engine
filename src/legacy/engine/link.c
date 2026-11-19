@@ -767,6 +767,15 @@ void link_setOutfallDepth(int j) {
 
     // --- set new depth at node
     node_setOutletDepth(n, yNorm, yCrit, z);
+
+    // --- a weir, orifice, outlet or pump leaves a FREE or NORMAL outfall dry.
+    //     Their offsets hold the crest height above the UPSTREAM node invert,
+    //     so "offset + depth" (the conduit rule) would stand water at the
+    //     outfall that is not there, and with an outfall invert above the
+    //     upstream invert drive the link backwards (EPA SWMM 5.2.4 behavior).
+    if (Link[j].type != CONDUIT && (Outfall[Node[n].subIndex].type == FREE_OUTFALL ||
+                                    Outfall[Node[n].subIndex].type == NORMAL_OUTFALL))
+        Node[n].newDepth = 0.0;
 }
 
 //=============================================================================

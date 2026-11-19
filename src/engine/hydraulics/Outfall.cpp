@@ -356,7 +356,9 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         // Normal and critical depths for the current flow — conduits only
         // (legacy: yNorm = yCrit = 0 for any other link type).
         double yNorm = 0.0, yCrit = 0.0;
-        if (ctx.links.type[static_cast<std::size_t>(link_idx)] == LinkType::CONDUIT) {
+        const bool is_conduit =
+            ctx.links.type[static_cast<std::size_t>(link_idx)] == LinkType::CONDUIT;
+        if (is_conduit) {
             auto uk = static_cast<std::size_t>(link_idx);
             const auto& CD = ctx.link_subtypes.conduits;
             const int cr = ctx.link_subtypes.conduit_row(link_idx);
@@ -370,14 +372,20 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         }
 
         switch (ost.bc_type) {
+        // A weir, orifice, outlet or pump leaves a FREE or NORMAL outfall dry:
+        // their offset is the crest height above the UPSTREAM node invert, so
+        // adding it to the outfall invert would stand water at the outfall
+        // that is not there and, with an outfall invert above the upstream
+        // invert, drive the link backwards (legacy link_setOutfallDepth; EPA
+        // SWMM 5.2.4 behavior).
         case OutfallType::FREE:
             // Legacy: depth = z + MIN(yNorm, yCrit)
-            depth = z + std::min(yNorm, yCrit);
+            depth = is_conduit ? z + std::min(yNorm, yCrit) : 0.0;
             break;
 
         case OutfallType::NORMAL:
             // Legacy: depth = z + yNorm
-            depth = z + yNorm;
+            depth = is_conduit ? z + yNorm : 0.0;
             break;
 
         case OutfallType::FIXED: {
