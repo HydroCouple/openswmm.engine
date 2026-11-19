@@ -10,7 +10,7 @@
  * bytes, with a message that blamed that section. The reader now checks the
  * file signature and names the plugin to use.
  *
- * Files go to OPENSWMM_BINARY_MODEL_TEST_OUTPUT, or binary_model_refused_output
+ * Files go to OPENSWMM_BINARY_MODEL_TEST_OUTPUT, or binary_model_refused_out
  * under the working directory.
  *
  * @author    Caleb Buahin <caleb.buahin@gmail.com>
@@ -30,7 +30,7 @@ namespace fs = std::filesystem;
 
 fs::path outputDir() {
     const char* root = std::getenv("OPENSWMM_BINARY_MODEL_TEST_OUTPUT");
-    fs::path dir = root && *root ? fs::path(root) : fs::path("binary_model_refused_output");
+    fs::path dir = root && *root ? fs::path(root) : fs::path("binary_model_refused_out");
     fs::create_directories(dir);
     return dir;
 }
