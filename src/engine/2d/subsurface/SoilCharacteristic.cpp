@@ -271,20 +271,20 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept {
     const double hu_se = (hu - p.theta_r * Lc) / span;
 
     if (p.law == SoilChar::GARDNER) {
-        // Eq. 22, verbatim. Written in the published form (not the factored
-        // one) so a reader can compare it to the paper line for line; the
-        // header records that the two are the same expression.
+        // Eq. 22's form, with the drainage sign: a column holding more than
+        // hydrostatic storage drains down (+), a drier one draws water up.
+        // The header records the factored identity.
         const double e = std::exp(-p.alpha * Lc);
         const double den = p.alpha * Lc * (1.0 - e);
         if (!(std::fabs(den) > 1.0e-300))
             return 0.0;
-        const double q = p.Ks * (1.0 - e - p.alpha * hu_se) / den;
+        const double q = p.Ks * (p.alpha * hu_se - (1.0 - e)) / den;
         return std::isfinite(q) ? q : 0.0;
     }
 
     // The generalised relaxation form (see the header's @warning — the rate
     // below is ours, the equilibrium is the law's):
-    //     q₀ = C(L)·[hᵤ*(L) − hᵤ],   C(L) = K̄ / (L · hᵤ*(L)/L)  →  K̄/hᵤ*
+    //     q₀ = C(L)·[hᵤ − hᵤ*(L)],   C(L) = K̄ / (L · hᵤ*(L)/L)  →  K̄/hᵤ*
     // where K̄ is the conductivity at the column's mean suction. Reducing to
     // Gardner: K̄ → Ks·e^(−αL/2) and hᵤ* → (1−e^(−αL))/α gives the same order
     // and the same limits, which is the consistency this rests on.
@@ -295,7 +295,7 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept {
         return 0.0;
     const double Kbar = conductivity(p, 0.5 * Lc);
     const double C = Kbar / hu_eq_se;
-    const double q = C * (hu_eq_se - hu_se);
+    const double q = C * (hu_se - hu_eq_se);
     return std::isfinite(q) ? q : 0.0;
 }
 
@@ -312,7 +312,7 @@ double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept {
     const double rate = p.law == SoilChar::GARDNER
                             ? p.Ks / (kLMin * -std::expm1(-p.alpha * kLMin))
                             : conductivity(p, .5 * kLMin) / saturationIntegral(p, kLMin);
-    const double disequilibrium = (p.theta_r * L + span * equilibrium - hu) / span;
+    const double disequilibrium = (hu - p.theta_r * L - span * equilibrium) / span;
     const double q = rate * disequilibrium;
     return std::isfinite(q) ? q : 0.;
 }

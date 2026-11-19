@@ -411,6 +411,11 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
 // mass over that water reported 4e8 mg/L (KS 3600) and inf (KS 36) from a
 // deck seeded at 25 mg/L at most, and dispersion carried the inf to the
 // neighbours as NaN (full-event Bellinge, 2026-11-17).
+// The columns start at residual content: a dry column draws water up from its
+// table until hydrostatic, and the 0.8 m column can hold far more than the
+// upper table's 0.07 m of drainable water, so that table empties. (A column at
+// or above hydrostatic instead drains into its table and keeps it from
+// emptying under the drainage sign, 2026-11-18, which would test nothing.)
 // ---------------------------------------------------------------------------
 TEST(GwTransportKernel, DrainedTableHoldsNoSoluteAndConcentrationsStayBounded) {
     for (const char* ks : {"3600", "36"}) {
@@ -442,9 +447,16 @@ TEST(GwTransportKernel, DrainedTableHoldsNoSoluteAndConcentrationsStayBounded) {
         ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
         ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK) << tag;
         r.started = true;
-        const auto& gw = r.eng->surfaceRouter2D().subsurface();
-        const auto& t = gw.transport();
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        auto& t = gw.transport();
         ASSERT_TRUE(t.active()) << tag;
+        for (int c = 0; c < t.n_cells; ++c) { // residual columns, still 2 mg/L
+            auto& w = gw.state();
+            w.hu[c] = w.theta_r[c] * (w.zs[c] - w.hg[c]);
+            t.unsat_mass[t.idx(0, c)] = 2.0 * gw.unsatVolume(c);
+        }
+        gw.state().led_init_storage = gw.state().storage();
+        t.init_mass[0] = t.ledgeredStorage(0);
         bool drained = false;
         double elapsed = 0.0;
         int status = SWMM_OK;

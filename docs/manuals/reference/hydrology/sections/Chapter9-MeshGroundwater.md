@@ -126,24 +126,41 @@ floored at 1 mm. This integral is the ENSLAVED closure's whole unsaturated
 state and the initial condition of every column.
 
 **The closed-form recharge.** For Gardner, the quasi-steady recharge across the
-table is Qu and Duffy's equation 22 verbatim, on the saturation scale
+table has the form of Qu and Duffy's equation 22, on the saturation scale
 \f$\tilde h_u = (h_u - \theta_r L)/(\theta_s - \theta_r)\f$:
 
-\f[ q_0(h_u, h_g) = K_s\, \frac{1 - e^{-\alpha L} - \alpha\, \tilde h_u}{\alpha L\,\bigl(1 - e^{-\alpha L}\bigr)}, \qquad L = z_s - h_g \f]  (9-3)
+\f[ q_0(h_u, h_g) = K_s\, \frac{\alpha\, \tilde h_u - \bigl(1 - e^{-\alpha L}\bigr)}{\alpha L\,\bigl(1 - e^{-\alpha L}\bigr)}, \qquad L = z_s - h_g \f]  (9-3)
 
 positive downward, negative for capillary rise, smooth in both states. It is
 identical to a relaxation of the stored water toward its hydrostatic
 equilibrium at a conductivity-set rate,
 
-\f[ q_0 = C(L)\,\bigl[\tilde\sigma^{\ast}(L) - \tilde h_u\bigr], \qquad \tilde\sigma^{\ast}(L) = \frac{1 - e^{-\alpha L}}{\alpha}, \quad C(L) = \frac{K_s}{L\,\bigl(1 - e^{-\alpha L}\bigr)} \f]  (9-4)
+\f[ q_0 = C(L)\,\bigl[\tilde h_u - \tilde\sigma^{\ast}(L)\bigr], \qquad \tilde\sigma^{\ast}(L) = \frac{1 - e^{-\alpha L}}{\alpha}, \quad C(L) = \frac{K_s}{L\,\bigl(1 - e^{-\alpha L}\bigr)} \f]  (9-4)
+
+so a column holding more than hydrostatic storage drains to the table and a
+drier one draws water up; with \f$\dot h_u = q^+ - q_{ET} - q_0\f$ the column
+relaxes toward equilibrium. **Sign corrected 2026-11-18.** Earlier engines used
+\f$C(L)[\tilde\sigma^{\ast} - \tilde h_u]\f$, which drove the column away from
+equilibrium: a wet column drew water up from the table instead of draining.
+Every CLOSED_FORM result changes with the correction, under both clocks.
 
 **The other three laws generalise (9-4)**: the equilibrium is the law's own
 \f$\sigma(L)\f$ from (9-2) and the rate is the conductivity at the column's
 mean suction over that integral,
 
-\f[ q_0 = \frac{\bar K}{\sigma(L)}\,\bigl[\sigma(L) - \tilde h_u\bigr], \qquad \bar K = K\!\left(\psi = \tfrac12 L\right) \f]  (9-5)
+\f[ q_0 = \frac{\bar K}{\sigma(L)}\,\bigl[\tilde h_u - \sigma(L)\bigr], \qquad \bar K = K\!\left(\psi = \tfrac12 L\right) \f]  (9-5)
 
 which for Gardner gives the same order and limits as (9-4).
+
+**Columns thinner than 1 mm.** Below 1 mm the rate coefficient keeps its 1 mm
+value, but residual water and equilibrium storage use the actual thickness,
+so a thin column is never credited with the storage of a missing part of a
+millimetre. A column that thin, ponded or receiving intake, passes that intake
+through to the table: each firing the table takes what it loses (node bed,
+lateral, conduit, deep) plus its room to the ground from the intake and from
+the column's water above residual. Both clocks use these rules (2026-11-18);
+before, only `GW_CLOCK INDEPENDENT` did, and `SHARED` evaluated the law on a
+1 mm column.
 
 **The Experimental caveat.** The code states, and this manual repeats: (9-5)
 is the engine's generalisation, not the literature's. Gardner reproduces the

@@ -1296,8 +1296,9 @@ TEST(Aquifer2D, IndependentBulkColumnReturnsOnlyWaterBeyondItsFullStorage) {
         auto& surface = r.eng->surfaceRouter2D();
         auto& gw = surface.subsurface();
         auto& cell = gw.state();
-        // A full thin column cannot recharge downward. Only the external
-        // receipt can add water to the surface or collapse this column.
+        // A full thin column drains only its small excess over hydrostatic
+        // storage (drainage sign, 2026-11-18). Only the external receipt can
+        // add water to the surface or collapse this column.
         cell.hu[0] = cell.theta_s[0] * (cell.zs[0] - cell.hg[0]);
         const double capacity = cell.area[0] * cell.theta_s[0] * cell.zs[0];
         auto& tracer = gw.transport();
@@ -1312,12 +1313,17 @@ TEST(Aquifer2D, IndependentBulkColumnReturnsOnlyWaterBeyondItsFullStorage) {
         gw.bookLinkSeepage(0, inflow);
         gw.bookLinkSeepageMass(0, 0, concentration * inflow);
         gw.advanceClock(end, surface.state(), false, true);
-        EXPECT_DOUBLE_EQ(cell.led_recharge, 0.);
+        EXPECT_GE(cell.led_recharge, 0.);
         EXPECT_NEAR(cell.dunne_cumulative[0], inflow, 1e-12);
         EXPECT_NEAR(cell.xacc_to_surface[0], inflow, 1e-12);
         EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0), capacity, 1e-12);
         EXPECT_NEAR(tracer.xacc_to_surface[0], concentration * inflow, 1e-12);
-        EXPECT_NEAR(tracer.unsat_mass[0], inflow > 0 ? 0. : initial_unsat_mass, 1e-12);
+        if (inflow > 0)
+            EXPECT_NEAR(tracer.unsat_mass[0], 0., 1e-12);
+        else { // drained water leaves at the column's own concentration
+            EXPECT_LE(tracer.unsat_mass[0], initial_unsat_mass + 1e-12);
+            EXPECT_NEAR(tracer.unsat_mass[0], concentration * gw.unsatVolume(0), 1e-12);
+        }
         EXPECT_NEAR(tracer.sat_mass[0] + tracer.unsat_mass[0] + tracer.xacc_to_surface[0],
                     concentration * (capacity + inflow), 1e-12);
         finish(r);
@@ -1341,7 +1347,16 @@ TEST(Aquifer2D, IndependentPartlyFilledColumnSettlesRechargeBeforeReleasingRealE
         auto& surface = r.eng->surfaceRouter2D();
         auto& gw = surface.subsurface();
         auto& state = gw.state();
-        state.hu[0] = .4 * (state.zs[0] - state.hg[0]);
+        // Wetter than hydrostatic but not full, so the column drains to the
+        // table (drainage sign) before any real excess is released.
+        openswmm::twoD::soil::Params p;
+        p.law = openswmm::twoD::SoilChar::GARDNER;
+        p.Ks = .1 / 1000;
+        p.theta_s = .45;
+        p.theta_r = .1;
+        p.alpha = 2;
+        const double length = state.zs[0] - state.hg[0];
+        state.hu[0] = .5 * (openswmm::twoD::soil::equilibriumStorage(p, length) + .45 * length);
         auto& tr = gw.transport();
         tr.sat_mass[0] = concentration * gw.satVolume(0);
         tr.unsat_mass[0] = concentration * gw.unsatVolume(0);
@@ -1436,8 +1451,9 @@ TEST(Aquifer2D, ThinRechargePreservesActualEquilibriumAndLegacyRatesAboveTheFloo
         for (double length : {1e-7, .0005}) {
             EXPECT_NEAR(soil::rechargeQ0AtLength(p, length, soil::equilibriumStorage(p, length)),
                         0., 1e-12);
-            EXPECT_GT(soil::rechargeQ0AtLength(p, length, p.theta_r * length), 0.);
-            EXPECT_LE(soil::rechargeQ0AtLength(p, length, p.theta_s * length), 0.);
+            // Drainage sign: a residual column draws water up, a full one drains.
+            EXPECT_LT(soil::rechargeQ0AtLength(p, length, p.theta_r * length), 0.);
+            EXPECT_GE(soil::rechargeQ0AtLength(p, length, p.theta_s * length), 0.);
         }
         for (double length : {.001, .01, 1.})
             for (double theta : {.1, .3, .45})
@@ -1466,14 +1482,28 @@ TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
             auto& state = gw.state();
             state.hg[0] = state.zs[0] - length;
             state.hu[0] = state.theta_s[0] * (state.zs[0] - state.hg[0]);
-            const double head = state.hg[0], column = state.hu[0], water = state.liveStorage();
+            const double column = state.hu[0], water = state.liveStorage();
+            const double actual = state.zs[0] - state.hg[0]; // the stored length, not `length`
             gw.prepareClock();
             gw.advanceClock(1. / 256, surface.state(), false, true);
-            // Full storage is above hydrostatic equilibrium. With capillary
-            // rise disabled and no forcing there is no downward recharge.
-            EXPECT_DOUBLE_EQ(state.q0_last[0], 0.);
-            EXPECT_DOUBLE_EQ(state.hg[0], head);
-            EXPECT_DOUBLE_EQ(state.hu[0], column);
+            // Full storage is above hydrostatic equilibrium, so the column
+            // drains (drainage sign), but only its actual excess at this
+            // length, never the storage of an invented millimetre.
+            openswmm::twoD::soil::Params p;
+            p.law = std::string(law) == "GARDNER"        ? openswmm::twoD::SoilChar::GARDNER
+                    : std::string(law) == "RUSSO"        ? openswmm::twoD::SoilChar::RUSSO
+                    : std::string(law) == "BROOKS_COREY" ? openswmm::twoD::SoilChar::BROOKS_COREY
+                                                         : openswmm::twoD::SoilChar::VAN_GENUCHTEN;
+            p.Ks = .1 / 1000;
+            p.theta_s = .45;
+            p.theta_r = .1;
+            p.alpha = 2;
+            const double excess =
+                (column - openswmm::twoD::soil::equilibriumStorage(p, actual)) * state.area[0];
+            EXPECT_GE(state.q0_last[0], 0.);
+            EXPECT_GE(state.led_recharge, 0.);
+            // Roundoff allowance: 1e-12 of the column's own storage.
+            EXPECT_LE(state.led_recharge, excess + 1e-12 * column * state.area[0]);
             EXPECT_DOUBLE_EQ(state.dunne_cumulative[0], 0.);
             EXPECT_DOUBLE_EQ(state.reject_cumulative[0], 0.);
             EXPECT_NEAR(state.liveStorage(), water, 1e-12);
@@ -1852,6 +1882,69 @@ TEST(Aquifer2D, PondedThinColumnKeepsTheTableUnderANodeDraw) {
         EXPECT_NEAR(s.continuityResidual(), 0., 1e-9) << clock;
         finish(r);
     }
+}
+
+TEST(Aquifer2D, ClosedFormColumnRelaxesTowardEquilibriumAfterRain) {
+    // A closed-form column wetter than hydrostatic equilibrium drains to the
+    // table; a drier one draws water up. One cell, table 2 m deep, 20 mm of
+    // rain in the first hour, then 5 h dry. The rain must reach the table
+    // (it ends higher) and the column must move back toward equilibrium. A
+    // column that starts at equilibrium with no rain must not move.
+    using namespace openswmm::twoD;
+    const auto deckFor = [](const char* law, const char* clock, double rain) {
+        std::ostringstream m;
+        m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+             "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 06:00:00\nREPORT_STEP 00:15:00\n"
+             "WET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 -5.0 4.0 0 0 0\n[OUTFALLS]\nO1 -5.5 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:15 1.0 TIMESERIES RAIN\n"
+             "[TIMESERIES]\nRAIN 0:00 "
+          << rain
+          << "\nRAIN 1:00 0.0\n[COORDINATES]\nJ1 50.0 50.0\nO1 60.0 60.0\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nEVAPORATION NO\n"
+             "RAINFALL_MODE SYSTEM\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 0\n"
+             "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nGW_ET NONE\nSOIL_CHAR "
+          << law << "\nGW_CLOCK " << clock
+          << "\n[2D_AQUIFER]\n* 36 3 .40 .05 2 HG0 1\n[REPORT]\nINPUT NO\n";
+        return m.str();
+    };
+    for (const auto& [law, kind] :
+         {std::pair{"GARDNER", SoilChar::GARDNER}, std::pair{"RUSSO", SoilChar::RUSSO}})
+        for (const char* clock : {"SHARED", "INDEPENDENT"})
+            for (double rain : {0.0, 20.0}) {
+                const std::string tag =
+                    std::string("relax-") + law + "-" + clock + (rain > 0 ? "-pulse" : "-control");
+                auto r = openDeck(tag, deckFor(law, clock, rain));
+                ASSERT_TRUE(r.opened) << tag;
+                ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
+                ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK) << tag;
+                r.started = true;
+                const auto& s = r.eng->surfaceRouter2D().subsurface().state();
+                soil::Params p;
+                p.law = kind;
+                p.Ks = 36e-3 / 3600;
+                p.theta_s = .40;
+                p.theta_r = .05;
+                p.alpha = 2;
+                const auto gap = [&] {
+                    return std::abs(s.hu[0] - soil::equilibriumStorage(p, s.zs[0] - s.hg[0]));
+                };
+                const double hg0 = s.hg[0], hu0 = s.hu[0];
+                double elapsed = 0, gap_after_rain = -1;
+                while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+                    if (gap_after_rain < 0 && elapsed >= 1.25 / 24)
+                        gap_after_rain = gap();
+                if (rain == 0) {
+                    EXPECT_NEAR(s.hg[0], hg0, 1e-12) << tag;
+                    EXPECT_NEAR(s.hu[0], hu0, 1e-12) << tag;
+                } else {
+                    EXPECT_GT(s.hg[0], hg0) << tag;
+                    EXPECT_LT(gap(), gap_after_rain) << tag;
+                }
+                finish(r);
+            }
 }
 
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3

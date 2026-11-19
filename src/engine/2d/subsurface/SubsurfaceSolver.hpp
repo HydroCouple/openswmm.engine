@@ -1541,7 +1541,7 @@ private:
     /**
      * @brief Test whether a cell passes surface intake straight to its table.
      * @param[in] cell Zero-based mesh cell.
-     * @return True for a covered CLOSED_FORM cell on the independent clock whose unsaturated
+     * @return True for a covered CLOSED_FORM cell (either clock) whose unsaturated
      * column is thinner than soil::kRechargeLengthFloor. Its own column law (A5) leaves a
      * saturated sub-millimetre column with no drainage and no storage room, so the firing
      * passes intake to the table instead (fireCell) and intake admission counts the table's

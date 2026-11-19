@@ -1181,12 +1181,14 @@ TEST(GroundHeat, PhysicalRechargeUsesTheAcceptedFixedGridVerticalHeatReceipt) {
         auto& gw = m.router().subsurface();
         auto& tr = gw.transport();
         ASSERT_TRUE(gw.heat().active());
-        // Put the closed-form unsaturated store away from equilibrium so its
-        // physical Darcy recharge is nonzero; align the thermal moisture while
-        // retaining the initialized layer temperatures.
+        // Put the closed-form unsaturated store above equilibrium (RUSSO,
+        // 0.5 m: 0.2204 m hydrostatic, 0.225 m full) so its physical recharge
+        // drains downward and is nonzero; with GW_ET NONE a drier store would
+        // not move. Align the thermal moisture while retaining the initialized
+        // layer temperatures.
         if (std::string(closure) == "CLOSED_FORM")
             for (int i = 0; i < gw.state().n_cells; ++i) {
-                gw.state().hu[std::size_t(i)] = .1;
+                gw.state().hu[std::size_t(i)] = .224;
                 auto& cell = gw.heat().cells[std::size_t(i)];
                 auto& column = cell.column;
                 std::vector<double> temperature(column.energy.size()), moisture;

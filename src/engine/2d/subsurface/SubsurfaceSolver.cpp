@@ -612,11 +612,11 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
                                     options_.c_col, options_.capillary_diff);
     } else if (cl == GwClosure::CLOSED_FORM) {
         // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
-        // is C = −∂q₀/∂hᵤ. Taken numerically so every soil law is
-        // covered by one expression rather than four differentiations.
+        // is C = ∂q₀/∂hᵤ (dhᵤ/dt = … − q₀). Taken numerically so every soil
+        // law is covered by one expression rather than four differentiations.
         const double hu = state_.hu[u];
         const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
-        const double C = (soil::rechargeQ0(p, L, hu) - soil::rechargeQ0(p, L, hu + d)) / d;
+        const double C = (soil::rechargeQ0(p, L, hu + d) - soil::rechargeQ0(p, L, hu)) / d;
         if (C > kTiny)
             dt_u = options_.c_col / C;
     }
@@ -2036,8 +2036,7 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell, double deficit) const no
 
 bool SubsurfaceSolver::passesIntakeToTable(int cell) const noexcept {
     const auto u = static_cast<std::size_t>(cell);
-    return independentClock() && covers(cell) &&
-           state_.closure[u] == int8_t(GwClosure::CLOSED_FORM) &&
+    return active() && covers(cell) && state_.closure[u] == int8_t(GwClosure::CLOSED_FORM) &&
            state_.zs[u] - state_.hg[u] < soil::kRechargeLengthFloor;
 }
 
@@ -4900,8 +4899,8 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
         const double length = state_.zs[cell] - state_.hg[cell];
         if (!(length > 0))
             continue;
-        if (independentClock() && length < soil::kRechargeLengthFloor)
-            continue; // legacy extension law floors storage as well as its rate
+        if (length < soil::kRechargeLengthFloor)
+            continue; // the extension law floors storage as well as its rate
         const auto p = paramsOf(cell);
         OpenSwmmGwRechargeInputV1 v{};
         v.struct_size = sizeof(v);
@@ -4944,7 +4943,7 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
  * @param[in] length Finite positive unsaturated length m matching the current cell state.
  * @return Raw signed recharge m/s, positive down and negative capillary rise. A cached extension
  * value is used only when evaluator/slot are valid and every immutable input matches exactly.
- * Independent sub-millimetre columns use rechargeQ0AtLength() on the CPU so the legacy
+ * Sub-millimetre columns use rechargeQ0AtLength() on the CPU so the legacy
  * extension's rate floor cannot invent storage. Other uncached rows use rechargeQ0().
  * No storage, front, ledgers or cache is
  * changed.
@@ -4952,7 +4951,7 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
  */
 double SubsurfaceSolver::rawRecharge(int cell, const soil::Params& p,
                                      double length) const noexcept {
-    if (independentClock() && length < soil::kRechargeLengthFloor)
+    if (length < soil::kRechargeLengthFloor)
         return soil::rechargeQ0AtLength(p, length, state_.hu[cell]);
     const int slot = recharge_backend_.evaluate && std::size_t(cell) < recharge_slots_.size()
                          ? recharge_slots_[cell]

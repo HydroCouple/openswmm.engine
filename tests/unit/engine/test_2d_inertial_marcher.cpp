@@ -1028,7 +1028,8 @@ TEST(CoupledGroundwaterRk2, SurfaceInfiltrationAndAquiferAdvanceTogetherAndRefin
         r.init(dt, .005, .0005, .2);
         auto& water = r.gw.state();
         for (int i = 0; i < water.n_cells; ++i) {
-            water.hu[i] = .35 * (water.zs[i] - water.hg[i]);
+            // Wetter than the RUSSO hydrostatic column, so it drains to the table.
+            water.hu[i] = .44 * (water.zs[i] - water.hg[i]);
             water.wetting_front[i] = .1;
         }
         water.led_init_storage = water.storage();
@@ -1620,7 +1621,8 @@ TEST(CoupledGroundwaterRk2, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
         for (auto* r : {&full, &half}) {
             auto& w = r->gw.state();
             for (int i = 0; i < w.n_cells; ++i) {
-                w.hu[i] = .35 * (w.zs[i] - w.hg[i]);
+                // Wetter than hydrostatic, so the column drains (drainage sign).
+                w.hu[i] = .44 * (w.zs[i] - w.hg[i]);
                 w.wetting_front[i] = .1;
             }
             w.led_init_storage = w.storage();
