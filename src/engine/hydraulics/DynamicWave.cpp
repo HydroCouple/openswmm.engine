@@ -4384,8 +4384,9 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         if (semi_implicit) {
             // Unified path — free-surface and surcharged alike, matching the
             // real-node SEMI_IMPLICIT branch (which likewise ignores the
-            // is_surcharged dQ/dH split and the crown clamp).
-            y_vj = y_old + dV / denom_semi;
+            // is_surcharged dQ/dH split and the crown clamp), with the head
+            // response applied to the change from y_last (see that branch).
+            y_vj = y_last + (surf_area * (y_old - y_last) + dV) / denom_semi;
             xnode_.old_surf_area[ui] = surf_area;
             if (step > 0)
                 y_vj = (1.0 - omega) * y_last + omega * y_vj;
@@ -4439,20 +4440,28 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         //
         //   A * dH = 0.5 * [Q_net_old + Q_net_new] * dt
         //
-        // Linearising Q_net_new around the current head estimate:
+        // The link flows of this iteration, and so Q_net, were computed at
+        // the latest iterate y_last. Linearising Q_net_new about it:
         //
-        //   Q_net_new ≈ Q_net + (dQ_net/dH) * dH
+        //   Q_net_new ≈ Q_net(y_last) + (dQ_net/dH) * (y_new - y_last)
         //
         // where sumdqdh is accumulated POSITIVE from the link dqdh values
         // (higher head ⟶ more net outflow through connected links), so
         // dQ_net/dH = -sumdqdh — the same sign convention the EXTRAN
-        // surcharge branch divides by.  Substituting and rearranging:
+        // surcharge branch divides by.  With dV the trapezoidal volume
+        // 0.5 * [Q_net_old + Q_net(y_last)] * dt, substituting gives
         //
-        //   dH = dV / (A + dt * sumdqdh / 2)
+        //   A * (y_new - y_old) = dV - 0.5 * dt * sumdqdh * (y_new - y_last)
         //
-        // dV already contains the trapezoidal average of old_net_inflow and
-        // current dQ, so the sumdqdh correction folds the head-dependent
-        // flow response into the same timestep.
+        //   y_new = y_last + [A * (y_old - y_last) + dV] / (A + dt * sumdqdh / 2)
+        //
+        // The head response multiplies the change from y_last, NOT from
+        // y_old: Q_net(y_last) already holds the response to y_last - y_old,
+        // and y_old + dV / (A + dt * sumdqdh / 2) counted it twice, which
+        // converged to A_eff = A + dt * sumdqdh / 2 instead of A. At
+        // convergence (y_new = y_last) this form satisfies A * dH = dV
+        // exactly, the equation the EXPLICIT free-surface branch solves; the
+        // sumdqdh term only shortens the path there.
         //
         // The equation unifies the free-surface and surcharged regimes:
         // when surfArea dominates the denominator ≈ A (classic dV/A path);
@@ -4464,8 +4473,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         if (nodes.storage_area[ui] == 0.0)
             denom = std::max(denom, min_surf_area_);
 
-        double dy = dV / denom;
-        y_new = y_old + dy;
+        y_new = y_last + (surf_area * (y_old - y_last) + dV) / denom;
 
         // Save non-ponded surface area (used by flooding logic and CFL)
         if (!is_ponded) {

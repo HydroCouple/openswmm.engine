@@ -134,7 +134,10 @@ enum class RunoffModel : int {
  *  - SEMI_IMPLICIT: Unified formulation that integrates sumdqdh into the
  *    depth update so that head changes affect inflow/outflow rates within
  *    the same timestep. Merges surcharged and non-surcharged states into
- *    a single equation: dy = dV / (surfArea + sumdqdh * dt).
+ *    a single equation, linearized about the latest iterate y_last:
+ *    y_new = y_last + (surfArea * (y_old - y_last) + dV) /
+ *    (surfArea + 0.5 * dt * sumdqdh). Below the crown it converges to the
+ *    same depths as EXPLICIT.
  *
  * Specified in [OPTIONS] as:
  * @code

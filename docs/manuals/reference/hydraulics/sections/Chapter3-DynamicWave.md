@@ -1584,26 +1584,34 @@ selected with the `NODE_CONTINUITY` option:
 
 The semi-implicit formulation recognizes that the flows entering the
 head update of Equation 3-15 themselves depend on the head being
-solved for. Linearizing the net nodal flow about the current head
-estimate using the flow gradients of Equation 3-27,
-\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q + \sum\frac{\partial Q}{\partial H}\mathrm{\Delta}H\f$,
+solved for. The flows of iteration *k*, \f$\sum Q\left( H_{k} \right)\f$, were
+computed at the latest head estimate \f$H_{k}\f$. Linearizing the net nodal
+flow about that estimate using the flow gradients of Equation 3-27,
+\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q\left( H_{k} \right) + \sum\frac{\partial Q}{\partial H}\left( H_{k + 1} - H_{k} \right)\f$,
 and carrying the correction into the trapezoidal head update yields a
 single equation used at every non-outfall node regardless of its
 surcharge state:
 
 | | | | |
 |---|---|---|---|
-| \f[H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
+| \f[H_{k + 1} = H_{k} + \frac{A_{S}\left( H^{t} - H_{k} \right) + \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q\left( H_{k} \right) \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
 
 where \f$A_{S}\f$ is the node assembly surface area of Equation 3-22 and
 the flow derivatives are those computed during the flow update, exactly
-as in Section 3.3.5. When the surface area dominates the denominator
-the update reduces to the ordinary free-surface formula 3-15; as a node
-approaches and passes through surcharge the flow-derivative term takes
-on the role that the surcharge formula 3-28 plays in the explicit
-scheme, with the minimum surface area *A*<sub>Smin</sub> bounding the
-denominator from below. The under-relaxation of Step 5 of the solution
-procedure and the ponding rules of Section 3.3.7 apply unchanged.
+as in Section 3.3.5. The flow-derivative term multiplies the change
+from \f$H_{k}\f$, not from \f$H^{t}\f$: \f$\sum Q\left( H_{k} \right)\f$ already contains the
+flow response to \f$H_{k} - H^{t}\f$, and applying the derivative to the
+whole step would count that response twice. When the iteration has
+converged (\f$H_{k + 1} = H_{k}\f$) Equation 3-45 reduces to
+\f$A_{S}\left( H^{t + \mathrm{\Delta}t} - H^{t} \right) = \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)\f$,
+the free-surface continuity of Equation 3-15: below the crown both
+formulations converge to the same heads, and the flow-derivative term
+only shortens the path. As a node approaches and passes through
+surcharge the flow-derivative term takes on the role that the
+surcharge formula 3-28 plays in the explicit scheme, with the minimum
+surface area *A*<sub>Smin</sub> bounding both \f$A_{S}\f$ and the denominator from
+below. The under-relaxation of Step 5 of the solution procedure and
+the ponding rules of Section 3.3.7 apply unchanged.
 
 The practical consequence is that the head-update operator has no
 branch at the crown: a node passes into and out of surcharge through

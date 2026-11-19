@@ -102,6 +102,10 @@ add_gtest_unit(test_engine_outfalls
 target_compile_definitions(test_engine_outfalls PRIVATE
     OUTFALL_DEPTH_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/outfall_nonconduit_depth_out")
 add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
+# NODE_CONTINUITY SEMI_IMPLICIT changes the iteration path, not the converged answer.
+add_gtest_unit(test_engine_semi_implicit_continuity test_semi_implicit_continuity.cpp)
+target_compile_definitions(test_engine_semi_implicit_continuity PRIVATE
+    SEMI_IMPLICIT_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/semi_implicit_continuity_out")
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
