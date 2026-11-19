@@ -407,10 +407,10 @@ public:
     /**
      * @brief Capture a native hot start with an optional complete engine-session checkpoint.
      *
-     * Chooses feature-dependent versions through V18; nonempty engine payload promotes at least V15 and
+     * Chooses feature-dependent versions through V19; nonempty engine payload promotes at least V15 and
      * is limited to 512 MiB. Payload must come from the matching initialized model and qualified
      * session snapshot, not arbitrary bytes. Empty payload refuses configurations needing full restart
-     * state. Native file write is direct truncation, without atomic staging. Allocation/other
+     * state. The file is written through a staged temporary file and replaced on commit. Allocation/other
      * exceptions outside capture guards can propagate.
      *
      * @param[in] ctx Borrowed coherent model state at an accepted save boundary; lifecycle
@@ -658,13 +658,13 @@ private:
      * @brief Serialize a native hot-start representation with a trailing IEEE CRC32.
      *
      * Builds the full body in memory, then writes it and its checksum. Numeric POD encoding uses native
-     * machine representation; no byte-order conversion despite the intended little-endian format. Does
-     * not create directories, atomically stage, fsync or validate opaque state semantics; allocation
-     * exceptions can propagate.
+     * machine representation; no byte-order conversion despite the intended little-endian format.
+     * Writes through io::AtomicOutputFile, so the destination is replaced only on commit. Does not
+     * create directories or validate opaque state semantics; allocation exceptions can propagate.
      *
      * @param[in] hs Coherent header/version and record arrays; caller ensures all count/length
      *     narrowing and represented feature state are valid.
-     * @param[in] path UTF-8 destination opened directly with binary truncation.
+     * @param[in] path UTF-8 destination, replaced only when the staged write commits.
      * @return True for successful stream write, false for guarded encoding/IO failure; some low-level
      *     false paths do not replace last_io_error().
      */
@@ -672,7 +672,7 @@ private:
     /**
      * @brief Read and check a native hot-start file into an existing representation.
      *
-     * Reads entire file into memory, supports versions 1..18 and native numeric representation. String
+     * Reads entire file into memory, supports versions 1..19 and native numeric representation. String
      * lengths are bounded at 4096 bytes including stored NUL; embedded engine payload bounded at 512
      * MiB. Checks serialized shape bounds where implemented, without proving model compatibility or
      * opaque payload semantics. Allocation exceptions can propagate.
