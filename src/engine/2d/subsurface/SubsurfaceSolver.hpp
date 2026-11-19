@@ -1527,11 +1527,12 @@ private:
      * @param[in] list,shared_dt,elapsed As fireGwFaceList.
      * @param[in,out] face_yield Per-cell yield cache (NaN = unset), filled for touched cells.
      * @param[in] concentration,gradient,stencil,coefficient fireGwFaceList's dispersion caches.
-     * @note Bulk profile only (no porous heat, layered transport or LID bed receipts). Each
-     * donor's unreserved water and available mass are taken before any booking; faces are sized
-     * by the order-independent per-face share, then all of a donor's faces are scaled by
-     * min(1, available / total demand). Every pass is per face or per cell, so the result does
-     * not depend on face order or thread count. Books eacc and sacc only.
+     * @note Every profile. Each donor's unreserved water and available (or layered-porewater
+     * mobile) mass are taken before any booking; faces are sized by the order-independent
+     * per-face share, then all of a donor's faces are scaled by min(1, available / total
+     * demand). The result does not depend on face order or thread count. The bulk profile runs
+     * the per-face passes on THREADS workers; porous heat, layered transport and LID bed receipts
+     * run them on one thread (heat faces and porewater presets are booked in list order).
      */
     template <class Concentration, class Gradient, class Stencil, class Coefficient>
     void fireGwFaceListByRatio(std::span<const int> list, double shared_dt,

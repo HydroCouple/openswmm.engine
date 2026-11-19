@@ -156,8 +156,9 @@ struct GwOptions {
     int m_layers = 8;               ///< σ layers under closure B (global default)
     bool capillary_diff = false;    ///< closure B optional diffusive term (D-N3: OFF)
     /// F-5: cap aquifer faces by one ratio per donor (order-independent, parallel face loop)
-    /// instead of sequentially against the water earlier faces left (GW_FACE_CAP RATIO).
-    bool face_cap_ratio = false;
+    /// instead of sequentially against the water earlier faces left. Default since 2026-11-19;
+    /// GW_FACE_CAP SEQUENTIAL restores the order-dependent rule.
+    bool face_cap_ratio = true;
     double c_gw = 0.5;              ///< saturated stability safety factor
     double c_col = 0.9;             ///< column stability safety factor
     bool force_closed_form = false; ///< suppress the αL ≥ 5 auto-override

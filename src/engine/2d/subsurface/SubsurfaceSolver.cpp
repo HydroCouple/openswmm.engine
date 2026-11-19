@@ -765,21 +765,25 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
     const auto count = static_cast<std::ptrdiff_t>(list.size());
     const int ns = tr_.active() ? tr_.n_species : 0;
     const bool disperse = tr_.active() && tr_.dispersion_on;
+    const bool heat = heat_.active();
     const auto dt_of = [&](std::ptrdiff_t slot) {
         return elapsed.empty() ? shared_dt : elapsed[std::size_t(slot)];
     };
+    // Porous heat, layered transport and LID bed receipts keep one thread: their
+    // per-face bookings (heat faces, porewater presets) are serial by design.
+    const bool bulk = tr_.n_layers == 0 && !heat && !lid_receipts_enabled_ && heat_faces_.empty();
     int threads = 1;
 #if defined(SWMM_USE_OPENMP)
     // fireGwFaceList pre-fills the dispersion caches under the same condition,
     // so the parallel passes below only read them.
-    if (opts_ && list.size() >= 512)
+    if (bulk && opts_ && list.size() >= 512)
         threads = std::max(1, opts_->num_threads);
 #endif
     (void)threads;
-    static thread_local std::vector<unsigned char> tls_touched, tls_bind;
+    static thread_local std::vector<unsigned char> tls_touched, tls_bind, tls_mobile_ok;
     static thread_local std::vector<int> tls_cells, tls_donor;
     static thread_local std::vector<double> tls_q, tls_avail_w, tls_demand_w, tls_avail_m,
-        tls_demand_m, tls_adv, tls_disp;
+        tls_demand_m, tls_mobile, tls_adv, tls_disp, tls_donor_dt;
     auto& touched = tls_touched;
     auto& cells = tls_cells;
     auto& donor = tls_donor;
@@ -788,9 +792,12 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
     auto& demand_w = tls_demand_w;
     auto& avail_m = tls_avail_m;
     auto& demand_m = tls_demand_m;
+    auto& mobile = tls_mobile;       // dissolved (or layered-porewater mobile) mass, pass 0
+    auto& mobile_ok = tls_mobile_ok; // 0: invalid layered porewater, skip as the serial pass does
     auto& adv = tls_adv;
     auto& disp = tls_disp;
     auto& bind = tls_bind;
+    auto& donor_dt = tls_donor_dt;
     touched.assign(std::size_t(n), 0);
     cells.clear();
     for (const int e : list)
@@ -802,10 +809,13 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
     if (avail_w.size() < std::size_t(n)) {
         avail_w.resize(std::size_t(n));
         demand_w.resize(std::size_t(n));
+        donor_dt.resize(std::size_t(n));
     }
     if (avail_m.size() < std::size_t(n) * std::size_t(ns)) {
         avail_m.resize(std::size_t(n) * std::size_t(ns));
         demand_m.resize(std::size_t(n) * std::size_t(ns));
+        mobile.resize(std::size_t(n) * std::size_t(ns));
+        mobile_ok.resize(std::size_t(n) * std::size_t(ns));
     }
     q.resize(list.size());
     donor.resize(list.size());
@@ -816,9 +826,13 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
     const auto sm = [ns](std::ptrdiff_t slot, int s) {
         return std::size_t(slot) * std::size_t(ns) + s;
     };
+    const auto layered = [&](int cell, int s) {
+        return tr_.n_layers == 0 && heat && s != tr_.temp_row &&
+               heat_.cells[std::size_t(cell)].porewater.active();
+    };
 
-    // Pass 0: each touched donor's yield, unreserved water and available mass,
-    // all taken before this pass books anything.
+    // Pass 0: each touched donor's yield, unreserved water and mobile/available
+    // mass, all taken before this pass books anything.
     const auto ncell = static_cast<std::ptrdiff_t>(cells.size());
 #pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
     for (std::ptrdiff_t k = 0; k < ncell; ++k) {
@@ -827,14 +841,31 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
             face_yield[c] = specificYieldOf(c);
         avail_w[c] = unreservedDrainableWater(c, face_yield[c]);
         demand_w[c] = 0.0;
+        donor_dt[c] = 0.0;
         for (int s = 0; s < ns; ++s) {
+            const double held = tr_.sat_mass[tr_.idx(s, c)];
             demand_m[cm(c, s)] = 0.0;
-            avail_m[cm(c, s)] =
-                tr_.signedRow(s)
-                    ? 0.0
-                    : std::max(0., tr_.sat_mass[tr_.idx(s, c)] - pendingSaturatedMassExport(c, s));
+            mobile_ok[cm(c, s)] = 1;
+            if (layered(c, s)) {
+                const double m = saturatedPorewaterMobileMass(c, s);
+                mobile[cm(c, s)] = m;
+                avail_m[cm(c, s)] = m;
+                mobile_ok[cm(c, s)] = std::isfinite(m) && m >= 0;
+            } else {
+                mobile[cm(c, s)] = held * tr_.dissolvedFraction(s, c, state_.theta_s[c]);
+                avail_m[cm(c, s)] =
+                    tr_.signedRow(s) ? 0.0 : std::max(0., held - pendingSaturatedMassExport(c, s));
+            }
         }
     }
+    const auto failPorewater = [&](int c, const char* what) {
+        auto& owner = heat_.cells[std::size_t(c)];
+        owner.failed = 1;
+        try {
+            owner.error = what;
+        } catch (...) {
+        }
+    };
 
     // Pass A: each face's water under the order-independent per-face share.
 #pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
@@ -859,8 +890,21 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         donor[std::size_t(slot)] = int(don);
     }
     // One ratio per donor: the water it can give over the water its faces ask.
-    for (std::ptrdiff_t slot = 0; slot < count; ++slot)
-        demand_w[donor[std::size_t(slot)]] += std::abs(q[std::size_t(slot)] * dt_of(slot));
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int d = donor[std::size_t(slot)];
+        demand_w[d] += std::abs(q[std::size_t(slot)] * dt_of(slot));
+        donor_dt[d] = std::max(donor_dt[d], dt_of(slot));
+    }
+    if (lid_receipts_enabled_)
+        // A LID-owned bed also bounds what its cell may give, over its longest face step.
+        for (const int c : cells) {
+            if (!(demand_w[c] > 0))
+                continue;
+            NodeWaterBudget budget;
+            if (auto error = nodeWaterBudget(c, donor_dt[c], budget); !error.empty())
+                throw std::runtime_error(error);
+            avail_w[c] = std::min(avail_w[c], budget.donor);
+        }
     const auto ratio_w = [&](int c) {
         return demand_w[c] > avail_w[c] ? avail_w[c] / demand_w[c] : 1.0;
     };
@@ -885,11 +929,11 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
             const double vd = satVolume(don);
             if (vd > 0.0)
                 for (int s = 0; s < ns; ++s) {
-                    const double mobile = tr_.sat_mass[tr_.idx(s, don)] *
-                                          tr_.dissolvedFraction(s, don, state_.theta_s[don]);
-                    if (mobile == 0.0)
+                    if (!mobile_ok[cm(don, s)])
                         continue;
-                    adv[sm(slot, s)] = std::abs(vol) * (mobile / vd);
+                    const double mob = mobile[cm(don, s)];
+                    // 0 marks a zero-mobility donor: heat still books its water.
+                    adv[sm(slot, s)] = mob == 0.0 ? 0.0 : std::abs(vol) * (mob / vd);
                 }
         }
         if (!disperse)
@@ -907,15 +951,21 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         const int nf_r = std::max(1, cell_nface_[r]);
         const int nf_l = std::max(1, cell_nface_[l]);
         for (int s = 0; s < ns; ++s) {
+            if (!mobile_ok[cm(int(l), s)] || !mobile_ok[cm(int(r), s)])
+                continue;
             const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
             const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
-            const double ca =
-                ma * tr_.dissolvedFraction(s, static_cast<int>(l), state_.theta_s[l]) / va;
-            const double cb =
-                mb * tr_.dissolvedFraction(s, static_cast<int>(r), state_.theta_s[r]) / vb;
+            const double mobile_a = mobile[cm(int(l), s)], mobile_b = mobile[cm(int(r), s)];
+            const double ca = mobile_a / va;
+            const double cb = mobile_b / vb;
+            const bool porous_temperature = heat && s == tr_.temp_row;
             double dMd = dt * dispersion::faceFlux(coefficient(l, headL), coefficient(r, headR), nx,
                                                    ny, dl, dr, armL, armR, gradient(int(l), s),
                                                    gradient(int(r), s), ca, cb, B);
+            if (porous_temperature) {
+                const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
+                dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+            }
             if (dMd == 0.0)
                 continue;
             double low = std::min(ca, cb), high = std::max(ca, cb);
@@ -930,8 +980,16 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
                 dMd > 0 ? std::min((ca - low) * capacityL / nf_l, (high - cb) * capacityR / nf_r)
                         : std::min((cb - low) * capacityR / nf_r, (high - ca) * capacityL / nf_l);
             cap = std::max(0., cap);
-            if (!tr_.signedRow(s))
-                cap = std::min(cap, std::abs(dMd > 0.0 ? ma : mb) * kFaceShare);
+            if (porous_temperature)
+                cap = std::abs((ca - cb) * va * vb / (va + vb) /
+                               static_cast<double>(dMd > 0 ? nf_r : nf_l));
+            if (!tr_.signedRow(s)) {
+                const bool layered_donor = layered(dMd > 0 ? int(l) : int(r), s);
+                const double give = std::abs((dMd > 0.0) ? (layered_donor ? mobile_a : ma)
+                                                         : (layered_donor ? mobile_b : mb)) *
+                                    kFaceShare;
+                cap = std::min(cap, give);
+            }
             if (std::abs(dMd) > cap) {
                 dMd = (dMd > 0.0) ? cap : -cap;
                 bind[sm(slot, s)] = 1;
@@ -939,6 +997,12 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
             disp[sm(slot, s)] = dMd;
         }
     }
+    // Invalid layered porewater fails its owner once, as the serial pass does.
+    for (const int c : cells)
+        for (int s = 0; s < ns; ++s)
+            if (!mobile_ok[cm(c, s)])
+                failPorewater(
+                    c, "Invalid reserved-layer porewater donor for an accepted face transfer.");
     // One ratio per donor and species: the mass it can give over the mass asked.
     for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
         const int e = list[std::size_t(slot)];
@@ -957,12 +1021,16 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         return !tr_.signedRow(s) && demand > avail ? avail / demand : 1.0;
     };
 
-    // Pass C: book into each face's own edge accumulators.
+    // Pass C: book into each face's own edge accumulators (and, outside the
+    // bulk profile, the lateral heat faces and porewater presets, in list order).
 #pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
     for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
         const int e = list[std::size_t(slot)];
         const auto eu = static_cast<std::size_t>(e);
-        const double vol = q[std::size_t(slot)] * dt_of(slot);
+        const double dt = dt_of(slot);
+        if (!heat_faces_.empty())
+            fireLateralHeatFace(e, dt);
+        const double vol = q[std::size_t(slot)] * dt;
         state_.eacc_L[eu] -= vol; // leaves cL
         state_.eacc_R[eu] += vol; // enters cR
         const int don = donor[std::size_t(slot)];
@@ -970,8 +1038,13 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
             double dm = adv[sm(slot, s)];
             if (std::isnan(dm))
                 continue;
+            if (heat && s == tr_.temp_row)
+                bookPresetHeatOut(don, std::abs(vol), dm);
+            if (dm == 0.0 && mobile[cm(don, s)] == 0.0)
+                continue; // zero-mobility donor: water only, as the serial pass
             if (const double ratio = ratio_m(don, s); ratio < 1.0)
                 dm *= ratio;
+            bookPresetPorewaterOut(don, s, dm);
             const double sgn = (vol > 0.0) ? 1.0 : -1.0;
             const auto k = tr_.lateralIndex(s, eu);
             tr_.sacc_L[k] -= sgn * dm;
@@ -981,10 +1054,12 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
             double dMd = disp[sm(slot, s)];
             if (std::isnan(dMd))
                 continue;
-            if (const double ratio = ratio_m(dMd > 0 ? E.cL[e] : E.cR[e], s); ratio < 1.0) {
+            const int giver = dMd > 0 ? E.cL[e] : E.cR[e];
+            if (const double ratio = ratio_m(giver, s); ratio < 1.0) {
                 dMd *= ratio;
                 bind[sm(slot, s)] = 1;
             }
+            bookPresetPorewaterOut(giver, s, std::abs(dMd));
             const auto k = tr_.lateralIndex(s, eu);
             tr_.sacc_L[k] -= dMd;
             tr_.sacc_R[k] += dMd;
@@ -1160,10 +1235,15 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
         }
     }
 #endif
-    if (options_.face_cap_ratio && tr_.n_layers == 0 && !heat_.active() && !lid_receipts_enabled_ &&
-        heat_faces_.empty()) {
+    if (options_.face_cap_ratio) {
         fireGwFaceListByRatio(list, shared_dt, elapsed, face_yield, concentration, gradient,
                               stencil, coefficient);
+        // As after the sequential pass: layered porewater views follow the bookings.
+        if (tr_.n_layers > 0 && heat_.active())
+            for (int i = 0; i < state_.n_cells; ++i)
+                if (covers(i))
+                    if (auto error = refreshSigmaPorewater(i); !error.empty())
+                        throw std::runtime_error(error);
         accumulators_pending_ = true;
         return;
     }

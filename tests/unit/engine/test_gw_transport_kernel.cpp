@@ -5901,13 +5901,13 @@ namespace gw_thread_fixture {
 /// With `forcing`, also a well whose flow reverses mid-run (its cell fires at
 /// knots) and a head boundary on cell 1's exterior edge.
 inline std::string deck(int n, const char* closure, int threads, bool forcing = false,
-                        const char* face_cap = nullptr) {
+                        const char* face_cap = nullptr, bool heat = false) {
     std::ostringstream s;
     s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
          "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:05:00\n"
          "REPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
-         "ALLOW_PONDING NO\nTHREADS "
-      << threads
+         "ALLOW_PONDING NO\n"
+      << (heat ? "HEAT_TRANSPORT YES\n" : "") << "THREADS " << threads
       << "\n[POLLUTANTS]\nTSS MG/L 10.0 0.0 0.0 0.0 NO * 0.0 0.0\n"
          "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n[OUTFALLS]\nO1 -2.5 FREE NO\n"
          "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n"
@@ -5939,8 +5939,13 @@ inline std::string deck(int n, const char* closure, int threads, bool forcing = 
         s << "CELL " << c + 1 << " 36 1 .45 .10 2 HG0 " << (c % 97 == 0 ? .95 : .3 + .01 * (c % 23))
           << '\n';
     s << "[GW_TRANSPORT_OPTIONS]\nDISPERSION YES\n"
-         "[GW_SORPTION]\n* TSS 0.2 1.0\n"
+      << (heat ? "THERMAL_MODEL POROUS_EQUILIBRIUM\nCONDUCTION NO\nSOIL_ET_HEAT SENSIBLE_ONLY\n"
+                 "SURFACE_THERMAL_BC ADIABATIC\nDEEP_THERMAL_BC ADIABATIC\n"
+               : "")
+      << "[GW_SORPTION]\n* TSS 0.2 1.0\n"
          "[GW_INITIAL_QUALITY]\n* SAT TSS 5.0\n* UNSAT TSS 2.0\nCELL 1 SAT TSS 25.0\n"
+      << (heat ? "* SAT __TEMPERATURE__ 10\n* UNSAT __TEMPERATURE__ 10\n" : "")
+      << ""
          "[2D_AQUIFER_NODE]\nJ1 1\n";
     if (forcing)
         s << "[GW_SOURCES]\nWell1 CELL " << n + 3 << " FLOW WELLQ TSS CONC 100.0\n"
@@ -6025,68 +6030,72 @@ TEST(GwFaceCap, RatioCapsDoNotDependOnFaceOrderWhenDonorsRunShort) {
     // donor's few demand additions changes). Neither may export more than the
     // donor had.
     using openswmm::twoD::SubsurfaceFaceOrderProbe;
-    for (const char* cap : {"SEQUENTIAL", "RATIO"}) {
-        SCOPED_TRACE(cap);
-        Deck r = open(std::string("face_order_") + cap,
-                      gw_thread_fixture::deck(6, "CLOSED_FORM", 1, false, cap));
-        ASSERT_TRUE(r.opened);
-        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
-        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
-        r.started = true;
-        auto& gw = r.eng->surfaceRouter2D().subsurface();
-        const int n = gw.state().n_cells;
-        gw.assignTiers(600., 1);
-        std::vector<double> available(n);
-        for (int c = 0; c < n; ++c) {
-            gw.bookLinkSeepage(c, -std::max(0., gw.unreservedDrainableWater(c) - 1e-7));
-            available[c] = gw.unreservedDrainableWater(c);
-        }
-        auto natural = gw, reversed = gw;
-        SubsurfaceFaceOrderProbe::reverse(reversed, 0);
-        natural.fireGwFaces(0, 600.);
-        reversed.fireGwFaces(0, 600.);
-        double scale = 0, gap = 0;
-        const auto& a = natural.state();
-        const auto& b = reversed.state();
-        for (std::size_t e = 0; e < a.eacc_L.size(); ++e) {
-            scale = std::max(scale, std::abs(a.eacc_L[e]));
-            gap = std::max(
-                {gap, std::abs(a.eacc_L[e] - b.eacc_L[e]), std::abs(a.eacc_R[e] - b.eacc_R[e])});
-        }
-        const auto& ta = natural.transport();
-        const auto& tb = reversed.transport();
-        double mass_scale = 0, mass_gap = 0;
-        for (std::size_t k = 0; k < ta.sacc_L.size(); ++k) {
-            mass_scale = std::max(mass_scale, std::abs(ta.sacc_L[k]));
-            mass_gap = std::max(mass_gap, std::abs(ta.sacc_L[k] - tb.sacc_L[k]));
-        }
-        ASSERT_GT(scale, 0.);
-        if (std::string(cap) == "RATIO") {
-            EXPECT_LE(gap, 1e-12 * scale);
-            EXPECT_LE(mass_gap, 1e-12 * mass_scale);
-        } else {
-            EXPECT_GT(gap, 1e-6 * scale); // the scenario does depend on order
-        }
-        // Exports booked in this pass never exceed what each donor had: the
-        // growth of its outgoing side packets, summed over its edges.
-        const auto& E = SubsurfaceFaceOrderProbe::edges(gw);
-        const auto& before = gw.state();
-        for (const auto* fired : {&natural, &reversed}) {
-            std::vector<double> out(n, 0.0);
-            const auto& after = fired->state();
-            for (std::size_t e = 0; e < after.eacc_L.size(); ++e) {
-                out[E.cL[e]] += std::max(0., -after.eacc_L[e]) - std::max(0., -before.eacc_L[e]);
-                out[E.cR[e]] += std::max(0., -after.eacc_R[e]) - std::max(0., -before.eacc_R[e]);
-            }
-            int binding = 0;
+    for (const bool heat : {false, true})
+        for (const char* cap : {"SEQUENTIAL", "RATIO"}) {
+            SCOPED_TRACE(std::string(cap) + (heat ? " porous heat" : " bulk"));
+            Deck r = open(std::string("face_order_") + cap + (heat ? "_heat" : ""),
+                          gw_thread_fixture::deck(6, "CLOSED_FORM", 1, false, cap, heat));
+            ASSERT_TRUE(r.opened);
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+            ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+            r.started = true;
+            auto& gw = r.eng->surfaceRouter2D().subsurface();
+            const int n = gw.state().n_cells;
+            ASSERT_EQ(gw.heat().active(), heat); // the profile under test is the one requested
+            gw.assignTiers(600., 1);
+            std::vector<double> available(n);
             for (int c = 0; c < n; ++c) {
-                EXPECT_LE(out[c], available[c] * (1 + 1e-12) + 1e-18) << cap << " cell " << c;
-                binding += out[c] > .5 * available[c];
+                gw.bookLinkSeepage(c, -std::max(0., gw.unreservedDrainableWater(c) - 1e-7));
+                available[c] = gw.unreservedDrainableWater(c);
             }
-            EXPECT_GT(binding, 0); // the caps really bind somewhere
+            auto natural = gw, reversed = gw;
+            SubsurfaceFaceOrderProbe::reverse(reversed, 0);
+            natural.fireGwFaces(0, 600.);
+            reversed.fireGwFaces(0, 600.);
+            double scale = 0, gap = 0;
+            const auto& a = natural.state();
+            const auto& b = reversed.state();
+            for (std::size_t e = 0; e < a.eacc_L.size(); ++e) {
+                scale = std::max(scale, std::abs(a.eacc_L[e]));
+                gap = std::max({gap, std::abs(a.eacc_L[e] - b.eacc_L[e]),
+                                std::abs(a.eacc_R[e] - b.eacc_R[e])});
+            }
+            const auto& ta = natural.transport();
+            const auto& tb = reversed.transport();
+            double mass_scale = 0, mass_gap = 0;
+            for (std::size_t k = 0; k < ta.sacc_L.size(); ++k) {
+                mass_scale = std::max(mass_scale, std::abs(ta.sacc_L[k]));
+                mass_gap = std::max(mass_gap, std::abs(ta.sacc_L[k] - tb.sacc_L[k]));
+            }
+            ASSERT_GT(scale, 0.);
+            if (std::string(cap) == "RATIO") {
+                EXPECT_LE(gap, 1e-12 * scale);
+                EXPECT_LE(mass_gap, 1e-12 * mass_scale);
+            } else {
+                EXPECT_GT(gap, 1e-6 * scale); // the scenario does depend on order
+            }
+            // Exports booked in this pass never exceed what each donor had: the
+            // growth of its outgoing side packets, summed over its edges.
+            const auto& E = SubsurfaceFaceOrderProbe::edges(gw);
+            const auto& before = gw.state();
+            for (const auto* fired : {&natural, &reversed}) {
+                std::vector<double> out(n, 0.0);
+                const auto& after = fired->state();
+                for (std::size_t e = 0; e < after.eacc_L.size(); ++e) {
+                    out[E.cL[e]] +=
+                        std::max(0., -after.eacc_L[e]) - std::max(0., -before.eacc_L[e]);
+                    out[E.cR[e]] +=
+                        std::max(0., -after.eacc_R[e]) - std::max(0., -before.eacc_R[e]);
+                }
+                int binding = 0;
+                for (int c = 0; c < n; ++c) {
+                    EXPECT_LE(out[c], available[c] * (1 + 1e-12) + 1e-18) << cap << " cell " << c;
+                    binding += out[c] > .5 * available[c];
+                }
+                EXPECT_GT(binding, 0); // the caps really bind somewhere
+            }
+            finish(r);
         }
-        finish(r);
-    }
 }
 
 TEST(GwParallelSweep, RatioFaceCapsAreBitIdenticalAcrossThreadCounts) {
