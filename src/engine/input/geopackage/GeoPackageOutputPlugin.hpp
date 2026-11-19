@@ -63,7 +63,7 @@ public:
      * copying.
      *
      * @param[in] init_args Borrowed arguments: [0] required database path, [1] optional simulation ID
-     *     (default run_1). Extra arguments are ignored.
+     *     (default: the engine's run ID for this execution). Extra arguments are ignored.
      * @param[in] info Unused borrowed metadata pointer; NULL is accepted.
      * @return Zero after configuration; -1 with diagnostic when no database-path argument exists.
      */

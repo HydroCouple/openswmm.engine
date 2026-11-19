@@ -178,3 +178,49 @@ TEST(GeoPackageRunLifecycle, SingleContainerRunWithASaveRowCompletes) {
     EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM hotstart_slots WHERE direction='SAVE'"), 1);
     EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM simulations"), 1);
 }
+
+// Each execution is its own run. A second run to the same file appended its
+// results under the first run's ID, duplicating every key.
+TEST(GeoPackageRunLifecycle, RepeatedRunsGetTheirOwnRunIds) {
+    const fs::path dir = caseDir("repeated_runs");
+    const fs::path gpkg = dir / "results.gpkg";
+    const fs::path inp = writeModel(dir,
+                                    "IO_OUTPUT_WRITER " + std::string(kGeoPackagePlugin) +
+                                        "\nIO_OUTPUT_PATH " + gpkg.string(),
+                                    "");
+    std::string why;
+    ASSERT_EQ(runModel(inp, &why), SWMM_OK) << why;
+    ASSERT_EQ(runModel(inp, &why), SWMM_OK) << why;
+
+    EXPECT_EQ(scalar(gpkg, "SELECT count(DISTINCT simulation_id) FROM result_timeseries"), 2);
+    EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM (SELECT 1 FROM result_timeseries GROUP BY "
+                           "simulation_id, object_type, object_id, variable_id, elapsed_time "
+                           "HAVING count(*) > 1)"),
+              0);
+    EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM simulations WHERE status='completed' AND "
+                           "simulation_id LIKE 'run_%'"),
+              2);
+    SWMM_Gpkg db = swmm_gpkg_open(gpkg.string().c_str());
+    ASSERT_NE(db, nullptr);
+    EXPECT_EQ(swmm_gpkg_simulation_count(db), 2);
+    swmm_gpkg_close(db);
+}
+
+// A run records when it finished, and a new file refuses a duplicated result key.
+TEST(GeoPackageRunLifecycle, RunRecordsProvenanceAndUniqueResultKeys) {
+    const fs::path dir = caseDir("provenance");
+    const fs::path gpkg = dir / "results.gpkg";
+    const fs::path inp = writeModel(dir,
+                                    "IO_OUTPUT_WRITER " + std::string(kGeoPackagePlugin) +
+                                        "\nIO_OUTPUT_PATH " + gpkg.string(),
+                                    "");
+    std::string why;
+    ASSERT_EQ(runModel(inp, &why), SWMM_OK) << why;
+
+    EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM simulations WHERE finished_at IS NOT NULL AND "
+                           "engine_version <> '' AND parent_run_id IS NULL"),
+              1);
+    EXPECT_EQ(scalar(gpkg, "SELECT count(*) FROM pragma_index_list('result_timeseries') "
+                           "WHERE \"unique\" = 1"),
+              1);
+}

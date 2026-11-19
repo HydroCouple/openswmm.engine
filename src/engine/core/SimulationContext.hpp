@@ -2042,6 +2042,14 @@ struct SimulationContext {
      */
     std::string inp_file_path;
 
+    /**
+     * @brief Identifier of this execution, set by SWMMEngine::open() (see newRunId()).
+     *
+     * Result, report and restart writers key what they store by it, so two runs into one file
+     * never share rows. Empty for a context that was not opened by an engine.
+     */
+    std::string run_id;
+
     // =========================================================================
     // Context-level operations
     // =========================================================================

@@ -10,6 +10,7 @@
 
 #include "GeoPackageOutputPlugin.hpp"
 #include "GeoPackageSchema.hpp"
+#include "core/RunId.hpp"
 #include "GeoPackageWriter.hpp"
 
 #include "core/SimulationContext.hpp"
@@ -141,7 +142,7 @@ int GeoPackageOutputPlugin::initialize(const std::vector<std::string>& init_args
         return -1;
     }
     db_path_ = init_args[0];
-    simulation_id_ = init_args.size() > 1 ? init_args[1] : "run_1";
+    simulation_id_ = init_args.size() > 1 ? init_args[1] : "";
     state_ = PluginState::INITIALIZED;
     return 0;
 }
@@ -153,6 +154,9 @@ int GeoPackageOutputPlugin::validate(const SimulationContext& /*ctx*/) {
 
 int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
     try {
+        // Every execution is its own run unless the caller named one.
+        if (simulation_id_.empty())
+            simulation_id_ = ctx.run_id.empty() ? newRunId() : ctx.run_id;
         db_ = open_database(db_path_);
         create_schema(db_.get());
 
@@ -477,9 +481,11 @@ int GeoPackageOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
 
         // Update simulation status
         auto stmt = gpkg::prepare(
-            db_.get(), "UPDATE simulations SET status = 'completed' WHERE simulation_id = ?");
+            db_.get(),
+            "UPDATE simulations SET status = 'completed', "
+            "finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, simulation_id_);
-        sqlite3_step(stmt.get());
+        checked_model_step(db_.get(), stmt.get());
 
         insert_stmt_.reset();
         db_.reset();
@@ -503,7 +509,7 @@ void GeoPackageOutputPlugin::flush_buffer() {
         bind_int(insert_stmt_.get(), 4, row.variable_id);
         bind_double(insert_stmt_.get(), 5, row.elapsed_time);
         bind_double(insert_stmt_.get(), 6, row.value);
-        sqlite3_step(insert_stmt_.get());
+        checked_model_step(db_.get(), insert_stmt_.get());
     }
     txn.commit();
     buffer_.clear();

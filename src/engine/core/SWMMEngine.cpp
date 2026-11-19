@@ -27,6 +27,7 @@
  */
 
 #include "SWMMEngine.hpp"
+#include "RunId.hpp"
 #include "../quality/PeerPassiveStorageExchange.hpp"
 #include "../transport/InitialQualitySeeds.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
@@ -341,6 +342,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     live_passive_exchange_.reset();
 #endif
     ctx_.reset();
+    ctx_.run_id = newRunId();
     metadata_only_ = metadata_only;
 #ifdef OPENSWMM_HAS_2D
     // Router-owned mesh/options/rows outlive ctx_.reset(). Replace the whole

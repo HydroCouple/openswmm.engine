@@ -10,6 +10,7 @@
 
 #include "GeoPackageReportPlugin.hpp"
 #include "GeoPackageSchema.hpp"
+#include "core/RunId.hpp"
 #include "GeoPackageWriter.hpp"
 #include <version.h>
 
@@ -27,7 +28,7 @@ int GeoPackageReportPlugin::initialize(const std::vector<std::string>& init_args
         return -1;
     }
     db_path_ = init_args[0];
-    simulation_id_ = init_args.size() > 1 ? init_args[1] : "run_1";
+    simulation_id_ = init_args.size() > 1 ? init_args[1] : "";
     state_ = PluginState::INITIALIZED;
     return 0;
 }
@@ -39,6 +40,9 @@ int GeoPackageReportPlugin::validate(const SimulationContext& /*ctx*/) {
 
 int GeoPackageReportPlugin::prepare(const SimulationContext& ctx) {
     try {
+        // The results writer of the same execution uses the same run ID.
+        if (simulation_id_.empty())
+            simulation_id_ = ctx.run_id.empty() ? newRunId() : ctx.run_id;
         db_ = open_database(db_path_);
         auto schema = gpkg::prepare(
             db_.get(), "SELECT 1 FROM sqlite_master WHERE type='table' AND name='variables'");
@@ -158,7 +162,8 @@ int GeoPackageReportPlugin::write_summary(const SimulationContext& ctx) {
         auto upd =
             gpkg::prepare(db_.get(), "UPDATE simulations SET "
                                      "continuity_error_runoff = ?, continuity_error_flow = ?, "
-                                     "continuity_error_quality = ?, status = 'completed' "
+                                     "continuity_error_quality = ?, status = 'completed', "
+                                     "finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') "
                                      "WHERE simulation_id = ?");
         bind_double(upd.get(), 1, ctx.mass_balance.runoff_error());
         bind_double(upd.get(), 2, ctx.mass_balance.routing_error());
