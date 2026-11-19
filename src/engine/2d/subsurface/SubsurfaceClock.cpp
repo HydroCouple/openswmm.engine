@@ -379,15 +379,11 @@ double SubsurfaceSolver::clockAccuracyLimit(int i) const {
     const auto p = paramsOf(i);
     const auto closure = static_cast<GwClosure>(state_.closure[i]);
     const double length = std::max(0., zs - state_.hg[i]);
-    double bottom = state_.theta_r[i];
-    const double yield = specificYield(i, p, state_.theta_s[i], length, closure, &bottom);
+    const double yield = specificYield(i, p, state_.theta_s[i], length, closure, nullptr);
     double recharge = 0;
     if (length > 0 && closure == GwClosure::SIGMA)
-        recharge = soil::conductivity(
-            p, soil::suctionAtSaturation(
-                   p, std::clamp((bottom - state_.theta_r[i]) /
-                                     std::max(state_.theta_s[i] - state_.theta_r[i], 1e-12),
-                                 1e-6, 1.)));
+        recharge = sigma::tableFlux(p, &state_.theta_sigma[i], state_.m_layers, state_.n_cells,
+                                    length, options_.capillary_diff);
     else if (length > 0 && closure == GwClosure::CLOSED_FORM)
         recharge = rawRecharge(i, p, length);
     if (recharge > 0)

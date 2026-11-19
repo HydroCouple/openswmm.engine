@@ -627,6 +627,52 @@ TEST(SoilRetention, SuctionInvertsEffectiveSaturationDownToAMillimetre) {
             }
 }
 
+TEST(SigmaTableFlux, HydrostaticProfileHasNoFluxAcrossTheTable) {
+    // With capillary diffusion, Darcy from the bottom layer centre to psi = 0 at the table
+    // vanishes on the seeded profile, a Brooks-Corey bottom layer inside the capillary fringe
+    // included; the unit-gradient K(psi_bot) used before 2026-11-19 drained it. The kinematic
+    // column (no capillary diffusion) keeps free drainage.
+    for (auto law : laws)
+        for (int m : {2, 8, 32})
+            for (double L : {.5, 2., 6.}) {
+                soil::Params p;
+                p.law = law;
+                SCOPED_TRACE(std::to_string(int(law)) + "/" + std::to_string(m) + "/" +
+                             std::to_string(L));
+                std::vector<double> theta(3 * m, -1.);
+                sigma::seedHydrostatic(p, theta.data(), m, 3, L);
+                EXPECT_LE(std::abs(sigma::tableFlux(p, theta.data(), m, 3, L, true)), 1e-9 * p.Ks);
+                const double se = (theta[3 * (m - 1)] - p.theta_r) / (p.theta_s - p.theta_r);
+                EXPECT_EQ(sigma::tableFlux(p, theta.data(), m, 3, L, false),
+                          soil::conductivity(p, soil::suctionAtSaturation(p, se)));
+            }
+}
+
+TEST(SigmaTableFlux, StepBoundKeepsTheTableFaceFromOvershooting) {
+    // The table face lies half a layer below the bottom layer's centre, so its coupling to that
+    // layer, 2D/dz^2, is twice an interior face's. The column bound counts it (3D/dz for the
+    // bottom layer): at the bound one explicit step closes at most 2/3 of the bottom layer's
+    // distance to rest. Counted like an interior face (2D/dz) the step closed 0.98 of it, and a
+    // column the clock let run at its bound oscillated about rest.
+    for (auto law : {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::VAN_GENUCHTEN}) {
+        SCOPED_TRACE(int(law));
+        soil::Params p;
+        p.law = law;
+        const int m = 32;
+        const double L = .5, dz = L / m, d = 1e-7;
+        std::vector<double> theta(m);
+        sigma::seedHydrostatic(p, theta.data(), m, 1, L);
+        const auto flux = [&](double bottom) {
+            auto t = theta;
+            t[m - 1] = bottom;
+            return sigma::tableFlux(p, t.data(), m, 1, L, true);
+        };
+        const double rate = (flux(theta[m - 1] + d) - flux(theta[m - 1] - d)) / (2 * d * dz);
+        EXPECT_GT(rate, 0.);
+        EXPECT_LE(rate * sigma::columnDtLimit(p, theta.data(), m, 1, L, 0., 1., true), .7);
+    }
+}
+
 TEST(SigmaLayerTransport, ReusedWorkspaceRetainsFreshPartialOutputsAfterRefusal) {
     LayerTransportScratch scratch;
     const auto same = [](const LayerTransportResult& a, const LayerTransportResult& b) {

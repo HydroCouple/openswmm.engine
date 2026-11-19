@@ -122,13 +122,33 @@ double columnDtLimit(const soil::Params& p, const double* theta, int m, int stri
         double diff = 0.0;
         if (capillary) {
             const double psi = soil::suctionAtSaturation(p, se);
-            diff = 2.0 * soil::diffusivity(p, psi) / std::max(dz, 1.0e-12);
+            // Two faces a layer apart; the bottom layer's second face is the table, half a
+            // layer away (tableFlux), which doubles its share.
+            diff = (j == m - 1 ? 3.0 : 2.0) * soil::diffusivity(p, psi) / std::max(dz, 1.0e-12);
         }
         const double denom = c + grid + diff;
         if (denom > kTiny)
             lim = std::min(lim, dz / denom);
     }
     return std::max(c_col, 1.0e-6) * lim;
+}
+
+double tableFlux(const soil::Params& p, const double* theta, int m, int stride, double L,
+                 bool capillary) noexcept {
+    const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
+    const double th_bot = std::clamp(at(theta, m - 1, stride), p.theta_r, p.theta_s);
+    // The 1e-6 floor is the one the free-drainage flux has always used.
+    double psi = soil::suctionAtSaturation(p, std::clamp((th_bot - p.theta_r) / span, 1.0e-6, 1.0));
+    const double k = soil::conductivity(p, psi);
+    if (!capillary)
+        return k; // kinematic column: free drainage
+    // Darcy over the half layer from the bottom layer centre to psi = 0 at the table.
+    const double half = std::max(0.5 * std::max(L, 0.0) / static_cast<double>(m), 1.0e-12);
+    // A saturated Brooks-Corey layer may hold any suction up to air entry; take the one nearest
+    // rest, so a capillary fringe seeded hydrostatic stays put.
+    if (p.law == SoilChar::BROOKS_COREY && psi < p.psi_b)
+        psi = std::min(p.psi_b, half);
+    return k * (1.0 - psi / half);
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +176,9 @@ void prepareColumn(const soil::Params& p, const double* theta, int m, int stride
         prepared.conductivity[j] = soil::conductivity(p, prepared.psi[j]);
         prepared.diffusivity[j] = st.capillary ? soil::diffusivity(p, prepared.psi[j]) : 0.0;
         prepared.diffusion_bound[j] =
-            st.capillary ? 2.0 * prepared.diffusivity[j] / std::max(dz, 1.0e-12) : 0.0;
+            st.capillary
+                ? (j == m - 1 ? 3.0 : 2.0) * prepared.diffusivity[j] / std::max(dz, 1.0e-12)
+                : 0.0;
     }
     prepared.fixed_velocity = st.forward_euler;
     if (prepared.fixed_velocity) {

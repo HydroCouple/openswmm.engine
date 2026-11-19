@@ -278,9 +278,21 @@ At the top, the first layer's headroom caps the infiltration accepted and the
 remainder is **rejected** to the surface (§9.7); the ET taken is the demand
 reduced by (9-6) at the top layer's own suction (wilting suction at 1 %
 effective saturation) and limited to what the layer holds above residual. At
-the bottom, \f$q_{0,phys}\f$ is the bottom layer's gravity drainage
-\f$K(\psi(\theta_{m-1}))\f$ and the second term is the **handover** swept
-across the moving boundary. Both together are what the saturated zone gains,
+the bottom, under `CAPILLARY_DIFF YES` the column is a diffusion problem and
+the table a \f$\psi = 0\f$ boundary: \f$q_{0,phys}\f$ is Darcy flow from the
+bottom layer's centre, half a layer above the table,
+\f$q_{0,phys} = K(\psi_{m-1})\,\bigl(1 - 2\psi_{m-1}/(L\Delta\sigma)\bigr)\f$,
+which is zero on a hydrostatic column (before 2026-11-19 it was the
+unit-gradient \f$K(\psi_{m-1})\f$, which drained a column seeded at rest). Its
+coupling to the bottom layer, \f$2D/(L\Delta\sigma)^2\f$, is added to that
+layer's capillary term in (9-18), \f$3\bar D/(L\Delta\sigma)\f$ instead of
+\f$2\bar D/(L\Delta\sigma)\f$. Without capillary diffusion the
+column is kinematic: gravity carries information downward only and the
+consistent outflow is free drainage, \f$q_{0,phys} = K(\psi_{m-1})\f$. A
+\f$\psi = 0\f$ condition there piles water onto the bottom layer until its
+specific yield vanishes, and the table oscillates at any step; the kinematic
+column therefore cannot hold a hydrostatic profile. The second term of
+\f$F_{bot}\f$ is the **handover** swept across the moving boundary. Both together are what the saturated zone gains,
 which is why (9-10) books \f$q_{0,phys}\f$ with
 \f$S_y = \theta_s - \theta_{m-1}\f$ rather than \f$F_{bot}\f$ with
 \f$\theta_s\f$: the same equation, but only the first conserves once the

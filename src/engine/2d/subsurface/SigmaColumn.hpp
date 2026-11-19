@@ -182,7 +182,8 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride, Colu
 
 /**
  * @brief The explicit stability bound of a column, without advancing it (§2.3): `Δt_u ≤
- * C_col·min_j[ L·Δσ / ( c(θ_j) + |σ_j·L̇| + 2·D̄_j/(L·Δσ) ) ]` with celerity `c(θ) = dK/dθ`.
+ * C_col·min_j[ L·Δσ / ( c(θ_j) + |σ_j·L̇| + 2·D̄_j/(L·Δσ) ) ]` with celerity `c(θ) = dK/dθ`;
+ * the bottom layer takes 3·D̄ (its second face is the table, half a layer away).
  *
  * @param[in] p Borrowed validated SI soil-law parameters.
  * @param[in] theta Required strided layer water-content array, dimensionless; at least
@@ -200,6 +201,29 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride, Colu
  */
 double columnDtLimit(const soil::Params& p, const double* theta, int m, int stride, double L,
                      double Ldot, double c_col, bool capillary) noexcept;
+
+/**
+ * @brief Physical flux across the water table, `q₀_phys` (m/s, positive down).
+ *
+ * With capillary diffusion the column is a diffusion problem and the table a `ψ = 0` boundary:
+ * Darcy from the bottom layer centre, half a layer above it, `q = K(ψ_bot)·(1 − ψ_bot/(Δz/2))`,
+ * zero on a hydrostatic profile. Its coupling to the bottom layer, `2D/Δz²`, is the one the
+ * column's capillary step bound already holds. Without it the column is kinematic (gravity
+ * only): information runs downward and the consistent outflow is free drainage `K(ψ_bot)`; a
+ * `ψ = 0` condition there piles water onto the bottom layer until the specific yield vanishes
+ * and the table oscillates.
+ *
+ * @param[in] p Borrowed validated SI soil-law parameters.
+ * @param[in] theta Required strided layer water contents, layer 0 at the ground; at least
+ * 1+(m-1)*stride readable doubles.
+ * @param[in] m Strictly positive layer count.
+ * @param[in] stride Strictly positive distance in doubles between layers.
+ * @param[in] L Column thickness, m.
+ * @param[in] capillary Whether the column carries capillary diffusion (`CAPILLARY_DIFF`).
+ * @return Flux in m/s, before the caller's availability caps. No allocation or stored state.
+ */
+double tableFlux(const soil::Params& p, const double* theta, int m, int stride, double L,
+                 bool capillary) noexcept;
 
 /**
  * @brief Seed a column to hydrostatic equilibrium above a table at depth `L`.

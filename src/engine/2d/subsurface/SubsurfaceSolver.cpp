@@ -2855,14 +2855,14 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     double Sy = specificYield(u, p, ts, L0, cl, &theta_bot);
 
     if (cl == GwClosure::SIGMA && L0 > 0.0) {
-        // The physical Darcy flux across the table is the bottom layer's
-        // gravity drainage. It is passed INTO the sweep as `q0_phys` and
-        // comes back inside `f_bot` together with the handover, which is why
-        // the saturated update above books `q0` and not `f_bot`.
-        q0 = soil::conductivity(
-            p, soil::suctionAtSaturation(p, std::clamp((theta_bot - state_.theta_r[u]) /
-                                                           std::max(ts - state_.theta_r[u], kTiny),
-                                                       1.0e-6, 1.0)));
+        // The physical Darcy flux across the table (sigma::tableFlux): with
+        // capillary diffusion, from the bottom layer centre to psi = 0 at the
+        // table, zero on a hydrostatic column; the kinematic column keeps
+        // free drainage. It is passed INTO the sweep as `q0_phys` and comes
+        // back inside `f_bot` together with the handover, which is why the
+        // saturated update above books `q0` and not `f_bot`.
+        q0 = sigma::tableFlux(p, &state_.theta_sigma[u], state_.m_layers, n, L0,
+                              options_.capillary_diff);
     } else if (cl == GwClosure::ENSLAVED) {
         q0 = q_in - q_et;
     } else if (L0 > 0.0) {
