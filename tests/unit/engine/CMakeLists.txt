@@ -856,6 +856,15 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     endforeach()
 endif()
 
+# Compute-backend queries (swmm_backend_info, swmm_fv_device_supported): what a
+# client asks before offering a backend. With the OpenMP plugin built here the
+# test also requires that plugin to be found for both solvers.
+add_gtest_unit(test_engine_backend_info test_backend_info.cpp)
+if(OPENSWMM_BUILD_GPU_PLUGIN AND OPENSWMM_GPU_BACKEND STREQUAL "omp" AND TARGET openswmm_gpu_omp)
+    target_compile_definitions(test_engine_backend_info PRIVATE OPENSWMM_TEST_HAVE_OMP_PLUGIN)
+    add_dependencies(test_engine_backend_info openswmm_gpu_omp)
+endif()
+
 # 1D finite volume device backend (hydraulics/fv/gpu): the plugin's substep
 # loop must reproduce the CPU solver bit for bit on the configuration it
 # integrates, at one thread and at several, and must name what it does not

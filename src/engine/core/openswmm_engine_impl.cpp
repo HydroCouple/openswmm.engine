@@ -28,9 +28,13 @@
 
 #include "openswmm_api_common.hpp"
 #include "ThreadInfo.hpp"
+#include "../hydraulics/fv/ExplicitFvSolver.hpp"
+#include "../hydraulics/fv/NetworkSolverFactory.hpp"
 #include "../transport/TransportPolicy.hpp" // E2: swmm_get_transport_matrix
 
 #include <cstring>
+#include <exception>
+#include <string>
 
 extern "C" {
 
@@ -380,6 +384,70 @@ SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_o
             *twod_threads = ti::twoDThreads(threads_option, n_tri, nullptr);
 #endif
     }
+    return SWMM_OK;
+}
+
+// ============================================================================
+// Compute backend queries
+// ============================================================================
+
+namespace {
+/// Copy text into a fixed C buffer, always terminated.
+void copy_text(char* dst, std::size_t cap, const std::string& src) {
+    if (!dst || cap == 0)
+        return;
+    const std::size_t n = src.size() < cap - 1 ? src.size() : cap - 1;
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+} // namespace
+
+SWMM_ENGINE_API int swmm_backend_info(int solver, const char* backend, SWMM_BackendInfo* out) {
+    if (!backend || !out)
+        return SWMM_ERR_BADPARAM;
+    if (solver != SWMM_BACKEND_SOLVER_FV_NETWORK && solver != SWMM_BACKEND_SOLVER_2D_SURFACE)
+        return SWMM_ERR_BADPARAM;
+    std::memset(out, 0, sizeof(*out));
+    openswmm::fv::BackendProbe probe;
+    try {
+        probe = openswmm::fv::probeBackend(backend, solver == SWMM_BACKEND_SOLVER_2D_SURFACE);
+    } catch (const std::exception& e) {
+        probe.usable = false;
+        probe.reason = e.what();
+    }
+#ifndef OPENSWMM_HAS_2D
+    if (solver == SWMM_BACKEND_SOLVER_2D_SURFACE) {
+        probe = {};
+        probe.reason = "this engine was built without the 2D module";
+    }
+#endif
+    out->usable = probe.usable ? 1 : 0;
+    out->device_mem_bytes = probe.device_mem_bytes;
+    copy_text(out->device_name, sizeof(out->device_name), probe.device_name);
+    copy_text(out->reason, sizeof(out->reason), probe.reason);
+    return SWMM_OK;
+}
+
+SWMM_ENGINE_API int swmm_fv_device_supported(SWMM_Engine engine, int* supported, char* why,
+                                             int buflen) {
+    if (!engine)
+        return SWMM_ERR_BADHANDLE;
+    if (!supported)
+        return SWMM_ERR_BADPARAM;
+    const auto& ctx = to_engine(engine)->context();
+    std::string reason;
+    bool ok = openswmm::fv::ExplicitFvSolver::deviceSupports(ctx.options.fv, 0, &reason);
+    // Quality rides on the routed water either as advected species or through
+    // the accepted-water ledger; the device loop carries neither.
+    if (ok && !ctx.options.ignore_quality &&
+        (ctx.n_pollutants() > 0 || ctx.reactions.n_species() > 0 || ctx.options.water_age ||
+         ctx.options.heat_transport)) {
+        ok = false;
+        reason = "water quality, age or heat routing";
+    }
+    *supported = ok ? 1 : 0;
+    if (why && buflen > 0)
+        copy_text(why, static_cast<std::size_t>(buflen), ok ? std::string() : reason);
     return SWMM_OK;
 }
 

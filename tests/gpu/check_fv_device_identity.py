@@ -19,9 +19,11 @@ import shutil
 import subprocess
 import sys
 
-# Report lines that legitimately differ: wall clock, and the active-list and
-# step-owner telemetry only the CPU loop collects.
-VOLATILE = re.compile(r"Analysis begun|Analysis ended|Total elapsed|Active Faces|dt Argmin")
+# Report lines that legitimately differ: wall clock, the name of the backend
+# that ran the substeps, and the active-list and step-owner telemetry only the
+# CPU loop collects.
+VOLATILE = re.compile(
+    r"Analysis begun|Analysis ended|Total elapsed|Active Faces|dt Argmin|^\s*Backend \.\.")
 
 
 def forced_deck(text, forced):
@@ -80,7 +82,7 @@ def main():
     args.output = args.output.resolve()
 
     forced = {"FV_LTS": "NO", "FV_COMPACTION": "NO", "FV_STRUCTURE_COUPLING": "ROUTING_STEP",
-              "THREADS": "1"}
+              "THREADS": str(args.threads)}
     for item in args.option:
         key, value = item.split("=", 1)
         forced[key] = value
@@ -98,7 +100,7 @@ def main():
         cpu_env["OPENSWMM_FV_SETTLE_SNAPSHOT"] = "1"
     logs = {}
     for tag, env, threads in (
-            ("cpu", cpu_env, 1),
+            ("cpu", cpu_env, args.threads),
             ("device", {"OPENSWMM_FV_BACKEND": args.backend,
                         "OPENSWMM_GPU_PLUGIN_PATH": str(args.plugin_dir)}, args.threads)):
         folder = args.output / tag

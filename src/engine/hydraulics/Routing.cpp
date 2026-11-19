@@ -1554,7 +1554,7 @@ void Router::initFv(SimulationContext& ctx) {
         fv_state_.node_head[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
     }
 
-    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc, ctx.options.num_threads);
     if (std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
                     [](double area) { return area > 0.0; }) &&
         !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {

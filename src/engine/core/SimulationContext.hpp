@@ -1847,6 +1847,7 @@ struct SimulationContext {
         double slot_peak_share = 0.0;
         double slot_time_above_s = 0.0;
 
+        std::string fv_backend;       ///< what ran the substeps, e.g. "cuda (RTX 2000 Ada)"
         long fv_nsteps = -1;          ///< explicit substeps over the run
         long fv_nflux = 0;            ///< face flux evaluations
         double fv_avg_h = 0.0;        ///< mean substep (s)

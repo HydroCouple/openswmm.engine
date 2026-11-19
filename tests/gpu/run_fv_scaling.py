@@ -178,9 +178,9 @@ def main():
     cases = [("cpu_global_t1", deck(False, 1), cpu, 1),
              ("cpu_global_tN", deck(False, n), cpu, n),
              ("cpu_lts_tN", deck(True, n), {"OPENSWMM_FV_BACKEND": "cpu"}, n),
-             ("device", deck(False, 1), dev, n)]
+             ("device", deck(False, n), dev, n)]
     if args.fenced:
-        cases.append(("device_fenced", deck(False, 1), dict(dev, OPENSWMM_PERF_FENCE="1"), n))
+        cases.append(("device_fenced", deck(False, n), dict(dev, OPENSWMM_PERF_FENCE="1"), n))
 
     rows = []
     for tag, text, env, threads in cases:

@@ -1229,8 +1229,7 @@ The scalar kernels — closure, reconstruction, Riemann flux, friction,
 Courant bound, positivity scale — are single-source inline functions
 over plain data. The same bodies compile for the CPU solver and,
 annotated with Kokkos function markers, for an accelerated device
-backend selected by `FV_BACKEND` (`AUTO` stays on the CPU below
-`FV_MIN_PARALLEL_CELLS` cells). Geometry closures are fixed-size
+backend selected by `FV_BACKEND` (§8.9.1). Geometry closures are fixed-size
 structures of about 2 kB per distinct cross-section, so they can be
 copied into device memory without owning containers.
 
@@ -1824,14 +1823,62 @@ file.
 | `FV_LTS` | `YES` | Local time stepping (§8.5.6). `NO` forces one global substep size. |
 | `FV_LTS_MAX_TIERS` | 6 | Cap on the tier spread; 6 allows 64×. |
 | `FV_CFL_CENSUS_INTERVAL` | 1 | Substeps between full Courant censuses. 1 recomputes every substep. |
-| `FV_BACKEND` | `AUTO` | `CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` or `SYCL`. |
-| `FV_MIN_PARALLEL_CELLS` | 20000 | Mesh size below which `AUTO` stays on the CPU. |
+| `FV_BACKEND` | `AUTO` | `CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` or `SYCL`. `CPU` and `AUTO` run the built-in solver; the others run the substep loop on a Kokkos plugin (§8.9.1). |
+| `FV_MIN_PARALLEL_CELLS` | 20000 | Reserved. `AUTO` does not select a plugin at any mesh size. |
 
 Three keys without the `FV_` prefix also affect finite-volume runs and
 are shared with the dynamic wave solver: `UNSTEADY_FRICTION` and
 `UF_K3` (§8.5.4), and `REPORT_SIGNED_HEADS` (§8.4.5), which puts the
 true signed piezometric head in the `.out` HEAD field for both solvers
 (default `NO` keeps legacy bit-parity; DEPTH stays floored either way).
+
+### 8.9.1 The device backend {#hydraulics_ref_ch8_device_backend}
+
+`FV_BACKEND OMP`, `CUDA`, `HIP` or `SYCL` moves the substep loop of each
+routing step onto a Kokkos plugin: state and forcing go to the device
+once, every substep runs there, and state and ledgers come back once.
+The solver object, its ledgers and everything outside the loop stay on
+the host. \status{Experimental}
+
+The plugin integrates the global-step path only. With a device backend
+selected the solver therefore runs as if `FV_LTS NO` and
+`FV_COMPACTION NO` were set, and `FV_STRUCTURE_COUPLING SUBSTEP` is
+clamped to `ROUTING_STEP` with a warning: pump, weir, orifice and outlet
+flows and outfall stages are evaluated once per routing step and held
+across its substeps. A model whose structures need the substep cadence
+should stay on the CPU solver.
+
+Outside the plugin's scope are `FV_ORDER 2`, `FV_TIME_INTEGRATION RK2`,
+the TPA pressure closure, unsteady friction, `FV_PRESSURIZED_IMPLICIT`,
+advected species, quality routed on the accepted-water ledger, conduit
+evaporation and seepage, `FV_CFL_CENSUS_INTERVAL` above 1, the node
+feedback bound and the `LINK_STEPS` record. A model that uses one of
+them still runs on the CPU solver, and the engine says which item it
+was: in a report warning for an option, on the console for the rest. The same happens when the plugin is not installed,
+was built for a different engine, or reports no device. The
+`FV Solver Statistics` block of the report names the backend that ran.
+
+On the OpenMP backend the plugin reproduces the CPU solver bit for bit
+(binary output, hot start file and report) at any thread count, against
+the CPU solver run with `FV_LTS NO`, `FV_COMPACTION NO`,
+`FV_STRUCTURE_COUPLING ROUTING_STEP` and the environment variable
+`OPENSWMM_FV_SETTLE_SNAPSHOT=1`. That variable makes the CPU solver test
+a pass-through junction's cells for pressurization on the state the node
+update started from, which is the rule the plugin uses because its node
+update has no node order.
+
+On CUDA (RTX 2000 Ada, 2026-11-18) free-surface networks of 4 000 to
+1 000 000 cells gave output identical to the CPU solver and ran 1.3 to
+3.9 times faster than the CPU solver on eight threads. Surcharged
+networks ran up to 7.8 times faster but did not give identical output:
+the substep sequence departs from the CPU's, by about as much as local
+time stepping departs from global stepping. Whether that is rounding in
+the step control or a defect in the surcharged path on the device has
+not been separated, which is why the backend is marked experimental.
+
+`swmm_backend_info` reports whether a backend can be used on the machine
+and `swmm_fv_device_supported` whether a model's options are in scope,
+so a client can say both before a run.
 
 ## 8.10 Choosing between dynamic wave and finite volume
 

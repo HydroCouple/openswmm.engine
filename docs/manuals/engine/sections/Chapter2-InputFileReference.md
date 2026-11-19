@@ -215,8 +215,8 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_LTS_MAX_TIERS | number | 6 | Cap on the local-time-stepping tier spread; 6 allows a 64-fold spread, and the hard ceiling is 8. Hydraulics §8.5.6. |
 | FV_NODE_FEEDBACK_DT | YES / NO / FALSE / 0 / OFF | NO | Bounds the explicit step by the algebraic-junction feedback limit at pressurised junctions; removes oscillation at 10 to 14 times the wall cost. Hydraulics §8.6.1. |
 | FV_CFL_CENSUS_INTERVAL | number | 1 | Substeps between full Courant censuses; 1 recomputes every substep. Hydraulics §8.5.5. |
-| FV_BACKEND | CPU / AUTO / OMP / CUDA / HIP / SYCL | AUTO | Kernel backend; AUTO tries plugins above FV_MIN_PARALLEL_CELLS and otherwise stays on the CPU. |
-| FV_MIN_PARALLEL_CELLS | number | 20000 | Cell count below which FV_BACKEND AUTO stays on the CPU. |
+| FV_BACKEND | CPU / AUTO / OMP / CUDA / HIP / SYCL | AUTO | Where the substep loop runs. CPU and AUTO use the built-in solver. OMP, CUDA, HIP and SYCL name a Kokkos plugin: the loop then steps globally with every cell active and holds structure and boundary flows over the routing step, whatever FV_LTS, FV_COMPACTION and FV_STRUCTURE_COUPLING say. A model outside the plugin's scope, or a plugin or device that is absent, runs on the CPU solver with a notice. The OPENSWMM_FV_BACKEND environment variable overrides the key. Hydraulics §8.9.1. |
+| FV_MIN_PARALLEL_CELLS | number | 20000 | Reserved. Read and written, but AUTO does not select a plugin at any size. |
 
 #### Water quality and transport
 

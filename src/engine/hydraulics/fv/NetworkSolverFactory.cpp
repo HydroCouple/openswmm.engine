@@ -22,11 +22,13 @@
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
 #include "../../2d/solver/GpuPluginAbi.h"
+#include "../../core/ThreadInfo.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -213,22 +215,36 @@ void* load_cached(const std::string& path) {
 using ProbeFn = int (*)(OpenSwmmGpuProbe*);
 using MakeFn = void* (*)(const OpenSwmmGpuProbe*);
 using DestroyFn = void (*)(void*);
+using ContractFn = const char* (*)();
+
+/// One usable plugin module for a backend, or why there is none.
+struct Located {
+    void* handle = nullptr;
+    OpenSwmmGpuProbe info{};
+    std::string reason; ///< set when handle is null
+};
 
 /**
- * @brief Probe candidate modules and create the first usable network substep marcher.
+ * @brief Find the first plugin module that can serve a backend, without creating a solver.
  *
- * Requires openswmm_gpu_probe, openswmm_make_gpu_network_marcher and
- * openswmm_destroy_gpu_network_marcher. A zero probe status, matching ABI and positive device
- * count are required. Module handles remain cached for the process lifetime, so the returned
- * deleter stays valid. This function does not catch allocation, filesystem-conversion or label
- * exceptions.
+ * Applies, in order: the module exists and loads; it was built from this engine's headers and
+ * toolchain (the build contract); it exports the probe and the factory symbols the solver needs;
+ * its ABI version and vendor match; its probe reports a usable device. Module handles stay cached
+ * for the process lifetime. The reason of the candidate that got furthest is kept, so a plugin
+ * that is present but unusable is not reported as missing.
  *
- * @param[in] backend Recognized backend suffix used for filenames and the selection label.
- * @param[out] label Optional; receives "<backend> (<device name>)" on success.
- * @return Shared marcher released through its plugin, or null if every candidate fails the
- *     existence/load/export/ABI/device/factory checks.
+ * @param[in] backend "omp", "cuda", "hip" or "sycl".
+ * @param[in] surface True to require the 2D surface solver factory, false for the 1D network
+ *     marcher factory.
+ * @return The module handle and its probe record, or a null handle and the reason.
  */
-std::shared_ptr<IFvDeviceMarcher> try_plugin(const std::string& backend, std::string* label) {
+Located locate_plugin(const std::string& backend, bool surface) {
+    Located out;
+    out.reason = "the " + backend + " plugin is not installed";
+    const int expected_vendor = backend == "omp"    ? OPENSWMM_GPU_VENDOR_OPENMP
+                                : backend == "cuda" ? OPENSWMM_GPU_VENDOR_CUDA
+                                : backend == "hip"  ? OPENSWMM_GPU_VENDOR_HIP
+                                                    : OPENSWMM_GPU_VENDOR_SYCL;
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -237,32 +253,98 @@ std::shared_ptr<IFvDeviceMarcher> try_plugin(const std::string& backend, std::st
                 continue;
 
             void* h = load_cached(path.string());
-            if (!h)
+            if (!h) {
+                out.reason = "the " + backend + " plugin could not be loaded (" + path.string() +
+                             "); a library it depends on may be missing";
                 continue;
+            }
+            bool same_build = false;
+#ifdef OPENSWMM_GPU_BUILD_CONTRACT
+            if (auto contract =
+                    reinterpret_cast<ContractFn>(platform_sym(h, "openswmm_gpu_build_contract"))) {
+                const char* id = contract();
+                same_build = id && std::strncmp(id, OPENSWMM_GPU_BUILD_CONTRACT,
+                                                sizeof(OPENSWMM_GPU_BUILD_CONTRACT)) == 0;
+            }
+#endif
+            if (!same_build) {
+                out.reason = "the " + backend + " plugin was built for a different engine (" +
+                             path.string() + ")";
+                continue;
+            }
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
-            auto make =
-                reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_network_marcher"));
-            auto destroy = reinterpret_cast<DestroyFn>(
-                platform_sym(h, "openswmm_destroy_gpu_network_marcher"));
-            if (!probe || !make || !destroy)
+            const bool factories = surface
+                                       ? (platform_sym(h, "openswmm_make_gpu_explicit_solver") &&
+                                          platform_sym(h, "openswmm_destroy_gpu_explicit_solver"))
+                                       : (platform_sym(h, "openswmm_make_gpu_network_marcher") &&
+                                          platform_sym(h, "openswmm_destroy_gpu_network_marcher"));
+            if (!probe || !factories) {
+                out.reason = "the " + backend + " plugin does not provide this solver";
                 continue;
+            }
             OpenSwmmGpuProbe info{};
             const int rc = probe(&info);
-            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION)
+            if (info.abi_version != OPENSWMM_GPU_ABI_VERSION ||
+                !std::memchr(info.device_name, '\0', sizeof(info.device_name)) ||
+                info.vendor != expected_vendor) {
+                out.reason = "the " + backend + " plugin was built for a different engine (" +
+                             path.string() + ")";
                 continue;
-            if (rc != 0 || info.device_count <= 0)
+            }
+            if (rc != 0 || info.device_count <= 0) {
+                out.reason = info.device_name[0]
+                                 ? "no usable device: " + std::string(info.device_name)
+                                 : "no usable device";
                 continue;
-            void* raw = make(&info);
-            if (!raw)
-                continue;
-            if (label)
-                *label = backend + " (" + info.device_name + ")";
-            return std::shared_ptr<IFvDeviceMarcher>(
-                static_cast<IFvDeviceMarcher*>(raw),
-                [destroy](IFvDeviceMarcher* m) { destroy(static_cast<void*>(m)); });
+            }
+            out.handle = h;
+            out.info = info;
+            out.reason.clear();
+            return out;
         }
     }
-    return nullptr;
+    return out;
+}
+
+/**
+ * @brief Create the network substep marcher of the first usable plugin for a backend.
+ *
+ * A host (OpenMP) plugin is told the thread count to initialize with; an automatic request on a
+ * machine with performance cores uses those, as the 2D factory does. Module handles remain cached
+ * for the process lifetime, so the returned deleter stays valid.
+ *
+ * @param[in] backend Recognized backend suffix used for filenames and the selection label.
+ * @param[in] requested_threads Raw [OPTIONS] THREADS (0 = automatic).
+ * @param[out] label Optional; receives "<backend> (<device name>)" on success.
+ * @param[out] reason Optional; receives why no marcher was created.
+ * @return Shared marcher released through its plugin, or null.
+ */
+std::shared_ptr<IFvDeviceMarcher> try_plugin(const std::string& backend, int requested_threads,
+                                             std::string* label, std::string* reason) {
+    Located found = locate_plugin(backend, false);
+    if (!found.handle) {
+        if (reason)
+            *reason = found.reason;
+        return nullptr;
+    }
+    auto make =
+        reinterpret_cast<MakeFn>(platform_sym(found.handle, "openswmm_make_gpu_network_marcher"));
+    auto destroy = reinterpret_cast<DestroyFn>(
+        platform_sym(found.handle, "openswmm_destroy_gpu_network_marcher"));
+    if (found.info.vendor == OPENSWMM_GPU_VENDOR_OPENMP)
+        found.info.requested_threads =
+            requested_threads > 0 ? requested_threads : threadinfo::perfCores();
+    void* raw = make(&found.info);
+    if (!raw) {
+        if (reason)
+            *reason = "the " + backend + " plugin could not create the solver";
+        return nullptr;
+    }
+    if (label)
+        *label = backend + " (" + found.info.device_name + ")";
+    return std::shared_ptr<IFvDeviceMarcher>(
+        static_cast<IFvDeviceMarcher*>(raw),
+        [destroy](IFvDeviceMarcher* m) { destroy(static_cast<void*>(m)); });
 }
 
 /**
@@ -291,8 +373,30 @@ const char* backend_name(Backend b) {
 
 } // namespace
 
+BackendProbe probeBackend(const std::string& backend_in, bool surface) {
+    const std::string backend = lower(backend_in);
+    BackendProbe out;
+    if (backend == "cpu" || backend == "auto") {
+        out.usable = true;
+        out.device_name = "CPU";
+        return out;
+    }
+    if (backend != "omp" && backend != "cuda" && backend != "hip" && backend != "sycl") {
+        out.reason = "'" + backend_in + "' is not a backend name";
+        return out;
+    }
+    const Located found = locate_plugin(backend, surface);
+    out.usable = found.handle != nullptr;
+    out.reason = found.reason;
+    if (out.usable) {
+        out.device_name = found.info.device_name;
+        out.device_mem_bytes = found.info.device_mem_bytes;
+    }
+    return out;
+}
+
 std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts, std::string* chosen,
-                                                  int n_cells) {
+                                                  int n_cells, int requested_threads) {
     (void)n_cells;
     auto solver = std::make_unique<ExplicitFvSolver>();
     if (chosen)
@@ -310,17 +414,17 @@ std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts, std::st
     if (mode != "omp" && mode != "cuda" && mode != "hip" && mode != "sycl")
         return solver;
 
-    std::string label;
-    if (auto marcher = try_plugin(mode, &label)) {
+    std::string label, reason;
+    if (auto marcher = try_plugin(mode, requested_threads, &label, &reason)) {
         solver->attachDeviceMarcher(std::move(marcher));
         if (chosen)
             *chosen = label + ", device substeps";
         std::fprintf(stderr, "[openswmm FV] using device backend: %s\n", label.c_str());
     } else {
         std::fprintf(stderr,
-                     "[openswmm FV] backend '%s' requested but no usable plugin was found; "
-                     "using the CPU solver\n",
-                     mode.c_str());
+                     "[openswmm FV] backend '%s' requested but no usable plugin was found "
+                     "(%s); using the CPU solver\n",
+                     mode.c_str(), reason.c_str());
     }
     return solver;
 }

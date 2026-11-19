@@ -9441,6 +9441,7 @@ int SWMMEngine::end() noexcept {
     if (const auto* fv = router_.fvSolver(); fv != nullptr && fv->run_stats().nsteps > 0) {
         const auto s = fv->run_stats();
         auto& rs = ctx_.routing_stats;
+        rs.fv_backend = router_.fvBackend();
         rs.fv_nsteps = s.nsteps;
         rs.fv_nflux = s.nflux;
         rs.fv_avg_h = s.avg_h;

@@ -114,28 +114,28 @@ for structures, with state device-resident across every substep of a
 routing step in deliberate parallel with the 2D plugin, and a shared
 device cross-section module gated by a bit-exact extraction test.
 
-What shipped is the option surface and the loader. `FV_BACKEND` accepts
-`CPU`, `AUTO`, `OMP`, `CUDA`, `HIP` and `SYCL`, `FV_MIN_PARALLEL_CELLS`
-gates `AUTO`, and `NetworkSolverFactory` searches the plugin path for
-`openswmm_gpu_<backend>` and requires two symbols — `openswmm_gpu_probe`
-and `openswmm_make_gpu_network_solver` — before accepting a plugin,
-falling through to the CPU solver otherwise. **No plugin in the tree
-exports the network-solver symbol**; the 2D plugins export the surface
-and inertial-marcher factories only, so every device request resolves to
-the CPU solver with a notice, as `ROADMAP.md` §7 records: "the same loader
-hooks and option surface but no plugin implementation yet".
+A device backend shipped on 2026-11-18 in a different shape
+(@ref hydraulics_ref_ch8_device_backend "§8.9.1"): the plugin runs the
+substep loop of the existing solver object, because the router reads
+that object's ledgers directly, and it covers the first-order
+global-step path. The benchmark gate this section used to record
+(§7B.3 of the plan: a no-go against serial dynamic wave at 8 000 cells,
+and a hold pending OpenMP thread scaling at \f$10^{5}\f$ to
+\f$10^{6}\f$ cells) was set aside: it measured the wrong comparison at
+the wrong size, and the device was measured directly instead.
 
-The benchmark campaign that was to gate the port (§7B.3) returned a
-no-go at the sizes measured: 2000 conduits at four cells each does not
-reach the 20 000-cell gate, and at that size the solver runs 189× serial
-dynamic wave, so no parallel efficiency makes it competitive there. The
-plan is careful about scope — the dynamic-wave prototype of §10.4
-measured a Picard iteration, the wrong shape for a device, whereas the
-explicit solver is local-stencil work of the right shape — and names the
-undecided regime, \f$10^{5}\f$ to \f$10^{6}\f$ cells, together with the cheap
-way to settle it: the solver's OpenMP thread scaling at those counts. The
-Kokkos implementation is on hold pending that measurement (owner ruling
-2026-08-08). \status{Planned}
+What remains planned from the original design:
+
+- structures and outfall laws on the device, so the substep coupling
+  cadence does not need a host round trip per substep;
+- second order, the per-chain dispersion solve and the species flux;
+- fused kernels and step control on the device (the first version makes
+  about eleven launches and one host readback per substep), and state
+  that stays on the device between routing steps;
+- an `AUTO` rule: `FV_MIN_PARALLEL_CELLS` is read and written but gates
+  nothing until the crossover has been measured on more than one machine.
+
+\status{Planned}
 
 ## 10.4 Dynamic wave on GPU
 

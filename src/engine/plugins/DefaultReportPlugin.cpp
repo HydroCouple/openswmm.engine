@@ -2088,6 +2088,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             auto srow = [&](const char* label, long v) {
                 std::fprintf(f, "\n  %s%14ld", label, v);
             };
+            if (!rs.fv_backend.empty())
+                std::fprintf(f, "\n  Backend ..................  %s", rs.fv_backend.c_str());
             srow("Explicit Substeps ........", rs.fv_nsteps);
             srow("Face Flux Evaluations ....", rs.fv_nflux);
             std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
