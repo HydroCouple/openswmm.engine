@@ -107,6 +107,9 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
     out->capabilities = openswmm::twoD::kKokkosSurfaceCapabilities;
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    out->capabilities |= OPENSWMM_GPU_CAP_METAL_FACES;
+#endif
     out->device_count = 1; // the OpenMP host backend is always usable
     out->vendor = OPENSWMM_GPU_VENDOR_OPENMP;
     std::strncpy(out->device_name, "Kokkos OpenMP (CPU, Phase 1)", sizeof(out->device_name) - 1);
