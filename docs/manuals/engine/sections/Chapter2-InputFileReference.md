@@ -16,6 +16,7 @@ The input file for command line SWMM has the same format as the project file use
 [OPTIONS]            analysis options
 [REPORT]                output reporting instructions
 [FILES]                interface file options
+[RESTART]              restart records in GeoPackage and HDF5 files
 
 [RAINGAGES]        rain gage information
 [EVAPORATION]        evaporation data
@@ -322,12 +323,58 @@ Remarks:
 Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
 A LEGACY save is refused when age, heat, LID-layer scalars, UEB snow, an active 2D surface or runtime coupling would be lost. Record-format NATIVE saves cannot preserve heat, conventional LID-layer scalars or ARD/LAGRANGIAN transport inventories; those combinations require a qualified full engine checkpoint. CLI SAVE HOTSTART requests using ARD/LAGRANGIAN transport currently fail explicitly. Thermal CLI saves also fail if a full checkpoint cannot be prepared. An unsupported save never replaces an existing restart file.
 
-A Hot Start file that cannot be written, for example because its folder does not exist, stops the run with an error that names the file; the run does not finish with a warning. An existing file that is not a Hot Start file, such as a GeoPackage or an HDF5 file, is never overwritten: the save is refused and the file is left unchanged.
+A Hot Start file that cannot be written, for example because its folder does not exist, stops the run with an error that names the file; the run does not finish with a warning. An existing file that is not a Hot Start file, such as a GeoPackage or an HDF5 file, is never overwritten: the save is refused and the file is left unchanged. To keep restart states in such a file, use the [RESTART] section — see @ref engine_manual_sect_RESTART.
 
 USE HOTSTART reads either format, recognizing it from the file itself. The format keyword must follow the date and time when both are given. Any other word in its place is ignored with a warning, and the default format is used. A row with exactly a date after the file name and one more item must give a valid date and time, or it is an error (ERROR 213), as in EPA SWMM. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files of version 4 (SWMM 5.1 and later); it gives them back unchanged, subcatchment state included. Older SWMM 5 versions are refused by name. When a GeoPackage project is opened, its embedded state must name exactly the model's nodes and links; a node or link that is missing from the state, or state for one the model no longer has, is an error that names it.
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  
+### Section: [RESTART] {#engine_manual_sect_RESTART}
+
+Purpose:
+(OpenSWMM extension.) Starts the run from a restart record saved in a GeoPackage or HDF5 file, and records this run's own restart states into such a file.
+
+Formats:
+SOURCE_FILE           Fname
+SOURCE_RUN            RunID
+SOURCE_RECORD         RecordID / LATEST
+MODE                  INITIAL_CONDITIONS / CONTINUE
+RECORD_FILE           Fname
+RECORD_FORMAT         GEOPACKAGE / HDF5
+RECORD_AT             END / Date Time
+RECORD_EVERY          Time
+RECORD_CONTINUATION   YES / NO
+
+Parameters:
+SOURCE_FILE  is the GeoPackage or HDF5 file holding the record to start from. Without it the run starts from its own initial conditions.
+SOURCE_RUN  is the ID of the run, within that file, that wrote the record. It may be omitted when the file holds a single run.
+SOURCE_RECORD  is the ID of the record, such as rec_000002, or LATEST for the run's last complete record. LATEST is resolved once, when the run starts, and the run's provenance names the record it chose.
+MODE  is INITIAL_CONDITIONS (the default) or CONTINUE. INITIAL_CONDITIONS takes the saved state of the nodes, links and subcatchments as the model's initial conditions at the model's own start date, and opens new mass balances. CONTINUE resumes the original run at the saved time, with its clocks, numerical history and mass balances; it needs a record written with RECORD_CONTINUATION YES, the same engine version and an end date after the record.
+RECORD_FILE  is the GeoPackage or HDF5 file this run records its restart states into. A missing file is created. An existing GeoPackage takes another run; an existing HDF5 file must already hold restart records or be empty.
+RECORD_FORMAT  is GEOPACKAGE or HDF5. It is required with RECORD_FILE and is never inferred from the file name. An existing file of another kind is refused and left unchanged.
+RECORD_AT  is END, or a date (month/day/year) and time (hours:minutes:seconds). Each line adds one record. A dated record is taken at the end of the first time step that reaches that moment; the record keeps both the requested time and the time of that step. Without RECORD_AT or RECORD_EVERY one record is taken at the end of the run.
+RECORD_EVERY  is an interval (hours:minutes:seconds, or seconds) between records, counted from the start of the run.
+RECORD_CONTINUATION  YES stores the engine checkpoint in each record so that a later run can CONTINUE from it. Default NO.
+
+Remarks:
+Each record holds the bytes of a native Hot Start file taken at an accepted time step, so a record restores exactly as the same Hot Start file would. Every run is given a unique ID (run_ followed by the start time in UTC and a random tag), and each record an ID unique within its run. A record is complete only once all of it is written; incomplete records cannot be selected. A run that starts from a record names the source file, run, record and mode as its parent in the file it records into, and in a GeoPackage results file.
+SOURCE_FILE together with [FILES] USE HOTSTART is an error. RECORD_FILE may not be the source file, the input file, the report or binary output file, or the 2D output file. A RECORD_AT time outside the simulation period is an error, and a record that cannot be written stops the run with an error.
+MODE INITIAL_CONDITIONS is refused for models with heat transport, frozen ground or an independent groundwater clock, whose state needs the engine checkpoint; use CONTINUE with a continuation record. Records restore only on the kind of machine that wrote them (operating system, processor and byte order).
+In a run that saves binary results, a record with the engine checkpoint also carries the binary output written so far, so a run that continues from it writes the same binary output file as the uninterrupted run. This needs the built-in binary output writer, no 2D output file, and a new output file: an existing one is refused, by name, before the run. A continued run saves binary results exactly when its record carries them, and is refused otherwise. Such records grow with the output already written.
+Paths are relative to the input file, and are rewritten when the model is saved to another folder. A GeoPackage project and an HDF5 model keep the section. Export to SWMM 5 omits it.
+
+Example:
+```
+[RESTART]
+SOURCE_FILE          "warmup.gpkg"
+SOURCE_RECORD        LATEST
+MODE                 INITIAL_CONDITIONS
+RECORD_FILE          "storm_states.h5"
+RECORD_FORMAT        HDF5
+RECORD_EVERY         01:00:00
+RECORD_AT            END
+```
+
 ### Section: [RAINGAGES] {#engine_manual_sect_RAINGAGES}
 
 Purpose:

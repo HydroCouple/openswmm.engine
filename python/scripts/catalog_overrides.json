@@ -156,6 +156,7 @@
   "TraceError"
  ],
  "units": {
+  "restart.record_every": "s",
   "climate.ati_weight": "fraction",
   "climate.temp_file_start": "datetime",
   "coefficient.value": "user_defined",

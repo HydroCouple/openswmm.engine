@@ -182,6 +182,18 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
         bind_text(stmt.get(), 3, ts.str());
         bind_text(stmt.get(), 4, OPENSWMM_VERSION_FULL);
         checked_model_step(db_.get(), stmt.get());
+        // A run started from a restart record names it as its parent.
+        if (!ctx.restart_receipt.run_id.empty()) {
+            auto parent = gpkg::prepare(
+                db_.get(), "UPDATE simulations SET parent_run_id = ?, parent_record_id = ?, "
+                           "restart_mode = ?, restart_source = ? WHERE simulation_id = ?");
+            bind_text(parent.get(), 1, ctx.restart_receipt.run_id);
+            bind_text(parent.get(), 2, ctx.restart_receipt.record_id);
+            bind_text(parent.get(), 3, ctx.restart_receipt.mode);
+            bind_text(parent.get(), 4, ctx.restart_receipt.source);
+            bind_text(parent.get(), 5, simulation_id_);
+            checked_model_step(db_.get(), parent.get());
+        }
 
         populate_default_variables(db_.get());
 

@@ -5017,6 +5017,51 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         }
     }
 
+    // [RESTART] — saved state to start from, and where this run records its
+    // own. SWMM 5 has no counterpart, so a 5.x export leaves it out.
+    if (swmm5 && ctx.restart.has_any())
+        note("[RESTART] omitted (SWMM 5.x profile)");
+    if (!swmm5 && ctx.restart.has_any()) {
+        const auto& r = ctx.restart;
+        sec(f, "RESTART");
+        std::fprintf(f, ";;%-19s %s\n", "Key", "Value");
+        if (!r.source_file.empty())
+            std::fprintf(
+                f, "%-21s \"%s\"\n", "SOURCE_FILE",
+                emit_path_token(r.source_file, dst_dir, force_abs_paths, warnings).c_str());
+        if (!r.source_run.empty())
+            std::fprintf(f, "%-21s %s\n", "SOURCE_RUN", r.source_run.c_str());
+        if (!r.source_record.empty())
+            std::fprintf(f, "%-21s %s\n", "SOURCE_RECORD", r.source_record.c_str());
+        if (!r.source_file.empty() || r.mode != RestartMode::INITIAL_CONDITIONS)
+            std::fprintf(f, "%-21s %s\n", "MODE",
+                         r.mode == RestartMode::CONTINUE ? "CONTINUE" : "INITIAL_CONDITIONS");
+        if (!r.record_file.empty())
+            std::fprintf(
+                f, "%-21s \"%s\"\n", "RECORD_FILE",
+                emit_path_token(r.record_file, dst_dir, force_abs_paths, warnings).c_str());
+        if (r.record_format != RestartFormat::NONE)
+            std::fprintf(f, "%-21s %s\n", "RECORD_FORMAT",
+                         r.record_format == RestartFormat::HDF5 ? "HDF5" : "GEOPACKAGE");
+        for (const double at : r.record_at) {
+            if (at <= 0.0) {
+                std::fprintf(f, "%-21s END\n", "RECORD_AT");
+                continue;
+            }
+            char date_buf[16], time_buf[16];
+            fmt_date(date_buf, at);
+            fmt_time(time_buf, at);
+            std::fprintf(f, "%-21s %s %s\n", "RECORD_AT", date_buf, time_buf);
+        }
+        if (r.record_every > 0.0) {
+            const long total = std::lround(r.record_every);
+            std::fprintf(f, "%-21s %02ld:%02ld:%02ld\n", "RECORD_EVERY", total / 3600,
+                         (total / 60) % 60, total % 60);
+        }
+        if (r.record_continuation)
+            std::fprintf(f, "%-21s YES\n", "RECORD_CONTINUATION");
+    }
+
     // [PLUGINS]
     if (swmm5 && !ctx.plugin_specs.empty())
         note("[PLUGINS] omitted (SWMM 5.x profile)");

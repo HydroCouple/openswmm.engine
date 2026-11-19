@@ -255,7 +255,7 @@ static bool read_string(std::istream& is, std::string& s) {
 // write_file()
 // ============================================================================
 
-bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path) {
+bool HotStartManager::encode(const HotStartFile& hs, std::string& bytes) {
     // Accumulate into a memory buffer first so we can compute CRC on it
     std::ostringstream buf(std::ios::binary);
 
@@ -512,16 +512,23 @@ bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path
                                      hs.gw_transport_state.empty() || !write_pod(buf, uint32_t{1})))
         return false;
     // Compute CRC32 over the body
-    const std::string body = buf.str();
-    const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(body.data()), body.size());
+    bytes = buf.str();
+    const uint32_t crc = crc32(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    bytes.append(reinterpret_cast<const char*>(&crc), sizeof crc);
+    return true;
+}
 
+bool HotStartManager::write_file(const HotStartFile& hs, const std::string& path) {
+    std::string bytes;
+    if (!encode(hs, bytes))
+        return false;
     io::AtomicOutputFile file(io::utf8_path(path), true);
     if (!file.stream()) {
         tl_last_io_error = file.error();
         return false;
     }
-    if (std::fwrite(body.data(), 1, body.size(), file.stream()) != body.size() ||
-        std::fwrite(&crc, sizeof crc, 1, file.stream()) != 1 || !file.commit()) {
+    if (std::fwrite(bytes.data(), 1, bytes.size(), file.stream()) != bytes.size() ||
+        !file.commit()) {
         tl_last_io_error =
             file.error().empty() ? "Hotstart write failed for '" + path + "'" : file.error();
         return false;
@@ -548,12 +555,22 @@ bool HotStartManager::read_file(HotStartFile& hs, const std::string& path) {
         return false;
     }
     file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> raw(file_size);
-    file.read(reinterpret_cast<char*>(raw.data()), static_cast<std::streamsize>(file_size));
+    std::string data(file_size, '\0');
+    file.read(data.data(), static_cast<std::streamsize>(file_size));
     if (!file) {
         tl_last_io_error = "Read error on '" + path + "'";
         return false;
     }
+    return decode(hs, data, path);
+}
+
+bool HotStartManager::decode(HotStartFile& hs, const std::string& data, const std::string& path) {
+    const std::size_t file_size = data.size();
+    if (file_size < 16u + 4u + 4u) {
+        tl_last_io_error = "'" + path + "' is too small to be a valid hot start file";
+        return false;
+    }
+    const std::vector<uint8_t> raw(data.begin(), data.end());
 
     // Validate CRC32 (last 4 bytes)
     // Variable-length strings leave the trailing checksum at arbitrary byte
@@ -1636,7 +1653,8 @@ void restoreAquiferBlock(const HotStartFile& hs, SimulationContext& ctx,
 
 } // namespace
 
-HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path) {
+HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::string& path,
+                                    std::string* bytes) {
     tl_last_io_error.clear();
 
     if (ctx.state_accessors.has_fv_retained_dry_mass &&
@@ -1821,7 +1839,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx, const std::str
         delete hs;
         return nullptr;
     }
-    if (!write_file(*hs, path)) {
+    if (bytes ? !encode(*hs, *bytes) : !write_file(*hs, path)) {
         delete hs;
         return nullptr;
     }
@@ -1843,7 +1861,7 @@ HotStartFile* HotStartManager::save(const SimulationContext& ctx,
 HotStartFile* HotStartManager::save_with_engine_checkpoint(
     const SimulationContext& ctx, const runoff::RunoffSolver* runoff_solver,
     const groundwater::GWSolver* gw_solver, const std::string& path,
-    const std::string& engine_checkpoint) {
+    const std::string& engine_checkpoint, std::string* bytes) {
     tl_last_io_error.clear();
 
     if (ctx.state_accessors.has_fv_retained_dry_mass &&
@@ -2036,7 +2054,7 @@ HotStartFile* HotStartManager::save_with_engine_checkpoint(
         hs->header.version =
             std::max(hs->header.version, independentGroundwaterRestart(ctx) ? 19u : 15u);
     }
-    if (!write_file(*hs, path)) {
+    if (bytes ? !encode(*hs, *bytes) : !write_file(*hs, path)) {
         delete hs;
         return nullptr;
     }
@@ -2077,8 +2095,10 @@ bool HotStartManager::may_write_hotstart(const std::string& path) noexcept {
             if (n >= 14 && std::memcmp(stamp, "SWMM5-HOTSTART", 14) == 0)
                 return true;
         }
-        tl_last_io_error =
-            "'" + path + "' exists and is not a hot start file; it was left unchanged.";
+        tl_last_io_error = "'" + path +
+                           "' exists and is not a hot start file; it was left unchanged. Restart "
+                           "states go into a GeoPackage or HDF5 file through [RESTART] RECORD_FILE "
+                           "and RECORD_FORMAT.";
     } catch (...) {
         tl_last_io_error = "cannot test hot start destination '" + path + "'";
     }

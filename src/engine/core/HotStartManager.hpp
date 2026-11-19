@@ -384,8 +384,10 @@ public:
      * @returns Heap-allocated `HotStartFile*` on success (caller owns), or
      *          nullptr on I/O error (error description in `last_io_error`).
      * @note Caller deletes the returned object. Source context must be coherent at an accepted boundary; this helper does not enforce the engine lifecycle itself. Destination is directly overwritten. Advanced features can require full session checkpoint capture instead; allocation exceptions may propagate.
+     * @param[out] bytes When non-null, receives the encoded file instead of @p path being written.
      */
-    static HotStartFile* save(const SimulationContext& ctx, const std::string& path);
+    static HotStartFile* save(const SimulationContext& ctx, const std::string& path,
+                              std::string* bytes = nullptr);
 
     /**
      * @brief Capture native engine state including optional infiltration and groundwater solvers.
@@ -423,11 +425,10 @@ public:
      * @return Heap-allocated file on success, caller deletes it; NULL on handled refusal/IO failure
      *     with last_io_error().
      */
-    static HotStartFile* save_with_engine_checkpoint(const SimulationContext& ctx,
-                                                     const runoff::RunoffSolver* runoff,
-                                                     const groundwater::GWSolver* gw,
-                                                     const std::string& path,
-                                                     const std::string& engine_checkpoint);
+    static HotStartFile*
+    save_with_engine_checkpoint(const SimulationContext& ctx, const runoff::RunoffSolver* runoff,
+                                const groundwater::GWSolver* gw, const std::string& path,
+                                const std::string& engine_checkpoint, std::string* bytes = nullptr);
 
     // -----------------------------------------------------------------------
     // Open
@@ -648,6 +649,23 @@ public:
 
     /** @brief Description of the most recent I/O error (empty = none). */
     static const std::string& last_io_error() noexcept;
+
+    /**
+     * @brief Encode a native hot start exactly as write_file() would write it, checksum included.
+     * @param[in] hs Coherent representation, as for write_file().
+     * @param[out] bytes Receives the file's bytes.
+     * @return False for a guarded encoding failure.
+     */
+    static bool encode(const HotStartFile& hs, std::string& bytes);
+
+    /**
+     * @brief Check and parse native hot start bytes, as read_file() does with a file's content.
+     * @param[out] hs Representation to fill.
+     * @param[in] bytes Borrowed bytes, checksum included.
+     * @param[in] label Name used in messages and stored as hs.path, such as a record's identity.
+     * @return False with last_io_error() set for a corrupt, truncated or unsupported input.
+     */
+    static bool decode(HotStartFile& hs, const std::string& bytes, const std::string& label);
 
 private:
     // -----------------------------------------------------------------------

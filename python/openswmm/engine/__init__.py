@@ -227,7 +227,7 @@ from ._gages import Gages
 # =============================================================================
 # Simulation state & I/O
 # =============================================================================
-from ._hotstart import HotStart
+from ._hotstart import HotStart, RestartSettings, inspect_restart_file, probe_restart_file
 from ._massbalance import MassBalance
 from ._statistics import Statistics
 from ._output_reader import OutputReader
@@ -365,7 +365,7 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages",
     "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
-    "HotStart", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
+    "HotStart", "RestartSettings", "inspect_restart_file", "probe_restart_file", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
     "Results", "ResultField", "SeriesField", "SurfaceField", "SurfaceResults", "ResultMesh",
     "capabilities",
     # --- Hydrology, water quality, and time-varying inputs ---

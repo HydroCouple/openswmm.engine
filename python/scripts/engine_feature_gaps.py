@@ -71,6 +71,7 @@ SECTION_API: dict[str, list[str]] = {
     "OPTIONS": [r"^swmm_options_"],
     "REPORT": [r"^swmm_options_(get|set)$"],  # RPT_* keys
     "FILES": [r"^swmm_files?_"],
+    "RESTART": [r"^swmm_restart_"],
     "EVENTS": [r"^swmm_events_"],
     "FROZEN_GROUND": [r"^swmm_frozen_ground_"],
     "2D_FROZEN_GROUND": [r"^swmm_frozen_ground_"],

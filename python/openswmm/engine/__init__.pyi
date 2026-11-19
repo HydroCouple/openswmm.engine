@@ -87,6 +87,9 @@ from ._gages import Gages as Gages
 # Simulation state & I/O
 # =============================================================================
 from ._hotstart import HotStart as HotStart
+from ._hotstart import RestartSettings as RestartSettings
+from ._hotstart import inspect_restart_file as inspect_restart_file
+from ._hotstart import probe_restart_file as probe_restart_file
 from ._massbalance import MassBalance as MassBalance
 from ._statistics import Statistics as Statistics
 from ._output_reader import OutputReader as OutputReader

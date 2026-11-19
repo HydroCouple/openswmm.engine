@@ -194,4 +194,68 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
     }
 }
 
+void handle_restart(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    auto& r = ctx.restart;
+    for (const auto& line : lines) {
+        auto tok = Tokenizer::tokenize(line);
+        if (tok.empty())
+            continue;
+        const std::string key = Tokenizer::to_upper(tok[0]);
+        if (tok.size() < 2) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, "", "[RESTART] " + tok[0]));
+            continue;
+        }
+        const std::string word = Tokenizer::to_upper(tok[1]);
+        auto bad = [&](int code) {
+            ctx.errors.push_back(format_error(code, tok[1], "[RESTART] " + key));
+        };
+        if (key == "SOURCE_FILE") {
+            r.source_file = unquote(tok[1]);
+        } else if (key == "SOURCE_RUN") {
+            r.source_run = tok[1];
+        } else if (key == "SOURCE_RECORD") {
+            r.source_record = word == "LATEST" ? "LATEST" : tok[1];
+        } else if (key == "MODE") {
+            if (word == "INITIAL_CONDITIONS")
+                r.mode = RestartMode::INITIAL_CONDITIONS;
+            else if (word == "CONTINUE")
+                r.mode = RestartMode::CONTINUE;
+            else
+                bad(ERR_KEYWORD);
+        } else if (key == "RECORD_FILE") {
+            r.record_file = unquote(tok[1]);
+        } else if (key == "RECORD_FORMAT") {
+            if (word == "GEOPACKAGE")
+                r.record_format = RestartFormat::GEOPACKAGE;
+            else if (word == "HDF5")
+                r.record_format = RestartFormat::HDF5;
+            else
+                bad(ERR_KEYWORD);
+        } else if (key == "RECORD_AT") {
+            if (word == "END") {
+                r.record_at.push_back(0.0);
+            } else if (tok.size() < 3 || parse_date(tok[1]) <= 0.0 || !is_time_token(tok[2])) {
+                bad(ERR_DATETIME);
+            } else {
+                r.record_at.push_back(parse_datetime(tok[1], tok[2]));
+            }
+        } else if (key == "RECORD_EVERY") {
+            const double seconds = is_time_token(tok[1]) ? parse_time_seconds(tok[1]) : 0.0;
+            if (seconds <= 0.0)
+                bad(ERR_NUMBER);
+            else
+                r.record_every = seconds;
+        } else if (key == "RECORD_CONTINUATION") {
+            if (word == "YES")
+                r.record_continuation = true;
+            else if (word == "NO")
+                r.record_continuation = false;
+            else
+                bad(ERR_KEYWORD);
+        } else {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0], "[RESTART]"));
+        }
+    }
+}
+
 } /* namespace openswmm::input */

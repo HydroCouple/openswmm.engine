@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from ._forcing import Forcing
     from ._gages import Gages
     from ._heat import Heat
-    from ._hotstart import SaveSchedule
+    from ._hotstart import RestartSettings, SaveSchedule
     from ._infrastructure import Infrastructure
     from ._inflows import Inflows
     from ._initial_quality import InitialQuality
@@ -473,6 +473,8 @@ class Solver:
     def editor(self) -> "ModelEditor": ...
     @property
     def save_schedule(self) -> "SaveSchedule": ...
+    @property
+    def restart(self) -> "RestartSettings": ...
     @property
     def surface2d(self) -> "Surface2D": ...
 

@@ -28,6 +28,7 @@
 
 #include "SWMMEngine.hpp"
 #include "RunId.hpp"
+#include <version.h>
 #include "../quality/PeerPassiveStorageExchange.hpp"
 #include "../transport/InitialQualitySeeds.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
@@ -1734,15 +1735,29 @@ int SWMMEngine::initialize() noexcept {
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
-    const bool hs_native =
-        !ctx_.files.hotstart_use_path.empty() && HotStartManager::is_native_file(hs_path);
+    // [RESTART] SOURCE_FILE: a record holds native hot start bytes, so it takes
+    // the native USE HOTSTART path below with the decoded file.
+    if (const auto error = validateRestartSpec(); !error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, error.c_str());
+        return CFFI_ERR_HOTSTART;
+    }
+    std::unique_ptr<HotStartFile> restart_hs;
+    if (!ctx_.restart.source_file.empty()) {
+        if (const auto error = restoreRestartSource(restart_hs); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART, error.c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+    }
+    const bool hs_native = restart_hs || (!ctx_.files.hotstart_use_path.empty() &&
+                                          HotStartManager::is_native_file(hs_path));
     std::unique_ptr<HotStartFile> deferred_hotstart;
     bool full_engine_restore = false;
     hotstart_deferred_ = false;
-    if (!ctx_.files.hotstart_use_path.empty()) {
+    if (restart_hs || !ctx_.files.hotstart_use_path.empty()) {
         int rc = 0;
         if (hs_native) {
-            std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
+            std::unique_ptr<HotStartFile> hs(restart_hs ? restart_hs.release()
+                                                        : HotStartManager::open(hs_path));
             if (!hs) {
                 rc = 1;
             } else if (!hs->engine_checkpoint.empty()) {
@@ -1909,7 +1924,11 @@ int SWMMEngine::initialize() noexcept {
             std::string why = HotStartManager::last_io_error();
             if (why.empty() && !deferred_hotstart->warnings.empty())
                 why = deferred_hotstart->warnings.front();
-            set_error(CFFI_ERR_HOTSTART, ("USE HOTSTART: " + why).c_str());
+            const std::string from =
+                ctx_.restart_receipt.record_id.empty()
+                    ? std::string("USE HOTSTART: ")
+                    : "[RESTART] record " + ctx_.restart_receipt.record_id + ": ";
+            set_error(CFFI_ERR_HOTSTART, (from + why).c_str());
             return CFFI_ERR_HOTSTART;
         }
         reopenMassBalance();
@@ -2008,6 +2027,34 @@ int SWMMEngine::start(int save_results) noexcept {
         set_error(SWMM_ERR_LIFECYCLE,
                   "Split network requires matching geometry and a phase callback before start");
         return SWMM_ERR_LIFECYCLE;
+    }
+    // A continued run writes binary results exactly when its record carries them.
+    if (ctx_.restart_receipt.mode == "CONTINUE" &&
+        ctx_.restart_receipt.binary_output != (save_results_ != 0)) {
+        set_error(CFFI_ERR_HOTSTART,
+                  ctx_.restart_receipt.binary_output
+                      ? ("[RESTART] record " + ctx_.restart_receipt.record_id +
+                         " carries the binary results written so far; continue it in a run that "
+                         "saves binary results (an .out file)")
+                            .c_str()
+                      : ("[RESTART] record " + ctx_.restart_receipt.record_id +
+                         " was recorded without binary results; continue it in a run that saves "
+                         "none (no .out file)")
+                            .c_str());
+        return CFFI_ERR_HOTSTART;
+    }
+    // [RESTART] continuation with binary results: as in a managed session, the
+    // engine checkpoint then carries the output written so far, so a continued
+    // run writes the same binary file as an uninterrupted one. Prepared before
+    // the writers open, with a new output destination.
+    if (save_results_ && !checkpoint_output_ && restartNeedsCheckpoint()) {
+        if (const auto error = prepareOutputCheckpointing(); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART,
+                      ("[RESTART] continuing with binary results: " + error +
+                       (out_path_.empty() ? std::string{} : " Output file: '" + out_path_ + "'."))
+                          .c_str());
+            return CFFI_ERR_HOTSTART;
+        }
     }
 
     // Short runs still need one reporting period (legacy project_validate).
@@ -2242,8 +2289,14 @@ int SWMMEngine::start(int save_results) noexcept {
 #ifdef OPENSWMM_HAS_2D
     date_native_snapshot |= surface_router_.subsurface().independentClock();
 #endif
+    // A record that can CONTINUE carries the engine checkpoint, so recording
+    // one needs checkpointing on, as a native SAVE HOTSTART of heat does.
+    const bool restart_checkpoints = !ctx_.restart.record_file.empty() &&
+                                     (ctx_.restart.record_continuation || date_native_snapshot);
     const bool wants_native_hotstart = !pending_hotstart_checkpoint_.empty() ||
+                                       restart_checkpoints ||
                                        (date_native_snapshot && !ctx_.files.hotstart_saves.empty());
+
     if (wants_native_hotstart) {
         hotstart_checkpoint_error_ = prepareNativeHotstartCheckpointing();
         if (!hotstart_checkpoint_error_.empty()) {
@@ -2268,7 +2321,20 @@ int SWMMEngine::start(int save_results) noexcept {
                     ctx_.elapsed_ms + 1.0 >=
                         (entry.datetime - ctx_.options.start_date) * 86400000.0;
             }
+            // Continuing needs time left to run after the restored step.
+            const double total_ms = (ctx_.options.end_date - ctx_.options.start_date) * 86400000.0;
+            if (!ctx_.restart_receipt.run_id.empty() && ctx_.elapsed_ms + 1.0 >= total_ms) {
+                set_error(CFFI_ERR_HOTSTART,
+                          ("[RESTART] the run ends at or before restored record " +
+                           ctx_.restart_receipt.record_id + "; set an end date after it")
+                              .c_str());
+                return CFFI_ERR_HOTSTART;
+            }
         }
+    }
+    if (const auto error = beginRestartRecording(); !error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, error.c_str());
+        return CFFI_ERR_HOTSTART;
     }
     return SWMM_OK;
 }
@@ -2875,6 +2941,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // heat) the save needs the accepted step boundary, so it waits for it.
         if (!checkpoint_enabled_) {
             auto error = writeDueHotstartSaves();
+            if (error.empty())
+                error = recordDueRestarts();
             if (!error.empty()) {
                 set_error(CFFI_ERR_HOTSTART, error.c_str());
                 return CFFI_ERR_HOTSTART;
@@ -2930,6 +2998,8 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             }
 #endif
             auto error = writeDueHotstartSaves();
+            if (error.empty())
+                error = recordDueRestarts();
             if (!error.empty()) {
                 set_error(CFFI_ERR_HOTSTART, error.c_str());
                 return CFFI_ERR_HOTSTART;
@@ -9561,6 +9631,11 @@ int SWMMEngine::end() noexcept {
                   plugin_io_error(plugins_, "Cannot finish writing results").c_str());
         return SWMM_ERR_PLUGIN;
     }
+    if (restart_store_) {
+        if (hotstart_error.empty())
+            hotstart_error = restart_store_->finishRun(ctx_.run_id);
+        restart_store_.reset();
+    }
     if (!hotstart_error.empty()) {
         set_error(CFFI_ERR_HOTSTART, hotstart_error.c_str());
         return CFFI_ERR_HOTSTART;
@@ -9654,11 +9729,276 @@ std::string SWMMEngine::writeEndOfRunCheckpointSaves() {
     if (end_checkpoint_saves_done_)
         return {};
     end_checkpoint_saves_done_ = true;
+    if (restart_store_ && restart_end_) {
+        restart_end_ = false;
+        if (auto error = recordRestart(0.0); !error.empty())
+            return error;
+    }
     if (endOfRunNeedsCheckpoint())
         for (const auto& entry : ctx_.files.hotstart_saves)
             if (entry.datetime == 0.0)
                 if (auto error = writeHotstartSave(entry); !error.empty())
                     return error;
+    return {};
+}
+
+// ============================================================================
+// [RESTART] — restore from, and record into, GeoPackage and HDF5 files
+// ============================================================================
+
+namespace {
+
+std::string pathOf(const FilePathPair& p) {
+    return !p.absolute.empty() ? p.absolute : p.original;
+}
+
+/** True when two paths name the same file, compared after resolving them. */
+bool samePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty())
+        return false;
+    std::error_code ec;
+    const auto x = std::filesystem::weakly_canonical(io::utf8_path(a), ec);
+    const auto y = std::filesystem::weakly_canonical(io::utf8_path(b), ec);
+    return x == y;
+}
+
+std::string restartModeName(RestartMode m) {
+    return m == RestartMode::CONTINUE ? "CONTINUE" : "INITIAL_CONDITIONS";
+}
+
+} // namespace
+
+bool SWMMEngine::restartNeedsCheckpoint() const {
+    if (ctx_.restart_receipt.mode == "CONTINUE")
+        return true;
+    if (ctx_.restart.record_file.empty())
+        return false;
+    bool full_continuation = ctx_.options.heat_transport || !ctx_.frozen_ground.rows.empty();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    return ctx_.restart.record_continuation || full_continuation;
+}
+
+std::string SWMMEngine::validateRestartSpec() const {
+    const auto& r = ctx_.restart;
+    const std::string source = pathOf(r.source_file);
+    const std::string record = pathOf(r.record_file);
+    if (!source.empty() && !ctx_.files.hotstart_use_path.empty())
+        return "[RESTART] SOURCE_FILE and [FILES] USE HOTSTART cannot both start the run";
+    if (!source.empty() && r.source_record.empty())
+        return "[RESTART] SOURCE_RECORD is required with SOURCE_FILE: a record ID or LATEST";
+    if (record.empty()) {
+        if (r.record_format != RestartFormat::NONE || !r.record_at.empty() ||
+            r.record_every > 0.0 || r.record_continuation)
+            return "[RESTART] RECORD_FILE is required to record restart states";
+        return {};
+    }
+    if (r.record_format == RestartFormat::NONE)
+        return "[RESTART] RECORD_FORMAT is required with RECORD_FILE: GEOPACKAGE or HDF5";
+    if (samePath(record, source))
+        return "[RESTART] RECORD_FILE and SOURCE_FILE must be different files";
+    for (const std::string& other : {ctx_.inp_file_path, rpt_path_, out_path_})
+        if (samePath(record, other))
+            return "[RESTART] RECORD_FILE '" + record +
+                   "' is also the run's input, report or output file";
+#ifdef OPENSWMM_HAS_2D
+    if (samePath(record, surface_router_.options().output_file))
+        return "[RESTART] RECORD_FILE '" + record + "' is also the 2D output file";
+#endif
+    for (const double at : r.record_at)
+        if (at > 0.0 && (at < ctx_.options.start_date || at > ctx_.options.end_date))
+            return "[RESTART] a RECORD_AT time is outside the simulation period";
+    return {};
+}
+
+std::string SWMMEngine::restoreRestartSource(std::unique_ptr<HotStartFile>& hs) {
+    const auto& r = ctx_.restart;
+    const std::string path = pathOf(r.source_file);
+    const auto kind = restart::probe(path);
+    if (kind == restart::Backend::NONE)
+        return "[RESTART] SOURCE_FILE '" + path + "' does not exist or is empty";
+    if (kind != restart::Backend::GEOPACKAGE && kind != restart::Backend::HDF5)
+        return "[RESTART] SOURCE_FILE '" + path +
+               "' is not a GeoPackage or HDF5 file; a hot start file goes in [FILES] USE HOTSTART";
+    std::string error;
+    auto store = restart::openStore(path, kind, false, error);
+    if (!store)
+        return "[RESTART] " + error;
+    restart::Catalog catalog;
+    if (error = store->catalog(catalog); !error.empty())
+        return "[RESTART] " + error;
+    if (catalog.runs.empty())
+        return "[RESTART] '" + path + "' holds no restart records";
+
+    const std::pair<restart::RunInfo, std::vector<restart::RecordInfo>>* run = nullptr;
+    if (r.source_run.empty()) {
+        if (catalog.runs.size() != 1)
+            return "[RESTART] '" + path + "' holds " + std::to_string(catalog.runs.size()) +
+                   " runs; choose one with SOURCE_RUN";
+        run = &catalog.runs.front();
+    } else {
+        for (const auto& candidate : catalog.runs)
+            if (candidate.first.run_id == r.source_run)
+                run = &candidate;
+        if (!run)
+            return "[RESTART] '" + path + "' has no run " + r.source_run;
+    }
+    const restart::RecordInfo* rec = nullptr;
+    if (r.source_record == "LATEST") {
+        for (const auto& candidate : run->second)
+            if (candidate.status == "complete")
+                rec = &candidate;
+        if (!rec)
+            return "[RESTART] run " + run->first.run_id + " has no complete record";
+    } else {
+        for (const auto& candidate : run->second)
+            if (candidate.record_id == r.source_record)
+                rec = &candidate;
+        if (!rec)
+            return "[RESTART] run " + run->first.run_id + " has no record " + r.source_record;
+        if (rec->status != "complete")
+            return "[RESTART] record " + rec->record_id + " is not complete";
+    }
+    if (rec->platform != restart::platformTag())
+        return "[RESTART] record " + rec->record_id + " was written on " + rec->platform +
+               "; this engine runs on " + restart::platformTag();
+
+    bool needs_checkpoint = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    needs_checkpoint |= surface_router_.subsurface().independentClock();
+#endif
+    if (r.mode == RestartMode::CONTINUE) {
+        if (!rec->continuation)
+            return "[RESTART] record " + rec->record_id +
+                   " carries no engine checkpoint, so it cannot CONTINUE; it was recorded "
+                   "without RECORD_CONTINUATION YES";
+        if (rec->engine_version != OPENSWMM_VERSION_FULL)
+            return "[RESTART] record " + rec->record_id + " was written by engine " +
+                   rec->engine_version + "; continuing needs the same engine (" +
+                   OPENSWMM_VERSION_FULL + ")";
+    } else if (needs_checkpoint) {
+        return "[RESTART] INITIAL_CONDITIONS cannot carry heat, frozen ground or an independent "
+               "groundwater clock; use MODE CONTINUE with a continuation record";
+    }
+
+    std::string bytes;
+    if (error = store->read(run->first.run_id, rec->record_id, bytes); !error.empty())
+        return "[RESTART] " + error;
+    hs = std::make_unique<HotStartFile>();
+    const std::string label = path + " " + run->first.run_id + " " + rec->record_id;
+    if (!HotStartManager::decode(*hs, bytes, label))
+        return "[RESTART] " + HotStartManager::last_io_error();
+    // Initial conditions take the object state only; the target keeps its clock.
+    if (r.mode == RestartMode::INITIAL_CONDITIONS)
+        hs->engine_checkpoint.clear();
+    else if (hs->engine_checkpoint.empty())
+        return "[RESTART] record " + rec->record_id + " carries no engine checkpoint";
+
+    ctx_.restart_receipt = {path, run->first.run_id, rec->record_id, restartModeName(r.mode),
+                            rec->binary_output};
+    return {};
+}
+
+std::string SWMMEngine::beginRestartRecording() {
+    restart_store_.reset();
+    restart_due_.clear();
+    restart_next_ = 0;
+    restart_ordinal_ = 0;
+    restart_end_ = false;
+    const auto& r = ctx_.restart;
+    const std::string path = pathOf(r.record_file);
+    if (path.empty())
+        return {};
+    const auto backend = r.record_format == RestartFormat::HDF5 ? restart::Backend::HDF5
+                                                                : restart::Backend::GEOPACKAGE;
+    // The format is chosen, never inferred; an existing file must already be one.
+    const auto kind = restart::probe(path);
+    if (kind != restart::Backend::NONE && kind != backend)
+        return "[RESTART] RECORD_FILE '" + path + "' exists and is not a " +
+               restart::backendName(backend) + " file; it was left unchanged";
+    std::string error;
+    auto store = restart::openStore(path, backend, true, error);
+    if (!store)
+        return "[RESTART] " + error;
+    restart::RunInfo run;
+    run.run_id = ctx_.run_id;
+    run.created_at = restart::utcNow();
+    run.engine_version = OPENSWMM_VERSION_FULL;
+    run.parent_run_id = ctx_.restart_receipt.run_id;
+    run.parent_record_id = ctx_.restart_receipt.record_id;
+    run.restart_mode = ctx_.restart_receipt.mode;
+    run.restart_source = ctx_.restart_receipt.source;
+    if (error = store->beginRun(ctx_, run); !error.empty())
+        return "[RESTART] " + error;
+
+    const double total_ms = (ctx_.options.end_date - ctx_.options.start_date) * 86400000.0;
+    for (const double at : r.record_at) {
+        if (at <= 0.0)
+            restart_end_ = true;
+        else
+            restart_due_.emplace_back((at - ctx_.options.start_date) * 86400000.0, at);
+    }
+    if (r.record_every > 0.0)
+        for (int k = 1; k * r.record_every * 1000.0 < total_ms - 1.0; ++k)
+            restart_due_.emplace_back(k * r.record_every * 1000.0,
+                                      ctx_.options.start_date + k * r.record_every / 86400.0);
+    if (r.record_at.empty() && r.record_every <= 0.0)
+        restart_end_ = true;
+    std::sort(restart_due_.begin(), restart_due_.end());
+    // A continued run starts later; times already passed were the source run's.
+    while (restart_next_ < restart_due_.size() &&
+           restart_due_[restart_next_].first <= ctx_.elapsed_ms + 1.0)
+        ++restart_next_;
+    restart_store_ = std::move(store);
+    return {};
+}
+
+std::string SWMMEngine::recordRestart(double requested) {
+    bool full_continuation = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    std::string bytes;
+    std::unique_ptr<HotStartFile> hs;
+    if ((ctx_.restart.record_continuation || full_continuation) && checkpoint_enabled_) {
+        std::string snapshot;
+        // With binary results the checkpoint carries the output written so far.
+        if (const auto error = checkpointBytes(snapshot); !error.empty())
+            return "[RESTART] cannot capture a continuation record: " + error;
+        hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, {},
+                                                              snapshot, &bytes));
+    } else {
+        hs.reset(HotStartManager::save(ctx_, {}, &bytes));
+    }
+    if (!hs)
+        return "[RESTART] cannot capture a restart state: " + HotStartManager::last_io_error();
+    restart::RecordInfo record;
+    record.ordinal = ++restart_ordinal_;
+    char id[24];
+    std::snprintf(id, sizeof id, "rec_%06d", record.ordinal);
+    record.record_id = id;
+    record.created_at = restart::utcNow();
+    record.model_datetime = ctx_.options.start_date + ctx_.elapsed_ms / 86400000.0;
+    record.elapsed_seconds = ctx_.elapsed_ms / 1000.0;
+    record.requested_datetime = requested;
+    record.hsf_version = static_cast<int>(hs->header.version);
+    record.continuation = !hs->engine_checkpoint.empty();
+    record.binary_output = record.continuation && checkpoint_output_;
+    record.platform = restart::platformTag();
+    record.engine_version = OPENSWMM_VERSION_FULL;
+    if (const auto error = restart_store_->append(ctx_.run_id, record, bytes); !error.empty())
+        return "[RESTART] " + error;
+    return {};
+}
+
+std::string SWMMEngine::recordDueRestarts() {
+    while (restart_store_ && restart_next_ < restart_due_.size() &&
+           ctx_.elapsed_ms + 1.0 >= restart_due_[restart_next_].first) {
+        if (auto error = recordRestart(restart_due_[restart_next_].second); !error.empty())
+            return error;
+        ++restart_next_;
+    }
     return {};
 }
 

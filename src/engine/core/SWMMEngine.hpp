@@ -55,6 +55,7 @@
 #include "SimulationContext.hpp"
 #include "SplitExecution.hpp"
 #include "HotStartManager.hpp"
+#include "restart/RestartStore.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../plugins/ProcessComponentHost.hpp"
 #include "../output/IOThread.hpp"
@@ -376,6 +377,9 @@ public:
      *     compatibility.
      */
     bool hotstartCheckpointAttached() const noexcept { return checkpoint_enabled_; }
+    /** @brief True when this run restores or records an engine checkpoint through [RESTART];
+     *  with binary results it then needs a new output file (see prepareOutputCheckpointing()). */
+    bool restartNeedsCheckpoint() const;
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
@@ -1187,11 +1191,33 @@ private:
      */
     bool endOfRunNeedsCheckpoint() const;
     /**
-     * @brief Write the end-of-run SAVE HOTSTART rows that need the engine checkpoint while the
-     *        engine still runs. Runs once per run.
+     * @brief Write the end-of-run saves that need a running engine: the [RESTART] END record and
+     *        checkpoint-based SAVE HOTSTART rows. Runs once per run.
      * @return Empty on success, otherwise the first failure's reason.
      */
     std::string writeEndOfRunCheckpointSaves();
+
+    // [RESTART] recording: the open record file, the requested capture times as
+    // (elapsed ms, requested decimal day), the next one due, and END.
+    std::unique_ptr<restart::Store> restart_store_;
+    std::vector<std::pair<double, double>> restart_due_;
+    std::size_t restart_next_ = 0;
+    int restart_ordinal_ = 0;
+    bool restart_end_ = false;
+
+    /** @brief Check the [RESTART] settings against each other and the run's other files. */
+    std::string validateRestartSpec() const;
+    /** @brief Read and check the [RESTART] source record; fills ctx_.restart_receipt. */
+    std::string restoreRestartSource(std::unique_ptr<HotStartFile>& hs);
+    /** @brief Open the RECORD_FILE, register this run and schedule its records. */
+    std::string beginRestartRecording();
+    /**
+     * @brief Capture the accepted state as one record.
+     * @param[in] requested Decimal day asked for, or 0 for END.
+     */
+    std::string recordRestart(double requested);
+    /** @brief Capture every record whose time the accepted clock has reached. */
+    std::string recordDueRestarts();
     /**
      * @brief Attach native restart resources at the initial RUNNING boundary.
      *

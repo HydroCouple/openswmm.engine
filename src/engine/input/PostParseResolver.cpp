@@ -169,6 +169,8 @@ void resolve_external_file_slots(SimulationContext& ctx, const std::string& anch
     resolve(f.hotstart_use_path);
     for (auto& save : f.hotstart_saves)
         resolve(save.path);
+    resolve(ctx.restart.source_file);
+    resolve(ctx.restart.record_file);
 
     for (auto& gfp : ctx.gages.file_path)
         resolve(gfp);

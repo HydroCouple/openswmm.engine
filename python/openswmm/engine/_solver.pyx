@@ -1306,6 +1306,14 @@ cdef class Solver:
         return self._hotstart
 
     @property
+    def restart(self):
+        """``solver.restart`` — the ``[RESTART]`` section: the saved state the run
+        starts from and where it records its own (see
+        :class:`~openswmm.engine._hotstart.RestartSettings`)."""
+        from ._hotstart import RestartSettings
+        return RestartSettings(self)
+
+    @property
     def transport(self):
         """ARD transport configuration and authored boundary/source rows."""
         from ._transport import Transport
