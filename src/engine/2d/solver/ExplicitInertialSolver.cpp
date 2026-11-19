@@ -601,7 +601,7 @@ void ExplicitInertialSolver::sinkMassAtCellConc(int i, double dv_m3, std::vector
 
 int ExplicitInertialSolver::sourceThread() const noexcept {
 #if defined(SWMM_USE_OPENMP)
-    return omp_in_parallel() ? omp_get_thread_num() : 0;
+    return omp_get_thread_num(); // 0 outside a parallel region
 #else
     return 0;
 #endif
@@ -941,9 +941,9 @@ bool ExplicitInertialSolver::applyPlainCellSources(int i, double dt) {
     const double out = requested_out * scale;
     state_->infil_applied[i] += infil / area;
     state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
-    double* const local_ledger =
-        source_ledgers_.data() + static_cast<std::size_t>(sourceThread()) * source_ledger_stride_;
-    local_ledger[0] += evap;
+    // The thread lookup is a runtime call per cell; evaporation is usually off.
+    if (evap != 0.0)
+        source_ledgers_[static_cast<std::size_t>(sourceThread()) * source_ledger_stride_] += evap;
     state_->volume[i] = requested >= available ? 0.0 : available - requested;
     return true;
 }

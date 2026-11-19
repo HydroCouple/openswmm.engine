@@ -4400,18 +4400,21 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             // read — not a re-derivation at the accepted end-of-step depth.
             // Consumed and zeroed here, so this must run exactly once per
             // routing step.
+            // A cell that applied nothing adds only zeros below: skip its writes.
             const double applied = state_.infil_applied[ui];
-            state_.infil_applied[ui] = 0.0;
-            infil_vol += applied * area;
-            if (track_cum)
-                infil_cum_applied_[ui] += applied;
-            // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
-            // here, from the same applied depth, so the recharge and the
-            // 2D ledger can never disagree.
-            if (route_aq && cell_subcatch_[ui] >= 0) {
-                const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
-                if (us < subcatch_recharge_.size()) {
-                    subcatch_recharge_[us] += applied * area;
+            if (applied != 0.0) {
+                state_.infil_applied[ui] = 0.0;
+                infil_vol += applied * area;
+                if (track_cum)
+                    infil_cum_applied_[ui] += applied;
+                // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
+                // here, from the same applied depth, so the recharge and the
+                // 2D ledger can never disagree.
+                if (route_aq && cell_subcatch_[ui] >= 0) {
+                    const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
+                    if (us < subcatch_recharge_.size()) {
+                        subcatch_recharge_[us] += applied * area;
+                    }
                 }
             }
         }
