@@ -1355,6 +1355,8 @@ public:
     void checkpoint(detail::CompletedSourceArchive&, bool model); // internal accepted-boundary IO
     /// Cell sweeps fired concurrently so far (diagnostic; never saved).
     long parallelCellSweeps() const noexcept { return parallel_cell_sweeps_; }
+    /// Diagnostic count of GW_FACE_CAP RATIO face passes run on more than one thread.
+    long parallelRatioFacePasses() const noexcept { return parallel_ratio_face_passes_; }
     /// True when this build can fire a cell sweep concurrently (compiled with OpenMP).
     static bool parallelCellSweepAvailable() noexcept;
     bool independentClock() const noexcept { return active() && options_.independent_clock; }
@@ -1520,6 +1522,22 @@ private:
     double clock_cutoff_ = -1.0;
     void refreshCellBound(int cell, const MeshData&, const InertialEdges&);
     void fireGwFaceList(std::span<const int>, double dt, std::span<const double> elapsed);
+    /**
+     * @brief GW_FACE_CAP RATIO face pass (F-5): every face of a donor is scaled by one ratio.
+     * @param[in] list,shared_dt,elapsed As fireGwFaceList.
+     * @param[in,out] face_yield Per-cell yield cache (NaN = unset), filled for touched cells.
+     * @param[in] concentration,gradient,stencil,coefficient fireGwFaceList's dispersion caches.
+     * @note Bulk profile only (no porous heat, layered transport or LID bed receipts). Each
+     * donor's unreserved water and available mass are taken before any booking; faces are sized
+     * by the order-independent per-face share, then all of a donor's faces are scaled by
+     * min(1, available / total demand). Every pass is per face or per cell, so the result does
+     * not depend on face order or thread count. Books eacc and sacc only.
+     */
+    template <class Concentration, class Gradient, class Stencil, class Coefficient>
+    void fireGwFaceListByRatio(std::span<const int> list, double shared_dt,
+                               std::span<const double> elapsed, std::vector<double>& face_yield,
+                               const Concentration& concentration, const Gradient& gradient,
+                               const Stencil& stencil, const Coefficient& coefficient);
     void bookClockAmount(int cell, GwSlot slot, std::vector<double>& field, std::size_t index,
                          double amount) {
         if (clock_state_ && amount != 0 &&
@@ -1559,6 +1577,7 @@ private:
     double intakeHeadroom(int cell, double deficit) const;
     friend class CommonSourceStage;
     friend class ExplicitInertialSolver;
+    friend struct SubsurfaceFaceOrderProbe; ///< test-only: reorders a tier's face list
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
                                                             double, double,
                                                             const std::vector<RichardsBedOwner>&);
@@ -2130,6 +2149,7 @@ private:
     void fireListedCell(int cell, double dt, SurfaceStateData& surf, double time,
                         double accepted_end, GwFiringOrigin origin, double intake_through);
     long parallel_cell_sweeps_ = 0; ///< diagnostic count of sweeps fired in parallel
+    long parallel_ratio_face_passes_ = 0; ///< RATIO face passes run on more than one thread
     // Per-thread journals; transient within one sweep, never copied or saved.
     struct JournalScratch {
         std::vector<LedgerJournal> journals;

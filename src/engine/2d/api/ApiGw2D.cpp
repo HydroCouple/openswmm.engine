@@ -270,6 +270,8 @@ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key, ch
         v = std::to_string(o.m_layers);
     else if (ieq(key, "CAPILLARY_DIFF"))
         v = yn(o.capillary_diff);
+    else if (ieq(key, "GW_FACE_CAP"))
+        v = o.face_cap_ratio ? "RATIO" : "SEQUENTIAL";
     else if (ieq(key, "C_GW"))
         v = num(o.c_gw);
     else if (ieq(key, "C_COL"))

@@ -65,6 +65,7 @@
 #include "core/CompletedSourceArchive.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/SubsurfaceSolver.hpp"
+#include "2d/solver/InertialEdges.hpp"
 #include "2d/subsurface/GroundwaterConcentration.hpp"
 #include "2d/subsurface/GroundwaterDispersion.hpp"
 #include "2d/subsurface/SubsurfaceSections.hpp"
@@ -418,68 +419,74 @@ TEST(GwTransportKernel, SubsurfaceEtLeavesTheSolutesBehind) {
 // emptying under the drainage sign, 2026-11-18, which would test nothing.)
 // ---------------------------------------------------------------------------
 TEST(GwTransportKernel, DrainedTableHoldsNoSoluteAndConcentrationsStayBounded) {
-    for (const char* ks : {"3600", "36"}) {
-        std::ostringstream s;
-        s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
-             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 12:00:00\n"
-             "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
-             "ALLOW_PONDING NO\n\n"
-             "[POLLUTANTS]\nTSS  MG/L  0.0  0.0  0.0  0.0  NO  *  0.0  0.0\n\n"
-             "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
-             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
-             "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n\n"
-             "[TIMESERIES]\nRAIN  0:00  0.0\nRAIN  0:10  0.0\n\n"
-             "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\n"
-             "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
-             "RAINFALL_MODE SYSTEM\nEVAPORATION CLIMATE\n\n"
-             "[2D_VERTICES]\n0.0 0.0 10.0\n10.0 0.0 10.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
-             "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
-             "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
-             "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\n\n"
-             "[2D_AQUIFER]\n*  "
-          << ks
-          << "  1.0  0.45  0.10  2.0  HG0 0.2\n\n"
-             "[GW_INITIAL_QUALITY]\n*  SAT  TSS  5.0\n*  UNSAT  TSS  2.0\nCELL 1  SAT  TSS  25.0\n\n"
-             "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n[REPORT]\nINPUT NO\n";
-        const std::string tag = std::string("drained_table_ks") + ks;
-        Deck r = open(tag, s.str());
-        ASSERT_TRUE(r.opened) << tag;
-        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
-        ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK) << tag;
-        r.started = true;
-        auto& gw = r.eng->surfaceRouter2D().subsurface();
-        auto& t = gw.transport();
-        ASSERT_TRUE(t.active()) << tag;
-        for (int c = 0; c < t.n_cells; ++c) { // residual columns, still 2 mg/L
-            auto& w = gw.state();
-            w.hu[c] = w.theta_r[c] * (w.zs[c] - w.hg[c]);
-            t.unsat_mass[t.idx(0, c)] = 2.0 * gw.unsatVolume(c);
-        }
-        gw.state().led_init_storage = gw.state().storage();
-        t.init_mass[0] = t.ledgeredStorage(0);
-        bool drained = false;
-        double elapsed = 0.0;
-        int status = SWMM_OK;
-        while ((status = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
-            for (int c = 0; c < t.n_cells; ++c) {
-                if (gw.state().hg[c] <= 1.0e-12) {
-                    drained = true;
-                    EXPECT_EQ(t.sat_mass[t.idx(0, c)], 0.0)
-                        << tag << " cell " << c << " hg " << gw.state().hg[c];
-                }
-                for (const bool sat : {true, false}) {
-                    const double conc = openswmm::twoD::groundwaterZoneConcentration(gw, c, 0, sat);
-                    ASSERT_TRUE(std::isfinite(conc) && conc >= 0.0 && conc <= 25.0 + 1.0e-9)
-                        << tag << " cell " << c << (sat ? " saturated " : " column ") << conc
-                        << " mg/L, hg " << gw.state().hg[c];
+    for (const char* cap : {"SEQUENTIAL", "RATIO"})
+        for (const char* ks : {"3600", "36"}) {
+            std::ostringstream s;
+            s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+                 "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 12:00:00\n"
+                 "REPORT_STEP 00:05:00\nWET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+                 "ALLOW_PONDING NO\n\n"
+                 "[POLLUTANTS]\nTSS  MG/L  0.0  0.0  0.0  0.0  NO  *  0.0  0.0\n\n"
+                 "[JUNCTIONS]\nJ1 -2.0 4.0 0 0 0\n\n[OUTFALLS]\nO1 -2.5 FREE NO\n\n"
+                 "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n\n"
+                 "[RAINGAGES]\nRG1 INTENSITY 0:10 1.0 TIMESERIES RAIN\n\n"
+                 "[TIMESERIES]\nRAIN  0:00  0.0\nRAIN  0:10  0.0\n\n"
+                 "[2D_OPTIONS]\nMOMENTUM_EQUATION LOCAL_INERTIAL\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\n"
+                 "MAX_TIMESTEP 5\nDRY_DEPTH 0.001\nCOUPLING_CD 0.7\nREPORT_2D NO\n"
+                 "RAINFALL_MODE SYSTEM\nEVAPORATION CLIMATE\n\n"
+                 "[2D_VERTICES]\n0.0 0.0 10.0\n10.0 0.0 10.0\n10.0 10.0 0.0\n0.0 10.0 0.0\n\n"
+                 "[2D_TRIANGLES]\n0 1 2 0.03 0.0\n0 2 3 0.03 0.0\n\n"
+                 "[2D_INFILTRATION_DEFAULTS]\n*  CONSTANT  40.0  -  -  -  -\n\n"
+                 "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nNODE_ENROLMENT ROWS\nGW_FACE_CAP "
+              << cap
+              << "\n\n"
+                 "[2D_AQUIFER]\n*  "
+              << ks
+              << "  1.0  0.45  0.10  2.0  HG0 0.2\n\n"
+                 "[GW_INITIAL_QUALITY]\n*  SAT  TSS  5.0\n*  UNSAT  TSS  2.0\nCELL 1  SAT  TSS  25.0\n\n"
+                 "[COORDINATES]\nJ1  5.0  5.0\nO1  40.0  40.0\n\n[REPORT]\nINPUT NO\n";
+            const std::string tag = std::string("drained_table_ks") + ks + "_" + cap;
+            Deck r = open(tag, s.str());
+            ASSERT_TRUE(r.opened) << tag;
+            ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
+            ASSERT_EQ(swmm_engine_start(r.e, 1), SWMM_OK) << tag;
+            r.started = true;
+            auto& gw = r.eng->surfaceRouter2D().subsurface();
+            auto& t = gw.transport();
+            ASSERT_TRUE(t.active()) << tag;
+            for (int c = 0; c < t.n_cells; ++c) { // residual columns, still 2 mg/L
+                auto& w = gw.state();
+                w.hu[c] = w.theta_r[c] * (w.zs[c] - w.hg[c]);
+                t.unsat_mass[t.idx(0, c)] = 2.0 * gw.unsatVolume(c);
+            }
+            gw.state().led_init_storage = gw.state().storage();
+            t.init_mass[0] = t.ledgeredStorage(0);
+            bool drained = false;
+            double elapsed = 0.0;
+            int status = SWMM_OK;
+            while ((status = swmm_engine_step(r.e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
+                for (int c = 0; c < t.n_cells; ++c) {
+                    if (gw.state().hg[c] <= 1.0e-12) {
+                        drained = true;
+                        EXPECT_EQ(t.sat_mass[t.idx(0, c)], 0.0)
+                            << tag << " cell " << c << " hg " << gw.state().hg[c];
+                    }
+                    for (const bool sat : {true, false}) {
+                        const double conc =
+                            openswmm::twoD::groundwaterZoneConcentration(gw, c, 0, sat);
+                        ASSERT_TRUE(std::isfinite(conc) && conc >= 0.0 && conc <= 25.0 + 1.0e-9)
+                            << tag << " cell " << c << (sat ? " saturated " : " column ") << conc
+                            << " mg/L, hg " << gw.state().hg[c];
+                    }
                 }
             }
+            EXPECT_EQ(status, SWMM_OK) << tag;
+            EXPECT_TRUE(drained) << tag
+                                 << ": the upper table never drained, the gate tested nothing";
+            EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * t.init_mass[0])
+                << tag << ledgerDump(t, 0);
+            finish(r);
         }
-        EXPECT_EQ(status, SWMM_OK) << tag;
-        EXPECT_TRUE(drained) << tag << ": the upper table never drained, the gate tested nothing";
-        EXPECT_LT(std::fabs(t.residual(0)), 1.0e-10 * t.init_mass[0]) << tag << ledgerDump(t, 0);
-        finish(r);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5893,7 +5900,8 @@ namespace gw_thread_fixture {
 /// sorbing, decaying pollutant, dispersion, rain, infiltration and one node bed.
 /// With `forcing`, also a well whose flow reverses mid-run (its cell fires at
 /// knots) and a head boundary on cell 1's exterior edge.
-inline std::string deck(int n, const char* closure, int threads, bool forcing = false) {
+inline std::string deck(int n, const char* closure, int threads, bool forcing = false,
+                        const char* face_cap = nullptr) {
     std::ostringstream s;
     s << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
          "START_DATE 01/01/2026\nSTART_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 00:05:00\n"
@@ -5922,7 +5930,9 @@ inline std::string deck(int n, const char* closure, int threads, bool forcing = 
     const int cells = 2 * n * n;
     s << "[2D_INFILTRATION_DEFAULTS]\n* CONSTANT 40.0 - - - -\n"
          "[2D_AQUIFER_OPTIONS]\nCLOSURE "
-      << closure << "\nM_LAYERS 4\nNODE_ENROLMENT ROWS\n[2D_AQUIFER]\n* 36 1 .45 .10 2 HG0 .5\n";
+      << closure << "\nM_LAYERS 4\nNODE_ENROLMENT ROWS\n"
+      << (face_cap ? std::string("GW_FACE_CAP ") + face_cap + "\n" : std::string())
+      << "[2D_AQUIFER]\n* 36 1 .45 .10 2 HG0 .5\n";
     // Uneven tables give every face a head gradient; a few cells start nearly
     // saturated so saturation excess returns to the surface.
     for (int c = 0; c < cells; ++c)
@@ -5941,18 +5951,20 @@ inline std::string deck(int n, const char* closure, int threads, bool forcing = 
 }
 struct Capture {
     std::string bytes;
-    long parallel_sweeps = 0;
+    long parallel_sweeps = 0, ratio_face_passes = 0;
     bool ok = false;
 };
 /// Run the deck to its end and serialize the aquifer checkpoint, the run-wide
 /// water and species ledgers, and the surface volume and species mass.
-inline Capture run(const std::string& tag, const char* closure, int threads, bool forcing = false) {
+inline Capture run(const std::string& tag, const char* closure, int threads, bool forcing = false,
+                   const char* face_cap = nullptr) {
     Capture result;
-    auto r = open(tag, deck(18, closure, threads, forcing));
+    auto r = open(tag, deck(18, closure, threads, forcing, face_cap));
     result.ok = ::run(r);
     if (result.ok) {
         auto& gw = r.eng->surfaceRouter2D().subsurface();
         result.parallel_sweeps = gw.parallelCellSweeps();
+        result.ratio_face_passes = gw.parallelRatioFacePasses();
         auto copy = gw;
         gw_packet_fixture::Archive a;
         copy.checkpoint(a, false);
@@ -5991,6 +6003,118 @@ TEST(GwParallelSweep, BulkAquiferIsBitIdenticalAcrossThreadCounts) {
             EXPECT_TRUE(parallel.bytes == serial.bytes) << closure << " threads " << threads;
         }
     }
+}
+
+namespace openswmm::twoD {
+/// Test-only access to a tier's face list (friend of SubsurfaceSolver).
+struct SubsurfaceFaceOrderProbe {
+    static void reverse(SubsurfaceSolver& gw, int tier) {
+        auto& faces = gw.faces_by_tier_[std::size_t(tier)];
+        std::reverse(faces.begin(), faces.end());
+    }
+    static const InertialEdges& edges(const SubsurfaceSolver& gw) { return *gw.edges_; }
+};
+} // namespace openswmm::twoD
+
+TEST(GwFaceCap, RatioCapsDoNotDependOnFaceOrderWhenDonorsRunShort) {
+    // Every cell's unreserved water is drawn down to 1e-7 m3 by an outgoing
+    // conduit receipt, so the donor caps bind on most faces. The same tier is
+    // fired in its natural face order and reversed. SEQUENTIAL gives each face
+    // what the faces before it left, so the two orders differ; RATIO scales a
+    // donor's faces by one ratio, so they agree to roundoff (only the order of a
+    // donor's few demand additions changes). Neither may export more than the
+    // donor had.
+    using openswmm::twoD::SubsurfaceFaceOrderProbe;
+    for (const char* cap : {"SEQUENTIAL", "RATIO"}) {
+        SCOPED_TRACE(cap);
+        Deck r = open(std::string("face_order_") + cap,
+                      gw_thread_fixture::deck(6, "CLOSED_FORM", 1, false, cap));
+        ASSERT_TRUE(r.opened);
+        ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+        ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+        r.started = true;
+        auto& gw = r.eng->surfaceRouter2D().subsurface();
+        const int n = gw.state().n_cells;
+        gw.assignTiers(600., 1);
+        std::vector<double> available(n);
+        for (int c = 0; c < n; ++c) {
+            gw.bookLinkSeepage(c, -std::max(0., gw.unreservedDrainableWater(c) - 1e-7));
+            available[c] = gw.unreservedDrainableWater(c);
+        }
+        auto natural = gw, reversed = gw;
+        SubsurfaceFaceOrderProbe::reverse(reversed, 0);
+        natural.fireGwFaces(0, 600.);
+        reversed.fireGwFaces(0, 600.);
+        double scale = 0, gap = 0;
+        const auto& a = natural.state();
+        const auto& b = reversed.state();
+        for (std::size_t e = 0; e < a.eacc_L.size(); ++e) {
+            scale = std::max(scale, std::abs(a.eacc_L[e]));
+            gap = std::max(
+                {gap, std::abs(a.eacc_L[e] - b.eacc_L[e]), std::abs(a.eacc_R[e] - b.eacc_R[e])});
+        }
+        const auto& ta = natural.transport();
+        const auto& tb = reversed.transport();
+        double mass_scale = 0, mass_gap = 0;
+        for (std::size_t k = 0; k < ta.sacc_L.size(); ++k) {
+            mass_scale = std::max(mass_scale, std::abs(ta.sacc_L[k]));
+            mass_gap = std::max(mass_gap, std::abs(ta.sacc_L[k] - tb.sacc_L[k]));
+        }
+        ASSERT_GT(scale, 0.);
+        if (std::string(cap) == "RATIO") {
+            EXPECT_LE(gap, 1e-12 * scale);
+            EXPECT_LE(mass_gap, 1e-12 * mass_scale);
+        } else {
+            EXPECT_GT(gap, 1e-6 * scale); // the scenario does depend on order
+        }
+        // Exports booked in this pass never exceed what each donor had: the
+        // growth of its outgoing side packets, summed over its edges.
+        const auto& E = SubsurfaceFaceOrderProbe::edges(gw);
+        const auto& before = gw.state();
+        for (const auto* fired : {&natural, &reversed}) {
+            std::vector<double> out(n, 0.0);
+            const auto& after = fired->state();
+            for (std::size_t e = 0; e < after.eacc_L.size(); ++e) {
+                out[E.cL[e]] += std::max(0., -after.eacc_L[e]) - std::max(0., -before.eacc_L[e]);
+                out[E.cR[e]] += std::max(0., -after.eacc_R[e]) - std::max(0., -before.eacc_R[e]);
+            }
+            int binding = 0;
+            for (int c = 0; c < n; ++c) {
+                EXPECT_LE(out[c], available[c] * (1 + 1e-12) + 1e-18) << cap << " cell " << c;
+                binding += out[c] > .5 * available[c];
+            }
+            EXPECT_GT(binding, 0); // the caps really bind somewhere
+        }
+        finish(r);
+    }
+}
+
+TEST(GwParallelSweep, RatioFaceCapsAreBitIdenticalAcrossThreadCounts) {
+    // GW_FACE_CAP RATIO sizes every face of a donor by one ratio taken before
+    // any booking, so the face pass runs on worker threads and the result
+    // cannot depend on face order or thread count.
+    for (const char* closure : {"CLOSED_FORM", "ENSLAVED", "SIGMA"})
+        for (bool forcing : {false, true}) {
+            const std::string stem =
+                std::string("gw_ratio_") + closure + (forcing ? "_forced" : "") + "_t";
+            const auto serial = gw_thread_fixture::run(stem + "1", closure, 1, forcing, "RATIO");
+            ASSERT_TRUE(serial.ok) << closure;
+            // No donor runs short on this deck, so RATIO must reproduce SEQUENTIAL exactly.
+            const auto sequential =
+                gw_thread_fixture::run(stem + "1_sequential", closure, 1, forcing, "SEQUENTIAL");
+            ASSERT_TRUE(sequential.ok) << closure;
+            EXPECT_TRUE(sequential.bytes == serial.bytes) << closure << (forcing ? " forced" : "");
+            for (int threads : {4, 8}) {
+                const auto parallel = gw_thread_fixture::run(stem + std::to_string(threads),
+                                                             closure, threads, forcing, "RATIO");
+                ASSERT_TRUE(parallel.ok) << closure << " threads " << threads;
+                // The comparison means nothing unless the ratio face pass ran on threads.
+                if (openswmm::twoD::SubsurfaceSolver::parallelCellSweepAvailable())
+                    EXPECT_GT(parallel.ratio_face_passes, 0) << closure << " threads " << threads;
+                EXPECT_TRUE(parallel.bytes == serial.bytes)
+                    << closure << (forcing ? " forced" : "") << " threads " << threads;
+            }
+        }
 }
 
 TEST(GwParallelSweep, WellAndBoundaryCellsFireSeriallyInsideAParallelSweep) {

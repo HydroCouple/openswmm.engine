@@ -753,6 +753,251 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
     fireGwFaceList(faces_by_tier_[static_cast<std::size_t>(tier)], dt, {});
 }
 
+template <class Concentration, class Gradient, class Stencil, class Coefficient>
+void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double shared_dt,
+                                             std::span<const double> elapsed,
+                                             std::vector<double>& face_yield,
+                                             const Concentration& concentration,
+                                             const Gradient& gradient, const Stencil& stencil,
+                                             const Coefficient& coefficient) {
+    const InertialEdges& E = *edges_;
+    const int n = state_.n_cells;
+    const auto count = static_cast<std::ptrdiff_t>(list.size());
+    const int ns = tr_.active() ? tr_.n_species : 0;
+    const bool disperse = tr_.active() && tr_.dispersion_on;
+    const auto dt_of = [&](std::ptrdiff_t slot) {
+        return elapsed.empty() ? shared_dt : elapsed[std::size_t(slot)];
+    };
+    int threads = 1;
+#if defined(SWMM_USE_OPENMP)
+    // fireGwFaceList pre-fills the dispersion caches under the same condition,
+    // so the parallel passes below only read them.
+    if (opts_ && list.size() >= 512)
+        threads = std::max(1, opts_->num_threads);
+#endif
+    (void)threads;
+    static thread_local std::vector<unsigned char> tls_touched, tls_bind;
+    static thread_local std::vector<int> tls_cells, tls_donor;
+    static thread_local std::vector<double> tls_q, tls_avail_w, tls_demand_w, tls_avail_m,
+        tls_demand_m, tls_adv, tls_disp;
+    auto& touched = tls_touched;
+    auto& cells = tls_cells;
+    auto& donor = tls_donor;
+    auto& q = tls_q;
+    auto& avail_w = tls_avail_w;
+    auto& demand_w = tls_demand_w;
+    auto& avail_m = tls_avail_m;
+    auto& demand_m = tls_demand_m;
+    auto& adv = tls_adv;
+    auto& disp = tls_disp;
+    auto& bind = tls_bind;
+    touched.assign(std::size_t(n), 0);
+    cells.clear();
+    for (const int e : list)
+        for (const int c : {E.cL[e], E.cR[e]})
+            if (!touched[c]) {
+                touched[c] = 1;
+                cells.push_back(c);
+            }
+    if (avail_w.size() < std::size_t(n)) {
+        avail_w.resize(std::size_t(n));
+        demand_w.resize(std::size_t(n));
+    }
+    if (avail_m.size() < std::size_t(n) * std::size_t(ns)) {
+        avail_m.resize(std::size_t(n) * std::size_t(ns));
+        demand_m.resize(std::size_t(n) * std::size_t(ns));
+    }
+    q.resize(list.size());
+    donor.resize(list.size());
+    adv.assign(list.size() * std::size_t(ns), std::numeric_limits<double>::quiet_NaN());
+    disp.assign(list.size() * std::size_t(ns), std::numeric_limits<double>::quiet_NaN());
+    bind.assign(list.size() * std::size_t(ns), 0);
+    const auto cm = [ns](int cell, int s) { return std::size_t(cell) * std::size_t(ns) + s; };
+    const auto sm = [ns](std::ptrdiff_t slot, int s) {
+        return std::size_t(slot) * std::size_t(ns) + s;
+    };
+
+    // Pass 0: each touched donor's yield, unreserved water and available mass,
+    // all taken before this pass books anything.
+    const auto ncell = static_cast<std::ptrdiff_t>(cells.size());
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t k = 0; k < ncell; ++k) {
+        const int c = cells[std::size_t(k)];
+        if (std::isnan(face_yield[c]))
+            face_yield[c] = specificYieldOf(c);
+        avail_w[c] = unreservedDrainableWater(c, face_yield[c]);
+        demand_w[c] = 0.0;
+        for (int s = 0; s < ns; ++s) {
+            demand_m[cm(c, s)] = 0.0;
+            avail_m[cm(c, s)] =
+                tr_.signedRow(s)
+                    ? 0.0
+                    : std::max(0., tr_.sat_mass[tr_.idx(s, c)] - pendingSaturatedMassExport(c, s));
+        }
+    }
+
+    // Pass A: each face's water under the order-independent per-face share.
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const double dt = dt_of(slot);
+        const auto eu = static_cast<std::size_t>(e);
+        const auto l = static_cast<std::size_t>(E.cL[eu]);
+        const auto r = static_cast<std::size_t>(E.cR[eu]);
+        const double dH = (state_.z_bed[l] + state_.hg[l]) - (state_.z_bed[r] + state_.hg[r]);
+        const std::size_t don = (dH > 0.0) ? l : r;
+        const double T = state_.hg[don];
+        const double K = harmonic(state_.Ks[l], state_.Ks[r]);
+        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH;
+        const double Sy = std::max(face_yield[don], kSyFloor);
+        const int nf = std::max(1, cell_nface_[don]);
+        const double cap =
+            kFaceShare * T * Sy * state_.area[don] / static_cast<double>(nf) / std::max(dt, kTiny);
+        if (std::abs(Q) > cap)
+            Q = (Q > 0.0) ? cap : -cap;
+        q[std::size_t(slot)] = Q;
+        donor[std::size_t(slot)] = int(don);
+    }
+    // One ratio per donor: the water it can give over the water its faces ask.
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot)
+        demand_w[donor[std::size_t(slot)]] += std::abs(q[std::size_t(slot)] * dt_of(slot));
+    const auto ratio_w = [&](int c) {
+        return demand_w[c] > avail_w[c] ? avail_w[c] / demand_w[c] : 1.0;
+    };
+
+    // Pass B: advected mass at the scaled water and dispersive mass under its
+    // order-independent limits (stencil range, share of the donor's mass).
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const double dt = dt_of(slot);
+        const auto eu = static_cast<std::size_t>(e);
+        const auto l = static_cast<std::size_t>(E.cL[eu]);
+        const auto r = static_cast<std::size_t>(E.cR[eu]);
+        const int don = donor[std::size_t(slot)];
+        const double ratio = ratio_w(don);
+        double Q = q[std::size_t(slot)];
+        if (ratio < 1.0)
+            Q *= ratio;
+        q[std::size_t(slot)] = Q;
+        const double vol = Q * dt;
+        if (ns > 0 && vol != 0.0) {
+            const double vd = satVolume(don);
+            if (vd > 0.0)
+                for (int s = 0; s < ns; ++s) {
+                    const double mobile = tr_.sat_mass[tr_.idx(s, don)] *
+                                          tr_.dissolvedFraction(s, don, state_.theta_s[don]);
+                    if (mobile == 0.0)
+                        continue;
+                    adv[sm(slot, s)] = std::abs(vol) * (mobile / vd);
+                }
+        }
+        if (!disperse)
+            continue;
+        const double Ta = state_.hg[l], Tb = state_.hg[r];
+        const double va = satVolume(static_cast<int>(l));
+        const double vb = satVolume(static_cast<int>(r));
+        if (!(Ta > kTiny && Tb > kTiny && va > 0.0 && vb > 0.0))
+            continue;
+        const double B = E.xi[eu], nx = E.nx[eu], ny = E.ny[eu];
+        const std::array<double, 2> armL{E.mx[eu] - mesh_->tri_cx[l], E.my[eu] - mesh_->tri_cy[l]};
+        const std::array<double, 2> armR{E.mx[eu] - mesh_->tri_cx[r], E.my[eu] - mesh_->tri_cy[r]};
+        const double dl = armL[0] * nx + armL[1] * ny, dr = -armR[0] * nx - armR[1] * ny;
+        const auto headL = gradient(int(l), -1), headR = gradient(int(r), -1);
+        const int nf_r = std::max(1, cell_nface_[r]);
+        const int nf_l = std::max(1, cell_nface_[l]);
+        for (int s = 0; s < ns; ++s) {
+            const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
+            const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
+            const double ca =
+                ma * tr_.dissolvedFraction(s, static_cast<int>(l), state_.theta_s[l]) / va;
+            const double cb =
+                mb * tr_.dissolvedFraction(s, static_cast<int>(r), state_.theta_s[r]) / vb;
+            double dMd = dt * dispersion::faceFlux(coefficient(l, headL), coefficient(r, headR), nx,
+                                                   ny, dl, dr, armL, armR, gradient(int(l), s),
+                                                   gradient(int(r), s), ca, cb, B);
+            if (dMd == 0.0)
+                continue;
+            double low = std::min(ca, cb), high = std::max(ca, cb);
+            for (int cell : {int(l), int(r)}) {
+                const auto range = stencil(cell, s);
+                low = std::min(low, range[0]);
+                high = std::max(high, range[1]);
+            }
+            const double capacityL = va / tr_.dissolvedFraction(s, int(l), state_.theta_s[l]);
+            const double capacityR = vb / tr_.dissolvedFraction(s, int(r), state_.theta_s[r]);
+            double cap =
+                dMd > 0 ? std::min((ca - low) * capacityL / nf_l, (high - cb) * capacityR / nf_r)
+                        : std::min((cb - low) * capacityR / nf_r, (high - ca) * capacityL / nf_l);
+            cap = std::max(0., cap);
+            if (!tr_.signedRow(s))
+                cap = std::min(cap, std::abs(dMd > 0.0 ? ma : mb) * kFaceShare);
+            if (std::abs(dMd) > cap) {
+                dMd = (dMd > 0.0) ? cap : -cap;
+                bind[sm(slot, s)] = 1;
+            }
+            disp[sm(slot, s)] = dMd;
+        }
+    }
+    // One ratio per donor and species: the mass it can give over the mass asked.
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const int don = donor[std::size_t(slot)];
+        for (int s = 0; s < ns; ++s) {
+            if (tr_.signedRow(s))
+                continue;
+            if (const double a = adv[sm(slot, s)]; !std::isnan(a))
+                demand_m[cm(don, s)] += a;
+            if (const double d = disp[sm(slot, s)]; !std::isnan(d))
+                demand_m[cm(d > 0 ? E.cL[e] : E.cR[e], s)] += std::abs(d);
+        }
+    }
+    const auto ratio_m = [&](int c, int s) {
+        const double demand = demand_m[cm(c, s)], avail = avail_m[cm(c, s)];
+        return !tr_.signedRow(s) && demand > avail ? avail / demand : 1.0;
+    };
+
+    // Pass C: book into each face's own edge accumulators.
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const auto eu = static_cast<std::size_t>(e);
+        const double vol = q[std::size_t(slot)] * dt_of(slot);
+        state_.eacc_L[eu] -= vol; // leaves cL
+        state_.eacc_R[eu] += vol; // enters cR
+        const int don = donor[std::size_t(slot)];
+        for (int s = 0; s < ns; ++s) {
+            double dm = adv[sm(slot, s)];
+            if (std::isnan(dm))
+                continue;
+            if (const double ratio = ratio_m(don, s); ratio < 1.0)
+                dm *= ratio;
+            const double sgn = (vol > 0.0) ? 1.0 : -1.0;
+            const auto k = tr_.lateralIndex(s, eu);
+            tr_.sacc_L[k] -= sgn * dm;
+            tr_.sacc_R[k] += sgn * dm;
+        }
+        for (int s = 0; s < ns; ++s) {
+            double dMd = disp[sm(slot, s)];
+            if (std::isnan(dMd))
+                continue;
+            if (const double ratio = ratio_m(dMd > 0 ? E.cL[e] : E.cR[e], s); ratio < 1.0) {
+                dMd *= ratio;
+                bind[sm(slot, s)] = 1;
+            }
+            const auto k = tr_.lateralIndex(s, eu);
+            tr_.sacc_L[k] -= dMd;
+            tr_.sacc_R[k] += dMd;
+        }
+    }
+    long binds = 0;
+    for (const unsigned char b : bind)
+        binds += b;
+    tr_.dispersion_limiter_binds += binds;
+    if (threads > 1)
+        ++parallel_ratio_face_passes_;
+}
+
 void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_dt,
                                       std::span<const double> elapsed) {
     const InertialEdges& E = *edges_;
@@ -915,6 +1160,13 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
         }
     }
 #endif
+    if (options_.face_cap_ratio && tr_.n_layers == 0 && !heat_.active() && !lid_receipts_enabled_ &&
+        heat_faces_.empty()) {
+        fireGwFaceListByRatio(list, shared_dt, elapsed, face_yield, concentration, gradient,
+                              stencil, coefficient);
+        accumulators_pending_ = true;
+        return;
+    }
     for (std::size_t slot = 0; slot < list.size(); ++slot) {
         const int e = list[slot];
         const double dt = elapsed.empty() ? shared_dt : elapsed[slot];

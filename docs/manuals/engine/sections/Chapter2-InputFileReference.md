@@ -3158,6 +3158,7 @@ Parameters:
 | CLOSURE | AUTO / CLOSED_FORM / ENSLAVED / SIGMA | AUTO | Unsaturated-zone closure: a bulk store with a quasi-steady recharge (CLOSED_FORM), that store made algebraic in the water table (ENSLAVED), or an explicit column of sigma layers (SIGMA). AUTO selects per cell at initialise. |
 | M_LAYERS | 2 .. 128 | 8 | Number of sigma layers of a SIGMA column, for rows that do not set their own. |
 | CAPILLARY_DIFF | YES / TRUE / 1 / NO / FALSE / 0 | NO | Optional diffusive term of the SIGMA column. |
+| GW_FACE_CAP | SEQUENTIAL / RATIO | SEQUENTIAL | How lateral aquifer faces share a donor cell's drainable water and solute within one face pass. SEQUENTIAL caps each face against what the faces before it left, so results depend on face order and the pass runs serially. RATIO totals every face's demand on a donor and scales all of them by one ratio when the donor cannot supply it all; the result does not depend on face order, and the pass runs on `THREADS` workers on the bulk profile (no porous heat, layered transport or LID bed receipts; other profiles keep the serial pass). Both conserve water and mass; they differ only where a donor runs short. |
 | C_GW | (0, 1] | 0.5 | Stability safety factor of the saturated-zone step. |
 | C_COL | (0, 1] | 0.9 | Stability safety factor of the unsaturated column step. |
 | FORCE_CLOSED_FORM | YES / TRUE / 1 / NO / FALSE / 0 | NO | Suppress the automatic switch away from CLOSED_FORM on strongly capillary soils. |
