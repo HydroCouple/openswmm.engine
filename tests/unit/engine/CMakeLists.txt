@@ -114,6 +114,7 @@ add_gtest_unit(test_engine_parser_core
     test_ignore_flags.cpp
 )
 add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
+add_gtest_unit(test_engine_binary_model_refused test_binary_model_refused.cpp)
 add_gtest_unit(test_engine_options
     test_options_parser.cpp
     test_report_options_api.cpp

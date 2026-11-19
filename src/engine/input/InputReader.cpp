@@ -37,6 +37,7 @@
 #include <istream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <algorithm>
 #include <cctype>
@@ -167,6 +168,32 @@ bool InputReader::read(const std::string& path, SimulationContext& ctx) {
         ctx.error_message = "InputReader: cannot open file '" + path + "'";
         ctx.state = EngineState::ERROR_STATE;
         return false;
+    }
+    // The .inp reader would parse an HDF5 or GeoPackage model as text: the
+    // model text stored inside parses, then its last section runs into binary
+    // bytes. Name the input plugin instead.
+    {
+        char head[16] = {};
+        ifs.read(head, sizeof head);
+        const std::string_view sig(head, static_cast<std::size_t>(ifs.gcount()));
+        const char* kind = nullptr;
+        const char* plugin = nullptr;
+        if (sig.substr(0, 8) == std::string_view("\x89HDF\r\n\x1a\n", 8)) {
+            kind = "an HDF5 file";
+            plugin = "org.hydrocouple.openswmm.plugins.hdf5";
+        } else if (sig == std::string_view("SQLite format 3\0", 16)) {
+            kind = "a GeoPackage (SQLite) file";
+            plugin = "org.hydrocouple.openswmm.plugins.geopackage";
+        }
+        if (kind) {
+            ctx.error_code = 2; // public SWMM_ERR_INPFILE
+            ctx.error_message = "InputReader: '" + path + "' is " + kind +
+                                ", not an .inp; open it with the input plugin " + plugin;
+            ctx.state = EngineState::ERROR_STATE;
+            return false;
+        }
+        ifs.clear();
+        ifs.seekg(0, std::ios::beg);
     }
     ctx.inp_file_path = path;
 #if defined(_WIN32)
