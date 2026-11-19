@@ -354,3 +354,32 @@ TEST(GpkgFormats_Hotstart, RejectsHeaderMismatch) {
     auto r = writeHotstartHsf((testDataDir() / "mismatch.hsf").string(), snap);
     EXPECT_FALSE(r.ok);
 }
+
+// Older SWMM5 hot start files (stamp versions 1 to 3) have a shorter header than
+// version 4. The codec read every file as version 4 and misaligned their counts;
+// it now refuses them by version instead.
+TEST(GpkgFormats_Hotstart, RefusesStampVersionsOneToThreeByName) {
+    struct Case {
+        const char* stamp;
+        std::size_t length;
+        int version;
+    };
+    for (const Case c : {Case{"SWMM5-HOTSTART", 14, 1}, Case{"SWMM5-HOTSTART2", 15, 2},
+                         Case{"SWMM5-HOTSTART3", 15, 3}}) {
+        const fs::path dst =
+            testDataDir() / ("hotstart_stamp_v" + std::to_string(c.version) + ".hsf");
+        {
+            std::ofstream out(dst, std::ios::binary);
+            out.write(c.stamp, static_cast<std::streamsize>(c.length));
+            for (int32_t v : {0, 0, 1, 0, 0, 0})
+                out.write(reinterpret_cast<const char*>(&v), 4);
+            for (float f : {0.5f, 0.1f})
+                out.write(reinterpret_cast<const char*>(&f), 4);
+        }
+        HotstartSnapshot snap;
+        auto r = parseHotstartHsf(dst.string(), snap);
+        EXPECT_FALSE(r.ok) << c.stamp;
+        EXPECT_NE(r.error.find("version " + std::to_string(c.version)), std::string::npos)
+            << r.error;
+    }
+}

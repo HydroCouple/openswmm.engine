@@ -121,8 +121,9 @@ FormatResult parseHotstartHsf(const std::string& path, HotstartSnapshot& snapsho
         return fail("could not open '" + path + "' for reading");
 
     // --- File-stamp ---
+    // Version 1 has a 14-byte stamp; versions 2 to 4 append their digit.
     char stamp[16] = {};
-    if (!readBytes(fp, stamp, HSF_STAMP_LEN)) {
+    if (!readBytes(fp, stamp, 14)) {
         std::fclose(fp);
         return fail("truncated header (file stamp)");
     }
@@ -130,10 +131,18 @@ FormatResult parseHotstartHsf(const std::string& path, HotstartSnapshot& snapsho
         std::fclose(fp);
         return fail("unrecognised file stamp — not a SWMM5 hot-start file");
     }
+    const int next = std::fgetc(fp);
+    const int version = (next >= '2' && next <= '9') ? next - '0' : 1;
+    // Versions 1 to 3 omit header counts that version 4 has, so this layout
+    // would misread them. They are refused instead of guessed.
+    if (version != 4) {
+        std::fclose(fp);
+        return fail("SWMM5 hot start version " + std::to_string(version) +
+                    " is not supported in a GeoPackage; only version 4 (SWMM 5.1 and later) is");
+    }
+    stamp[14] = static_cast<char>(next);
     snapshot.header.file_stamp = std::string(stamp, HSF_STAMP_LEN);
-    // Version is the trailing digit; default v1 when absent (legacy).
-    const char v = stamp[14];
-    snapshot.header.file_version = (v >= '0' && v <= '9') ? (v - '0') : 1;
+    snapshot.header.file_version = version;
 
     // --- Counts (HSF v4 layout: nSubcatch, nLandUses, nNodes, nLinks,
     //                            nPollut, flowUnits) ---
