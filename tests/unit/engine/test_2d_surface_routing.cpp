@@ -1400,8 +1400,9 @@ TEST(InputParsing, Parse2DOptionsLine) {
         const char* tok;
         Backend2D want;
     } backends[] = {
-        {"cpu", Backend2D::CPU}, {"OMP", Backend2D::OMP},   {"Cuda", Backend2D::CUDA},
-        {"HIP", Backend2D::HIP}, {"sycl", Backend2D::SYCL}, {"auto", Backend2D::AUTO},
+        {"cpu", Backend2D::CPU},   {"OMP", Backend2D::OMP},   {"Cuda", Backend2D::CUDA},
+        {"HIP", Backend2D::HIP},   {"sycl", Backend2D::SYCL}, {"Metal", Backend2D::METAL},
+        {"auto", Backend2D::AUTO},
     };
     for (const auto& b : backends) {
         err = parse2DOptionsLine({"BACKEND", b.tok}, opts);
@@ -1412,8 +1413,8 @@ TEST(InputParsing, Parse2DOptionsLine) {
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         EXPECT_EQ(format2DOptionValue(opts, "BACKEND"), upper) << b.tok;
     }
-    err = parse2DOptionsLine({"BACKEND", "METAL"}, opts);
-    EXPECT_FALSE(err.empty()) << "BACKEND METAL must be rejected";
+    err = parse2DOptionsLine({"BACKEND", "VULKAN"}, opts);
+    EXPECT_FALSE(err.empty()) << "BACKEND VULKAN must be rejected";
     EXPECT_EQ(opts.backend, Backend2D::AUTO)
         << "a rejected token must not clobber the previous value";
 }
