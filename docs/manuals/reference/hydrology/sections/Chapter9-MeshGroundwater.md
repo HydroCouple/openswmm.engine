@@ -511,10 +511,13 @@ the same option at open — selects how the subsurface meets evaporative demand:
 
 | Mode | Capillary rise (negative \f$q_0\f$) | Demand at the column top |
 |---|---|---|
-| `NONE` (default) | Suppressed: a negative \f$q_0\f$ is zeroed | None |
+| `NONE` | Suppressed: a negative \f$q_0\f$ is zeroed | None |
 | `CAPILLARY_RISE` | Allowed | None |
 | `BOUNDARY_ET` | Suppressed | Yes |
 | `BOTH` | Allowed | Yes |
+
+The default, `AUTO`, is `BOTH` for a mesh aquifer and `NONE` under
+`MODE PER_SUBCATCH`.
 
 The capillary σ column (`CAPILLARY_DIFF YES`, §9.4.4) is the exception to the
 middle column: its table face follows suction in both directions under every

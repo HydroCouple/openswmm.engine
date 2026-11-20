@@ -4518,8 +4518,27 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
             // the last of several fine GW steps, spoiling convergence.
             const double p = gw_->clockState()->schedule->producerStep();
             const double next = (std::floor(t / p) + 1) * p;
-            if (dt0_ > p && next > t)
+            if (dt0_ > p && next > t) {
+                // On a check instant with room for a whole cycle, run the tiered
+                // cycle with the check cadence as its finest step: every substep
+                // ends on a check, and the coarser tiers keep their longer
+                // steps. Landing each check with a global tail step instead put
+                // every active cell on the check cadence, which on a mesh whose
+                // cells mostly sit in the coarse tiers more than doubled the
+                // face work and ran the rebuild cadence several times as fast.
+                const double index = t / p;
+                const bool on_check =
+                    std::abs(index - std::round(index)) <=
+                    64 * std::numeric_limits<double>::epsilon() * std::max(1., std::abs(index));
+                if (on_check && !second_order_ && nsub_full * p <= t_target - t) {
+                    runMacroCycle(p, nsub_full, t);
+                    t += nsub_full * p;
+                    last_dt_ = p;
+                    ++cycles_since_rebuild;
+                    continue;
+                }
                 target = std::min(target, next);
+            }
         }
         const double remaining = target - t;
 

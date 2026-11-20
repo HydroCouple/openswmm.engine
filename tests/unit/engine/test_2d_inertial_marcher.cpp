@@ -12430,6 +12430,54 @@ TEST(IndependentGroundwaterClock, TwelveRungsCloseWaterAndTracerAtVariableRoutin
     EXPECT_LT(solver.last_step_size(), .051);
 }
 
+// A groundwater check cadence finer than the surface's own step used to land every check with a
+// global step of every active cell, so a tiered surface did the work of an untiered one. The
+// checks now end the substeps of a tiered cycle: same firings, coarse tiers on longer steps.
+TEST(IndependentGroundwaterClock, FineCheckCadenceKeepsTheSurfaceTiers) {
+    long evaluations[2] = {};
+    unsigned long long firings[2] = {};
+    for (int run = 0; run < 2; ++run) {
+        // Still water over a step in the bed: 4 m deep on the left, 0.05 m on the right.
+        auto mesh = makeGridMesh(8, 8, 2., [](double x, double) { return x < 8. ? 0. : 3.95; });
+        auto surface = makeState(mesh);
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
+        opts.max_timestep = 5.;
+        opts.groundwater = 1;
+        opts.lts_tiers = run == 0 ? 1 : 3;
+        seedSurface(mesh, opts, surface, 4.);
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, surface, opts);
+        SubsurfaceConfig config;
+        config.options.authored = config.options.independent_clock = true;
+        config.options.gw_et = "NONE";
+        config.options.closure = GwClosure::ENSLAVED;
+        config.options.base_step = config.options.max_step = .0625; // every cell at the ceiling
+        config.options.base_step_set = true;
+        GwAquiferRow r;
+        r.zs = 2;
+        r.hg0 = 1;
+        r.theta_s = .45;
+        r.theta_r = .1;
+        r.Ks = 1e-7;
+        r.alpha = 2;
+        config.rows = {r};
+        SubsurfaceSolver gw;
+        std::vector<std::string> warnings;
+        ASSERT_EQ(gw.initialize(mesh, solver.inertialEdges(), opts, {}, 0, config, warnings), "");
+        solver.setSubsurface(&gw, 8.);
+        for (int start = 0; start < 8; ++start)
+            solver.advance(start, start + 1);
+        evaluations[run] = solver.run_stats().nrhs;
+        firings[run] = gw.clockState()->firings[int(GwClosure::ENSLAVED)];
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            EXPECT_EQ(gw.cellCompletedTime(i), 8.);
+    }
+    EXPECT_EQ(firings[0], 128u * 256u); // 128 cells on the 0.03125 s check cadence for 8 s
+    EXPECT_EQ(firings[1], firings[0]);
+    EXPECT_LT(evaluations[1], .8 * evaluations[0]);
+}
+
 TEST(IndependentGroundwaterClock, FastSurfaceDoesNotForceTheSlowAquiferAtWindowEnds) {
     auto mesh = makeGridMesh(1, 1, 1., [](double, double) { return 2.; });
     auto surface = makeState(mesh);
