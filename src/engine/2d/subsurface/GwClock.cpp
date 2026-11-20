@@ -124,6 +124,10 @@ GwClock::GwClock(Options options, std::span<const double> bounds, std::vector<Fa
         cells_.push_back({time_, bounds[i],
                           select(bounds[i], accuracy.empty() ? 1e30 : accuracy[i], floorRung(i))});
         schedule(i, cells_.back().rung, time_);
+        const auto k = static_cast<std::size_t>(floorRung(i));
+        if (floor_cells_.size() <= k)
+            floor_cells_.resize(k + 1);
+        floor_cells_[k].push_back(i);
     }
 }
 
