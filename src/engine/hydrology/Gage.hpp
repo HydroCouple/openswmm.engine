@@ -245,6 +245,18 @@ double getPastRain(const GageState& state, int hours);
  * no finite/range validation or transaction rollback occurs here. */
 void updateAllGages(SimulationContext& ctx, double current_time);
 
+/**
+ * @brief Re-read each gage's next record after a run continued into longer rain series.
+ *
+ * A [RESTART] continuation record restores the gage machine as the saving run left it; that run's
+ * series ended at the record, so a gage that found no next record then may find one now. Seeds a
+ * gage the saving run had no state for, as at the start, and re-reads the next non-zero record
+ * of one whose next record was none, with the factor the uninterrupted run would have used.
+ * Other gages keep their state: a next record found before the record is the same in both series.
+ * @param[in,out] ctx Context just restored from the record, with the continued model's series.
+ */
+void refreshGageLookahead(SimulationContext& ctx);
+
 /** @brief Query rainfall using the most recently advanced runoff-gage state.
  * @param ctx Compatible initialized state/tables/co-gage arrays, borrowed read-only.
  * @param gage_idx Valid zero-based gage index, unchecked before several accesses.

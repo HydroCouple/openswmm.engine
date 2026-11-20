@@ -433,7 +433,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_initialize(<SWMM_Engine><size_t>self.handle)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def start(self, bint save_results=True) -> None:
         """Start the simulation; transition to ``STARTED``.
@@ -445,7 +445,7 @@ cdef class Solver:
         with self._operation():
             rc = swmm_engine_start(<SWMM_Engine><size_t>self.handle, 1 if save_results else 0)
         self._access.raise_callback_error()
-        _check(rc)
+        _check_engine(rc, self._handle)
 
     def advance_to(self, double seconds) -> timedelta:
         """Advance to exact elapsed seconds and settle both 2D domains."""

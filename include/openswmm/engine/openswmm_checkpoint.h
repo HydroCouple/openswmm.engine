@@ -27,6 +27,9 @@ extern "C" {
 #define SWMM_CHECKPOINT_FILE_PROFILE (1UL << 6)
 #define SWMM_CHECKPOINT_BUNDLE_EXPORT (1UL << 7)
 #define SWMM_CHECKPOINT_SESSION_BUILDER (1UL << 8)
+/* [RESTART] MODE CONTINUE into a model with a later end and time series points after the record
+ * (a digital twin's next cycle); every other model difference is refused by name. */
+#define SWMM_CHECKPOINT_CONTINUE_EXTENDED_FORCING (1UL << 9)
 
 /* Cheap attachment/lifecycle hints; full compatibility remains validated by
  * inspect/restore/save. An ordinary initialized engine is not attached. */

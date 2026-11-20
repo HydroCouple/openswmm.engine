@@ -1048,9 +1048,13 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             require(state.cells.empty(), "Hydraulic checkpoint has unassigned LID cells.");
     }
 }
-std::string Router::checkpointModel(const SimulationContext& c) const {
+std::string Router::checkpointModel(const SimulationContext& c, bool continuation) const {
     Archive a;
     auto o = c.options;
+    if (continuation) {
+        o.end_date = 0.0;
+        o.total_duration_ms = 0.0;
+    }
     a(o.start_date, o.end_date, o.total_duration_ms, o.report_start, o.routing_step,
       o.min_routing_step, o.report_step, o.variable_step, o.lengthening_step, o.flow_units,
       o.routing_model, o.surcharge_method, o.node_continuity, o.anderson_accel, o.head_tol,
@@ -1233,7 +1237,8 @@ Router::prepareCheckpointBytes(const SimulationContext& c, std::string bytes,
     in(magic, version, model, crc, payload);
     in.finish();
     require(magic == magicName && (version == 3 || version == 4 || version == 5) &&
-                model == checkpoint_model_ && crc == checksum(payload),
+                (model == checkpoint_model_ || accept_continuation_model_) &&
+                crc == checksum(payload),
             "Hydraulic checkpoint format/model/checksum differs.");
     require(version == 3 || version == 4 || version == 5,
             "Hydraulic checkpoint version is unsupported.");

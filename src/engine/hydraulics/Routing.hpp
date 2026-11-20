@@ -545,6 +545,9 @@ private:
     bool checkpoint_aquifer_session_ =
         false; // paired engine/surface recovery owns node-bed receipts
     std::string checkpoint_model_;
+    /// A [RESTART] CONTINUE whose engine-level continuation model matched: the saved hydraulic
+    /// model may differ from this one in its end date only (SWMMEngine::loadCheckpointBytes).
+    bool accept_continuation_model_ = false;
     double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
     bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;
     /**
@@ -556,10 +559,12 @@ private:
      *
      * @param[in] ctx Initialized matching context with coherent geometry/options/subtype/LID material
      *     arrays.
+     * @param[in] continuation Leave out the end date and the total duration, which a run continued
+     *     from a [RESTART] record may move on.
      * @return Owned binary model-identity bytes used for exact equality, not a human-readable model
      *     name.
      */
-    std::string checkpointModel(const SimulationContext& ctx) const;
+    std::string checkpointModel(const SimulationContext& ctx, bool continuation = false) const;
     /**
      * @brief Reject hydraulic features outside the currently owned checkpoint qualification.
      *

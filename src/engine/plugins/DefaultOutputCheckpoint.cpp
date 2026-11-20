@@ -179,6 +179,30 @@ DefaultOutputPlugin::prepareCheckpoint(const SimulationContext& ctx, double next
     return prepared;
 }
 
+void DefaultOutputPlugin::rewriteLastReportRain(const std::vector<double>& subcatch_rain,
+                                                float sys_rain) {
+    const long values = long(n_subcatch_) * n_subcatch_vars_ + long(n_nodes_) * n_node_vars_ +
+                        long(n_links_) * n_link_vars_ + MAX_SYS_RESULTS;
+    const long width = long(sizeof(double)) + values * long(sizeof(float));
+    require(out_file_ && n_periods_ > 0 && std::fflush(out_file_) == 0,
+            "No binary report to rewrite the rainfall of.");
+    const long end = output_start_pos_ + long(n_periods_) * width, row = end - width;
+    const auto put = [&](long value_index, float value) {
+        require(std::fseek(out_file_,
+                           row + long(sizeof(double)) + value_index * long(sizeof(float)),
+                           SEEK_SET) == 0 &&
+                    std::fwrite(&value, sizeof value, 1, out_file_) == 1,
+                "Cannot rewrite the last report's rainfall.");
+    };
+    long k = 0; // reported subcatchments, in model order; RAINFALL is each one's first value
+    for (std::size_t j = 0; j < subcatch_rain.size(); ++j)
+        if (j >= subcatch_rpt_flag_.size() || subcatch_rpt_flag_[j])
+            put(k++ * n_subcatch_vars_, static_cast<float>(subcatch_rain[j]));
+    put(values - MAX_SYS_RESULTS + 1, sys_rain); // SYS_RAINFALL
+    require(std::fflush(out_file_) == 0 && std::fseek(out_file_, end, SEEK_SET) == 0,
+            "Cannot rewrite the last report's rainfall.");
+}
+
 io::CheckpointOutputPublication::Output
 DefaultOutputPlugin::checkpointPublication(const PreparedCheckpoint& prepared) const {
     return {prepared.staging, io::utf8_path(out_path_), checkpoint_header_,

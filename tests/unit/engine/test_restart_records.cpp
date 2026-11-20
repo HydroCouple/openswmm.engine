@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_model.h>
@@ -477,4 +479,232 @@ TEST(RestartRecords, EngineReportsWhenARunUsesTheCheckpoint) {
         swmm_engine_close(e);
         swmm_engine_destroy(e);
     }
+}
+
+// ============================================================================
+// A twin's cycles: each continues from the previous cycle's record into the same model with a
+// later end and the rain that arrived since. Continuation records end a step at their time, so
+// the cycles reproduce an uninterrupted run that records at the same times, bit for bit.
+// ============================================================================
+
+namespace {
+
+/** Rain every five minutes over four hours, in in/h: two storms and a dry spell. */
+constexpr double kRain[48] = {0.0, 0.4, 1.2, 2.4, 3.0, 2.0, 1.1, 0.6, 0.3, 0.1, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                              0.8, 1.6, 3.2, 4.0, 2.5, 1.5, 0.9, 0.5, 0.2, 0.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.6, 0.6, 0.3, 0.1, 0.0};
+
+struct TwinModel {
+    int end_minutes = 240;             ///< END_TIME after 01/01/2020 00:00.
+    int rain_minutes = 240;            ///< Rain points strictly before this many minutes.
+    int inflow_minutes = 240;          ///< Inflow series points up to this many minutes.
+    double roughness = 0.013;          ///< Conduit C1's Manning n.
+    double first_rain = 0.0;           ///< Value of the first rain point.
+    std::string wet_step = "00:01:00"; ///< WET_STEP and DRY_STEP; steps that do not divide
+    std::string dry_step = "00:05:00"; ///< an hour end at a record's time only when it ends them.
+    std::string restart;               ///< [RESTART] rows.
+};
+
+std::string clock(int minutes) {
+    char text[16];
+    std::snprintf(text, sizeof text, "%02d:%02d:00", minutes / 60, minutes % 60);
+    return text;
+}
+
+/** A subcatchment draining to a two-conduit dynamic-wave network, its gage on a rain series. */
+fs::path writeTwinModel(const fs::path& dir, const std::string& name, const TwinModel& m) {
+    const fs::path inp = dir / (name + ".inp");
+    std::ofstream o(inp);
+    o << "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n"
+         "IGNORE_GROUNDWATER YES\nSTART_DATE 01/01/2020\nSTART_TIME 00:00:00\n"
+         "REPORT_START_DATE 01/01/2020\nREPORT_START_TIME 00:00:00\nEND_DATE 01/01/2020\n"
+         "END_TIME "
+      << clock(m.end_minutes) << "\nREPORT_STEP 00:01:00\nWET_STEP " << m.wet_step << "\nDRY_STEP "
+      << m.dry_step
+      << "\nROUTING_STEP 15\n"
+         "VARIABLE_STEP 0.75\n\n[RESTART]\n"
+      << m.restart
+      << "\n\n[RAINGAGES]\nRG INTENSITY 0:05 1.0 TIMESERIES RAIN\n\n"
+         "[SUBCATCHMENTS]\nS1 RG J1 20 60 800 1.0 0\n\n"
+         "[SUBAREAS]\nS1 0.012 0.15 0.05 0.2 25 OUTLET\n\n"
+         "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+         "[JUNCTIONS]\nJ1 10 6 0 0 0\nJ2 8 6 0 0 0\n\n[OUTFALLS]\nO1 5 FREE\n\n"
+         "[CONDUITS]\nC1 J1 J2 400 "
+      << m.roughness
+      << " 0 0 0 0\nC2 J2 O1 400 0.013 0 0 0 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0 1\nC2 CIRCULAR 1.5 0 0 0 1\n\n"
+         "[INFLOWS]\nJ2 FLOW BASE\n\n[TIMESERIES]\n";
+    for (int i = 0; i < 48 && 5 * i < m.rain_minutes; ++i)
+        o << "RAIN 01/01/2020 " << clock(5 * i) << " " << (i == 0 ? m.first_rain : kRain[i])
+          << "\n";
+    for (int minute = 0; minute <= m.inflow_minutes; minute += 30)
+        o << "BASE 01/01/2020 " << clock(minute) << " " << 0.2 + 0.05 * (minute % 60 == 0) << "\n";
+    return inp;
+}
+
+std::string continuationRows(const fs::path& file, const std::vector<int>& at_minutes) {
+    std::string rows =
+        "RECORD_FILE \"" + file.string() + "\"\nRECORD_FORMAT HDF5\nRECORD_CONTINUATION YES\n";
+    for (const int minute : at_minutes)
+        rows += minute < 0 ? std::string("RECORD_AT END\n")
+                           : "RECORD_AT 01/01/2020 " + clock(minute) + "\n";
+    return rows;
+}
+
+std::string continueFrom(const fs::path& file) {
+    return "SOURCE_FILE \"" + file.string() + "\"\nSOURCE_RECORD LATEST\nMODE CONTINUE\n";
+}
+
+/** Cycles of @p hours each over four hours, every one continuing the one before. */
+Run runCycles(const fs::path& dir, int hours, const TwinModel& steps) {
+    Run last;
+    fs::path previous;
+    for (int k = 1; k * hours <= 4; ++k) {
+        TwinModel m;
+        m.wet_step = steps.wet_step;
+        m.dry_step = steps.dry_step;
+        m.end_minutes = m.rain_minutes = 60 * hours * k;
+        const fs::path record = dir / ("cycle" + std::to_string(k) + ".h5");
+        m.restart =
+            (k > 1 ? continueFrom(previous) : std::string()) + continuationRows(record, {-1});
+        last = run(writeTwinModel(dir, "cycle" + std::to_string(k), m));
+        if (last.rc != SWMM_OK)
+            return last;
+        previous = record;
+    }
+    return last;
+}
+
+} // namespace
+
+TEST(RestartRecords, TwinCyclesReproduceTheUninterruptedRun) {
+    {
+        SWMM_Engine e = swmm_engine_create();
+        unsigned long flags = 0;
+        ASSERT_EQ(swmm_checkpoint_capabilities(e, &flags), SWMM_OK);
+        EXPECT_TRUE(flags & SWMM_CHECKPOINT_CONTINUE_EXTENDED_FORCING);
+        swmm_engine_destroy(e);
+    }
+    // A 3.5 minute wet step (at most the gage's 5 minute recording interval, or the engine
+    // shortens it) and a 7 minute dry step do not divide the hour: runoff steps end at the
+    // records' times only because the records end them there.
+    for (const auto& [hours, steps] : {std::pair<int, bool>{1, false}, {2, false}, {1, true}}) {
+        const fs::path dir = caseDir("twin_cycles_" + std::to_string(hours) + "h" +
+                                     (steps ? "_runoff_steps_unaligned" : ""));
+        TwinModel whole;
+        if (steps) {
+            whole.wet_step = "00:03:30";
+            whole.dry_step = "00:07:00";
+        }
+        std::vector<int> boundaries;
+        for (int minute = 60 * hours; minute < 240; minute += 60 * hours)
+            boundaries.push_back(minute);
+        whole.restart = continuationRows(dir / "whole.h5", boundaries);
+        const auto reference = run(writeTwinModel(dir, "whole", whole));
+        ASSERT_EQ(reference.rc, SWMM_OK) << reference.message;
+        const auto cycles = runCycles(dir, hours, whole);
+        ASSERT_EQ(cycles.rc, SWMM_OK) << hours << " h cycles: " << cycles.message;
+        EXPECT_EQ(cycles.state, reference.state) << hours << " h cycles";
+        const std::string a = bytes(dir / "whole.out"),
+                          b = bytes(dir / ("cycle" + std::to_string(4 / hours) + ".out"));
+        ASSERT_FALSE(a.empty());
+        EXPECT_EQ(b, a) << hours << " h cycles: the binary output differs";
+    }
+}
+
+TEST(RestartRecords, TwinCycleRefusesAnyOtherChange) {
+    const fs::path dir = caseDir("twin_cycle_refusals");
+    // Cycle 1's inflow series stops at 00:30, before the record at 01:00: the values after
+    // 00:30 would interpolate towards a later point, so extending it is refused. One that
+    // already has its point at 01:00 may be extended after it.
+    TwinModel first;
+    first.end_minutes = first.rain_minutes = 60;
+    first.inflow_minutes = 30;
+    first.restart = continuationRows(dir / "first.h5", {-1});
+    ASSERT_EQ(run(writeTwinModel(dir, "first", first)).rc, SWMM_OK);
+    const auto next = [&](const std::string& name, TwinModel m) {
+        m.restart = continueFrom(dir / "first.h5");
+        return run(writeTwinModel(dir, name, m));
+    };
+    TwinModel ok;
+    ok.end_minutes = ok.rain_minutes = 120;
+    ok.inflow_minutes = 30;
+    EXPECT_EQ(next("rain_arrived", ok).rc, SWMM_OK)
+        << "only the rain after 01:00 and the end change";
+    TwinModel pointed = first;
+    pointed.inflow_minutes = 60;
+    pointed.restart = continuationRows(dir / "pointed.h5", {-1});
+    ASSERT_EQ(run(writeTwinModel(dir, "pointed", pointed)).rc, SWMM_OK);
+    TwinModel extended = ok;
+    extended.inflow_minutes = 120;
+    extended.restart = continueFrom(dir / "pointed.h5");
+    const auto after_its_point = run(writeTwinModel(dir, "inflow_after_its_point", extended));
+    EXPECT_EQ(after_its_point.rc, SWMM_OK) << after_its_point.message;
+    TwinModel rough = ok;
+    rough.roughness = 0.015;
+    TwinModel past = ok;
+    past.first_rain = 0.5;
+    TwinModel inflow = ok;
+    inflow.inflow_minutes = 120;
+    TwinModel earlier = ok;
+    earlier.end_minutes = 30;
+    for (const auto& [name, model] : {std::pair<const char*, TwinModel>{"roughness", rough},
+                                      {"past_rain", past},
+                                      {"inflow_series", inflow},
+                                      {"earlier_end", earlier}}) {
+        const auto r = next(name, model);
+        EXPECT_EQ(r.rc, SWMM_ERR_HOTSTART) << name << ": " << r.message;
+        EXPECT_FALSE(r.message.empty()) << name;
+    }
+}
+
+// A run with no output file writes no binary results whatever start() is asked, as the Python
+// Solver asks by default, so its continuation records carry none and continue into such a run.
+TEST(RestartRecords, ContinuationRecordsInRunsWithoutAnOutputFile) {
+    const fs::path dir = caseDir("continuation_without_output_file");
+    const auto stepped = [&](const fs::path& inp) {
+        struct Run r; // gtest's Test::Run hides the type here
+        SWMM_Engine e = swmm_engine_create();
+        r.rc = swmm_engine_open(
+            e, inp.string().c_str(),
+            (inp.parent_path() / (inp.stem().string() + ".rpt")).string().c_str(), "", nullptr);
+        if (r.rc == SWMM_OK)
+            r.rc = swmm_engine_initialize(e);
+        if (r.rc == SWMM_OK)
+            r.rc = swmm_engine_start(e, 1);
+        double elapsed = 0.0;
+        while (r.rc == SWMM_OK && (r.rc = swmm_engine_step(e, &elapsed)) == SWMM_OK &&
+               elapsed > 0.0) {
+        }
+        for (int i = 0; r.rc == SWMM_OK && i < swmm_node_count(e); ++i) {
+            double v = 0.0;
+            swmm_node_get_depth(e, i, &v);
+            r.state.push_back(v);
+        }
+        if (r.rc == SWMM_OK)
+            r.rc = swmm_engine_end(e);
+        if (const char* m = swmm_get_last_error_msg(e))
+            r.message = m;
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+        return r;
+    };
+    TwinModel whole;
+    whole.restart = continuationRows(dir / "whole.h5", {120});
+    const auto reference = stepped(writeTwinModel(dir, "whole", whole));
+    ASSERT_EQ(reference.rc, SWMM_OK) << reference.message;
+    TwinModel first;
+    first.end_minutes = first.rain_minutes = 120;
+    first.restart = continuationRows(dir / "first.h5", {-1});
+    const auto a = stepped(writeTwinModel(dir, "first", first));
+    ASSERT_EQ(a.rc, SWMM_OK) << a.message;
+    const std::string json = inspect(dir / "first.h5");
+    EXPECT_EQ(count(json, "\"binary_output\":false"), 1) << json;
+    EXPECT_EQ(count(json, "\"continuation\":true"), 1) << json;
+    TwinModel second;
+    second.restart = continueFrom(dir / "first.h5");
+    const auto b = stepped(writeTwinModel(dir, "second", second));
+    ASSERT_EQ(b.rc, SWMM_OK) << b.message;
+    EXPECT_EQ(b.state, reference.state);
 }

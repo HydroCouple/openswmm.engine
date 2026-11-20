@@ -2028,9 +2028,11 @@ int SWMMEngine::start(int save_results) noexcept {
                   "Split network requires matching geometry and a phase callback before start");
         return SWMM_ERR_LIFECYCLE;
     }
-    // A continued run writes binary results exactly when its record carries them.
+    // A continued run writes binary results exactly when its record carries them. A run
+    // without an output file writes none, whatever start() was asked.
+    const bool binary_results = save_results_ != 0 && !out_path_.empty();
     if (ctx_.restart_receipt.mode == "CONTINUE" &&
-        ctx_.restart_receipt.binary_output != (save_results_ != 0)) {
+        ctx_.restart_receipt.binary_output != binary_results) {
         set_error(CFFI_ERR_HOTSTART,
                   ctx_.restart_receipt.binary_output
                       ? ("[RESTART] record " + ctx_.restart_receipt.record_id +
@@ -2047,7 +2049,7 @@ int SWMMEngine::start(int save_results) noexcept {
     // engine checkpoint then carries the output written so far, so a continued
     // run writes the same binary file as an uninterrupted one. Prepared before
     // the writers open, with a new output destination.
-    if (save_results_ && !checkpoint_output_ && restartNeedsCheckpoint()) {
+    if (binary_results && !checkpoint_output_ && restartNeedsCheckpoint()) {
         if (const auto error = prepareOutputCheckpointing(); !error.empty()) {
             set_error(CFFI_ERR_HOTSTART,
                       ("[RESTART] continuing with binary results: " + error +
@@ -2630,6 +2632,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             }
         }
 
+        // A continuation record ends a step at its time, as a run that ends there does.
+        if (const double record_ms = nextContinuationRecordMs();
+            ctx_.elapsed_ms + 1000.0 * dt_next > record_ms)
+            dt_next = std::max((record_ms - ctx_.elapsed_ms) / 1000.0, 0.001);
         const auto bound_runtime_step = [&]() {
             const double now = runtimeCouplingTime();
             if (process_component_host_)
@@ -3470,6 +3476,12 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         }
         if (new_runoff_ms_ > total_ms)
             new_runoff_ms_ = total_ms;
+        // A continuation record ends a runoff step at its time too, as the end does.
+        if (const double record_ms = nextContinuationRecordMs(); new_runoff_ms_ > record_ms) {
+            dt_runoff = (record_ms - old_runoff_ms_) / 1000.0;
+            new_runoff_time_ = record_ms / 1000.0;
+            new_runoff_ms_ = record_ms;
+        }
 
         // Legacy runoff.c:241: book the resolved rates once, after the
         // actual runoff duration is known. USE RUNOFF returns before this
@@ -9966,6 +9978,12 @@ std::string SWMMEngine::recordRestart(double requested) {
         // With binary results the checkpoint carries the output written so far.
         if (const auto error = checkpointBytes(snapshot); !error.empty())
             return "[RESTART] cannot capture a continuation record: " + error;
+        try {
+            snapshot = wrapContinuationRecord(
+                std::move(snapshot), ctx_.options.start_date + ctx_.elapsed_ms / 86400000.0);
+        } catch (const std::exception& e) {
+            return std::string("[RESTART] cannot capture a continuation record: ") + e.what();
+        }
         hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, {},
                                                               snapshot, &bytes));
     } else {

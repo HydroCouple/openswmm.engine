@@ -125,7 +125,8 @@ int swmm_checkpoint_capabilities(SWMM_Engine handle, unsigned long* flags) {
         if (!flags)
             return failure(SWMM_ERR_BADPARAM, "Null checkpoint capability output.");
         unsigned long supported = SWMM_CHECKPOINT_INSPECTION | SWMM_CHECKPOINT_RESTORE |
-                                  SWMM_CHECKPOINT_BINARY_PROFILE | SWMM_CHECKPOINT_SESSION_BUILDER;
+                                  SWMM_CHECKPOINT_BINARY_PROFILE | SWMM_CHECKPOINT_SESSION_BUILDER |
+                                  SWMM_CHECKPOINT_CONTINUE_EXTENDED_FORCING;
         if (openswmm::io::checkpointNoReplaceAvailable())
             supported |= SWMM_CHECKPOINT_SAVE_NEW;
 #ifdef OPENSWMM_HAS_2D

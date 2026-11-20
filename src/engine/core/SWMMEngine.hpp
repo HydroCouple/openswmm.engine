@@ -1219,6 +1219,25 @@ private:
     /** @brief Capture every record whose time the accepted clock has reached. */
     std::string recordDueRestarts();
     /**
+     * @brief Elapsed ms of the next continuation record this run takes, or +infinity.
+     *
+     * A run that records RECORD_CONTINUATION YES ends a routing and a runoff step at each record's
+     * time, as a run ending there does, so a run continued from the record into a model with a
+     * later end steps as this one does.
+     */
+    double nextContinuationRecordMs() const noexcept;
+    /**
+     * @brief Put the continuation model at @p record_time around a record's engine checkpoint.
+     *
+     * A run continued from the record may differ from this model in its end date and in the
+     * points of its time series after @p record_time; loadCheckpointBytes() checks the rest.
+     * @param[in] checkpoint The engine checkpoint bytes.
+     * @param[in] record_time Decimal day of the accepted step captured.
+     */
+    std::string wrapContinuationRecord(std::string checkpoint, double record_time) const;
+    /// Set while loadCheckpointBytes() restores a record whose continuation model matched.
+    bool continuation_restore_ = false;
+    /**
      * @brief Attach native restart resources at the initial RUNNING boundary.
      *
      * Requires time zero and no existing checkpoint. With an active surface, owns initialized
@@ -1270,6 +1289,18 @@ private:
      *     format.
      */
     std::string checkpointModel() const;
+    /**
+     * @brief The model identity a run continued at @p record_time must share.
+     *
+     * checkpointModel() without the end date and total duration, and with each time series cut
+     * at @p record_time: a series only rain gages read (INTENSITY or VOLUME, each point its own
+     * interval) keeps its points before that time; any other keeps them and its first point at or
+     * after it, which the values before it interpolate towards. Curves are kept whole.
+     * @param[in] record_time Decimal day of the record.
+     * @param[out] parts Named pieces of the identity (options, each table), for refusals.
+     */
+    std::string continuationModel(double record_time,
+                                  std::vector<std::pair<std::string, std::string>>* parts) const;
     /**
      * @brief Validate an accepted attachment, unchanged model and consistent restart inventory.
      *

@@ -736,6 +736,16 @@ TEST(EngineCheckpoint, RefusesIncompleteProfilesChangedModelsAndUnrelatedDestina
     b.context().forcing.climate_evap_mode = ForcingMode::OVERRIDE;
     EXPECT_FALSE(b.enableCheckpointing().empty());
     b.context().forcing.climate_evap_mode = ForcingMode::NONE;
+    // A persistent per-element climate forcing is refused too; it is not saved either.
+    for (auto* channels : {b.context().forcing.elem_air_temp, b.context().forcing.elem_humidity,
+                           b.context().forcing.elem_wind, b.context().forcing.elem_shortwave}) {
+        channels[1].mode.assign(1, ForcingMode::OVERRIDE);
+        channels[1].value.assign(1, 1.0);
+        channels[1].persist.assign(1, ForcingPersist::PERSIST);
+        EXPECT_EQ(b.enableCheckpointing(),
+                  "Engine checkpoint cannot recover runtime element climate forcing.");
+        channels[1].clear();
+    }
     ASSERT_EQ(b.enableCheckpointing(), "");
     ASSERT_EQ(b.close(), 0);
     ASSERT_NO_THROW(start(b, "guards-reopened"));
