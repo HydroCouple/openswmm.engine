@@ -648,6 +648,17 @@ phase with `infil_in` and `dunne`. The continuity residual is
 zero to machine precision for a conserving kernel; recharge and capillary rise
 are internal to a cell and do not appear.
 
+The results file's per-species ledger (`groundwater_species_ledger`) closes the
+same way with one difference: mass the 1D network hands to the aquifer through a
+node bed or a leaking conduit is counted in storage as soon as it is sampled, but
+booked as node or link inflow only when the receiving cell gathers it. Between
+those two moments its residual equals the mass in flight, and it returns to
+roundoff once the cells have fired. Under the shared clock that is at most one
+surface step's worth; under `GW_CLOCK INDEPENDENT` a cell can hold it for its
+whole period, so mid-run residuals are larger (on the Bellinge
+groundwater-quality example about \f$10^{-4}\f$ of the stored mass at the
+heaviest exchange, \f$2 \times 10^{-7}\f$ at the end).
+
 ### 9.10.2 The report
 
 When `[REPORT] CONTINUITY` is on and the kernel ran, a **2D Aquifer
