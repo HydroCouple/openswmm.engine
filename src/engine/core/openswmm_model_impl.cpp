@@ -1627,6 +1627,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
         case openswmm::fv::Backend::SYCL:
             val = "SYCL";
             break;
+        case openswmm::fv::Backend::METAL:
+            val = "METAL";
+            break;
         default:
             val = "AUTO";
             break;
@@ -2259,6 +2262,8 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine, const char* key, const 
                 opt.fv.backend = openswmm::fv::Backend::HIP;
             else if (vu == "SYCL")
                 opt.fv.backend = openswmm::fv::Backend::SYCL;
+            else if (vu == "METAL")
+                opt.fv.backend = openswmm::fv::Backend::METAL;
             else
                 return SWMM_ERR_BADPARAM;
         }

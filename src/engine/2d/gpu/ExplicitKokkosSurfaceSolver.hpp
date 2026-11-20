@@ -63,6 +63,11 @@
 #include "KokkosTypes.hpp"
 #include "KokkosPerfCounters.hpp"
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+#include "metal/FaceClient.hpp"
+#include <memory>
+#endif
+
 namespace openswmm::twoD::gpu {
 
 struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
@@ -81,7 +86,13 @@ public:
      * initialize(). Default counters/flags do not prove runtime availability or allocate mesh
      * state.
      */
-    ExplicitKokkosSurfaceSolver() = default;
+    explicit ExplicitKokkosSurfaceSolver(bool metal = false)
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        : metal_requested_(metal)
+#endif
+    {
+        (void)metal;
+    }
     /**
      * @brief Retire optional telemetry through finalize() then release owned Kokkos view
      * handles.
@@ -229,6 +240,11 @@ public:
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    bool metal_requested_;
+    std::unique_ptr<metal::SurfaceClient> metal_swe_;
+    std::unique_ptr<metal::FaceClient> metal_faces_;
+#endif
     friend struct ExplicitKokkosSurfaceSolverTestAccess;
     kperf::Counters perf_counters_;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).

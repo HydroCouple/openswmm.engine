@@ -60,7 +60,7 @@ inline std::vector<std::pair<std::string, std::string>> fvOptionRows(const Simul
     static const char* sLimiter[] = {"MINMOD", "VANLEER", "SUPERBEE"};
     static const char* sScalar[] = {"UPWIND", "MUSCL", "QUICKEST_ULTIMATE"};
     static const char* sTime[] = {"EULER", "RK2"};
-    static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
+    static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL", "METAL"};
     auto real = [](double v) {
         char b[32];
         std::snprintf(b, sizeof(b), "%.17g", v);

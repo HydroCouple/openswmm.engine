@@ -321,23 +321,36 @@ Located locate_plugin(const std::string& backend, bool surface) {
  */
 std::shared_ptr<IFvDeviceMarcher> try_plugin(const std::string& backend, int requested_threads,
                                              std::string* label, std::string* reason) {
-    Located found = locate_plugin(backend, false);
+    Located found = locate_plugin(backend == "metal" ? "omp" : backend, false);
     if (!found.handle) {
         if (reason)
             *reason = found.reason;
         return nullptr;
     }
-    auto make =
-        reinterpret_cast<MakeFn>(platform_sym(found.handle, "openswmm_make_gpu_network_marcher"));
+    auto make = reinterpret_cast<MakeFn>(
+        platform_sym(found.handle, backend == "metal" ? "openswmm_make_metal_network_marcher"
+                                                      : "openswmm_make_gpu_network_marcher"));
     auto destroy = reinterpret_cast<DestroyFn>(
         platform_sym(found.handle, "openswmm_destroy_gpu_network_marcher"));
     if (found.info.vendor == OPENSWMM_GPU_VENDOR_OPENMP)
         found.info.requested_threads =
             requested_threads > 0 ? requested_threads : threadinfo::perfCores();
+    if (!make) {
+        if (reason)
+            *reason = "installed plugin lacks the Metal network worker";
+        return nullptr;
+    }
     void* raw = make(&found.info);
     if (!raw) {
-        if (reason)
-            *reason = "the " + backend + " plugin could not create the solver";
+        if (reason) {
+            using Error = const char* (*)();
+            auto error =
+                reinterpret_cast<Error>(platform_sym(found.handle, "openswmm_gpu_last_error"));
+            const char* diagnostic = error ? error() : nullptr;
+            *reason = diagnostic && *diagnostic
+                          ? diagnostic
+                          : "the " + backend + " plugin could not create the solver";
+        }
         return nullptr;
     }
     if (label)
@@ -365,6 +378,8 @@ const char* backend_name(Backend b) {
         return "hip";
     case Backend::SYCL:
         return "sycl";
+    case Backend::METAL:
+        return "metal";
     case Backend::AUTO:
     default:
         return "auto";
@@ -379,6 +394,26 @@ BackendProbe probeBackend(const std::string& backend_in, bool surface) {
     if (backend == "cpu" || backend == "auto") {
         out.usable = true;
         out.device_name = "CPU";
+        return out;
+    }
+    if (backend == "metal") {
+        auto found = locate_plugin("omp", surface);
+        if (!found.handle) {
+            out.reason = found.reason;
+            return out;
+        }
+        using ProbeMetal = int (*)(char*, size_t);
+        auto probe =
+            reinterpret_cast<ProbeMetal>(platform_sym(found.handle, "openswmm_probe_metal_faces"));
+        char name[256]{};
+        if (!probe)
+            out.reason = "engine plugin was built without Metal";
+        else if (probe(name, sizeof(name)) != 0)
+            out.reason = name;
+        else {
+            out.usable = true;
+            out.device_name = name;
+        }
         return out;
     }
     if (backend != "omp" && backend != "cuda" && backend != "hip" && backend != "sycl") {
@@ -411,16 +446,20 @@ std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts, std::st
     // the CPU: the marcher steps globally and holds structure forcing over the
     // routing step, so switching to it changes results against the default
     // local-time-stepping path, and its crossover size has not been measured.
-    if (mode != "omp" && mode != "cuda" && mode != "hip" && mode != "sycl")
+    if (mode != "metal" && mode != "omp" && mode != "cuda" && mode != "hip" && mode != "sycl")
         return solver;
 
     std::string label, reason;
     if (auto marcher = try_plugin(mode, requested_threads, &label, &reason)) {
         solver->attachDeviceMarcher(std::move(marcher));
+        if (mode == "metal")
+            label = "metal (Kokkos SYCL network faces)";
         if (chosen)
             *chosen = label + ", device substeps";
         std::fprintf(stderr, "[openswmm FV] using device backend: %s\n", label.c_str());
     } else {
+        if (mode == "metal")
+            throw std::runtime_error("Metal FV network request failed: " + reason);
         std::fprintf(stderr,
                      "[openswmm FV] backend '%s' requested but no usable plugin was found "
                      "(%s); using the CPU solver\n",

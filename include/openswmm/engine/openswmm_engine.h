@@ -721,18 +721,22 @@ typedef struct SWMM_BackendInfo {
     char reason[256];                    /**< why the backend is not usable; empty if usable  */
 } SWMM_BackendInfo;
 
+/** This engine understands METAL as an explicit 1D or 2D face backend.
+ * Query swmm_backend_info separately for runtime availability. */
+#define OPENSWMM_HAS_METAL_FACE_SELECTION 1
+
 /**
  * @brief Ask whether a compute backend is installed and usable, without an engine.
  *
  * Looks for the backend's plugin beside the engine library (and on OPENSWMM_GPU_PLUGIN_PATH),
  * checks that it was built for this engine and provides the solver asked about, and asks it for
- * a device. No solver is created and no parallel runtime is started; a plugin found here stays
+ * a device. METAL starts a short-lived worker to identify the actual GPU. A plugin found here stays
  * loaded for the life of the process. "CPU" and "AUTO" are always usable. A model that asks for
- * a backend that is not usable still runs: the engine uses the CPU solver and says so.
+ * METAL explicitly requires that worker and fails if it cannot run.
  *
  * @param[in] solver A SWMM_BackendSolver value.
  * @param[in] backend Non-null backend name as written in the input file: CPU, AUTO, OMP, CUDA,
- *     HIP or SYCL, in any case.
+ *     HIP, SYCL or METAL, in any case.
  * @param[out] out Non-null caller-owned destination; every field is filled on SWMM_OK.
  * @return SWMM_OK, or SWMM_ERR_BADPARAM for a null argument or an unknown solver.
  */

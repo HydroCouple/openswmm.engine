@@ -174,7 +174,8 @@ enum class Backend2D : int8_t {
     OMP = 2,  ///< Kokkos OpenMP host plugin.
     CUDA = 3, ///< Kokkos CUDA device plugin (NVIDIA).
     HIP = 4,  ///< Kokkos HIP device plugin (AMD).
-    SYCL = 5  ///< Kokkos SYCL device plugin (Intel).
+    SYCL = 5,
+    METAL = 6 ///< Apple GPU face flux through Kokkos SYCL.
 };
 
 /**

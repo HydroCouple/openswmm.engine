@@ -41,7 +41,7 @@ namespace openswmm::fv::gpu {
 /// Create a marcher on the plugin's execution space. Kokkos must already be
 /// initialized. The caller owns the result and deletes it through
 /// IFvDeviceMarcher.
-IFvDeviceMarcher* makeKokkosNetworkMarcher();
+IFvDeviceMarcher* makeKokkosNetworkMarcher(bool metal = false);
 
 } // namespace openswmm::fv::gpu
 
