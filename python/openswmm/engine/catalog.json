@@ -14628,7 +14628,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "link.roughness",
@@ -15036,7 +15036,7 @@
    ],
    "returns": "Tuple[XSectShape, float, float, float, float]",
    "params": [],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "link.xsect.g1",
@@ -15118,7 +15118,7 @@
    ],
    "returns": "CrossSection",
    "params": [],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "link.xsect.items",
@@ -15356,7 +15356,7 @@
    ],
    "returns": "Tuple[NDArray[Any], NDArray[Any], NDArray[Any]]",
    "params": [],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "links.qualities",
@@ -15379,7 +15379,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "links.rename",
@@ -16464,7 +16464,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "node.rim_depth",
@@ -16993,7 +16993,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "nodes.rename",
@@ -22643,7 +22643,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "steady_state_skip",
@@ -22833,7 +22833,7 @@
    ],
    "returns": "list[float]",
    "params": [],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "subcatchment.ds_imperv",
@@ -23353,7 +23353,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "subcatchment.quality",
@@ -23375,7 +23375,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "subcatchment.rain_scale_factor",
@@ -23955,7 +23955,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "subcatchments.rainfalls",
@@ -29752,7 +29752,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.area_from_section_factor",
@@ -29789,7 +29789,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.critical_depth",
@@ -29826,7 +29826,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.depth_from_area",
@@ -29863,7 +29863,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.dsda",
@@ -29900,7 +29900,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.flow_units",
@@ -30214,7 +30214,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.hyd_radius_from_area",
@@ -30251,7 +30251,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.is_open",
@@ -30329,7 +30329,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   },
   {
    "path": "xsect.shape",
@@ -30390,7 +30390,7 @@
      "required": true
     }
    ],
-   "effect": "write"
+   "effect": "read"
   }
  ],
  "functions": {
