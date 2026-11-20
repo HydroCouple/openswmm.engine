@@ -298,7 +298,9 @@ rate into the top layer from the ponded ground, capped by that layer's room
 room is **rejected** to the surface. The ET taken is the demand reduced by
 (9-6) at the top layer's suction at the start of the step and limited to what
 the layer holds above residual. \f$q_{rise}\f$ is what the saturated zone can
-still supply upward, zero when `GW_ET` excludes capillary rise. Every face vanishes
+still supply upward, under every `GW_ET` mode: the column and the table are one
+pressure-continuous system, and a table that rises under a column has to be able
+to wet it back to rest (§9.8). Every face vanishes
 on a hydrostatic profile, so a column at rest stays there, a Brooks-Corey
 capillary fringe included. The arithmetic mean keeps every face monotone in
 suction, so the backward-Euler step has one solution; a harmonic mean blocks a
@@ -513,6 +515,15 @@ the same option at open — selects how the subsurface meets evaporative demand:
 | `CAPILLARY_RISE` | Allowed | None |
 | `BOUNDARY_ET` | Suppressed | Yes |
 | `BOTH` | Allowed | Yes |
+
+The capillary σ column (`CAPILLARY_DIFF YES`, §9.4.4) is the exception to the
+middle column: its table face follows suction in both directions under every
+mode, limited by what the saturated zone holds, and `GW_ET` selects only whether
+it meets demand at its top. A face that passes water down only leaves a column
+drier than rest after its table rises, and a column saturated at its foot (a
+Brooks-Corey capillary fringe) then has no yield at all, so a table gaining
+water has no nearby water balance. The kinematic σ column has no upward flux
+under any mode.
 
 **The demand** is the surface cell's evaporation rate of Chapter 8 §8.5 — zero
 under the default `[2D_OPTIONS] EVAPORATION YES` with no forcing, the

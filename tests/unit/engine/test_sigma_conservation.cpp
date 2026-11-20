@@ -50,9 +50,10 @@ struct Rig {
      *     parameters.
      * @param[in] capillary Enable capillary diffusion when true.
      * @param[in] layers Positive sigma-layer count accepted by initialization, default eight.
+     * @param[in] et GW_ET mode, default BOUNDARY_ET.
      */
     void init(SoilChar law, double table = 1, double ks = .01, GwUnitFactors units = {},
-              bool capillary = false, int layers = 8) {
+              bool capillary = false, int layers = 8, const char* et = "BOUNDARY_ET") {
         mesh.resize_vertices(3);
         mesh.vx = {0, 4, 0};
         mesh.vy = {0, 0, 2};
@@ -69,7 +70,7 @@ struct Rig {
         cfg.options.capillary_diff = capillary;
         cfg.options.m_layers = layers;
         cfg.options.soil_char = law;
-        cfg.options.gw_et = "BOUNDARY_ET";
+        cfg.options.gw_et = et;
         GwAquiferRow row;
         row.Ks = ks / units.rate;
         row.zs = 2 / units.length;
@@ -845,6 +846,34 @@ TEST(SigmaImplicitColumn, MovingColumnsConserveWaterAndBalanceTheirReceipts) {
             }
 }
 
+// A Brooks-Corey column 0.3 m long with a 0.2 m air-entry suction is saturated at its foot. When
+// the saturated zone gains water the table must rise by the gain over the column's yield at its
+// top. With a table face that could only pass water down (GW_ET without capillary rise) the
+// column could not be wetted from below, the water balance had no slope, and the settlement put
+// the table a fringe higher (0.28 m in one firing on the mixed clock fixture).
+TEST(SigmaImplicitColumn, FringeColumnGainingTableWaterRisesByItsYieldUnderEveryEtMode) {
+    for (const char* et : {"NONE", "BOUNDARY_ET", "CAPILLARY_RISE", "BOTH"}) {
+        SCOPED_TRACE(et);
+        Rig r;
+        r.init(SoilChar::BROOKS_COREY, 1.7, .01, {}, true, 4, et);
+        GwResolvedSource source;
+        source.cells = {{0, 1}};
+        source.flow.times = {0, 100};
+        source.flow.values = {1e-6, 1e-6}; // 2.5e-7 m/s over the 4 m2 cell
+        r.gw.setSources({source});
+        const auto& s = r.gw.state();
+        const double start = s.hg[0];
+        ASSERT_DOUBLE_EQ(s.theta_sigma.back(), s.theta_s[0]); // the foot is in the fringe
+        ASSERT_LT(s.theta_sigma.front(), s.theta_s[0]);
+        for (int k = 0; k < 10; ++k) {
+            r.fire(1, k);
+            r.check();
+        }
+        EXPECT_GT(s.hg[0], start);
+        EXPECT_LT(s.hg[0] - start, 1e-3); // 2.5e-6 m of water
+        EXPECT_GT(s.led_source_in, 0);
+    }
+}
 TEST(SigmaLayerTransport, ReusedWorkspaceRetainsFreshPartialOutputsAfterRefusal) {
     LayerTransportScratch scratch;
     const auto same = [](const LayerTransportResult& a, const LayerTransportResult& b) {

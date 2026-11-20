@@ -2885,7 +2885,9 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // the floor does not bind (every deck that was already right).
         theta_bot = ts - Sy;
     }
-    if (cl != GwClosure::ENSLAVED && !et_caprise && q0 < 0.0)
+    // The capillary column and the table are one pressure-continuous system:
+    // its table face runs both ways whatever GW_ET says (see `q0_min` below).
+    if (cl != GwClosure::ENSLAVED && !et_caprise && !implicit_column && q0 < 0.0)
         q0 = 0.0; // GW_ET NONE: no capillary rise
 
     // Availability, the same idiom as every other flux here: a column may not
@@ -3266,11 +3268,14 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 // Rise may spend only the table's drainable water left after
                 // every other saturated channel of this firing (node, link,
                 // wells, edges, deep loss: `external`), so a table height
-                // >= 0 settles it. GW_ET without capillary rise: none.
+                // >= 0 settles it. The face runs upward under every GW_ET
+                // mode: a table that rises under a column must be able to wet
+                // it back to rest, and with a one-way face a column saturated
+                // at its foot (a capillary fringe) gives the balance no slope
+                // at all, so the settlement ran to a root a fringe away.
                 const double supply = Sy * hg0 + external - (runtime_rk2 ? 0.0 : future_lid_up / A);
-                cs.q0_min = et_caprise ? -std::max(0.0, supply) / dt *
-                                             (1.0 - 8.0 * std::numeric_limits<double>::epsilon())
-                                       : 0.0;
+                cs.q0_min = -std::max(0.0, supply) / dt *
+                            (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
             }
             cs.handover_theta = ts - Sy;
             if (tr_.n_layers > 0)

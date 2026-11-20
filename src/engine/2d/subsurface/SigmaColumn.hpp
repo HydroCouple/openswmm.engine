@@ -118,7 +118,7 @@ struct ColumnStep {
         -1.0;             ///< <0: actual bottom layer; otherwise paired table storage coefficient
     double q0_phys = 0.0; ///< kinematic column: physical flux across the table (m/s)
     /// Capillary column: lower bound on the solved table flux (m/s): what the table can supply
-    /// upward, 0 when capillary rise is off.
+    /// upward (0 for an empty table), under every GW_ET mode.
     double q0_min = -1.0e300;
     bool capillary = false; ///< CAPILLARY_DIFF: the implicit capillary (Darcy) column
 

@@ -210,8 +210,8 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
     bool converged = false;
     // The table face's bound is held on one branch through a Newton pass, chosen from the
     // starting state and flipped (once) if the converged state contradicts it: max(Darcy,
-    // q0_min) has its kink exactly at equilibrium when capillary rise is off, and switching
-    // branch every iterate there cycles.
+    // q0_min) has its kink exactly at equilibrium when the table has nothing to supply, and
+    // switching branch every iterate there cycles.
     bool clamped = false;
     double darcy = 0.0;
     const auto held = [&](const std::vector<double>& sat, int j) {

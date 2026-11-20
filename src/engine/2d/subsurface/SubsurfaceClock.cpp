@@ -389,7 +389,7 @@ double SubsurfaceSolver::clockAccuracyLimit(int i) const {
     if (recharge > 0)
         recharge = std::min(recharge, std::max(0., state_.hu[i] - state_.theta_r[i] * length) /
                                           options_.base_step);
-    else if (!et_caprise_)
+    else if (!et_caprise_ && !(closure == GwClosure::SIGMA && options_.capillary_diff))
         recharge = 0;
     add(recharge * A);
     if (!state_.eacc_L.empty())
