@@ -161,7 +161,10 @@ struct SubsurfaceSolver::IndependentOwner final : GwClock::Owner {
         if (std::floor(end / gw.options_.base_step) <=
             std::floor(state.schedule->time() / gw.options_.base_step))
             return;
-        std::vector<unsigned char> scheduled(state.cells.size(), 0);
+        // Called at every base-step check for every cell: reuse the buffers.
+        static thread_local std::vector<unsigned char> scheduled;
+        static thread_local std::vector<ClockBudget> budgets;
+        scheduled.assign(state.cells.size(), 0);
         for (int id : due)
             scheduled[id] = 1;
         for (int cell : state.cells) {
@@ -169,7 +172,8 @@ struct SubsurfaceSolver::IndependentOwner final : GwClock::Owner {
                 continue;
             bool trigger = false;
             double excess_in = 0, excess_out = 0, ratio = 0;
-            for (const auto& b : gw.clockBudgets(cell, end)) {
+            gw.clockBudgets(cell, end, budgets);
+            for (const auto& b : budgets) {
                 trigger |= (b.in > 0 && b.in >= b.room_in) || (b.out > 0 && b.out >= b.room_out);
                 excess_in = std::max(excess_in, std::max(0., b.in - b.room_in));
                 excess_out = std::max(excess_out, std::max(0., b.out - b.room_out));
@@ -319,13 +323,19 @@ double SubsurfaceSolver::clockAmount(int cell, GwSlot field, const std::vector<d
 
 std::vector<SubsurfaceSolver::ClockBudget> SubsurfaceSolver::clockBudgets(int i,
                                                                           double through) const {
+    std::vector<ClockBudget> result;
+    clockBudgets(i, through, result);
+    return result;
+}
+
+void SubsurfaceSolver::clockBudgets(int i, double through, std::vector<ClockBudget>& result) const {
+    result.clear();
     auto [in, out] = pendingClockWater(i, through);
     const double yield = specificYieldOf(i), A = state_.area[i];
     const double head = options_.head_tolerance * yield * A * std::max(.01, state_.hg[i]);
     const auto budget = [&](double room) {
         return options_.budget_fraction * std::min(head, std::max(0., room));
     };
-    std::vector<ClockBudget> result;
     const bool sigma = state_.closure[i] == static_cast<int>(GwClosure::SIGMA);
     if (sigma) {
         double intake = clockAmount(i, GwSlot::surface, state_.xacc_from_surface, i, through);
@@ -361,7 +371,6 @@ std::vector<SubsurfaceSolver::ClockBudget> SubsurfaceSolver::clockBudgets(int i,
         {std::max(0., in), std::max(0., out),
          budget(sigma ? yield * A * (state_.zs[i] - state_.hg[i]) : infiltrationStorageDeficit(i)),
          budget(unreservedDrainableWater(i, yield))});
-    return result;
 }
 
 double SubsurfaceSolver::clockAccuracyLimit(int i) const {

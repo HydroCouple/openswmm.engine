@@ -1917,6 +1917,8 @@ private:
         double in, out, room_in, room_out;
     };
     std::vector<ClockBudget> clockBudgets(int cell, double through) const;
+    /// clockBudgets into a caller-owned buffer (replaced), for loops over every cell.
+    void clockBudgets(int cell, double through, std::vector<ClockBudget>& result) const;
     double clockAmount(int cell, GwSlot field, const std::vector<double>& values, std::size_t index,
                        double through) const;
     double clockAccuracyLimit(int cell) const;
