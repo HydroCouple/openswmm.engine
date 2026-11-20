@@ -63,6 +63,11 @@
 #include "KokkosTypes.hpp"
 #include "KokkosPerfCounters.hpp"
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+#include "metal/FaceClient.hpp"
+#include <memory>
+#endif
+
 namespace openswmm::twoD::gpu {
 
 struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
@@ -229,6 +234,9 @@ public:
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    std::unique_ptr<metal::FaceClient> metal_faces_;
+#endif
     friend struct ExplicitKokkosSurfaceSolverTestAccess;
     kperf::Counters perf_counters_;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).

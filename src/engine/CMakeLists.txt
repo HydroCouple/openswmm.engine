@@ -532,6 +532,10 @@ if(OPENSWMM_BUILD_2D)
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+    if(OPENSWMM_ENABLE_METAL_FACES)
+        set_property(SOURCE 2d/solver/SurfaceSolverFactory.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS OPENSWMM_ENABLE_METAL_FACES)
+    endif()
 
     # Default2DOutputPlugin writes the [2D_OPTIONS] OUTPUT_FILE results as
     # CF-1.11/UGRID-1.0 HDF5. It is the 2D module's only HDF5 user, so
