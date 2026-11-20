@@ -360,15 +360,18 @@ void GroundPorewaterColumn::refreshSigmaView() {
  * @param[in,out] tr Canonical transport owner with matching SIGMA species/layers and cell
  * extent.
  * @param[in] cell Target cell index in that owner.
+ * @param[in] claims Optional current saturated outgoing reservation per species; null keeps the
+ * map's own (see SigmaPorewaterMap::publish).
  * @return Empty when inactive or successfully published/refreshed; otherwise sigma.publish()'s
  * diagnostic, without refreshing the derived views. The map handles pending receipt validation.
  * @note This method borrows the owner only for the call; publication requires exclusive access
  * to both objects and must occur at the phase where pending contact receipts become canonical.
  */
-std::string GroundPorewaterColumn::publishSigma(SubsurfaceTransportState& tr, int cell) {
+std::string GroundPorewaterColumn::publishSigma(SubsurfaceTransportState& tr, int cell,
+                                                const std::vector<double>* claims) {
     if (!sigma.active())
         return {};
-    if (auto error = sigma.publish(tr, cell); !error.empty())
+    if (auto error = sigma.publish(tr, cell, claims); !error.empty())
         return error;
     refreshSigmaView();
     return {};

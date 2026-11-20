@@ -219,12 +219,18 @@ bool SigmaPorewaterMap::apply(int row, int physical, double increment) noexcept 
  * @return Empty on success after canonical publication, unsaturated-view refresh, overlap rebase
  * and clearing pending receipts. Diagnostic on owner layout or candidate rebase refusal before
  * canonical writes; allocation exceptions also occur before publication.
- * @note Rebase preserves current summed overlap reservations as saturated claims. Prepared
+ * @param[in] claims Optional current saturated outgoing reservation per species, native units.
+ * Null keeps this map's summed overlap reservations. A caller that has just settled an export
+ * against the canonical owner passes the owner's remaining claims: the map's own are stale
+ * until it is configured again, and can exceed a saturated store the same firing emptied.
+ * @note Rebase preserves the claims it is given as saturated claims. Prepared
  * indices, extents and owner invariants are required. Both objects need exclusive access for the
  * call.
  */
-std::string SigmaPorewaterMap::publish(SubsurfaceTransportState& tr, int cell) {
-    if (layers != tr.n_layers || species != tr.n_species)
+std::string SigmaPorewaterMap::publish(SubsurfaceTransportState& tr, int cell,
+                                       const std::vector<double>* claims) {
+    if (layers != tr.n_layers || species != tr.n_species ||
+        (claims && claims->size() != std::size_t(species)))
         return "SIGMA contact owner layout differs.";
     const int nr = layers + 1;
     std::vector<double> canonical(std::size_t(species) * nr), held(species, 0);
@@ -237,8 +243,11 @@ std::string SigmaPorewaterMap::publish(SubsurfaceTransportState& tr, int cell) {
                                         : tr.layer_mass[tr.layerIdx(s, r, cell)]) +
                            pending[q];
         }
-        for (std::size_t e = 0; e < overlaps.size(); ++e)
-            held[s] += reserved[std::size_t(s) * overlaps.size() + e];
+        if (claims)
+            held[s] = (*claims)[s];
+        else
+            for (std::size_t e = 0; e < overlaps.size(); ++e)
+                held[s] += reserved[std::size_t(s) * overlaps.size() + e];
     }
     if (auto error = rebase(canonical, held); !error.empty())
         return error;

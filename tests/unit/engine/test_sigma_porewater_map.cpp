@@ -91,6 +91,29 @@ TEST(SigmaPorewaterMap, PublishCommitsOnceAndInvalidOwnerLeavesMapAndInventoryUn
     retain("published", map);
 }
 
+// A firing that pays a reserved export and empties the saturated store leaves this map's own
+// reservation stale until it is configured again; publishing with it refused a valid state.
+TEST(SigmaPorewaterMap, PublishTakesTheOwnersClaimsWhenItsOwnAreStale) {
+    SubsurfaceTransportState tr;
+    tr.resize(1, 1, 0);
+    tr.n_layers = 2;
+    SigmaPorewaterMap map;
+    ASSERT_TRUE(
+        map.configure(2, 1, {{0, 0, .2, .4}, {0, 1, .3, .4}, {1, 2, .4, .6}}, {0.}, {1, 2, 5}, {3.})
+            .empty());
+    tr.layer_mass = {1, 4}; // the export of 3 is paid and the rest handed to the layers
+    tr.sat_mass = {0};
+    const auto before = snapshot(map);
+    EXPECT_FALSE(map.publish(tr, 0).empty());
+    EXPECT_EQ(snapshot(map), before);
+    const std::vector<double> none{0.}, wrong_shape{0., 0.};
+    EXPECT_FALSE(map.publish(tr, 0, &wrong_shape).empty());
+    ASSERT_TRUE(map.publish(tr, 0, &none).empty());
+    EXPECT_EQ(map.reserved, std::vector<double>(3, 0));
+    EXPECT_EQ(tr.sat_mass, std::vector<double>{0});
+    EXPECT_NEAR(tr.layer_mass[0] + tr.layer_mass[1], 5, 1e-15);
+}
+
 TEST(SigmaPorewaterMap, DryUnsortedOverlapsOverwriteStagingAndKeepCanonicalTemperature) {
     const std::vector<double> canonical{1, 2, 3, 4, 0, 0, 0, 0};
     const std::vector<SigmaPorewaterMap::Overlap> wet{

@@ -96,10 +96,16 @@ std::string SubsurfaceSolver::refreshSigmaPorewater(int i) {
     auto& pore = cell.porewater;
     if (cell.column.energy.empty())
         return {};
-    if (auto error = pore.publishSigma(tr_, i); !error.empty())
+    const int m = tr_.n_layers, ns = tr_.n_species;
+    // The owner's claims, not the map's: a firing that has just paid an export leaves the map's
+    // reservation stale, and it can exceed a saturated store the same firing emptied.
+    std::vector<double> held(ns);
+    for (int s = 0; s < ns; ++s)
+        if (s != tr_.temp_row)
+            held[s] = pendingSaturatedMassExport(i, s);
+    if (auto error = pore.publishSigma(tr_, i, &held); !error.empty())
         return error;
     const auto nl = cell.column.theta.size();
-    const int m = tr_.n_layers, ns = tr_.n_species;
     const double area = state_.area[i], length = state_.zs[i] - state_.hg[i], dz = length / m;
     std::vector<SigmaPorewaterMap::Overlap> overlaps;
     for (std::size_t j = 0; j < nl; ++j)
@@ -115,14 +121,13 @@ std::string SubsurfaceSolver::refreshSigmaPorewater(int i) {
                                      : state_.theta_sigma[std::size_t(layer) * state_.n_cells + i];
             overlaps.push_back({int(j), layer, area * overlap * theta, area * overlap});
         }
-    std::vector<double> partition(ns), canonical(std::size_t(ns) * (m + 1)), held(ns);
+    std::vector<double> partition(ns), canonical(std::size_t(ns) * (m + 1));
     for (int s = 0; s < ns; ++s)
         if (s != tr_.temp_row) {
             partition[s] = s == tr_.age_row ? 0 : tr_.kd[tr_.idx(s, i)] * tr_.rho_b[i];
             for (int j = 0; j < m; ++j)
                 canonical[std::size_t(s) * (m + 1) + j] = tr_.layer_mass[tr_.layerIdx(s, j, i)];
             canonical[std::size_t(s) * (m + 1) + m] = tr_.sat_mass[tr_.idx(s, i)];
-            held[s] = pendingSaturatedMassExport(i, s);
         }
     if (auto error = pore.sigma.configure(m, ns, std::move(overlaps), partition, canonical, held);
         !error.empty())

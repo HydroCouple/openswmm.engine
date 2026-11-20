@@ -4045,17 +4045,6 @@ TEST(GwIntegrated, ConduitNodeWellAndEdgesShareOneFiniteDonor) {
                     ASSERT_NE(at, std::string::npos);
                     body.replace(at, 19, profile == 1 ? "CLOSURE ENSLAVED" : "CLOSURE SIGMA");
                 }
-                if (profile == 4) {
-                    // The withdrawals take exactly the drainable water. The capillary column
-                    // keeps the slab a falling table uncovers, so the table empties, and the
-                    // porous-heat contact map cannot hold the pending reservations in an empty
-                    // saturated zone (open, 2026-11-19); the kinematic column's overflow
-                    // keeps 0.22 m of table.
-                    const std::string anchor = "[2D_AQUIFER_OPTIONS]\n";
-                    const auto at = body.find(anchor);
-                    ASSERT_NE(at, std::string::npos);
-                    body.insert(at + anchor.size(), "CAPILLARY_DIFF NO\n");
-                }
                 // Temperature rows are authored only for the active porous profile.
                 if (profile != 4) {
                     const auto at = body.find("* SAT __TEMPERATURE__ 20\n");

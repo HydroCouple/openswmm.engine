@@ -37,6 +37,7 @@ struct SigmaPorewaterMap {
     std::string rebase(const std::vector<double>& canonical,
                        const std::vector<double>& saturated_reserved);
     bool apply(int row, int physical, double increment) noexcept;
-    std::string publish(SubsurfaceTransportState&, int cell);
+    std::string publish(SubsurfaceTransportState&, int cell,
+                        const std::vector<double>* claims = nullptr);
 };
 } // namespace openswmm::twoD
