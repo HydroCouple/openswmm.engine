@@ -98,6 +98,8 @@ constexpr double kDarcyMinThickness = 0.01;
 /// saturated to `θ_s` at the table (which is physically where it should be —
 /// the specific yield genuinely vanishes there, and the table stops moving).
 constexpr double kSyFloor = 1.0e-3;
+/// Settlements of one SIGMA firing that may withhold rise for a pending withdrawal (fireCell).
+constexpr int kReservePasses = 8;
 /// Largest table move, in layers, by which an implicit SIGMA trial's balance miss is booked to
 /// the table instead of re-solving the column (fireCell).
 constexpr double kShiftLayers = 1.0e-10;
@@ -3252,6 +3254,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             (saturated_exchange + source.in - source.out + boundary_in - boundary_out) / A -
             state_.qdeep_last[u] * dt;
         const double tolerance = 1e-15 * std::max({1.0, zs, std::abs(external)});
+        double reserve_cut = 0.0; // m of rise withheld for pending withdrawals (below)
         const auto evaluate = [&](double h, bool capture = false) {
             sigma_evaluations.evaluate();
             trial = original;
@@ -3273,7 +3276,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 // it back to rest, and with a one-way face a column saturated
                 // at its foot (a capillary fringe) gives the balance no slope
                 // at all, so the settlement ran to a root a fringe away.
-                const double supply = Sy * hg0 + external - (runtime_rk2 ? 0.0 : future_lid_up / A);
+                const double supply =
+                    Sy * hg0 + external - (runtime_rk2 ? 0.0 : future_lid_up / A) - reserve_cut;
                 cs.q0_min = -std::max(0.0, supply) / dt *
                             (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
             }
@@ -3304,156 +3308,176 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 throw std::runtime_error("SIGMA table/column water settlement is non-finite.");
             return balance;
         };
-        double lo = 0.0, hi = zs;
-        hg1 = std::clamp(hg1, lo, hi);
-        const bool receipts = tr_.n_layers > 0 || (heat_.active() && sigma_stage);
-        double residual = evaluate(hg1, implicit_column && receipts);
-        // The implicit column's table face is not the predictor's estimate, so
-        // its trials miss the balance by what the solved face differs from it.
-        // A trial whose miss would move the table by under kShiftLayers of a
-        // layer is kept: the miss goes into the table's storage (the table
-        // moves by it) and the layers are re-derived on that thickness, so water
-        // balances to roundoff and the column was solved on a geometry within
-        // that fraction of a layer. -1: no shift.
-        double solved_height = -1.0;
-        const auto keepShifted = [&](double h, double miss) {
-            const double shifted = h - miss / ts;
-            if (std::abs(miss / ts) > kShiftLayers * std::max(zs - h, 0.0) / state_.m_layers ||
-                !(shifted > lo && shifted < hi))
-                return false;
-            // The same water on the shifted thickness must stay admissible.
-            const double scale = (zs - h) / (zs - shifted);
-            for (const double theta : trial)
-                if (theta * scale > ts || theta * scale < p.theta_r)
+        // A withdrawal dated after this firing (a conduit or LID packet) was
+        // capped against the table's drainable water when it was booked, and
+        // rise is held to the water left after it. Rising water wets the bottom
+        // layer, though, and lowers the yield, so the same table can end up
+        // holding less drainable water than the withdrawal; at its gather the
+        // settlement could not support water the conduit already has. While
+        // the face is still rising, settle again with that shortfall withheld.
+        const double predictor = hg1;
+        for (int reserve_pass = 0;; ++reserve_pass) {
+            hg1 = predictor;
+            double lo = 0.0, hi = zs;
+            hg1 = std::clamp(hg1, lo, hi);
+            const bool receipts = tr_.n_layers > 0 || (heat_.active() && sigma_stage);
+            double residual = evaluate(hg1, implicit_column && receipts);
+            // The implicit column's table face is not the predictor's estimate, so
+            // its trials miss the balance by what the solved face differs from it.
+            // A trial whose miss would move the table by under kShiftLayers of a
+            // layer is kept: the miss goes into the table's storage (the table
+            // moves by it) and the layers are re-derived on that thickness, so water
+            // balances to roundoff and the column was solved on a geometry within
+            // that fraction of a layer. -1: no shift.
+            double solved_height = -1.0;
+            const auto keepShifted = [&](double h, double miss) {
+                const double shifted = h - miss / ts;
+                if (std::abs(miss / ts) > kShiftLayers * std::max(zs - h, 0.0) / state_.m_layers ||
+                    !(shifted > lo && shifted < hi))
                     return false;
-            solved_height = h;
-            hg1 = shifted;
-            residual = 0.0;
-            return true;
-        };
-        if (implicit_column && std::abs(residual) > tolerance && !keepShifted(hg1, residual)) {
-            // Otherwise secant steps from the predictor (slope Sy, the balance's
-            // own slope) find a sign change, then Illinois false position closes
-            // on it, inside [0, zs]; bisection to this tolerance costs ~50
-            // column solves. Whatever this cannot settle falls through to the
-            // bracketed solve below.
-            double a = hg1, fa = residual;
-            double b = std::clamp(a - fa / std::max(Sy, kSyFloor), lo, hi),
-                   fb = evaluate(b, receipts);
-            if (std::abs(fb) > tolerance && keepShifted(b, fb))
-                fb = 0.0;
-            for (int search = 0; search < 8 && std::abs(fb) > tolerance && (fa > 0) == (fb > 0);
-                 ++search) {
-                const double c = fb != fa ? std::clamp(b - fb * (b - a) / (fb - fa), lo, hi) : b;
-                if (c == b)
-                    break;
-                a = b;
-                fa = fb;
-                b = c;
-                fb = evaluate(b);
-            }
-            for (int iteration = 0;
-                 iteration < 60 && std::abs(fb) > tolerance && (fa > 0) != (fb > 0); ++iteration) {
-                double c = b - fb * (b - a) / (fb - fa);
-                if (!(c > std::min(a, b) && c < std::max(a, b)))
-                    c = 0.5 * (a + b);
-                if (c == a || c == b)
-                    break;
-                const double fc = evaluate(c);
-                if ((fc > 0) == (fb > 0)) {
-                    fa *= 0.5; // Illinois: the far end has gone stale
-                } else {
+                // The same water on the shifted thickness must stay admissible.
+                const double scale = (zs - h) / (zs - shifted);
+                for (const double theta : trial)
+                    if (theta * scale > ts || theta * scale < p.theta_r)
+                        return false;
+                solved_height = h;
+                hg1 = shifted;
+                residual = 0.0;
+                return true;
+            };
+            if (implicit_column && std::abs(residual) > tolerance && !keepShifted(hg1, residual)) {
+                // Otherwise secant steps from the predictor (slope Sy, the balance's
+                // own slope) find a sign change, then Illinois false position closes
+                // on it, inside [0, zs]; bisection to this tolerance costs ~50
+                // column solves. Whatever this cannot settle falls through to the
+                // bracketed solve below.
+                double a = hg1, fa = residual;
+                double b = std::clamp(a - fa / std::max(Sy, kSyFloor), lo, hi),
+                       fb = evaluate(b, receipts);
+                if (std::abs(fb) > tolerance && keepShifted(b, fb))
+                    fb = 0.0;
+                for (int search = 0; search < 8 && std::abs(fb) > tolerance && (fa > 0) == (fb > 0);
+                     ++search) {
+                    const double c =
+                        fb != fa ? std::clamp(b - fb * (b - a) / (fb - fa), lo, hi) : b;
+                    if (c == b)
+                        break;
                     a = b;
                     fa = fb;
+                    b = c;
+                    fb = evaluate(b);
                 }
-                b = c;
-                fb = fc;
-            }
-            if (solved_height >= 0.0) {
-                // kept shifted after the first secant step
-            } else if (std::abs(fb) <= tolerance) {
-                hg1 = b;
-                residual = fb;
-            } else {
-                residual = evaluate(hg1); // the bracketed solve starts from here
-            }
-        }
-        if (std::abs(residual) > tolerance) {
-            double lower = evaluate(lo);
-            if (lower > tolerance) {
-                // No saturated water remains to support this withdrawal.
-                // Preserve the existing deep-first refund order, using the
-                // settled column balance rather than a floored predictor.
-                double short_volume = lower * A;
-                const double deep = std::min(short_volume, state_.qdeep_last[u] * A * dt);
-                state_.qdeep_last[u] -= deep / (A * dt);
-                book(state_.led_deep, -deep);
-                external += deep / A;
-                short_volume -= deep;
-                const double node =
-                    std::min(short_volume, std::max(0.0, state_.qnode_last[u] * dt));
-                if (node > 0) {
-                    countNodeRefund();
-                    state_.qnode_last[u] -= node / dt;
-                    book(state_.led_node, -node);
-                    external += node / A;
-                }
-                lower = evaluate(lo);
-                if (lower > tolerance)
-                    throw std::runtime_error(
-                        "SIGMA saturated withdrawals exceed available column/table water.");
-            }
-            const double upper = evaluate(hi);
-            if (upper < -tolerance) {
-                hg1 = hi;
-                dunne_vol = -upper * A;
-            } else if (std::abs(lower) <= tolerance) {
-                hg1 = lo;
-                evaluate(hg1);
-            } else if (std::abs(upper) <= tolerance) {
-                hg1 = hi;
-            } else {
-                // Bounded scalar consistency solve; no forcing or water
-                // histories change in a trial, and no future flux is credit.
-                // The implicit column's trials are full solves, so its cells
-                // close the bracket by Illinois false position (bisection when
-                // that does not shrink it); the kinematic column bisects.
-                double f_lo = lower, f_hi = upper;
-                int side = 0;
-                for (int iteration = 0; iteration < 100; ++iteration) {
-                    hg1 = lo + .5 * (hi - lo);
-                    if (implicit_column && f_hi > f_lo) {
-                        const double secant = lo - f_lo * (hi - lo) / (f_hi - f_lo);
-                        if (secant > lo && secant < hi)
-                            hg1 = secant;
-                    }
-                    residual = evaluate(hg1);
-                    if (std::abs(residual) <= tolerance)
+                for (int iteration = 0;
+                     iteration < 60 && std::abs(fb) > tolerance && (fa > 0) != (fb > 0);
+                     ++iteration) {
+                    double c = b - fb * (b - a) / (fb - fa);
+                    if (!(c > std::min(a, b) && c < std::max(a, b)))
+                        c = 0.5 * (a + b);
+                    if (c == a || c == b)
                         break;
-                    if (residual > 0) {
-                        hi = hg1;
-                        f_hi = residual;
-                        if (side == 1)
-                            f_lo *= 0.5;
-                        side = 1;
+                    const double fc = evaluate(c);
+                    if ((fc > 0) == (fb > 0)) {
+                        fa *= 0.5; // Illinois: the far end has gone stale
                     } else {
-                        lo = hg1;
-                        f_lo = residual;
-                        if (side == -1)
-                            f_hi *= 0.5;
-                        side = -1;
+                        a = b;
+                        fa = fb;
                     }
+                    b = c;
+                    fb = fc;
                 }
-                if (std::abs(residual) > tolerance)
-                    throw std::runtime_error(
-                        "SIGMA table/column water settlement did not converge.");
+                if (solved_height >= 0.0) {
+                    // kept shifted after the first secant step
+                } else if (std::abs(fb) <= tolerance) {
+                    hg1 = b;
+                    residual = fb;
+                } else {
+                    residual = evaluate(hg1); // the bracketed solve starts from here
+                }
             }
+            if (std::abs(residual) > tolerance) {
+                double lower = evaluate(lo);
+                if (lower > tolerance) {
+                    // No saturated water remains to support this withdrawal.
+                    // Preserve the existing deep-first refund order, using the
+                    // settled column balance rather than a floored predictor.
+                    double short_volume = lower * A;
+                    const double deep = std::min(short_volume, state_.qdeep_last[u] * A * dt);
+                    state_.qdeep_last[u] -= deep / (A * dt);
+                    book(state_.led_deep, -deep);
+                    external += deep / A;
+                    short_volume -= deep;
+                    const double node =
+                        std::min(short_volume, std::max(0.0, state_.qnode_last[u] * dt));
+                    if (node > 0) {
+                        countNodeRefund();
+                        state_.qnode_last[u] -= node / dt;
+                        book(state_.led_node, -node);
+                        external += node / A;
+                    }
+                    lower = evaluate(lo);
+                    if (lower > tolerance)
+                        throw std::runtime_error(
+                            "SIGMA saturated withdrawals exceed available column/table water.");
+                }
+                const double upper = evaluate(hi);
+                if (upper < -tolerance) {
+                    hg1 = hi;
+                    dunne_vol = -upper * A;
+                } else if (std::abs(lower) <= tolerance) {
+                    hg1 = lo;
+                    evaluate(hg1);
+                } else if (std::abs(upper) <= tolerance) {
+                    hg1 = hi;
+                } else {
+                    // Bounded scalar consistency solve; no forcing or water
+                    // histories change in a trial, and no future flux is credit.
+                    // The implicit column's trials are full solves, so its cells
+                    // close the bracket by Illinois false position (bisection when
+                    // that does not shrink it); the kinematic column bisects.
+                    double f_lo = lower, f_hi = upper;
+                    int side = 0;
+                    for (int iteration = 0; iteration < 100; ++iteration) {
+                        hg1 = lo + .5 * (hi - lo);
+                        if (implicit_column && f_hi > f_lo) {
+                            const double secant = lo - f_lo * (hi - lo) / (f_hi - f_lo);
+                            if (secant > lo && secant < hi)
+                                hg1 = secant;
+                        }
+                        residual = evaluate(hg1);
+                        if (std::abs(residual) <= tolerance)
+                            break;
+                        if (residual > 0) {
+                            hi = hg1;
+                            f_hi = residual;
+                            if (side == 1)
+                                f_lo *= 0.5;
+                            side = 1;
+                        } else {
+                            lo = hg1;
+                            f_lo = residual;
+                            if (side == -1)
+                                f_hi *= 0.5;
+                            side = -1;
+                        }
+                    }
+                    if (std::abs(residual) > tolerance)
+                        throw std::runtime_error(
+                            "SIGMA table/column water settlement did not converge.");
+                }
+            }
+            if (receipts && solved_height < 0.0)
+                evaluate(hg1, true);
+            if (solved_height >= 0.0)
+                for (double& theta : trial) // the same water on the shifted thickness
+                    theta *= (zs - solved_height) / (zs - hg1);
+            if (!implicit_column || runtime_rk2 || !(future_lid_up > 0.0) ||
+                !(cs.table_flux < 0.0) || reserve_pass == kReservePasses)
+                break;
+            const double drainable = std::max(ts - trial.back(), kSyFloor) * hg1 * A;
+            if (!(drainable < future_lid_up))
+                break;
+            reserve_cut += (future_lid_up - drainable) / A;
         }
-        if (receipts && solved_height < 0.0)
-            evaluate(hg1, true);
-        if (solved_height >= 0.0)
-            for (double& theta : trial) // the same water on the shifted thickness
-                theta *= (zs - solved_height) / (zs - hg1);
         if (implicit_column) {
             // The physical recharge is the face the column solved at the
             // settled table, not the estimate the caps used.

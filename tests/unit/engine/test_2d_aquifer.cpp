@@ -1657,6 +1657,53 @@ TEST(Aquifer2D, IndependentLayerContactUsesItsReceivingLayerBudget) {
     finish(r);
 }
 
+// A conduit withdrawal booked for a later producer check reserves table water. Capillary rise in
+// the firings before that check must not spend it. The column is dried to near residual, so its
+// table face asks for far more than the table holds; GW_ET NONE, because the capillary column's
+// face runs both ways under every mode.
+TEST(Aquifer2D, CapillaryRiseLeavesAPendingConduitWithdrawalItsWater) {
+    auto r = openDeck("clock-rise-pending-export",
+                      deck(aquiferSection("CLOSURE SIGMA HG0 .5 SOIL_CHAR BROOKS_COREY",
+                                          "GW_CLOCK INDEPENDENT\nGW_ET NONE\nNODE_ENROLMENT ROWS\n"
+                                          "M_LAYERS 4\n"),
+                           "INFILTRATION NO\n", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    auto& s = gw.state();
+    for (int c = 0; c < s.n_cells; ++c) {
+        const double L = s.zs[c] - s.hg[c];
+        s.hu[c] = 0;
+        for (int j = 0; j < s.m_layers; ++j) {
+            s.theta_sigma[std::size_t(j) * s.n_cells + c] = s.theta_r[c] + .005;
+            s.hu[c] += (s.theta_r[c] + .005) * L / s.m_layers;
+        }
+    }
+    const double column0 = s.hu[0];
+    const double residual0 = s.continuityResidual(); // the drying above is outside the ledgers
+    gw.prepareClock();
+    gw.refreshClockAfterEdit(surface.state()); // the dried column now asks to fire every second
+    constexpr double end = 50.;
+    gw.setProducerEnd(end);
+    const double reserve = .9 * gw.unreservedDrainableWater(0);
+    ASSERT_GT(reserve, 0.);
+    gw.bookLinkSeepage(0, -reserve);
+    for (double t = 1.; t < end; t += 1.)
+        gw.advanceClock(t, surface.state(), false);
+    ASSERT_GT(gw.cellCompletedTime(0), 0.); // the cell fired before the withdrawal was due
+    EXPECT_GT(s.hu[0], column0);            // and capillary rise took table water
+    EXPECT_GE(gw.specificYieldOf(0) * s.hg[0] * s.area[0], reserve * (1 - 1e-12));
+    gw.advanceClock(end, surface.state(), false, true);
+    EXPECT_EQ(gw.cellCompletedTime(0), end);
+    EXPECT_NEAR(s.led_link, -reserve, 1e-15 * reserve);
+    EXPECT_GE(s.hg[0], 0.);
+    EXPECT_NEAR(s.continuityResidual(), residual0, 1e-11);
+    finish(r);
+}
+
 TEST(Aquifer2D, RuntimeBoundaryEditLandsOnlyTheEditedIndependentCell) {
     auto r = openDeck(
         "clock-runtime-edit",
