@@ -32,6 +32,7 @@
 #include <openswmm/engine/openswmm_hotstart.h>
 #include "core/CompletedSourceArchive.hpp"
 #include "core/SWMMEngine.hpp"
+#include "2d/subsurface/SigmaColumn.hpp"
 #include "2d/SurfaceRouter2D.hpp"
 #include "2d/subsurface/LidNodeExchange.hpp"
 #include "2d/subsurface/CommonSourceStage.hpp"
@@ -1181,14 +1182,27 @@ TEST(GroundHeat, PhysicalRechargeUsesTheAcceptedFixedGridVerticalHeatReceipt) {
         auto& gw = m.router().subsurface();
         auto& tr = gw.transport();
         ASSERT_TRUE(gw.heat().active());
-        // Put the closed-form unsaturated store above equilibrium (RUSSO,
-        // 0.5 m: 0.2204 m hydrostatic, 0.225 m full) so its physical recharge
-        // drains downward and is nonzero; with GW_ET NONE a drier store would
-        // not move. Align the thermal moisture while retaining the initialized
-        // layer temperatures.
-        if (std::string(closure) == "CLOSED_FORM")
-            for (int i = 0; i < gw.state().n_cells; ++i) {
-                gw.state().hu[std::size_t(i)] = .224;
+        // Put the unsaturated store above equilibrium (RUSSO, 0.5 m: 0.2204 m
+        // hydrostatic, 0.225 m full) so its physical recharge drains downward
+        // and is nonzero; with GW_ET NONE a drier store would not move. The
+        // capillary SIGMA column holds its hydrostatic seed at rest, so each
+        // layer goes halfway from its seed to saturation: wetter than rest
+        // everywhere, and not saturated (a saturated column has no specific
+        // yield to place the table by). Align the thermal moisture while
+        // retaining the initialized layer temperatures.
+        {
+            auto& s = gw.state();
+            for (int i = 0; i < s.n_cells; ++i) {
+                if (std::string(closure) == "CLOSED_FORM") {
+                    s.hu[std::size_t(i)] = .224;
+                } else {
+                    for (int j = 0; j < s.m_layers; ++j) {
+                        auto& theta = s.theta_sigma[std::size_t(j) * s.n_cells + i];
+                        theta = .5 * (theta + s.theta_s[i]);
+                    }
+                    s.hu[i] = openswmm::twoD::sigma::columnStorage(&s.theta_sigma[i], s.m_layers,
+                                                                   s.n_cells, s.zs[i] - s.hg[i]);
+                }
                 auto& cell = gw.heat().cells[std::size_t(i)];
                 auto& column = cell.column;
                 std::vector<double> temperature(column.energy.size()), moisture;
@@ -1203,8 +1217,8 @@ TEST(GroundHeat, PhysicalRechargeUsesTheAcceptedFixedGridVerticalHeatReceipt) {
                     column.energy[j] = column.capacity[j] * temperature[j];
                 gw.heat().refreshView(i, tr);
             }
-        if (std::string(closure) == "CLOSED_FORM")
-            gw.state().led_init_storage = gw.state().led_final_storage = gw.state().storage();
+        }
+        gw.state().led_init_storage = gw.state().led_final_storage = gw.state().storage();
         const double initial_energy = energy(gw.heat());
         std::vector<openswmm::twoD::PorousHeatColumn> expected;
         expected.reserve(gw.heat().cells.size());

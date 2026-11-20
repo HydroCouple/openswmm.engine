@@ -2138,9 +2138,10 @@ TEST(EngineCheckpoint, MappedSigmaChemistryContinuesFullSessionAcrossMidnightWit
             return mass;
         };
         const double initial_mass = tr.ledgeredStorage(dye) + surface_mass();
-        const double initial_table = gw.state().hg[0];
-        // An accepted, cold leakage packet moves the table before the saved
-        // boundary; a second packet is still waiting at that boundary.
+        const double initial_column = gw.state().hu[0];
+        // An accepted, cold leakage packet changes the column before the saved
+        // boundary (the capillary column holds it above the table); a second
+        // packet is still waiting at that boundary.
         std::vector<double> concentration(tr.n_species, 0);
         concentration[dye] = 7;
         concentration[tr.temp_row] = -4;
@@ -2148,7 +2149,7 @@ TEST(EngineCheckpoint, MappedSigmaChemistryContinuesFullSessionAcrossMidnightWit
         gw.bookLinkContact(0, .002, concentration, -.25, -.25);
         while (source.engine.context().current_time < boundary)
             ASSERT_NO_THROW(step(source.engine));
-        ASSERT_NE(gw.state().hg[0], initial_table);
+        ASSERT_NE(gw.state().hu[0], initial_column);
         ASSERT_NE(tr.gained_contact[dye], 0);
         gw.bookLinkContact(0, .00025, concentration, -.25, -.25);
         ASSERT_NE(gw.state().lacc[0], 0);

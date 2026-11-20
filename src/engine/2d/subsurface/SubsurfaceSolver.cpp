@@ -98,6 +98,9 @@ constexpr double kDarcyMinThickness = 0.01;
 /// saturated to `θ_s` at the table (which is physically where it should be —
 /// the specific yield genuinely vanishes there, and the table stops moving).
 constexpr double kSyFloor = 1.0e-3;
+/// Largest table move, in layers, by which an implicit SIGMA trial's balance miss is booked to
+/// the table instead of re-solving the column (fireCell).
+constexpr double kShiftLayers = 1.0e-10;
 /// Availability share a single face may take of its donor cell per step —
 /// the surface solver's `exchange_beta` idiom, applied to Darcy.
 constexpr double kFaceShare = 0.5;
@@ -609,7 +612,7 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
         // drives it.
         const double Ldot = -state_.q0_last[u] / Sy;
         dt_u = sigma::columnDtLimit(p, &state_.theta_sigma[u], state_.m_layers, n, L, Ldot,
-                                    options_.c_col, options_.capillary_diff);
+                                    options_.c_col);
     } else if (cl == GwClosure::CLOSED_FORM) {
         // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
         // is C = ∂q₀/∂hᵤ (dhᵤ/dt = … − q₀). Taken numerically so every soil
@@ -2691,6 +2694,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const soil::Params p = paramsOf(i);
     const auto cl = static_cast<GwClosure>(state_.closure[u]);
     const bool sigma_stage = cl == GwClosure::SIGMA && opts_ && opts_->reconstruction_order == 2;
+    // CAPILLARY_DIFF: the column solves its own table face (S2), so q0 below is an estimate.
+    const bool implicit_column = cl == GwClosure::SIGMA && options_.capillary_diff;
 
     const double hg0 = state_.hg[u];
     const double hu_pre = state_.hu[u]; // T7.1: the column store this firing starts from
@@ -2855,12 +2860,12 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     double Sy = specificYield(u, p, ts, L0, cl, &theta_bot);
 
     if (cl == GwClosure::SIGMA && L0 > 0.0) {
-        // The physical Darcy flux across the table (sigma::tableFlux): with
-        // capillary diffusion, from the bottom layer centre to psi = 0 at the
-        // table, zero on a hydrostatic column; the kinematic column keeps
-        // free drainage. It is passed INTO the sweep as `q0_phys` and comes
-        // back inside `f_bot` together with the handover, which is why the
-        // saturated update above books `q0` and not `f_bot`.
+        // The physical flux across the table (sigma::tableFlux): the kinematic
+        // column's free drainage, passed INTO the sweep as `q0_phys` and back
+        // inside `f_bot` together with the handover, which is why the
+        // saturated update above books `q0` and not `f_bot`. The capillary
+        // column solves this face itself; there q0 is the Darcy estimate at
+        // the old state, used only by the caps and the table predictor below.
         q0 = sigma::tableFlux(p, &state_.theta_sigma[u], state_.m_layers, n, L0,
                               options_.capillary_diff);
     } else if (cl == GwClosure::ENSLAVED) {
@@ -3047,9 +3052,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                     A;
     const double requested_source_out = source.out;
     const double combined_out = source.out + boundary_out;
-    // A bounded SIGMA sweep can reduce its proposed recharge. External
-    // withdrawals cannot spend that unaccepted column-to-table transfer.
-    const double saturated_credit = other_sat - (sigma_stage ? std::max(0., q0) * A * dt : 0.);
+    // A bounded SIGMA sweep can reduce its proposed recharge, and the implicit
+    // column solves its own. External withdrawals cannot spend that
+    // unaccepted column-to-table transfer.
+    const double saturated_credit =
+        other_sat - (sigma_stage || implicit_column ? std::max(0., q0) * A * dt : 0.);
     const double accepted_scale =
         combined_out > 0
             ? std::min(1.,
@@ -3202,9 +3209,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             state_.qnode_last[u] = (node_vol - refund_node) / dt;
         }
     }
-    book(state_.led_recharge, q0 * A * dt);
-    if (cl != GwClosure::ENSLAVED && q0 < 0.0)
-        book(state_.led_caprise, -q0 * A * dt);
+    if (!implicit_column) {
+        book(state_.led_recharge, q0 * A * dt);
+        if (cl != GwClosure::ENSLAVED && q0 < 0.0)
+            book(state_.led_caprise, -q0 * A * dt);
+    }
     book(state_.led_deep, state_.qdeep_last[u] * A * dt);
     // Independent storage readers include both edge receipts. Gathering an
     // internal packet changes its owner, not the domain's net inflow. Booking
@@ -3253,6 +3262,16 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             cs.q_in = q_in;
             cs.q_et = q_et;
             cs.q0_phys = q0;
+            if (implicit_column) {
+                // Rise may spend only the table's drainable water left after
+                // every other saturated channel of this firing (node, link,
+                // wells, edges, deep loss: `external`), so a table height
+                // >= 0 settles it. GW_ET without capillary rise: none.
+                const double supply = Sy * hg0 + external - (runtime_rk2 ? 0.0 : future_lid_up / A);
+                cs.q0_min = et_caprise ? -std::max(0.0, supply) / dt *
+                                             (1.0 - 8.0 * std::numeric_limits<double>::epsilon())
+                                       : 0.0;
+            }
             cs.handover_theta = ts - Sy;
             if (tr_.n_layers > 0)
                 cs.layer_inflow = &contact_depth;
@@ -3282,7 +3301,78 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         };
         double lo = 0.0, hi = zs;
         hg1 = std::clamp(hg1, lo, hi);
-        double residual = evaluate(hg1);
+        const bool receipts = tr_.n_layers > 0 || (heat_.active() && sigma_stage);
+        double residual = evaluate(hg1, implicit_column && receipts);
+        // The implicit column's table face is not the predictor's estimate, so
+        // its trials miss the balance by what the solved face differs from it.
+        // A trial whose miss would move the table by under kShiftLayers of a
+        // layer is kept: the miss goes into the table's storage (the table
+        // moves by it) and the layers are re-derived on that thickness, so water
+        // balances to roundoff and the column was solved on a geometry within
+        // that fraction of a layer. -1: no shift.
+        double solved_height = -1.0;
+        const auto keepShifted = [&](double h, double miss) {
+            const double shifted = h - miss / ts;
+            if (std::abs(miss / ts) > kShiftLayers * std::max(zs - h, 0.0) / state_.m_layers ||
+                !(shifted > lo && shifted < hi))
+                return false;
+            // The same water on the shifted thickness must stay admissible.
+            const double scale = (zs - h) / (zs - shifted);
+            for (const double theta : trial)
+                if (theta * scale > ts || theta * scale < p.theta_r)
+                    return false;
+            solved_height = h;
+            hg1 = shifted;
+            residual = 0.0;
+            return true;
+        };
+        if (implicit_column && std::abs(residual) > tolerance && !keepShifted(hg1, residual)) {
+            // Otherwise secant steps from the predictor (slope Sy, the balance's
+            // own slope) find a sign change, then Illinois false position closes
+            // on it, inside [0, zs]; bisection to this tolerance costs ~50
+            // column solves. Whatever this cannot settle falls through to the
+            // bracketed solve below.
+            double a = hg1, fa = residual;
+            double b = std::clamp(a - fa / std::max(Sy, kSyFloor), lo, hi),
+                   fb = evaluate(b, receipts);
+            if (std::abs(fb) > tolerance && keepShifted(b, fb))
+                fb = 0.0;
+            for (int search = 0; search < 8 && std::abs(fb) > tolerance && (fa > 0) == (fb > 0);
+                 ++search) {
+                const double c = fb != fa ? std::clamp(b - fb * (b - a) / (fb - fa), lo, hi) : b;
+                if (c == b)
+                    break;
+                a = b;
+                fa = fb;
+                b = c;
+                fb = evaluate(b);
+            }
+            for (int iteration = 0;
+                 iteration < 60 && std::abs(fb) > tolerance && (fa > 0) != (fb > 0); ++iteration) {
+                double c = b - fb * (b - a) / (fb - fa);
+                if (!(c > std::min(a, b) && c < std::max(a, b)))
+                    c = 0.5 * (a + b);
+                if (c == a || c == b)
+                    break;
+                const double fc = evaluate(c);
+                if ((fc > 0) == (fb > 0)) {
+                    fa *= 0.5; // Illinois: the far end has gone stale
+                } else {
+                    a = b;
+                    fa = fb;
+                }
+                b = c;
+                fb = fc;
+            }
+            if (solved_height >= 0.0) {
+                // kept shifted after the first secant step
+            } else if (std::abs(fb) <= tolerance) {
+                hg1 = b;
+                residual = fb;
+            } else {
+                residual = evaluate(hg1); // the bracketed solve starts from here
+            }
+        }
         if (std::abs(residual) > tolerance) {
             double lower = evaluate(lo);
             if (lower > tolerance) {
@@ -3320,23 +3410,54 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             } else {
                 // Bounded scalar consistency solve; no forcing or water
                 // histories change in a trial, and no future flux is credit.
+                // The implicit column's trials are full solves, so its cells
+                // close the bracket by Illinois false position (bisection when
+                // that does not shrink it); the kinematic column bisects.
+                double f_lo = lower, f_hi = upper;
+                int side = 0;
                 for (int iteration = 0; iteration < 100; ++iteration) {
                     hg1 = lo + .5 * (hi - lo);
+                    if (implicit_column && f_hi > f_lo) {
+                        const double secant = lo - f_lo * (hi - lo) / (f_hi - f_lo);
+                        if (secant > lo && secant < hi)
+                            hg1 = secant;
+                    }
                     residual = evaluate(hg1);
                     if (std::abs(residual) <= tolerance)
                         break;
-                    if (residual > 0)
+                    if (residual > 0) {
                         hi = hg1;
-                    else
+                        f_hi = residual;
+                        if (side == 1)
+                            f_lo *= 0.5;
+                        side = 1;
+                    } else {
                         lo = hg1;
+                        f_lo = residual;
+                        if (side == -1)
+                            f_hi *= 0.5;
+                        side = -1;
+                    }
                 }
                 if (std::abs(residual) > tolerance)
                     throw std::runtime_error(
                         "SIGMA table/column water settlement did not converge.");
             }
         }
-        if (tr_.n_layers > 0 || (heat_.active() && sigma_stage))
+        if (receipts && solved_height < 0.0)
             evaluate(hg1, true);
+        if (solved_height >= 0.0)
+            for (double& theta : trial) // the same water on the shifted thickness
+                theta *= (zs - solved_height) / (zs - hg1);
+        if (implicit_column) {
+            // The physical recharge is the face the column solved at the
+            // settled table, not the estimate the caps used.
+            q0 = cs.table_flux;
+            state_.q0_last[u] = q0;
+            book(state_.led_recharge, q0 * A * dt);
+            if (q0 < 0.0)
+                book(state_.led_caprise, -q0 * A * dt);
+        }
         for (int j = 0; j < state_.m_layers; ++j)
             state_.theta_sigma[static_cast<std::size_t>(j) * n + u] = trial[j];
         rejected = cs.rejected;

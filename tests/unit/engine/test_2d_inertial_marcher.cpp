@@ -2920,7 +2920,9 @@ TEST(CoupledGroundwaterRk2, SigmaInvalidLayerAndBulkStatesRefuseWithoutMutationA
     }
 }
 
-TEST(CoupledGroundwaterRk2, SigmaCapillaryTransportRetainsSecondTemporalOrder) {
+TEST(CoupledGroundwaterRk2, SigmaCapillaryColumnConvergesAtFirstOrderUnderRk2) {
+    // The capillary column (S2, 2026-11-19) is backward Euler in each RK2 stage, so the coupled
+    // trajectory converges at first order; it still differs from the kinematic column's.
     const auto trajectory = [](double dt, bool capillary) {
         CoupledRkRig r;
         r.init(dt, .003, .01, .2, "NONE", GwClosure::SIGMA, SoilChar::GARDNER, 4, capillary);
@@ -2950,9 +2952,9 @@ TEST(CoupledGroundwaterRk2, SigmaCapillaryTransportRetainsSecondTemporalOrder) {
             error += std::pow(actual[i] - reference[i], 2);
         error = std::sqrt(error);
         RecordProperty("sigma_capillary_error_" + std::to_string(int(dt * 1000)), error);
-        EXPECT_LT(error, 1e-4);
+        EXPECT_LT(error, 2e-3);
         if (previous > 0)
-            EXPECT_GT(previous / error, 3.5);
+            EXPECT_GT(previous / error, 1.8);
         previous = error;
     }
 }
@@ -3239,7 +3241,9 @@ TEST(CoupledGroundwaterRk2, PassiveSharedSurfaceLayerTransportRefinesAndClosesEv
                 continue;
             const auto trajectory = [&](double dt) {
                 CoupledRkRig r;
-                r.init(dt, .003, .001, .2, "NONE", closure, SoilChar::GARDNER, 4, true);
+                // The kinematic column: second order here is the RK2 coupling's. The capillary
+                // column is backward Euler in each stage, first order (S2, 2026-11-19).
+                r.init(dt, .003, .001, .2, "NONE", closure, SoilChar::GARDNER, 4, false);
                 initRkQuality(r, layered, true, true);
                 seedRkQuality(r, 2, .001);
                 auto& t = r.gw.transport();

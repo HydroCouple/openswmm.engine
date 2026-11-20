@@ -1514,8 +1514,11 @@ TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
 TEST(Aquifer2D, IndependentColumnDrainageWakesWithoutExternalReceipts) {
     auto r = openDeck(
         "clock-column-drainage",
+        // The kinematic column drains from its hydrostatic seed; the capillary column (the
+        // default) holds it at rest, and the clock rungs cells at start.
         deck(
-            "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n"
+            "[2D_AQUIFER_OPTIONS]\nCAPILLARY_DIFF NO\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\n"
+            "NODE_ENROLMENT ROWS\nM_LAYERS 4\n"
             "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",
             "", 0.));
     ASSERT_TRUE(r.opened);
@@ -1543,8 +1546,10 @@ TEST(Aquifer2D, IndependentBaseRungCapsWetProducerChecks) {
         SCOPED_TRACE(ceiling);
         auto r =
             openDeck("clock-base-producer-" + std::string(ceiling),
-                     deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\n"
-                          "GW_MAX_STEP " +
+                     // The kinematic column drains from its hydrostatic seed, which is the work
+                     // these producer checks schedule; the capillary column holds it at rest.
+                     deck("[2D_AQUIFER_OPTIONS]\nCAPILLARY_DIFF NO\nGW_CLOCK INDEPENDENT\n"
+                          "GW_HEAD_TOLERANCE .0001\nGW_MAX_STEP " +
                               std::string(ceiling) +
                               "\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n[2D_AQUIFER]\n"
                               "* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",

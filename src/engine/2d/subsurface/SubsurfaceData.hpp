@@ -154,7 +154,9 @@ struct GwOptions {
     SoilChar soil_char = SoilChar::RUSSO;
     GwClosure closure = GwClosure::AUTO;
     int m_layers = 8;               ///< σ layers under closure B (global default)
-    bool capillary_diff = false;    ///< closure B optional diffusive term (D-N3: OFF)
+    /// Closure B: the implicit capillary (Darcy) column, default since 2026-11-19 (S2); NO keeps
+    /// the explicit gravity-only (kinematic) column.
+    bool capillary_diff = true;
     /// F-5: cap aquifer faces by one ratio per donor (order-independent, parallel face loop)
     /// instead of sequentially against the water earlier faces left. Default since 2026-11-19;
     /// GW_FACE_CAP SEQUENTIAL restores the order-dependent rule.

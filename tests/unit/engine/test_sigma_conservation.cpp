@@ -21,6 +21,9 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <random>
+#include <sstream>
+#include <string>
 using namespace openswmm::twoD;
 namespace {
 constexpr auto laws = {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::BROOKS_COREY,
@@ -648,29 +651,198 @@ TEST(SigmaTableFlux, HydrostaticProfileHasNoFluxAcrossTheTable) {
             }
 }
 
-TEST(SigmaTableFlux, StepBoundKeepsTheTableFaceFromOvershooting) {
-    // The table face lies half a layer below the bottom layer's centre, so its coupling to that
-    // layer, 2D/dz^2, is twice an interior face's. The column bound counts it (3D/dz for the
-    // bottom layer): at the bound one explicit step closes at most 2/3 of the bottom layer's
-    // distance to rest. Counted like an interior face (2D/dz) the step closed 0.98 of it, and a
-    // column the clock let run at its bound oscillated about rest.
-    for (auto law : {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::VAN_GENUCHTEN}) {
-        SCOPED_TRACE(int(law));
-        soil::Params p;
-        p.law = law;
-        const int m = 32;
-        const double L = .5, dz = L / m, d = 1e-7;
-        std::vector<double> theta(m);
-        sigma::seedHydrostatic(p, theta.data(), m, 1, L);
-        const auto flux = [&](double bottom) {
-            auto t = theta;
-            t[m - 1] = bottom;
-            return sigma::tableFlux(p, t.data(), m, 1, L, true);
+/**
+ * @brief Advance a packed capillary (S2) column whose table does not move.
+ * @param[in] p Soil law.
+ * @param[in,out] theta Packed layer water contents.
+ * @param[in] L Column thickness, m.
+ * @param[in] dt Step, s.
+ * @param[in] q_in Offered infiltration, m/s.
+ * @return The step record.
+ */
+static sigma::ColumnStep stepFixedCapillary(const soil::Params& p, std::vector<double>& theta,
+                                            double L, double dt, double q_in) {
+    sigma::ColumnStep st;
+    st.L_old = st.L_new = L;
+    st.dt = dt;
+    st.q_in = q_in;
+    st.capillary = true;
+    sigma::advanceColumn(p, theta.data(), int(theta.size()), 1, st);
+    return st;
+}
+
+/**
+ * @brief Layer average over heights [a, b] above the table of K/Ks in Srivastava & Yeh's (1991)
+ * solution for a Gardner soil: steady flux qA, then qB from t = 0, K = Ks at the table, flux
+ * boundary at height L. All lengths are alpha*z and t = alpha Ks t/(theta_s - theta_r).
+ *
+ * K* = qB + (1 - qB) e^-z + e^(-z/2 - t/4) sum c_n sin(l_n z) e^(-l_n^2 t), tan(l L) = -2 l,
+ * c_n = 2 (qA - qB) sin(l_n L) e^(L/2) / (1/2 + 2 l_n^2) / (L/2 - sin(2 l_n L)/(4 l_n)).
+ * Checked against a fine Crank-Nicolson solution of the same equation to 1e-7
+ * (tests/output/gw2d_clock_2026-11-19/sigma_s2/check_srivastava_yeh.py).
+ */
+static double srivastavaYeh(double L, double qA, double qB, double t, double a, double b) {
+    const auto steady = [&](double q) {
+        return q * (b - a) + (1 - q) * (std::exp(-a) - std::exp(-b));
+    };
+    if (t <= 0)
+        return steady(qA) / (b - a);
+    double sum = steady(qB);
+    for (int k = 1; k <= 80; ++k) {
+        const auto g = [&](double l) { return std::sin(l * L) + 2 * l * std::cos(l * L); };
+        double lo = (k - .5) * M_PI / L, hi = k * M_PI / L;
+        for (int it = 0; it < 200; ++it) {
+            const double mid = .5 * (lo + hi);
+            ((g(lo) > 0) == (g(mid) > 0) ? lo : hi) = mid;
+        }
+        const double l = .5 * (lo + hi);
+        const double c = 2 * (qA - qB) * std::sin(l * L) * std::exp(L / 2) / (.5 + 2 * l * l) /
+                         (L / 2 - std::sin(2 * l * L) / (4 * l));
+        const auto primitive = [&](double z) {
+            return std::exp(-z / 2) * (-.5 * std::sin(l * z) - l * std::cos(l * z)) / (.25 + l * l);
         };
-        const double rate = (flux(theta[m - 1] + d) - flux(theta[m - 1] - d)) / (2 * d * dz);
-        EXPECT_GT(rate, 0.);
-        EXPECT_LE(rate * sigma::columnDtLimit(p, theta.data(), m, 1, L, 0., 1., true), .7);
+        sum += std::exp(-t / 4 - l * l * t) * c * (primitive(b) - primitive(a));
     }
+    return sum / (b - a);
+}
+
+TEST(SigmaImplicitColumn, HydrostaticColumnStaysAtRestForEveryLaw) {
+    // S2 gate G1. Every face of the capillary column vanishes on a hydrostatic profile, the table
+    // face and a Brooks-Corey fringe included, so a column seeded at rest holds it to roundoff.
+    // The explicit capillary sweep it replaced moved the probe deck's table 7-15 cm in 12 h.
+    double worst = 0;
+    for (auto law : laws)
+        for (int m : {2, 8, 32})
+            for (double L : {.5, 2., 6.})
+                for (double dt : {60., 3600.}) {
+                    SCOPED_TRACE(std::to_string(int(law)) + "/" + std::to_string(m) + "/" +
+                                 std::to_string(L) + "/" + std::to_string(dt));
+                    soil::Params p;
+                    p.law = law;
+                    std::vector<double> theta(m);
+                    sigma::seedHydrostatic(p, theta.data(), m, 1, L);
+                    const auto start = theta;
+                    double to_table = 0;
+                    for (int k = 0; k < int(43200 / dt); ++k) {
+                        const auto st = stepFixedCapillary(p, theta, L, dt, 0.);
+                        to_table += (st.f_bot + st.overflow_to_sat - st.deficit_from_sat) * dt;
+                    }
+                    double drift = std::abs(to_table);
+                    for (int j = 0; j < m; ++j)
+                        drift = std::max(drift, std::abs(theta[j] - start[j]) * L / m);
+                    EXPECT_LE(drift, 1e-12);
+                    worst = std::max(worst, drift);
+                }
+    std::ostringstream drift;
+    drift << worst;
+    RecordProperty("max_rest_drift_m", drift.str());
+}
+
+TEST(SigmaImplicitColumn, GardnerInfiltrationConvergesToSrivastavaYeh) {
+    // S2 gate G2: a Gardner column over a fixed table, steady and then wetted at 0.9 Ks, against
+    // the analytical solution of the linearized Richards equation (Srivastava & Yeh 1991,
+    // WRR 27(5)) at t* = 1. "moist": alpha*L = 4 from 0.1 Ks; "dry": alpha*L = 10 from rest, a
+    // front entering soil at K/Ks = 5e-5. Backward Euler in time and a second-order flux in
+    // space: refining the layers and the step together halves the error. At 8 layers the
+    // arithmetic face mean is 3.7 % off on the dry case; a harmonic mean blocks the front and
+    // is 13 % off (2026-11-19).
+    struct Case {
+        const char* name;
+        double alpha, qA, bound8;
+    };
+    for (const Case c : {Case{"moist", 2., .1, .02}, Case{"dry", 5., 0., .05}}) {
+        SCOPED_TRACE(c.name);
+        soil::Params p;
+        p.law = SoilChar::GARDNER;
+        p.alpha = c.alpha;
+        const double L = 2, span = p.theta_s - p.theta_r, qB = .9, t_star = 1;
+        const double t_end = t_star * span / (p.alpha * p.Ks);
+        const auto error = [&](int m, int steps) {
+            const double dz = p.alpha * L / m; // dimensionless layer
+            const auto layer = [&](int j, double t) {
+                const double top = p.alpha * L - j * dz;
+                return p.theta_r + span * srivastavaYeh(p.alpha * L, c.qA, qB, t, top - dz, top);
+            };
+            std::vector<double> theta(m);
+            for (int j = 0; j < m; ++j)
+                theta[j] = layer(j, 0);
+            for (int k = 0; k < steps; ++k)
+                stepFixedCapillary(p, theta, L, t_end / steps, qB * p.Ks);
+            double worst = 0;
+            for (int j = 0; j < m; ++j)
+                worst = std::max(worst, std::abs(theta[j] - layer(j, t_star)) / span);
+            return worst;
+        };
+        double previous = 0;
+        for (int m : {8, 16, 32, 64}) {
+            const double e = error(m, 2 * m);
+            RecordProperty(std::string("srivastava_yeh_") + c.name + "_error_m" + std::to_string(m),
+                           std::to_string(e));
+            if (m == 8)
+                EXPECT_LT(e, c.bound8);
+            if (previous > 0)
+                EXPECT_GT(previous / e, 1.6) << m;
+            previous = e;
+        }
+    }
+}
+
+TEST(SigmaImplicitColumn, MovingColumnsConserveWaterAndBalanceTheirReceipts) {
+    // Water is taken from the solved fluxes, so the column balances to roundoff whatever the
+    // geometry, forcing or table bound; the receipts transport replays reproduce every layer.
+    std::mt19937 random(20261119);
+    std::uniform_real_distribution<double> unit(0., 1.);
+    for (auto law : laws)
+        for (int m : {1, 3, 8})
+            for (int trial = 0; trial < 40; ++trial) {
+                SCOPED_TRACE(std::to_string(int(law)) + "/" + std::to_string(m) + "/" +
+                             std::to_string(trial));
+                soil::Params p;
+                p.law = law;
+                std::vector<double> theta(m), contacts(m);
+                for (int j = 0; j < m; ++j) {
+                    theta[j] = p.theta_r + (p.theta_s - p.theta_r) * unit(random);
+                    contacts[j] = trial % 3 ? 0. : .002 * unit(random);
+                }
+                sigma::ColumnStep st;
+                st.L_old = trial % 7 ? .05 + 3 * unit(random) : 0.;
+                st.L_new = trial % 5 ? std::max(0., st.L_old + (unit(random) - .5)) : 0.;
+                st.dt = std::pow(10., 1 + 3 * unit(random));
+                st.q_in = trial % 2 ? 1e-4 * unit(random) : 0.;
+                st.q_et = trial % 4 ? 1e-7 * unit(random) : 0.;
+                st.handover_theta = trial % 2 ? -1. : p.theta_s - .2 * unit(random);
+                st.q0_min = trial % 3 == 1 ? 0. : (trial % 3 == 2 ? -1e-7 : -1e300);
+                st.layer_inflow = &contacts;
+                st.capillary = true;
+                sigma::ColumnTransfers r;
+                st.transfers = &r;
+                const auto before = theta;
+                sigma::advanceColumn(p, theta.data(), m, 1, st);
+                const double dz0 = st.L_old / m, dz1 = st.L_new / m;
+                double old_water = 0, new_water = 0, contact = 0;
+                for (int j = 0; j < m; ++j) {
+                    old_water += before[j] * dz0;
+                    new_water += dz1 > 0 ? theta[j] * dz1 : 0;
+                    contact += contacts[j];
+                    EXPECT_GE(theta[j], p.theta_r - 1e-13);
+                    EXPECT_LE(theta[j], p.theta_s + 1e-13);
+                    const double replay = r.old_water[j] + r.contacts[j] + r.faces[j] -
+                                          r.faces[j + 1] + r.compression[j] - r.compression[j + 1] +
+                                          r.support[j] - r.support[j + 1];
+                    EXPECT_NEAR(r.new_water[j], replay, 1e-14 * (1 + std::abs(replay)));
+                }
+                const double through =
+                    (st.f_top - st.et_taken - st.f_bot - st.overflow_to_sat + st.deficit_from_sat) *
+                    st.dt;
+                EXPECT_NEAR(new_water, old_water + contact + through,
+                            1e-13 * (1 + old_water + contact + std::abs(through)));
+                EXPECT_NEAR(r.faces[0], (st.f_top - st.et_taken) * st.dt,
+                            1e-15 * (1 + std::abs(r.faces[0])));
+                EXPECT_GE(st.rejected, 0.);
+                EXPECT_LE(st.f_top, st.q_in * (1 + 1e-15));
+                if (st.q0_min > -1e300)
+                    EXPECT_GE(st.table_flux, st.q0_min - 1e-20);
+            }
 }
 
 TEST(SigmaLayerTransport, ReusedWorkspaceRetainsFreshPartialOutputsAfterRefusal) {

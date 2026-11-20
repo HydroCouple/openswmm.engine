@@ -255,53 +255,95 @@ replaced created 23.5 m³ on a two-cell exfiltration deck.
 
 ### 9.4.4 `SIGMA` (closure B)
 
-An explicit column of \f$m\f$ layers on \f$\sigma = z/L \in [0, 1]\f$,
-\f$z\f$ downward from the ground, \f$\Delta\sigma = 1/m\f$. Layers stretch and
-compress as the table moves with no regridding and a fixed SoA stride, so a
-layer sweep vectorises across columns. The **conserved** quantity is the water
-depth per layer \f$w_j = \theta_j L \Delta\sigma\f$; \f$\theta\f$ is
-re-derived from \f$w\f$ and the *new* \f$L\f$ at the end of the sweep, which
-makes the compression exact. With \f$\dot L = (L_1 - L_0)/\Delta t\f$ and face
-\f$j + \tfrac12\f$ at \f$\sigma_f = (j+1)/m\f$, the downward-positive flux is
+A column of \f$m\f$ layers on \f$\sigma = z/L \in [0, 1]\f$, \f$z\f$ downward
+from the ground, \f$\Delta\sigma = 1/m\f$. Layers stretch and compress as the
+table moves with no regridding and a fixed SoA stride. The **conserved**
+quantity is the water depth per layer \f$w_j = \theta_j L \Delta\sigma\f$;
+\f$\theta\f$ is re-derived from \f$w\f$ and the *new* \f$L\f$ at the end of the
+step, which makes the compression exact. With \f$\dot L = (L_1 - L_0)/\Delta t\f$
+and face \f$j + \tfrac12\f$ at \f$\sigma_f = (j+1)/m\f$, the downward-positive
+flux is a physical part and a grid part,
 
-\f[ F_{j+1/2} = K\!\bigl(\psi(\theta_j)\bigr) \;-\; \theta_{donor}\,\sigma_f\,\dot L \;-\; \frac{\bar D_{j+1/2}}{L_0\,\Delta\sigma}\,\bigl(\theta_{j+1} - \theta_j\bigr) \f]  (9-8)
+\f[ F_{j+1/2} = P_{j+1/2} \;-\; \theta_{donor}\,\sigma_f\,\dot L \f]  (9-8)
 
-Gravity is downward, so the advective donor is the layer above (first-order
-upwind; MUSCL is a recorded follow-up). The grid term is upwinded on its own
-sign: with \f$\dot L > 0\f$ (table falling) the donor is the layer below. The
-capillary term, \f$D = K\, d\psi/d\theta\f$ harmonic-mean across the face, is
-included only under `CAPILLARY_DIFF YES` (default off). The boundaries:
+The grid term is explicit and upwinded on its own sign: with \f$\dot L > 0\f$
+(table falling) the donor is the layer below. The physical part depends on
+`CAPILLARY_DIFF`.
 
-\f[ F_{top} = \min\!\bigl(q^{+},\ (\theta_s - \theta_0)\, L_0 \Delta\sigma / \Delta t\bigr) - q_{ET}^{taken}, \qquad F_{bot} = q_{0,phys} - \theta_{m-1}\,\dot L \f]  (9-9)
+**Capillary column (`CAPILLARY_DIFF YES`, the default since 2026-11-19).**
+Darcy flow on suction,
+\f$P_{j+1/2} = \bar K_{j+1/2}\,\bigl(1 + (\psi_{j+1} - \psi_j)/\Delta z\bigr)\f$
+with \f$\bar K_{j+1/2} = \tfrac12\bigl(K(\psi_j) + K(\psi_{j+1})\bigr)\f$ and
+\f$\Delta z = L_1\Delta\sigma\f$, advanced by backward Euler in mixed form
+(Celia, Bouloutas & Zarba 1990). Once the grid term has carried the old water
+\f$w_j^*\f$ onto the new layers, the suctions solve
 
-At the top, the first layer's headroom caps the infiltration accepted and the
-remainder is **rejected** to the surface (§9.7); the ET taken is the demand
-reduced by (9-6) at the top layer's own suction (wilting suction at 1 %
-effective saturation) and limited to what the layer holds above residual. At
-the bottom, under `CAPILLARY_DIFF YES` the column is a diffusion problem and
-the table a \f$\psi = 0\f$ boundary: \f$q_{0,phys}\f$ is Darcy flow from the
-bottom layer's centre, half a layer above the table,
-\f$q_{0,phys} = K(\psi_{m-1})\,\bigl(1 - 2\psi_{m-1}/(L\Delta\sigma)\bigr)\f$,
-which is zero on a hydrostatic column (before 2026-11-19 it was the
-unit-gradient \f$K(\psi_{m-1})\f$, which drained a column seeded at rest). Its
-coupling to the bottom layer, \f$2D/(L\Delta\sigma)^2\f$, is added to that
-layer's capillary term in (9-18), \f$3\bar D/(L\Delta\sigma)\f$ instead of
-\f$2\bar D/(L\Delta\sigma)\f$. Without capillary diffusion the
-column is kinematic: gravity carries information downward only and the
-consistent outflow is free drainage, \f$q_{0,phys} = K(\psi_{m-1})\f$. A
+\f[ \theta(\psi_j)\,\Delta z = w_j^* + \Delta t\,\bigl(P_{j-1/2} - P_{j+1/2}\bigr) \f]
+
+by Newton's method with a line search. A layer's unknown is its effective
+saturation below 0.5 and its suction above (Forsyth, Wu & Pruess 1995):
+suction alone cannot wet a dry layer, whose retention is flat at its numerical
+floor. The fluxes see suction capped at 1000 m. The new water is taken from the
+final fluxes, so the column conserves water to roundoff whatever the iteration
+left, and a step that does not converge is halved inside the column, up to 64
+pieces. The table is a \f$\psi = 0\f$ node with \f$K = K_s\f$, half a layer
+below the bottom layer's center, under the same arithmetic mean, and the top
+boundary is the kinematic column's, fixed before the solve:
+
+\f[ P_{top} = \min\!\bigl(q^{+},\ (\theta_s - \theta_0)\, L_0 \Delta\sigma / \Delta t\bigr) - q_{ET}^{taken}, \qquad P_{bot} = \max\!\Bigl(\bar K_{bot}\,\bigl(1 - 2\psi_{m-1}/\Delta z\bigr),\ -q_{rise}\Bigr) \f]  (9-9)
+
+The surface's published infiltration capacity for a σ cell is already a Darcy
+rate into the top layer from the ponded ground, capped by that layer's room
+(§9.7), so the column stores what the surface delivers; anything beyond the
+room is **rejected** to the surface. The ET taken is the demand reduced by
+(9-6) at the top layer's suction at the start of the step and limited to what
+the layer holds above residual. \f$q_{rise}\f$ is what the saturated zone can
+still supply upward, zero when `GW_ET` excludes capillary rise. Every face vanishes
+on a hydrostatic profile, so a column at rest stays there, a Brooks-Corey
+capillary fringe included. The arithmetic mean keeps every face monotone in
+suction, so the backward-Euler step has one solution; a harmonic mean blocks a
+front entering dry soil (on the dry Srivastava & Yeh 1991 case, 13 % error at 8
+layers against 3.7 %).
+
+**Kinematic column (`CAPILLARY_DIFF NO`).** Explicit gravity flow,
+\f$P_{j+1/2} = K\bigl(\psi(\theta_j)\bigr)\f$, the donor being the layer above
+(first-order upwind; MUSCL is a recorded follow-up), with the top flux of
+(9-9) and free drainage at the table, \f$P_{bot} = q_{0,phys} = K(\psi_{m-1})\f$.
+Gravity carries information downward only and the consistent outflow is free
+drainage; a
 \f$\psi = 0\f$ condition there piles water onto the bottom layer until its
-specific yield vanishes, and the table oscillates at any step; the kinematic
-column therefore cannot hold a hydrostatic profile. The second term of
-\f$F_{bot}\f$ is the **handover** swept across the moving boundary. Both together are what the saturated zone gains,
-which is why (9-10) books \f$q_{0,phys}\f$ with
-\f$S_y = \theta_s - \theta_{m-1}\f$ rather than \f$F_{bot}\f$ with
-\f$\theta_s\f$: the same equation, but only the first conserves once the
-column retains water above a falling table. The design record writes
-\f$\theta_s\f$; \f$\theta_s - \theta_{bot}\f$ is the textbook specific yield
-and what the code uses.
+specific yield vanishes, and the table oscillates at any step. The kinematic
+column therefore cannot hold a hydrostatic profile.
 
-Positivity is a per-layer availability share: a layer may not export more than
-it holds above residual in one step. After the update \f$\theta\f$ is
+In both, the bottom flux adds the **handover** swept across the moving
+boundary, \f$F_{bot} = P_{bot} - \theta_{m-1}\dot L\f$. Both together are what
+the saturated zone gains, which is why the table is settled with
+\f$P_{bot}\f$ paired with \f$S_y = \theta_s - \theta_{m-1}\f$ rather than
+\f$F_{bot}\f$ with \f$\theta_s\f$: the same equation, but only the first
+conserves once the column retains water above a falling table. The design
+record writes \f$\theta_s\f$; \f$\theta_s - \theta_{bot}\f$ is the textbook
+specific yield and what the code uses. (9-10) predicts the table with an
+estimate of \f$P_{bot}\f$ at the old state; the settlement replaces it with
+the column's actual transfer.
+
+**Settlement.** The new table height \f$h\f$ closes
+\f$\theta_s (h - h_g^{\,0}) = V_{ext}/A + (F_{bot} + \text{overflow} - \text{support})\,\Delta t\f$
+on \f$[0, z_s]\f$, each trial running the column on the trial thickness. The
+kinematic column's first trial closes it to roundoff (its table flux is the
+predictor's) unless positivity binds, and bisection settles the rest. The
+capillary column's solved face differs from the predictor's estimate. A trial
+whose miss would move the table by less than \f$10^{-10}\f$ of a layer is
+kept: the miss is booked to the table, which moves by it, and the layers are
+re-derived on that thickness (if they stay within
+\f$[\theta_r, \theta_s]\f$), so water balances to roundoff. Otherwise secant
+steps from the predictor and Illinois false position close the balance, with
+bisection as the last resort. On Bellinge with every cell σ this takes 1.2
+column solves per firing under the shared clock and 1.4 under the independent
+one.
+
+In the kinematic column positivity is a per-layer availability share: a layer
+may not export more than it holds above residual in one step; the capillary
+column stays within $[	heta_r, 	heta_s]$ by construction. After the update \f$\theta\f$ is
 re-derived from the new geometry. A rising table compresses every layer, and a
 layer whose water then exceeds \f$\theta_s L_1 \Delta\sigma\f$ is saturated:
 the surplus cascades downward and whatever reaches the bottom is reported as an
@@ -525,12 +567,17 @@ linear sinks. `C_GW` defaults to 0.5, range (0, 1]. For realistic
 conductivities the bound is minutes to hours — orders above the surface tiers,
 which is what local time stepping exploits.
 
-**The unsaturated bound** depends on the closure. A σ column's own bound is
+**The unsaturated bound** depends on the closure. A σ column's bound is the
+kinematic Courant limit
 
-\f[ \Delta t_u \le C_{col}\, \min_j \frac{L\, \Delta\sigma}{c(\theta_j) + \lvert \sigma_j \dot L \rvert + 2\bar D_j / (L\Delta\sigma)}, \qquad c(\theta) = \frac{dK}{d\theta} \f]  (9-18)
+\f[ \Delta t_u \le C_{col}\, \min_j \frac{L\, \Delta\sigma}{c(\theta_j) + \lvert \sigma_j \dot L \rvert}, \qquad c(\theta) = \frac{dK}{d\theta} \f]  (9-18)
 
 with the celerity by a centred difference through the retention inverse and
-\f$\dot L\f$ estimated from the previous firing, \f$-q_{0,last}/S_y\f$.
+\f$\dot L\f$ estimated from the previous firing, \f$-q_{0,last}/S_y\f$. It
+is the kinematic column's stability bound and the capillary column's accuracy
+bound: the implicit column has no stability bound, so the diffusive time scale
+\f$\Delta z^2/2D\f$ that bounded the explicit capillary sweep it replaced no
+longer limits the step.
 Closure A is a relaxation whose stiffness \f$C = -\partial q_0/\partial h_u\f$
 is taken numerically, so \f$\Delta t_u \le C_{col}/C\f$ covers every soil law;
 `ENSLAVED` has no unsaturated bound. `C_COL` defaults to 0.9.
@@ -645,7 +692,7 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | Closure | `ENSLAVED` | \f$h_u\f$ algebraic in \f$h_g\f$; bracketed volume solve | \status{Implemented} |
 | Closure | `SIGMA` | Explicit ALE σ column, first-order upwind | \status{Implemented} |
 | Closure | `SIGMA` with MUSCL reconstruction | Recorded follow-up in the column's contract | \status{Planned} |
-| Column option | `CAPILLARY_DIFF YES` | Harmonic-mean diffusive term in (9-8) and its bound | \status{Implemented} |
+| Column option | `CAPILLARY_DIFF YES` (default) / `NO` | Implicit mixed-form Darcy column, (9-8) and (9-9); `NO` keeps the explicit kinematic column | \status{Implemented} |
 | Mode | `MODE MESH` (default) | Kernel on the mesh cells with lateral Darcy | \status{Implemented} |
 | Mode | `MODE PER_SUBCATCH` | Today: the mesh kernel with lateral topology removed; the one-cell-per-subcatchment vehicle is not in the code | \status{Experimental} |
 | Deep loss | Linear \f$c_{loss} h_g / z_s\f$ | Chapter 5's (5-21) form | \status{Implemented} |
