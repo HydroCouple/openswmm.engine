@@ -101,14 +101,15 @@ inline std::string surfaceCapabilityNames(std::uint64_t mask) {
                                             "transport (FULL_SWE)",
                                             "coupled groundwater",
                                             "porous ground heat",
-                                            "surface heat exchange"};
+                                            "surface heat exchange",
+                                            "Metal face worker"};
     std::string out;
     for (int bit = 0; bit < 64; ++bit) {
         if (!(mask & (1ull << bit)))
             continue;
         if (!out.empty())
             out += ", ";
-        out += bit < 13 ? names[bit] : "capability bit " + std::to_string(bit);
+        out += bit < 14 ? names[bit] : "capability bit " + std::to_string(bit);
     }
     return out.empty() ? "none" : out;
 }

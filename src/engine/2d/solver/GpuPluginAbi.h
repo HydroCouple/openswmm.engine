@@ -124,6 +124,7 @@ extern "C" {
 #define OPENSWMM_GPU_CAP_GROUNDWATER (1ull << 10)     /**< coupled 2D aquifer */
 #define OPENSWMM_GPU_CAP_POROUS_HEAT (1ull << 11)     /**< porous ground heat */
 #define OPENSWMM_GPU_CAP_SURFACE_HEAT (1ull << 12)    /**< surface heat exchange (COUPLED_HEAT) */
+#define OPENSWMM_GPU_CAP_METAL_FACES (1ull << 13)     /**< Apple silicon Metal face worker */
 /** @} */
 
 /** GPU vendor / backend identifier reported by a plugin. */

@@ -110,7 +110,8 @@ enum class Backend : int {
     OMP = 2,
     CUDA = 3,
     HIP = 4,
-    SYCL = 5
+    SYCL = 5,
+    METAL = 6
 };
 
 /**

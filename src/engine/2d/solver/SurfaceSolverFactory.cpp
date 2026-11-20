@@ -333,8 +333,10 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
             if (!destroy)
                 continue;
             auto probe = reinterpret_cast<ProbeFn>(platform_sym(h, "openswmm_gpu_probe"));
-            auto make =
-                reinterpret_cast<MakeFn>(platform_sym(h, "openswmm_make_gpu_explicit_solver"));
+            auto make = reinterpret_cast<MakeFn>(
+                platform_sym(h, (required & OPENSWMM_GPU_CAP_METAL_FACES)
+                                    ? "openswmm_make_metal_surface_solver"
+                                    : "openswmm_make_gpu_explicit_solver"));
             if (!probe || !make)
                 continue;
             OpenSwmmGpuProbe info{};
@@ -460,6 +462,8 @@ std::string backend_name(Backend2D b) {
         return "hip";
     case Backend2D::SYCL:
         return "sycl";
+    case Backend2D::METAL:
+        return "metal";
     case Backend2D::AUTO:
         break;
     }
@@ -486,6 +490,22 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
     // Policy: the environment variable (operator/CI override) wins; otherwise
     // the model's own [2D_OPTIONS] BACKEND — same precedence as the FV
     // module's OPENSWMM_FV_BACKEND over FV_BACKEND.
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    const auto override_mode = lower(env("OPENSWMM_2D_BACKEND"));
+    if (override_mode == "metal" || env("OPENSWMM_2D_METAL_FACES") == "1" ||
+        (override_mode.empty() && opts.backend == Backend2D::METAL)) {
+        if (const auto lacking = required & ~kKokkosSurfaceCapabilities)
+            throw std::invalid_argument("Metal face flow does not support " +
+                                        surfaceCapabilityNames(lacking));
+        auto solver = try_plugin("omp", chosen, opts.requested_threads,
+                                 required | OPENSWMM_GPU_CAP_METAL_FACES);
+        if (!solver)
+            throw std::runtime_error("Metal face flow requires the Metal-enabled OpenSWMM plugin");
+        if (chosen)
+            *chosen = "Metal faces (Kokkos SYCL)";
+        return solver;
+    }
+#endif
     std::string mode = lower(env("OPENSWMM_2D_BACKEND"));
     if (mode.empty())
         mode = opts.backend == Backend2D::AUTO && opts.auto_backend_cpu

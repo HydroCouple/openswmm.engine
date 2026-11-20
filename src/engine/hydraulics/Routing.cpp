@@ -510,7 +510,12 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         break;
     }
     case RouteModel::FV: {
-        initFv(ctx);
+        try {
+            initFv(ctx);
+        } catch (const std::exception& error) {
+            fv_solver_.reset();
+            fv_errors_.push_back(std::string("FV initialization failed: ") + error.what());
+        }
         break;
     }
     case RouteModel::STEADY: {
@@ -1568,6 +1573,8 @@ void Router::initFv(SimulationContext& ctx) {
     if (fv_native && fv_native->hasDeviceMarcher()) {
         std::string why;
         if (!fv::ExplicitFvSolver::deviceSupports(fv_opts_, fv_state_.n_species, &why)) {
+            if (fv_backend_.rfind("metal", 0) == 0)
+                throw std::runtime_error("Metal FV network does not support " + why);
             fv_native->attachDeviceMarcher(nullptr);
             fv_warnings_.push_back(format_warning(
                 WARN_FV_OPTION_INERT, "FV backend '" + fv_backend_ + "' not used: " + why +

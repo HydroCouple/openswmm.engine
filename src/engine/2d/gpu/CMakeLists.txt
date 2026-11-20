@@ -36,6 +36,10 @@ set(OPENSWMM_GPU_BACKEND "omp" CACHE STRING
     "GPU plugin backend: stub | omp | cuda | hip | sycl")
 set_property(CACHE OPENSWMM_GPU_BACKEND PROPERTY STRINGS stub omp cuda hip sycl)
 
+if(OPENSWMM_ENABLE_METAL_FACES AND NOT OPENSWMM_GPU_BACKEND STREQUAL "omp")
+    message(FATAL_ERROR "The Metal face worker requires the host omp surface plugin")
+endif()
+
 set(_OPENSWMM_GPU_COMMON_PROPS
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -274,6 +278,10 @@ endif()
 # with the (release) installed Kokkos headers vcpkg ships. See
 # vcpkg-overlays/kokkos/portfile.cmake.
 
+if(OPENSWMM_ENABLE_METAL_FACES)
+    include("${CMAKE_CURRENT_LIST_DIR}/../../../../cmake/BuildMetalFaces.cmake")
+endif()
+
 if(OPENSWMM_INSTALL)
     # Installed layout: place the plugin where the engine library lands (lib/ on
     # Unix, bin/ on Windows) so the factory's engine-dir search finds it. The
@@ -286,6 +294,9 @@ if(OPENSWMM_INSTALL)
     set(OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION
         "${_OPENSWMM_GPU_INSTALL_DEST_DEFAULT}" CACHE STRING
         "Install destination (relative to prefix) for the GPU plugin shared library")
+    if(OPENSWMM_ENABLE_METAL_FACES)
+        install(PROGRAMS "${_openswmm_metal_executable}" DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}")
+    endif()
     install(TARGETS ${_OPENSWMM_GPU_TARGET}
         LIBRARY DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}"
         RUNTIME DESTINATION "${OPENSWMM_GPU_PLUGIN_INSTALL_DESTINATION}")

@@ -107,6 +107,9 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
     out->capabilities = openswmm::twoD::kKokkosSurfaceCapabilities;
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    out->capabilities |= OPENSWMM_GPU_CAP_METAL_FACES;
+#endif
     out->device_count = 1; // the OpenMP host backend is always usable
     out->vendor = OPENSWMM_GPU_VENDOR_OPENMP;
     std::strncpy(out->device_name, "Kokkos OpenMP (CPU, Phase 1)", sizeof(out->device_name) - 1);
@@ -214,3 +217,28 @@ extern "C" OPENSWMM_GPU_ABI void* openswmm_make_gpu_network_marcher(const OpenSw
     return openswmm::twoD::gpu::plugin::makeNetworkMarcher(
         [&] { ensureKokkosInitialized(probe ? probe->requested_threads : 0); });
 }
+
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+extern "C" OPENSWMM_GPU_ABI int openswmm_probe_metal_faces(char* name, size_t size) {
+    try {
+        openswmm::twoD::metal::FaceClient client;
+        std::snprintf(name, size, "%s", client.device.c_str());
+        return 0;
+    } catch (const std::exception& e) {
+        std::snprintf(name, size, "%s", e.what());
+        return 1;
+    }
+}
+
+extern "C" OPENSWMM_GPU_ABI void*
+openswmm_make_metal_surface_solver(const OpenSwmmGpuProbe* probe) {
+    return openswmm::twoD::gpu::plugin::make(
+        [&] { ensureKokkosInitialized(probe->requested_threads); }, true);
+}
+
+extern "C" OPENSWMM_GPU_ABI void*
+openswmm_make_metal_network_marcher(const OpenSwmmGpuProbe* probe) {
+    return openswmm::twoD::gpu::plugin::makeNetworkMarcher(
+        [&] { ensureKokkosInitialized(probe->requested_threads); }, true);
+}
+#endif

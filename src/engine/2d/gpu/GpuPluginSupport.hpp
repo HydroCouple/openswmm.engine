@@ -33,11 +33,11 @@ inline thread_local char error[512]{};
  * destruction uses the matching plugin entry point. No exception escapes, and process-runtime
  * finalization is outside this helper.
  */
-template <class Initialize> void* make(Initialize initialize) noexcept {
+template <class Initialize> void* make(Initialize initialize, bool metal = false) noexcept {
     error[0] = '\0';
     try {
         initialize();
-        return static_cast<ISurfaceSolver*>(new ExplicitKokkosSurfaceSolver());
+        return static_cast<ISurfaceSolver*>(new ExplicitKokkosSurfaceSolver(metal));
     } catch (const std::exception& e) {
         std::snprintf(error, sizeof error, "%s", e.what());
     } catch (...) {
@@ -52,12 +52,13 @@ template <class Initialize> void* make(Initialize initialize) noexcept {
  * @param[in] initialize Callable that initializes the backend's Kokkos runtime; may throw.
  * @return Owning openswmm::fv::IFvDeviceMarcher* as void*, or nullptr with `error` set.
  */
-template <class Initialize> void* makeNetworkMarcher(Initialize initialize) noexcept {
+template <class Initialize>
+void* makeNetworkMarcher(Initialize initialize, bool metal = false) noexcept {
     error[0] = '\0';
     try {
         initialize();
         return static_cast<openswmm::fv::IFvDeviceMarcher*>(
-            openswmm::fv::gpu::makeKokkosNetworkMarcher());
+            openswmm::fv::gpu::makeKokkosNetworkMarcher(metal));
     } catch (const std::exception& e) {
         std::snprintf(error, sizeof error, "%s", e.what());
     } catch (...) {

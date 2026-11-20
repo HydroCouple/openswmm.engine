@@ -929,6 +929,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.fv.backend = fv::Backend::HIP;
             else if (bv == "SYCL")
                 opt.fv.backend = fv::Backend::SYCL;
+            else if (bv == "METAL")
+                opt.fv.backend = fv::Backend::METAL;
 
         } else if (key == "FV_MIN_PARALLEL_CELLS") {
             opt.fv.min_parallel_cells = static_cast<long>(to_double(val));

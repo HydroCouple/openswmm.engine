@@ -43,7 +43,8 @@ struct CulvertCurve;
 namespace openswmm::fv {
 struct FvGeometry;
 namespace kernels {
-struct FaceState;
+template <class Real> struct FaceStateT;
+using FaceState = FaceStateT<double>;
 }
 } // namespace openswmm::fv
 
