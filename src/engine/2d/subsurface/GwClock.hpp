@@ -65,8 +65,6 @@ public:
     int rung(int cell) const { return cells_.at(cell).rung; }
     // The finest rung accuracy alone may select for this cell (0 = base step).
     int floorRung(int cell) const { return floor_.empty() ? 0 : floor_.at(cell); }
-    // Cell IDs grouped by that floor rung (index = rung, >= 0), in ID order.
-    const std::vector<std::vector<int>>& cellsByFloorRung() const noexcept { return floor_cells_; }
     double committedBound(int cell) const { return cells_.at(cell).committed_bound; }
     double completed(int cell) const { return cells_.at(cell).last; }
     double completedFace(int face) const { return face_last_.at(face); }
@@ -87,7 +85,6 @@ private:
     Queue fine_, coarse_, limits_;
     std::size_t base_cells_ = 0; // derived occupancy, rebuilt on restore
     std::vector<int> floor_;     // per-cell accuracy floor rung; empty = base
-    std::vector<std::vector<int>> floor_cells_; // derived from floor_ at construction
 
     int select(double bound, double accuracy = 1e30, int floor = 0) const;
     double next(double after, int rung) const;

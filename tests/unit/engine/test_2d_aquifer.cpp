@@ -1843,11 +1843,6 @@ TEST(Aquifer2D, ClockAccuracyFloorIsPerCell) {
     EXPECT_EQ(floored.rung(0), 0);
     EXPECT_EQ(floored.rung(1), 3); // 1 s = 0.125 s * 2^3
     EXPECT_EQ(floored.floorRung(1), 3);
-    ASSERT_EQ(floored.cellsByFloorRung().size(), 4u);
-    EXPECT_EQ(floored.cellsByFloorRung()[0], std::vector<int>{0});
-    EXPECT_TRUE(floored.cellsByFloorRung()[1].empty());
-    EXPECT_EQ(floored.cellsByFloorRung()[3], std::vector<int>{1});
-    EXPECT_EQ(base.cellsByFloorRung(), (std::vector<std::vector<int>>{{0, 1}}));
     // Physical stability is never floored.
     const std::vector<double> stiff{.05, .05};
     const GwClock physical(options, stiff, {}, accuracy, floors);
@@ -1899,50 +1894,6 @@ TEST(Aquifer2D, AutoBaseStepFloorsOnlyNodeBedCells) {
         EXPECT_GT(others, 0) << c.tag;
         finish(r);
     }
-}
-
-// A budget wake is an accuracy firing, so under AUTO a cell is checked for one at its own floor:
-// the node-bed cell at every 0.125 s check, the rest only at 1 s checks. Checking every cell at
-// every 0.125 s was a third of an independent-clock run's wall time on Bellinge.
-TEST(Aquifer2D, AutoBaseStepChecksBudgetsAtEachCellsOwnFloor) {
-    auto r = openDeck("floor-auto-bed-budget",
-                      deck(aquiferSection("", "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n", "J1 1\n"),
-                           "INFILTRATION NO\n", 0.));
-    ASSERT_TRUE(r.opened);
-    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
-    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
-    r.started = true;
-    auto& surface = r.eng->surfaceRouter2D();
-    auto& gw = surface.subsurface();
-    gw.prepareClock();
-    const auto* clock = gw.clockState();
-    ASSERT_TRUE(clock && clock->schedule);
-    int bed = -1, other = -1;
-    for (const auto& b : gw.nodeBeds())
-        bed = b.cell;
-    for (int cell : clock->cells)
-        if (cell != bed)
-            other = cell;
-    ASSERT_GE(bed, 0);
-    ASSERT_GE(other, 0);
-    ASSERT_EQ(clock->schedule->floorRung(clock->dense[bed]), 0);
-    ASSERT_EQ(clock->schedule->floorRung(clock->dense[other]), 3);
-    ASSERT_GT(gw.clockRung(other), 3); // not due at 1 s on its own
-    ASSERT_GT(gw.clockRung(bed), 0);   // nor the bed cell at 0.125 s
-    // Each cell is handed far more water than its budget room in the first 0.125 s.
-    gw.setProducerEnd(.125);
-    gw.bookInfiltrationFromSurface(bed, 1.);
-    gw.bookInfiltrationFromSurface(other, 1.);
-    gw.advanceClock(.125, surface.state(), false);
-    EXPECT_EQ(gw.cellCompletedTime(bed), .125); // woken at the base-step check
-    EXPECT_EQ(gw.cellCompletedTime(other), 0.); // not checked until its 1 s floor
-    for (int k = 2; k <= 8; ++k) {
-        gw.setProducerEnd(.125 * k);
-        gw.advanceClock(.125 * k, surface.state(), false);
-    }
-    EXPECT_EQ(gw.cellCompletedTime(other), 1.);
-    EXPECT_GE(std::accumulate(clock->budget_firings.begin(), clock->budget_firings.end(), 0ull), 2ull);
-    finish(r);
 }
 
 TEST(Aquifer2D, PondedThinColumnKeepsTheTableUnderANodeDraw) {
