@@ -11,3 +11,10 @@ openswmm_fetch_metal_kokkos()
 add_executable(openswmm_metal_faces FaceWorker.cpp)
 target_compile_features(openswmm_metal_faces PRIVATE cxx_std_20)
 target_link_libraries(openswmm_metal_faces PRIVATE Kokkos::kokkos)
+
+# CI runs the same kernels on hosted Macs whose GPU is unavailable.
+# The installed worker always enforces sycl::backend::metal.
+add_executable(openswmm_faces_cpu_control EXCLUDE_FROM_ALL FaceWorker.cpp)
+target_compile_definitions(openswmm_faces_cpu_control PRIVATE OPENSWMM_FACE_CPU_CONTROL)
+target_link_libraries(openswmm_faces_cpu_control PRIVATE Kokkos::kokkos)
+target_compile_features(openswmm_faces_cpu_control PRIVATE cxx_std_20)

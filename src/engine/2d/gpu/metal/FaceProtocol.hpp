@@ -24,7 +24,40 @@ struct FaceRequest {
     StepParams params;
 };
 constexpr int no_metal_device = 77;
-constexpr std::uint32_t worker_ready = 0x53574631u;
+// The distinct handshake rejects a stale or mismatched worker before exchanging arrays.
+enum class FaceOperation : std::uint32_t { local_inertial = 0x53574632u, surface_fv, network_fv };
+inline const char* operation_name(FaceOperation op) {
+    switch (op) {
+    case FaceOperation::local_inertial:
+        return "local-inertial";
+    case FaceOperation::surface_fv:
+        return "surface-fv";
+    case FaceOperation::network_fv:
+        return "network-fv";
+    }
+    throw std::invalid_argument("unknown Metal face operation");
+}
+struct SurfaceInput {
+    float eta_left, depth_left, qx_left, qy_left, eta_right, depth_right, qx_right, qy_right, nx,
+        ny;
+};
+struct SurfaceOutput {
+    float mass, mx, my, corr_lx, corr_ly, corr_rx, corr_ry;
+};
+struct NetworkSide {
+    float area, discharge, velocity, celerity, pressure_integral;
+    std::uint32_t pressure_state;
+};
+struct NetworkInput {
+    NetworkSide left, right;
+};
+struct NetworkOutput {
+    float mass, momentum;
+};
+struct WorkerHello {
+    FaceOperation operation;
+    char device[128];
+};
 static_assert(sizeof(FaceRequest) == 16 && sizeof(FaceInput) == 32 && sizeof(FaceOutput) == 8);
 
 inline bool read_bytes(int fd, void* buffer, std::size_t bytes, bool allow_eof = false) {

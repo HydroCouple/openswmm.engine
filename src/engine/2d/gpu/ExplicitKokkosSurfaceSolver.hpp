@@ -86,7 +86,13 @@ public:
      * initialize(). Default counters/flags do not prove runtime availability or allocate mesh
      * state.
      */
-    ExplicitKokkosSurfaceSolver() = default;
+    explicit ExplicitKokkosSurfaceSolver(bool metal = false)
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        : metal_requested_(metal)
+#endif
+    {
+        (void)metal;
+    }
     /**
      * @brief Retire optional telemetry through finalize() then release owned Kokkos view
      * handles.
@@ -235,6 +241,8 @@ public:
 
 private:
 #ifdef OPENSWMM_ENABLE_METAL_FACES
+    bool metal_requested_;
+    std::unique_ptr<metal::SurfaceClient> metal_swe_;
     std::unique_ptr<metal::FaceClient> metal_faces_;
 #endif
     friend struct ExplicitKokkosSurfaceSolverTestAccess;

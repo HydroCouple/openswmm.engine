@@ -5,17 +5,33 @@ on:
       - 'cmake/*Metal*'
       - 'src/engine/2d/gpu/**'
       - 'src/engine/2d/solver/**'
+      - 'src/engine/core/**'
+      - 'src/engine/hydraulics/**'
+      - 'src/engine/input/**'
+      - 'src/engine/2d/input/**'
+      - 'src/engine/2d/data/**'
+      - 'include/openswmm/engine/**'
+      - 'tests/gpu/check_metal_fv.py'
+      - 'tests/gpu/data/fv_device/coupled_chamber.inp'
       - 'src/engine/CMakeLists.txt'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
       - 'tests/benchmarks/generated/soa_review_2026-10/pipeline_parallel/mixed_water_t1.inp'
       - '.github/workflows/macos_metal.yml'
   push:
-    branches: [swmm6_rel, 'feature/macos-metal']
+    branches: [swmm6_rel, 'feature/macos-metal', 'integration/macos-metal-fv']
     paths:
       - 'cmake/*Metal*'
       - 'src/engine/2d/gpu/**'
       - 'src/engine/2d/solver/**'
+      - 'src/engine/core/**'
+      - 'src/engine/hydraulics/**'
+      - 'src/engine/input/**'
+      - 'src/engine/2d/input/**'
+      - 'src/engine/2d/data/**'
+      - 'include/openswmm/engine/**'
+      - 'tests/gpu/check_metal_fv.py'
+      - 'tests/gpu/data/fv_device/coupled_chamber.inp'
       - 'src/engine/CMakeLists.txt'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
@@ -97,4 +113,26 @@ jobs:
             OPENSWMM_2D_METAL_FACES=1 "$cli" model.inp metal.rpt metal.out 2>&1 | tee metal.log
             grep -F 'face_operator=metal queue_device=' metal.log
             grep -E 'face_worker_complete sweeps=[1-9][0-9]* evaluations=[1-9][0-9]*' metal.log
+          fi
+      - name: Check 1D and 2D finite-volume routing and hydraulic results
+        shell: bash
+        env:
+          REQUIRE_METAL: ${{ inputs.hardware && '1' || '0' }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/fv-python"
+          python="$RUNNER_TEMP/fv-python/bin/python"
+          "$python" -m pip install numpy h5py
+          export SDKROOT="${ACPP_APP_SDK:-$(xcrun --show-sdk-path)}"
+          build="$GITHUB_WORKSPACE/build/darwin-metal"
+          engine="$build/src/engine"
+          worker="$engine/2d/gpu/metal-build"
+          args=(tests/gpu/check_metal_fv.py --cli "$build/src/cli/openswmm" --library "$engine/libopenswmm.engine.dylib")
+          "$python" "${args[@]}" --operator metal --plugin-dir "$engine" --hidden-only
+          cmake --build "$worker" --target openswmm_faces_cpu_control --parallel 3
+          control=$(mktemp -d "$RUNNER_TEMP/fv-control.XXXXXXXX")
+          cp "$engine/libopenswmm_gpu_omp.dylib" "$control/"
+          cp "$worker/openswmm_faces_cpu_control" "$control/openswmm_metal_faces"
+          ACPP_VISIBILITY_MASK=omp "$python" "${args[@]}" --operator sycl-cpu-control --plugin-dir "$control"
+          if [ "$REQUIRE_METAL" = 1 ]; then
+            "$python" "${args[@]}" --operator metal --plugin-dir "$engine"
           fi

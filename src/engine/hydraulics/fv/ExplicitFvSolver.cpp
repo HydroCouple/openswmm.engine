@@ -11,6 +11,7 @@
  */
 
 #include "ExplicitFvSolver.hpp"
+#include <string_view>
 
 #include <algorithm>
 #include <cmath>
@@ -442,6 +443,8 @@ void ExplicitFvSolver::bindDevice() {
     if (!ok) {
         std::fprintf(stderr, "[openswmm FV] %s backend not used: %s is outside its scope\n",
                      marcher_->label(), why.c_str());
+        if (std::string_view(marcher_->label()) == "metal")
+            throw std::runtime_error("Metal FV network does not support " + why);
         marcher_.reset();
         return;
     }
@@ -601,6 +604,8 @@ bool ExplicitFvSolver::advanceOnDevice(double t_current, double t_target,
     else if (forcing.node_source_max && forcing.n_nodes < mesh_->n_nodes())
         why = "a short node_source_max array";
     if (why) {
+        if (std::string_view(marcher_->label()) == "metal")
+            throw std::runtime_error(std::string("Metal FV network cannot advance with ") + why);
         ++device_fallbacks_;
         if (!device_note_printed_) {
             device_note_printed_ = true;

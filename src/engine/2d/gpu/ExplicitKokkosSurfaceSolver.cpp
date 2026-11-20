@@ -934,12 +934,14 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     if (const char* p = std::getenv("OPENSWMM_2D_MARCHER_TELEMETRY"))
         telemetry_path_ = p;
 #ifdef OPENSWMM_ENABLE_METAL_FACES
-    const char* metal = std::getenv("OPENSWMM_2D_METAL_FACES");
-    if (metal && std::strcmp(metal, "1") == 0) {
-        if (diffusive_ || swe_ || K_ != 1 || opts.advection || species_)
-            throw std::invalid_argument("Metal face flow requires single-tier local-inertial "
-                                        "water-only flow without advection");
-        metal_faces_ = std::make_unique<metal::FaceClient>();
+    if (metal_requested_) {
+        if (diffusive_ || second_order_ || K_ != 1 || opts.advection || species_)
+            throw std::invalid_argument(
+                "Metal face flow requires first-order, single-tier water-only flow without advection");
+        if (swe_)
+            metal_swe_ = std::make_unique<metal::SurfaceClient>();
+        else
+            metal_faces_ = std::make_unique<metal::FaceClient>();
     }
 #endif
     initialized_ = true;
@@ -1717,6 +1719,32 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
     auto zface = d_zface_, inv_dx = d_inv_dx_;
     const bool species = species_;
     const SpeciesRows rows = speciesRows();
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    const metal::SurfaceOutput* metal_fluxes = nullptr;
+    if (metal_swe_) {
+        metal_swe_->inputs.resize(hi - lo);
+        auto inputs = metal_swe_->inputs.data();
+        Kokkos::parallel_for(
+            "packSurfaceMetal", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
+                const int e = list(idx), a = cLv(e), b = cRv(e);
+                // Subtract a common datum before converting to FP32. This preserves
+                // small head differences on meshes at large absolute elevations.
+                inputs[idx - lo] = {0.f,
+                                    float(depth(a)),
+                                    float(qcx(a)),
+                                    float(qcy(a)),
+                                    float(head(b) - head(a)),
+                                    float(depth(b)),
+                                    float(qcx(b)),
+                                    float(qcy(b)),
+                                    float(nxv(e)),
+                                    float(nyv(e))};
+            });
+        ExecSpace().fence();
+        metal_swe_->run({float(dt_f), float(dry), 0.f});
+        metal_fluxes = metal_swe_->outputs.data();
+    }
+#endif
     Kokkos::parallel_for(
         "fireFacesSwe", Kokkos::RangePolicy<ExecSpace>(lo, hi), KOKKOS_LAMBDA(int idx) {
             const int e = list(idx);
@@ -1724,7 +1752,18 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
             swe::FaceFlux F;
             double cLx, cLy, cRx, cRy;
             bool wet;
-            if (so) {
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+            if (metal_fluxes) {
+                const auto v = metal_fluxes[idx - lo];
+                F = {v.mass, v.mx, v.my, 0.0};
+                cLx = v.corr_lx;
+                cLy = v.corr_ly;
+                cRx = v.corr_rx;
+                cRy = v.corr_ry;
+                wet = true; // Dry faces return zero flux and corrections.
+            } else
+#endif
+                if (so) {
                 // MUSCL: extrapolate eta, depth and velocity to the face (== serial).
                 const double ha = depth(a), hb = depth(b);
                 const double za = head(a) - ha, zb = head(b) - hb;
@@ -1799,6 +1838,10 @@ void ExplicitKokkosSurfaceSolver::fireFacesSwe(int lo, int hi, double dt_f, bool
                               inv_dx(e), 1.0);
             }
         });
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    if (metal_swe_)
+        ExecSpace().fence();
+#endif
     face_passes_ += (hi - lo);
 }
 
@@ -4040,6 +4083,7 @@ void ExplicitKokkosSurfaceSolver::finalize() {
     telemetry_.clear();
 #ifdef OPENSWMM_ENABLE_METAL_FACES
     metal_faces_.reset();
+    metal_swe_.reset();
 #endif
     initialized_ = false;
 }

@@ -2749,6 +2749,9 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
         case twoD::Backend2D::SYCL:
             backend = "SYCL";
             break;
+        case twoD::Backend2D::METAL:
+            backend = "METAL";
+            break;
         case twoD::Backend2D::AUTO:
             break;
         }

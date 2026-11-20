@@ -47,6 +47,9 @@
 #include "../FvSubstepKernels.hpp"
 #include "../../../2d/gpu/KokkosTypes.hpp"
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+#include "../../../2d/gpu/metal/FaceClient.hpp"
+#endif
 #include <cfloat>
 #include <chrono>
 #include <cstddef>
@@ -168,14 +171,31 @@ struct Perf {
  */
 class KokkosNetworkMarcher final : public IFvDeviceMarcher {
 public:
+    explicit KokkosNetworkMarcher(bool metal) {
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        if (metal)
+            network_ = std::make_unique<twoD::metal::NetworkClient>();
+#else
+        (void)metal;
+#endif
+    }
     ~KokkosNetworkMarcher() override { report(); }
     void bind(const FvDeviceMesh& mesh) override;
     FvDeviceResult advance(const FvDeviceAdvance& step) override;
-    const char* label() const noexcept override { return kLabel; }
+    const char* label() const noexcept override {
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        if (network_)
+            return "metal";
+#endif
+        return kLabel;
+    }
 
     // Public only for the reason above; not part of the interface.
     double census();
     void takeSubstep(double dt);
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    void metalFaceFluxes();
+#endif
     void save();
     void restore();
 
@@ -184,6 +204,10 @@ private:
     void pullStep(const substep::Arrays& h);
     void report() const;
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    std::unique_ptr<twoD::metal::NetworkClient> network_;
+    std::vector<int> interior_faces_, host_faces_;
+#endif
     Perf perf_;
     substep::Arrays d_{}; ///< every pointer is a device view's data()
     int n_conduits_ = 0;
@@ -241,6 +265,22 @@ void KokkosNetworkMarcher::bind(const FvDeviceMesh& mesh) {
     const substep::Arrays& h = mesh.host;
     const int nc = h.n_cells, nf = h.n_faces, nn = h.n_nodes, ns = h.n_structs;
     n_conduits_ = mesh.n_conduits;
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    if (network_) {
+        interior_faces_.clear();
+        host_faces_.clear();
+        for (int f = 0; f < nf; ++f) {
+            if (h.face_cl[f] >= 0 && h.face_cr[f] >= 0 && h.face_node[f] < 0 &&
+                h.face_gate[f] == 0 && h.face_culvert[f] < 0)
+                interior_faces_.push_back(f);
+            else
+                host_faces_.push_back(f);
+        }
+        if (interior_faces_.empty())
+            throw std::runtime_error("Metal FV network requires an interior conduit face");
+        network_->inputs.resize(interior_faces_.size());
+    }
+#endif
 
     cell_geom_ = upload("fv_cell_geom", h.cell_geom, nc);
     cell_conduit_ = upload("fv_cell_conduit", h.cell_conduit, nc);
@@ -598,13 +638,60 @@ double KokkosNetworkMarcher::census() {
     return dt;
 }
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+// The OpenMP host plugin owns the FP64 mesh, boundary conditions, node solves
+// and conservation ledgers. Batch only ordinary interior Riemann problems.
+void KokkosNetworkMarcher::metalFaceFluxes() {
+    const auto D = d_;
+    const auto* interior = interior_faces_.data();
+    const auto* boundaries = host_faces_.data();
+    auto* inputs = network_->inputs.data();
+    Kokkos::parallel_for(
+        "fv_metal_boundary_faces", Range(0, host_faces_.size()),
+        KOKKOS_LAMBDA(int i) { substep::faceFlux(D, boundaries[i], false); });
+    Kokkos::parallel_for(
+        "fv_metal_pack", Range(0, interior_faces_.size()), KOKKOS_LAMBDA(int i) {
+            const int f = interior[i], cl = D.face_cl[f], cr = D.face_cr[f];
+            const double z = std::max(D.cell_zb[cl], D.cell_zb[cr]);
+            kernels::FaceState left, right;
+            double il, ir, bed;
+            substep::faceSide(D, f, cl, -1, z, D.face_dir_l[f], 0., left, il, bed, false);
+            substep::faceSide(D, f, cr, -1, z, D.face_dir_r[f], 0., right, ir, bed, false);
+            D.f_state_l[f] = left;
+            D.f_state_r[f] = right;
+            D.f_corr_l[f] = kernels::kGravity * (il - left.i1);
+            D.f_corr_r[f] = kernels::kGravity * (ir - right.i1);
+            auto pack = [](const kernels::FaceState& v) -> twoD::metal::NetworkSide {
+                return {float(v.a), float(v.q), float(v.u), float(v.c), float(v.i1), v.press};
+            };
+            inputs[i] = {pack(left), pack(right)};
+        });
+    ExecSpace().fence();
+    network_->run({});
+    const auto* result = network_->outputs.data();
+    Kokkos::parallel_for(
+        "fv_metal_unpack", Range(0, interior_faces_.size()), KOKKOS_LAMBDA(int i) {
+            const int f = interior[i];
+            D.f_mass[f] = result[i].mass;
+            D.f_mom[f] = result[i].momentum;
+        });
+    ExecSpace().fence();
+}
+#endif
+
 void KokkosNetworkMarcher::takeSubstep(double dt) {
     const substep::Arrays D = d_;
     const int nc = D.n_cells, nf = D.n_faces, nn = D.n_nodes, ns = D.n_structs;
 
     auto t0 = perf_.start();
-    Kokkos::parallel_for(
-        "fv1d_flux", Range(0, nf), KOKKOS_LAMBDA(const int f) { substep::faceFlux(D, f, false); });
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    if (network_)
+        metalFaceFluxes();
+    else
+#endif
+        Kokkos::parallel_for(
+            "fv1d_flux", Range(0, nf),
+            KOKKOS_LAMBDA(const int f) { substep::faceFlux(D, f, false); });
     perf_.stop(kFlux, t0);
     t0 = perf_.start();
     Kokkos::parallel_for(
@@ -849,8 +936,8 @@ FvDeviceResult KokkosNetworkMarcher::advance(const FvDeviceAdvance& step) {
     return r;
 }
 
-IFvDeviceMarcher* makeKokkosNetworkMarcher() {
-    return new KokkosNetworkMarcher();
+IFvDeviceMarcher* makeKokkosNetworkMarcher(bool metal) {
+    return new KokkosNetworkMarcher(metal);
 }
 
 } // namespace openswmm::fv::gpu
