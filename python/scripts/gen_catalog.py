@@ -25,6 +25,20 @@ committed catalog must still resolve through a shared view (a property whose
 a DeprecationWarning) or ``removed`` (with a reason), and ``revision`` must
 increase. The generator refuses to write a catalog that breaks this.
 
+Effects: every method, keyed item and module function carries an ``effect`` so a
+consumer can separate reading from changing without a list of its own:
+
+* ``read``       changes nothing: not the model, the engine state or a file;
+* ``write``      changes model values or engine state, with the same elements;
+* ``structural`` adds, removes or converts elements, so the model is rebuilt;
+* ``file``       reads or writes a file at a path the caller supplies.
+
+``read`` is derived only when the method's name and every C symbol it wraps both
+say so, or it is listed under ``effects`` in the overrides after a review of its
+source. Anything no rule places is ``write``, so an unreviewed method is never
+offered as harmless. ``--check`` fails on a method without an effect and on an
+override that names no method.
+
 Usage::
 
     python python/scripts/gen_catalog.py          # rewrite catalog.json
@@ -47,7 +61,18 @@ ENGINE_DIR = REPO / "python" / "openswmm" / "engine"
 HEADER_DIR = REPO / "include" / "openswmm" / "engine"
 OUT_JSON = ENGINE_DIR / "catalog.json"
 OVERRIDES = Path(__file__).with_name("catalog_overrides.json")
-SCHEMA = 1
+SCHEMA = 2                      # 2: every method, item and function carries ``effect``
+EFFECTS = ("read", "write", "structural", "file")
+_READ_NAME = re.compile(r"^(get|is|has|find|count|list|query|effective|capabilities|inspect)(_|$)")
+_READ_C = re.compile(r"_(get|count|index|id|is|has|find|capabilities)(_|$)")
+_WRITE_C = re.compile(
+    r"_(set|add|remove|delete|clear|split|fuse|init|rename|apply|write|save|create|destroy|open"
+    r"|close|restore|replace|convert|reset|start|end|step|stride|run|enable|disable|commit|define"
+    r"|free|prepare|read|load|insert|append|update|advance|register)(_|$)")
+_WRITE_NAME = re.compile(r"^(set|clear|reset)(_|$)")
+# The same two patterns openswmm.mcp uses for structural edits and file arguments.
+_STRUCTURAL_NAME = re.compile(r"^(add|delete|remove|split|fuse|convert|pop)(_|$)")
+_PATH_PARAM = re.compile(r"(^|_)(path|file|filename|inp|rpt|out|dir)$")
 
 
 def _load(name: str, path: Path):
@@ -503,6 +528,7 @@ class Builder:
         self.targets: dict[str, dict] = {}
         self.members: list[dict] = []
         self.class_target: dict[str, str] = {}
+        self.unreviewed: list[str] = []         # methods that are "write" only by default
 
     # -- walk ---------------------------------------------------------------
     def is_target_class(self, name: str) -> bool:
@@ -570,6 +596,9 @@ class Builder:
                 array = by_path[bulk[m["path"]]]
                 if "units" in m and "units" not in array:
                     array["units"] = m["units"]
+        for m in self.members:
+            if m["form"] != "property":
+                m["effect"] = self.effect_of(m)
         records = {name: {"fields": {k: _expand(v.type, self.aliases)
                                      for k, v in c.members.items() if v.form == "property"},
                           "doc": c.doc}
@@ -584,7 +613,8 @@ class Builder:
             "c_exports": len(_audit.collect_c_functions()),
             "targets": dict(sorted(self.targets.items())),
             "members": sorted(self.members, key=lambda m: m["path"]),
-            "functions": {mod: {name: dict(fn, c=sorted(self.c_by_member.get(("", name), ())))
+            "functions": {mod: {name: dict(fn, c=sorted(self.c_by_member.get(("", name), ())),
+                                           effect=self.function_effect(f"{mod.lstrip('_')}.{name}"))
                                 for name, fn in sorted(f.items())}
                           for mod, f in sorted(self.functions.items())
                           if mod.lstrip("_") in self.overrides["function_modules"]},
@@ -638,6 +668,42 @@ class Builder:
                                  for d in ("__len__", "__iter__", "__getitem__", "__contains__")))
             if syms:
                 entry["c"] = sorted(set(entry.get("c", [])) | syms)
+
+    # -- effects ------------------------------------------------------------
+    def root(self, target: str) -> str:
+        """The root a target hangs from: ``solver``, or a standalone root such as ``output``."""
+        while True:
+            entry = self.targets[target]
+            up = entry.get("parent") or entry.get("collection")
+            if not up:
+                return target
+            target = up
+
+    def effect_of(self, m: dict) -> str:
+        """``read``, ``write``, ``structural`` or ``file`` for one method or item (see module doc)."""
+        reviewed = self.overrides["effects"].get(m["path"])
+        if reviewed:
+            return reviewed
+        name = m["name"]
+        if any(_PATH_PARAM.search(p["name"]) or "PathLike" in p["type"] for p in m["params"]) \
+                or "path" in self.targets[self.root(m["target"])].get("construct", {}).get("args", ()):
+            return "file"
+        if _STRUCTURAL_NAME.match(name) or m["target"] == "editor":
+            return "structural"
+        if m["form"] == "item":
+            return "read" if name in ("items", "get_item") else "write"
+        if _READ_NAME.match(name) and m["c"] \
+                and all(_READ_C.search(s) and not _WRITE_C.search(s) for s in m["c"]):
+            return "read"
+        if not _WRITE_NAME.match(name):
+            self.unreviewed.append(m["path"])
+        return "write"
+
+    def function_effect(self, path: str) -> str:
+        reviewed = self.overrides["effects"].get(path)
+        if not reviewed:
+            self.unreviewed.append(path)
+        return reviewed or "write"
 
     def member_entry(self, target: str, cls_name: str, m: Member) -> dict:
         prefix = "" if target == "solver" else target + "."
@@ -794,6 +860,20 @@ def contract_problems(old: dict | None, new: dict) -> list[str]:
     return problems
 
 
+def effect_problems(catalog: dict, reviewed: dict[str, str]) -> list[str]:
+    """Methods, items and functions without a valid effect, and overrides that name none of them."""
+    entries = {m["path"]: m for m in catalog["members"] if m["form"] != "property"}
+    entries.update({f"{mod.lstrip('_')}.{name}": fn
+                    for mod, f in catalog["functions"].items() for name, fn in f.items()})
+    problems = [f"{path} has no effect (one of {', '.join(EFFECTS)})"
+                for path, e in sorted(entries.items()) if e.get("effect") not in EFFECTS]
+    problems += [f"'effects' override {path!r} names no method, item or function"
+                 for path in sorted(set(reviewed) - set(entries))]
+    problems += [f"'effects' override {path!r}: {value!r} is not one of {', '.join(EFFECTS)}"
+                 for path, value in sorted(reviewed.items()) if value not in EFFECTS]
+    return problems
+
+
 def _catalog_module():
     return _load("_engine_catalog_source", ENGINE_DIR / "catalog.py")
 
@@ -807,7 +887,8 @@ def unitless_floats(catalog: dict) -> list[str]:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--check", action="store_true",
-                    help="fail if catalog.json is stale, a class is uncovered, or a float field has no unit kind")
+                    help="fail if catalog.json is stale, a class is uncovered, a float field has no unit "
+                         "kind, or a method has no effect")
     args = ap.parse_args(argv)
     b = Builder()
     catalog = b.build()
@@ -816,7 +897,13 @@ def main(argv: list[str]) -> int:
     unitless = unitless_floats(catalog)
     print(f"targets={len(catalog['targets'])} members={len(catalog['members'])} "
           f"float fields without a unit kind={len(unitless)}")
-    problems = []
+    counts = {e: 0 for e in EFFECTS}
+    for m in catalog["members"]:
+        if m["form"] != "property":
+            counts[m["effect"]] += 1
+    print("method effects: " + " ".join(f"{e}={n}" for e, n in counts.items())
+          + f"; write by default, not yet reviewed={len(b.unreviewed)}")
+    problems = effect_problems(catalog, b.overrides["effects"])
     if missing:
         problems.append("classes neither reachable nor excluded: " + ", ".join(missing))
     if unitless:

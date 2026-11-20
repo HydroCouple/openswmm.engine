@@ -22,7 +22,9 @@ Machine-readable map of the Python engine API.
 *target* reachable from a :class:`Solver` -- services such as ``forcing`` and
 ``surface2d.groundwater``, element kinds such as ``node`` and ``link`` and
 their sub-views such as ``node.stats`` -- and every property and method on
-them, with type, access, units, lifecycle phases and wrapped C symbols.
+them, with type, access, units, lifecycle phases and wrapped C symbols. Every
+method carries an ``effect`` (``read``, ``write``, ``structural`` or ``file``);
+anything not derived or reviewed as ``read`` is ``write``.
 
 .. code-block:: python
 

@@ -1,5 +1,5 @@
 {
- "schema": 1,
+ "schema": 2,
  "revision": 2,
  "renamed": {},
  "removed": {},
@@ -914,7 +914,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "aquifers.add",
@@ -934,7 +935,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "aquifers.get_evap_pattern",
@@ -953,7 +955,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "aquifers.get_id",
@@ -972,7 +975,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "aquifers.get_index",
@@ -991,7 +995,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "aquifers.get_param",
@@ -1015,7 +1020,8 @@
      "type": "Union[AquiferParam, int]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "aquifers.items",
@@ -1028,7 +1034,8 @@
    "params": [],
    "c": [
     "swmm_aquifer_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "aquifers.rename",
@@ -1052,7 +1059,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "aquifers.set_evap_pattern",
@@ -1076,7 +1084,8 @@
      "type": "Optional[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "aquifers.set_param",
@@ -1105,7 +1114,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.add_gage",
@@ -1124,7 +1134,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.add_link",
@@ -1148,7 +1159,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.add_node",
@@ -1172,7 +1184,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.add_subcatch",
@@ -1189,7 +1202,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.add_subcatchment",
@@ -1208,7 +1222,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.add_title_line",
@@ -1227,7 +1242,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.clear_title",
@@ -1240,7 +1256,8 @@
     "swmm_title_clear"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.clear_userflag_value",
@@ -1269,7 +1286,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.define_userflag",
@@ -1298,7 +1316,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.end_datetime",
@@ -1331,7 +1350,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.files_set",
@@ -1355,7 +1375,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.finalize",
@@ -1368,7 +1389,8 @@
     "swmm_finalize_model"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.get_crs",
@@ -1381,7 +1403,8 @@
     "swmm_get_crs"
    ],
    "returns": "str",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "builder.get_file_path",
@@ -1405,7 +1428,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_option",
@@ -1424,7 +1448,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_option_ext",
@@ -1443,7 +1468,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_title_count",
@@ -1456,7 +1482,8 @@
     "swmm_title_get_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "builder.get_title_line",
@@ -1475,7 +1502,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_userflag_bool",
@@ -1494,7 +1522,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_userflag_def",
@@ -1513,7 +1542,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_userflag_int",
@@ -1532,7 +1562,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_userflag_real",
@@ -1551,7 +1582,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.get_userflag_value",
@@ -1580,7 +1612,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "builder.plugin_get",
@@ -1599,7 +1632,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.plugin_remove",
@@ -1618,7 +1652,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.plugin_set",
@@ -1642,7 +1677,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.plugins_count",
@@ -1655,7 +1691,8 @@
     "swmm_plugins_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.pop_last_link",
@@ -1674,7 +1711,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.pop_last_node",
@@ -1693,7 +1731,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "builder.report_start_datetime",
@@ -1736,7 +1775,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "builder.set_link_length",
@@ -1760,7 +1800,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_link_nodes",
@@ -1789,7 +1830,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_link_roughness",
@@ -1813,7 +1855,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_link_xsect",
@@ -1857,7 +1900,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_node_invert",
@@ -1881,7 +1925,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_node_max_depth",
@@ -1905,7 +1950,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_option",
@@ -1929,7 +1975,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_option_ext",
@@ -1953,7 +2000,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_title",
@@ -1972,7 +2020,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_userflag_bool",
@@ -1996,7 +2045,8 @@
      "type": "bool",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_userflag_int",
@@ -2020,7 +2070,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_userflag_real",
@@ -2044,7 +2095,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.set_userflag_value",
@@ -2078,7 +2130,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.start_datetime",
@@ -2103,7 +2156,8 @@
    "doc": "Transfer ownership of the engine handle to a Solver.",
    "c": [],
    "returns": "Solver",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.undefine_userflag",
@@ -2122,7 +2176,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "builder.userflag_def_count",
@@ -2135,7 +2190,8 @@
     "swmm_userflag_def_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.validate",
@@ -2148,7 +2204,8 @@
     "swmm_validate_model"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "builder.write",
@@ -2167,7 +2224,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "builder.write_with_plugin",
@@ -2191,7 +2249,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "checkpoints.capabilities",
@@ -2229,7 +2288,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "checkpoints.inspect",
@@ -2250,7 +2310,8 @@
      "type": "str | PathLike[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "checkpoints.restore",
@@ -2270,7 +2331,8 @@
      "type": "str | PathLike[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "checkpoints.save",
@@ -2289,7 +2351,8 @@
      "type": "str | PathLike[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "checkpoints.session_status",
@@ -2339,7 +2402,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "climate.adc_impervious",
@@ -2661,7 +2725,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "climate.snow_temp",
@@ -2774,7 +2839,8 @@
     "swmm_engine_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "close_runoff_interface",
@@ -2787,7 +2853,8 @@
     "swmm_runoff_iface_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "coefficient.index",
@@ -2858,7 +2925,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "controls.clear",
@@ -2871,7 +2939,8 @@
     "swmm_control_clear_rules"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "controls",
@@ -2890,7 +2959,8 @@
    ],
    "c": [
     "swmm_control_remove_rule"
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "controls.find_references",
@@ -2909,7 +2979,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "controls",
@@ -2929,7 +3000,8 @@
    "c": [
     "swmm_control_get_id",
     "swmm_control_get_rule"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "controls.insert",
@@ -2951,7 +3023,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "controls",
@@ -2966,7 +3039,8 @@
     "swmm_control_count",
     "swmm_control_get_id",
     "swmm_control_get_rule"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "controls.remove_rule",
@@ -2985,7 +3059,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "controls.replace_program",
@@ -3010,7 +3085,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "controls",
@@ -3032,7 +3108,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "write"
   },
   {
    "path": "controls.set_link_setting",
@@ -3058,7 +3135,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "controls.set_link_status",
@@ -3085,7 +3163,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "controls.validate_message",
@@ -3104,7 +3183,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.advance_to",
@@ -3121,7 +3201,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.apply_frame",
@@ -3141,7 +3222,8 @@
      "type": "CouplingFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.capabilities",
@@ -3171,7 +3253,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.groundwater",
@@ -3211,7 +3294,8 @@
      "type": "Iterable[RuntimeSource]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.boundary_flow",
@@ -3235,7 +3319,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.boundary_receipt",
@@ -3260,7 +3345,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.clear_boundary",
@@ -3284,7 +3370,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.clear_source",
@@ -3309,7 +3396,8 @@
      "type": "int | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.infiltration_receipt",
@@ -3329,7 +3417,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.set_boundaries",
@@ -3346,7 +3435,8 @@
      "type": "Iterable[RuntimeBoundary]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.set_boundary",
@@ -3386,7 +3476,8 @@
      "type": "Mapping[str, float] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.set_forcings",
@@ -3403,7 +3494,8 @@
      "type": "Iterable[RuntimeForcing]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.set_source",
@@ -3455,7 +3547,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.source_receipt",
@@ -3479,7 +3572,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.source_receipts",
@@ -3503,7 +3597,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.species_ledger",
@@ -3522,7 +3617,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "coupling.surface.water_totals",
@@ -3548,7 +3644,8 @@
     "swmm_engine_create"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "crs",
@@ -3585,7 +3682,8 @@
     "swmm_engine_destroy"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "editor.analyze_aquifer_impact",
@@ -3606,7 +3704,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_gage_impact",
@@ -3627,7 +3726,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_hydrograph_impact",
@@ -3647,7 +3747,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_inlet_impact",
@@ -3668,7 +3769,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_landuse_impact",
@@ -3689,7 +3791,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_lid_impact",
@@ -3710,7 +3813,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_link_impact",
@@ -3731,7 +3835,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_node_impact",
@@ -3752,7 +3857,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_pattern_impact",
@@ -3773,7 +3879,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_pollutant_impact",
@@ -3794,7 +3901,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_snowpack_impact",
@@ -3815,7 +3923,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_street_impact",
@@ -3836,7 +3945,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_subcatch_impact",
@@ -3857,7 +3967,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_table_impact",
@@ -3878,7 +3989,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.analyze_transect_impact",
@@ -3898,7 +4010,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.convert_link",
@@ -3924,7 +4037,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.convert_node",
@@ -3950,7 +4064,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.convert_types",
@@ -4000,7 +4115,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_aquifer",
@@ -4021,7 +4137,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_gage",
@@ -4042,7 +4159,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_gage_recorded",
@@ -4063,7 +4181,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_gages",
@@ -4084,7 +4203,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_gages_recorded",
@@ -4105,7 +4225,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_hydrograph",
@@ -4125,7 +4246,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_inlet",
@@ -4146,7 +4268,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_landuse",
@@ -4167,7 +4290,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_lid",
@@ -4188,7 +4312,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_link",
@@ -4209,7 +4334,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_link_recorded",
@@ -4230,7 +4356,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_links",
@@ -4251,7 +4378,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_links_recorded",
@@ -4272,7 +4400,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_node",
@@ -4293,7 +4422,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_node_recorded",
@@ -4314,7 +4444,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_nodes",
@@ -4335,7 +4466,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_nodes_recorded",
@@ -4356,7 +4488,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_pattern",
@@ -4377,7 +4510,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_pollutant",
@@ -4398,7 +4532,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_snowpack",
@@ -4419,7 +4554,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_street",
@@ -4440,7 +4576,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_subcatch",
@@ -4461,7 +4598,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_subcatch_recorded",
@@ -4482,7 +4620,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_subcatchments",
@@ -4503,7 +4642,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_subcatchments_recorded",
@@ -4524,7 +4664,8 @@
      "type": "Iterable[int | str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_table",
@@ -4545,7 +4686,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.delete_transect",
@@ -4565,7 +4707,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.end_datetime",
@@ -4599,7 +4742,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.fuse_virtual_junction",
@@ -4619,7 +4763,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.gage_count",
@@ -4697,7 +4842,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.set_node_virtual",
@@ -4722,7 +4868,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.split_conduit",
@@ -4762,7 +4909,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.split_conduit_inlet",
@@ -4807,7 +4955,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "editor.start_datetime",
@@ -4866,7 +5015,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "elapsed",
@@ -4892,7 +5042,8 @@
     "swmm_engine_end"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "end_datetime",
@@ -4938,7 +5089,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "events.clear",
@@ -4951,7 +5103,8 @@
     "swmm_events_clear"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "events",
@@ -4970,7 +5123,8 @@
    ],
    "c": [
     "swmm_events_remove"
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "target": "events",
@@ -4989,7 +5143,8 @@
    ],
    "c": [
     "swmm_events_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "events.insert",
@@ -5011,7 +5166,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "events",
@@ -5025,7 +5181,8 @@
    "c": [
     "swmm_events_count",
     "swmm_events_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "events",
@@ -5049,7 +5206,8 @@
    ],
    "c": [
     "swmm_events_set"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "flow_units",
@@ -5094,7 +5252,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.clear_all",
@@ -5107,7 +5266,8 @@
     "swmm_forcing_clear_all"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "forcing.climate_dry_only",
@@ -5126,7 +5286,8 @@
      "type": "bool",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.climate_evap",
@@ -5157,7 +5318,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.climate_evap_rate",
@@ -5170,7 +5332,8 @@
     "swmm_climate_get_evap_rate"
    ],
    "returns": "float",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "forcing.climate_temperature",
@@ -5201,7 +5364,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.climate_wind",
@@ -5232,7 +5396,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.element_climate",
@@ -5282,7 +5447,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.element_climate_get",
@@ -5315,7 +5481,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.gage_rainfall",
@@ -5353,7 +5520,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.get_climate_dry_only",
@@ -5366,7 +5534,8 @@
     "swmm_climate_get_dry_only"
    ],
    "returns": "bool",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "forcing.get_climate_temperature",
@@ -5379,7 +5548,8 @@
     "swmm_climate_get_temperature"
    ],
    "returns": "float",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "forcing.get_climate_wind_speed",
@@ -5392,7 +5562,8 @@
     "swmm_climate_get_wind_speed"
    ],
    "returns": "float",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "forcing.link_flow",
@@ -5430,7 +5601,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.link_quality",
@@ -5475,7 +5647,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.link_seepage",
@@ -5513,7 +5686,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.link_setting",
@@ -5551,7 +5725,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.node_age",
@@ -5589,7 +5764,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.node_head_boundary",
@@ -5627,7 +5803,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.node_lat_inflow",
@@ -5665,7 +5842,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.node_quality",
@@ -5710,7 +5888,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.node_temperature",
@@ -5748,7 +5927,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.subcatchment_evap",
@@ -5786,7 +5966,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.subcatchment_rainfall",
@@ -5824,7 +6005,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "forcing.subcatchment_snowfall",
@@ -5862,7 +6044,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "frozen_ground_rows",
@@ -5882,7 +6065,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "fv_device_supported",
@@ -5895,7 +6079,8 @@
     "swmm_fv_device_supported"
    ],
    "returns": "tuple[bool, str]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "gage.data_source",
@@ -6079,7 +6264,8 @@
      "type": "Optional[str]",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "gage.set_rain_interval",
@@ -6098,7 +6284,8 @@
      "type": "Union[float, timedelta]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "gage.set_timeseries",
@@ -6117,7 +6304,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "gage.snow_factor",
@@ -6191,7 +6379,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "gages.get_id",
@@ -6210,7 +6399,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "gages.get_index",
@@ -6229,7 +6419,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "gages.ids",
@@ -6268,7 +6459,8 @@
     "swmm_gage_reload_rain_files"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "gages.rename",
@@ -6294,7 +6486,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "geopackage.begin",
@@ -6307,7 +6500,8 @@
     "swmm_gpkg_begin"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.close",
@@ -6320,7 +6514,8 @@
     "swmm_gpkg_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.commit",
@@ -6333,7 +6528,8 @@
     "swmm_gpkg_commit"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.create_observed_series",
@@ -6377,7 +6573,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.last_error",
@@ -6412,7 +6609,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.observed_series_count",
@@ -6425,7 +6623,8 @@
     "swmm_gpkg_observed_series_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.observed_value_count",
@@ -6444,7 +6643,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.query_double",
@@ -6463,7 +6663,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.query_int",
@@ -6482,7 +6683,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.read_observed_values",
@@ -6502,7 +6704,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.read_result_ts",
@@ -6537,7 +6740,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.read_summary",
@@ -6571,7 +6775,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.result_ts_count",
@@ -6605,7 +6810,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.rollback",
@@ -6618,7 +6824,8 @@
     "swmm_gpkg_rollback"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.simulation_count",
@@ -6631,7 +6838,8 @@
     "swmm_gpkg_simulation_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.simulation_ids",
@@ -6645,7 +6853,8 @@
     "swmm_gpkg_simulation_id"
    ],
    "returns": "List[str]",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.topology_edge_count",
@@ -6664,7 +6873,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.variable_count",
@@ -6677,7 +6887,8 @@
     "swmm_gpkg_variable_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "geopackage.write_observed_value",
@@ -6711,7 +6922,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "geopackage.write_observed_values",
@@ -6745,7 +6957,8 @@
      "type": "Optional[List[str]]",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "groundwater2d.active",
@@ -6792,7 +7005,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.add_node",
@@ -6831,7 +7045,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.add_row",
@@ -6887,7 +7102,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.authored_boundaries",
@@ -6926,7 +7142,8 @@
      "type": "int | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.boundary_flow",
@@ -6948,7 +7165,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.boundary_receipt",
@@ -6970,7 +7188,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.cell",
@@ -6994,7 +7213,8 @@
      "type": "GroundwaterVariable",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.cells",
@@ -7014,7 +7234,8 @@
      "type": "GroundwaterVariable",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.clear_boundary",
@@ -7036,7 +7257,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.clear_source",
@@ -7058,7 +7280,8 @@
      "type": "int | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.clock_stats",
@@ -7091,7 +7314,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.concentrations",
@@ -7116,7 +7340,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.continuity_error",
@@ -7185,7 +7410,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.ledger",
@@ -7204,7 +7430,8 @@
      "type": "GroundwaterLedger",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.links",
@@ -7250,7 +7477,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "target": "groundwater2d.options",
@@ -7269,7 +7497,8 @@
    ],
    "c": [
     "swmm_gw2d_option_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "groundwater2d.options",
@@ -7282,7 +7511,8 @@
    "params": [],
    "c": [
     "swmm_gw2d_option_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "groundwater2d.options",
@@ -7306,7 +7536,8 @@
    ],
    "c": [
     "swmm_gw2d_option_set"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.options.set_process_options",
@@ -7344,7 +7575,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.remove_authored_boundary",
@@ -7363,7 +7595,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.remove_link",
@@ -7382,7 +7615,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.remove_node",
@@ -7401,7 +7635,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.remove_row",
@@ -7420,7 +7655,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.replace_nodes",
@@ -7456,7 +7692,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.row_property",
@@ -7480,7 +7717,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.rows",
@@ -7533,7 +7771,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_flow_boundary",
@@ -7565,7 +7804,8 @@
      "type": "Mapping[str, float] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_head_boundary",
@@ -7597,7 +7837,8 @@
      "type": "Mapping[str, float] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_heat_source",
@@ -7631,7 +7872,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_node_exchange",
@@ -7655,7 +7897,8 @@
      "type": "bool",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_row_property",
@@ -7684,7 +7927,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_species_source",
@@ -7718,7 +7962,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.set_water_source",
@@ -7740,7 +7985,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.source_receipt",
@@ -7762,7 +8008,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.sources",
@@ -7812,7 +8059,8 @@
      "type": "GroundwaterSpeciesLedger",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.tier_histogram",
@@ -7897,7 +8145,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "target": "groundwater2d.transport.options",
@@ -7916,7 +8165,8 @@
    ],
    "c": [
     "swmm_gw_transport_option_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "groundwater2d.transport.options",
@@ -7929,7 +8179,8 @@
    "params": [],
    "c": [
     "swmm_gw_transport_option_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "groundwater2d.transport.options",
@@ -7953,7 +8204,8 @@
    ],
    "c": [
     "swmm_gw_transport_option_set"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.parameters",
@@ -7986,7 +8238,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.remove_initial_quality",
@@ -8005,7 +8258,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.remove_parameters",
@@ -8024,7 +8278,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.remove_sorption",
@@ -8043,7 +8298,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.remove_source",
@@ -8062,7 +8318,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.remove_source_species",
@@ -8086,7 +8343,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "groundwater2d.transport.set_boundary",
@@ -8105,7 +8363,8 @@
      "type": "GroundwaterBoundary",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_initial_quality",
@@ -8124,7 +8383,8 @@
      "type": "GroundwaterInitialQuality",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_parameters",
@@ -8143,7 +8403,8 @@
      "type": "GroundwaterParameters",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_sorption",
@@ -8162,7 +8423,8 @@
      "type": "GroundwaterSorption",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_source",
@@ -8183,7 +8445,8 @@
      "type": "GroundwaterSource",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_source_scale",
@@ -8207,7 +8470,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_source_species",
@@ -8231,7 +8495,8 @@
      "type": "GroundwaterSourceTerm",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.set_source_xy",
@@ -8260,7 +8525,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.sorption",
@@ -8293,7 +8559,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.source_species",
@@ -8313,7 +8580,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.source_xy",
@@ -8332,7 +8600,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "groundwater2d.transport.sources",
@@ -8379,7 +8648,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.channel_ground_status",
@@ -8392,7 +8662,8 @@
     "swmm_heat_get_channel_ground_status"
    ],
    "returns": "dict[str, object]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "heat.channel_ground_values",
@@ -8421,7 +8692,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.cloud.clear",
@@ -8434,7 +8706,8 @@
     "swmm_heat_clear_cloud"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "heat.cloud.configured",
@@ -8480,7 +8753,8 @@
    ],
    "c": [
     "swmm_heat_get_cloud"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.cloud",
@@ -8493,7 +8767,8 @@
    "params": [],
    "c": [
     "swmm_heat_get_cloud"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.cloud",
@@ -8517,7 +8792,8 @@
    ],
    "c": [
     "swmm_heat_set_cloud"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.cloud.set_timeseries",
@@ -8536,7 +8812,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.cloud.timeseries",
@@ -8596,7 +8873,8 @@
      "type": "Callable[[Solver], object]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.effective_element",
@@ -8625,7 +8903,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.element_overrides",
@@ -8644,7 +8923,8 @@
    ],
    "c": [
     "swmm_heat_get_element_override"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.element_overrides",
@@ -8658,7 +8938,8 @@
    "c": [
     "swmm_heat_element_override_count",
     "swmm_heat_get_element_override"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "heat.element_overrides.remove",
@@ -8677,7 +8958,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "heat.element_overrides.set",
@@ -8711,7 +8993,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.enabled",
@@ -8758,7 +9041,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.ground_status",
@@ -8771,7 +9055,8 @@
     "swmm_heat_get_ground_status"
    ],
    "returns": "dict[str, object]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "heat.ground_values",
@@ -8800,7 +9085,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.lid_material",
@@ -8855,7 +9141,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "heat.modules",
@@ -8874,7 +9161,8 @@
    ],
    "c": [
     "swmm_heat_get_module"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.modules",
@@ -8887,7 +9175,8 @@
    "params": [],
    "c": [
     "swmm_heat_get_module"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.modules",
@@ -8911,7 +9200,8 @@
    ],
    "c": [
     "swmm_heat_set_module"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "heat.node_overrides",
@@ -8930,7 +9220,8 @@
    ],
    "c": [
     "swmm_heat_get_node_override"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.node_overrides",
@@ -8944,7 +9235,8 @@
    "c": [
     "swmm_heat_get_node_override",
     "swmm_heat_node_override_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "heat.node_overrides.remove",
@@ -8963,7 +9255,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "heat.node_overrides.set",
@@ -8994,7 +9287,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.preview_channel_ground_map",
@@ -9035,7 +9329,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "heat.radiative",
@@ -9054,7 +9349,8 @@
    ],
    "c": [
     "swmm_heat_get_radiative"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.radiative",
@@ -9067,7 +9363,8 @@
    "params": [],
    "c": [
     "swmm_heat_get_radiative"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.radiative",
@@ -9091,7 +9388,8 @@
    ],
    "c": [
     "swmm_heat_set_radiative"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.sediment.clear",
@@ -9110,7 +9408,8 @@
      "type": "Union[HeatSedimentParam, int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.sediment.clear_ground_source",
@@ -9123,7 +9422,8 @@
     "swmm_heat_clear_ground_source"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "heat.sediment",
@@ -9142,7 +9442,8 @@
    ],
    "c": [
     "swmm_heat_get_sediment"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "heat.sediment.ground_source_configured",
@@ -9188,7 +9489,8 @@
      "type": "Union[HeatSedimentParam, int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "heat.sediment",
@@ -9201,7 +9503,8 @@
    "params": [],
    "c": [
     "swmm_heat_get_sediment"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.sediment",
@@ -9225,7 +9528,8 @@
    ],
    "c": [
     "swmm_heat_set_sediment"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.set_shortwave_timeseries",
@@ -9244,7 +9548,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.shortwave_mode",
@@ -9289,7 +9594,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.solar.clear",
@@ -9302,7 +9608,8 @@
     "swmm_heat_clear_solar_site"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "heat.solar",
@@ -9321,7 +9628,8 @@
    ],
    "c": [
     "swmm_heat_get_solar"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.solar",
@@ -9334,7 +9642,8 @@
    "params": [],
    "c": [
     "swmm_heat_get_solar"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.solar",
@@ -9358,7 +9667,8 @@
    ],
    "c": [
     "swmm_heat_set_solar"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.solar_sited",
@@ -9390,7 +9700,8 @@
      "type": "Union[WaterAgeSource, int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat.sources.effective",
@@ -9416,7 +9727,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.sources",
@@ -9435,7 +9747,8 @@
    ],
    "c": [
     "swmm_heat_get_source_temp"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "heat.sources.is_configured",
@@ -9454,7 +9767,8 @@
      "type": "Union[WaterAgeSource, int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.sources",
@@ -9468,7 +9782,8 @@
    "c": [
     "swmm_heat_get_source_temp",
     "swmm_heat_source_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "heat.sources",
@@ -9492,7 +9807,8 @@
    ],
    "c": [
     "swmm_heat_set_source_temp"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "heat_snapshot.close",
@@ -9506,7 +9822,8 @@
     "swmm_heat_snapshot_destroy"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "heat_snapshot.restore",
@@ -9520,7 +9837,8 @@
     "swmm_heat_snapshot_restore"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "hotstart.apply",
@@ -9539,7 +9857,8 @@
      "type": "Solver",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.close",
@@ -9552,7 +9871,8 @@
     "swmm_hotstart_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "hotstart.contents",
@@ -9620,7 +9940,8 @@
     "swmm_hotstart_species_count"
    ],
    "returns": "List[HotStartLinkRecord]",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "hotstart.node_count",
@@ -9649,7 +9970,8 @@
     "swmm_hotstart_species_count"
    ],
    "returns": "List[HotStartNodeRecord]",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "hotstart.open",
@@ -9670,7 +9992,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "hotstart.open_legacy",
@@ -9696,7 +10019,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "hotstart.save_from",
@@ -9722,7 +10046,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "hotstart.saved_at",
@@ -9759,7 +10084,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_link_flow",
@@ -9783,7 +10109,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_link_state",
@@ -9812,7 +10139,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_node_depth",
@@ -9836,7 +10164,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_node_head",
@@ -9860,7 +10189,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_node_state",
@@ -9884,7 +10214,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.set_subcatchment_runoff",
@@ -9908,7 +10239,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "hotstart.sim_datetime",
@@ -9975,7 +10307,8 @@
     "swmm_hotstart_subcatch_count"
    ],
    "returns": "List[HotStartSubcatchmentRecord]",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "hotstart.version",
@@ -10058,7 +10391,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.add_external",
@@ -10120,7 +10454,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.add_hydrograph",
@@ -10182,7 +10517,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.add_hydrograph_gage",
@@ -10206,7 +10542,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.add_rdii",
@@ -10237,7 +10574,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.add_rdii_decay",
@@ -10306,7 +10644,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.clear_hydrograph_group_months",
@@ -10325,7 +10664,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.dwf_count",
@@ -10370,7 +10710,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_external",
@@ -10389,7 +10730,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_hydrograph",
@@ -10408,7 +10750,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_hydrograph_gage",
@@ -10427,7 +10770,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_hydrograph_group_id",
@@ -10446,7 +10790,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_rdii",
@@ -10465,7 +10810,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.get_rdii_decay",
@@ -10484,7 +10830,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "inflows.hydrograph_count",
@@ -10568,7 +10915,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.remove_external",
@@ -10587,7 +10935,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.remove_hydrograph_entry",
@@ -10616,7 +10965,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.remove_hydrograph_group",
@@ -10635,7 +10985,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.remove_rdii",
@@ -10654,7 +11005,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.remove_rdii_decay",
@@ -10678,7 +11030,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "inflows.rename_hydrograph_group",
@@ -10702,7 +11055,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_dwf_baseline",
@@ -10726,7 +11080,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_external_baseline",
@@ -10750,7 +11105,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_external_scale",
@@ -10774,7 +11130,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_hydrograph_gage",
@@ -10798,7 +11155,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_hydrograph_ia",
@@ -10842,7 +11200,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_hydrograph_rtk",
@@ -10886,7 +11245,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "inflows.set_rdii_decay",
@@ -10955,7 +11315,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlet_usages.find_link",
@@ -10974,7 +11335,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlet_usages.find_node",
@@ -10993,7 +11355,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlet_usages.get",
@@ -11012,7 +11375,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlet_usages.items",
@@ -11025,7 +11389,8 @@
    "params": [],
    "c": [
     "swmm_inlet_usage_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlet_usages.remove",
@@ -11044,7 +11409,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.inlet_usages.set",
@@ -11114,7 +11480,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlet_usages.validate",
@@ -11133,7 +11500,8 @@
      "type": "Mapping[str, Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlets.add",
@@ -11157,7 +11525,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.inlets.get_comment",
@@ -11176,7 +11545,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.get_design",
@@ -11195,7 +11565,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.get_id",
@@ -11214,7 +11585,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.get_index",
@@ -11233,7 +11605,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.get_params",
@@ -11252,7 +11625,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.get_type",
@@ -11271,7 +11645,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.items",
@@ -11284,7 +11659,8 @@
    "params": [],
    "c": [
     "swmm_inlet_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.inlets.rename",
@@ -11308,7 +11684,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlets.set_comment",
@@ -11332,7 +11709,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlets.set_design",
@@ -11357,7 +11735,8 @@
      "type": "dict[str, Any] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlets.set_params",
@@ -11406,7 +11785,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.inlets.validate_design",
@@ -11425,7 +11805,8 @@
      "type": "Mapping[str, Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.add",
@@ -11449,7 +11830,8 @@
      "type": "LidType",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.lids.assign_node",
@@ -11483,7 +11865,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.get_drain",
@@ -11502,7 +11885,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_drain_curve",
@@ -11522,7 +11906,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_drainmat",
@@ -11541,7 +11926,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_extra",
@@ -11565,7 +11951,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_flow_options",
@@ -11586,7 +11973,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_id",
@@ -11605,7 +11993,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_index",
@@ -11624,7 +12013,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_layers",
@@ -11646,7 +12036,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_materials",
@@ -11668,7 +12059,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_outlet_anchor",
@@ -11689,7 +12081,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_pavement",
@@ -11708,7 +12101,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_removal",
@@ -11732,7 +12126,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_soil",
@@ -11751,7 +12146,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_storage",
@@ -11770,7 +12166,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_surface",
@@ -11789,7 +12186,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_treatments",
@@ -11812,7 +12210,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.get_type",
@@ -11831,7 +12230,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.items",
@@ -11844,7 +12244,8 @@
    "params": [],
    "c": [
     "swmm_lid_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.lids.node_assignment",
@@ -11865,7 +12266,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.node_base_area",
@@ -11886,7 +12288,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.node_bottom",
@@ -11907,7 +12310,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.node_bottom_state",
@@ -11928,7 +12332,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.node_profile",
@@ -11950,7 +12355,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.node_snapshot",
@@ -11975,7 +12381,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.prepare_node",
@@ -12016,7 +12423,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.remove_node",
@@ -12037,7 +12445,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.lids.rename",
@@ -12061,7 +12470,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.replace_node",
@@ -12088,7 +12498,8 @@
      "type": "Mapping[str, Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.replace_usages",
@@ -12114,7 +12525,8 @@
      "type": "Iterable[Mapping[str, Any]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.richards_profile",
@@ -12136,7 +12548,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.richards_statistics",
@@ -12157,7 +12570,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_drain",
@@ -12194,7 +12608,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_drainmat",
@@ -12231,7 +12646,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_extra",
@@ -12260,7 +12676,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_layers",
@@ -12309,7 +12726,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_node_bottom",
@@ -12335,7 +12753,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_outlet_anchor",
@@ -12367,7 +12786,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_pavement",
@@ -12429,7 +12849,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_removal",
@@ -12458,7 +12879,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_soil",
@@ -12513,7 +12935,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_storage",
@@ -12550,7 +12973,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_surface",
@@ -12587,7 +13011,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.set_type",
@@ -12611,7 +13036,8 @@
      "type": "LidType",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.usage_add",
@@ -12667,7 +13093,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.usage_count",
@@ -12680,7 +13107,8 @@
     "swmm_lid_usage_count"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.usage_get",
@@ -12699,7 +13127,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.usage_record",
@@ -12718,7 +13147,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.usage_remove",
@@ -12737,7 +13167,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.validate_layers",
@@ -12786,7 +13217,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.validate_node",
@@ -12813,7 +13245,8 @@
      "type": "Mapping[str, Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.validate_type",
@@ -12837,7 +13270,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.lids.validate_usage",
@@ -12856,7 +13290,8 @@
      "type": "Mapping[str, Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.streets.add",
@@ -12875,7 +13310,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.streets.get_id",
@@ -12894,7 +13330,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.streets.get_index",
@@ -12913,7 +13350,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.streets.get_params",
@@ -12932,7 +13370,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.streets.items",
@@ -12945,7 +13384,8 @@
    "params": [],
    "c": [
     "swmm_street_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.streets.rename",
@@ -12969,7 +13409,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.streets.set_params",
@@ -13048,7 +13489,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.add",
@@ -13067,7 +13509,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.transects.add_station",
@@ -13096,7 +13539,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.transects.clear_stations",
@@ -13115,7 +13559,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.get_bank_stations",
@@ -13134,7 +13579,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_comments",
@@ -13153,7 +13599,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_encroachment_stations",
@@ -13172,7 +13619,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_id",
@@ -13191,7 +13639,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_index",
@@ -13210,7 +13659,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_modifiers",
@@ -13229,7 +13679,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_roughness",
@@ -13248,7 +13699,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.get_station",
@@ -13272,7 +13724,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.items",
@@ -13285,7 +13738,8 @@
    "params": [],
    "c": [
     "swmm_transect_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "infrastructure.transects.remove",
@@ -13304,7 +13758,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "infrastructure.transects.rename",
@@ -13328,7 +13783,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.set_bank_stations",
@@ -13357,7 +13813,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.set_comments",
@@ -13381,7 +13838,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.set_encroachment_stations",
@@ -13410,7 +13868,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.set_modifiers",
@@ -13444,7 +13903,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.set_roughness",
@@ -13478,7 +13938,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.station_count",
@@ -13497,7 +13958,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "infrastructure.transects.stations",
@@ -13514,7 +13976,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "initial_quality.TEMPERATURE",
@@ -13569,7 +14032,8 @@
    ],
    "c": [
     "swmm_init_quality_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "initial_quality.is_file",
@@ -13588,7 +14052,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "initial_quality",
@@ -13602,7 +14067,8 @@
    "c": [
     "swmm_init_quality_count",
     "swmm_init_quality_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "initial_quality.remove",
@@ -13621,7 +14087,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "initial_quality.set",
@@ -13661,7 +14128,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "initialize",
@@ -13674,7 +14142,8 @@
     "swmm_engine_initialize"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "is_between_events",
@@ -13730,7 +14199,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "landuse.sweep_interval",
@@ -14157,7 +14627,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "link.roughness",
@@ -14213,7 +14684,8 @@
      "type": "Union[Node, Union[int, str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "link.slope",
@@ -14563,7 +15035,8 @@
     "swmm_link_get_xsect"
    ],
    "returns": "Tuple[XSectShape, float, float, float, float]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "link.xsect.g1",
@@ -14630,7 +15103,8 @@
    "doc": "Return an XSectionGeometry for this link's cross-section.",
    "c": [],
    "returns": "XSectionGeometry",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "link.xsect.info",
@@ -14643,7 +15117,8 @@
     "swmm_link_get_xsect"
    ],
    "returns": "CrossSection",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "link.xsect.items",
@@ -14654,7 +15129,8 @@
    "doc": "",
    "returns": "list[tuple[int, Iterator[Any]]]",
    "params": [],
-   "c": []
+   "c": [],
+   "effect": "read"
   },
   {
    "path": "link.xsect.shape",
@@ -14692,7 +15168,8 @@
      "type": "LinkType",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "links.capacities",
@@ -14772,7 +15249,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "links.get_index",
@@ -14791,7 +15269,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "links.get_xsect_info",
@@ -14812,7 +15291,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "links.hyd_powers",
@@ -14860,7 +15340,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "links.pump_stats",
@@ -14874,7 +15355,8 @@
     "swmm_link_get_pump_stats_bulk"
    ],
    "returns": "Tuple[NDArray[Any], NDArray[Any], NDArray[Any]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "links.qualities",
@@ -14896,7 +15378,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "links.rename",
@@ -14922,7 +15405,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "links.restore_authored_orientation",
@@ -14935,7 +15419,8 @@
     "swmm_links_restore_authored_orientation"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "links.target_settings",
@@ -15015,7 +15500,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "mass_balance.quality_evap_loss",
@@ -15036,7 +15522,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "mass_balance.quality_seep_loss",
@@ -15057,7 +15544,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "mass_balance.routing_continuity_error",
@@ -15103,7 +15591,8 @@
      "type": "RoutingTotal",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "mass_balance.runoff_continuity_error",
@@ -15136,7 +15625,8 @@
      "type": "RunoffTotal",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "material_split.apply_geometry",
@@ -15155,7 +15645,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.bind",
@@ -15180,7 +15671,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.checkpoint_capabilities",
@@ -15194,7 +15686,8 @@
     "swmm_split_material_checkpoint_last_error"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "material_split.checkpoint_capture",
@@ -15210,7 +15703,8 @@
     "swmm_split_material_checkpoint_last_error"
    ],
    "returns": "bytes",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "material_split.checkpoint_enable",
@@ -15230,7 +15724,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.checkpoint_prepare_outputs",
@@ -15244,7 +15739,8 @@
     "swmm_split_material_checkpoint_prepare_outputs"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "material_split.checkpoint_restore",
@@ -15272,7 +15768,8 @@
      "type": "float | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.configure",
@@ -15292,7 +15789,8 @@
      "type": "SplitRole | int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.copy_packet",
@@ -15313,7 +15811,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.decode",
@@ -15334,7 +15833,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.encode",
@@ -15355,7 +15855,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.evaluate",
@@ -15380,7 +15881,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.geometry",
@@ -15394,7 +15896,8 @@
     "swmm_split_geometry"
    ],
    "returns": "SplitFrame",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "material_split.set_callback",
@@ -15413,7 +15916,8 @@
      "type": "Callable[[SplitPhase, SplitFrame], SplitFrame] | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.set_transport",
@@ -15433,7 +15937,8 @@
      "type": "Callable[[int, str], str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "material_split.validate_input",
@@ -15447,7 +15952,8 @@
     "swmm_split_material_validate_input"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "node.crown_elev",
@@ -15509,7 +16015,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.divider.params",
@@ -15640,7 +16147,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.invert_elev",
@@ -15772,7 +16280,8 @@
     "swmm_node_get_outfall_tidal"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "node.outfall.get_timeseries",
@@ -15785,7 +16294,8 @@
     "swmm_node_get_outfall_timeseries"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "node.outfall.param",
@@ -15832,7 +16342,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.outfall.set_tidal_curve",
@@ -15851,7 +16362,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.outfall.set_timeseries",
@@ -15870,7 +16382,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.outfall.type",
@@ -15950,7 +16463,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.rim_depth",
@@ -15984,7 +16498,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.set_quality_mass_flux",
@@ -16010,7 +16525,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "node.solver",
@@ -16273,7 +16789,8 @@
      "type": "NodeType",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "nodes.depths",
@@ -16308,7 +16825,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "nodes.get_index",
@@ -16327,7 +16845,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "nodes.heads",
@@ -16450,7 +16969,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "nodes.qualities",
@@ -16472,7 +16992,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "nodes.rename",
@@ -16498,7 +17019,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "nodes.set_lateral_inflows",
@@ -16518,7 +17040,8 @@
      "type": "NDArray[Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "nodes.volumes",
@@ -16552,7 +17075,8 @@
      "type": "Optional[Union[str, PathLike[str]]]",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "open_errors",
@@ -16579,7 +17103,8 @@
     "swmm_engine_open_metadata"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "open_results",
@@ -16605,7 +17130,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "open_runoff_interface_read",
@@ -16624,7 +17150,8 @@
      "type": "Union[str, PathLike[str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "open_runoff_interface_write",
@@ -16643,7 +17170,8 @@
      "type": "Union[str, PathLike[str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "open_simulation_period",
@@ -16656,7 +17184,8 @@
     "swmm_engine_open_simulation_period"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "open_warnings",
@@ -16698,7 +17227,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "path": "options.end_datetime",
@@ -16726,7 +17256,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "target": "options.ext",
@@ -16745,7 +17276,8 @@
    ],
    "c": [
     "swmm_options_get_ext"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "options.ext",
@@ -16760,7 +17292,8 @@
     "swmm_options_ext_key_at",
     "swmm_options_ext_key_count",
     "swmm_options_get_ext"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "options.ext",
@@ -16784,7 +17317,8 @@
    ],
    "c": [
     "swmm_options_set_ext"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "options",
@@ -16803,7 +17337,8 @@
    ],
    "c": [
     "swmm_options_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "options",
@@ -16818,7 +17353,8 @@
     "swmm_options_get",
     "swmm_options_key_at",
     "swmm_options_key_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "options.report_start_datetime",
@@ -16864,7 +17400,8 @@
    ],
    "c": [
     "swmm_options_set"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "options.start_datetime",
@@ -16888,7 +17425,8 @@
     "swmm_output_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "output.error_code",
@@ -16933,7 +17471,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.is_live",
@@ -16973,7 +17512,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.link_count",
@@ -17025,7 +17565,8 @@
      "type": "OutLinkVar",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.link_series",
@@ -17065,7 +17606,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.node_attributes",
@@ -17092,7 +17634,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.node_count",
@@ -17144,7 +17687,8 @@
      "type": "OutNodeVar",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.node_series",
@@ -17184,7 +17728,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.node_stats",
@@ -17209,7 +17754,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.period_count",
@@ -17289,7 +17835,8 @@
     "swmm_output_refresh"
    ],
    "returns": "int",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "output.report_step",
@@ -17342,7 +17889,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.subcatchment_count",
@@ -17394,7 +17942,8 @@
      "type": "OutSubcatchVar",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.subcatchment_series",
@@ -17434,7 +17983,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.system_result",
@@ -17458,7 +18008,8 @@
      "type": "OutSystemVar",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.system_series",
@@ -17490,7 +18041,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "output.version",
@@ -17517,7 +18069,8 @@
     "swmm_passive_exchange_last_error"
    ],
    "returns": "PassiveLeg",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.enable",
@@ -17542,7 +18095,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.enable_checkpoint",
@@ -17556,7 +18110,8 @@
     "swmm_passive_exchange_last_error"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.leg",
@@ -17576,7 +18131,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.pool",
@@ -17596,7 +18152,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.receipt",
@@ -17616,7 +18173,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.row",
@@ -17646,7 +18204,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "passive_exchange.status",
@@ -17660,7 +18219,8 @@
     "swmm_passive_exchange_status_v1"
    ],
    "returns": "PassiveStatus",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "pattern.factors",
@@ -17722,7 +18282,8 @@
      "type": "PatternType",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "pattern.solver",
@@ -17772,7 +18333,8 @@
      "type": "PatternType",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "patterns.get_index",
@@ -17791,7 +18353,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "patterns.remove",
@@ -17810,7 +18373,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "patterns.rename",
@@ -17834,7 +18398,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "pollutant.co_pollutant",
@@ -18002,7 +18567,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "pollutant.snow_only",
@@ -18067,7 +18633,8 @@
      "type": "ConcentrationUnits",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "pollutants.get_id",
@@ -18086,7 +18653,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "pollutants.get_index",
@@ -18105,7 +18673,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "pollutants.rename",
@@ -18131,7 +18700,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "pollutants.set_link_quality",
@@ -18164,7 +18734,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "pollutants.set_node_quality",
@@ -18197,7 +18768,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "process_components.add_search_path",
@@ -18217,7 +18789,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "process_components.arguments",
@@ -18237,7 +18810,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "process_components.get_index",
@@ -18256,7 +18830,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "process_components",
@@ -18275,7 +18850,8 @@
    ],
    "c": [
     "swmm_process_component_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "process_components",
@@ -18289,7 +18865,8 @@
    "c": [
     "swmm_process_component_count",
     "swmm_process_component_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "process_components.known",
@@ -18304,7 +18881,8 @@
    ],
    "returns": "tuple[KnownProcessComponent, ...]",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "process_components.libraries",
@@ -18319,7 +18897,8 @@
    ],
    "returns": "tuple[ComponentLibrary, ...]",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "process_components.register",
@@ -18344,7 +18923,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "process_components.remove",
@@ -18363,7 +18943,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "process_components.set_argument",
@@ -18392,7 +18973,8 @@
      "type": "str | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "quality.clear_treatment",
@@ -18420,7 +19002,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "quality.get_buildup",
@@ -18450,7 +19033,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "quality.get_treatment",
@@ -18478,7 +19062,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "quality.get_washoff",
@@ -18508,7 +19093,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "quality.landuses.add",
@@ -18528,7 +19114,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "quality.landuses.get_id",
@@ -18547,7 +19134,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "quality.landuses.get_index",
@@ -18566,7 +19154,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "quality.set_buildup",
@@ -18626,7 +19215,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "quality.set_treatment",
@@ -18659,7 +19249,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "quality.set_washoff",
@@ -18719,7 +19310,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "quality.validate_treatment_expression",
@@ -18738,7 +19330,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.apply_text",
@@ -18757,7 +19350,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.check_text",
@@ -18776,7 +19370,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.coefficients.add",
@@ -18808,7 +19403,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.coefficients.get_index",
@@ -18825,7 +19421,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.coefficients.remove",
@@ -18844,7 +19441,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.functions",
@@ -18859,7 +19457,8 @@
    ],
    "returns": "Tuple[ReactionFunction, ...]",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "reactions.get_option",
@@ -18878,7 +19477,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "reactions.hydraulic_variables",
@@ -18893,7 +19493,8 @@
    ],
    "returns": "Tuple[ReactionHydVar, ...]",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "target": "reactions.initial",
@@ -18913,7 +19514,8 @@
    "c": [
     "swmm_reaction_init_elem_count",
     "swmm_reaction_init_elem_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "reactions.initial",
@@ -18927,7 +19529,8 @@
    "c": [
     "swmm_reaction_init_elem_count",
     "swmm_reaction_init_elem_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "reactions.initial.remove",
@@ -18947,7 +19550,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.initial.set",
@@ -18981,7 +19585,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.save",
@@ -19000,7 +19605,8 @@
      "type": "Optional[str]",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "reactions.serialize",
@@ -19013,7 +19619,8 @@
     "swmm_reactions_serialize"
    ],
    "returns": "str",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "reactions.set_option",
@@ -19037,7 +19644,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.species.add",
@@ -19081,7 +19689,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.species.get_index",
@@ -19098,7 +19707,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.species.remove",
@@ -19117,7 +19727,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.terms.add",
@@ -19142,7 +19753,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.terms.get_index",
@@ -19159,7 +19771,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "reactions.terms.remove",
@@ -19178,7 +19791,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "reactions.validate",
@@ -19202,7 +19816,8 @@
      "type": "ReactionScope",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "read_runoff_step",
@@ -19215,7 +19830,8 @@
     "swmm_runoff_iface_read_step"
    ],
    "returns": "bool",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "remove_frozen_ground",
@@ -19239,7 +19855,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "report",
@@ -19252,7 +19869,8 @@
     "swmm_engine_report"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "report_start_datetime",
@@ -19408,7 +20026,8 @@
    "doc": "Run the full simulation lifecycle in one call.",
    "c": [],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "save_runoff_step",
@@ -19427,7 +20046,8 @@
      "type": "Union[timedelta, float]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "save_schedule.append",
@@ -19446,7 +20066,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "save_schedule.clear",
@@ -19459,7 +20080,8 @@
     "swmm_hotstart_saves_clear"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "save_schedule",
@@ -19478,7 +20100,8 @@
    ],
    "c": [
     "swmm_hotstart_saves_remove"
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "save_schedule.get_format",
@@ -19497,7 +20120,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "save_schedule",
@@ -19517,7 +20141,8 @@
    "c": [
     "swmm_hotstart_saves_get_datetime",
     "swmm_hotstart_saves_get_path"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "save_schedule.insert",
@@ -19539,7 +20164,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "save_schedule",
@@ -19554,7 +20180,8 @@
     "swmm_hotstart_saves_count",
     "swmm_hotstart_saves_get_datetime",
     "swmm_hotstart_saves_get_path"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "save_schedule.legacy_omits",
@@ -19567,7 +20194,8 @@
     "swmm_hotstart_legacy_omits"
    ],
    "returns": "tuple[str, ...]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "save_schedule.set_format",
@@ -19591,7 +20219,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "save_schedule",
@@ -19616,7 +20245,8 @@
    "c": [
     "swmm_hotstart_saves_set_datetime",
     "swmm_hotstart_saves_set_path"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_frozen_ground",
@@ -19645,7 +20275,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_lenient_open",
@@ -19664,7 +20295,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_phase_callback",
@@ -19683,7 +20315,8 @@
      "type": "Callable[[int, float, float], None] | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_progress_callback",
@@ -19702,7 +20335,8 @@
      "type": "Optional[Callable[[float], None]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_step_begin_callback",
@@ -19721,7 +20355,8 @@
      "type": "Optional[Callable[[float, float], None]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_step_end_callback",
@@ -19740,7 +20375,8 @@
      "type": "Optional[Callable[[float, float], None]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "set_warning_callback",
@@ -19759,7 +20395,8 @@
      "type": "Optional[Callable[[int, str], None]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "sim_end_time",
@@ -19816,7 +20453,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.apply_packs",
@@ -19835,7 +20473,8 @@
      "type": "Iterable[dict[str, Any]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.cloud",
@@ -19861,7 +20500,8 @@
     "swmm_snow_get_ueb_ledger"
    ],
    "returns": "dict[str, float]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "snow.model",
@@ -19908,7 +20548,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.pack",
@@ -19928,7 +20569,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.preview_meteorology",
@@ -19947,7 +20589,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "snow.radiation",
@@ -19980,7 +20623,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.set_option",
@@ -20004,7 +20648,8 @@
      "type": "str | float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.set_pack",
@@ -20029,7 +20674,8 @@
      "type": "dict[str, float | int] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.set_radiation_source",
@@ -20053,7 +20699,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.state",
@@ -20078,7 +20725,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snow.step_seconds",
@@ -20113,7 +20761,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "snowpacks.get_id",
@@ -20132,7 +20781,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_impervious",
@@ -20151,7 +20801,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_index",
@@ -20170,7 +20821,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_pervious",
@@ -20189,7 +20841,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_plowable",
@@ -20208,7 +20861,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_removal",
@@ -20227,7 +20881,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.get_removal_subcatch",
@@ -20246,7 +20901,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.items",
@@ -20259,7 +20915,8 @@
    "params": [],
    "c": [
     "swmm_snowpack_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "snowpacks.rename",
@@ -20283,7 +20940,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snowpacks.set_impervious",
@@ -20344,7 +21002,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snowpacks.set_pervious",
@@ -20405,7 +21064,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snowpacks.set_plowable",
@@ -20466,7 +21126,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snowpacks.set_removal",
@@ -20521,7 +21182,8 @@
      "required": true,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "snowpacks.set_removal_subcatch",
@@ -20545,7 +21207,8 @@
      "type": "Optional[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.crs",
@@ -20580,7 +21243,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.get_annotation",
@@ -20599,7 +21263,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.link_coord",
@@ -20620,7 +21285,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.link_vertices",
@@ -20642,7 +21308,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.map_dimensions",
@@ -20691,7 +21358,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.node_coords",
@@ -20705,7 +21373,8 @@
     "swmm_spatial_get_node_coords_bulk"
    ],
    "returns": "NDArray[Any]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "spatial.node_has_coord",
@@ -20726,7 +21395,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.set_annotation",
@@ -20750,7 +21420,8 @@
      "type": "str | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_gage_coord",
@@ -20781,7 +21452,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_link_coord",
@@ -20812,7 +21484,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_link_vertices",
@@ -20838,7 +21511,8 @@
      "type": "NDArray[Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_node_coord",
@@ -20869,7 +21543,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_node_coords",
@@ -20889,7 +21564,8 @@
      "type": "NDArray[Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_subcatchment_coord",
@@ -20920,7 +21596,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.set_subcatchment_polygon",
@@ -20946,7 +21623,8 @@
      "type": "NDArray[Any]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "spatial.subcatchment_coord",
@@ -20967,7 +21645,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "spatial.subcatchment_polygon",
@@ -20989,7 +21668,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "species.atol",
@@ -21022,7 +21702,8 @@
      "type": "ReactionScope",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "species.index",
@@ -21143,7 +21824,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "species.tank_expression",
@@ -21186,7 +21868,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.configure",
@@ -21205,7 +21888,8 @@
      "type": "SplitRole | int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.decode",
@@ -21225,7 +21909,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.encode",
@@ -21245,7 +21930,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.evaluate",
@@ -21270,7 +21956,8 @@
      "type": "SplitFrame",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.geometry",
@@ -21284,7 +21971,8 @@
     "swmm_split_geometry"
    ],
    "returns": "SplitFrame",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "split.set_callback",
@@ -21303,7 +21991,8 @@
      "type": "Callable[[SplitPhase, SplitFrame], SplitFrame] | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split.validate_input",
@@ -21316,7 +22005,8 @@
     "swmm_split_validate_input"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "split_frame.close",
@@ -21329,7 +22019,8 @@
     "swmm_split_frame_destroy"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "split_frame.node",
@@ -21348,7 +22039,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split_frame.outfall_return",
@@ -21367,7 +22059,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split_frame.phase",
@@ -21399,7 +22092,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "split_frame.time",
@@ -21431,7 +22125,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "start_datetime",
@@ -21492,7 +22187,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.link_max_flow",
@@ -21525,7 +22221,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.link_max_velocity",
@@ -21558,7 +22255,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.link_surcharge_time",
@@ -21593,7 +22291,8 @@
      "required": true
     }
    ],
-   "units": "s"
+   "units": "s",
+   "effect": "read"
   },
   {
    "path": "statistics.link_vol_flow",
@@ -21627,7 +22326,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.node_max_depth",
@@ -21660,7 +22360,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.node_max_overflow",
@@ -21693,7 +22394,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.node_time_flooded",
@@ -21728,7 +22430,8 @@
      "required": true
     }
    ],
-   "units": "s"
+   "units": "s",
+   "effect": "read"
   },
   {
    "path": "statistics.node_vol_flooded",
@@ -21762,7 +22465,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.subcatchment_max_runoff",
@@ -21795,7 +22499,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.subcatchment_precip",
@@ -21844,7 +22549,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.summary_row_at",
@@ -21868,7 +22574,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.summary_table",
@@ -21893,7 +22600,8 @@
      "type": "SummaryTable | int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "statistics.summary_tables",
@@ -21904,7 +22612,8 @@
    "doc": "Read every report summary table, in report order (tables without rows included).",
    "c": [],
    "returns": "List[ReportTable]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "statistics.summary_value_at",
@@ -21933,7 +22642,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "steady_state_skip",
@@ -21960,7 +22670,8 @@
     "swmm_engine_step"
    ],
    "returns": "timedelta",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "steps",
@@ -21971,7 +22682,8 @@
    "doc": "Iterate routing steps until the simulation ends.",
    "c": [],
    "returns": "Iterator[timedelta]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "stride",
@@ -21990,7 +22702,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.aquifer",
@@ -22038,7 +22751,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "target": "subcatchment.coverage",
@@ -22059,7 +22773,8 @@
     "swmm_landuse_count",
     "swmm_landuse_index",
     "swmm_subcatch_get_coverage"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "subcatchment.coverage",
@@ -22075,7 +22790,8 @@
     "swmm_landuse_id",
     "swmm_landuse_index",
     "swmm_subcatch_get_coverage"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "subcatchment.coverage",
@@ -22101,7 +22817,8 @@
     "swmm_landuse_count",
     "swmm_landuse_index",
     "swmm_subcatch_set_coverage"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.coverages",
@@ -22115,7 +22832,8 @@
     "swmm_subcatch_get_coverages"
    ],
    "returns": "list[float]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "subcatchment.ds_imperv",
@@ -22202,7 +22920,8 @@
     "swmm_subcatch_get_gw_state"
    ],
    "returns": "tuple[float, float]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "subcatchment.get_snow_state",
@@ -22221,7 +22940,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "subcatchment.groundwater",
@@ -22411,7 +23131,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.infiltration.set_green_ampt",
@@ -22440,7 +23161,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.infiltration.set_horton",
@@ -22474,7 +23196,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "subcatchment.loadings",
@@ -22491,7 +23214,8 @@
      "required": true
     }
    ],
-   "c": []
+   "c": [],
+   "effect": "structural"
   },
   {
    "target": "subcatchment.loadings",
@@ -22514,7 +23238,8 @@
     "swmm_reaction_species_count",
     "swmm_reaction_species_get",
     "swmm_subcatch_get_initial_loading"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "subcatchment.loadings",
@@ -22532,7 +23257,8 @@
     "swmm_reaction_species_count",
     "swmm_reaction_species_get",
     "swmm_subcatch_get_initial_loading"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "subcatchment.loadings",
@@ -22560,7 +23286,8 @@
     "swmm_reaction_species_count",
     "swmm_reaction_species_get",
     "swmm_subcatch_set_initial_loading"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.n_imperv",
@@ -22625,7 +23352,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.quality",
@@ -22646,7 +23374,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.rain_scale_factor",
@@ -22746,7 +23475,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.set_gw_state",
@@ -22770,7 +23500,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.set_outlet_node",
@@ -22791,7 +23522,8 @@
      "type": "Union[Node, Union[int, str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.set_outlet_subcatchment",
@@ -22812,7 +23544,8 @@
      "type": "Union['Subcatchment', Union[int, str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.set_ponded_quality",
@@ -22838,7 +23571,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.set_snow_state",
@@ -22877,7 +23611,8 @@
      "type": "float",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchment.slope",
@@ -23054,7 +23789,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "subcatchments.evaps",
@@ -23095,7 +23831,8 @@
      "type": "Union[GwfType, int]",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "subcatchments.get_id",
@@ -23114,7 +23851,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "subcatchments.get_index",
@@ -23133,7 +23871,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "subcatchments.gwf_functions",
@@ -23147,7 +23886,8 @@
     "swmm_gwf_function_name"
    ],
    "returns": "List[str]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "subcatchments.gwf_variables",
@@ -23162,7 +23902,8 @@
     "swmm_gwf_variable_name"
    ],
    "returns": "List[Tuple[str, str]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "subcatchments.ids",
@@ -23213,7 +23954,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchments.rainfalls",
@@ -23254,7 +23996,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchments.runoffs",
@@ -23300,7 +24043,8 @@
      "type": "Optional[str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "subcatchments.snow_depths",
@@ -23334,7 +24078,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.add_triangle_coupling",
@@ -23368,7 +24113,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.boundary_edge_count",
@@ -23403,7 +24149,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.boundary_quality",
@@ -23439,7 +24186,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.clear_boundary",
@@ -23461,7 +24209,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.clear_edge_bc",
@@ -23485,7 +24234,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.clear_source",
@@ -23507,7 +24257,8 @@
      "type": "int | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.clear_triangle_couplings",
@@ -23520,7 +24271,8 @@
     "swmm_2d_clear_triangle_couplings"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.concentrations",
@@ -23539,7 +24291,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.continuity_error",
@@ -23592,7 +24345,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.edge_stride",
@@ -23618,7 +24372,8 @@
     "swmm_2d_force_clear_all"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.force_coupling_flux",
@@ -23654,7 +24409,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.force_evap",
@@ -23690,7 +24446,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.force_evap_uniform",
@@ -23721,7 +24478,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.force_rainfall",
@@ -23757,7 +24515,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.force_rainfall_uniform",
@@ -23788,7 +24547,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.geometry_scale_to_si",
@@ -23821,7 +24581,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_cell_vertex_count",
@@ -23840,7 +24601,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_cell_vertices",
@@ -23859,7 +24621,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_coupling_flux",
@@ -23879,7 +24642,8 @@
      "required": true
     }
    ],
-   "units": "m/s"
+   "units": "m/s",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_coupling_fluxes",
@@ -23892,7 +24656,8 @@
     "swmm_2d_get_coupling_fluxes_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_coupling_volume_bulk",
@@ -23906,7 +24671,8 @@
     "swmm_2d_get_coupling_volume_bulk"
    ],
    "returns": "np.ndarray",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_depth",
@@ -23926,7 +24692,8 @@
      "required": true
     }
    ],
-   "units": "m"
+   "units": "m",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_depths",
@@ -23940,7 +24707,8 @@
    ],
    "returns": "npt.NDArray[np.float64]",
    "params": [],
-   "units": "m"
+   "units": "m",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_cum_flux",
@@ -23964,7 +24732,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_flow",
@@ -23988,7 +24757,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_flow_tseries_name",
@@ -24012,7 +24782,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_head",
@@ -24036,7 +24807,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_rating_curve_name",
@@ -24060,7 +24832,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_slope",
@@ -24084,7 +24857,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_tseries_name",
@@ -24108,7 +24882,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_bc_type",
@@ -24132,7 +24907,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_conveyance",
@@ -24156,7 +24932,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_conveyance_bulk",
@@ -24171,7 +24948,8 @@
     "swmm_2d_triangle_count"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.get_edge_flux_bulk",
@@ -24184,7 +24962,8 @@
     "swmm_2d_get_edge_flux_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_geometry_bulk",
@@ -24197,7 +24976,8 @@
     "swmm_2d_edge_get_geometry_bulk"
    ],
    "returns": "tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_edge_wall_drag",
@@ -24221,7 +25001,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_head",
@@ -24241,7 +25022,8 @@
      "required": true
     }
    ],
-   "units": "m"
+   "units": "m",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_heads",
@@ -24255,7 +25037,8 @@
    ],
    "returns": "npt.NDArray[np.float64]",
    "params": [],
-   "units": "m"
+   "units": "m",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_mass_balance",
@@ -24269,7 +25052,8 @@
     "swmm_2d_get_mass_balance"
    ],
    "returns": "dict[str, float]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_net_source",
@@ -24289,7 +25073,8 @@
      "required": true
     }
    ],
-   "units": "m/s"
+   "units": "m/s",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_node_coupling_default_type",
@@ -24308,7 +25093,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_node_coupling_param",
@@ -24332,7 +25118,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_node_coupling_type",
@@ -24351,7 +25138,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_rain_volume_bulk",
@@ -24365,7 +25153,8 @@
     "swmm_2d_get_rain_volume_bulk"
    ],
    "returns": "np.ndarray",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_rainfall",
@@ -24385,7 +25174,8 @@
      "required": true
     }
    ],
-   "units": "m/s"
+   "units": "m/s",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_rainfall_bulk",
@@ -24399,7 +25189,8 @@
     "swmm_2d_get_rainfall_bulk"
    ],
    "returns": "np.ndarray",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_report_rainfall_bulk",
@@ -24419,7 +25210,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_stat_max_continuity_err",
@@ -24432,7 +25224,8 @@
     "swmm_2d_get_stat_max_continuity_err"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_stat_max_depths",
@@ -24446,7 +25239,8 @@
    ],
    "returns": "npt.NDArray[np.float64]",
    "params": [],
-   "units": "m"
+   "units": "m",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_stat_max_velocities",
@@ -24460,7 +25254,8 @@
    ],
    "returns": "npt.NDArray[np.float64]",
    "params": [],
-   "units": "m/s"
+   "units": "m/s",
+   "effect": "read"
   },
   {
    "path": "surface2d.get_surface_owners",
@@ -24473,7 +25268,8 @@
     "swmm_surface_owner_get"
    ],
    "returns": "npt.NDArray[np.intc]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_area",
@@ -24492,7 +25288,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_centroid",
@@ -24511,7 +25308,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_coupled_node",
@@ -24530,7 +25328,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_coupling_row",
@@ -24549,7 +25348,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_init_depth",
@@ -24568,7 +25368,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.get_triangle_init_hgl",
@@ -24587,7 +25388,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.get_triangle_init_velocity",
@@ -24606,7 +25408,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.get_triangle_mannings",
@@ -24625,7 +25428,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_neighbours",
@@ -24644,7 +25448,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_tag",
@@ -24663,7 +25468,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_triangle_vertices",
@@ -24682,7 +25488,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_velocities",
@@ -24695,7 +25502,8 @@
     "swmm_2d_get_velocities_bulk"
    ],
    "returns": "tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_coords",
@@ -24708,7 +25516,8 @@
     "swmm_2d_vertex_get_xyz_bulk"
    ],
    "returns": "tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_coupled_node",
@@ -24727,7 +25536,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_coupling_area",
@@ -24746,7 +25556,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_coupling_cd",
@@ -24765,7 +25576,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_head",
@@ -24784,7 +25596,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_heads",
@@ -24797,7 +25610,8 @@
     "swmm_2d_vertex_get_heads_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_render_depths",
@@ -24810,7 +25624,8 @@
     "swmm_2d_vertex_get_render_depths_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_tag",
@@ -24829,7 +25644,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.get_vertex_xyz",
@@ -24848,7 +25664,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "surface2d.groundwater",
@@ -24873,7 +25690,8 @@
     "swmm_infil2d_get_authored_rows"
    ],
    "returns": "list[dict[str, Any]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.cell",
@@ -24892,7 +25710,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.cumulative",
@@ -24906,7 +25725,8 @@
     "swmm_infil2d_get_cum_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "surface2d.infiltration.defaults",
@@ -24925,7 +25745,8 @@
    ],
    "c": [
     "swmm_infil2d_remove_default"
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "target": "surface2d.infiltration.defaults",
@@ -24946,7 +25767,8 @@
     "swmm_infil2d_defaults_count",
     "swmm_infil2d_get_default",
     "swmm_infil2d_get_default_tag"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "surface2d.infiltration.defaults",
@@ -24961,7 +25783,8 @@
     "swmm_infil2d_defaults_count",
     "swmm_infil2d_get_default",
     "swmm_infil2d_get_default_tag"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "surface2d.infiltration.defaults",
@@ -24985,7 +25808,8 @@
    ],
    "c": [
     "swmm_infil2d_set_default"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.frozen_ground",
@@ -24999,7 +25823,8 @@
     "swmm_infil2d_get_frozen_ground_bulk"
    ],
    "returns": "tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.infil_step",
@@ -25033,7 +25858,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.ownership_bulk",
@@ -25047,7 +25873,8 @@
     "swmm_infil2d_get_ownership_bulk"
    ],
    "returns": "tuple[npt.NDArray[np.intc], npt.NDArray[np.intc], npt.NDArray[np.intc]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.rate",
@@ -25061,7 +25888,8 @@
     "swmm_infil2d_get_rate_bulk"
    ],
    "returns": "npt.NDArray[np.float64]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.replace_authored_rows",
@@ -25080,7 +25908,8 @@
      "type": "Sequence[dict[str, Any]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.set_cell",
@@ -25104,7 +25933,8 @@
      "type": "Infil2DRow | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.set_cells",
@@ -25128,7 +25958,8 @@
      "type": "Infil2DRow | None",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.infiltration.total_volume",
@@ -25269,7 +26100,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "surface2d.output_variable_text",
@@ -25289,7 +26121,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "surface2d.output_variables",
@@ -25304,7 +26137,8 @@
    ],
    "returns": "tuple[str, ...]",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "surface2d.prepare_for_edit",
@@ -25317,7 +26151,8 @@
     "swmm_2d_prepare_for_edit"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.preview_surface_owners",
@@ -25336,7 +26171,8 @@
      "type": "Sequence[int] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.quality.buildup",
@@ -25356,7 +26192,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.quality.coverages",
@@ -25418,7 +26255,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.quality.remove_curb_length",
@@ -25437,7 +26275,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.quality.remove_loading",
@@ -25456,7 +26295,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.quality.set_coverage",
@@ -25492,7 +26332,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.quality.set_curb_length",
@@ -25528,7 +26369,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.quality.set_loading",
@@ -25569,7 +26411,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.rainfall_weights",
@@ -25588,7 +26431,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.remove_boundary_quality",
@@ -25607,7 +26451,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.remove_initial_bed_quality",
@@ -25626,7 +26471,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.remove_initial_quality",
@@ -25645,7 +26491,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "surface2d.replace_node_coupling",
@@ -25681,7 +26528,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.replace_surface_owners",
@@ -25705,7 +26553,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.reset_edge_conveyance",
@@ -25718,7 +26567,8 @@
     "swmm_2d_reset_edge_conveyance"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.reset_node_coupling",
@@ -25737,7 +26587,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.run_stats",
@@ -25769,7 +26620,8 @@
      "type": "bool",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_boundary_quality",
@@ -25803,7 +26655,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_concentrations",
@@ -25832,7 +26685,8 @@
      "type": "Mapping[str, float]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_flow",
@@ -25861,7 +26715,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_flow_tseries_name",
@@ -25890,7 +26745,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_group",
@@ -25919,7 +26775,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_head",
@@ -25948,7 +26805,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_rating_curve_name",
@@ -25977,7 +26835,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_slope",
@@ -26006,7 +26865,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_tseries_name",
@@ -26035,7 +26895,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_bc_type",
@@ -26064,7 +26925,8 @@
      "type": "SurfaceBoundaryType",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_conveyance",
@@ -26093,7 +26955,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_edge_wall_drag",
@@ -26122,7 +26985,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_flow_boundary",
@@ -26154,7 +27018,8 @@
      "type": "Mapping[str, float] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_head_boundary",
@@ -26186,7 +27051,8 @@
      "type": "Mapping[str, float] | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_heat_source",
@@ -26220,7 +27086,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_initial_bed_quality",
@@ -26256,7 +27123,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_initial_quality",
@@ -26292,7 +27160,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_node_coupling_param",
@@ -26321,7 +27190,8 @@
      "type": "object",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_node_coupling_type",
@@ -26345,7 +27215,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_results_file",
@@ -26364,7 +27235,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "surface2d.set_species_source",
@@ -26398,7 +27270,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_triangle_init_depth",
@@ -26422,7 +27295,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_triangle_init_hgl",
@@ -26446,7 +27320,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_triangle_init_velocity",
@@ -26475,7 +27350,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_triangle_mannings",
@@ -26499,7 +27375,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_triangle_tag",
@@ -26523,7 +27400,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_coupled_node",
@@ -26547,7 +27425,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_coupling_area",
@@ -26571,7 +27450,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_coupling_cd",
@@ -26595,7 +27475,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_tag",
@@ -26619,7 +27500,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_z",
@@ -26643,7 +27525,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_vertex_z_bulk",
@@ -26662,7 +27545,8 @@
      "type": "Sequence[float] | npt.NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.set_water_source",
@@ -26684,7 +27568,8 @@
      "type": "Any",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.snow.apply_configuration",
@@ -26713,7 +27598,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.snow.configuration",
@@ -26726,7 +27612,8 @@
     "swmm_snow2d_get_configuration"
    ],
    "returns": "dict[str, str]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.snow.ledgers",
@@ -26741,7 +27628,8 @@
     "swmm_snow2d_get_ledgers"
    ],
    "returns": "list[dict[str, float]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.snow.options",
@@ -26775,7 +27663,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.snow.states",
@@ -26789,7 +27678,8 @@
     "swmm_snow2d_get_states"
    ],
    "returns": "list[dict[str, float | int]]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "surface2d.solver_last_step",
@@ -26838,7 +27728,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.sources",
@@ -26881,7 +27772,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.total_exchange_flow",
@@ -26971,7 +27863,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "surface2d.vertex_coupling_count",
@@ -27007,7 +27900,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "surface_output.available",
@@ -27021,7 +27915,8 @@
    ],
    "returns": "bool",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "file"
   },
   {
    "path": "surface_output.close",
@@ -27034,7 +27929,8 @@
     "swmm_output2d_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "file"
   },
   {
    "path": "surface_output.datasets",
@@ -27088,7 +27984,8 @@
      "type": "Any",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "surface_output.shape",
@@ -27108,7 +28005,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "surface_output.strings",
@@ -27131,7 +28029,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "surface_output.unlimited_axes",
@@ -27151,7 +28050,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "table.add",
@@ -27174,7 +28074,8 @@
      "required": true
     }
    ],
-   "variant": "TimeSeries"
+   "variant": "TimeSeries",
+   "effect": "structural"
   },
   {
    "path": "table.add_point",
@@ -27198,7 +28099,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "table.clear",
@@ -27211,7 +28113,8 @@
     "swmm_table_clear"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "table.id",
@@ -27254,7 +28157,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "table.points",
@@ -27336,7 +28240,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "table.set_relative_info",
@@ -27361,7 +28266,8 @@
      "required": true
     }
    ],
-   "variant": "TimeSeries"
+   "variant": "TimeSeries",
+   "effect": "write"
   },
   {
    "path": "table.solver",
@@ -27405,7 +28311,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "tables.add_curve",
@@ -27432,7 +28339,8 @@
      "type": "int",
      "required": false
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "tables.add_timeseries",
@@ -27455,7 +28363,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "tables.as_curve",
@@ -27477,7 +28386,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "tables.as_timeseries",
@@ -27500,7 +28410,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "tables.get_id",
@@ -27519,7 +28430,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "tables.get_index",
@@ -27538,7 +28450,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "tables.get_type",
@@ -27559,7 +28472,8 @@
      "type": "int | str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "tables.rename",
@@ -27585,7 +28499,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "tables.set_type",
@@ -27611,7 +28526,8 @@
      "type": "TableType | int",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "term.expression",
@@ -27688,7 +28604,8 @@
     "swmm_trace_close"
    ],
    "returns": "None",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "path": "trace.default_options",
@@ -27702,7 +28619,8 @@
    ],
    "returns": "TraceOptions",
    "params": [],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "trace.estimate",
@@ -27732,7 +28650,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "trace.info",
@@ -27808,7 +28727,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "trace.prepare_live",
@@ -27833,7 +28753,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "trace.set_averages",
@@ -27863,7 +28784,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "trace.topology",
@@ -28010,7 +28932,8 @@
      "required": false,
      "keyword_only": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "transport.remove_boundary",
@@ -28029,7 +28952,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "transport.remove_conduit_dispersion",
@@ -28048,7 +28972,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "transport.remove_source",
@@ -28067,7 +28992,8 @@
      "type": "int",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "transport.set_boundary",
@@ -28101,7 +29027,8 @@
      "type": "str | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "transport.set_conduit_dispersion",
@@ -28125,7 +29052,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "transport.set_source",
@@ -28159,7 +29087,8 @@
      "type": "str | None",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "transport.sources",
@@ -28231,7 +29160,8 @@
      "type": "Union[datetime, timedelta]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "userflags.clear_value",
@@ -28260,7 +29190,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "userflags.define",
@@ -28289,7 +29220,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "userflags.definitions",
@@ -28303,7 +29235,8 @@
     "swmm_userflag_def_get"
    ],
    "returns": "list[UserFlagDef]",
-   "params": []
+   "params": [],
+   "effect": "write"
   },
   {
    "target": "userflags",
@@ -28322,7 +29255,8 @@
    ],
    "c": [
     "swmm_userflag_undefine"
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "target": "userflags",
@@ -28344,7 +29278,8 @@
     "swmm_userflag_get_int",
     "swmm_userflag_get_real",
     "swmm_userflag_value_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "userflags.get_value",
@@ -28373,7 +29308,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "userflags",
@@ -28390,7 +29326,8 @@
     "swmm_userflag_get_int",
     "swmm_userflag_get_real",
     "swmm_userflag_value_get"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "userflags",
@@ -28418,7 +29355,8 @@
     "swmm_userflag_set_int",
     "swmm_userflag_set_real",
     "swmm_userflag_value_set"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "userflags.set_value",
@@ -28452,7 +29390,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "userflags.undefine",
@@ -28471,7 +29410,8 @@
      "type": "str",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "water_age.enabled",
@@ -28503,7 +29443,8 @@
    ],
    "c": [
     "swmm_water_age_get_global_source"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "water_age.globals",
@@ -28516,7 +29457,8 @@
    "params": [],
    "c": [
     "swmm_water_age_get_global_source"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "water_age.globals",
@@ -28540,7 +29482,8 @@
    ],
    "c": [
     "swmm_water_age_set_global_source"
-   ]
+   ],
+   "effect": "write"
   },
   {
    "target": "water_age.node_overrides",
@@ -28559,7 +29502,8 @@
    ],
    "c": [
     "swmm_water_age_get_override"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "target": "water_age.node_overrides",
@@ -28573,7 +29517,8 @@
    "c": [
     "swmm_water_age_get_override",
     "swmm_water_age_override_count"
-   ]
+   ],
+   "effect": "read"
   },
   {
    "path": "water_age.node_overrides.remove",
@@ -28599,7 +29544,8 @@
      "type": "Union[int, str]",
      "required": true
     }
-   ]
+   ],
+   "effect": "structural"
   },
   {
    "path": "water_age.node_overrides.set",
@@ -28630,7 +29576,8 @@
      "type": "float",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "water_age.save",
@@ -28649,7 +29596,8 @@
      "type": "Union[str, PathLike[str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "write",
@@ -28668,7 +29616,8 @@
      "type": "Union[str, PathLike[str]]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "write_compat",
@@ -28692,7 +29641,8 @@
      "type": "InpProfile",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "write_geopackage",
@@ -28714,7 +29664,8 @@
      "type": "Optional[str]",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "write_staged",
@@ -28738,7 +29689,8 @@
      "type": "Callable[[str, int], Union[str, PathLike[str]] | None]",
      "required": true
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "write_with_plugin",
@@ -28762,7 +29714,8 @@
      "type": "str",
      "required": false
     }
-   ]
+   ],
+   "effect": "file"
   },
   {
    "path": "xsect.area",
@@ -28798,7 +29751,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.area_from_section_factor",
@@ -28834,7 +29788,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.critical_depth",
@@ -28870,7 +29825,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.depth_from_area",
@@ -28906,7 +29862,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.dsda",
@@ -28942,7 +29899,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.flow_units",
@@ -28992,7 +29950,8 @@
      "keyword_only": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "xsect.from_link",
@@ -29013,7 +29972,8 @@
      "required": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "xsect.from_street",
@@ -29091,7 +30051,8 @@
      "keyword_only": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "xsect.from_transect",
@@ -29159,7 +30120,8 @@
      "keyword_only": true
     }
    ],
-   "static": true
+   "static": true,
+   "effect": "write"
   },
   {
    "path": "xsect.full_area",
@@ -29251,7 +30213,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.hyd_radius_from_area",
@@ -29287,7 +30250,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.is_open",
@@ -29364,7 +30328,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   },
   {
    "path": "xsect.shape",
@@ -29424,7 +30389,8 @@
      "type": "Sequence[float] | NDArray[np.float64]",
      "required": true
     }
-   ]
+   ],
+   "effect": "write"
   }
  ],
  "functions": {
@@ -29443,7 +30409,8 @@
     "doc": "",
     "stub_setter": false,
     "static": false,
-    "c": []
+    "c": [],
+    "effect": "read"
    },
    "oadate_to_datetime": {
     "name": "oadate_to_datetime",
@@ -29459,7 +30426,8 @@
     "doc": "",
     "stub_setter": false,
     "static": false,
-    "c": []
+    "c": [],
+    "effect": "read"
    }
   },
   "_datetime": {
@@ -29484,7 +30452,8 @@
     "static": false,
     "c": [
      "swmm_datetime_add_seconds"
-    ]
+    ],
+    "effect": "read"
    },
    "decode_date": {
     "name": "decode_date",
@@ -29502,7 +30471,8 @@
     "static": false,
     "c": [
      "swmm_datetime_decode_date"
-    ]
+    ],
+    "effect": "read"
    },
    "decode_time": {
     "name": "decode_time",
@@ -29520,7 +30490,8 @@
     "static": false,
     "c": [
      "swmm_datetime_decode_time"
-    ]
+    ],
+    "effect": "read"
    },
    "encode_date": {
     "name": "encode_date",
@@ -29548,7 +30519,8 @@
     "static": false,
     "c": [
      "swmm_datetime_encode_date"
-    ]
+    ],
+    "effect": "read"
    },
    "encode_time": {
     "name": "encode_time",
@@ -29576,7 +30548,8 @@
     "static": false,
     "c": [
      "swmm_datetime_encode_time"
-    ]
+    ],
+    "effect": "read"
    },
    "time_diff": {
     "name": "time_diff",
@@ -29599,7 +30572,8 @@
     "static": false,
     "c": [
      "swmm_datetime_time_diff"
-    ]
+    ],
+    "effect": "read"
    }
   }
  },
