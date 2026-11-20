@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -22,6 +23,7 @@
 
 #include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_links.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_nodes.h>
@@ -612,6 +614,169 @@ TEST(RestartRecords, TwinCyclesReproduceTheUninterruptedRun) {
         ASSERT_FALSE(a.empty());
         EXPECT_EQ(b, a) << hours << " h cycles: the binary output differs";
     }
+}
+
+namespace {
+
+/** A subcatchment and its gage, two junctions, an orifice to a third and an outfall: a model
+ * every restored forcing channel acts on. (Records refuse pollutants, so quality forcing is not
+ * restored.) */
+fs::path writeForcingModel(const fs::path& dir, const std::string& name,
+                           const std::string& restart) {
+    const fs::path inp = dir / (name + ".inp");
+    std::ofstream o(inp);
+    o << "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n"
+         "IGNORE_GROUNDWATER YES\nSTART_DATE 01/01/2020\nSTART_TIME 00:00:00\n"
+         "REPORT_START_DATE 01/01/2020\nREPORT_START_TIME 00:00:00\nEND_DATE 01/01/2020\n"
+         "END_TIME 03:00:00\nREPORT_STEP 00:01:00\nWET_STEP 00:01:00\nDRY_STEP 00:05:00\n"
+         "ROUTING_STEP 15\nVARIABLE_STEP 0.75\n\n[EVAPORATION]\nCONSTANT 0.2\nDRY_ONLY NO\n\n"
+         "[RESTART]\n"
+      << restart
+      << "\n\n[RAINGAGES]\nRG INTENSITY 0:05 1.0 TIMESERIES RAIN\n\n"
+         "[SUBCATCHMENTS]\nS1 RG J1 20 60 800 1.0 0\n\n"
+         "[SUBAREAS]\nS1 0.012 0.15 0.05 0.2 25 OUTLET\n\n"
+         "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+         "[JUNCTIONS]\nJ1 10 6 0 0 0\nJ2 8 6 0 0 0\nJ3 6 6 0 0 0\n\n[OUTFALLS]\nO1 4 FREE\n\n"
+         "[CONDUITS]\nC1 J1 J2 400 0.013 0 0 0 0\nC2 J3 O1 400 0.013 0 0 0 0\n\n"
+         "[ORIFICES]\nOR1 J2 J3 SIDE 0 0.65 NO 0\n\n"
+         "[XSECTIONS]\nC1 CIRCULAR 1.5 0 0 0 1\nC2 CIRCULAR 1.5 0 0 0 1\n"
+         "OR1 RECT_CLOSED 1.0 1.0 0 0\n\n[TIMESERIES]\n";
+    for (int i = 0; i < 36; ++i)
+        o << "RAIN 01/01/2020 " << clock(5 * i) << " " << kRain[i] << "\n";
+    return inp;
+}
+
+/** A runtime forcing channel: sets it with a scale (1 persistent, 2 for one step) and persistence. */
+struct ForcingCase {
+    const char* name;
+    std::function<int(SWMM_Engine, double, int)> set;
+};
+
+std::vector<ForcingCase> restoredForcings() {
+    using F = std::function<int(SWMM_Engine, double, int)>;
+    auto node = [](SWMM_Engine e, const char* id) { return swmm_node_index(e, id); };
+    auto link = [](SWMM_Engine e, const char* id) { return swmm_link_index(e, id); };
+    return {
+        {"node_lat_inflow", F([=](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_node_lat_inflow(e, node(e, "J1"), 2.0 * v, SWMM_FORCING_ADD, k);
+         })},
+        {"node_head_boundary", F([=](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_node_head_boundary(e, node(e, "O1"), 4.5 + 0.5 * v,
+                                                    SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"link_flow", F([=](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_link_flow(e, link(e, "C1"), 1.0 * v, SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"link_setting", F([=](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_link_setting(e, link(e, "OR1"), 0.2 + 0.1 * v,
+                                              SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"subcatch_rainfall", F([](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_subcatch_rainfall(e, 0, 0.5 * v, SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"subcatch_evap", F([](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_subcatch_evap(e, 0, 0.5 * v, SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"gage_rainfall", F([](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_gage_rainfall(e, 0, 0.5 * v, SWMM_FORCING_OVERRIDE, k);
+         })},
+        {"climate_evap", F([](SWMM_Engine e, double v, int k) {
+             return swmm_forcing_climate_evap(e, 0.3 * v, SWMM_FORCING_OVERRIDE, k);
+         })},
+    };
+}
+
+/** Run to the end, with @p forcing set for one step at 00:45 and persistently from 01:00. */
+Run forcedRun(const fs::path& inp, const ForcingCase* forcing) {
+    Run r;
+    SWMM_Engine e = swmm_engine_create();
+    const fs::path stem = inp.parent_path() / inp.stem();
+    r.rc = swmm_engine_open(e, inp.string().c_str(), (stem.string() + ".rpt").c_str(),
+                            (stem.string() + ".out").c_str(), nullptr);
+    if (r.rc == SWMM_OK)
+        r.rc = swmm_engine_initialize(e);
+    if (r.rc == SWMM_OK)
+        r.rc = swmm_engine_start(e, 1);
+    double elapsed = 1.0, now = 0.0;
+    bool once = forcing == nullptr, persistent = forcing == nullptr;
+    while (r.rc == SWMM_OK && elapsed > 0.0) {
+        swmm_engine_get_elapsed_seconds(e, &now);
+        if (!once && now >= 45 * 60.0) {
+            r.rc = forcing->set(e, 2.0, SWMM_FORCING_RESET);
+            once = true;
+        } else if (!persistent && now >= 60 * 60.0) {
+            r.rc = forcing->set(e, 1.0, SWMM_FORCING_PERSIST);
+            persistent = true;
+        }
+        if (r.rc == SWMM_OK)
+            r.rc = swmm_engine_step(e, &elapsed);
+    }
+    if (r.rc == SWMM_OK) {
+        for (int i = 0; i < swmm_node_count(e); ++i) {
+            double v = 0.0;
+            swmm_node_get_depth(e, i, &v);
+            r.state.push_back(v);
+        }
+        for (int j = 0; j < swmm_link_count(e); ++j) {
+            double v = 0.0;
+            swmm_link_get_flow(e, j, &v);
+            r.state.push_back(v);
+        }
+        r.rc = swmm_engine_end(e);
+    }
+    if (const char* m = swmm_get_last_error_msg(e))
+        r.message = m;
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    return r;
+}
+
+} // namespace
+
+// A run's runtime forcing is saved in its continuation record, so a run continued from the
+// record applies it as the run that recorded it does: the persistent forcing from 01:00 on, after
+// a one-step forcing at 00:45, on each restored channel, both runs' end states and .out equal
+// byte for byte; without the forcing the run differs.
+TEST(RestartRecords, RuntimeForcingResumesBitForBit) {
+    {
+        SWMM_Engine e = swmm_engine_create();
+        unsigned long flags = 0;
+        ASSERT_EQ(swmm_checkpoint_capabilities(e, &flags), SWMM_OK);
+        EXPECT_TRUE(flags & SWMM_CHECKPOINT_RUNTIME_FORCING);
+        swmm_engine_destroy(e);
+    }
+    const fs::path base = caseDir("runtime_forcing_unforced");
+    const auto unforced = forcedRun(
+        writeForcingModel(base, "whole", continuationRows(base / "whole.h5", {90})), nullptr);
+    ASSERT_EQ(unforced.rc, SWMM_OK) << unforced.message;
+    for (const auto& forcing : restoredForcings()) {
+        const fs::path dir = caseDir(std::string("runtime_forcing_") + forcing.name);
+        const auto whole = forcedRun(
+            writeForcingModel(dir, "whole", continuationRows(dir / "whole.h5", {90})), &forcing);
+        ASSERT_EQ(whole.rc, SWMM_OK) << forcing.name << ": " << whole.message;
+        const auto continued =
+            forcedRun(writeForcingModel(dir, "continued", continueFrom(dir / "whole.h5")), nullptr);
+        ASSERT_EQ(continued.rc, SWMM_OK) << forcing.name << ": " << continued.message;
+        EXPECT_EQ(continued.state, whole.state) << forcing.name;
+        const std::string a = bytes(dir / "whole.out"), b = bytes(dir / "continued.out");
+        ASSERT_FALSE(a.empty()) << forcing.name;
+        EXPECT_EQ(b, a) << forcing.name << ": the binary output differs";
+        EXPECT_NE(a, bytes(base / "whole.out")) << forcing.name << ": the forcing changed nothing";
+    }
+}
+
+TEST(RestartRecords, AnUnrestoredForcingChannelIsStillRefusedByName) {
+    const fs::path dir = caseDir("runtime_forcing_refused");
+    const ForcingCase wind{"climate_wind", [](SWMM_Engine e, double v, int k) {
+                               return swmm_forcing_climate_wind(e, 5.0 * v, SWMM_FORCING_OVERRIDE,
+                                                                k);
+                           }};
+    const auto r =
+        forcedRun(writeForcingModel(dir, "whole", continuationRows(dir / "whole.h5", {90})), &wind);
+    EXPECT_NE(r.rc, SWMM_OK);
+    EXPECT_NE(r.message.find("cannot recover runtime climate temperature or wind forcing"),
+              std::string::npos)
+        << r.message;
 }
 
 // A twin cycle sets its end through the API, as the Python Solver does: the day's serial plus

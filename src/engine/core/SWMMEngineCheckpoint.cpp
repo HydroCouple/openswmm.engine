@@ -1144,6 +1144,51 @@ std::string SWMMEngine::saveNativeHotstart(const std::string& path) const {
     return saved ? std::string{} : HotStartManager::last_io_error();
 }
 
+// Runtime forcing channels a checkpoint saves and restores, with climate evaporation: each entry's
+// mode, value and persistence, so a run continued from it applies the persistent forcing and any
+// one-step forcing not yet applied, as the run that saved it would. The other channels are refused
+// by name (checkCheckpointProfile) until their restore is tested.
+#define RESTORED_FORCING(X)                                                                        \
+    X(node_lat_inflow)                                                                             \
+    X(node_head_boundary)                                                                          \
+    X(link_flow)                                                                                   \
+    X(link_setting)                                                                                \
+    X(subcatch_rainfall)                                                                           \
+    X(subcatch_evap)                                                                               \
+    X(gage_rainfall)
+
+namespace {
+constexpr uint32_t forcingVersion =
+    10000; ///< Added to the checkpoint version when it holds forcing.
+
+/** Whether any restored channel holds a forcing. */
+bool restoredForcingActive(const ForcingData& f) {
+    const auto any = [](const std::vector<ForcingMode>& modes) {
+        return std::any_of(modes.begin(), modes.end(),
+                           [](ForcingMode m) { return m != ForcingMode::NONE; });
+    };
+    bool active = f.climate_evap_mode != ForcingMode::NONE;
+#define ACTIVE(c) active = active || any(f.c##_mode);
+    RESTORED_FORCING(ACTIVE)
+#undef ACTIVE
+    return active;
+}
+
+/** Whether a saved channel has the live channel's length, known modes and finite values. */
+template <class Modes, class Values, class Persist>
+bool forcingChannelValid(const Modes& modes, const Values& values, const Persist& persist,
+                         std::size_t n) {
+    if (modes.size() != n || values.size() != n || persist.size() != n)
+        return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        const int m = static_cast<int>(modes[i]), k = static_cast<int>(persist[i]);
+        if (m < 0 || m > 2 || k < 0 || k > 1 || !std::isfinite(values[i]))
+            return false;
+    }
+    return true;
+}
+} // namespace
+
 struct SWMMEngine::RestartState {
     SimulationContext::MassBalance balance;
     SimulationContext::RoutingStepStats stats;
@@ -1177,6 +1222,9 @@ struct SWMMEngine::RestartState {
     bool frost_profile = false;
     std::vector<double> frost_enthalpy, frost_initial, frost_surface, frost_deep, frost_water;
     std::array<double, 6> boundary;
+    // Runtime forcing of the restored channels; carried only when one holds a forcing.
+    bool forcing_profile = false;
+    ForcingData forcing;
     double controls_remaining;
     std::vector<TableCursor> cursors;
     std::vector<controls::ControlEngine::PendingAction> pending;
@@ -1252,6 +1300,9 @@ struct SWMMEngine::RestartState {
             snow_rain = e.snow_rain_;
             snow_snow = e.snow_snow_;
         }
+        forcing_profile = restoredForcingActive(e.ctx_.forcing);
+        if (forcing_profile)
+            forcing = e.ctx_.forcing;
         frost_profile = e.ctx_.frozen_ground.enabled();
         if (frost_profile) {
             const auto& f = e.ctx_.frozen_ground;
@@ -1403,6 +1454,16 @@ struct SWMMEngine::RestartState {
         if (spatial)
             fields(a, source_totals);
 #endif
+        if (forcing_profile) {
+            std::string marker = "engine runtime forcing v1";
+            a(marker);
+            require(marker == "engine runtime forcing v1",
+                    "Unsupported engine runtime forcing record.");
+#define CHANNEL(c) a(forcing.c##_mode, forcing.c##_value, forcing.c##_persist);
+            RESTORED_FORCING(CHANNEL)
+#undef CHANNEL
+            a(forcing.climate_evap_mode, forcing.climate_evap_value, forcing.climate_evap_persist);
+        }
     }
     /**
      * @brief Validate staged engine inventories against a matching initialized model.
@@ -1417,6 +1478,20 @@ struct SWMMEngine::RestartState {
      *     profile configuration.
      */
     void validate(const SWMMEngine& e) const {
+        if (forcing_profile) {
+            const auto& live = e.ctx_.forcing;
+#define SHAPE(c)                                                                                   \
+    require(forcingChannelValid(forcing.c##_mode, forcing.c##_value, forcing.c##_persist,          \
+                                live.c##_mode.size()),                                             \
+            "Engine checkpoint runtime forcing " #c " differs from the model.");
+            RESTORED_FORCING(SHAPE)
+#undef SHAPE
+            const std::array<ForcingMode, 1> mode{forcing.climate_evap_mode};
+            const std::array<double, 1> value{forcing.climate_evap_value};
+            const std::array<ForcingPersist, 1> persist{forcing.climate_evap_persist};
+            require(forcingChannelValid(mode, value, persist, 1),
+                    "Engine checkpoint runtime forcing climate_evap is invalid.");
+        }
         const double time = boundary[0], elapsed = boundary[2],
                      duration = e.ctx_.options.totalDurationMs();
         require(time >= 0 && elapsed >= 0 && elapsed <= duration &&
@@ -1847,6 +1922,19 @@ struct SWMMEngine::RestartState {
         ENGINE(COPY)
         RUNOFF_ENGINE(COPY)
 #undef COPY
+        // The forcing the saved run held, and none when it held none.
+        if (forcing_profile) {
+#define MOVE(c)                                                                                    \
+    e.ctx_.forcing.c##_mode = std::move(forcing.c##_mode);                                         \
+    e.ctx_.forcing.c##_value = std::move(forcing.c##_value);                                       \
+    e.ctx_.forcing.c##_persist = std::move(forcing.c##_persist);
+            RESTORED_FORCING(MOVE)
+#undef MOVE
+            e.ctx_.forcing.climate_evap_mode = forcing.climate_evap_mode;
+            e.ctx_.forcing.climate_evap_value = forcing.climate_evap_value;
+            e.ctx_.forcing.climate_evap_persist = forcing.climate_evap_persist;
+        } else
+            e.ctx_.forcing.clear_all();
         if (snow_context) {
             e.snow_ = std::move(snow);
             e.ctx_.snowpacks.runtime = std::move(snow_context->snowpacks.runtime);
@@ -2057,18 +2145,26 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     for (const auto& t : ctx_.tables.tables)
         require(!t.is_file_based && !t.file_handle,
                 "Engine checkpoint cannot recover file-backed tables.");
+    // Runtime forcing of the RESTORED_FORCING channels and climate evaporation is saved; the
+    // others are refused by name until their restore is tested.
     const auto& f = ctx_.forcing;
-    for (const auto* row :
-         {&f.node_lat_inflow_mode, &f.node_head_boundary_mode, &f.node_quality_mode,
-          &f.node_temperature_mode, &f.node_age_mode, &f.link_flow_mode, &f.link_setting_mode,
-          &f.link_seepage_mode, &f.link_quality_mode, &f.subcatch_rainfall_mode,
-          &f.subcatch_evap_mode, &f.subcatch_snowfall_mode, &f.gage_rainfall_mode})
+    for (const auto& [row, message] :
+         {std::pair{&f.node_temperature_mode,
+                    "Engine checkpoint cannot recover runtime node temperature forcing."},
+          std::pair{&f.node_age_mode, "Engine checkpoint cannot recover runtime node age forcing."},
+          std::pair{&f.node_quality_mode,
+                    "Engine checkpoint cannot recover runtime node quality forcing."},
+          std::pair{&f.link_quality_mode,
+                    "Engine checkpoint cannot recover runtime link quality forcing."},
+          std::pair{&f.link_seepage_mode,
+                    "Engine checkpoint cannot recover runtime link seepage forcing."},
+          std::pair{&f.subcatch_snowfall_mode,
+                    "Engine checkpoint cannot recover runtime subcatchment snowfall forcing."}})
         for (auto mode : *row)
-            require(mode == ForcingMode::NONE, "Engine checkpoint cannot recover runtime forcing.");
+            require(mode == ForcingMode::NONE, message);
     require(f.climate_temperature_mode == ForcingMode::NONE &&
-                f.climate_wind_mode == ForcingMode::NONE &&
-                f.climate_evap_mode == ForcingMode::NONE,
-            "Engine checkpoint cannot recover runtime climate forcing.");
+                f.climate_wind_mode == ForcingMode::NONE,
+            "Engine checkpoint cannot recover runtime climate temperature or wind forcing.");
     // Per-element air temperature, humidity, wind and shortwave forcing is no more recoverable:
     // without this a persistent one passed the check and was gone after a restore.
     for (const auto* channels : {f.elem_air_temp, f.elem_humidity, f.elem_wind, f.elem_shortwave})
@@ -2776,7 +2872,7 @@ std::string SWMMEngine::checkpointBytes(std::string& result, bool include_output
         state.archive(payload);
         std::string hydraulic;
         // New report-statistics schema; keep profile/output offsets distinct from old files.
-        uint32_t version = 103;
+        uint32_t version = state.forcing_profile ? 103 + forcingVersion : 103;
         std::string error;
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.isActive()) {
@@ -3320,10 +3416,14 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
             expected_version += 100;
         if (ctx_.reactions.configured)
             expected_version += 1000;
+        const bool forced = version == expected_version + forcingVersion;
+        if (forced)
+            expected_version += forcingVersion;
         require(magic == magicName && version == expected_version &&
                     (model == checkpoint_model_ || continuation_restore_) && crc == checksum(bytes),
                 "Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);
+        state.forcing_profile = forced;
         Archive payload(std::move(bytes));
         state.archive(payload);
         std::string hydraulic;

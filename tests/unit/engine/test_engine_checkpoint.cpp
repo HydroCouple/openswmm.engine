@@ -733,9 +733,24 @@ TEST(EngineCheckpoint, RefusesIncompleteProfilesChangedModelsAndUnrelatedDestina
     b.context().tables[0].is_file_based = true;
     EXPECT_FALSE(b.enableCheckpointing().empty());
     b.context().tables[0].is_file_based = false;
-    b.context().forcing.climate_evap_mode = ForcingMode::OVERRIDE;
-    EXPECT_FALSE(b.enableCheckpointing().empty());
-    b.context().forcing.climate_evap_mode = ForcingMode::NONE;
+    // Forcing of a channel whose restore is not tested is refused by name (climate evaporation
+    // and the RESTORED_FORCING channels are saved; RestartRecords tests their resume).
+    b.context().forcing.climate_wind_mode = ForcingMode::OVERRIDE;
+    EXPECT_EQ(b.enableCheckpointing(),
+              "Engine checkpoint cannot recover runtime climate temperature or wind forcing.");
+    b.context().forcing.climate_wind_mode = ForcingMode::NONE;
+    for (auto [modes, message] :
+         {std::pair{&b.context().forcing.node_temperature_mode,
+                    "Engine checkpoint cannot recover runtime node temperature forcing."},
+          std::pair{&b.context().forcing.link_seepage_mode,
+                    "Engine checkpoint cannot recover runtime link seepage forcing."},
+          std::pair{&b.context().forcing.node_age_mode,
+                    "Engine checkpoint cannot recover runtime node age forcing."}}) {
+        ASSERT_FALSE(modes->empty()) << message;
+        (*modes)[0] = ForcingMode::OVERRIDE;
+        EXPECT_EQ(b.enableCheckpointing(), message);
+        (*modes)[0] = ForcingMode::NONE;
+    }
     // A persistent per-element climate forcing is refused too; it is not saved either.
     for (auto* channels : {b.context().forcing.elem_air_temp, b.context().forcing.elem_humidity,
                            b.context().forcing.elem_wind, b.context().forcing.elem_shortwave}) {
