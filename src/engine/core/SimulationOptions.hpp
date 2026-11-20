@@ -845,11 +845,14 @@ struct SimulationOptions {
      *  @details Returns the legacy-exact value stored by the INP options
      *  handler when available; otherwise falls back to flooring the combined
      *  serial difference to whole seconds (mirroring legacy swmm5.c:3198-3200
-     *  as closely as the combined representation allows). */
+     *  as closely as the combined representation allows). The difference is
+     *  rounded to the millisecond first: a date set through the API as the
+     *  day's serial plus the time's fraction of a day can lie a rounding below
+     *  its whole second, and flooring that ended the run a second early. */
     double totalDurationMs() const {
         if (total_duration_ms >= 0.0)
             return total_duration_ms;
-        return std::floor((end_date - start_date) * 86400.0) * 1000.0;
+        return std::floor(std::round((end_date - start_date) * 86400000.0) / 1000.0) * 1000.0;
     }
 };
 

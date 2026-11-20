@@ -11,6 +11,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -611,6 +612,38 @@ TEST(RestartRecords, TwinCyclesReproduceTheUninterruptedRun) {
         ASSERT_FALSE(a.empty());
         EXPECT_EQ(b, a) << hours << " h cycles: the binary output differs";
     }
+}
+
+// A twin cycle sets its end through the API, as the Python Solver does: the day's serial plus
+// the time as a fraction of a day. Some of those serials lie a rounding below their whole
+// second, and the duration, floored to whole seconds, ended such a run one second early, so its
+// record was a second before the cycle's end and the next cycle left the uninterrupted run.
+TEST(RestartRecords, AnEndSetThroughTheApiEndsTheRunAtItsTime) {
+    const fs::path dir = caseDir("end_through_the_api");
+    const fs::path inp = writeTwinModel(dir, "model", TwinModel{});
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.string().c_str(), (dir / "model.rpt").string().c_str(),
+                               nullptr, nullptr),
+              SWMM_OK);
+    double start = 0.0;
+    ASSERT_EQ(swmm_options_get_start_date(e, &start), SWMM_OK);
+    int seconds = 0; // the first whole minute whose serial lies below its second
+    for (int minute = 1; minute <= 240 && !seconds; ++minute)
+        if ((start + 60.0 * minute / 86400.0 - start) * 86400.0 < 60.0 * minute)
+            seconds = 60 * minute;
+    ASSERT_GT(seconds, 0) << "no serial in the four hours lies below its second";
+    ASSERT_EQ(swmm_options_set_end_date(e, start + seconds / 86400.0), SWMM_OK);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 0), SWMM_OK);
+    double elapsed = 1.0, last = 0.0;
+    int rc = SWMM_OK;
+    while (elapsed > 0.0 && (rc = swmm_engine_step(e, &elapsed)) == SWMM_OK)
+        ASSERT_EQ(swmm_engine_get_elapsed_seconds(e, &last), SWMM_OK);
+    EXPECT_EQ(rc, SWMM_OK);
+    EXPECT_EQ(last, double(seconds)) << "the run ended before the end set through the API";
+    swmm_engine_end(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 TEST(RestartRecords, TwinCycleRefusesAnyOtherChange) {
