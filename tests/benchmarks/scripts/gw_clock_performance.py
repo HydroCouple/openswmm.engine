@@ -10,6 +10,8 @@ it: the deck's start, report start and end are rewritten and nothing else. A win
 after the event's start has no antecedent wetting, so its numbers describe that regime (a storm
 burst, a rain-free stretch), not the full event. Each run also records the engine process's CPU
 time and the load average around it, so a comparison made on a shared machine can be judged.
+--settle-load MAX waits, before each run and for at most --settle-wait seconds, until the 1-minute
+load average is at or below MAX; the wait and whether the load settled are recorded with the run.
 """
 import argparse
 import datetime
@@ -81,7 +83,15 @@ def prepare(source, mode, window=None):
     return text, dependencies
 
 
-def measure(cli, dest, profiled, expected_seconds, slack=1e-8):
+def settle(maximum, wait):
+    """Wait until the 1-minute load average is <= maximum, at most `wait` s; return (s, settled)."""
+    started = time.perf_counter()
+    while os.getloadavg()[0] > maximum and time.perf_counter() - started < wait:
+        time.sleep(15)
+    return time.perf_counter() - started, os.getloadavg()[0] <= maximum
+
+
+def measure(cli, dest, profiled, expected_seconds, slack=1e-8, quiet=None):
     env = dict(os.environ)
     for key in list(env):
         if key.startswith(("GW_STUDY_", "GW_CONTROL_", "OPENSWMM_PERF")) or key in (
@@ -90,6 +100,7 @@ def measure(cli, dest, profiled, expected_seconds, slack=1e-8):
             env.pop(key)
     if profiled:
         env.update(OPENSWMM_PERF="1", OPENSWMM_GW_CLOCK_CELLS="1")
+    waited, settled = settle(*quiet) if quiet else (0.0, None)
     load_before = os.getloadavg()[0]
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter()
@@ -113,7 +124,8 @@ def measure(cli, dest, profiled, expected_seconds, slack=1e-8):
     phases = {group: dict(re.findall(r"([\w.]+)=([^\s]+)", body))
               for group, body in re.findall(r"\[PERF-([^]]+)\]([^\n]+)", log)}
     return {"wall_seconds": elapsed, "cpu_seconds": cpu,
-            "load_average_1min": [load_before, os.getloadavg()[0]], "out_sha256": sha(dest / "model.out"),
+            "load_average_1min": [load_before, os.getloadavg()[0]],
+            "settle_wait_seconds": waited, "load_settled": settled, "out_sha256": sha(dest / "model.out"),
             "report_payload_sha256": hashlib.sha256(report_payload(dest / "model.rpt")).hexdigest(),
             "datasets": datasets(dest / "fields.2d.h5"), "clock": clocks, "phases": phases}
 
@@ -173,6 +185,9 @@ def main():
     parser.add_argument("--suite", choices=("soa", "bellinge"), required=True)
     parser.add_argument("--bellinge", type=Path)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--settle-load", type=float, metavar="MAX",
+                        help="wait for the 1-minute load average to fall to MAX before each run")
+    parser.add_argument("--settle-wait", type=float, default=900, metavar="SECONDS")
     parser.add_argument("--window", nargs=2, metavar=("START", "END"),
                         help='run only this part of the Bellinge event, "MM/DD/YYYY HH:MM:SS" each')
     args = parser.parse_args()
@@ -244,7 +259,9 @@ def main():
                         # A window that starts on a whole minute reports one second less
                         # than its length (7199 s for two hours); the full event is exact.
                         row = measure(cli, dest, label == "profiled", expected,
-                                      1 + 1e-8 if window else 1e-8)
+                                      1 + 1e-8 if window else 1e-8,
+                                      (args.settle_load, args.settle_wait)
+                                      if args.settle_load is not None else None)
                         pair[mode][label] = row
                         save(measurement, row)
                         print(f"Completed in {row['wall_seconds']:.3f} s", flush=True)
