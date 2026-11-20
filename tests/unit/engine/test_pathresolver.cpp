@@ -42,6 +42,9 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <string>
+
 #include "../../src/engine/core/PathResolver.hpp"
 
 using openswmm::io::PathClass;
@@ -232,6 +235,38 @@ TEST(PathResolverMakeRelative, GrandparentTraversal) {
     EXPECT_EQ(r.classification, PathClass::Relative);
     EXPECT_EQ(r.path, "../../shared/data/rain.dat");
     EXPECT_EQ(r.up_levels, 2);
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// makeRelative — a relative target or anchor is relative to the working directory
+//
+// A model opened by a relative path stores its file references relative to the
+// working directory. Written to another folder, a reference must still resolve:
+// it used to be read as if it hung from the filesystem root.
+// ---------------------------------------------------------------------------
+
+#ifndef _WIN32
+TEST(PathResolverMakeRelative, RelativeTargetIsResolvedAgainstTheWorkingDirectory) {
+    const std::string cwd = std::filesystem::current_path().generic_string();
+    auto r = makeRelative("data/rain.dat", cwd + "/out/sub");
+    EXPECT_EQ(r.classification, PathClass::Relative);
+    EXPECT_EQ(r.path, "../../data/rain.dat");
+    EXPECT_EQ(r.up_levels, 2);
+}
+
+TEST(PathResolverMakeRelative, RelativeAnchorIsResolvedAgainstTheWorkingDirectory) {
+    const std::string cwd = std::filesystem::current_path().generic_string();
+    auto r = makeRelative(cwd + "/data/rain.dat", "out");
+    EXPECT_EQ(r.classification, PathClass::Relative);
+    EXPECT_EQ(r.path, "../data/rain.dat");
+}
+
+TEST(PathResolverMakeRelative, BothRelativeStayRelativeToEachOther) {
+    auto r = makeRelative("model/rain/storm.dat", "model/out");
+    EXPECT_EQ(r.classification, PathClass::Relative);
+    EXPECT_EQ(r.path, "../rain/storm.dat");
+    EXPECT_EQ(r.up_levels, 1);
 }
 #endif
 
