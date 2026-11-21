@@ -85,6 +85,10 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# No source here is a C++ module. CMake 4.5 gives every scanned C++20 target
+# `import std`; with MSVC 19.52 every C++ try_compile of a Debug configure then
+# failed before compiling, FindOpenMP's among them. try_compile inherits this.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Bit-exact parity with the legacy engine needs FMA contraction off in BOTH
