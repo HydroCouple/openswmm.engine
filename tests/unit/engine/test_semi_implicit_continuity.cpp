@@ -126,4 +126,72 @@ TEST(SemiImplicitContinuity, ConvergedDepthsMatchExplicitOnFreeSurface) {
     EXPECT_LT(worst, 1e-6);
 }
 
+/**
+ * @brief Run the chain with its inflow above pipe capacity, so the junctions surcharge.
+ *
+ * @param[in] continuity "EXPLICIT" or "SEMI_IMPLICIT".
+ * @param[out] error Routing continuity error (fraction) at the end of the run.
+ * @param[out] held Summed junction held surcharge water at the end of the run (ft3).
+ * @param[out] volume Summed junction volume, legacy convention, at the end of the run (ft3).
+ * @param[out] surcharged Junctions above their crown at the end of the run.
+ */
+void runSurcharged(const std::string& continuity, double& error, double& held, double& volume,
+                   int& surcharged) {
+    std::filesystem::create_directories(out);
+    std::string text = deck(continuity);
+    for (const auto& [from, to] : {std::pair<std::string, std::string>{
+                                       "ramp 0:30 8\nramp 1:00 8", "ramp 0:30 30\nramp 1:00 30"},
+                                   {"J1 3 10 0 0 0\nJ2 2 10 0 0 0\nJ3 1 10 0 0 0",
+                                    "J1 3 20 0 0 0\nJ2 2 20 0 0 0\nJ3 1 20 0 0 0"}}) {
+        const auto at = text.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        text.replace(at, from.size(), to);
+    }
+    const auto path = (out / ("surcharged_" + continuity + ".inp")).string();
+    std::ofstream(path) << text;
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(engine.open(path.c_str(), (path + ".rpt").c_str(), ""), 0);
+    ASSERT_EQ(engine.initialize(), 0);
+    ASSERT_EQ(engine.start(0), 0);
+    const auto& ctx = engine.context();
+    double elapsed = 0.0;
+    do
+        ASSERT_EQ(engine.step(&elapsed), 0);
+    while (elapsed > 0.0);
+    held = volume = 0.0;
+    surcharged = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        held += ctx.nodes.held_volume[i];
+        volume += ctx.nodes.volume[i];
+        surcharged += ctx.nodes.depth[i] + ctx.nodes.invert_elev[i] > ctx.nodes.crown_elev[i];
+    }
+    ASSERT_EQ(engine.end(), 0);
+    error = ctx.mass_balance.routing_error();
+}
+
+// SEMI_IMPLICIT stores water above a surcharged junction's crown over the conduits' crown-cutoff
+// surface area (Eq. 3-45). The junction books it beside its legacy volume (NodeData::held_volume);
+// without that the continuity table lost it, and the routing continuity error read the held water
+// as a loss until it drained.
+TEST(SemiImplicitContinuity, SurchargedJunctionBooksTheWaterItHolds) {
+    double ex_error = 0.0, si_error = 0.0, ex_held = 0.0, si_held = 0.0, ex_volume = 0.0,
+           si_volume = 0.0;
+    int ex_surcharged = 0, si_surcharged = 0;
+    ASSERT_NO_FATAL_FAILURE(runSurcharged("EXPLICIT", ex_error, ex_held, ex_volume, ex_surcharged));
+    ASSERT_NO_FATAL_FAILURE(
+        runSurcharged("SEMI_IMPLICIT", si_error, si_held, si_volume, si_surcharged));
+    ASSERT_GT(ex_surcharged, 0) << "nothing surcharged; deck defect";
+    ASSERT_GT(si_surcharged, 0) << "nothing surcharged; deck defect";
+    EXPECT_EQ(ex_held, 0.0) << "an EXPLICIT junction holds no surcharge water";
+    // The volume hydraulic readers see keeps the SWMM 5 convention under both options.
+    EXPECT_EQ(ex_volume, 0.0);
+    EXPECT_EQ(si_volume, 0.0);
+    EXPECT_GT(si_held, 0.0) << "the surcharged junctions hold no water";
+    // Here the held water is about 2 % of the inflow (1686 ft3 at the end); unbooked it put the
+    // SEMI_IMPLICIT continuity that far from the EXPLICIT run's (-0.35 %).
+    EXPECT_NEAR(si_error, ex_error, 1e-3)
+        << "SEMI_IMPLICIT continuity " << si_error * 100 << " % vs EXPLICIT " << ex_error * 100
+        << " %; held " << si_held << " ft3";
+}
+
 } // namespace

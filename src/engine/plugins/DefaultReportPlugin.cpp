@@ -1813,8 +1813,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (std::size_t s = 0; s < uns; ++s) {
             double fin = at(led.final_dry, s);
             for (int j = 0; j < ctx.n_nodes(); ++j)
+                // Node water includes a SEMI_IMPLICIT junction's held surcharge water.
                 fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
-                           ctx.nodes.volume[static_cast<std::size_t>(j)] +
+                           (ctx.nodes.volume[static_cast<std::size_t>(j)] +
+                            ctx.nodes.held_volume[static_cast<std::size_t>(j)]) +
                        msxlid::heldMass(ctx, j, int(s));
             for (int j = 0; j < ctx.n_links(); ++j)
                 fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *

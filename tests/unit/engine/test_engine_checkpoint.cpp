@@ -13569,14 +13569,14 @@ TEST(EngineCheckpoint, NetworkPollutantsFirstOrderSharedMeshOwnsPhysicalQueuesAn
     }
 }
 // Routing checkpoints before version 6 carry no gross 1D<->2D exchange water
-// (NodeData::coupling_drain_queue and siblings). Their mass queue was paired against the net
-// water, so they restore with the gross queues rebuilt from the net queue: drained water is its
-// positive part, spilled water its negative part. The version 5 file is a version 6 checkpoint
-// with that block cut out, re-framed through the surface and engine records around it.
-TEST(EngineCheckpoint, RoutingVersion5RestoresTheGrossCouplingQueuesFromTheNetQueue) {
-    SWMMEngine a, b;
+// (NodeData::coupling_drain_queue and siblings), and before version 7 no SEMI_IMPLICIT held
+// surcharge water (NodeData::held_volume). The gross queues restore from the net queue (the mass
+// queue was paired against the net water: drained water is its positive part, spilled water its
+// negative part) and the held water as none. The older files are a version 7 checkpoint with
+// those blocks cut out, re-framed through the surface and engine records around it.
+TEST(EngineCheckpoint, RoutingVersions5And6RestoreTheColumnsTheyLack) {
+    SWMMEngine a;
     ASSERT_NO_THROW(startNetworkPollutants(a, "routing-v5-a", 0, true, true, 0));
-    ASSERT_NO_THROW(startNetworkPollutants(b, "routing-v5-b", 0, true, true, 0));
     const int s = a.context().node_names.find("S");
     ASSERT_GE(s, 0);
     const auto us = static_cast<std::size_t>(s);
@@ -13585,7 +13585,7 @@ TEST(EngineCheckpoint, RoutingVersion5RestoresTheGrossCouplingQueuesFromTheNetQu
             << "no boundary with coupling water queued for the node";
         ASSERT_NO_THROW(step(a));
     }
-    const auto good = root() / "routing-v5-good.chk", old = root() / "routing-v5-old.chk";
+    const auto good = root() / "routing-v5-good.chk";
     ASSERT_EQ(a.saveCheckpoint(good.string()), "");
 
     using Archive = detail::CompletedSourceArchive;
@@ -13631,50 +13631,72 @@ TEST(EngineCheckpoint, RoutingVersion5RestoresTheGrossCouplingQueuesFromTheNetQu
     Archive hydraulic(spayload.substr(h_at + 8, h_size));
     hydraulic(hmagic, hversion, hmodel, hsum, body);
     hydraulic.finish();
-    ASSERT_EQ(hversion, 6u);
+    ASSERT_EQ(hversion, 7u);
 
-    // Version 6 archives the four gross columns right after the node columns.
+    // Version 6 archives the four gross columns right after the node columns, version 7 the held
+    // surcharge column after them.
     const auto& live = a.context().nodes;
     auto drain = live.coupling_drain_queue, spill = live.coupling_spill_queue,
          drain_in = live.coupling_drain_inflow, spill_out = live.coupling_spill_outflow;
+    auto held = live.held_volume;
     ASSERT_TRUE(drain[us] != 0 || spill[us] != 0);
-    Archive block;
-    block.fixed(drain, spill, drain_in, spill_out);
-    const auto cut = body.find(block.bytes());
+    Archive gross_block, held_block;
+    gross_block.fixed(drain, spill, drain_in, spill_out);
+    held_block.fixed(held);
+    const auto cut = body.find(gross_block.bytes());
     ASSERT_NE(cut, std::string::npos) << "the gross block is not where version 6 puts it";
-    ASSERT_EQ(body.find(block.bytes(), cut + 1), std::string::npos);
-    body.erase(cut, block.bytes().size());
-    hversion = 5;
-    hsum = crc(body);
-    Archive hout;
-    hout(hmagic, hversion, hmodel, hsum, body);
-    spayload.replace(h_at, h_size + 8, framed(hout.bytes()));
-    ssum = crc(spayload);
-    Archive sout;
-    sout(smagic, sversion, endian, long_bytes, smodel, spayload, ssum);
-    payload.replace(s_at, s_size + 8, framed(sout.bytes()));
-    sum = crc(payload);
-    Archive out;
-    out(magic, version, model, sum, payload);
-    write(old, out.bytes());
+    ASSERT_EQ(body.find(gross_block.bytes(), cut + 1), std::string::npos);
+    const auto held_at = cut + gross_block.bytes().size();
+    ASSERT_EQ(body.compare(held_at, held_block.bytes().size(), held_block.bytes()), 0)
+        << "the held column is not where version 7 puts it";
 
-    ASSERT_EQ(b.loadCheckpoint(old.string()), "");
-    const auto& restored = b.context().nodes;
-    EXPECT_EQ(restored.coupling_queue, live.coupling_queue);
-    EXPECT_EQ(restored.coupling_qual_queue, live.coupling_qual_queue);
-    EXPECT_EQ(restored.depth, live.depth);
-    EXPECT_EQ(b.context().links.flow, a.context().links.flow);
-    ASSERT_EQ(restored.coupling_drain_queue.size(), live.coupling_queue.size());
-    for (std::size_t i = 0; i < live.coupling_queue.size(); ++i) {
-        const double q = live.coupling_queue[i];
-        EXPECT_EQ(restored.coupling_drain_queue[i], std::max(0.0, q)) << i;
-        EXPECT_EQ(restored.coupling_spill_queue[i], std::max(0.0, -q)) << i;
-        EXPECT_EQ(restored.coupling_drain_inflow[i], 0.0) << i;
-        EXPECT_EQ(restored.coupling_spill_outflow[i], 0.0) << i;
+    for (const uint32_t target : {6u, 5u}) {
+        SCOPED_TRACE(target);
+        auto older = body;
+        if (target == 6)
+            older.erase(held_at, held_block.bytes().size());
+        else
+            older.erase(cut, gross_block.bytes().size() + held_block.bytes().size());
+        uint32_t older_version = target, older_sum = crc(older);
+        Archive hout;
+        hout(hmagic, older_version, hmodel, older_sum, older);
+        auto older_surface = spayload;
+        older_surface.replace(h_at, h_size + 8, framed(hout.bytes()));
+        uint32_t older_ssum = crc(older_surface);
+        Archive sout;
+        sout(smagic, sversion, endian, long_bytes, smodel, older_surface, older_ssum);
+        auto older_payload = payload;
+        older_payload.replace(s_at, s_size + 8, framed(sout.bytes()));
+        uint32_t older_sum_engine = crc(older_payload);
+        Archive out;
+        out(magic, version, model, older_sum_engine, older_payload);
+        const auto tag = "routing-v" + std::to_string(target);
+        const auto path = root() / (tag + "-old.chk");
+        write(path, out.bytes());
+
+        SWMMEngine b;
+        ASSERT_NO_THROW(startNetworkPollutants(b, tag + "-b", 0, true, true, 0));
+        ASSERT_EQ(b.loadCheckpoint(path.string()), "");
+        const auto& restored = b.context().nodes;
+        EXPECT_EQ(restored.coupling_queue, live.coupling_queue);
+        EXPECT_EQ(restored.coupling_qual_queue, live.coupling_qual_queue);
+        EXPECT_EQ(restored.depth, live.depth);
+        EXPECT_EQ(b.context().links.flow, a.context().links.flow);
+        EXPECT_EQ(restored.held_volume, std::vector<double>(live.volume.size(), 0.0));
+        ASSERT_EQ(restored.coupling_drain_queue.size(), live.coupling_queue.size());
+        for (std::size_t i = 0; i < live.coupling_queue.size(); ++i) {
+            const double q = live.coupling_queue[i];
+            EXPECT_EQ(restored.coupling_drain_queue[i], target == 6 ? drain[i] : std::max(0.0, q))
+                << i;
+            EXPECT_EQ(restored.coupling_spill_queue[i], target == 6 ? spill[i] : std::max(0.0, -q))
+                << i;
+            EXPECT_EQ(restored.coupling_drain_inflow[i], target == 6 ? drain_in[i] : 0.0) << i;
+            EXPECT_EQ(restored.coupling_spill_outflow[i], target == 6 ? spill_out[i] : 0.0) << i;
+        }
+        while (b.context().elapsed_ms < b.context().options.totalDurationMs())
+            ASSERT_NO_THROW(step(b));
+        ASSERT_EQ(b.end(), 0);
     }
-    while (b.context().elapsed_ms < b.context().options.totalDurationMs())
-        ASSERT_NO_THROW(step(b));
-    ASSERT_EQ(b.end(), 0);
     ASSERT_EQ(a.end(), 0);
 }
 #endif

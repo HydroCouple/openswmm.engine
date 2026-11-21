@@ -4712,6 +4712,17 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
     // volume, the routing mass balance's flooding gate and the control-rule /
     // quality node volume off by that amount (sampleram JCT-38: +50.26 ft3,
     // 4 ft * 12.566 ft2, from the first ponded step on).
+    // SEMI_IMPLICIT stores water above the crown of a surcharged junction (Eq. 3-45 keeps the
+    // conduits' crown-cutoff surface area there), which neither the junction (whose volume is
+    // booked as zero, legacy) nor the full conduits hold. The junction books it in held_volume,
+    // beside a volume kept exactly in the legacy convention (so no hydraulic reader sees it): while
+    // surcharged below the rim, the step's storage the legacy volume does not take; at the rim,
+    // what it held. Plain junctions only (no storage, chamber, wet well, LID or inlet node). The
+    // explicit surcharge branch drives the net flow to zero instead.
+    const bool holds_surcharge = node_continuity == NodeContinuity::SEMI_IMPLICIT &&
+                                 !t.is_storage && t.rpt_full_volume == 0.0 && t.y_crown > 0.0 &&
+                                 nodes.storage_area[ui] == 0.0 && !is_inlet_node &&
+                                 !lidnode::active(ctx, node_idx);
     nodes.overflow[ui] = 0.0;
     if (y_new > y_max) {
         if (!can_pond) {
@@ -4734,6 +4745,21 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
         // Legacy node_getVolume default branch: fullVolume * (depth / fullDepth)
         nodes.volume[ui] = (t.full_depth > 0.0) ? t.rpt_full_volume * (y_new / t.full_depth) : 0.0;
     }
+    double held = 0.0;
+    if (holds_surcharge && y_new > t.y_crown) {
+        if (y_new >= y_max) {
+            held = nodes.old_held_volume[ui]; // what it held when it reached the rim
+        } else {
+            // The step's net inflow less what the legacy volume took (a draining pond's water
+            // is that volume's); on the step entering surcharge, its share above the crown.
+            const double y_old = nodes.old_depth[ui];
+            held = nodes.old_held_volume[ui] + nodes.old_volume[ui] + dV - nodes.volume[ui];
+            if (!(y_old > t.y_crown))
+                held = y_new > y_old ? held * (y_new - t.y_crown) / (y_new - y_old) : 0.0;
+            held = std::max(held, 0.0);
+        }
+    }
+    nodes.held_volume[ui] = held;
 
     // An inlet junction floods (above) but is still a zero-storage node: the
     // half-link surface area it carries is the continuity linearization of the

@@ -2326,6 +2326,8 @@ int HotStartManager::apply(HotStartFile& hs, SimulationContext& ctx,
             ctx.nodes.volume[i] = node::getVolume(
                 ctx.nodes, idx, rec.depth, &ctx.tables,
                 ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units)), &ctx.node_subtypes);
+        // The record carries no SEMI_IMPLICIT held surcharge water (NodeData::held_volume).
+        ctx.nodes.held_volume[i] = 0.0;
         // A2a: restore water age. Sizing happens once (guarded resize);
         // both engines then seed FROM the loaded state instead of
         // INITIAL_STATE (hotstart_loaded; legacy_seeded suppresses the

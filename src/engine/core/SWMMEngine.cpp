@@ -6920,6 +6920,8 @@ void SWMMEngine::computeFinalStorage() noexcept {
                 double volume = ctx_.nodes.volume[j];
                 if (const double base = router_.fvPondBase(j); base > 0.0 && volume >= base)
                     volume -= base;
+                // Plus the surcharge water a SEMI_IMPLICIT junction holds, which its mix holds.
+                volume += ctx_.nodes.held_volume[j];
                 if (idx < ctx_.nodes.conc.size())
                     m += ctx_.nodes.conc[idx] * volume + lidnode::heldMass(ctx_, j, p);
             }
@@ -7762,9 +7764,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
                                   f_rt * (ctx_.nodes.head[ui] - ctx_.nodes.invert_elev[ui])
                             : ctx_.nodes.invert_elev[ui] + y;
                     snap.nodes.volume[ui] =
-                        f1_rt * reportedNodeVolume(i, ctx_.nodes.old_depth[ui],
-                                                   ctx_.nodes.old_volume[ui]) +
-                        f_rt * reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]);
+                        f1_rt * (reportedNodeVolume(i, ctx_.nodes.old_depth[ui],
+                                                    ctx_.nodes.old_volume[ui]) +
+                                 ctx_.nodes.old_held_volume[ui]) +
+                        f_rt * (reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]) +
+                                ctx_.nodes.held_volume[ui]);
                     snap.nodes.lateral_inflow[ui] =
                         f1_rt * ctx_.nodes.old_lat_flow[ui] + f_rt * ctx_.nodes.lat_flow[ui];
                     snap.nodes.total_inflow[ui] =
@@ -12878,7 +12882,9 @@ bool SWMMEngine::isInSteadyState(int action_count) const {
 
 double SWMMEngine::reportedNodeVolume(int i) const noexcept {
     auto ui = static_cast<std::size_t>(i);
-    return reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]);
+    // Plus the surcharge water a SEMI_IMPLICIT junction holds beside its legacy volume.
+    return reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]) +
+           ctx_.nodes.held_volume[ui];
 }
 
 double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const noexcept {

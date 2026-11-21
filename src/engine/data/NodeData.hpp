@@ -238,6 +238,17 @@ struct NodeData {
     std::vector<double> volume;
 
     /**
+     * @brief Water a junction holds above its crown under NODE_CONTINUITY SEMI_IMPLICIT, beside
+     *        `volume` (ft3).
+     * @details Eq. 3-45 stores a surcharged junction's head change over the conduits' crown-cutoff
+     *          surface area; DWSolver::commitNodeDepthState books that water here. `volume` keeps
+     *          the legacy convention untouched, so no hydraulic reader sees it; the junction's
+     *          water is volume + held_volume (reported volume, mass balance, node mixing). Zero
+     *          below the crown and for every other node and option.
+     */
+    std::vector<double> held_volume;
+
+    /**
      * @brief Current lateral inflow (project flow units).
      * @see Legacy: Node[i].newLatFlow
      */
@@ -587,6 +598,8 @@ struct NodeData {
 
     /** @brief Volume at the previous timestep. */
     std::vector<double> old_volume;
+    /// held_volume at the start of the routing step (save_hyd_state).
+    std::vector<double> old_held_volume;
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double> old_lat_flow;
@@ -803,6 +816,7 @@ struct NodeData {
         depth.assign(un, 0.0);
         head.assign(un, 0.0);
         volume.assign(un, 0.0);
+        held_volume.assign(un, 0.0);
         lat_flow.assign(un, 0.0);
         user_lat_flow.assign(un, 0.0);
         runoff_inflow.assign(un, 0.0);
@@ -845,6 +859,7 @@ struct NodeData {
         rpt_full_volume.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
+        old_held_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
         old_inflow.assign(un, 0.0);
 
@@ -908,6 +923,7 @@ struct NodeData {
         g(depth, 0.0);
         g(head, 0.0);
         g(volume, 0.0);
+        g(held_volume, 0.0);
         g(lat_flow, 0.0);
         g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0);
@@ -942,6 +958,7 @@ struct NodeData {
         g(rpt_full_volume, 0.0);
         g(old_depth, 0.0);
         g(old_volume, 0.0);
+        g(old_held_volume, 0.0);
         g(old_lat_flow, 0.0);
         g(old_inflow, 0.0);
         comments.resize(un, std::string{});
@@ -1017,6 +1034,7 @@ struct NodeData {
         r(depth);
         r(head);
         r(volume);
+        r(held_volume);
         r(lat_flow);
         r(user_lat_flow);
         r(runoff_inflow);
@@ -1047,6 +1065,7 @@ struct NodeData {
         r(rpt_full_volume);
         r(old_depth);
         r(old_volume);
+        r(old_held_volume);
         r(old_lat_flow);
         r(old_inflow);
         r(rpt_flag);
@@ -1104,6 +1123,7 @@ struct NodeData {
         f(&NodeData::depth);
         f(&NodeData::head);
         f(&NodeData::volume);
+        f(&NodeData::held_volume);
         f(&NodeData::lat_flow);
         f(&NodeData::user_lat_flow);
         f(&NodeData::runoff_inflow);
@@ -1140,6 +1160,7 @@ struct NodeData {
         f(&NodeData::rpt_full_volume);
         f(&NodeData::old_depth);
         f(&NodeData::old_volume);
+        f(&NodeData::old_held_volume);
         f(&NodeData::old_lat_flow);
         f(&NodeData::old_inflow);
         f(&NodeData::comments);
@@ -1285,6 +1306,7 @@ struct NodeData {
         depth.shrink_to_fit();
         head.shrink_to_fit();
         volume.shrink_to_fit();
+        held_volume.shrink_to_fit();
         lat_flow.shrink_to_fit();
         user_lat_flow.shrink_to_fit();
         runoff_inflow.shrink_to_fit();
@@ -1325,6 +1347,7 @@ struct NodeData {
         rpt_full_volume.shrink_to_fit();
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
+        old_held_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
         old_inflow.shrink_to_fit();
 
@@ -1374,6 +1397,7 @@ struct NodeData {
     void save_hyd_state() noexcept {
         std::copy(depth.begin(), depth.end(), old_depth.begin());
         std::copy(volume.begin(), volume.end(), old_volume.begin());
+        std::copy(held_volume.begin(), held_volume.end(), old_held_volume.begin());
         std::copy(inflow.begin(), inflow.end(), old_inflow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
@@ -1411,7 +1435,9 @@ struct NodeData {
         }
         // Volumes must be computed from init_depth by caller (needs table data)
         std::fill(volume.begin(), volume.end(), 0.0);
+        std::fill(held_volume.begin(), held_volume.end(), 0.0);
         std::fill(old_volume.begin(), old_volume.end(), 0.0);
+        std::fill(old_held_volume.begin(), old_held_volume.end(), 0.0);
         // Zero flows
         std::fill(lat_flow.begin(), lat_flow.end(), 0.0);
         std::fill(inflow.begin(), inflow.end(), 0.0);

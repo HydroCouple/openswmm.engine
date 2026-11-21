@@ -110,7 +110,8 @@ void armMsxRoutingLedger(SimulationContext& ctx) {
             for (std::size_t s = 0; s < uns; ++s)
                 if (!rx.species_is_wall[s])
                     led.init[s] += rx.msx_node_conc[static_cast<std::size_t>(i) * uns + s] *
-                                       ctx.nodes.old_volume[static_cast<std::size_t>(i)] +
+                                       (ctx.nodes.old_volume[static_cast<std::size_t>(i)] +
+                                        ctx.nodes.old_held_volume[static_cast<std::size_t>(i)]) +
                                    msxlid::heldMass(ctx, i, int(s));
         for (int j = 0; j < nl; ++j)
             for (std::size_t s = 0; s < uns; ++s)
@@ -210,7 +211,9 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
     const bool has_ext = rx.msx_ext_mass_in.size() >= static_cast<std::size_t>(nn) * uns;
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double v_old = msxlid::mobileWater(ctx, i, ctx.nodes.old_volume[ui]);
+        // Including a SEMI_IMPLICIT junction's held surcharge water (NodeData::held_volume).
+        const double v_old =
+            msxlid::mobileWater(ctx, i, ctx.nodes.old_volume[ui] + ctx.nodes.old_held_volume[ui]);
         const double v_in = ctx.nodes.qual_vol_in[ui];
         const double q_in = (dt > 0.0) ? v_in / dt : 0.0;
         const bool zero_bf = ctx.options.outfall_backflow_zero &&
@@ -281,7 +284,7 @@ void routeLegacyMsx(SimulationContext& ctx, double dt) {
                     reactionBoosterMass(ctx, i, int(s), std::max(c_new, 0.) * mixed, mixed, v_in) /
                     mixed;
             if (dry) {
-                led.final_dry[s] += c_new * ctx.nodes.volume[ui];
+                led.final_dry[s] += c_new * (ctx.nodes.volume[ui] + ctx.nodes.held_volume[ui]);
                 c_new = 0.0;
             }
             rx.msx_node_conc[ui * uns + s] = std::max(c_new, 0.0);

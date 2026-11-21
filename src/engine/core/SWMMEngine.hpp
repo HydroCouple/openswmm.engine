@@ -1630,7 +1630,8 @@ private:
      * Delegates the explicit-depth/volume overload with current state.
      *
      * @param[in] i Caller-validated node index in aligned state arrays.
-     * @return Reported current volume in internal cubic feet, including retained storage-LID water.
+     * @return Reported current volume in internal cubic feet, including retained storage-LID water
+     *     and the surcharge water a SEMI_IMPLICIT junction holds (NodeData::held_volume).
      */
     double reportedNodeVolume(int i) const noexcept;
 
