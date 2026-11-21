@@ -84,7 +84,9 @@ void serve(const Space& space, FaceOperation op, Evaluate evaluate) {
     while (read_bytes(STDIN_FILENO, &req, sizeof(req), true)) {
         if (req.count == 0 || req.count > INT32_MAX)
             throw std::runtime_error("invalid face count");
-        if (faces.extent(0) != req.count) {
+        // Grow only: with LTS tiers each request is one tier's faces, so the
+        // count changes on nearly every request.
+        if (faces.extent(0) < req.count) {
             faces = decltype(faces)(Kokkos::view_alloc(Kokkos::WithoutInitializing, "faces"),
                                     req.count);
             out = decltype(out)(Kokkos::view_alloc(Kokkos::WithoutInitializing, "flux"), req.count);
@@ -93,13 +95,14 @@ void serve(const Space& space, FaceOperation op, Evaluate evaluate) {
             output = decltype(output)(Kokkos::view_alloc(Kokkos::WithoutInitializing, "outputs"),
                                       req.count);
         }
+        const std::pair<std::size_t, std::size_t> used(0, req.count);
         read_bytes(STDIN_FILENO, input.data(), req.count * sizeof(Input));
-        Kokkos::deep_copy(space, faces, input);
+        Kokkos::deep_copy(space, Kokkos::subview(faces, used), Kokkos::subview(input, used));
         const auto params = req.params;
         Kokkos::parallel_for(
             operation_name(op), Kokkos::RangePolicy<Space>(space, 0, req.count),
             KOKKOS_LAMBDA(int i) { out(i) = evaluate(faces(i), params); });
-        Kokkos::deep_copy(space, output, out);
+        Kokkos::deep_copy(space, Kokkos::subview(output, used), Kokkos::subview(out, used));
         space.fence();
         space.sycl_queue().wait_and_throw();
         for (std::uint32_t i = 0; i < req.count; ++i)

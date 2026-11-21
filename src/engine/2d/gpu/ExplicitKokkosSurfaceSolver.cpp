@@ -935,9 +935,9 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         telemetry_path_ = p;
 #ifdef OPENSWMM_ENABLE_METAL_FACES
     if (metal_requested_) {
-        if (diffusive_ || second_order_ || K_ != 1 || opts.advection || species_)
+        if (diffusive_ || second_order_ || opts.advection || species_)
             throw std::invalid_argument(
-                "Metal face flow requires first-order, single-tier water-only flow without advection");
+                "Metal face flow requires first-order water-only flow without advection");
         if (swe_)
             metal_swe_ = std::make_unique<metal::SurfaceClient>();
         else
@@ -1566,14 +1566,19 @@ void ExplicitKokkosSurfaceSolver::fireFaces(int k, double dt_f, bool global_step
             if (packed) {
                 const double ba = (quads && nvv(a) == 4) ? beta4 : beta3;
                 const double bb = (quads && nvv(b) == 4) ? beta4 : beta3;
+                // The worker spends the exporter's share of its volume. Like the
+                // host branch below, a face fires 2^(tier(cell) - ftier(e)) times
+                // per firing of that cell, so each firing gets that fraction.
+                const int ra = global_step ? 1 : (1 << (tier(a) - ftier(e)));
+                const int rb = global_step ? 1 : (1 << (tier(b) - ftier(e)));
                 packed[idx - lo] = {float(hf),
                                     float(qhat),
                                     float(slope),
                                     float(n2(e)),
                                     float(q_mag),
                                     float(width),
-                                    float(ba * std::max(0., vol(a))),
-                                    float(bb * std::max(0., vol(b)))};
+                                    float(ba / ra * std::max(0., vol(a))),
+                                    float(bb / rb * std::max(0., vol(b)))};
                 return;
             }
 #endif
