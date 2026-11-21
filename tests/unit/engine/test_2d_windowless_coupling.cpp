@@ -75,10 +75,13 @@ namespace {
  * @param[in] coupling_cd Raw global coupling coefficient token.
  * @param[in] row_tail Optional raw map-row suffix replacing coefficient and area; null uses 0.7 and
  *     area_token.
+ * @param[in] weir True adds a 2 m2 transverse weir (0.05 x 40 m, crest 0.95 m up, top at J1's 1 m
+ *     rim) from J1 to outfall O2.
  * @return Owned forty-minute CMS deck with 100 m2 pan, four LTS tiers and J1 vertex map.
  */
 std::string build_model(double area_token, bool auto_area, double sur_depth = 0.0,
-                        const std::string& coupling_cd = "0.7", const char* row_tail = nullptr) {
+                        const std::string& coupling_cd = "0.7", const char* row_tail = nullptr,
+                        bool weir = false) {
     std::ostringstream m;
     m << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\n"
@@ -99,13 +102,18 @@ std::string build_model(double area_token, bool auto_area, double sur_depth = 0.
          "\n"
          "[OUTFALLS]\n"
          "O1     -0.5    FREE  NO\n"
-         "\n"
+      << (weir ? "O2     -0.5    FREE  NO\n" : "")
+      << "\n"
          "[CONDUITS]\n"
          "C1      J1    O1  30.0    0.013      0         0          0\n"
-         "\n"
-         "[XSECTIONS]\n"
-         "C1      CIRCULAR  0.3    0      0      0      1\n"
-         "\n"
+         "\n";
+    if (weir)
+        m << "[WEIRS]\nW1  J1  O2  TRANSVERSE  0.95  1.84  NO  0  0\n\n";
+    m << "[XSECTIONS]\n"
+         "C1      CIRCULAR  0.3    0      0      0      1\n";
+    if (weir)
+        m << "W1      RECT_OPEN 0.05   40.0   0      0\n";
+    m << "\n"
          "[2D_OPTIONS]\n"
          "INTEGRATOR       EXPLICIT\n"
          "LTS_TIERS        4\n"
@@ -162,19 +170,20 @@ struct RunResult {
  * @param[in] coupling_cd Raw global coupling coefficient token.
  * @param[in] row_tail Optional raw map-row suffix replacing coefficient and area; null uses 0.7 and
  *     area_token.
+ * @param[in] weir True adds build_model's transverse weir at J1.
  * @return Owned receipt volumes m3, dimensionless continuity and report text; ok=false on
  *     setup/inactive/node/start refusal.
  */
 RunResult run(const fs::path& dir, const std::string& tag, double area_token, bool auto_area,
               double sur_depth = 0.0, const std::string& coupling_cd = "0.7",
-              const char* row_tail = nullptr) {
+              const char* row_tail = nullptr, bool weir = false) {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
     {
         std::ofstream f(inp);
-        f << build_model(area_token, auto_area, sur_depth, coupling_cd, row_tail);
+        f << build_model(area_token, auto_area, sur_depth, coupling_cd, row_tail, weir);
     }
 
     SWMM_Engine eng = swmm_engine_create();
@@ -308,6 +317,25 @@ TEST_F(WindowlessCoupling2DTest, AutoAreaReachesLiveExchange) {
         << "fixture does not discriminate the 0.001 m² token from the derived area";
     EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min, 0.01 * ref.received_first_2min)
         << "AUTO run should drain like an explicit derived-area row";
+}
+
+// AUTO sizes the area from the largest connected CONDUIT. A weir's opening says nothing about the
+// inlet: counted, the 2 m2 weir opening here would give J1 a 2 m2 orifice (an overflow chamber's inflow
+// weir did that on the Bellinge example). With the weir connected, the AUTO run still drains like
+// a row authored at 1.25 x the pipe's area.
+TEST_F(WindowlessCoupling2DTest, AutoAreaIgnoresConnectedWeirs) {
+    const double a_auto = 1.25 * 0.25 * 3.14159265358979323846 * 0.3 * 0.3;
+    RunResult drv = run(dir_, "auto_weir_auto", 0.001, true, 0.0, "0.7", nullptr, true);
+    RunResult ref = run(dir_, "auto_weir_ref", a_auto, false, 0.0, "0.7", nullptr, true);
+    RunResult big = run(dir_, "auto_weir_big", 2.0, false, 0.0, "0.7", nullptr, true);
+    ASSERT_TRUE(drv.ok && ref.ok && big.ok);
+    ASSERT_GT(ref.received_first_2min, 0.1) << "fixture produced no early exchange";
+    // Rain-limited early on, so the 2 m2 orifice drains ~11 % more than the derived area.
+    EXPECT_GT(std::fabs(big.received_first_2min - ref.received_first_2min),
+              0.05 * ref.received_first_2min)
+        << "fixture does not discriminate a 2 m2 orifice from the derived area";
+    EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min, 0.01 * ref.received_first_2min)
+        << "AUTO sized the area from the weir, not the conduit";
 }
 
 // A map row without a CD token takes [2D_OPTIONS] COUPLING_CD: it must run

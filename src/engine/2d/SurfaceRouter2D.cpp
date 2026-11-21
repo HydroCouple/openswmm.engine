@@ -821,6 +821,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     std::vector<double> a_pipe_max_m2(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
     for (int l = 0; l < ctx.n_links(); ++l) {
         const auto ul = static_cast<std::size_t>(l);
+        // Conduits only: a weir's or an orifice's opening says nothing about the inlet the
+        // surface drains through (an overflow chamber's 2 m2 weir gave its manhole a 2 m2 orifice).
+        if (ctx.links.type[ul] != LinkType::CONDUIT)
+            continue;
         for (const int n : {ctx.links.node1[ul], ctx.links.node2[ul]}) {
             if (n < 0)
                 continue;
