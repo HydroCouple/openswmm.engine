@@ -116,7 +116,7 @@ a:hover { color: var(--hc-link-hover); }
 .hc-topbar {
   flex: 0 0 100%;
   position: relative;
-  z-index: 102;
+  z-index: 10000; /* above Doxygen's menu bar (.sm, z-index 9999 in tabs.css) so the Documentation menu is on top */
   background: var(--hc-nav-bg);
   backdrop-filter: saturate(1.4) blur(10px);
   -webkit-backdrop-filter: saturate(1.4) blur(10px);
@@ -340,6 +340,17 @@ a span.tt { color: var(--hc-link) !important; }
 #page-nav a:is(:hover, :focus) { color: var(--hc-link-hover) !important; }
 div.nav-sync-icon { background: var(--hc-surface) !important; border-color: var(--hc-line) !important; }
 #nav-tree { border-color: var(--hc-line) !important; }
+
+/* Member labels (inline, virtual...), the N/C/F icons of the index trees, level selectors and
+   parameter names: doxygen-awesome and doxygen.css color these with fixed or link colors that fail
+   contrast in dark mode. */
+span.mlabel, .memtitle .mlabel, span.icon {
+  background: var(--hc-primary) !important;
+  color: var(--hc-on-primary) !important;
+  border: 0 !important;
+}
+div.levels span, div.levels a { color: var(--hc-link) !important; }
+.paramname em, td.paramname em, .paramname { color: var(--hc-on-flag-soft) !important; }
 
 /* Bottom bar (breadcrumb and generator note) */
 #nav-path, #nav-path ul {

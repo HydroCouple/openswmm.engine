@@ -38,6 +38,12 @@
 .hc-diagram__viewport.is-dragging { cursor: grabbing; }
 .hc-diagram__canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
 .hc-diagram__canvas > svg { display: block; max-width: none !important; }
+/* Mermaid sizes each HTML label when it renders. Page styles that change a label's line height or
+   margins or font size afterwards (doxygen-awesome sets them on paragraphs in div.contents) clip
+   wrapped text. */
+.hc-diagram__canvas foreignObject p,
+.hc-diagram__canvas foreignObject span,
+.hc-diagram__canvas foreignObject div { line-height: 1.5 !important; margin: 0 !important; font-size: inherit !important; }
 .hc-diagram__source { margin: 0; padding: 0.8rem 1rem; white-space: pre-wrap; font-family: var(--hc-font-mono); font-size: 0.85rem; color: var(--hc-text); }
 .hc-diagram--error .hc-diagram__viewport { cursor: default; }
 .hc-diagram--error .hc-diagram__canvas { position: static; transform: none !important; }
