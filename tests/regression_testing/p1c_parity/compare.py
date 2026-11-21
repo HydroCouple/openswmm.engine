@@ -5,6 +5,15 @@ Reports per-dataset max |abs| and max |rel| difference and checks agreement
 against the CVODE solver tolerance (atol=1e-6, rtol=1e-4 from SolverOptions2D).
 Not bit-identical is expected (GMRES parallel reductions reassociate FP); the
 claim under test is tolerance-level agreement.
+
+Storage precision (E1, 2026-09-07): the engine now writes float32 by default
+([2D_OPTIONS] OUTPUT_PRECISION FLOAT32). float32 keeps ~7 significant digits,
+so a float32 file compared against a float64 file (or two float32 files
+written by different binaries) carries a storage rounding of up to
+|x| * 6e-8 per value -- three orders below RTOL, so the tolerance above is
+unaffected. For a BIT-EXACT comparison (the trackI census, bitwise
+regressions) write both runs with OUTPUT_PRECISION FLOAT64; the file's root
+attribute `precision` records which was used, and this script prints it.
 """
 import sys
 import h5py
@@ -14,6 +23,12 @@ ATOL, RTOL = 1.0e-6, 1.0e-4  # SolverOptions2D defaults
 
 a = h5py.File("serial.h5", "r")
 b = h5py.File("gpu.h5", "r")
+
+def _precision(f):
+    p = f.attrs.get("precision", b"float64")
+    return p.decode() if isinstance(p, (bytes, bytearray)) else str(p)
+
+print(f"storage precision: serial={_precision(a)} gpu={_precision(b)}")
 
 # Physical result fields (skip static geometry/topology which are bit-identical).
 fields = [

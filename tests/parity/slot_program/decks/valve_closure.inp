@@ -1,0 +1,49 @@
+[TITLE]
+Slot program fixture (d): valve-closure surge. Steady full-bore flow through
+an in-line orifice that CONTROLS slam shut at t = 1 h; the pressure front
+that forms is the surge the slot celerity governs. Gates: monotone head
+rise at J1, no post-closure ringing, dt does not collapse at the front.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             02:00:00
+REPORT_STEP          00:00:30
+ROUTING_STEP         0.25
+FV_SLOT_CELERITY     100
+LENGTHENING_STEP     0
+
+[JUNCTIONS]
+J0     100.0 80.0 0 0 0
+J1     100.0 80.0 0 0 0
+
+[OUTFALLS]
+OF     100.0 FIXED 112.0 NO
+
+[CONDUITS]
+C1     J0   J1 1500 0.013 0 0 0
+
+[ORIFICES]
+;;Name From To Type Offset Cd Gated CloseTime
+V1     J1   OF SIDE 0.0 0.65 NO 0
+
+[XSECTIONS]
+C1     CIRCULAR 3 0 0 0 1
+V1     CIRCULAR 3 0 0 0 1
+
+[INFLOWS]
+J0     FLOW "" FLOW 1.0 1.0 40.0
+
+[CONTROLS]
+RULE SLAM
+IF SIMULATION TIME > 1.0
+THEN ORIFICE V1 SETTING = 0.0
+
+[REPORT]
+CONTINUITY YES
+FLOWSTATS YES
+NODES ALL
+LINKS ALL

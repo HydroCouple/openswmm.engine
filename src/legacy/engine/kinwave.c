@@ -18,6 +18,17 @@
 //   Build 5.2.4:
 //   - Arguments to function link_getLossRate changed again.
 //-----------------------------------------------------------------------------
+
+/**
+ * @file      kinwave.c
+ * @brief     Kinematic-wave conduit routing calculations.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #define _CRT_SECURE_NO_DEPRECATE
 
 #include <math.h>
@@ -25,21 +36,21 @@
 #include "findroot.h"
 
 //-----------------------------------------------------------------------------
-//  Constants 
+//  Constants
 //-----------------------------------------------------------------------------
-static const double WX      = 0.6;     // distance weighting
-static const double WT      = 0.6;     // time weighting
-static const double EPSIL   = 0.001;   // convergence criterion
+static const double WX = 0.6;      // distance weighting
+static const double WT = 0.6;      // time weighting
+static const double EPSIL = 0.001; // convergence criterion
 
 //-----------------------------------------------------------------------------
 //  Shared variables
 //-----------------------------------------------------------------------------
-static double   Beta1;
-static double   C1;
-static double   C2;
-static double   Afull;
-static double   Qfull;
-static TXsect*  pXsect;
+static double Beta1;
+static double C1;
+static double C2;
+static double Afull;
+static double Qfull;
+static TXsect* pXsect;
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)
@@ -49,41 +60,43 @@ static TXsect*  pXsect;
 //-----------------------------------------------------------------------------
 //  Local functions
 //-----------------------------------------------------------------------------
-static int   solveContinuity(double qin, double ain, double* aout);
-static void  evalContinuity(double a, double* f, double* df, void* p);
+static int solveContinuity(double qin, double ain, double* aout);
+static void evalContinuity(double a, double* f, double* df, void* p);
 
 /*!
 * \brief Finds outflow over time step tStep given flow entering a
 * conduit using Kinematic Wave flow routing.
-* \param[in] linkIndex Link index
-* \param[in] qinflow Inflow at current time (cfs)
-* \param[out] qoutflow Outflow at current time (cfs)
-* \param[in] tStep Time step (sec)
+* @par Implementation arguments
+ * - linkIndex (in): Link index
+* - qinflow (in): Inflow at current time (cfs)
+* - qoutflow (out): Outflow at current time (cfs)
+* - tStep (in): Time step (sec)
 * \return Returns number of iterations used
 * \details
 *  Orientation of link and variables:
-*  q1, a1, q2, a2, q3, a3, x, t 
-*                               ^ q3 
-*  t                            |   
+*  q1, a1, q2, a2, q3, a3, x, t
+*                               ^ q3
+*  t                            |
 *  |          qin, ain |-------------------| qout, aout
 *  |                   |  Flow --->        |
 *  |----> x     q1, a1 |-------------------| q2, a2
 */
-int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tStep)
-{
-    int    k;
-    int    result = 1;
+int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tStep) {
+    int k;
+    int result = 1;
     double dxdt, dq;
     double ain, aout;
     double qin, qout;
     double a1, a2, q1, q2, q3;
 
     // --- no routing for non-conduit link
-    (*qoutflow) = (*qinflow); 
-    if ( Link[linkIndex].type != CONDUIT ) return result;
+    (*qoutflow) = (*qinflow);
+    if (Link[linkIndex].type != CONDUIT)
+        return result;
 
     // --- no routing for dummy xsection
-    if ( Link[linkIndex].xsect.type == DUMMY ) return result;
+    if (Link[linkIndex].xsect.type == DUMMY)
+        return result;
 
     // --- assign module-level variables
     pXsect = &Link[linkIndex].xsect;
@@ -91,7 +104,7 @@ int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tSt
     Afull = Link[linkIndex].xsect.aFull;
     k = Link[linkIndex].subIndex;
     Beta1 = Conduit[k].beta / Qfull;
- 
+
     // --- normalize previous flows
     q1 = Conduit[k].q1 / Qfull;
     q2 = Conduit[k].q2 / Qfull;
@@ -100,37 +113,37 @@ int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tSt
     qin = (*qinflow) / Conduit[k].barrels / Qfull;
 
     // --- compute evaporation and infiltration loss rate
-    q3 = link_getLossRate(linkIndex, KW, qin*Qfull, tStep) / Qfull;
+    q3 = link_getLossRate(linkIndex, KW, qin * Qfull, tStep) / Qfull;
 
     // --- normalize previous areas
     a1 = Conduit[k].a1 / Afull;
     a2 = Conduit[k].a2 / Afull;
 
     // --- use full area when inlet flow >= full flow
-    if ( qin >= 1.0 ) ain = 1.0;
+    if (qin >= 1.0)
+        ain = 1.0;
 
     // --- get normalized inlet area corresponding to inlet flow
-    else ain = xsect_getAofS(pXsect, qin/Beta1) / Afull;
+    else
+        ain = xsect_getAofS(pXsect, qin / Beta1) / Afull;
 
     // --- check for no flow
-    if ( qin <= TINY && q2 <= TINY )
-    {
+    if (qin <= TINY && q2 <= TINY) {
         qout = 0.0;
         aout = 0.0;
     }
 
     // --- otherwise solve finite difference form of continuity eqn.
-    else
-    {
+    else {
         // --- compute constant factors
         dxdt = link_getLength(linkIndex) / tStep * Afull / Qfull;
-        dq   = q2 - q1;
-        C1   = dxdt * WT / WX;
-        C2   = (1.0 - WT) * (ain - a1);
-        C2   = C2 - WT * a2;
-        C2   = C2 * dxdt / WX;
-        C2   = C2 + (1.0 - WX) / WX * dq - qin;
-        C2   = C2 + q3 / WX;
+        dq = q2 - q1;
+        C1 = dxdt * WT / WX;
+        C2 = (1.0 - WT) * (ain - a1);
+        C2 = C2 - WT * a2;
+        C2 = C2 * dxdt / WX;
+        C2 = C2 + (1.0 - WX) / WX * dq - qin;
+        C2 = C2 + q3 / WX;
 
         // --- starting guess for aout is value from previous time step
         aout = a2;
@@ -139,16 +152,17 @@ int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tSt
         result = solveContinuity(qin, ain, &aout);
 
         // --- report error if continuity eqn. not solved
-        if ( result == -1 )
-        {
+        if (result == -1) {
             report_writeErrorMsg(ERR_KINWAVE, Link[linkIndex].ID);
             return 1;
         }
-        if ( result <= 0 ) result = 1;
+        if (result <= 0)
+            result = 1;
 
         // --- compute normalized outlet flow from outlet area
-        qout = Beta1 * xsect_getSofA(pXsect, aout*Afull);
-        if ( qin > 1.0 ) qin = 1.0;
+        qout = Beta1 * xsect_getSofA(pXsect, aout * Afull);
+        if (qin > 1.0)
+            qin = 1.0;
     }
 
     // --- save new flows and areas
@@ -156,15 +170,25 @@ int kinwave_execute(int linkIndex, double* qinflow, double* qoutflow, double tSt
     Conduit[k].a1 = ain * Afull;
     Conduit[k].q2 = qout * Qfull;
     Conduit[k].a2 = aout * Afull;
-    Conduit[k].fullState =
-        link_getFullState(Conduit[k].a1, Conduit[k].a2, Afull);
-    (*qinflow)  = Conduit[k].q1 * Conduit[k].barrels;
+    Conduit[k].fullState = link_getFullState(Conduit[k].a1, Conduit[k].a2, Afull);
+    (*qinflow) = Conduit[k].q1 * Conduit[k].barrels;
     (*qoutflow) = Conduit[k].q2 * Conduit[k].barrels;
     return result;
 }
 
 //=============================================================================
 
+/**
+ * @brief Solve the normalized kinematic-wave continuity equation for outlet area.
+ * @param[in] qin Upstream flow normalized by full flow, dimensionless.
+ * @param[in] ain Upstream area normalized by full area, dimensionless.
+ * @param[in,out] aout Non-null initial outlet-area guess, replaced with a root
+ * or an applicable full/no-flow fallback, dimensionless.
+ * @return Positive Newton evaluation count, -1 if Newton fails, -2 if the
+ * residual implies above-maximum flow, or -3 for below-zero flow.
+ * @pre kinwave_execute() has set pXsect, Afull, Beta1, C1 and C2.
+ * The root tolerance is EPSIL in normalized area units.
+ */
 int solveContinuity(double qin, double ain, double* aout)
 //
 //  Input:   qin = upstream normalized flow
@@ -184,10 +208,10 @@ int solveContinuity(double qin, double ain, double* aout)
 //           in kinwave_execute().
 //
 {
-    int    n;                          // # evaluations or error code
-    double aLo, aHi, aTmp;             // lower/upper bounds on a
-    double fLo, fHi;                   // lower/upper bounds on f
-    double tol = EPSIL;                // absolute convergence tol.
+    int n;                 // # evaluations or error code
+    double aLo, aHi, aTmp; // lower/upper bounds on a
+    double fLo, fHi;       // lower/upper bounds on f
+    double tol = EPSIL;    // absolute convergence tol.
 
     // --- first determine bounds on 'a' so that f(a) passes through 0.
 
@@ -197,15 +221,13 @@ int solveContinuity(double qin, double ain, double* aout)
 
     // --- try setting lower bound to area where section factor is maximum
     aLo = xsect_getAmax(pXsect) / Afull;
-    if ( aLo < aHi )
-    {
-        fLo = ( Beta1 * pXsect->sMax ) + (C1 * aLo) + C2;
-    }
-    else fLo = fHi;
+    if (aLo < aHi) {
+        fLo = (Beta1 * pXsect->sMax) + (C1 * aLo) + C2;
+    } else
+        fLo = fHi;
 
     // --- if fLo and fHi have same sign then set lower bound to 0
-    if ( fHi*fLo > 0.0 )
-    {
+    if (fHi * fLo > 0.0) {
         aHi = aLo;
         fHi = fLo;
         aLo = 0.0;
@@ -213,49 +235,57 @@ int solveContinuity(double qin, double ain, double* aout)
     }
 
     // --- proceed with search for root if fLo and fHi have different signs
-    if ( fHi*fLo <= 0.0 )
-    {
+    if (fHi * fLo <= 0.0) {
         // --- start search at midpoint of lower/upper bounds
         //     if initial value outside of these bounds
-		if ( *aout < aLo || *aout > aHi ) *aout = 0.5*(aLo + aHi);
+        if (*aout < aLo || *aout > aHi)
+            *aout = 0.5 * (aLo + aHi);
 
         // --- if fLo > fHi then switch aLo and aHi
-        if ( fLo > fHi )
-        {
+        if (fLo > fHi) {
             aTmp = aLo;
-            aLo  = aHi;
-            aHi  = aTmp;
+            aLo = aHi;
+            aHi = aTmp;
         }
 
-        // --- call the Newton root finder method passing it the 
+        // --- call the Newton root finder method passing it the
         //     evalContinuity function to evaluate the function
         //     and its derivatives
         n = findroot_Newton(aLo, aHi, aout, tol, evalContinuity, NULL);
 
         // --- check if root finder succeeded
-        if ( n <= 0 ) n = -1;
+        if (n <= 0)
+            n = -1;
     }
 
     // --- if lower/upper bound functions both negative then use full flow
-    else if ( fLo < 0.0 )
-    {
-        if ( qin > 1.0 ) *aout = ain;
-        else *aout = 1.0;
+    else if (fLo < 0.0) {
+        if (qin > 1.0)
+            *aout = ain;
+        else
+            *aout = 1.0;
         n = -2;
     }
 
     // --- if lower/upper bound functions both positive then use no flow
-    else if ( fLo > 0 )
-    {
+    else if (fLo > 0) {
         *aout = 0.0;
         n = -3;
-    }
-    else n = -1;
+    } else
+        n = -1;
     return n;
 }
 
 //=============================================================================
 
+/**
+ * @brief Evaluate normalized continuity and its area derivative for Newton iteration.
+ * @param[in] a Outlet area divided by full area, dimensionless.
+ * @param[out] f Non-null borrowed slot for the continuity residual.
+ * @param[out] df Non-null borrowed slot for its derivative with respect to a.
+ * @param[in] p Unused opaque callback context; may be NULL and is not retained.
+ * @pre pXsect, Afull, Beta1, C1 and C2 describe the current conduit.
+ */
 void evalContinuity(double a, double* f, double* df, void* p)
 //
 //  Input:   a = outlet normalized area
@@ -265,8 +295,8 @@ void evalContinuity(double a, double* f, double* df, void* p)
 //           w.r.t. normalized area for link with normalized outlet area 'a'.
 //
 {
-    *f  = (Beta1 * xsect_getSofA(pXsect, a*Afull)) + (C1 * a) + C2;
-    *df = (Beta1 * Afull * xsect_getdSdA(pXsect, a*Afull)) + C1;
+    *f = (Beta1 * xsect_getSofA(pXsect, a * Afull)) + (C1 * a) + C2;
+    *df = (Beta1 * Afull * xsect_getdSdA(pXsect, a * Afull)) + C1;
 }
 
 //=============================================================================

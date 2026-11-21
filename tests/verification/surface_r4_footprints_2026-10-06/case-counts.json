@@ -1,0 +1,66 @@
+{
+  "suites": {
+    "test_engine_2d_inertial_marcher": {
+      "cases": 11,
+      "failures": 0
+    },
+    "test_engine_common_source_stage": {
+      "cases": 29,
+      "failures": 0
+    },
+    "test_engine_gw_source_forcing": {
+      "cases": 4,
+      "failures": 0
+    },
+    "test_engine_gw_transport_kernel": {
+      "cases": 30,
+      "failures": 0
+    },
+    "test_engine_lid": {
+      "cases": 55,
+      "failures": 0
+    },
+    "test_engine_lid_nodes": {
+      "cases": 53,
+      "failures": 0
+    },
+    "test_engine_runoff": {
+      "cases": 17,
+      "failures": 0
+    },
+    "test_engine_runtime_coupling_api": {
+      "cases": 4,
+      "failures": 0
+    },
+    "test_engine_sigma_conservation": {
+      "cases": 11,
+      "failures": 0
+    },
+    "test_engine_source_clock_groups": {
+      "cases": 16,
+      "failures": 0
+    },
+    "test_engine_source_water_driver": {
+      "cases": 28,
+      "failures": 0
+    },
+    "test_engine_surface_aquifer_receiving": {
+      "cases": 16,
+      "failures": 0
+    },
+    "test_engine_surface_et_budget": {
+      "cases": 12,
+      "failures": 0
+    },
+    "test_engine_surface_exchange": {
+      "cases": 15,
+      "failures": 0
+    },
+    "test_engine_surface_ownership": {
+      "cases": 10,
+      "failures": 0
+    }
+  },
+  "total": 311,
+  "unique_run": "qualified-cases"
+}

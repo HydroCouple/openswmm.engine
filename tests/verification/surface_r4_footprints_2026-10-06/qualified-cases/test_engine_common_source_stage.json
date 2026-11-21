@@ -1,0 +1,312 @@
+{
+  "tests": 29,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T11:26:54Z",
+  "time": "0.031s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "CommonSourceStage",
+      "tests": 29,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T11:26:54Z",
+      "time": "0.031s",
+      "testsuite": [
+        {
+          "name": "MeshAndTwoIndependentSourcesShareScarceReceiverBeforeDebits",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 137,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0.001s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "UnusedIntervalAwardsReturnToReceiverWithoutExtraDonorWithdrawal",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 163,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "SaturatedReceiverKeepsDeniedWaterInMeshAndBothSources",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 177,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "StableNamesGiveTheSameAwardsAfterSourceOrderChanges",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 187,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "NativeLidBottomAndNonLidCompeteWithMeshAndRemainPaired",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 196,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "DeniedCellShareNeverMigratesToAnotherReceiver",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 207,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "PendingNodeArrivalReducesHeadroomAndFutureExtractionDoesNotAddIt",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 221,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "MeshWeatherUsesOnlyRemainingAreaAndKeepsExistingEvaporationGate",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 230,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "ProfileFailureDoesNotInstallWaterOrAdvanceAnyClock",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 240,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "UnsupportedOrIncompleteReviewedGroupsCannotAttach",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 249,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "ActualMarcherSourcePhaseAdvancesDryPinnedSourcesAndTailTogether",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 259,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0.001s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "RegistrationRequiresMatchingInitialFirstOrderMesh",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 274,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "IncomingFaceWaterLandsBeforeDryMeshDonorRequestsAreGathered",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 288,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "DryOwnerDemandUsesReviewedAreasAndOneSoilStressForQualifiedClosuresAndAllLaws",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 300,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "WetImperviousEvaporationCannotConsumeDryPerviousDemand",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 318,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "MixedSourceDoesNotUseLegacyImperviousCarryInAsPerviousEvaporation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 330,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "OpenAndSealedLidStoresPayTheirOwnDemandBeforeSoil",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 346,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "FullLidFootprintDoesNotAddAnExtraNonLidAtmosphericBudget",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 369,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "CoveredAndUncoveredBarrelRemaindersExpireOnTheirOwnFootprint",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 377,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "FailedIntervalCannotInstallAnyAtmosphericReceiptOrFutureDemand",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 391,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "OwnerSpecificDemandKeepsCellProvenanceAcrossSourceOrderAndCadence",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 404,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "MarcherConsumesPastSoilDemandWithoutDuplicatingMeshOrSourceEvaporation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 422,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "ExistingEtModesConsumeOnlyEligibleCompletedDemand",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 434,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "ComponentAreasMustCloseEvenWhenTotalWeatherCoverageCloses",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 444,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "QualifiedSigmaMarchesCompletedOwnerEtWithMovingTable",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 455,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0.006s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "PartialInsideSourcesKeepOutsideLossAndWeatherSeparate",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 475,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "ConnectedOutsideOnlyPeerKeepsItsNativePath",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 488,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "GeneralizedNativeAndSealedLidFootprintsSpendOnlyTheirInsideAwards",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 496,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0.015s",
+          "classname": "CommonSourceStage"
+        },
+        {
+          "name": "PartialAreasKeepScarceAwardsInTheirCellsAcrossSourceOrder",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_common_source_stage.cpp",
+          "line": 528,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:54Z",
+          "time": "0s",
+          "classname": "CommonSourceStage"
+        }
+      ]
+    }
+  ]
+}

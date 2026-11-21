@@ -1,7 +1,11 @@
 /**
- * @file GeoPackagePluginInfo.cpp
- * @brief IPluginComponentInfo implementation for the GeoPackage I/O plugin.
+ * @file      GeoPackagePluginInfo.cpp
+ * @brief     IPluginComponentInfo implementation for the GeoPackage I/O plugin.
  * @ingroup engine_geopackage
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include "GeoPackagePluginInfo.hpp"
@@ -58,12 +62,18 @@ bool GeoPackagePluginInfo::register_plugin(const RegistrationInfo& info) {
 // what keeps the symbol off the engine DLL export table.
 
 #if defined(__GNUC__) || defined(__clang__)
-#  define OPENSWMM_GPKG_HIDDEN __attribute__((visibility("hidden")))
+#define OPENSWMM_GPKG_HIDDEN __attribute__((visibility("hidden")))
 #else
-#  define OPENSWMM_GPKG_HIDDEN
+#define OPENSWMM_GPKG_HIDDEN
 #endif
 
-extern "C" OPENSWMM_GPKG_HIDDEN
-openswmm::IPluginComponentInfo* openswmm_plugin_info(void) {
+/**
+ * @brief Borrow GeoPackage singleton metadata through the hidden compatibility factory.
+ *
+ * This symbol is intentionally hidden from the engine shared-library discovery surface; use the
+ * registered built-in factory for supported discovery.
+ * @return Non-owning IPluginComponentInfo pointer; do not delete.
+ */
+extern "C" OPENSWMM_GPKG_HIDDEN openswmm::IPluginComponentInfo* openswmm_plugin_info(void) {
     return &openswmm::gpkg::GeoPackagePluginInfo::instance();
 }

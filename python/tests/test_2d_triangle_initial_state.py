@@ -1,11 +1,11 @@
 """Per-triangle initial depth and velocity through the Python bindings.
 
-Pins the contract of the four ``[2D_TRIANGLES]``/``[2D_INITIAL_VELOCITY]``
-initial-condition bindings added to ``Surface2D``:
-``get_triangle_init_depth`` / ``set_triangle_init_depth`` and
-``get_triangle_init_velocity`` / ``set_triangle_init_velocity``. Values
-authored in the ``.inp`` read back; runtime writes round-trip; invalid
-values raise.
+Pins the contract of the ``[2D_TRIANGLES]``/``[2D_INITIAL_VELOCITY]``/
+``[2D_INITIAL_HGL]`` initial-condition bindings on ``Surface2D``:
+``get_triangle_init_depth`` / ``set_triangle_init_depth``,
+``get_triangle_init_velocity`` / ``set_triangle_init_velocity`` and
+``get_triangle_init_hgl`` / ``set_triangle_init_hgl``. Values authored in the
+``.inp`` read back; runtime writes round-trip; invalid values raise.
 
 Outputs land in ``tests/_artifacts/<test id>/`` for review (project
 convention -- no hidden temp files).
@@ -17,7 +17,7 @@ import math
 import os
 import unittest
 
-from openswmm.engine import Solver
+from openswmm.engine import BadParamError, BadIndexError, Solver
 
 from ._paths import artifact_dir
 
@@ -111,11 +111,54 @@ class TwoDTriangleInitialStateTest(unittest.TestCase):
 
     def test_invalid_depth_raises(self):
         surf = self._open_model("depth_invalid").surface2d
-        with self.assertRaises(RuntimeError):  # negative depth
+        with self.assertRaises(BadParamError):  # negative depth
             surf.set_triangle_init_depth(0, -0.1)
-        with self.assertRaises(RuntimeError):  # bad triangle index
+        with self.assertRaises(BadIndexError):  # bad triangle index
             surf.set_triangle_init_depth(99, 0.1)
         self.assertAlmostEqual(surf.get_triangle_init_depth(0), 0.0)
+
+    # -- water-surface elevation (HGL) ----------------------------------
+
+    def test_hgl_defaults_to_unset(self):
+        surf = self._open_model("hgl_default").surface2d
+        self.assertTrue(math.isnan(surf.get_triangle_init_hgl(0)))
+        self.assertTrue(math.isnan(surf.get_triangle_init_hgl(1)))
+
+    def test_authored_hgl_reads_back(self):
+        surf = self._open_model(
+            "hgl_authored",
+            extra_sections="[2D_INITIAL_HGL]\n*  1.75\n1  0.5\n").surface2d
+        self.assertAlmostEqual(surf.get_triangle_init_hgl(0), 1.75)
+        # Below the bed (z = 1) is legal: the cell starts dry.
+        self.assertAlmostEqual(surf.get_triangle_init_hgl(1), 0.5)
+
+    def test_hgl_round_trips_and_clears(self):
+        surf = self._open_model("hgl_roundtrip").surface2d
+        surf.set_triangle_init_hgl(0, 2.5)
+        self.assertAlmostEqual(surf.get_triangle_init_hgl(0), 2.5)
+        self.assertTrue(math.isnan(surf.get_triangle_init_hgl(1)))
+        surf.set_triangle_init_hgl(0, math.nan)  # NaN clears it
+        self.assertTrue(math.isnan(surf.get_triangle_init_hgl(0)))
+
+    def test_hgl_overrides_depth_and_clamps_at_the_bed(self):
+        # Flat bed at z = 1: cell 0 at HGL 1.4 holds 0.4 m regardless of its
+        # INIT_DEPTH; cell 1 at HGL 0.5 (below the bed) starts dry.
+        s = self._open_model(
+            "hgl_seeds", triangle_rows=_WET_ROWS,
+            extra_sections="[2D_INITIAL_HGL]\n0  1.4\n1  0.5\n")
+        s.initialize()
+        s.start()
+        depths = s.surface2d.get_depths()
+        self.assertAlmostEqual(depths[0], 0.4, places=9)
+        self.assertEqual(depths[1], 0.0)
+
+    def test_invalid_hgl_raises(self):
+        surf = self._open_model("hgl_invalid").surface2d
+        with self.assertRaises(BadParamError):  # infinite elevation
+            surf.set_triangle_init_hgl(0, math.inf)
+        with self.assertRaises(BadIndexError):  # bad triangle index
+            surf.set_triangle_init_hgl(99, 1.0)
+        self.assertTrue(math.isnan(surf.get_triangle_init_hgl(0)))
 
     # -- velocity ------------------------------------------------------
 
@@ -134,11 +177,11 @@ class TwoDTriangleInitialStateTest(unittest.TestCase):
 
     def test_invalid_velocity_raises(self):
         surf = self._open_model("vel_invalid").surface2d
-        with self.assertRaises(RuntimeError):  # non-finite u
+        with self.assertRaises(BadParamError):  # non-finite u
             surf.set_triangle_init_velocity(0, math.inf, 0.0)
-        with self.assertRaises(RuntimeError):  # non-finite v
+        with self.assertRaises(BadParamError):  # non-finite v
             surf.set_triangle_init_velocity(0, 0.0, math.nan)
-        with self.assertRaises(RuntimeError):  # bad triangle index
+        with self.assertRaises(BadIndexError):  # bad triangle index
             surf.set_triangle_init_velocity(99, 1.0, 1.0)
         self.assertEqual(surf.get_triangle_init_velocity(0), (0.0, 0.0))
 

@@ -1,0 +1,42 @@
+{
+  "head": "5431760b847d267230e825f6cd1314329198cb4a",
+  "task_source_tree": "8601c59343ba88bea311331bcc15dbbec73e93aa",
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "files": {
+    "src/engine/hydrology/Runoff.cpp": "571f067ab22f7815cec198754691f809edf48e09137fe861f0b58d3e55621e52",
+    "src/engine/hydrology/Runoff.hpp": "997d99181787e7d9d8696a31a2723b47a12fe1380ad16192b417a9855e226f76",
+    "src/engine/hydrology/LID.cpp": "35bd0dffeb7360a8b2f9d60be323d065b4a93c30ea60331680ede25ea4b8ad3e",
+    "src/engine/hydrology/LID.hpp": "61f618e3bebac3c65d9eb054523e7d906554659d429c7279434fc7750e06c23c",
+    "src/engine/hydrology/SourceWaterDriver.cpp": "444a9f63bb77337bda38300770bd56b089b206a7191ffca17335d22f253d3996",
+    "src/engine/hydrology/SourceWaterDriver.hpp": "4da4a2188d61c6cae92a08d15ba11e1dd982f98f7a32d2027df20bb88b276d5a",
+    "src/engine/2d/subsurface/CommonSourceStage.cpp": "e3bf512abc6b17742eace9f45b8afdbb06bf4eeb9e7a672652b9e75365f50db7",
+    "src/engine/2d/subsurface/CommonSourceStage.hpp": "409f6207841e5614082d9633b906bf892d5d5f4d7f9a274e53e02f2503ce77a8",
+    "src/engine/2d/subsurface/SubsurfaceSections.cpp": "d3f8b0f0de580c0a954fbeb6edf1e468c2f2b655ba6d2c6992b1962ea2428cc9",
+    "tests/unit/engine/test_common_source_stage.cpp": "2750700e30a5ec697fc572c505440385a624c6cea26c8abb3372f442b974aa4c",
+    "tests/unit/engine/test_source_water_driver.cpp": "822aaa4683100f65e85a5331646af2bc09a3e32a2e65d1e87688e9c4d05f8c1e",
+    "tests/unit/engine/test_surface_ownership.cpp": "fda501d7cd533085cfba60b084848413b2f03234bd8dfc4b047f97e5147ebf01",
+    "plans/SURFACE_PROCESS_R4_PARTIAL_FOOTPRINTS_2026-10-06.md": "64b27e44d9ec94a49af83e2a42b00fac15a756c2998f6eab12b8ca60f1ff4a16"
+  },
+  "unchanged_controls": {
+    "src/engine/hydrology/LidNode.cpp": "be39f712e3c9cac90757725b7ee5a9693d9db9ba47ed5b186404cfccef6a7b25",
+    "src/engine/hydrology/LidNode.hpp": "5bcc484bf0ca72df279ff662ae9d37e9ea521ca50420eef4f3ab172fd1635f22",
+    "src/engine/hydrology/RichardsColumn.cpp": "b2c40217f37d455704f6586831dfc1beac46dfce5942fe383d2650cf95a8bcdc",
+    "src/engine/hydrology/RichardsColumn.hpp": "8ddaf000fd66c087480cda81b5cff91ba0b9a9f018efbca26a072c1b4a7babad",
+    "src/engine/hydraulics/Node.cpp": "2c335ff503d842ffb83ac28890a1c7f0981363f5a823a7d87f5654146b0149a2",
+    "src/engine/2d/subsurface/SigmaColumn.cpp": "9fb1e5373cef6bc853ebaa00a3cb4b0d1eb48c7e7ba1f8b967e94a910b8cb6d1",
+    "src/engine/2d/subsurface/SubsurfaceSolver.cpp": "50da7ce5d47954975c23d7dbb367885c9638f7b2599e8d9f1ca36b31f656ef1c",
+    "src/engine/2d/SurfaceRouter2D.cpp": "21a070a4e887c823caf5c326c28ca4ba9fbeda2840ecac142c9b0b0fba062373"
+  },
+  "library_sha256": "21dee4c506101d77602cb84cedbf1a8ad85137170238937b1b8c47d075ef7536",
+  "final_documentation_sha256": {
+    "plans/SURFACE_PROCESS_R4_PARTIAL_FOOTPRINTS_2026-10-06.md": "64b27e44d9ec94a49af83e2a42b00fac15a756c2998f6eab12b8ca60f1ff4a16",
+    "tests/verification/surface_r4_footprints_2026-10-06/README.md": "83ed9eb73b3020fd9a0e82038fd9475c802019ee7bc1da5e3146c84091c2a6e5"
+  },
+  "qualification_runner_sha256": {
+    "prepare_source.py": "572b25cab196f5f200610a2863b238f02c486938c0b7c4c30f7c9bd9f0eb8eca",
+    "run_tests.py": "0c24e2fb1a57dc52ec0d13ddf29334596466db738bd91d53f70a5b0c5528ce62",
+    "run_controls.py": "12589e3e64173c757b282c7986e7bc2da555cc2d067caa80b3fc7d5b978b7850",
+    "ordinary_controls.cpp": "c3567b3c91bf2004eaa08f2daab33715ce27d032ec31285f7e23ac2cc762ffad",
+    "summarize_qualification.py": "4a8316faaaf8c32ef7856e7ea209a7c77164453a4ac42a076d1143d6c11db026"
+  }
+}

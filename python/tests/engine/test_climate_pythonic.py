@@ -79,6 +79,7 @@ class TestClimateArrayRoundTrip(ClimateCase):
             ("evap_monthly", 12),
             ("pan_coeff", 12),
             ("wind_monthly", 12),
+            ("humidity_monthly", 12),
             ("adjust_temperature", 12),
             ("adjust_evaporation", 12),
             ("adjust_rainfall", 12),

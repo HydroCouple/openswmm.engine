@@ -1,6 +1,6 @@
 /**
- * @file test_report_options_api.cpp
- * @brief Unit tests for the [REPORT] section keys exposed via the public
+ * @file      test_report_options_api.cpp
+ * @brief     Unit tests for the [REPORT] section keys exposed via the public
  *        swmm_options_get / swmm_options_set API.
  *
  * @details Slice BV.1 (added 2026-05-22).  The engine has long stored the
@@ -14,6 +14,10 @@
  *
  *          Selector keys (ALL / NONE / "name1,name2,..."):
  *            RPT_SUBCATCHMENTS, RPT_NODES, RPT_LINKS
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -29,21 +33,44 @@ class ReportOptionsApiTest : public ::testing::Test {
 protected:
     SWMM_Engine engine = nullptr;
 
+    /**
+     * @brief Create an editable J1-to-O1 conduit model for API edits.
+     *
+     * Allocates the fixture-owned handle, adds junction/outfall/L1 conduit and connects its endpoints.
+     * Does not yet set complete hydraulic geometry or initialize a simulation. Fatal assertions leave
+     * the partial model for teardown.
+     */
     void SetUp() override {
         engine = swmm_engine_new();
         ASSERT_NE(engine, nullptr);
         // Minimal topology so swmm_model_write would succeed if a test
         // exercises it (not required for the key-level tests below).
         ASSERT_EQ(swmm_node_add(engine, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
-        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL),  SWMM_OK);
-        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT),  SWMM_OK);
-        ASSERT_EQ(swmm_link_set_nodes(engine,
-                      swmm_link_index(engine, "L1"),
-                      swmm_node_index(engine, "J1"),
-                      swmm_node_index(engine, "O1")), SWMM_OK);
+        ASSERT_EQ(swmm_node_add(engine, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(engine, "L1", SWMM_LINK_CONDUIT), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(engine, swmm_link_index(engine, "L1"),
+                                      swmm_node_index(engine, "J1"), swmm_node_index(engine, "O1")),
+                  SWMM_OK);
     }
-    void TearDown() override { if (engine) swmm_engine_destroy(engine); }
+    /**
+     * @brief Destroy the fixture engine when allocation succeeded.
+     *
+     * Releases model resources through engine destruction; the member value is not reset and must not
+     * be reused after teardown.
+     */
+    void TearDown() override {
+        if (engine)
+            swmm_engine_destroy(engine);
+    }
 
+    /**
+     * @brief Copy one report option from the live fixture engine.
+     *
+     * Records getter status expectation; no parsing, independent validity flag or model mutation.
+     *
+     * @param[in] key Non-null recognized option keyword.
+     * @return Owned text from a 512-byte zeroed buffer, possibly empty/partial after nonfatal failure.
+     */
     std::string getopt(const char* key) {
         char buf[512] = {};
         EXPECT_EQ(swmm_options_get(engine, key, buf, sizeof(buf)), SWMM_OK);
@@ -59,46 +86,53 @@ TEST_F(ReportOptionsApiTest, BoolKeyDefaults) {
     // SimulationOptions.hpp: rpt_disabled=false, rpt_input=false,
     // rpt_continuity=true, rpt_flowstats=true, rpt_controls=false,
     // rpt_averages=false.
-    EXPECT_EQ(getopt("RPT_DISABLED"),   "NO");
-    EXPECT_EQ(getopt("RPT_INPUT"),      "NO");
+    EXPECT_EQ(getopt("RPT_DISABLED"), "NO");
+    EXPECT_EQ(getopt("RPT_INPUT"), "NO");
     EXPECT_EQ(getopt("RPT_CONTINUITY"), "YES");
-    EXPECT_EQ(getopt("RPT_FLOWSTATS"),  "YES");
-    EXPECT_EQ(getopt("RPT_CONTROLS"),   "NO");
-    EXPECT_EQ(getopt("RPT_AVERAGES"),   "NO");
+    EXPECT_EQ(getopt("RPT_FLOWSTATS"), "YES");
+    EXPECT_EQ(getopt("RPT_CONTROLS"), "NO");
+    EXPECT_EQ(getopt("RPT_AVERAGES"), "NO");
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "NO");
+}
+
+TEST_F(ReportOptionsApiTest, LinkStepsRoundTrip) {
+    EXPECT_EQ(swmm_options_set(engine, "RPT_LINK_STEPS", "YES"), SWMM_OK);
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "YES");
+    EXPECT_EQ(swmm_options_set(engine, "RPT_LINK_STEPS", "NO"), SWMM_OK);
+    EXPECT_EQ(getopt("RPT_LINK_STEPS"), "NO");
 }
 
 TEST_F(ReportOptionsApiTest, BoolKeyRoundTrip) {
     // Flip each key and confirm get sees the new value.
-    EXPECT_EQ(swmm_options_set(engine, "RPT_DISABLED",   "YES"), SWMM_OK);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT",      "YES"), SWMM_OK);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_CONTINUITY", "NO"),  SWMM_OK);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_FLOWSTATS",  "NO"),  SWMM_OK);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_CONTROLS",   "YES"), SWMM_OK);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_AVERAGES",   "YES"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_DISABLED", "YES"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "YES"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_CONTINUITY", "NO"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_FLOWSTATS", "NO"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_CONTROLS", "YES"), SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_AVERAGES", "YES"), SWMM_OK);
 
-    EXPECT_EQ(getopt("RPT_DISABLED"),   "YES");
-    EXPECT_EQ(getopt("RPT_INPUT"),      "YES");
+    EXPECT_EQ(getopt("RPT_DISABLED"), "YES");
+    EXPECT_EQ(getopt("RPT_INPUT"), "YES");
     EXPECT_EQ(getopt("RPT_CONTINUITY"), "NO");
-    EXPECT_EQ(getopt("RPT_FLOWSTATS"),  "NO");
-    EXPECT_EQ(getopt("RPT_CONTROLS"),   "YES");
-    EXPECT_EQ(getopt("RPT_AVERAGES"),   "YES");
+    EXPECT_EQ(getopt("RPT_FLOWSTATS"), "NO");
+    EXPECT_EQ(getopt("RPT_CONTROLS"), "YES");
+    EXPECT_EQ(getopt("RPT_AVERAGES"), "YES");
 }
 
 TEST_F(ReportOptionsApiTest, BoolKeyAcceptsAlternateTokens) {
     // TRUE/FALSE/1/0 must work in addition to YES/NO.
-    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "TRUE"),  SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "TRUE"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_INPUT"), "YES");
     EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "FALSE"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_INPUT"), "NO");
-    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "1"),     SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "1"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_INPUT"), "YES");
-    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "0"),     SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "0"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_INPUT"), "NO");
 }
 
 TEST_F(ReportOptionsApiTest, BoolKeyRejectsGarbage) {
-    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "MAYBE"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_INPUT", "MAYBE"), SWMM_ERR_BADPARAM);
 }
 
 // ---------------------------------------------------------------------------
@@ -108,14 +142,14 @@ TEST_F(ReportOptionsApiTest, BoolKeyRejectsGarbage) {
 TEST_F(ReportOptionsApiTest, SelectorDefaultsAreAll) {
     // Default for subcatch/nodes/links is 1 = ALL.
     EXPECT_EQ(getopt("RPT_SUBCATCHMENTS"), "ALL");
-    EXPECT_EQ(getopt("RPT_NODES"),         "ALL");
-    EXPECT_EQ(getopt("RPT_LINKS"),         "ALL");
+    EXPECT_EQ(getopt("RPT_NODES"), "ALL");
+    EXPECT_EQ(getopt("RPT_LINKS"), "ALL");
 }
 
 TEST_F(ReportOptionsApiTest, SelectorAllNoneRoundTrip) {
     EXPECT_EQ(swmm_options_set(engine, "RPT_SUBCATCHMENTS", "NONE"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_SUBCATCHMENTS"), "NONE");
-    EXPECT_EQ(swmm_options_set(engine, "RPT_SUBCATCHMENTS", "ALL"),  SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_SUBCATCHMENTS", "ALL"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_SUBCATCHMENTS"), "ALL");
 
     EXPECT_EQ(swmm_options_set(engine, "RPT_NODES", "NONE"), SWMM_OK);
@@ -137,9 +171,7 @@ TEST_F(ReportOptionsApiTest, SelectorSomeListAcceptsWhitespaceDelimiters) {
 }
 
 TEST_F(ReportOptionsApiTest, SelectorSomeListEmptyTokensSkipped) {
-    EXPECT_EQ(swmm_options_set(engine, "RPT_SUBCATCHMENTS",
-                                ",,,Sub1,,Sub2,,"),
-              SWMM_OK);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_SUBCATCHMENTS", ",,,Sub1,,Sub2,,"), SWMM_OK);
     EXPECT_EQ(getopt("RPT_SUBCATCHMENTS"), "Sub1,Sub2");
 }
 
@@ -151,8 +183,6 @@ TEST_F(ReportOptionsApiTest, SelectorEmptyStringCollapsesToNone) {
 
 TEST_F(ReportOptionsApiTest, UnknownRptKeyRejected) {
     char buf[16];
-    EXPECT_EQ(swmm_options_get(engine, "RPT_BOGUS", buf, sizeof(buf)),
-              SWMM_ERR_BADPARAM);
-    EXPECT_EQ(swmm_options_set(engine, "RPT_BOGUS", "YES"),
-              SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_options_get(engine, "RPT_BOGUS", buf, sizeof(buf)), SWMM_ERR_BADPARAM);
+    EXPECT_EQ(swmm_options_set(engine, "RPT_BOGUS", "YES"), SWMM_ERR_BADPARAM);
 }

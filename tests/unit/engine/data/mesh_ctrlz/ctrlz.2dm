@@ -1,0 +1,5 @@
+[2D_VERTICES]
+0 0 1
+10 0 1
+;; a Ctrl-Z  in a comment
+0 10 1

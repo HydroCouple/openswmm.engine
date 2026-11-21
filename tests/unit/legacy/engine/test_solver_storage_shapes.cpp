@@ -39,6 +39,16 @@
  *   and it must hold regardless of how KINWAVE arrived at that depth.
  */
 
+/**
+ * @file      test_solver_storage_shapes.cpp
+ * @brief     Tests for solver storage shapes.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
+ */
+
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -46,12 +56,12 @@
 #include "openswmm_solver.h"
 
 #define US_MODEL_INP "./storage_shapes_us.inp"
-#define US_RPT       "./_storage_shapes_us.rpt"
-#define US_OUT       "./_storage_shapes_us.out"
+#define US_RPT "./_storage_shapes_us.rpt"
+#define US_OUT "./_storage_shapes_us.out"
 
 #define SI_MODEL_INP "./storage_shapes_si.inp"
-#define SI_RPT       "./_storage_shapes_si.rpt"
-#define SI_OUT       "./_storage_shapes_si.out"
+#define SI_RPT "./_storage_shapes_si.rpt"
+#define SI_OUT "./_storage_shapes_si.out"
 
 // STOR1's FUNCTIONAL coefficients, matching [STORAGE] in both fixtures:
 // area(d) = A0 + A1*d^A2;  volume(d) = A0*d + A1/(A2+1)*d^(A2+1)
@@ -60,6 +70,14 @@ constexpr double A0 = 50.0;
 constexpr double A1 = 10.0;
 constexpr double A2 = 2.0;
 
+/**
+ * @brief Integrate the fixture's functional storage area law analytically.
+ *
+ * Pure reference formula without clamping/finite checks or production storage access.
+ *
+ * @param[in] depth Intended nonnegative storage depth in project feet.
+ * @return A0*depth+A1*depth^(A2+1)/(A2+1) in ft3 for fixture constants.
+ */
 double expectedVolume(double depth) {
     return A0 * depth + (A1 / (A2 + 1.0)) * std::pow(depth, A2 + 1.0);
 }
@@ -70,11 +88,23 @@ double expectedVolume(double depth) {
 // the empty or full boundary, where the geometric relation isn't the
 // thing under test. Returns the number of samples actually checked, so
 // the caller can assert the test wasn't vacuous.
-int runAndCheckConsistency(const char* inp, const char* rpt, const char* out,
-                            double relTol) {
+/**
+ * @brief Run legacy storage and assert each interior-depth volume matches its area law.
+ *
+ * Requires exclusive global legacy state. Nonfatal expectations check lookup and storage-subindex
+ * discriminator, then step without a cap, checking depths strictly away from dry/full boundaries.
+ * Ignores end/close statuses; no independent success flag or ownership escape.
+ *
+ * @param[in] inp Non-null existing fixture input.
+ * @param[in] rpt Report destination passed to global swmm_open.
+ * @param[in] out Binary output destination passed to global swmm_open.
+ * @param[in] relTol Nonnegative multiplier for max(1,abs(expected volume)) ft3 tolerance.
+ * @return Number of checked samples, possibly zero/partial after open/start/step refusal.
+ */
+int runAndCheckConsistency(const char* inp, const char* rpt, const char* out, double relTol) {
     EXPECT_EQ(swmm_open(inp, rpt, out), 0);
 
-    int idxJ1    = swmm_getIndex(swmm_NODE, "J1");
+    int idxJ1 = swmm_getIndex(swmm_NODE, "J1");
     int idxStor1 = swmm_getIndex(swmm_NODE, "STOR1");
     EXPECT_GE(idxJ1, 0);
     EXPECT_GE(idxStor1, 0);
@@ -93,7 +123,8 @@ int runAndCheckConsistency(const char* inp, const char* rpt, const char* out,
     if (swmm_start(1) == 0) {
         double elapsed = 0.0;
         do {
-            if (swmm_step(&elapsed) != 0) break;
+            if (swmm_step(&elapsed) != 0)
+                break;
 
             double d = swmm_getValue(swmm_NODE_DEPTH, idxStor1);
             double v = swmm_getValue(swmm_NODE_VOLUME, idxStor1);
@@ -103,7 +134,8 @@ int runAndCheckConsistency(const char* inp, const char* rpt, const char* out,
                 double tol = relTol * std::max(1.0, std::fabs(vExpected));
                 EXPECT_NEAR(v, vExpected, tol)
                     << "STOR1 NODE_VOLUME inconsistent with its own FUNCTIONAL "
-                       "shape at depth=" << d;
+                       "shape at depth="
+                    << d;
                 ++checked;
             }
         } while (elapsed > 0.0);
@@ -112,16 +144,16 @@ int runAndCheckConsistency(const char* inp, const char* rpt, const char* out,
     swmm_close();
     return checked;
 }
-}  // namespace
+} // namespace
 
 TEST(StorageShapeConsistency, FunctionalNewton_USUnits) {
     int checked = runAndCheckConsistency(US_MODEL_INP, US_RPT, US_OUT, 0.01);
     EXPECT_GT(checked, 0) << "No mid-range depth samples were taken — "
-                              "adjust the US fixture's inflow/duration";
+                             "adjust the US fixture's inflow/duration";
 }
 
 TEST(StorageShapeConsistency, FunctionalNewton_SIUnits) {
     int checked = runAndCheckConsistency(SI_MODEL_INP, SI_RPT, SI_OUT, 0.01);
     EXPECT_GT(checked, 0) << "No mid-range depth samples were taken — "
-                              "adjust the SI fixture's inflow/duration";
+                             "adjust the SI fixture's inflow/duration";
 }

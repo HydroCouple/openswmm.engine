@@ -1,15 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file RDII.cpp
- * @brief RDII unit hydrograph convolution — matching legacy rdii.c.
+ * @file      RDII.cpp
+ * @brief     RDII unit hydrograph convolution — matching legacy rdii.c.
  * @ingroup new_engine
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "RDII.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/ErrorCodes.hpp"
@@ -26,10 +43,11 @@ void RDIIGroupSoA::resize(int n) {
     uh_idx.assign(un, -1);
     gage_idx.assign(un, -1);
     area.assign(un, 0.0);
-    uh_data.resize(un * 3);  // 3 responses per group
+    uh_data.resize(un * 3); // 3 responses per group
     rain_interval.assign(un, 300);
-    time_accum.assign(un, 0.0);
-    rain_at_start.assign(un, 0.0);
+    gage_elapsed.assign(un, 0.0);
+    rate_recorded_until.assign(un, 0.0);
+    pending_rates.assign(un, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -40,28 +58,30 @@ void RDIIGroupSoA::resize(int n) {
 // This gives the ordinate in 1/hr units (rainfall rate per unit depth).
 // We replicate this exactly so the rest of the math is identical.
 // ---------------------------------------------------------------------------
-double RDIISolver::uhOrdinate(const UnitHydParams& uh, int month,
-                              int response, double t) const {
+double RDIISolver::uhOrdinate(const UnitHydParams& uh, int month, int response, double t) const {
     int m = month % 12;
     int k = response % 3;
-    double tp    = uh.tPeak[m][k];
+    double tp = uh.tPeak[m][k];
     double tBase = uh.tBase[m][k];
-    if (tp <= 0.0 || tBase <= 0.0) return 0.0;
-    if (t >= tBase) return 0.0;
+    if (tp <= 0.0 || tBase <= 0.0)
+        return 0.0;
+    if (t >= tBase)
+        return 0.0;
 
     // Peak ordinate in 1/hr (matching legacy: 2./tBase*3600.)
     double qPeak = 2.0 / tBase * 3600.0;
     double t2 = tBase - tp;
 
     double f;
-    if (t <= tp) f = t / tp;
-    else         f = (t2 > 0.0) ? 1.0 - (t - tp) / t2 : 0.0;
+    if (t <= tp)
+        f = t / tp;
+    else
+        f = (t2 > 0.0) ? 1.0 - (t - tp) / t2 : 0.0;
     f = std::max(f, 0.0);
     return f * qPeak;
 }
 
-int RDIISolver::addUnitHydParams(const std::string& name,
-                                 const UnitHydParams& params) {
+int RDIISolver::addUnitHydParams(const std::string& name, const UnitHydParams& params) {
     auto it = uh_name_to_idx_.find(name);
     if (it != uh_name_to_idx_.end()) {
         uh_params[static_cast<size_t>(it->second)] = params;
@@ -75,30 +95,34 @@ int RDIISolver::addUnitHydParams(const std::string& name,
 
 int RDIISolver::findUnitHyd(const std::string& name) const {
     auto it = uh_name_to_idx_.find(name);
-    if (it == uh_name_to_idx_.end()) return -1;
+    if (it == uh_name_to_idx_.end())
+        return -1;
     return it->second;
 }
 
 int RDIISolver::getRainInterval(const UnitHydParams& uh, double wet_step) {
     int ri = static_cast<int>(wet_step);
-    if (ri <= 0) ri = 300;
+    if (ri <= 0)
+        ri = 300;
     for (int m = 0; m < 12; ++m) {
         for (int k = 0; k < 3; ++k) {
             double tp = uh.tPeak[m][k];
             if (tp > 0.0) {
                 int tLimb = static_cast<int>(tp);
-                if (tLimb > 0) ri = std::min(ri, tLimb);
+                if (tLimb > 0)
+                    ri = std::min(ri, tLimb);
                 int tFall = static_cast<int>(uh.tBase[m][k] - tp);
-                if (tFall > 0) ri = std::min(ri, tFall);
+                if (tFall > 0)
+                    ri = std::min(ri, tFall);
             }
         }
     }
     return std::max(ri, 1);
 }
 
-int RDIISolver::getMaxPeriods(const UnitHydParams& uh, int response,
-                              int rainInterval) {
-    if (rainInterval <= 0) return 0;
+int RDIISolver::getMaxPeriods(const UnitHydParams& uh, int response, int rainInterval) {
+    if (rainInterval <= 0)
+        return 0;
     int k = response % 3;
     int nMax = 0;
     for (int m = 0; m < 12; ++m) {
@@ -119,9 +143,13 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
     bool any_active = false;
     for (const auto& triple : decay_params) {
         for (const auto& dp : triple) {
-            if (dp.active) { any_active = true; break; }
+            if (dp.active) {
+                any_active = true;
+                break;
+            }
         }
-        if (any_active) break;
+        if (any_active)
+            break;
     }
     if (any_active && ctx.options.temp_source == 0) {
         ctx.warnings.emplace_back(
@@ -132,37 +160,40 @@ void RDIISolver::validateExpDecay(SimulationContext& ctx) const {
 
     static const char* kResponseNames[3] = {"SHORT", "MEDIUM", "LONG"};
     for (const auto& e : ctx.rdii_decay.entries) {
-        if (findUnitHyd(e.uh_name) < 0) continue;
-        if (e.response < 0 || e.response > 2) continue;
+        if (findUnitHyd(e.uh_name) < 0)
+            continue;
+        if (e.response < 0 || e.response > 2)
+            continue;
         const char* resp = kResponseNames[e.response];
         if (e.k_dep == 0.0) {
             ctx.warnings.emplace_back(
-                "WARNING: [RDII_DECAY] k_dep = 0 for group '" + e.uh_name +
-                "' (" + resp + "): initial abstraction is disabled; excess "
+                "WARNING: [RDII_DECAY] k_dep = 0 for group '" + e.uh_name + "' (" + resp +
+                "): initial abstraction is disabled; excess "
                 "equals rainfall and the recovery parameters have no effect.");
         }
         if (e.T_freeze >= e.T_ref) {
-            ctx.warnings.emplace_back(
-                "WARNING: [RDII_DECAY] T_freeze >= T_ref for group '" +
-                e.uh_name + "' (" + resp + "): recovery is suppressed at the "
-                "reference temperature; check the freeze threshold.");
+            ctx.warnings.emplace_back("WARNING: [RDII_DECAY] T_freeze >= T_ref for group '" +
+                                      e.uh_name + "' (" + resp +
+                                      "): recovery is suppressed at the "
+                                      "reference temperature; check the freeze threshold.");
         }
         if (e.snow_on && ctx.options.temp_source == 0) {
             // With no temperature source, T is pinned at T_ref: either every
             // precipitation event becomes permanent snowpack (T_ref <= snow_T,
             // RDII silently vanishes) or the snow model never engages.
             ctx.warnings.emplace_back(
-                (e.T_ref <= e.snow_T)
-                    ? ("WARNING: [RDII_DECAY] snow model is on for group '" +
-                       e.uh_name + "' (" + resp + ") but no temperature source "
-                       "is configured and T_ref <= snow_T: all rainfall will "
-                       "accumulate as snow and never melt, producing zero RDII "
-                       "for this response.")
-                    : ("WARNING: [RDII_DECAY] snow model is on for group '" +
-                       e.uh_name + "' (" + resp + ") but no temperature source "
-                       "is configured: temperature is fixed at T_ref, so no "
-                       "snow will ever accumulate and the snow parameters have "
-                       "no effect."));
+                (e.T_ref <= e.snow_T) ? ("WARNING: [RDII_DECAY] snow model is on for group '" +
+                                         e.uh_name + "' (" + resp +
+                                         ") but no temperature source "
+                                         "is configured and T_ref <= snow_T: all rainfall will "
+                                         "accumulate as snow and never melt, producing zero RDII "
+                                         "for this response.")
+                                      : ("WARNING: [RDII_DECAY] snow model is on for group '" +
+                                         e.uh_name + "' (" + resp +
+                                         ") but no temperature source "
+                                         "is configured: temperature is fixed at T_ref, so no "
+                                         "snow will ever accumulate and the snow parameters have "
+                                         "no effect."));
         }
     }
 }
@@ -186,11 +217,22 @@ void RDIISolver::init(SimulationContext& ctx) {
         }
         auto& uh = uh_params[static_cast<size_t>(idx)];
 
-        double tPeak_sec = entry.t * 3600.0;
-        double tBase_sec = entry.t * (1.0 + entry.k) * 3600.0;
+        // PARITY rdii.c:424-426 — legacy forms the base time in HOURS and
+        // stores both times TRUNCATED to whole seconds:
+        //   tBase = t * (1.0 + k);                    // hours
+        //   UnitHyd.tPeak = (long)(t * 3600.);        // seconds
+        //   UnitHyd.tBase = (long)(tBase * 3600.);    // seconds
+        // The truncation is not cosmetic: T 0.3 h, K 2.0 gives
+        // 0.3*(1+2) = 0.8999999999999999 h, so tBase lands at 3239 s, not
+        // 3240, and qPeak = 2/tBase*3600 is 3.1e-4 HIGH for the whole run.
+        // Keeping the exact product made every short-response RTK hydrograph
+        // in 405-h-h-elements 2.9e-4 low from its first nonzero ordinate.
+        double tBase_hrs = entry.t * (1.0 + entry.k);
+        double tPeak_sec = static_cast<double>(static_cast<long>(entry.t * 3600.0));
+        double tBase_sec = static_cast<double>(static_cast<long>(tBase_hrs * 3600.0));
 
-        int m_start = (entry.month < 0) ? 0  : entry.month;
-        int m_end   = (entry.month < 0) ? 11 : entry.month;
+        int m_start = (entry.month < 0) ? 0 : entry.month;
+        int m_end = (entry.month < 0) ? 11 : entry.month;
         int k = entry.response;
 
         // Warn once per entry that re-assigns an already-assigned month;
@@ -198,22 +240,29 @@ void RDIISolver::init(SimulationContext& ctx) {
         auto& seen = params_seen[idx];
         bool repeated = false;
         for (int m = m_start; m <= m_end; ++m) {
-            if (seen[static_cast<size_t>(m)][static_cast<size_t>(k)]) repeated = true;
+            if (seen[static_cast<size_t>(m)][static_cast<size_t>(k)])
+                repeated = true;
             seen[static_cast<size_t>(m)][static_cast<size_t>(k)] = true;
         }
         if (repeated) {
-            ctx.warnings.push_back(
-                format_warning(WARN_UH_PARAMS_REPEATED, entry.name));
+            ctx.warnings.push_back(format_warning(WARN_UH_PARAMS_REPEATED, entry.name));
         }
 
         for (int m = m_start; m <= m_end; ++m) {
-            uh.r[m][k]       = entry.r;
-            uh.tPeak[m][k]   = tPeak_sec;
-            uh.tBase[m][k]   = tBase_sec;
-            uh.iaMax[m][k]   = entry.dmax;
+            uh.r[m][k] = entry.r;
+            uh.tPeak[m][k] = tPeak_sec;
+            uh.tBase[m][k] = tBase_sec;
+            uh.iaMax[m][k] = entry.dmax;
             uh.iaRecov[m][k] = entry.drecov;
-            uh.iaInit[m][k]  = entry.dinit;
+            uh.iaInit[m][k] = entry.dinit;
         }
+    }
+
+    // A gage-only UH is a valid zero-response group in legacy. Its sewer
+    // area still contributes rainfall to the RDII continuity report.
+    for (const auto& name : ctx.unit_hyds.gage_assignments) {
+        if (findUnitHyd(name) < 0)
+            addUnitHydParams(name, UnitHydParams{});
     }
 
     // Resize decay_params parallel to uh_params; default-constructed entries
@@ -223,19 +272,21 @@ void RDIISolver::init(SimulationContext& ctx) {
     // Populate decay_params from parsed [RDII_DECAY] data
     for (const auto& d : ctx.rdii_decay.entries) {
         int idx = findUnitHyd(d.uh_name);
-        if (idx < 0) continue;            // unknown UH group — silently skip
-        if (d.response < 0 || d.response > 2) continue;
+        if (idx < 0)
+            continue; // unknown UH group — silently skip
+        if (d.response < 0 || d.response > 2)
+            continue;
         auto& dp = decay_params[static_cast<size_t>(idx)][static_cast<size_t>(d.response)];
-        dp.active    = true;
-        dp.k_dep     = d.k_dep;
-        dp.k_0       = d.k_0;
-        dp.k_T       = d.k_T;
-        dp.T_ref     = d.T_ref;
+        dp.active = true;
+        dp.k_dep = d.k_dep;
+        dp.k_0 = d.k_0;
+        dp.k_T = d.k_T;
+        dp.T_ref = d.T_ref;
         dp.theta_rec = d.theta_rec;
-        dp.T_freeze  = d.T_freeze;
-        dp.snow_on   = d.snow_on;
-        dp.snow_T    = d.snow_T;
-        dp.snow_ddf  = d.snow_ddf;
+        dp.T_freeze = d.T_freeze;
+        dp.snow_on = d.snow_on;
+        dp.snow_T = d.snow_T;
+        dp.snow_ddf = d.snow_ddf;
     }
     validateExpDecay(ctx);
 
@@ -255,6 +306,13 @@ void RDIISolver::init(SimulationContext& ctx) {
 
     const auto& assigns = ctx.rdii_assigns;
     int n_assigns = assigns.count();
+
+    // Strict-grid state (see advance()) — reset for re-initialization.
+    grid_step_ = 0.0;
+    next_tick_ = 0.0;
+    grid_node_.clear();
+    grid_flows_.clear();
+
     if (n_assigns == 0) {
         groups_.count = 0;
         return;
@@ -263,11 +321,12 @@ void RDIISolver::init(SimulationContext& ctx) {
     groups_.resize(n_assigns);
     node_rdii_flow_.assign(static_cast<size_t>(ctx.n_nodes()), 0.0);
     double wet_step = ctx.options.wet_step;
+    grid_step_ = wet_step;
 
     for (int i = 0; i < n_assigns; ++i) {
         auto ui = static_cast<size_t>(i);
         groups_.node_idx[ui] = assigns.node_idx[ui];
-        groups_.area[ui]     = assigns.sewer_area[ui];
+        groups_.area[ui] = assigns.sewer_area[ui];
 
         const std::string& uh_name = assigns.uh_name[ui];
         int uh_i = findUnitHyd(uh_name);
@@ -308,6 +367,13 @@ void RDIISolver::init(SimulationContext& ctx) {
             }
         }
     }
+
+    // Grid columns: the RDII node set (legacy RdiiNodeIndex file header).
+    for (int ni : groups_.node_idx)
+        if (ni >= 0)
+            grid_node_.push_back(ni);
+    std::sort(grid_node_.begin(), grid_node_.end());
+    grid_node_.erase(std::unique(grid_node_.begin(), grid_node_.end()), grid_node_.end());
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +382,18 @@ void RDIISolver::init(SimulationContext& ctx) {
 // Subtracts initial abstraction from rainfall depth.
 // During dry periods, recovers IA at iaRecov rate.
 // ---------------------------------------------------------------------------
-static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd,
-                              int month, int response,
+/** @brief Apply the legacy wet abstraction/dry linear recovery rule for one chunk.
+ * @param uh Valid monthly abstraction depths and project-depth/day recovery rates.
+ * @param[in,out] rd Used abstraction in project rain-depth units; no ring/SWE mutation.
+ * @param month Nonnegative month, reduced modulo 12.
+ * @param response Nonnegative response, reduced modulo three.
+ * @param rainDepth Finite project precipitation depth; positive selects abstraction,
+ * nonpositive selects recovery.
+ * @param dt_sec Finite nonnegative chunk seconds, converted to days for recovery.
+ * @return Project-depth excess after available IA, or zero when dry. Wet storage gains
+ * only bounded abstracted depth; dry used IA is floored at zero. Does not clamp all
+ * monthly-parameter bounds, validate finite input or book context mass balances. */
+static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd, int month, int response,
                               double rainDepth, double dt_sec) {
     int m = month % 12;
     int k = response % 3;
@@ -351,14 +427,18 @@ static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd,
 // @see docs/RDII_ExpDecay_Implementation.md §2.2
 // ---------------------------------------------------------------------------
 double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
-    if (T_celsius < dp.T_freeze) return 0.0;
-    double k = dp.k_0 + dp.k_T
-               * std::exp(dp.theta_rec * (T_celsius - dp.T_ref));
+    if (T_celsius < dp.T_freeze)
+        return 0.0;
+    double k = dp.k_0 + dp.k_T * std::exp(dp.theta_rec * (T_celsius - dp.T_ref));
     return std::max(0.0, k);
 }
 
-/// Fahrenheit → Celsius. ClimateState.temperature stores degrees F.
-static inline double fToC(double tf) { return (tf - 32.0) * 5.0 / 9.0; }
+/** @brief Convert native climate temperature to Celsius.
+ * @param tf Fahrenheit value, borrowed by value.
+ * @return (tf-32)*5/9; no finite/range checks or state mutation. */
+static inline double fToC(double tf) {
+    return (tf - 32.0) * 5.0 / 9.0;
+}
 
 // ---------------------------------------------------------------------------
 // updateIA_exp — exponential IA depletion during storms, additive temperature-
@@ -371,16 +451,13 @@ static inline double fToC(double tf) { return (tf - 32.0) * 5.0 / 9.0; }
 // T > snow_T any SWE melts at snow_ddf*(T - snow_T)*dt_days, capped by the
 // available SWE, and the melt is added to rainfall (rain-on-snow adds).
 //
-// Mass-consistent bookkeeping: the storage is drained by exactly the depth it
-// abstracts from the rainfall (ia_consumed), and the excess is computed from
-// that same ia_consumed. Declared in RDII.hpp so unit tests can pin the
-// trajectory to the reference IAModel implementation.
+// Storage change and clipped excess use the same exponential ia_consumed term;
+// ia_consumed is not independently capped at rainDepth. Declared in RDII.hpp
+// so reference tests can pin the implemented trajectory.
 // @see docs/RDII_ExpDecay_Implementation.md §2.1
 // ---------------------------------------------------------------------------
-double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
-                    const ExpDecayParams& dp,
-                    int month, int response,
-                    double rainDepth, double dt_sec,
+double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd, const ExpDecayParams& dp,
+                    int month, int response, double rainDepth, double dt_sec,
                     const SimulationContext& ctx) {
     int m = month % 12;
     int k = response % 3;
@@ -391,21 +468,18 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
 
     // Air temperature (deg C) — needed by both the snow partition and the
     // dry-period recovery branch. Falls back to T_ref with no temp source.
-    double T_c = (ctx.options.temp_source != 0)
-                   ? fToC(ctx.climate_state.temperature)
-                   : dp.T_ref;
+    double T_c = (ctx.options.temp_source != 0) ? fToC(ctx.climate_state.temperature) : dp.T_ref;
 
     // Degree-day snow partition — transforms the precipitation input before
     // the depletion/recovery branch (reference: IAModel compute_excess_series).
     if (dp.snow_on) {
         if (T_c <= dp.snow_T) {
             rd.swe += rainDepth;
-            rainDepth = 0.0;                 // snowfall: no liquid input
+            rainDepth = 0.0; // snowfall: no liquid input
         } else if (rd.swe > 0.0) {
-            double melt = std::min(
-                rd.swe, dp.snow_ddf * (T_c - dp.snow_T) * dt_sec / 86400.0);
+            double melt = std::min(rd.swe, dp.snow_ddf * (T_c - dp.snow_T) * dt_sec / 86400.0);
             rd.swe -= melt;
-            rainDepth += melt;               // rain-on-snow adds
+            rainDepth += melt; // rain-on-snow adds
         }
     }
 
@@ -421,7 +495,8 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
 
     // Dry — additive recovery
     double kr = getRecoveryRate(dp, T_c);
-    if (kr <= 0.0) return 0.0;  // frozen ground or fully recovered
+    if (kr <= 0.0)
+        return 0.0; // frozen ground or fully recovered
 
     double dt_hr = dt_sec / 3600.0;
     double ia_new = iaMax - (iaMax - ia_avail) * std::exp(-kr * dt_hr);
@@ -435,14 +510,19 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd,
 //
 // Resets buffer if dry period exceeds buffer capacity.
 // ---------------------------------------------------------------------------
-static void updateDryPeriod(UHResponseData& rd, double rainDepth,
-                            int rainInterval) {
+/** @brief Update ring-event activity after one response's excess rainfall chunk.
+ * @param[in,out] rd Consistent allocated ring/capacity and nonnegative dry seconds.
+ * @param rainDepth Positive excess starts/continues an event; otherwise a dry chunk.
+ * @param rainInterval Positive whole seconds fitting long dry-time arithmetic.
+ * Wet after at least one ring-duration dry period clears past rain and resets write
+ * position; months are retained. Wet sets activity/dry clock; dry increases clock
+ * and marks activity until ring-duration is reached. No local bounds/overflow checks. */
+static void updateDryPeriod(UHResponseData& rd, double rainDepth, int rainInterval) {
     if (rainDepth > 0.0) {
         // If previous dry period was long enough, begin a new RDII event
         // by clearing the buffer and resetting period to 0
         // (matching legacy rdii.c lines 1278-1286)
-        if (rd.dry_seconds >=
-            static_cast<long>(rainInterval) * rd.max_periods) {
+        if (rd.dry_seconds >= static_cast<long>(rainInterval) * rd.max_periods) {
             for (int i = 0; i < rd.max_periods; ++i)
                 rd.past_rain[static_cast<size_t>(i)] = 0.0;
             rd.period = 0;
@@ -451,8 +531,7 @@ static void updateDryPeriod(UHResponseData& rd, double rainDepth,
         rd.has_past_rain = 1;
     } else {
         rd.dry_seconds += rainInterval;
-        if (rd.dry_seconds >=
-            static_cast<long>(rainInterval) * rd.max_periods) {
+        if (rd.dry_seconds >= static_cast<long>(rainInterval) * rd.max_periods) {
             rd.has_past_rain = 0;
         } else {
             rd.has_past_rain = 1;
@@ -461,145 +540,204 @@ static void updateDryPeriod(UHResponseData& rd, double rainDepth,
 }
 
 // ---------------------------------------------------------------------------
-// computeAll — matches legacy getUnitHydRdii() + getUnitHydConvol().
+// advance — the legacy createRdiiFile() driver embedded at runtime.
 //
-// 1. Accumulates rainfall over the rain interval
-// 2. At each rain interval boundary, stores rainfall depth (with IA) into
-//    per-response circular buffers
-// 3. Convolves past rainfall with UH ordinates
-// 4. Scatters RDII flow to nodes (area × rdii / UCF(RAINFALL))
+// Legacy computes RDII once, before the run, on a fixed RdiiStep (= WetStep)
+// grid anchored at StartDateTime, with each UH group's rainfall processed in
+// its own rainInterval chunks (rdii.c:800-821, getRainfall's
+// `while (gageDate < currentDate)` loop). The previous implementation ticked
+// on the runoff substep cadence and crossed at most ONE rain interval per
+// substep, so a DRY_STEP jump swallowed the intermediate intervals — dry
+// seconds, IA recovery and the convolution grid all corrupted.
+//
+// Two facts make the embedded driver exact without re-scanning gage series:
+//   1. computeRunoffTimestep caps every runoff substep at the next gage
+//      entry boundary, so the CURRENT gage rate (with the monthly adjustment
+//      applied by the caller) is the step-function rate at every chunk start
+//      inside the substep. Rates are recorded per chunk as substeps pass.
+//   2. Legacy samples the gage ONCE per driver tick (Gage.isCurrent memo) —
+//      all chunks of one tick use the FIRST chunk's rate. Replicated below.
 // ---------------------------------------------------------------------------
-void RDIISolver::computeAll(SimulationContext& ctx, int month, double dt) {
-    int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+void RDIISolver::advance(SimulationContext& ctx, double new_elapsed_sec) {
+    if (groups_.count == 0 || grid_step_ <= 0.0)
+        return;
 
-    // Zero the per-node RDII buffer before accumulating
+    // 1. Record the gage rate for every chunk whose start lies inside the
+    //    just-computed substep (chunk starts advance in rain_interval steps
+    //    from simulation start; strictly-before keeps the boundary chunk for
+    //    the substep that owns it).
+    for (int g = 0; g < groups_.count; ++g) {
+        auto ug = static_cast<size_t>(g);
+        int ri = groups_.rain_interval[ug];
+        if (ri <= 0)
+            continue;
+        int gi = groups_.gage_idx[ug];
+        double rate = 0.0;
+        if (gi >= 0 && gi < static_cast<int>(ctx.gages.rainfall.size()))
+            rate = ctx.gages.rainfall[static_cast<size_t>(gi)];
+        while (groups_.rate_recorded_until[ug] < new_elapsed_sec) {
+            groups_.pending_rates[ug].push_back(rate);
+            groups_.rate_recorded_until[ug] += static_cast<double>(ri);
+        }
+    }
+
+    // 2. Emit every strict-grid tick the runoff clock has reached (legacy
+    //    driver: elapsedTime = 0, RdiiStep, 2·RdiiStep, ... — inclusive).
+    while (next_tick_ <= new_elapsed_sec) {
+        emitTick(ctx, next_tick_);
+        next_tick_ += grid_step_;
+    }
+}
+
+void RDIISolver::emitTick(SimulationContext& ctx, double T) {
+    const int unit_sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
+    constexpr double ZERO_RDII = 0.0001; // legacy rdii.c:41 (cfs)
+
+    // Month of the tick date — legacy getRainfall computes it from
+    // currentDate and stamps it on every chunk stored this tick.
+    const double tick_date = datetime::addSeconds(ctx.options.start_date, T);
+    const int tick_month = datetime::monthOfYear(tick_date) - 1;
+
     std::fill(node_rdii_flow_.begin(), node_rdii_flow_.end(), 0.0);
 
     for (int g = 0; g < groups_.count; ++g) {
         auto ug = static_cast<size_t>(g);
         int uh_i = groups_.uh_idx[ug];
-        if (uh_i < 0 || uh_i >= static_cast<int>(uh_params.size())) continue;
+        if (uh_i < 0 || uh_i >= static_cast<int>(uh_params.size()))
+            continue;
         const auto& uh = uh_params[static_cast<size_t>(uh_i)];
-
         int ri = groups_.rain_interval[ug];
+        if (ri <= 0)
+            continue;
 
-        // Read rainfall from this group's assigned gage (legacy: UnitHyd[j].rainGage)
-        int gi = groups_.gage_idx[ug];
-        double rainfall = 0.0;
-        if (gi >= 0 && gi < static_cast<int>(ctx.gages.rainfall.size())) {
-            rainfall = ctx.gages.rainfall[static_cast<size_t>(gi)];
-        }
+        // --- legacy getRainfall: process rain chunks up to the tick.
+        // All chunks of one tick use the rate of the FIRST chunk
+        // (legacy Gage.isCurrent memo — gage_setState runs once per tick).
+        bool have_tick_rate = false;
+        double tick_rate = 0.0;
+        auto& pend = groups_.pending_rates[ug];
+        while (groups_.gage_elapsed[ug] < T) {
+            double c = groups_.gage_elapsed[ug];
+            double rate = pend.empty() ? 0.0 : pend.front();
+            if (!pend.empty())
+                pend.erase(pend.begin());
+            if (!have_tick_rate) {
+                tick_rate = rate;
+                have_tick_rate = true;
+            }
+            double rainDepth = tick_rate * static_cast<double>(ri) / 3600.0;
+            const double sewer_area_ft2 = groups_.area[ug] / ucf::Ucf[ucf::LANDAREA][unit_sys];
+            ctx.mass_balance.rdii_rainfall +=
+                rainDepth / ucf::Ucf[ucf::RAINDEPTH][unit_sys] * sewer_area_ft2;
 
-        // Capture rainfall at start of each interval (matching legacy
-        // gage_setState at gageDate, which is the interval start time).
-        if (groups_.time_accum[ug] == 0.0) {
-            groups_.rain_at_start[ug] = rainfall;
-        }
+            // IA month is the month of the CHUNK date (legacy applyIA uses
+            // gageDate); the buffer month is the tick's.
+            const double chunk_date = datetime::addSeconds(ctx.options.start_date, c);
+            const int chunk_month = datetime::monthOfYear(chunk_date) - 1;
 
-        // Track elapsed time within current rain interval
-        groups_.time_accum[ug] += dt;
-
-        // Only process when full rain interval has elapsed
-        if (groups_.time_accum[ug] < static_cast<double>(ri)) {
-            // Not yet at rain interval boundary — continue with existing
-            // convolution from buffer for continuous RDII output.
-        } else {
-            // Full interval elapsed — compute rainfall depth using the
-            // rainfall rate captured at the START of the interval (matching
-            // legacy: gage_setState(g, gageDate) where gageDate is the
-            // interval start time).
-            double rainDepth = groups_.rain_at_start[ug]
-                             * static_cast<double>(ri) / 3600.0;
-            groups_.time_accum[ug] = 0.0;
-
-            // Store into per-response buffers with IA subtraction
             for (int k = 0; k < 3; ++k) {
                 auto& rd = groups_.uh_data[ug * 3 + static_cast<size_t>(k)];
-                if (rd.max_periods <= 0) continue;
+                if (rd.max_periods <= 0)
+                    continue;
+                bool exp_on =
+                    (uh_i < static_cast<int>(decay_params.size())) &&
+                    decay_params[static_cast<size_t>(uh_i)][static_cast<size_t>(k)].active;
+                double excessDepth =
+                    exp_on ? updateIA_exp(
+                                 uh, rd,
+                                 decay_params[static_cast<size_t>(uh_i)][static_cast<size_t>(k)],
+                                 chunk_month, k, rainDepth, static_cast<double>(ri), ctx)
+                           : updateIA_linear(uh, rd, chunk_month, k, rainDepth,
+                                             static_cast<double>(ri));
 
-                // Apply initial abstraction — exponential model if a
-                // [RDII_DECAY] row is active for this (group, response),
-                // otherwise legacy linear iaRecov.
-                bool exp_on = (uh_i < static_cast<int>(decay_params.size())) &&
-                              decay_params[static_cast<size_t>(uh_i)]
-                                  [static_cast<size_t>(k)].active;
-                double excessDepth = exp_on
-                    ? updateIA_exp(uh, rd,
-                                   decay_params[static_cast<size_t>(uh_i)]
-                                                [static_cast<size_t>(k)],
-                                   month, k, rainDepth,
-                                   static_cast<double>(ri), ctx)
-                    : updateIA_linear(uh, rd, month, k, rainDepth,
-                                      static_cast<double>(ri));
-
-                // Update dry period tracking (matching legacy updateDryPeriod)
                 updateDryPeriod(rd, excessDepth, ri);
 
-                // Store in circular buffer
                 int p = rd.period;
-                if (p >= rd.max_periods) p = 0;
+                if (p >= rd.max_periods)
+                    p = 0;
                 rd.past_rain[static_cast<size_t>(p)] = excessDepth;
-                rd.past_month[static_cast<size_t>(p)] = month;
+                rd.past_month[static_cast<size_t>(p)] = tick_month;
                 rd.period = p + 1;
             }
+            groups_.gage_elapsed[ug] = c + static_cast<double>(ri);
         }
 
-        // Convolution for each response — matches legacy getUnitHydConvol()
-        // rdii_group is in rainfall-rate units (in/hr)
+        // --- legacy getUnitHydConvol: convolve past rain with UH ordinates.
         double rdii_group = 0.0;
         for (int k = 0; k < 3; ++k) {
             auto& rd = groups_.uh_data[ug * 3 + static_cast<size_t>(k)];
-            if (!rd.has_past_rain || rd.max_periods <= 0) continue;
+            if (!rd.has_past_rain || rd.max_periods <= 0)
+                continue;
 
             int pMax = rd.max_periods;
-            // Start from most recent period and work backwards
             int i_buf = rd.period - 1;
-            if (i_buf < 0) i_buf = pMax - 1;
+            if (i_buf < 0)
+                i_buf = pMax - 1;
             int p = 1;
-
             while (p < pMax) {
                 double v = rd.past_rain[static_cast<size_t>(i_buf)];
-                int    m = rd.past_month[static_cast<size_t>(i_buf)];
+                int m = rd.past_month[static_cast<size_t>(i_buf)];
                 if (v > 0.0) {
-                    // Mid-point time of UH period (matching legacy)
-                    double t = (static_cast<double>(p) - 0.5)
-                               * static_cast<double>(ri);
-                    // ordinate × R fraction (legacy: getUnitHydOrd * r[m][k])
+                    double t = (static_cast<double>(p) - 0.5) * static_cast<double>(ri);
                     double u = uhOrdinate(uh, m, k, t) * uh.r[m % 12][k];
                     rdii_group += u * v;
                 }
                 p++;
                 i_buf--;
-                if (i_buf < 0) i_buf = pMax - 1;
+                if (i_buf < 0)
+                    i_buf = pMax - 1;
             }
         }
 
-        // Convert RDII from rainfall-rate units to CFS:
-        //   rdii_cfs = rdii_group * area_ft2 / UCF(RAINFALL)
-        // where area is in project units (acres for US),
-        // converted to ft2 by dividing by Ucf[LANDAREA].
+        // Node flow: rdii × sewer area / UCF(RAINFALL) (legacy getNodeRdii).
         double area_ft2 = groups_.area[ug] / ucf::Ucf[ucf::LANDAREA][unit_sys];
-        double rdii_cfs = rdii_group * area_ft2
-                        / ucf::Ucf[ucf::RAINFALL][unit_sys];
-
-        // Buffer RDII flow per node (applied to lat_flow later via applyRdiiInflows)
+        double rdii_cfs = rdii_group * area_ft2 / ucf::Ucf[ucf::RAINFALL][unit_sys];
         int ni = groups_.node_idx[ug];
-        if (ni >= 0 && ni < static_cast<int>(node_rdii_flow_.size())) {
+        if (ni >= 0 && ni < static_cast<int>(node_rdii_flow_.size()))
             node_rdii_flow_[static_cast<std::size_t>(ni)] += rdii_cfs;
-        }
+    }
+
+    // Threshold + float32 quantization per node (legacy getNodeRdii writes
+    // REAL4 records; ZERO_RDII zeroes trace flows) and append the grid row.
+    for (std::size_t col = 0; col < grid_node_.size(); ++col) {
+        auto un = static_cast<std::size_t>(grid_node_[col]);
+        double q = (un < node_rdii_flow_.size()) ? node_rdii_flow_[un] : 0.0;
+        if (q < ZERO_RDII)
+            q = 0.0;
+        // Legacy TotalRdiiVol uses the unrounded generated flow, including
+        // the final driver tick; routed volume uses the float32 interface.
+        if (q > 0.0)
+            ctx.mass_balance.rdii_produced += q * grid_step_;
+        float qf = static_cast<float>(q);
+        node_rdii_flow_[un] = static_cast<double>(qf);
+        grid_flows_.push_back(qf);
     }
 }
 
 // ---------------------------------------------------------------------------
-// applyRdiiInflows — add buffered RDII flows to node lateral inflows.
-// Matching legacy addRdiiInflows() in routing.c which reads pre-computed
-// RDII from the interface file and adds to Node[j].newLatFlow.
+// applyRdiiInflows — add the grid row covering the routing time to node
+// lateral inflows. Legacy addRdiiInflows() streams the RDII interface file:
+// a record at date D covers [D, D + RdiiStep) and dates outside any record
+// contribute zero. The dense zero-filled grid reproduces exactly that.
 // ---------------------------------------------------------------------------
-void RDIISolver::applyRdiiInflows(SimulationContext& ctx) const {
-    for (int i = 0; i < static_cast<int>(node_rdii_flow_.size()); ++i) {
-        double q = node_rdii_flow_[static_cast<size_t>(i)];
-        if (q == 0.0) continue;
-        ctx.nodes.rdii_inflow[static_cast<size_t>(i)] += q;
+void RDIISolver::applyRdiiInflows(SimulationContext& ctx, double elapsed_sec) const {
+    if (grid_step_ <= 0.0 || grid_node_.empty())
+        return;
+    if (elapsed_sec < 0.0)
+        return;
+    auto row = static_cast<std::size_t>(std::floor(elapsed_sec / grid_step_));
+    const std::size_t ncol = grid_node_.size();
+    if ((row + 1) * ncol > grid_flows_.size())
+        return; // beyond emitted grid
+    const float* flows = grid_flows_.data() + row * ncol;
+    for (std::size_t col = 0; col < ncol; ++col) {
+        double q = static_cast<double>(flows[col]);
+        // legacy addRdiiInflows: `if (fabs(q) < FLOW_TOL) continue;`
+        if (std::fabs(q) < constants::FLOW_TOL)
+            continue;
+        auto un = static_cast<std::size_t>(grid_node_[col]);
+        if (un < ctx.nodes.rdii_inflow.size())
+            ctx.nodes.rdii_inflow[un] += q;
     }
 }
 

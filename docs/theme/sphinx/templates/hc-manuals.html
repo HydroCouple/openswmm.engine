@@ -1,0 +1,21 @@
+{#- Cross-manual menu, rendered from manuals.json. -#}
+<div class="dropdown hc-manuals">
+  <button class="btn nav-link dropdown-toggle hc-manuals__button" type="button" data-bs-toggle="dropdown" aria-expanded="false">Documentation</button>
+  <div class="dropdown-menu dropdown-menu-end hc-manuals__menu">
+    <div class="hc-manuals__groups">
+    {%- for group in hc_manuals.groups %}
+      <div class="hc-manuals__group">
+        <p class="hc-manuals__heading">{{ group.title }}</p>
+        <ul>
+        {%- for m in group.manuals %}
+          <li><a class="dropdown-item hc-manuals__item{% if m.current %} active{% endif %}" href="{{ m.url }}"{% if m.current %} aria-current="page"{% endif %}><span class="hc-manuals__title">{{ m.title }}</span><span class="hc-manuals__kind">{{ m.kind }}</span></a></li>
+        {%- endfor %}
+        </ul>
+      </div>
+    {%- endfor %}
+    </div>
+    <div class="hc-manuals__footer">
+      {%- for link in hc_manuals.links %}<a href="{{ link.url }}">{{ link.title }}</a>{%- endfor %}
+    </div>
+  </div>
+</div>

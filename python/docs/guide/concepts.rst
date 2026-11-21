@@ -53,6 +53,22 @@ EngineState — what's legal when
 The Solver moves through a strict sequence of states.  The current
 state is exposed via :attr:`Solver.state`:
 
+.. mermaid::
+
+   stateDiagram-v2
+       direction LR
+       [*] --> CREATED : Solver(...)
+       CREATED --> OPENED : open()
+       [*] --> BUILDING : ModelBuilder
+       BUILDING --> OPENED : finalize()
+       OPENED --> INITIALIZED : initialize()
+       INITIALIZED --> STARTED : start()
+       STARTED --> RUNNING : first step()
+       RUNNING --> RUNNING : step()
+       RUNNING --> ENDED : end()
+       ENDED --> CLOSED : close()
+       CLOSED --> [*]
+
 .. list-table::
    :header-rows: 1
    :widths: 20 12 68

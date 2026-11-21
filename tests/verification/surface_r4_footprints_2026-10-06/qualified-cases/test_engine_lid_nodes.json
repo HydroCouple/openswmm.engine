@@ -1,0 +1,552 @@
+{
+  "tests": 53,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-06T11:26:55Z",
+  "time": "12.198s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "LidNodes",
+      "tests": 53,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-06T11:26:55Z",
+      "time": "12.198s",
+      "testsuite": [
+        {
+          "name": "ArbitraryOrderedLayersAndValidation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 46,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RejectsDepthMismatchAndDuplicateAssignment",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 61,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "InputRoundTripPreservesRepeatedLayers",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 70,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.001s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "AtomicApiStackAndStorageAssignment",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 89,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RetainedAndMobileStorageConserveWater",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 109,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "MobileDepthVolumeInverseAcrossEveryLayer",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 129,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RoutedBucketConservation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 136,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.002s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "HotstartRetainsMoistureAndCloggingHistory",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 188,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "GeoPackagePreservesOrderedLayersAndAssignment",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 210,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0.01s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "OrdinaryLinksAreNumericallyUnchanged",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 235,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PortsRespectAvailableWaterAndBackflowCapacity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 241,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PartlySubmergedAggregateStillDrainsRetainedWater",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 255,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ElevatedInletInConnectedCellCannotFillRetainedStoreToPorosity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 271,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ChainedFreeOutletAndBackwaterHaveContinuousStorageHead",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 306,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:55Z",
+          "time": "2.249s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ElevatedPortsConserveAcrossPondingAndSurcharge",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 339,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0.006s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "FullySaturatedInitialProfileHasConnectedWaterTable",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 366,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ConvertingStorageClearsOutletAnchors",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 374,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "UndoingAddedOutletClearsItsAnchor",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 382,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "SurchargeWetsMediaToFieldCapacityConservatively",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 393,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "LayerTreatmentApiIsAtomicAndPreservedByPhysicalEdits",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 404,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "LayerRatesExpressionsAndTransfersConservePollutantMass",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 422,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "LayerTreatmentInputRoundTrip",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 442,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RoutedLayerTreatmentMassBalance",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 453,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:57Z",
+          "time": "0.036s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "SaturatedAggregateDecayConservesMass",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 507,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:58Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PollutantRenameAndDeleteFollowLayerTreatment",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 523,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:58Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ChainedDrainageAndBackflowConservePollutantMass",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 535,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:26:58Z",
+          "time": "9.006s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PercolationCanDrainBelowOneLitreWithoutLosingItsLoad",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 592,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "WeirAnchorUsesItsPhysicalCrestAndTracksStackEdits",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 613,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PondedWeirAtNonzeroInvertDrawsSurfaceWater",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 630,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PortInterfacesAllowRoundoffButPreservePhysicalOffsets",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 650,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "MobileOutletTreatmentUsesTheSameInterfaceOwnerAsHydraulics",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 662,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "MediaDrainageUsesLegacyConductivitySlope",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 699,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "SurfaceEntryReusesModifiedGreenAmptAndRespondsToPonding",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 716,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "CapacityLimitAdvancesOnlyAcceptedInfiltrationHistory",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 734,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ZeroConductivityIsAnImpermeableSurfaceReceiver",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 747,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "DrySurfaceRecoversHistoryWithoutDryingPhysicalMoisture",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 756,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ZeroClimateConductivityMultiplierDoesNotAdvanceInfiltration",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 769,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "ReversedMediaPortWettingDoesNotCountAsSurfaceInfiltration",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 780,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "PartialBackwaterReconcilesDeficitAndSuppressesDryRecovery",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 800,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "FullResaturationAndRecessionStartFromRemainingMoisture",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 815,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "V10HotstartExactlyContinuesInfiltrationAndMoisture",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 848,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "OlderHotstartExplicitlyReconstructsMissingInfiltrationHistory",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 873,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RoutedReversalResaturationRecessionAndSecondEventConserve",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 910,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.011s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsOwnsPorousStorageAndConservesCapturedSupply",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 970,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.062s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsHydrostaticPortsHaveOneDonorBudgetAcrossTrials",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 988,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsFailureDoesNotConsumeLateralWaterOrQuality",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1013,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsInpRoundTripAndMissingRetentionValidation",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1024,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.002s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsAtomicApiKeepsMaterialAndGeometryOnInvalidEdit",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1038,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsInactiveMaterialsPersistAndUnsupportedTransportFails",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1058,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsPhysicalStateIsConsistentAcrossInputUnits",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1078,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsV11RestartRestoresCompleteStorageAndRejectsChangedMaterial",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1097,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.026s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsGeoPackageRetainsSolverAndPorousLaws",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1115,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.021s",
+          "classname": "LidNodes"
+        },
+        {
+          "name": "RichardsRoutedBackwaterSupplySeepageAndQualityConserve",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_lid_nodes.cpp",
+          "line": 1127,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-06T11:27:07Z",
+          "time": "0.75s",
+          "classname": "LidNodes"
+        }
+      ]
+    }
+  ]
+}

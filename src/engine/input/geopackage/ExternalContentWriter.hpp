@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ExternalContentWriter.hpp
- * @brief Slice IO-7 — fan-out from in-memory external-file slots to the
+ * @file      ExternalContentWriter.hpp
+ * @brief     Slice IO-7 — fan-out from in-memory external-file slots to the
  *        Part D GeoPackage tables.
  *
  * @details Walks every external-file slot on `SimulationContext`
@@ -31,9 +47,9 @@
  *
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_EXTERNAL_CONTENT_WRITER_HPP
@@ -44,21 +60,29 @@
 struct sqlite3;
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::gpkg {
 
 /**
- * @brief Populate the Part D content tables for `simulation_id` from
- *        the in-memory model.
+ * @brief Populate embedded external-input content tables from a model's file slots.
  *
- * @throws GpkgError when a USE-direction slot references a missing file
- *         or when a format parser reports a hard failure.
+ * Reads time-series/rain/climate files, then routing interfaces and hot starts; source text
+ * units/layout are preserved through format adapters. Missing USE-direction files or hard parse
+ * failures throw GpkgError; SAVE hot starts may register pending state before a run. Writes
+ * incrementally without its own rollback, so caller wraps a transaction when atomic model
+ * replacement is required. Does not execute a model or materialize output scratch files; legacy
+ * adapters may accept empty/malformed rows or miss late IO errors.
+ *
+ * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller has already
+ *     created model/pollutant catalogue rows and owns transaction boundaries.
+ * @param[in] ctx Borrowed model with resolved file slots, or original tokens usable from current
+ *     cwd when no absolute cache exists.
+ * @param[in] simulation_id Owning simulation key used for embedded content foreign keys.
  */
-void write_external_content(sqlite3*                          db,
-                             const openswmm::SimulationContext& ctx,
-                             const std::string&                 simulation_id);
+void write_external_content(sqlite3* db, const openswmm::SimulationContext& ctx,
+                            const std::string& simulation_id);
 
 } // namespace openswmm::gpkg
 

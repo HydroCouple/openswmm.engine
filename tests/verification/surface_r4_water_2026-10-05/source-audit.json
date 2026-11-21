@@ -1,0 +1,35 @@
+{
+  "head": "cf242ea1ee71927f65c84af6016af7547400cef9",
+  "task_source_tree": "942cb4cdd2572b4c5b3102f9d1156e950e380371",
+  "working_file_sha256": {
+    "src/engine/hydrology/LID.hpp": "e51d6672604aa072453ec14d06dbdd1505f5c94e1cffd05f98dfdac106d010d2",
+    "src/engine/hydrology/LID.cpp": "23cecb082a78a6d8e37fa424376d25c342a50ceb86ea50c541cc2b8b0bdacb1a",
+    "src/engine/hydrology/Runoff.hpp": "fdddfb2c41b1c9373c8ec6249b76f1ec639d8db1560c956009ead0a6c318ae24",
+    "src/engine/hydrology/Runoff.cpp": "fa066b2e5e5eb075eb4201470a20365d5eec5f77b41998a52da3d6a30b8f3287",
+    "src/engine/2d/solver/ISurfaceSolver.hpp": "09f373d2f058055aed8411ad6459b758ef09ba25f37adb36d9ee32b5d6b4aa58",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "93acf0d2171d1110dbf098cd3b5522661ff72230fdef4f751454340ab80909f3",
+    "tests/unit/engine/CMakeLists.txt": "852f22dd39643b592eb35d3b87ad986e8763fd38bf6c89d5608020884f6b37cf",
+    "src/engine/hydrology/SourceWaterDriver.hpp": "40c7d2a3387041b08004df08d6e4a3c1522c925302a3bc761040c924bb9050d6",
+    "src/engine/hydrology/SourceWaterDriver.cpp": "77492ec00ecbd92d5587b21c27fdaba2d79d59c5daa0af64049c3d81063c2b85",
+    "tests/unit/engine/test_source_water_driver.cpp": "c79aa6dbeab6cc25326c7371366436d0e3596621a77b2a9b21ea3b9de00584b2",
+    "plans/SURFACE_PROCESS_R4_SOURCE_WATER_2026-10-05.md": "d6b2b9cf19096595e8f9f8b13e2166d8bb6394e950387484fcef5c6321deb58b"
+  },
+  "isolated_file_sha256": {
+    "src/engine/hydrology/LID.hpp": "e51d6672604aa072453ec14d06dbdd1505f5c94e1cffd05f98dfdac106d010d2",
+    "src/engine/hydrology/LID.cpp": "23cecb082a78a6d8e37fa424376d25c342a50ceb86ea50c541cc2b8b0bdacb1a",
+    "src/engine/hydrology/Runoff.hpp": "fdddfb2c41b1c9373c8ec6249b76f1ec639d8db1560c956009ead0a6c318ae24",
+    "src/engine/hydrology/Runoff.cpp": "fa066b2e5e5eb075eb4201470a20365d5eec5f77b41998a52da3d6a30b8f3287",
+    "src/engine/2d/solver/ISurfaceSolver.hpp": "09f373d2f058055aed8411ad6459b758ef09ba25f37adb36d9ee32b5d6b4aa58",
+    "src/engine/2d/solver/ExplicitInertialSolver.hpp": "93acf0d2171d1110dbf098cd3b5522661ff72230fdef4f751454340ab80909f3",
+    "tests/unit/engine/CMakeLists.txt": "664f9226ba43d451fe2b204701080be42ce3b67d691119e3dc4c4653faeb6f85",
+    "src/engine/hydrology/SourceWaterDriver.hpp": "40c7d2a3387041b08004df08d6e4a3c1522c925302a3bc761040c924bb9050d6",
+    "src/engine/hydrology/SourceWaterDriver.cpp": "77492ec00ecbd92d5587b21c27fdaba2d79d59c5daa0af64049c3d81063c2b85",
+    "tests/unit/engine/test_source_water_driver.cpp": "c79aa6dbeab6cc25326c7371366436d0e3596621a77b2a9b21ea3b9de00584b2",
+    "plans/SURFACE_PROCESS_R4_SOURCE_WATER_2026-10-05.md": "d6b2b9cf19096595e8f9f8b13e2166d8bb6394e950387484fcef5c6321deb58b"
+  },
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "build_code_and_cmake_match": true,
+  "qualified_code_unchanged_after_documentation": true,
+  "qualification_cases": 167,
+  "qualification_suites": 9
+}

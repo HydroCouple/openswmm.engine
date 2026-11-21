@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 GeoPackage Access
 =================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Type stubs for :mod:`openswmm.engine._geopackage`.
 
@@ -48,7 +64,7 @@ class GeoPackage:
 
         @param path: Path to the C{.gpkg} file.
         @type path: str
-        @raise RuntimeError: If the file cannot be opened.
+        @raise GeoPackageError: If the file cannot be opened.
         """
         ...
 
@@ -109,21 +125,23 @@ class GeoPackage:
     def begin(self) -> None:
         """Begin a transaction for bulk operations.
 
-        @raise RuntimeError: If the transaction cannot be started.
+        @raise LifecycleError: If a transaction is already active.
+        @raise GeoPackageError: If the transaction cannot be started.
         """
         ...
 
     def commit(self) -> None:
         """Commit the current transaction.
 
-        @raise RuntimeError: If the commit fails.
+        @raise LifecycleError: If no transaction is active.
+        @raise GeoPackageError: If the commit fails.
         """
         ...
 
     def rollback(self) -> None:
         """Roll back the current transaction.
 
-        @raise RuntimeError: If the rollback fails.
+        @raise GeoPackageError: If the rollback fails.
         """
         ...
 
@@ -273,7 +291,7 @@ class GeoPackage:
         @type units: str
         @return: Series ID (M{>= 0}).
         @rtype: int
-        @raise RuntimeError: If the series cannot be created.
+        @raise GeoPackageError: If the series cannot be created.
         """
         ...
 
@@ -292,7 +310,7 @@ class GeoPackage:
         @param flag: Quality flag (e.g. C{"A"}, C{"P"}), or C{""} for
             none.
         @type flag: str
-        @raise RuntimeError: If the write fails.
+        @raise GeoPackageError: If the write fails.
         """
         ...
 
@@ -321,7 +339,7 @@ class GeoPackage:
         @param flags: Optional list of quality-flag strings, one per
             timestamp.
         @type flags: Optional[List[str]]
-        @raise RuntimeError: If the bulk write fails.
+        @raise GeoPackageError: If the bulk write fails.
         @raise MemoryError: If the C string-pointer arrays cannot be
             allocated.
         """
@@ -385,7 +403,7 @@ class GeoPackage:
         @type sql: str
         @return: Double-precision result of the query.
         @rtype: float
-        @raise RuntimeError: If the query fails.
+        @raise GeoPackageError: If the query fails.
         """
         ...
 

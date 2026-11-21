@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_postparse_resolver.cpp
- * @brief Slice IO-3 verification — every FilePathPair slot has its
+ * @file      test_postparse_resolver.cpp
+ * @brief     Slice IO-3 verification — every FilePathPair slot has its
  *        `.absolute` populated against the .inp directory after the
  *        post-parse resolver runs.
  *
@@ -23,9 +39,9 @@
  *          touch the filesystem — they exercise the resolver as a pure
  *          string transformation against in-memory state.
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -43,18 +59,27 @@ namespace {
 
 constexpr const char* kAnchor = "/proj/sub";
 
+/**
+ * @brief Construct synthetic unresolved external-file slots for resolver tests.
+ *
+ * Includes empty slots, parent traversal, hotstart-save entries and a colon-qualified CSV column.
+ * Sets authored tokens only without calling the resolver, opening any external file or building a
+ * complete hydraulic model; caller owns later mutations.
+ * @return Owned context anchored at /proj/sub/model.inp with mixed relative/absolute FILES, gage,
+ *     climate and timeseries paths.
+ */
 SimulationContext makeContextWithSlots() {
     SimulationContext ctx;
     ctx.inp_file_path = "/proj/sub/model.inp";
 
     // [FILES] slots — mix of relative, absolute, parent-traversal.
     ctx.files.rainfall_mode = FileMode::USE;
-    ctx.files.rainfall_path = std::string("rain.dat");                  // sibling
-    ctx.files.runoff_mode   = FileMode::SAVE;
-    ctx.files.runoff_path   = std::string("./out/runoff.bin");          // subdir
-    ctx.files.rdii_mode     = FileMode::USE;
-    ctx.files.rdii_path     = std::string("../shared/rdii.dat");        // parent
-    ctx.files.inflows_path  = std::string("/abs/inflows.dat");          // absolute
+    ctx.files.rainfall_path = std::string("rain.dat"); // sibling
+    ctx.files.runoff_mode = FileMode::SAVE;
+    ctx.files.runoff_path = std::string("./out/runoff.bin"); // subdir
+    ctx.files.rdii_mode = FileMode::USE;
+    ctx.files.rdii_path = std::string("../shared/rdii.dat");  // parent
+    ctx.files.inflows_path = std::string("/abs/inflows.dat"); // absolute
     ctx.files.outflows_path = std::string("outflows.dat");
 
     openswmm::HotstartSaveEntry e;
@@ -65,7 +90,7 @@ SimulationContext makeContextWithSlots() {
 
     // Raingage data file — vector slot.
     ctx.gages.file_path.emplace_back(std::string("gage_data/g1.dat"));
-    ctx.gages.file_path.emplace_back(std::string());   // gage with no file
+    ctx.gages.file_path.emplace_back(std::string()); // gage with no file
     ctx.gages.file_path.emplace_back(std::string("/abs/g3.dat"));
 
     // Climate file.
@@ -77,7 +102,7 @@ SimulationContext makeContextWithSlots() {
     ctx.tables[t1].file_path = std::string("rain.csv");
     int t2 = ctx.tables.add("TS_COL", TableType::TIMESERIES);
     ctx.tables[t2].file_path = std::string("rainfall.csv:East_Gage");
-    int t3 = ctx.tables.add("TS_INLINE", TableType::TIMESERIES);  // empty
+    int t3 = ctx.tables.add("TS_INLINE", TableType::TIMESERIES); // empty
     (void)t3;
 
     return ctx;
@@ -125,8 +150,7 @@ TEST(PostParseResolverIO3, HotstartSaveSlotResolved) {
     auto ctx = makeContextWithSlots();
     resolve_external_file_slots(ctx, kAnchor);
     ASSERT_EQ(ctx.files.hotstart_saves.size(), 1u);
-    EXPECT_EQ(ctx.files.hotstart_saves.front().path.absolute,
-              "/proj/sub/hot/save_0.hsf");
+    EXPECT_EQ(ctx.files.hotstart_saves.front().path.absolute, "/proj/sub/hot/save_0.hsf");
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +161,26 @@ TEST(PostParseResolverIO3, GageDataFileVectorResolvedPerEntry) {
     auto ctx = makeContextWithSlots();
     resolve_external_file_slots(ctx, kAnchor);
     EXPECT_EQ(ctx.gages.file_path[0].absolute, "/proj/sub/gage_data/g1.dat");
-    EXPECT_EQ(ctx.gages.file_path[1].absolute, "");   // empty stays empty
+    EXPECT_EQ(ctx.gages.file_path[1].absolute, ""); // empty stays empty
     EXPECT_EQ(ctx.gages.file_path[2].absolute, "/abs/g3.dat");
+}
+
+// A GeoPackage model's embedded file content is materialised by the reader
+// before this pass, which binds a "<gpkg:...>" sentinel with the scratch file as
+// `.absolute`. Anchoring the sentinel lost the scratch file: a .gpkg holding an
+// external-file series then failed to open (ERROR 361).
+TEST(PostParseResolverIO3, GeoPackageScratchFileKept) {
+    auto ctx = makeContextWithSlots();
+    int idx = ctx.tables.add("TS_GPKG", TableType::TIMESERIES);
+    ctx.tables[idx].file_path.original = "<gpkg:input_timeseries:TS_GPKG>";
+    ctx.tables[idx].file_path.absolute = "/proj/sub/model.scratch/ts.dat";
+    ctx.options.temp_file.original = "<gpkg:climate_data>";
+    ctx.options.temp_file.absolute = "/proj/sub/model.scratch/climate.dat";
+    resolve_external_file_slots(ctx, kAnchor);
+    EXPECT_EQ(ctx.tables[idx].file_path.absolute, "/proj/sub/model.scratch/ts.dat");
+    EXPECT_EQ(ctx.options.temp_file.absolute, "/proj/sub/model.scratch/climate.dat");
+    // An ordinary relative slot is still anchored.
+    EXPECT_EQ(ctx.files.rainfall_path.absolute, "/proj/sub/rain.dat");
 }
 
 TEST(PostParseResolverIO3, ClimateTempFileResolved) {
@@ -163,10 +205,8 @@ TEST(PostParseResolverIO3, TimeseriesColumnSuffixPreservedInAbsolute) {
     resolve_external_file_slots(ctx, kAnchor);
     int idx = ctx.find_timeseries("TS_COL");
     ASSERT_GE(idx, 0);
-    EXPECT_EQ(ctx.tables[idx].file_path.original,
-              "rainfall.csv:East_Gage");
-    EXPECT_EQ(ctx.tables[idx].file_path.absolute,
-              "/proj/sub/rainfall.csv:East_Gage");
+    EXPECT_EQ(ctx.tables[idx].file_path.original, "rainfall.csv:East_Gage");
+    EXPECT_EQ(ctx.tables[idx].file_path.absolute, "/proj/sub/rainfall.csv:East_Gage");
 }
 
 TEST(PostParseResolverIO3, InlineTimeseriesUnchanged) {
@@ -188,10 +228,8 @@ TEST(PostParseResolverIO3, EmptyAnchorLeavesAbsoluteAsNormalisedToken) {
     // With empty anchor, resolveRelative returns the token lexically
     // normalised; "./out/runoff.bin" becomes "out/runoff.bin".
     EXPECT_EQ(ctx.files.runoff_path.original, "./out/runoff.bin");
-    EXPECT_NE(ctx.files.runoff_path.absolute.find("out"),
-              std::string::npos);
-    EXPECT_NE(ctx.files.runoff_path.absolute.find("runoff.bin"),
-              std::string::npos);
+    EXPECT_NE(ctx.files.runoff_path.absolute.find("out"), std::string::npos);
+    EXPECT_NE(ctx.files.runoff_path.absolute.find("runoff.bin"), std::string::npos);
 }
 
 TEST(PostParseResolverIO3, ReresolvingClearsThenRepopulates) {

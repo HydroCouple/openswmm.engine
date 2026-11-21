@@ -7,6 +7,7 @@ from openswmm.engine import (
     ModelEditor,
     ImpactEntry,
     ConversionResult,
+    TypeChange,
     NodeType,
     LinkType,
     BadParamError,
@@ -344,6 +345,43 @@ class TestConvertNode(unittest.TestCase):
         ed = ModelEditor(m)
         result = ed.convert_node(0, NodeType.JUNCTION)
         self.assertTrue(all(isinstance(w, str) for w in result.warnings))
+
+
+# ---------------------------------------------------------------------------
+# Type conversion — batches
+# ---------------------------------------------------------------------------
+
+class TestConvertTypes(unittest.TestCase):
+    def _model(self):
+        m = ModelBuilder()
+        m.add_node("A", NodeType.JUNCTION)
+        m.add_node("B", NodeType.OUTFALL)
+        m.add_node("C", NodeType.STORAGE)
+        return m
+
+    def test_preview_changes_nothing(self):
+        m = self._model()
+        ed = ModelEditor(m)
+        rows = ed.convert_types(True, NodeType.STORAGE, [0, 2], apply=False)
+        self.assertEqual([r.source_type for r in rows], [NodeType.JUNCTION, NodeType.STORAGE])
+        self.assertTrue(all(isinstance(r, TypeChange) and r.status == 0 for r in rows))
+        again = ed.convert_types(True, NodeType.STORAGE, [0], apply=False)
+        self.assertEqual(again[0].source_type, NodeType.JUNCTION)
+
+    def test_apply_converts_and_reports_each_object(self):
+        ed = ModelEditor(self._model())
+        rows = ed.convert_types(True, NodeType.STORAGE, [0, 1, 7])
+        self.assertEqual([r.status == 0 for r in rows], [True, True, False])
+        self.assertEqual(rows[2].source_type, -1)
+        self.assertEqual(rows[0].details.new_type, NodeType.STORAGE)
+        after = ed.convert_types(True, NodeType.STORAGE, [0, 1], apply=False)
+        self.assertEqual([r.source_type for r in after], [NodeType.STORAGE] * 2)
+
+    def test_empty_and_invalid_target(self):
+        ed = ModelEditor(self._model())
+        self.assertEqual(ed.convert_types(True, NodeType.STORAGE, []), [])
+        with self.assertRaises(BadParamError):
+            ed.convert_types(True, 99, [0])
 
 
 # ---------------------------------------------------------------------------

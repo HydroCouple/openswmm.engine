@@ -7,7 +7,7 @@ and exercise:
 
 * Metadata properties: enum-typed flow_units, datetime/timedelta types.
 * Object id arrays (``node_ids`` etc.) — lists of str, length-matched.
-* ``period_times`` numpy array (datetime64[s]).
+* ``period_times`` numpy array (datetime64[us]), fractional report steps.
 * ``*_result(period, var=Enum)`` and ``*_series(key, var=Enum)`` with
   ``int`` and ``str`` object selectors.
 * ``*_attributes(key, period)`` returns ``Dict[Enum, float]``.
@@ -18,6 +18,8 @@ and exercise:
 from __future__ import annotations
 
 import os
+import re
+import struct
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -37,9 +39,10 @@ from openswmm.engine import (
     OutSubcatchVar,
     OutSystemVar,
     OutputReader,
+    Solver,
 )
 
-from tests._paths import artifact_dir
+from tests._paths import SITE_DRAINAGE_INP, artifact_dir
 from tests.engine._solver_cases import EngineSolverCase
 
 
@@ -117,7 +120,7 @@ class TestPeriodTimes(OutputReaderCase):
         out = self.out()
         arr = out.period_times
         self.assertIsInstance(arr, np.ndarray)
-        self.assertEqual(arr.dtype, np.dtype("datetime64[s]"))
+        self.assertEqual(arr.dtype, np.dtype("datetime64[us]"))
         self.assertEqual(arr.shape[0], out.period_count)
 
     def test_period_times_monotonic(self):
@@ -131,6 +134,73 @@ class TestPeriodTimes(OutputReaderCase):
         arr1 = out.period_times
         arr2 = out.period_times
         self.assertIs(arr1, arr2)
+
+
+def _raw_period_days(path):
+    """Every period's stored date, read straight from the .out bytes.
+
+    The 24-byte epilog holds the results offset and the period count; each
+    period record starts with its date as a REAL8, which is the value
+    ``swmm_output_get_period_time`` returns.
+    """
+    data = Path(path).read_bytes()
+    _, _, output_pos, periods, _, _ = struct.unpack("<6i", data[-24:])
+    stride = (len(data) - 24 - output_pos) // periods
+    return [struct.unpack_from("<d", data, output_pos + i * stride)[0] for i in range(periods)]
+
+
+class TestFractionalPeriodTimes(unittest.TestCase):
+    """Saved sub-second report steps keep distinct, exact timestamps."""
+
+    def run_case(self, report_step, routing_step, end_time):
+        d = artifact_dir(self)
+        text = Path(SITE_DRAINAGE_INP).read_text()
+        for key, value in (("REPORT_STEP", report_step), ("ROUTING_STEP", routing_step),
+                           ("END_TIME", end_time), ("VARIABLE_STEP", "0")):
+            text, n = re.subn(rf"^{key}\s+\S+", f"{key:<21}{value}", text, count=1, flags=re.M)
+            self.assertEqual(n, 1, key)
+        inp = os.path.join(d, "model.inp")
+        rpt, out = inp.replace(".inp", ".rpt"), inp.replace(".inp", ".out")
+        Path(inp).write_text(text)
+        s = Solver(inp, rpt, out)
+        s.open()
+        s.initialize()
+        s.start()
+        for _ in s.steps():
+            pass
+        s.end()
+        s.report()
+        s.close()
+        s.destroy()
+        reader = OutputReader(out)
+        self.addCleanup(reader.close)
+        return reader, _raw_period_days(out)
+
+    def check(self, report_step, routing_step, end_time, step_us, periods):
+        reader, raw = self.run_case(report_step, routing_step, end_time)
+        times = reader.period_times
+        self.assertEqual(times.dtype, np.dtype("datetime64[us]"))
+        self.assertEqual(len(times), periods)
+        self.assertEqual(len(raw), periods)
+        self.assertTrue((np.diff(times.astype(np.int64)) > 0).all(), "times must strictly increase")
+        start = np.datetime64("1998-01-01T00:00:00", "us")
+        expected = start + np.arange(1, periods + 1, dtype=np.int64) * np.timedelta64(step_us, "us")
+        np.testing.assert_array_equal(times, expected)
+        # Each Python time is the native period time less the 1 ms report offset.
+        epoch = np.datetime64("1899-12-30", "us")
+        for i, days in enumerate(raw):
+            native_us = days * 86400e6
+            python_us = float((times[i] - epoch) / np.timedelta64(1, "us"))
+            self.assertAlmostEqual(native_us - python_us, 1000.0, delta=1.0, msg=f"period {i}")
+
+    def test_report_step_0_02_s(self):
+        self.check("00:00:00.02", "0.01", "00:00:02", 20_000, 100)
+
+    def test_report_step_0_05_s(self):
+        self.check("00:00:00.05", "0.01", "00:00:02", 50_000, 40)
+
+    def test_report_step_5_min_dates(self):
+        self.check("00:05:00", "15", "06:00:00", 300_000_000, 72)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,172 @@
+{
+  "tests": 15,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-05T13:34:43Z",
+  "time": "0.016s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "SurfaceExchange",
+      "tests": 15,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-05T13:34:43Z",
+      "time": "0.016s",
+      "testsuite": [
+        {
+          "name": "CompletedContiguousIntervalsOnlyAndNoReplay",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 74,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "DonorHeadCapacityIsReadOnlyAcrossClosuresAndSoils",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 88,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "SharedHeadroomProportionalDryAndPermutationInvariant",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 100,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "ProportionsUseWaterLimitedCandidatesRatherThanUnboundedCapacity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 117,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "OneDonorWaterCeilingAcrossCellsAndNoDenialRedistribution",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 124,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "SettlementRevalidatesAtomicallyAndExpiresUnusedAwards",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 139,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "InvalidInputsAndChangedConductivityBookNothing",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 151,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "ActualDonorMassAndWaterStayPairedInPendingReceipts",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 161,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "ClosedSaturationAndActualFiringConserveAcrossClosures",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 172,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "TwoRealRunoffKernelsApplyAwardsBeforeWithdrawal",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 185,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0.001s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "NullBoundaryRetainsNativeTrajectoryAndActualPerviousEvapIsSeparate",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 216,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "RealStorageLidBottomConsumesOnlyItsBoundedAward",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 228,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "ReviewedAreasAvoidLegacyRoundingInUsAndSiAndRejectBadOverrides",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 246,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "ExistingEngineRunoffClockActuallyLeadsTheFirstRoutingStep",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 260,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0.002s",
+          "classname": "SurfaceExchange"
+        },
+        {
+          "name": "SourceCadenceProbeRecordsWorkCountWithoutClaimingWholeModelCost",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_surface_exchange.cpp",
+          "line": 275,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T13:34:43Z",
+          "time": "0.009s",
+          "classname": "SurfaceExchange"
+        }
+      ]
+    }
+  ]
+}

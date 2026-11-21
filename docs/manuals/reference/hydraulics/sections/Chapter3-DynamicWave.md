@@ -134,7 +134,7 @@ Non-storage junction nodes are assumed to be points with zero volume and
 surface area while storage nodes (such as ponds and tanks) contain both
 volume and surface area.
 
-![Node-Link.bmp](hydraulics/media/media/image11.png)
+![Node-Link.bmp](hydraulics/media/media/hydraulics-image11.png)
 
 **Figure 3-1 Node-link representation of a conveyance network in SWMM (from Roesner et al, 1992).**
 
@@ -421,9 +421,9 @@ manhole) which can be overridden by the user. This is strictly a
 computational device and does not add volume to a junction node (where
 *A<sub>SN</sub> = 0*) nor change it into a storage node.
 
-![Pipe.bmp](hydraulics/media/media/image12.png)
+![Pipe.bmp](hydraulics/media/media/hydraulics-image12.png)
 
-![SurfaceArea2.bmp](hydraulics/media/media/image13.png)
+![SurfaceArea2.bmp](hydraulics/media/media/hydraulics-image13.png)
 
 **Figure 3‑2 Special flow conditions for dynamic wave analysis**
 
@@ -510,7 +510,7 @@ itself would no longer be surcharged.
 
 **Figure 3-3 Illustration of a surcharged node**
 
-![Surcharge4.bmp](hydraulics/media/media/image14.png)
+![Surcharge4.bmp](hydraulics/media/media/hydraulics-image14.png)
 
 When a node becomes surcharged there is no more volume available in the
 conduits forming the node's assembly to absorb the difference between
@@ -631,7 +631,7 @@ is given by:
 
 where *W*<sub>max</sub> is the conduit's maximum width, *Y*<sub>full</sub> is its full
 depth, and Y is depth of flow. This equation applies to
-\f$\frac{Y}{Y_{full}}\f$ values between 0.985257 and 1.7. Below this range
+\f$\frac{Y}{Y_{full}}\f$ values between 0.985257 and 1.78. Below this range
 the slot is not used while above it the slot width relative to *W*<sub>max</sub>
 is clamped at 0.01. The range's lower limit was chosen so that the width
 computed from equation 3-30 is the same as the width across a circular
@@ -687,7 +687,7 @@ updated head is restricted to be just a small value above *H*<sub>max</sub> (or
 below it in the opposite case) to avoid wide swings in head during the
 transition.
 
-![Surcharge5.bmp](hydraulics/media/media/image15.png)
+![Surcharge5.bmp](hydraulics/media/media/hydraulics-image15.png)
 
 **Figure 3-4 Ponding of excess water above a junction**
 
@@ -747,8 +747,9 @@ based on the generalized, dynamic and transient-storage form of the
 slot developed by Sharior, Hodges, and Vasconcelos (2023). It is
 selected by setting the `SURCHARGE_METHOD` option to `DYNAMIC_SLOT`
 (the other recognized values being `EXTRAN`, the default, for the
-surcharge algorithm of Section 3.3.5 and `SLOT` for the static slot of
-Section 3.3.6). Under this method the slot's cross-sectional area
+surcharge algorithm of Section 3.3.5, `SLOT` for the static slot of
+Section 3.3.6, and `TPA` for the two-component pressure approach of
+Section 3.3.11). Under this method the slot's cross-sectional area
 evolves in time as an element of transient storage, and the modeler
 specifies the maximum pressure-wave celerity directly.
 
@@ -893,6 +894,7 @@ explicit, user-controlled quantity.
 The pressurization life cycle of a conduit end under the dynamic slot
 is summarized in Figure 3-9.
 
+<!-- workflow: dps_state_machine -->
 <pre class="mermaid">
 stateDiagram-v2
     direction LR
@@ -947,16 +949,29 @@ meant to serve: two collinear conduits of identical cross-section
 meeting at a grade break.
 
 Virtual junctions are declared in a dedicated `[VIRTUAL_JUNCTIONS]`
-input section whose entries carry only a name and an invert elevation:
+input section whose entries carry a name, an invert elevation and an
+optional maximum depth:
 
     [VIRTUAL_JUNCTIONS]
-    ;;Name           Elev
+    ;;Name           Elev        MaxDepth
     VJ1              101.25
+    VJ2              100.80      4.50
 
-All remaining geometry is derived: the maximum depth equals the shared
-pipe's full depth, and the surcharge depth and ponded area are zero.
-In reports and output files a virtual junction appears as an ordinary
-junction whose stored volume is identically zero.
+All hydraulic geometry is derived: the maximum depth used by the solver
+equals the shared pipe's full depth, and the surcharge depth and ponded
+area are zero. In reports and output files a virtual junction appears as
+an ordinary junction whose stored volume is identically zero.
+
+The optional third entry, `MaxDepth`, is a **drawing property only**. A
+virtual junction's derived maximum depth is the pipe crown, so a profile
+or section view that draws the ground surface at `invert + maximum depth`
+would sink the terrain to the crown at every break point. Supplying
+`MaxDepth` gives such views the real ground elevation to draw instead. No
+part of the solver, the routing, the reporting or the binary output file
+reads it, so a model produces identical results whether or not it is
+supplied; when it is omitted, viewers fall back to the pipe crown. A
+virtual junction created by splitting a conduit inherits a `MaxDepth`
+interpolated between the two end nodes' ground elevations.
 
 A node is eligible to be a virtual junction only if it satisfies all of
 the following, which are enforced when the input file is processed:
@@ -972,10 +987,12 @@ the following, which are enforced when the input file is processed:
 3.  Both conduit offsets at the node are zero; the node's invert is
     continuous with both conduit inverts.
 
-4.  No lateral inflow of any kind targets the node — external or dry
-    weather inflows, RDII, subcatchment outlets, LID drains, or
-    two-dimensional surface coupling. All inflow must arrive through
-    the upstream conduit.
+4.  The node is not a two-dimensional surface coupling point. A virtual
+    junction has no opening, so it cannot exchange water with an
+    overlying surface mesh. Point lateral inflows — external and dry
+    weather inflows, RDII, subcatchment outlets, LID drains and the
+    runtime lateral-inflow API — are permitted; see *Lateral inflows*
+    below.
 
 5.  The routing method is dynamic wave (or the finite-volume method of
     @ref hydraulics_ref_ch8_finite_volume "Chapter 8", under which a
@@ -1008,22 +1025,32 @@ momentum equations across the break. When flow runs in the pair's
 forward direction, the downstream conduit's upstream-weighted area and
 hydraulic radius (Equations 3-19 and 3-20) take the upstream conduit's
 mid-reach values as their upwind state, carrying the advected momentum
-state across the node instead of restarting it. When the
-`VIRTUAL_JUNCTION_MOMENTUM` option is set to `FULL` (the default is
-`BASIC`), an additional cross-junction convective correction is added
-to the \f$\Delta Q_{inertia}\f$ term of both conduits:
+state across the node instead of restarting it. This upwinding of the
+advected state is the whole of the momentum treatment: a virtual
+junction transmits **no** cross-junction convective momentum flux.
+
+**Retired option.** The `VIRTUAL_JUNCTION_MOMENTUM FULL` setting formerly
+added the cross-junction convective correction of Equation 3-43 to the
+\f$\Delta Q_{inertia}\f$ term of both conduits:
 
 | | | | |
 |---|---|---|---|
 | \f[\Delta Q_{j} = \mathrm{\Delta}t\,\sigma_{j}\frac{\left( \overline{U}^{2}\overline{A} \right)_{dn} - \left( \overline{U}^{2}\overline{A} \right)_{up}}{\Lambda}, \qquad \Lambda = \frac{L_{up} + L_{dn}}{2}\f] | | (3-43) | |
 
-which represents the convective flux difference across a control volume
-spanning the two half-conduits. Here *σ*<sub>j</sub> is a damping factor of the
-form of Equation 3-18 evaluated from the through-flow Froude number at
-the junction, so the correction is silenced near critical flow just as
-the per-conduit inertial terms are, and the correction vanishes
-whenever the two conduits do not carry flow the same way through the
-node. Pairs in a sag or peak orientation (both conduits pointing into,
+It is retired as of 2026-08-14. For steady discharge
+\f$\Delta\left( U^{2}A \right) = - U^{2}\Delta A\f$, so this correction
+carries the *opposite* sign to the per-conduit convective term it was
+meant to supplement, and adding it to both adjacent conduits applied it
+roughly three times over. On the SWASHES `macdonald-periodic` benchmark
+it destroyed 224–325 % of the routed volume; negating it restored mass
+conservation but still left a profile error of 5.24 % against 0.163 %
+for `BASIC` and 0.141 % for ordinary junctions. The keyword is still
+accepted, issues a warning, and is treated as `BASIC`. Models that need
+genuine momentum transport through a subdivided reach should use the
+finite-volume solver, which on the same benchmark is roughly 60× more
+accurate and 2.6× faster.
+
+Pairs in a sag or peak orientation (both conduits pointing into,
 or out of, the node) receive the zero-storage continuity treatment but
 not the directional momentum coupling. The two conduits of a pair are
 also always solved together: neither is frozen by the converged-node
@@ -1046,6 +1073,36 @@ status report. With identical cross-sections and a shared node head the
 hydrostatic terms cancel, so *R*<sub>j</sub> measures the discrete momentum-flux
 mismatch directly.
 
+**Lateral inflows.** A point lateral inflow at a virtual junction is
+integrated exactly as at any other node: it enters the flow balance
+\f$\sum Q\f$ of the zero-storage update, so at convergence the
+downstream conduit carries the upstream discharge plus the lateral.
+The node stays sealed — a lateral that exceeds the pair's capacity
+raises the head above the crown without flooding or ponding, as a tap
+into a buried main would — and its committed volume remains zero.
+One guard is added. At a dry pair the natural half-link area vanishes
+and \f$\sum \partial Q/\partial H\f$ is zero, so an imposed inflow
+would either divide a finite volume by nothing or fall into the
+dry-pair hold and be swallowed. While the node carries a lateral its
+surface area is therefore floored at a *wetting floor*: the pair's own
+natural half-link area evaluated at a seed depth of 2 % of the pipe's
+full depth, \f$w(0.02\,y_{full})\,(L_{up}+L_{dn})/2\f$ per barrel. The
+floor is continuous with the natural area (the larger of the two is
+used) and inert once the pair is wetter than the seed depth, so it
+scales with the reach instead of introducing the fixed
+*A*<sub>Smin</sub> storage the feature removes. Unfed virtual junctions
+keep their unfloored arithmetic. The momentum coupling is unchanged:
+the upwinding of Equations 3-19 and 3-20 hands the upstream conduit's
+state across the node, so with a lateral the treatment is first order
+in \f$q_{lat}/Q\f$ — the same class of approximation a regular junction
+makes for all of its momentum — and the residual *R*<sub>j</sub> of
+Equation 3-44 is legitimately nonzero at a fed node, which the Virtual
+Junction Summary marks. Under the finite-volume method the lateral is
+divided equally between the two cells adjoining the spliced face as a
+zero-momentum source (Chapter 8, §8.6.2). Re-fusing a fed virtual
+junction removes its inflow rows and unassigns any subcatchment or LID
+drain that targeted it, exactly as deleting the node would.
+
 **Modeling implications.** A virtual junction transmits streamwise
 momentum and is intended for grade breaks between near-collinear
 pipes, where the deflection angle is small and axial momentum
@@ -1059,8 +1116,7 @@ that the same subdivision with regular junctions would introduce.
 Control rules may reference a virtual junction's depth, which is well
 defined; its volume is identically zero.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): profile view of a grade break modeled two ways: left, a regular junction with its MIN_SURFAREA storage and stagnation volume annotated; right, a virtual junction shown as an interior point of the fused reach with continuous invert, zero storage, and momentum flux carried across the break. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-10-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
-![Figure 3-10](figure3-10-placeholder.png)
+![Figure 3-10](figures/png/hydraulics_ch3_virtual_junction.png)
 
 *Figure 3-10 Virtual junction representation of a conduit grade break*
 
@@ -1081,6 +1137,284 @@ from `src/engine/input/PostParseResolver.cpp`; the
 and Bocchi, J.P.P. (2020). "Comparing SWMM 5.1 Calculation Alternatives
 to Represent Unsteady Stormwater Sewer Flows." Journal of Hydraulic
 Engineering, 146(7), 04020046.*
+
+#### Inlet junctions
+
+An *inlet junction* is a virtual junction that also owns a street inlet.
+It is declared in its own `[INLET_JUNCTIONS]` section, whose first three
+entries mirror `[VIRTUAL_JUNCTIONS]` and whose remaining entries are the
+placement columns of `[INLET_USAGE]`:
+
+    [INLET_JUNCTIONS]
+    ;;Name   Elev    MaxDepth  Inlet   CaptureNode  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+    IJ1      98.00   0.50      Curb1   MH2          1        10     0     0       0       ON_GRADE
+
+The node obeys every virtual-junction eligibility rule above and, in
+addition, both attached conduits must carry a STREET cross-section
+(error 623), the inlet design must exist (625), the capture node must
+exist, differ from the junction and be a real node (627), neither
+attached conduit may itself carry an `[INLET_USAGE]` row (629), the row
+may carry no extra entries (631), and an inlet junction without a usage
+row is refused (633). A design incompatible with the host section is a
+warning (635) that disarms the inlet, as in legacy SWMM.
+
+**Capture.** At every routing step, after all other lateral inflows have
+been assembled and before the conduits are solved, the HEC-22 capture
+kernel computes the flow the inlet intercepts from the gutter flow
+arriving on the approach conduit — the conduit whose flow is directed
+toward the node; at a sag both conduits contribute — using the street
+geometry and the design dimensions exactly as for a conduit-attribute
+inlet. The captured flow leaves the junction as a negative lateral
+inflow and enters the capture node as a positive one; the bypass
+continues down the street. When the capture node floods, its overflow
+returns to the street through the inlet as backflow, so the transfer runs
+in either direction. Placement `AUTOMATIC` resolves by slope: the node is
+a sag when both conduits fall toward it, on-grade otherwise.
+
+**Continuity.** Unlike a plain virtual junction the node is *not*
+sealed: water that rises above the street section leaves the corridor.
+The head update is the zero-storage virtual-junction form, but the
+flooding logic of an ordinary junction applies above a threshold equal
+to the street section's full depth or, when it is larger, the `MaxDepth`
+entry. `MaxDepth` can therefore raise the threshold — a raised curb line,
+a wall — but never lower it below the section, so a rendering-only rim
+inherited from a conduit split cannot make the node flood early. The node
+has no ponded area, so water above the threshold is lost as flooding.
+Its stored volume is identically zero: the half-link surface area it
+carries is the linearization of the adjacent conduits, not storage of
+its own.
+
+**Momentum.** The pair receives the zero-storage continuity treatment
+only. The directional momentum coupling (the upwind-state carry-over
+across the break) is disabled at an inlet junction, because that
+coupling assumes a sealed pair with no lateral exchange at the node.
+
+**Routing methods.** Inlet junctions require dynamic wave routing. Under
+kinematic or steady routing the virtual-junction rule applies (error
+619); under finite-volume routing, which splices virtual junctions out
+of its mesh (§8.6.2), an inlet junction is also refused with error 619,
+because the spliced node could no longer carry the capture sink.
+
+**Results and files.** The node reports as a JUNCTION in the output
+file. The Street Inlet Flow Summary lists it as `NAME (node)` beside the
+conduit-attribute inlets, with the same performance columns. When a
+model is written for a SWMM 5.x engine (the `SWMM5` write profile of
+`swmm_model_write_compat`), an inlet junction is downgraded to an
+ordinary junction plus an `[INLET_USAGE]` row on its approach conduit
+with the same design and capture node — the legacy-equivalent model —
+and the writer reports the substitution.
+
+Implementation: `src/engine/hydraulics/Inlet.cpp` (the kernel and the
+per-step transfer, `inlet::InletSolver::computeAll`), the unsealed
+flooding branch of `DWSolver::commitNodeDepthState` and the
+mechanism-1-only guard in `DWSolver::vjPrepareIteration`
+(`src/engine/hydraulics/DynamicWave.cpp`), validation in
+`src/engine/input/PostParseResolver.cpp` (`validate_inlet_junctions`),
+and the split/fuse editing operations `ij_split_conduit` / `ij_fuse` in
+`src/engine/edit/VirtualJunctionOps.cpp`.
+
+### 3.3.11 Two-Component Pressure Approach (`SURCHARGE_METHOD TPA`)
+
+All three surcharge treatments described so far share one fidelity
+limit: a head below the pipe crown is always reinterpreted as a free
+surface, so a sealed conduit cannot hold sub-atmospheric pressure
+during a rapid downsurge. OpenSWMM provides a fourth surcharge
+treatment, `SURCHARGE_METHOD TPA`, a pragmatic port of the
+two-component pressure approach of Vasconcelos, Wright and Roe (2006)
+to the node-link scheme. (Its natural home is the finite-volume solver,
+where the full shock-capturing formulation is available as
+`FV_PRESSURE_CLOSURE TPA` —
+@ref hydraulics_ref_ch8_finite_volume "Chapter 8".) It is
+\status{Experimental}: default-off, validated on the Vasconcelos et al.
+(2006) laboratory cases, with the high-celerity filling divergence of
+§8.4.5 still open.
+
+**Requirements.** The method needs a **closed conduit with a defined
+full depth**: an open cross-section, or one whose \f$Y_{full}\f$ is
+zero, never latches and keeps ordinary free-surface geometry — the
+option is inert outside closed pipe, so mixed networks need no special
+arrangement. Setup is the pair `SURCHARGE_METHOD TPA` and
+`TPA_CELERITY` under `FLOW_ROUTING DYNWAVE`. Only a *sealed* conduit
+end — a virtual junction (Section 3.3.10) or a node with positive
+surcharge depth — can hold sub-crown pressure; every other end vents.
+Signed heads reach the binary output only under
+`REPORT_SIGNED_HEADS YES`, and `NODE_CONTINUITY SEMI_IMPLICIT`
+(Section 3.5) is the recommended pairing.
+
+**Above the crown: a constant-width slot.** Where the static slot of
+Section 3.3.6 uses the Sjőberg width function 3-30, TPA uses the
+classical celerity-derived width directly, held constant per conduit:
+
+| | | | |
+|---|---|---|---|
+| \f[w_{tpa} = \frac{gA_{full}}{a^{2}}\f] | | (3-49) | |
+
+where \f$a\f$ is the acoustic celerity given by the `TPA_CELERITY`
+option, in project length units per second (converted internally;
+compare Equation 3-29). There is no Sjőberg decay and no clamp above
+1.78 *Y*<sub>full</sub>; the crown cutoff at *Y*/*Y*<sub>full</sub> = 0.985257 applies
+as it does for the other slot methods. Above the crown this is the
+whole story: heads are always updated through the ordinary
+free-surface continuity formula with the slot supplying the surface
+area, and the surcharge branch of Equation 3-28 is never invoked.
+
+**Below the crown: the sub-atmospheric latch.** The new capability is a
+per-conduit *pressurized latch*, recording whether the air pathway to
+the conduit has been cut — physical history, not a numerical device.
+The latch is **set** when the conduit reaches full (both end depths at
+*Y*<sub>full</sub>, the same condition that engages the slot branch today). While
+it is set, a head below the crown at a *sealed* end does not revert the
+conduit to free-surface geometry: the flow area follows the signed slot
+line \f$A_{full} + w_{tpa}(Y - Y_{full})\f$ — "shrinkage" of the section
+under negative gauge pressure — the top width stays \f$w_{tpa}\f$, the
+hydraulic radius stays at its full-conduit value (the slot carries no
+wetted perimeter), and each end contributes \f$w_{tpa}L/4\f$ of surface
+area to node continuity. Momentum needs no new terms: the solver
+already differences node heads, and a sub-crown head at a sealed node
+is simply a head — the latch's only job is preventing the geometry
+tables from reinterpreting it as a free-surface depth.
+
+The latch is **cleared** when air can actually re-enter: at a *vented*
+end whose flow depth stands below the crown at that end (an
+*unsubmerged* opening — a vented node whose water level stands above
+the crown holds the column, exactly as a submerged inlet holds a
+siphon), or on column separation, when the mid-reach depth falls more
+than 30 ft below the crown — about one atmosphere of water column,
+past which a vapor cavity forms and two-phase dynamics outside the
+model's scope take over. *Sealed* means a virtual junction (Section
+3.3.10) or a node with a positive surcharge depth (a bolted cover);
+everything else is vented. The latch is updated **once per routing
+step, before the iterative solution begins**, so the Picard iteration
+of Section 3.2 iterates a fixed operator — the same reasoning that has
+the dynamic slot advance its state between iterations rather than
+within them. When Anderson acceleration (Section 3.6) is active, the
+end nodes of any conduit whose latch changed this step take the plain
+iterate for that step, since a latch transition is a discrete operator
+switch (see Table 3-2).
+
+**What is and is not captured.** DW node depths are floored at zero, so
+the vacuum representable at a node is bounded by the distance from the
+crown down to the node invert: stations that would fall below their
+own invert under vacuum — the deep sub-atmospheric transients of the
+negative-pressure siphon class — are finite-volume territory
+(@ref hydraulics_ref_ch8_finite_volume "Chapter 8"). DW TPA's value is
+sealed sub-crown behavior: no spurious geometry flip, no spurious
+flooding, and a head that recovers smoothly when inflow returns. On the
+rapid-filling laboratory case of Vasconcelos et al. (2006), DW TPA's
+bore arrival lands within 2 % of the finite-volume timing (10.25 s
+against 10.45 s), where the Sjőberg static slot arrives about 20 %
+early (8.35 s) — measured on the mixed-flow closure study of issue
+#156. Phase 6 of that study, scoring against the digitized laboratory
+record on a shared absolute threshold (head first exceeding 0.15 m at
+the 9.9 m station, measured at 6.69 s), places the columns in absolute
+terms: the dynamic slot lands 0.14 s early (6.55 s), the static slot
+at 9.95 s, DW TPA at 12.25 s, and EXTRAN at 14.35 s — so DW TPA's
+agreement with the finite-volume timing above is scheme consistency,
+not accuracy on this filling case (and the finite-volume columns'
+own timing there is compromised by a documented initial-condition
+seeding defect). On the negative-pressure siphon case, Phase 6
+measured every dynamic-wave column bottoming at 0.231–0.233 m of
+crest head against 0.1035 m for finite-volume TPA — the quantified
+form of the invert-floor limit above. To observe signed heads in the
+binary output file at all, set
+`REPORT_SIGNED_HEADS YES` (default `NO` preserves legacy bit-parity;
+the HEAD field then carries the true signed head while DEPTH stays
+floored — both solvers honor the option).
+
+The method adds one `[OPTIONS]` keyword beside `SURCHARGE_METHOD`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `TPA_CELERITY` | 100 | Acoustic celerity \f$a\f$ in Equation 3-49, in project length units per second. Air content can cut the true value by an order of magnitude, so it is a user parameter, exactly like the finite-volume solver's `FV_SLOT_CELERITY`. |
+
+`NODE_CONTINUITY SEMI_IMPLICIT` (Section 3.5) is the recommended
+pairing: with the constant \f$w_{tpa}\f$ surface area the unified update
+is smooth through the crown.
+
+**Implementation.** The latch update and geometry override are
+`updateTpaLatch` and `applyTpaGeometry` in
+@ref openswmm::dynwave::DWSolver "DWSolver"
+(`src/engine/hydraulics/DynamicWave.cpp`), hooked beside the dynamic
+slot's `applyDPSGeometry`; the per-conduit width (3-49) is computed at
+initialization. Gates: `tests/unit/engine/test_dw_tpa.cpp`.
+
+*Reference: Vasconcelos, J.G., Wright, S.J., and Roe, P.L. (2006).
+"Improved Simulation of Flow Regime Transition in Sewers: Two-Component
+Pressure Approach." Journal of Hydraulic Engineering, 132(6), 553–562.*
+
+### 3.3.12 Unsteady Friction (`UNSTEADY_FRICTION`)
+
+Mixed-flow models that carry only steady friction reproduce observed
+transient damping only by inflating Manning's *n* to unphysical values.
+OpenSWMM offers the remedy of Pinto, Vasconcelos and Soares (2025) — a
+modified Vítkovský et al. (2000) instantaneous-acceleration term with a
+Brunone-type coefficient *k*<sub>3</sub> — as an option orthogonal to the
+surcharge method and shared with the finite-volume solver
+(@ref hydraulics_ref_ch8_finite_volume "Chapter 8"). The friction slope
+becomes \f$S_f = S_{fs} + S_{fu}\f$ with the steady term unchanged and
+
+| | | | |
+|---|---|---|---|
+| \f[S_{fu} = \frac{k_{3}}{g}\left( \frac{\partial V}{\partial t} + c\,\mathrm{sgn}(V)\left\lvert \frac{\partial V}{\partial x} \right\rvert \right)\f] | | (3-50) | |
+
+where the celerity *c* is regime-dependent: the acoustic celerity when
+the conduit is pressurized, the gravity-wave celerity otherwise. In
+this solver both come out of the mid-reach top width already in hand —
+the slot width while surcharged under a slot method (so `TPA_CELERITY`
+governs under TPA), the free-surface width otherwise, and the
+near-crown width under `EXTRAN`, which has no acoustic celerity of its
+own and is therefore the weakest pairing.
+
+The term drops into the flow updating formula 3-14 the way every other
+term does. The local-acceleration half integrates semi-implicitly —
+*k*<sub>3</sub> joins the denominator alongside \f$\Delta Q_{friction}\f$ and
+\f$k_{3}\overline{A}\,V^{old}\f$ joins the numerator — which also enters
+the flow gradient 3-27, keeping the surcharge iteration and the
+semi-implicit node continuity consistent with the flow update. The
+convective half is an explicit term built from the end velocities. Two
+details are consequences of the node-link discretization rather than
+choices:
+
+- **The velocity gradient uses a cross-link stencil.** Within a single
+  link the gradient estimator is the end-velocity difference, which is
+  *structurally zero* on a full conduit (equal end areas) — exactly the
+  pressurized case the term exists for. The gradient therefore reads
+  the neighboring conduits' previous-iterate velocities across simple
+  two-conduit junctions, sign-mapped into the link's frame, with the
+  within-link difference as the fallback. The modeling consequence:
+  **unsteady-friction damping requires a discretized reach.** A single
+  long conduit has no neighbors to difference against and receives
+  added inertia only; subdividing the reach (virtual junctions serve
+  well, Section 3.3.10) restores the damping term.
+- **Force mains** have equal end areas by construction, so the gradient
+  term vanishes and only the local-acceleration fold acts.
+
+As in the finite-volume implementation, a 0.01 ft/s velocity dead-band
+keeps the added inertia from amplifying numerical settling noise, a
+per-step clamp bounds the update to half the incoming momentum, and
+with `UNSTEADY_FRICTION NONE` (the default) the original expressions
+are evaluated verbatim for bit-parity.
+
+Fidelity expectations must be set honestly: the node-link solver cannot
+reproduce waterhammer (a 1255 m/s valve-closure transient is
+finite-volume-with-implicit-acoustics territory). The dynamic wave
+value proposition is better damping of inertial oscillations and
+post-surcharge transients at ordinary routing steps.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `UNSTEADY_FRICTION` | `NONE` | `NONE` or `VITKOVSKY`. `NONE` is bit-inert in both solvers. |
+| `UF_K3` | 0.015 | Brunone-type coefficient *k*<sub>3</sub> in Equation 3-50, used only when the method is not `NONE`. Paper-calibrated range 0.005–0.020, swept to 0.045. |
+
+**Implementation.** The dq-term extension lives in `processManningLink`
+and `processForceMainLink` of @ref openswmm::dynwave::DWSolver
+"DWSolver" (`src/engine/hydraulics/DynamicWave.cpp`), with the
+cross-link stencil tables built in `DWSolver::init`. Gates:
+`tests/unit/engine/test_dw_unsteady_friction.cpp`.
+
+*Reference: Pinto, S.I.G., Vasconcelos, J.G., and Soares, A.K. (2025).
+"Unsteady Friction in Mixed-Flow Models Based on the Saint-Venant
+Equations." Journal of Hydraulic Engineering, 152(1), 04025046.*
 
 ## 3.4 Numerical Stability
 
@@ -1207,7 +1541,7 @@ of 0.015 (see Figure 3-5). When divided into 10 equal length sections of
 \f$\frac{200}{\sqrt{32.2 \times 2} = 25}\f$ seconds. When analyzed as just a
 single 2,000 ft long section it increases to 250 seconds.
 
-![Example1a.png](hydraulics/media/media/image16.png)
+![Example1a.png](hydraulics/media/media/hydraulics-image16.png)
 
 **Figure 3-5 Profile view of example rectangular conduit (not to scale)**
 
@@ -1217,7 +1551,7 @@ dotted curve in the figure). Both results are completely stable. The
 option with the higher spatial resolution produces a more skewed
 hydrograph with a slightly lower peak.
 
-![](hydraulics/media/media/image17.png "image17")
+![](hydraulics/media/media/hydraulics-image17.png "image17")
 
 **Figure 3-6 Outflow hydrographs for example conduit -I**
 
@@ -1229,7 +1563,7 @@ variable time step a stable result is produced. In this case SWMM's
 Status Report shows that the variable time step ranged from 24 to 120
 seconds with the average being 42.
 
-![](hydraulics/media/media/image18.png "image18")
+![](hydraulics/media/media/hydraulics-image18.png "image18")
 
 **Figure 3-7 Outflow hydrographs for example conduit – II**
 
@@ -1250,26 +1584,34 @@ selected with the `NODE_CONTINUITY` option:
 
 The semi-implicit formulation recognizes that the flows entering the
 head update of Equation 3-15 themselves depend on the head being
-solved for. Linearizing the net nodal flow about the current head
-estimate using the flow gradients of Equation 3-27,
-\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q + \sum\frac{\partial Q}{\partial H}\mathrm{\Delta}H\f$,
+solved for. The flows of iteration *k*, \f$\sum Q\left( H_{k} \right)\f$, were
+computed at the latest head estimate \f$H_{k}\f$. Linearizing the net nodal
+flow about that estimate using the flow gradients of Equation 3-27,
+\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q\left( H_{k} \right) + \sum\frac{\partial Q}{\partial H}\left( H_{k + 1} - H_{k} \right)\f$,
 and carrying the correction into the trapezoidal head update yields a
 single equation used at every non-outfall node regardless of its
 surcharge state:
 
 | | | | |
 |---|---|---|---|
-| \f[H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
+| \f[H_{k + 1} = H_{k} + \frac{A_{S}\left( H^{t} - H_{k} \right) + \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q\left( H_{k} \right) \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
 
 where \f$A_{S}\f$ is the node assembly surface area of Equation 3-22 and
 the flow derivatives are those computed during the flow update, exactly
-as in Section 3.3.5. When the surface area dominates the denominator
-the update reduces to the ordinary free-surface formula 3-15; as a node
-approaches and passes through surcharge the flow-derivative term takes
-on the role that the surcharge formula 3-28 plays in the explicit
-scheme, with the minimum surface area *A*<sub>Smin</sub> bounding the
-denominator from below. The under-relaxation of Step 5 of the solution
-procedure and the ponding rules of Section 3.3.7 apply unchanged.
+as in Section 3.3.5. The flow-derivative term multiplies the change
+from \f$H_{k}\f$, not from \f$H^{t}\f$: \f$\sum Q\left( H_{k} \right)\f$ already contains the
+flow response to \f$H_{k} - H^{t}\f$, and applying the derivative to the
+whole step would count that response twice. When the iteration has
+converged (\f$H_{k + 1} = H_{k}\f$) Equation 3-45 reduces to
+\f$A_{S}\left( H^{t + \mathrm{\Delta}t} - H^{t} \right) = \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)\f$,
+the free-surface continuity of Equation 3-15: below the crown both
+formulations converge to the same heads, and the flow-derivative term
+only shortens the path. As a node approaches and passes through
+surcharge the flow-derivative term takes on the role that the
+surcharge formula 3-28 plays in the explicit scheme, with the minimum
+surface area *A*<sub>Smin</sub> bounding both \f$A_{S}\f$ and the denominator from
+below. The under-relaxation of Step 5 of the solution procedure and
+the ponding rules of Section 3.3.7 apply unchanged.
 
 The practical consequence is that the head-update operator has no
 branch at the crown: a node passes into and out of surcharge through
@@ -1279,6 +1621,27 @@ smoothness of the iteration operator, and it is the recommended node
 continuity setting for models containing virtual junctions
 (Section 3.3.10).
 
+**Regulator laws under semi-implicit continuity.** Equation 3-45 can
+only converge where each link's flow is a continuous function of the
+heads whose slope the flow derivatives report. Three of the SWMM 5
+regulator laws of @ref hydraulics_ref_ch6_pumps_regulators "Chapter 6"
+break this, and a node they join then fails to converge step after
+step. Under `SEMI_IMPLICIT`, which has no SWMM 5 counterpart, OpenSWMM
+changes them as follows; under `EXPLICIT` they are exactly as in SWMM 5.
+\f$\delta\f$ is 0.05 ft.
+
+| SWMM 5 law | Why the iteration fails | Under `SEMI_IMPLICIT` |
+|---|---|---|
+| Villemonte factor (Equations 6-13 and 6-26) on submerged orifices and weirs | Its slope is unbounded as \f$H_{2} \to H_{1}\f$, while \f$dQ/dH\f$ (Equation 6-17, Table 6-4) is taken before the factor: the head update overshoots and the flow reverses from one trial to the next | The factor is evaluated at a head difference of at least \f$\delta\f$; below \f$\delta\f$ the flow runs linearly to zero, and \f$dQ/dH\f$ is the slope of that line. Above \f$\delta\f$ \f$dQ/dH\f$ is the larger of the SWMM 5 value times the factor and the flow's sensitivity to the downstream head. A full side orifice or a surcharged weir driven by the head difference (Equations 6-5 and 6-30) gets the same linear segment below \f$\delta\f$ |
+| Bottom orifice in its weir regime with \f$H_{2}\f$ above the opening | Its head is already the head difference \f$H_{1} - H_{2}\f$ (Equation 6-6), and the factor of Equation 6-13 is applied as well, so submergence is counted twice; at \f$H^{*}\f$ the flow jumps by \f$1/f_{S}\f$, and an inflow inside the jump has no steady state | The factor is not applied, so the weir and orifice formulas meet at \f$H^{*}\f$ (Equation 6-10) |
+| Outlet rating at small heads | A rating that starts at a nonzero flow (a flow regulator), or a power below one, switches an outlet on a nearly empty node between its rated flow and none, and its \f$dQ/dH\f$ is 0 | Below an effective head of \f$\delta\f$ the flow runs linearly from zero to the rating's value at \f$\delta\f$, and \f$dQ/dH\f$ is the slope of that line |
+
+Apart from the bottom orifice, the flow laws are those of SWMM 5
+wherever the head difference across a submerged regulator, or an
+outlet's head, is at least \f$\delta\f$; there only the flow derivatives
+differ. Stepped (Type 2) pump curves and the conduit end surface areas
+of Section 3.3.2 are unchanged.
+
 **Implementation.** The unified branch is implemented in
 `setNodeDepth` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`); the option is declared in
@@ -1286,7 +1649,7 @@ continuity setting for models containing virtual junctions
 (`src/engine/core/SimulationOptions.hpp`) and parsed in
 `src/engine/input/handlers/OptionsHandler.cpp`.
 
-## 3.6 Anderson Acceleration of the Iterative Solution
+## 3.6 Anderson Acceleration of the Iterative Solution {#hydraulics_ref_ch3_anderson}
 
 The successive-approximation procedure of Section 3.2 is a fixed-point
 (Picard) iteration: each pass applies the same head-update operator to
@@ -1312,8 +1675,9 @@ estimate entering iteration *k*. The iteration residual is
 
 and convergence is declared when its magnitude falls within the head
 tolerance. Rather than simply accepting \f$G\left( H_{k} \right)\f$ as the
-next iterate, Anderson acceleration of depth two (equivalently,
-Aitken's secant update) blends the two most recent operator outputs so
+next iterate, two-point Anderson acceleration with one stored iterate
+(equivalently, Aitken's secant update) blends the two most recent
+operator outputs so
 as to cancel the residual predicted by a linear model of the
 iteration. The mixing coefficient is
 
@@ -1337,9 +1701,14 @@ has no history to mix). When a mixed head is accepted it is committed
 through the same routine as an ordinary update, so the node's volume,
 overflow and rate of depth change — quantities that feed flooding
 totals, the mass balance and the variable time step — always describe
-the head actually accepted. In practice the acceleration reduces trial
-counts by roughly 25 to 50 percent per routing step on networks that
-otherwise iterate to the trial limit.
+the head actually accepted. Whether the acceleration saves trials
+depends on why a network is slow to converge. It shortens a slow, smooth
+approach to the solution; it cannot converge a node that alternates
+between two branches of a non-smooth update, such as a weir or orifice
+between two nodes at nearly equal heads or a flow regulator draining a
+nearly empty storage unit. Where those nodes are what exhaust the trial
+allotment, the acceleration can raise the trial count. Compare the
+report's Routing Time Step Summary with the option on and off.
 
 The acceleration is justified only where the operator \f$G\f$ is smooth —
 where small head changes produce proportionally small changes in the
@@ -1363,9 +1732,11 @@ pair well.
 
 | Condition | Applies when | Reason |
 |---|---|---|
-| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT` | The head update switches from Equation 3-15 to Equation 3-28 at the crown. |
+| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT`; the head entering either of the two blended iterations is above the crown | The head update switches from Equation 3-15 to Equation 3-28 at the crown, and a blend must not combine updates from the two branches. |
+| Node at its flood limit | The plain iterate is at or above the depth where the node floods (full depth plus surcharge depth, or full depth where it can pond) | Overflow and ponded volume are booked only at or above that depth; a blend landing below it would discard the water the plain iterate sent to flooding. |
 | Active dynamic slot | `SURCHARGE_METHOD DYNAMIC_SLOT`; node touches a conduit with *A*<sub>s</sub> > 0 | The slot geometry of Section 3.3.9 is rewritten each iteration, so the operator differs between iterates. |
 | Near the static slot cutoff | `SURCHARGE_METHOD SLOT`; node touches a closed conduit with \f$0.98 \leq \overline{Y}/Y_{full} \leq 1.02\f$ | The slot width of Equation 3-30 engages abruptly at the crown cutoff. |
+| TPA latch transition | `SURCHARGE_METHOD TPA`; node touches a conduit whose pressurized latch changed this routing step | A latch transition is a discrete operator switch (Section 3.3.11). Steadily latched or steadily free conduits remain eligible. |
 | Weir or orifice at its crown | Upstream hydraulic grade line at or above the structure crown; both end nodes | The flow equation switches discontinuously (weir to orifice; partial to full submergence). |
 | Pump end nodes | Always; both end nodes of every pump | Pump on/off status is discrete. |
 
@@ -1381,6 +1752,7 @@ that of Section 3.2.
 
 Figure 3-11 summarizes one accelerated iteration.
 
+<!-- workflow: anderson_iteration -->
 <pre class="mermaid">
 flowchart TD
     A[Start iteration k] --> B[Compute plain iterate G of H_k for every node]
@@ -1397,6 +1769,11 @@ flowchart TD
     J -- no --> B
     J -- yes --> K[Node converged]
 </pre>
+<div class="workflow-links" data-workflow="anderson_iteration">
+<span data-node="D">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: the residual gate and eligibility"</span>
+<span data-node="F">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: the mixing coefficient"</span>
+<span data-node="K">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: convergence"</span>
+</div>
 
 *Figure 3-11 Workflow of one Anderson-accelerated iteration of the
 successive-approximation loop (rendered diagram)*
@@ -1405,8 +1782,11 @@ successive-approximation loop (rendered diagram)*
 two-condition convergence test are implemented in
 `updateNodeDepthsTeam` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`), with the exclusion flags of
-Table 3-2 computed once per iteration in `computeAASkipFlags` and the
-canonical state commit in `commitNodeDepthState`. The option is
+Table 3-2 computed once per iteration in `computeAASkipFlags`, except
+the two that depend on the current plain iterate (its surcharge branch
+and the flood limit, `floodLimitDepth`), which `updateNodeDepthsTeam`
+tests after each node's update, and the canonical state commit in
+`commitNodeDepthState`. The option is
 declared in @ref openswmm::SimulationOptions "SimulationOptions"
 (`src/engine/core/SimulationOptions.hpp`).
 

@@ -166,10 +166,12 @@ class TestQualityEditing(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(msg, "")
 
+            ok, msg, col = s.quality.validate_treatment_expression("C = FLOW * 2")
+            self.assertTrue(ok)  # FLOW is now a supported hydraulic variable.
             ok, msg, col = s.quality.validate_treatment_expression(
-                "C = FLOW * 2")
+                "C = NOT_A_HYDRAULIC_VARIABLE * 2")
             self.assertFalse(ok)
-            self.assertIn("FLOW", msg)
+            self.assertIn("NOT_A_HYDRAULIC_VARIABLE", msg)
             self.assertEqual(col, 4)
 
             ok, msg, col = s.quality.validate_treatment_expression("X = 1")

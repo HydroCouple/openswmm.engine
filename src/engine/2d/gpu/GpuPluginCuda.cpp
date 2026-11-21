@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file GpuPluginCuda.cpp
- * @brief Plugin entry points for the Phase 2 Kokkos/CUDA surface solver.
+ * @file      GpuPluginCuda.cpp
+ * @brief     Plugin entry points for the Phase 2 Kokkos/CUDA surface solver.
  *
  * @details Exports the GpuPluginAbi.h contract for the openswmm_gpu_cuda
  *          plugin. Identical in shape to GpuPluginOmp.cpp — the probe advertises
@@ -19,14 +35,20 @@
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include "../solver/GpuPluginAbi.h"
+#include "../solver/SurfaceCapabilities.hpp"
 #include "../solver/ISurfaceSolver.hpp"
-#include "ExplicitKokkosSurfaceSolver.hpp"
+#include "GpuPluginSupport.hpp"
+#include "CudaArchitectureMatch.hpp"
+#include "GpuCudaArchitectures.generated.hpp"
+#include <cstdio>
+#include <mutex>
+#include <stdexcept>
 
 #include <Kokkos_Core.hpp>
 #include <cuda_runtime.h>
@@ -34,25 +56,36 @@
 #include <cstring>
 
 namespace {
+std::mutex initialization_mutex;
+/**
+ * @brief Initialize the plugin execution runtime once under a process-level mutex.
+ * @throws std::runtime_error If Kokkos has already been finalized.
+ * @note Existing initialized Kokkos state is reused; this helper does not finalize it.
+ * Initialization exceptions propagate to the enclosing factory/operation handler. Caller uses
+ * the execution-owner thread.
+ */
 void ensureKokkosInitialized() {
+    std::lock_guard<std::mutex> lock(initialization_mutex);
+    if (Kokkos::is_finalized())
+        throw std::runtime_error("Kokkos runtime has already been finalized");
     if (!Kokkos::is_initialized() && !Kokkos::is_finalized()) {
         Kokkos::initialize();
     }
 }
 } // namespace
 
-extern "C" OPENSWMM_GPU_ABI int
-openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
-    if (out == nullptr) return 1;
+extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
+    if (out == nullptr)
+        return 1;
     std::memset(out, 0, sizeof(*out));
     out->abi_version = OPENSWMM_GPU_ABI_VERSION;
-    out->vendor      = OPENSWMM_GPU_VENDOR_CUDA;
+    out->capabilities = openswmm::twoD::kKokkosSurfaceCapabilities;
+    out->vendor = OPENSWMM_GPU_VENDOR_CUDA;
 
     int device_count = 0;
     if (cudaGetDeviceCount(&device_count) != cudaSuccess || device_count <= 0) {
         // No usable CUDA device — tell the core to fall back to the CPU solver.
-        std::strncpy(out->device_name, "no CUDA device",
-                     sizeof(out->device_name) - 1);
+        std::strncpy(out->device_name, "no CUDA device", sizeof(out->device_name) - 1);
         return 1;
     }
     out->device_count = device_count;
@@ -61,16 +94,30 @@ openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     if (cudaGetDeviceProperties(&prop, 0) == cudaSuccess) {
         std::strncpy(out->device_name, prop.name, sizeof(out->device_name) - 1);
         out->device_mem_bytes = static_cast<unsigned long long>(prop.totalGlobalMem);
+        constexpr int built[] = {OPENSWMM_GPU_CUDA_ARCHITECTURE_LIST};
+        if (!openswmm::twoD::gpu::cudaDeviceRunsBuiltCode(
+                built, static_cast<int>(sizeof(built) / sizeof(built[0])), prop.major,
+                prop.minor)) {
+            // Kokkos aborts the process on a device with no matching device binary.
+            std::fprintf(stderr,
+                         "[openswmm 2D] CUDA plugin has no device code for %s (compute "
+                         "capability %d.%d; built for %s). The plugin is not used.\n",
+                         prop.name, prop.major, prop.minor, OPENSWMM_GPU_CUDA_ARCHITECTURE_TEXT);
+            out->device_count = 0;
+            return 1;
+        }
     } else {
         std::strncpy(out->device_name, "CUDA device", sizeof(out->device_name) - 1);
     }
-    return 0;  // usable device present
+    return 0; // usable device present
 }
 
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
-    ensureKokkosInitialized();
-    openswmm::twoD::ISurfaceSolver* solver =
-        new openswmm::twoD::gpu::ExplicitKokkosSurfaceSolver();
-    return static_cast<void*>(solver);
+    return openswmm::twoD::gpu::plugin::make([] { ensureKokkosInitialized(); });
+}
+
+extern "C" OPENSWMM_GPU_ABI void* openswmm_make_gpu_network_marcher(const OpenSwmmGpuProbe* probe) {
+    (void)probe;
+    return openswmm::twoD::gpu::plugin::makeNetworkMarcher([] { ensureKokkosInitialized(); });
 }

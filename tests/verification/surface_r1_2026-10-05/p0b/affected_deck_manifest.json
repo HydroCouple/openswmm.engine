@@ -1,0 +1,1228 @@
+{
+  "baseline_engine_sha256": "87a77515e6f161f9554e0c4a440187c3aa689bb56d6d8db1a492080960d3d363",
+  "candidate_engine_sha256": "140c69eb224d2e331522a816c262de370312800edd22269a2aa50e0a08b1aa87",
+  "fixtures": [
+    {
+      "deck": "control_constant_si.inp",
+      "input_sha256": "89a5d3e03f1d48af22d304e79ac0126f0a65b37553d16adbea53a8a1f251dc8d",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.327906660767312,
+        "applied_integral_m3": 9.32790666076723,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b2ef1c2221ca543ee2bccfdd9499a35c85edc8243d243d7291d52a3d962c9011"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.327906660767312,
+        "applied_integral_m3": 9.32790666076723,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b2ef1c2221ca543ee2bccfdd9499a35c85edc8243d243d7291d52a3d962c9011"
+      }
+    },
+    {
+      "deck": "conductivity_constant_si.inp",
+      "input_sha256": "2def2a98243b37708c8b6e46cb00447417d7d7e18367cd48b5eedc453083fb20",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.327906660767312,
+        "applied_integral_m3": 9.32790666076723,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b2ef1c2221ca543ee2bccfdd9499a35c85edc8243d243d7291d52a3d962c9011"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 3.900028888888911,
+        "applied_integral_m3": 3.900028888888888,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "9b190323677351db6eb4ab6fdd3dd202aa2e577146ab45765ff99cb001a969e2"
+      }
+    },
+    {
+      "deck": "recovery_constant_si.inp",
+      "input_sha256": "183d5502591295069487aff9bdcfd7b893e80cb3045f53ff7dc6cf138e888ba2",
+      "cause": "recovery",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.327906660767312,
+        "applied_integral_m3": 9.32790666076723,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b2ef1c2221ca543ee2bccfdd9499a35c85edc8243d243d7291d52a3d962c9011"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.327906660767312,
+        "applied_integral_m3": 9.32790666076723,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b2ef1c2221ca543ee2bccfdd9499a35c85edc8243d243d7291d52a3d962c9011"
+      }
+    },
+    {
+      "deck": "control_constant_us.inp",
+      "input_sha256": "e2b247f6aad8c2abeccbfe53012daf7c9ee5253445d64daba020c596d9555bc6",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8665908856215238,
+        "applied_integral_m3": 0.8665908856215286,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "563b325003462366cc4f514f21e2dbc0fed542c02775a39d538c61a66a4f5272"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8665908856215238,
+        "applied_integral_m3": 0.8665908856215286,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "563b325003462366cc4f514f21e2dbc0fed542c02775a39d538c61a66a4f5272"
+      }
+    },
+    {
+      "deck": "conductivity_constant_us.inp",
+      "input_sha256": "062d37ebf6e6909b2afd26a7a67118d7ce05c47f9b16bb99c4b1b07dff6a78e0",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8665908856215238,
+        "applied_integral_m3": 0.8665908856215286,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "563b325003462366cc4f514f21e2dbc0fed542c02775a39d538c61a66a4f5272"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.3623245398655974,
+        "applied_integral_m3": 0.3623245398655999,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "da73c09be86ff4b025c56c30ea1e0333c6d3b0f767017304219c0de4464d5c08"
+      }
+    },
+    {
+      "deck": "recovery_constant_us.inp",
+      "input_sha256": "41433427a4f004050709ee12049bc16b566ffaab7f25157ad9a869fd9bfac308",
+      "cause": "recovery",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8665908856215238,
+        "applied_integral_m3": 0.8665908856215286,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "563b325003462366cc4f514f21e2dbc0fed542c02775a39d538c61a66a4f5272"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8665908856215238,
+        "applied_integral_m3": 0.8665908856215286,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "563b325003462366cc4f514f21e2dbc0fed542c02775a39d538c61a66a4f5272"
+      }
+    },
+    {
+      "deck": "control_curve_number_si.inp",
+      "input_sha256": "772774984dd6060a1470a55b353246438b9adcbc79b8fa81ba95723f47044141",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 18.87500791326972,
+        "applied_integral_m3": 18.87500791326973,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "30332bab88838b325b8c9b7d36459a4afce1a08fe6e80d2b43b46ef0aa60e904"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 18.87500791326972,
+        "applied_integral_m3": 18.87500791326973,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "30332bab88838b325b8c9b7d36459a4afce1a08fe6e80d2b43b46ef0aa60e904"
+      }
+    },
+    {
+      "deck": "conductivity_curve_number_si.inp",
+      "input_sha256": "8061e55920dc06a3c369360b6f92d3a33c9ff86ce70b2f81411687a162442b45",
+      "cause": "conductivity",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 18.87500791326972,
+        "applied_integral_m3": 18.87500791326973,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "30332bab88838b325b8c9b7d36459a4afce1a08fe6e80d2b43b46ef0aa60e904"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 18.87500791326972,
+        "applied_integral_m3": 18.87500791326973,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "30332bab88838b325b8c9b7d36459a4afce1a08fe6e80d2b43b46ef0aa60e904"
+      }
+    },
+    {
+      "deck": "recovery_curve_number_si.inp",
+      "input_sha256": "88838473c5fd3394cf79054ea173f48f8bebdec6838da3af1469b6e81579b159",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 18.393551628679745,
+        "applied_integral_m3": 18.39355162867969,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "00a90b55572032164c309d5fdce8ae8e3611b5c8f28775c45c30ffdbe7828483"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 17.971885905111595,
+        "applied_integral_m3": 17.97188590511164,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "d79bae8a9f847ca58fee45498da7f7758d489f0fd57490c8d4f514822534ffc0"
+      }
+    },
+    {
+      "deck": "control_curve_number_us.inp",
+      "input_sha256": "2e0c08f57a35351653b69636eff0eea70af0b0d6995f09993065e70d98016377",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.7535456151668185,
+        "applied_integral_m3": 1.7535456151668134,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3c02b5ebd9284b139e30c863d3077caa4108223c68b2246a0e8b9ed946e71367"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.7535456151668185,
+        "applied_integral_m3": 1.7535456151668134,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3c02b5ebd9284b139e30c863d3077caa4108223c68b2246a0e8b9ed946e71367"
+      }
+    },
+    {
+      "deck": "conductivity_curve_number_us.inp",
+      "input_sha256": "9c34c74a5cbca357313b2612d726bb75b9ffe5cf9f0648afae3746d412106654",
+      "cause": "conductivity",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.7535456151668185,
+        "applied_integral_m3": 1.7535456151668134,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3c02b5ebd9284b139e30c863d3077caa4108223c68b2246a0e8b9ed946e71367"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.7535456151668185,
+        "applied_integral_m3": 1.7535456151668134,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3c02b5ebd9284b139e30c863d3077caa4108223c68b2246a0e8b9ed946e71367"
+      }
+    },
+    {
+      "deck": "recovery_curve_number_us.inp",
+      "input_sha256": "68994ed1ad85ed2db77c40e48aab69bb450ad41d08f49fd0f55599e8d06f8e17",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.7088168627012936,
+        "applied_integral_m3": 1.7088168627012934,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "05e19a032fc08370d6e904f5f49188b0e2cee392018367a49c97684767b13547"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.6696428351180195,
+        "applied_integral_m3": 1.669642835118022,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "7926eb5d4a772a9caf5c83445b21ee9aa5c32f81868ee749331abac7ab3b0850"
+      }
+    },
+    {
+      "deck": "control_green_ampt_si.inp",
+      "input_sha256": "8c7f7e949e3de9e682b1fe1a4ea4c0ef54cf990b5d00ae050cb0f427f535832f",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      }
+    },
+    {
+      "deck": "conductivity_green_ampt_si.inp",
+      "input_sha256": "2e8dbae74239319cc4644ead6aec1efcf778ca1a19562d67221826a04e8105bf",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.47252523432921,
+        "applied_integral_m3": 9.472525234329202,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "636cee1ce90f244a6207a34e11a8f2e6b0ea7bd0bd2c3a7fab8fb35fbfa94967"
+      }
+    },
+    {
+      "deck": "recovery_green_ampt_si.inp",
+      "input_sha256": "051986c54428f6167540b10788fd1080359dd6d0fab375500bd4e6f38d89ee01",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 27.030301378594093,
+        "applied_integral_m3": 27.030301378595635,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "b9625a06f66377c8faebad0acde0f072c0e7cf657e1893e77650b53778fa2375"
+      },
+      "after": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 47.016006516909826,
+        "applied_integral_m3": 47.01600651691022,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e5f67d777315db199c8bc8fd7989e17e10a270277399cf2c8d2a5bb60a10837"
+      }
+    },
+    {
+      "deck": "control_green_ampt_us.inp",
+      "input_sha256": "ab09b29776f2624f049a60be0e76405fa4c56ea327bb37b49dee0fa7d134b786",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      }
+    },
+    {
+      "deck": "conductivity_green_ampt_us.inp",
+      "input_sha256": "94b6d72c24a929aa925efa95b516ce26227c351fc3984ea501bd1b2b6eacd932",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8800263907458966,
+        "applied_integral_m3": 0.8800263907458963,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "e77deeeb2514f616c6a6f1e44090f77a398819e31ade4e1d95a5ed6da8b31c14"
+      }
+    },
+    {
+      "deck": "recovery_green_ampt_us.inp",
+      "input_sha256": "1e687c90068c50ec3b34a43e27d27f514fad1ae7be0eb9f907490fefb4f128be",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 2.511197170187762,
+        "applied_integral_m3": 2.5111971701877254,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3d5aa2df4b89369f3e44e5e64e88977e16559945a7b06d4826107c03dc52767b"
+      },
+      "after": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 4.367929934080747,
+        "applied_integral_m3": 4.367929934080763,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "1db7f47170ac7a6d4688ac7125f53d556030561b3c03852f73e125f8daad48ef"
+      }
+    },
+    {
+      "deck": "control_horton_si.inp",
+      "input_sha256": "3668a56902bb11648fdfc9784d56d3b29abe3707b5c754dca04c54167e19b34a",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.499623711322426,
+        "applied_integral_m3": 9.499623711322418,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "32469da88bfee181eec33abef5c71701bae96b1be321edded9bb53f9b2415b9b"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.499623711322426,
+        "applied_integral_m3": 9.499623711322418,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "32469da88bfee181eec33abef5c71701bae96b1be321edded9bb53f9b2415b9b"
+      }
+    },
+    {
+      "deck": "conductivity_horton_si.inp",
+      "input_sha256": "aca47a27011dfa2150845f80bdcc72ffd228352e5e75a99d16b9a7c3d2f4665f",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.499623711322426,
+        "applied_integral_m3": 9.499623711322418,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "32469da88bfee181eec33abef5c71701bae96b1be321edded9bb53f9b2415b9b"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 5.759154858859951,
+        "applied_integral_m3": 5.7591548588599615,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "fddace9566208f886751d38083dffe322756e0422438b1573976a17dd83c76ea"
+      }
+    },
+    {
+      "deck": "recovery_horton_si.inp",
+      "input_sha256": "810d37ebe63742cffea0ea4fea973435c07d8dae29b79a00e41f8180abcb181a",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.499623711322426,
+        "applied_integral_m3": 9.499623711322418,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "32469da88bfee181eec33abef5c71701bae96b1be321edded9bb53f9b2415b9b"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.499623711322426,
+        "applied_integral_m3": 9.499623711322418,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "32469da88bfee181eec33abef5c71701bae96b1be321edded9bb53f9b2415b9b"
+      }
+    },
+    {
+      "deck": "control_horton_us.inp",
+      "input_sha256": "c6cde196b07bbbb64412ff70a73a4ad411402d4718c0315077781a549f5732f4",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8825439216379347,
+        "applied_integral_m3": 0.8825439216379345,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "6a46f5c593fea1a186c5784d08aa293d558349ff04aa6cb9786a40389a308782"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8825439216379347,
+        "applied_integral_m3": 0.8825439216379345,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "6a46f5c593fea1a186c5784d08aa293d558349ff04aa6cb9786a40389a308782"
+      }
+    },
+    {
+      "deck": "conductivity_horton_us.inp",
+      "input_sha256": "08489dec28d2854149c9f651534e387a6f5bb6a3cec4a4fc243b5cfa94d78e06",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8825439216379347,
+        "applied_integral_m3": 0.8825439216379345,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "6a46f5c593fea1a186c5784d08aa293d558349ff04aa6cb9786a40389a308782"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.5350429942188633,
+        "applied_integral_m3": 0.5350429942188615,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "46056c176d8f18498562cd217fd67ff6109a1934ebeb14d130c5a70d8ccc6113"
+      }
+    },
+    {
+      "deck": "recovery_horton_us.inp",
+      "input_sha256": "e4dd852f8dca5a3bfb99e1c1d442093f3ef1d0495524fabbd3c7d7c0758c46a6",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8825439216379347,
+        "applied_integral_m3": 0.8825439216379345,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "6a46f5c593fea1a186c5784d08aa293d558349ff04aa6cb9786a40389a308782"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8825439216379347,
+        "applied_integral_m3": 0.8825439216379345,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "6a46f5c593fea1a186c5784d08aa293d558349ff04aa6cb9786a40389a308782"
+      }
+    },
+    {
+      "deck": "control_modified_green_ampt_si.inp",
+      "input_sha256": "48fbb6b81045f264fa6e037ff28f2c539e2f387a33652d6776ab412451c35fa5",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      }
+    },
+    {
+      "deck": "conductivity_modified_green_ampt_si.inp",
+      "input_sha256": "40a786755ea56f6b1e748d5ed7dd0ed127dd217558b0e231dab98f6e81f32c44",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 12.279508883035922,
+        "applied_integral_m3": 12.279508883035986,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8bebf9addb74f0a8e99d6d486933712b0230c6ed0aed71a776f4e55493d20d8f"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.47252523432921,
+        "applied_integral_m3": 9.472525234329202,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "636cee1ce90f244a6207a34e11a8f2e6b0ea7bd0bd2c3a7fab8fb35fbfa94967"
+      }
+    },
+    {
+      "deck": "recovery_modified_green_ampt_si.inp",
+      "input_sha256": "15c3274b9240f48debb5db6355d5191bc0c2f8274811a7d14fc61d622db2c92a",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 47.016006516909826,
+        "applied_integral_m3": 47.01600651691022,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e5f67d777315db199c8bc8fd7989e17e10a270277399cf2c8d2a5bb60a10837"
+      },
+      "after": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 47.016006516909826,
+        "applied_integral_m3": 47.01600651691022,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e5f67d777315db199c8bc8fd7989e17e10a270277399cf2c8d2a5bb60a10837"
+      }
+    },
+    {
+      "deck": "control_modified_green_ampt_us.inp",
+      "input_sha256": "8144aa90eb6ea6edbf0b2a4993985d24c0673d8d676faf65e1177f6639233bde",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      }
+    },
+    {
+      "deck": "conductivity_modified_green_ampt_us.inp",
+      "input_sha256": "553e7fa7b4f8e3dc42dfa66a6df3f021e9a3ef187653eba400c923d54eb1b18f",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 1.1408037049410424,
+        "applied_integral_m3": 1.140803704941047,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "cb0f44ddab3595ef42c3054786a5bbd93820160fabf2607681ca89e00f94e27d"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.8800263907458966,
+        "applied_integral_m3": 0.8800263907458963,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "e77deeeb2514f616c6a6f1e44090f77a398819e31ade4e1d95a5ed6da8b31c14"
+      }
+    },
+    {
+      "deck": "recovery_modified_green_ampt_us.inp",
+      "input_sha256": "d6c67a6111b08120bad60e46e406959493638ede0d00a1a9b286c5229372cf33",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 4.367929934080747,
+        "applied_integral_m3": 4.367929934080763,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "1db7f47170ac7a6d4688ac7125f53d556030561b3c03852f73e125f8daad48ef"
+      },
+      "after": {
+        "samples": 8636,
+        "cells": 4,
+        "volume_m3": 4.367929934080747,
+        "applied_integral_m3": 4.367929934080763,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "1db7f47170ac7a6d4688ac7125f53d556030561b3c03852f73e125f8daad48ef"
+      }
+    },
+    {
+      "deck": "control_modified_horton_si.inp",
+      "input_sha256": "194d7177f1339feb3df04bde7bf602fd007aab137c96b55992288bdd89978e59",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.852521115094891,
+        "applied_integral_m3": 9.85252111509486,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3f98ac9c583475bcceb97c718804aaf8a5af414b64d911712810714894830e01"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.852521115094891,
+        "applied_integral_m3": 9.85252111509486,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3f98ac9c583475bcceb97c718804aaf8a5af414b64d911712810714894830e01"
+      }
+    },
+    {
+      "deck": "conductivity_modified_horton_si.inp",
+      "input_sha256": "de7c59f2be610bc8d67279c2883bf03a33a3dfc3e06d15995521a29ba3d51647",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.852521115094891,
+        "applied_integral_m3": 9.85252111509486,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3f98ac9c583475bcceb97c718804aaf8a5af414b64d911712810714894830e01"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 5.759924096228437,
+        "applied_integral_m3": 5.7599240962284,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "8a4441663dc7e3379b5651b626c2b252603fb64fefa5aaa5bfdbb868d5ef4b92"
+      }
+    },
+    {
+      "deck": "recovery_modified_horton_si.inp",
+      "input_sha256": "f54f4019e775f2a6870ae3828849c38a43798f5683765deea5f54df5338f2d2c",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.852521115094891,
+        "applied_integral_m3": 9.85252111509486,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3f98ac9c583475bcceb97c718804aaf8a5af414b64d911712810714894830e01"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 9.852521115094891,
+        "applied_integral_m3": 9.85252111509486,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "3f98ac9c583475bcceb97c718804aaf8a5af414b64d911712810714894830e01"
+      }
+    },
+    {
+      "deck": "control_modified_horton_us.inp",
+      "input_sha256": "efc0f49f4cd4bf56b0dbcbd7c471cdead105531c3f3b9e61e72557c7cf58ecee",
+      "cause": "control",
+      "configured_factor_applies": false,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.9153291632565042,
+        "applied_integral_m3": 0.9153291632565023,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e081a5b98f13fc05ecbf55703fd9dcfe99506de281dab16b8e708ce87fd282e"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.9153291632565042,
+        "applied_integral_m3": 0.9153291632565023,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e081a5b98f13fc05ecbf55703fd9dcfe99506de281dab16b8e708ce87fd282e"
+      }
+    },
+    {
+      "deck": "conductivity_modified_horton_us.inp",
+      "input_sha256": "597f7debe7b273d1001e319e9e2df70e31a40142660db40b1541f37ffe43db6a",
+      "cause": "conductivity",
+      "configured_factor_applies": true,
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.9153291632565042,
+        "applied_integral_m3": 0.9153291632565023,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e081a5b98f13fc05ecbf55703fd9dcfe99506de281dab16b8e708ce87fd282e"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.535114458708871,
+        "applied_integral_m3": 0.535114458708871,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "1fd967e73ebed0c872325d5dae43faa790d26696c02f19095fea7a5a8cc1ad27"
+      }
+    },
+    {
+      "deck": "recovery_modified_horton_us.inp",
+      "input_sha256": "02263962d663fde1a7d046b7d4c9c19af0d73224f2748cb0de011403471a58e9",
+      "cause": "recovery",
+      "configured_factor_applies": true,
+      "changed": false,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.9153291632565042,
+        "applied_integral_m3": 0.9153291632565023,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e081a5b98f13fc05ecbf55703fd9dcfe99506de281dab16b8e708ce87fd282e"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 0.9153291632565042,
+        "applied_integral_m3": 0.9153291632565023,
+        "initial_rate_m_s": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "series_sha256": "0e081a5b98f13fc05ecbf55703fd9dcfe99506de281dab16b8e708ce87fd282e"
+      }
+    },
+    {
+      "deck": "monthly_constant_si.inp",
+      "input_sha256": "b0b5921896a3ebe2921c402fa6130c0b9d167389c0770234041e796c62d70631",
+      "cause": "month_boundary",
+      "changed": true,
+      "before": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 10.160000000000046,
+        "applied_integral_m3": 10.159999999999902,
+        "initial_rate_m_s": [
+          3.527777777777778e-06,
+          3.527777777777778e-06,
+          3.527777777777778e-06,
+          3.527777777777778e-06
+        ],
+        "series_sha256": "c19f71ebf2b09c4b62da0e6b74d1cd8f0bce51a3ab10a92762f1aa9d2a6fd285"
+      },
+      "after": {
+        "samples": 722,
+        "cells": 4,
+        "volume_m3": 5.932028888888883,
+        "applied_integral_m3": 5.932028888888954,
+        "initial_rate_m_s": [
+          1.4111111111111111e-06,
+          1.4111111111111111e-06,
+          1.4111111111111111e-06,
+          1.4111111111111111e-06
+        ],
+        "series_sha256": "dca01abba0b28d74c90674e8b773b185ce1e2ee910ea811171de238982380806"
+      }
+    }
+  ],
+  "changed": 15,
+  "unchanged": 22
+}

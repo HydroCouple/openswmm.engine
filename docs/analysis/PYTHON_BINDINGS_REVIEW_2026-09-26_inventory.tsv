@@ -1,0 +1,1173 @@
+function	header	line	status	reference_files
+swmm_2d_add_triangle_coupling	include/openswmm/engine/openswmm_2d.h	380	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_boundary_edge_count	include/openswmm/engine/openswmm_2d.h	839	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_cell_count	include/openswmm/engine/openswmm_2d.h	178	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_cell_get_neighbours	include/openswmm/engine/openswmm_2d.h	208	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_cell_get_vertices	include/openswmm/engine/openswmm_2d.h	201	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_cell_vertex_count	include/openswmm/engine/openswmm_2d.h	195	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_clear_triangle_couplings	include/openswmm/engine/openswmm_2d.h	392	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_coverage_count	include/openswmm/engine/openswmm_sq2d.h	57	gap	
+swmm_2d_coverage_get	include/openswmm/engine/openswmm_sq2d.h	82	gap	
+swmm_2d_coverage_remove	include/openswmm/engine/openswmm_sq2d.h	88	gap	
+swmm_2d_coverage_row_size	include/openswmm/engine/openswmm_sq2d.h	75	gap	
+swmm_2d_coverage_set	include/openswmm/engine/openswmm_sq2d.h	69	gap	
+swmm_2d_curb_length_count	include/openswmm/engine/openswmm_sq2d.h	114	gap	
+swmm_2d_curb_length_get	include/openswmm/engine/openswmm_sq2d.h	122	gap	
+swmm_2d_curb_length_remove	include/openswmm/engine/openswmm_sq2d.h	126	gap	
+swmm_2d_curb_length_set	include/openswmm/engine/openswmm_sq2d.h	118	gap	
+swmm_2d_edge_get_geometry_bulk	include/openswmm/engine/openswmm_2d.h	312	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_edge_stride	include/openswmm/engine/openswmm_2d.h	191	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_clear_all	include/openswmm/engine/openswmm_2d.h	799	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_coupling_flux	include/openswmm/engine/openswmm_2d.h	793	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_evap	include/openswmm/engine/openswmm_2d.h	780	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_evap_uniform	include/openswmm/engine/openswmm_2d.h	786	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_rainfall	include/openswmm/engine/openswmm_2d.h	759	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_force_rainfall_uniform	include/openswmm/engine/openswmm_2d.h	765	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_buildup_bulk	include/openswmm/engine/openswmm_sq2d.h	140	gap	
+swmm_2d_get_continuity_error	include/openswmm/engine/openswmm_2d.h	731	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_coupling_flux	include/openswmm/engine/openswmm_2d.h	476	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_coupling_fluxes_bulk	include/openswmm/engine/openswmm_2d.h	519	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_coupling_volume_bulk	include/openswmm/engine/openswmm_2d.h	555	gap	
+swmm_2d_get_depth	include/openswmm/engine/openswmm_2d.h	468	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_depths_bulk	include/openswmm/engine/openswmm_2d.h	511	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_dry_depth	include/openswmm/engine/openswmm_2d.h	807	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_cum_flux	include/openswmm/engine/openswmm_2d.h	961	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_flow	include/openswmm/engine/openswmm_2d.h	915	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_flow_tseries_name	include/openswmm/engine/openswmm_2d.h	935	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_head	include/openswmm/engine/openswmm_2d.h	862	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_rating_curve_name	include/openswmm/engine/openswmm_2d.h	953	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_slope	include/openswmm/engine/openswmm_2d.h	875	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_tseries_name	include/openswmm/engine/openswmm_2d.h	903	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_bc_type	include/openswmm/engine/openswmm_2d.h	846	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_conveyance	include/openswmm/engine/openswmm_2d.h	595	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_conveyance_bulk	include/openswmm/engine/openswmm_2d.h	620	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_edge_flux_bulk	include/openswmm/engine/openswmm_2d.h	573	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_head	include/openswmm/engine/openswmm_2d.h	472	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_heads_bulk	include/openswmm/engine/openswmm_2d.h	515	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_mass_balance	include/openswmm/engine/openswmm_2d.h	737	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_max_depth	include/openswmm/engine/openswmm_2d.h	659	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_net_source	include/openswmm/engine/openswmm_2d.h	505	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_rain_volume_bulk	include/openswmm/engine/openswmm_2d.h	534	gap	
+swmm_2d_get_rainfall	include/openswmm/engine/openswmm_2d.h	481	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_rainfall_bulk	include/openswmm/engine/openswmm_2d.h	526	gap	
+swmm_2d_get_rainfall_weights	include/openswmm/engine/openswmm_2d.h	498	gap	
+swmm_2d_get_run_stats	include/openswmm/engine/openswmm_2d.h	707	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_solver_last_step	include/openswmm/engine/openswmm_2d.h	681	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_solver_steps	include/openswmm/engine/openswmm_2d.h	675	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_stat_max_continuity_err	include/openswmm/engine/openswmm_2d.h	725	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_stat_max_depths	include/openswmm/engine/openswmm_2d.h	713	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_stat_max_velocities	include/openswmm/engine/openswmm_2d.h	719	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_total_exchange_flow	include/openswmm/engine/openswmm_2d.h	668	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_total_volume	include/openswmm/engine/openswmm_2d.h	663	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_triangle_coupling_row	include/openswmm/engine/openswmm_2d.h	407	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_triangle_tag	include/openswmm/engine/openswmm_2d.h	292	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_vertex_coupling_area	include/openswmm/engine/openswmm_2d.h	444	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_vertex_coupling_cd	include/openswmm/engine/openswmm_2d.h	419	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_get_vertex_tag	include/openswmm/engine/openswmm_2d.h	285	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_is_active	include/openswmm/engine/openswmm_2d.h	71	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_loading_count	include/openswmm/engine/openswmm_sq2d.h	94	gap	
+swmm_2d_loading_get	include/openswmm/engine/openswmm_sq2d.h	103	gap	
+swmm_2d_loading_remove	include/openswmm/engine/openswmm_sq2d.h	108	gap	
+swmm_2d_loading_set	include/openswmm/engine/openswmm_sq2d.h	99	gap	
+swmm_2d_output_variable_count	include/openswmm/engine/openswmm_2d.h	976	gap	
+swmm_2d_output_variable_mask	include/openswmm/engine/openswmm_2d.h	981	gap	
+swmm_2d_output_variable_name	include/openswmm/engine/openswmm_2d.h	978	gap	
+swmm_2d_output_variable_text	include/openswmm/engine/openswmm_2d.h	983	gap	
+swmm_2d_prepare_for_edit	include/openswmm/engine/openswmm_2d.h	83	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_quad_count	include/openswmm/engine/openswmm_2d.h	182	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_reset_edge_conveyance	include/openswmm/engine/openswmm_2d.h	625	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_dry_depth	include/openswmm/engine/openswmm_2d.h	811	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_flow	include/openswmm/engine/openswmm_2d.h	922	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_flow_tseries_name	include/openswmm/engine/openswmm_2d.h	928	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_head	include/openswmm/engine/openswmm_2d.h	869	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_rating_curve_name	include/openswmm/engine/openswmm_2d.h	946	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_slope	include/openswmm/engine/openswmm_2d.h	881	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_tseries_name	include/openswmm/engine/openswmm_2d.h	892	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_bc_type	include/openswmm/engine/openswmm_2d.h	852	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_edge_conveyance	include/openswmm/engine/openswmm_2d.h	611	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_triangle_init_depth	include/openswmm/engine/openswmm_2d.h	250	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_triangle_init_velocity	include/openswmm/engine/openswmm_2d.h	265	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_triangle_mannings	include/openswmm/engine/openswmm_2d.h	234	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_triangle_tag	include/openswmm/engine/openswmm_2d.h	278	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_coupled_node	include/openswmm/engine/openswmm_2d.h	360	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_coupling_area	include/openswmm/engine/openswmm_2d.h	456	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_coupling_cd	include/openswmm/engine/openswmm_2d.h	429	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_tag	include/openswmm/engine/openswmm_2d.h	272	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_z	include/openswmm/engine/openswmm_2d.h	128	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_set_vertex_z_bulk	include/openswmm/engine/openswmm_2d.h	153	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_count	include/openswmm/engine/openswmm_2d.h	95	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_coupling_count	include/openswmm/engine/openswmm_2d.h	327	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_coupling_rows	include/openswmm/engine/openswmm_2d.h	397	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_area	include/openswmm/engine/openswmm_2d.h	215	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_centroid	include/openswmm/engine/openswmm_2d.h	220	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_coupled_node	include/openswmm/engine/openswmm_2d.h	341	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_init_depth	include/openswmm/engine/openswmm_2d.h	242	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_init_velocity	include/openswmm/engine/openswmm_2d.h	255	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_mannings	include/openswmm/engine/openswmm_2d.h	226	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_neighbours	include/openswmm/engine/openswmm_2d.h	298	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_triangle_get_vertices	include/openswmm/engine/openswmm_2d.h	161	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_count	include/openswmm/engine/openswmm_2d.h	91	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_coupling_count	include/openswmm/engine/openswmm_2d.h	323	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_coupled_node	include/openswmm/engine/openswmm_2d.h	333	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_head	include/openswmm/engine/openswmm_2d.h	633	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_heads_bulk	include/openswmm/engine/openswmm_2d.h	638	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_render_depths_bulk	include/openswmm/engine/openswmm_2d.h	650	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_xyz	include/openswmm/engine/openswmm_2d.h	101	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_2d_vertex_get_xyz_bulk	include/openswmm/engine/openswmm_2d.h	107	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_aquifer_add	include/openswmm/engine/openswmm_subcatchments.h	856	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_analyze_impact	include/openswmm/engine/openswmm_edit.h	166	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_aquifer_count	include/openswmm/engine/openswmm_subcatchments.h	827	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_delete	include/openswmm/engine/openswmm_edit.h	347	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_aquifer_get_evap_pattern	include/openswmm/engine/openswmm_subcatchments.h	945	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_get_param	include/openswmm/engine/openswmm_subcatchments.h	910	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_id	include/openswmm/engine/openswmm_subcatchments.h	843	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_index	include/openswmm/engine/openswmm_subcatchments.h	835	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_rename	include/openswmm/engine/openswmm_subcatchments.h	873	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_set_evap_pattern	include/openswmm/engine/openswmm_subcatchments.h	961	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_aquifer_set_param	include/openswmm/engine/openswmm_subcatchments.h	926	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_buildup_get	include/openswmm/engine/openswmm_quality.h	120	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_buildup_set	include/openswmm/engine/openswmm_quality.h	100	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_climate_get_adc_impervious	include/openswmm/engine/openswmm_climate.h	266	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_adc_pervious	include/openswmm/engine/openswmm_climate.h	273	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_adjust_conductivity	include/openswmm/engine/openswmm_climate.h	302	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_adjust_evaporation	include/openswmm/engine/openswmm_climate.h	290	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_adjust_rainfall	include/openswmm/engine/openswmm_climate.h	296	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_adjust_temperature	include/openswmm/engine/openswmm_climate.h	284	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_ati_weight	include/openswmm/engine/openswmm_climate.h	249	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_dry_only	include/openswmm/engine/openswmm_forcing.h	469	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_climate_get_elevation	include/openswmm/engine/openswmm_climate.h	146	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_evap_monthly	include/openswmm/engine/openswmm_climate.h	174	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_evap_rate	include/openswmm/engine/openswmm_forcing.h	368	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_climate_get_evap_recovery	include/openswmm/engine/openswmm_climate.h	191	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_evap_timeseries	include/openswmm/engine/openswmm_climate.h	180	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_evap_type	include/openswmm/engine/openswmm_climate.h	167	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_humidity_monthly	include/openswmm/engine/openswmm_climate.h	230	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_humidity_timeseries	include/openswmm/engine/openswmm_climate.h	235	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_humidity_type	include/openswmm/engine/openswmm_climate.h	216	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_humidity_variable	include/openswmm/engine/openswmm_climate.h	222	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_latitude	include/openswmm/engine/openswmm_climate.h	151	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_longitude_correction	include/openswmm/engine/openswmm_climate.h	158	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_neg_melt_ratio	include/openswmm/engine/openswmm_climate.h	255	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_pan_coeff	include/openswmm/engine/openswmm_climate.h	186	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_snow_temp	include/openswmm/engine/openswmm_climate.h	244	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_temp_file_start	include/openswmm/engine/openswmm_climate.h	134	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_temp_source	include/openswmm/engine/openswmm_climate.h	123	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_temp_timeseries	include/openswmm/engine/openswmm_climate.h	129	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_temp_units	include/openswmm/engine/openswmm_climate.h	140	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_temperature	include/openswmm/engine/openswmm_forcing.h	402	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_climate_get_wind_monthly	include/openswmm/engine/openswmm_climate.h	207	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_get_wind_speed	include/openswmm/engine/openswmm_forcing.h	429	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_climate_get_wind_type	include/openswmm/engine/openswmm_climate.h	200	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adc_impervious	include/openswmm/engine/openswmm_climate.h	269	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adc_pervious	include/openswmm/engine/openswmm_climate.h	276	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adjust_conductivity	include/openswmm/engine/openswmm_climate.h	305	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adjust_evaporation	include/openswmm/engine/openswmm_climate.h	292	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adjust_rainfall	include/openswmm/engine/openswmm_climate.h	298	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_adjust_temperature	include/openswmm/engine/openswmm_climate.h	286	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_ati_weight	include/openswmm/engine/openswmm_climate.h	252	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_dry_only	include/openswmm/engine/openswmm_forcing.h	459	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_climate_set_elevation	include/openswmm/engine/openswmm_climate.h	148	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_evap_monthly	include/openswmm/engine/openswmm_climate.h	177	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_evap_recovery	include/openswmm/engine/openswmm_climate.h	193	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_evap_timeseries	include/openswmm/engine/openswmm_climate.h	182	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_evap_type	include/openswmm/engine/openswmm_climate.h	170	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_humidity_monthly	include/openswmm/engine/openswmm_climate.h	232	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_humidity_timeseries	include/openswmm/engine/openswmm_climate.h	237	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_humidity_type	include/openswmm/engine/openswmm_climate.h	219	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_humidity_variable	include/openswmm/engine/openswmm_climate.h	225	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_latitude	include/openswmm/engine/openswmm_climate.h	154	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_longitude_correction	include/openswmm/engine/openswmm_climate.h	160	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_neg_melt_ratio	include/openswmm/engine/openswmm_climate.h	258	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_pan_coeff	include/openswmm/engine/openswmm_climate.h	188	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_snow_temp	include/openswmm/engine/openswmm_climate.h	246	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_temp_file_start	include/openswmm/engine/openswmm_climate.h	136	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_temp_source	include/openswmm/engine/openswmm_climate.h	126	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_temp_timeseries	include/openswmm/engine/openswmm_climate.h	131	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_temp_units	include/openswmm/engine/openswmm_climate.h	143	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_wind_monthly	include/openswmm/engine/openswmm_climate.h	209	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_climate_set_wind_type	include/openswmm/engine/openswmm_climate.h	203	pyx_use	python/openswmm/engine/_climate.pyx
+swmm_conduit_split	include/openswmm/engine/openswmm_edit.h	501	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_conduit_split_inlet	include/openswmm/engine/openswmm_edit.h	544	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_control_add_rule	include/openswmm/engine/openswmm_controls.h	70	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_clear_rules	include/openswmm/engine/openswmm_controls.h	112	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_count	include/openswmm/engine/openswmm_controls.h	77	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_find_references	include/openswmm/engine/openswmm_controls.h	144	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_get_id	include/openswmm/engine/openswmm_controls.h	105	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_get_rule	include/openswmm/engine/openswmm_controls.h	87	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_remove_rule	include/openswmm/engine/openswmm_controls.h	124	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_set_link_setting	include/openswmm/engine/openswmm_controls.h	205	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_set_link_status	include/openswmm/engine/openswmm_controls.h	217	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_control_validate_rule	include/openswmm/engine/openswmm_controls.h	185	pyx_use	python/openswmm/engine/_controls.pyx
+swmm_conversion_result_free	include/openswmm/engine/openswmm_edit.h	423	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_curve_add	include/openswmm/engine/openswmm_tables.h	114	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_datetime_add_seconds	include/openswmm/engine/openswmm_datetime.h	175	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_datetime_decode_date	include/openswmm/engine/openswmm_datetime.h	138	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_datetime_decode_time	include/openswmm/engine/openswmm_datetime.h	155	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_datetime_encode_date	include/openswmm/engine/openswmm_datetime.h	106	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_datetime_encode_time	include/openswmm/engine/openswmm_datetime.h	121	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_datetime_time_diff	include/openswmm/engine/openswmm_datetime.h	187	pyx_use	python/openswmm/engine/_datetime.pyx
+swmm_dwf_add	include/openswmm/engine/openswmm_inflows.h	152	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_dwf_count	include/openswmm/engine/openswmm_inflows.h	603	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_dwf_get	include/openswmm/engine/openswmm_inflows.h	175	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_dwf_remove	include/openswmm/engine/openswmm_inflows.h	190	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_dwf_set_baseline	include/openswmm/engine/openswmm_inflows.h	198	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_engine_close	include/openswmm/engine/openswmm_engine.h	236	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_create	include/openswmm/engine/openswmm_engine.h	188	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_destroy	include/openswmm/engine/openswmm_engine.h	239	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_end	include/openswmm/engine/openswmm_engine.h	230	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_get_state	include/openswmm/engine/openswmm_engine.h	242	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_initialize	include/openswmm/engine/openswmm_engine.h	206	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_new	include/openswmm/engine/openswmm_model.h	62	pyx_use	python/openswmm/engine/_model.pyx
+swmm_engine_open	include/openswmm/engine/openswmm_engine.h	201	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_report	include/openswmm/engine/openswmm_engine.h	233	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_run	include/openswmm/engine/openswmm_engine.h	261	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_run_with_callback	include/openswmm/engine/openswmm_engine.h	278	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_set_lenient_open	include/openswmm/engine/openswmm_engine.h	314	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_start	include/openswmm/engine/openswmm_engine.h	209	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_step	include/openswmm/engine/openswmm_engine.h	212	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_engine_stride	include/openswmm/engine/openswmm_engine.h	227	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_error_message	include/openswmm/engine/openswmm_engine.h	302	existing_allowlist	
+swmm_events_add	include/openswmm/engine/openswmm_engine.h	469	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_events_clear	include/openswmm/engine/openswmm_engine.h	477	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_events_count	include/openswmm/engine/openswmm_engine.h	453	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_events_get	include/openswmm/engine/openswmm_engine.h	457	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_events_remove	include/openswmm/engine/openswmm_engine.h	474	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_events_set	include/openswmm/engine/openswmm_engine.h	463	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_ext_inflow_add	include/openswmm/engine/openswmm_inflows.h	68	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_ext_inflow_count	include/openswmm/engine/openswmm_inflows.h	596	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_ext_inflow_get	include/openswmm/engine/openswmm_inflows.h	96	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_ext_inflow_remove	include/openswmm/engine/openswmm_inflows.h	115	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_ext_inflow_set_baseline	include/openswmm/engine/openswmm_inflows.h	130	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_ext_inflow_set_scale	include/openswmm/engine/openswmm_inflows.h	123	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_file_path_get	include/openswmm/engine/openswmm_model.h	398	pyx_use	python/openswmm/engine/_model.pyx
+swmm_file_path_set	include/openswmm/engine/openswmm_model.h	419	pyx_use	python/openswmm/engine/_model.pyx
+swmm_files_get	include/openswmm/engine/openswmm_model.h	307	pyx_use	python/openswmm/engine/_model.pyx
+swmm_files_set	include/openswmm/engine/openswmm_model.h	322	pyx_use	python/openswmm/engine/_model.pyx
+swmm_finalize_model	include/openswmm/engine/openswmm_model.h	91	pyx_use	python/openswmm/engine/_model.pyx
+swmm_forcing_clear	include/openswmm/engine/openswmm_forcing.h	560	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_clear_all	include/openswmm/engine/openswmm_forcing.h	569	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_climate_evap	include/openswmm/engine/openswmm_forcing.h	448	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_climate_temperature	include/openswmm/engine/openswmm_forcing.h	391	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_climate_wind	include/openswmm/engine/openswmm_forcing.h	418	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_element_climate	include/openswmm/engine/openswmm_forcing.h	547	gap	
+swmm_forcing_element_climate_get	include/openswmm/engine/openswmm_forcing.h	556	gap	
+swmm_forcing_gage_rainfall	include/openswmm/engine/openswmm_forcing.h	486	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_link_flow	include/openswmm/engine/openswmm_forcing.h	224	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_link_quality	include/openswmm/engine/openswmm_forcing.h	291	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_link_seepage	include/openswmm/engine/openswmm_forcing.h	272	gap	
+swmm_forcing_link_setting	include/openswmm/engine/openswmm_forcing.h	238	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_node_age	include/openswmm/engine/openswmm_forcing.h	206	gap	
+swmm_forcing_node_head_boundary	include/openswmm/engine/openswmm_forcing.h	161	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_node_lat_inflow	include/openswmm/engine/openswmm_forcing.h	147	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_node_quality	include/openswmm/engine/openswmm_forcing.h	176	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_node_temperature	include/openswmm/engine/openswmm_forcing.h	193	gap	
+swmm_forcing_subcatch_evap	include/openswmm/engine/openswmm_forcing.h	331	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_subcatch_rainfall	include/openswmm/engine/openswmm_forcing.h	310	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_forcing_subcatch_snowfall	include/openswmm/engine/openswmm_forcing.h	351	pyx_use	python/openswmm/engine/_forcing.pyx
+swmm_gage_add	include/openswmm/engine/openswmm_gages.h	95	pyx_use	python/openswmm/engine/_gages.pyx;python/openswmm/engine/_model.pyx
+swmm_gage_analyze_impact	include/openswmm/engine/openswmm_edit.h	146	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_gage_count	include/openswmm/engine/openswmm_gages.h	66	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_gages.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_gage_delete	include/openswmm/engine/openswmm_edit.h	251	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_gage_delete_many	include/openswmm/engine/openswmm_edit.h	297	gap	
+swmm_gage_get_data_source	include/openswmm/engine/openswmm_gages.h	258	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_file_column	include/openswmm/engine/openswmm_gages.h	318	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_file_format	include/openswmm/engine/openswmm_gages.h	330	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rain_interval	include/openswmm/engine/openswmm_gages.h	276	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rain_type	include/openswmm/engine/openswmm_gages.h	249	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rain_units	include/openswmm/engine/openswmm_gages.h	339	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rainfall	include/openswmm/engine/openswmm_gages.h	346	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rainfall_bulk	include/openswmm/engine/openswmm_gages.h	367	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rainfall_series	include/openswmm/engine/openswmm_gages.h	426	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_rainfall_series_count	include/openswmm/engine/openswmm_gages.h	392	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_scale_factor	include/openswmm/engine/openswmm_gages.h	267	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_snow_factor	include/openswmm/engine/openswmm_gages.h	285	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_station_id	include/openswmm/engine/openswmm_gages.h	307	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_get_timeseries	include/openswmm/engine/openswmm_gages.h	296	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_id	include/openswmm/engine/openswmm_gages.h	82	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_index	include/openswmm/engine/openswmm_gages.h	74	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_gages.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_gage_reload_rain_files	include/openswmm/engine/openswmm_gages.h	446	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_rename	include/openswmm/engine/openswmm_gages.h	372	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_data_source	include/openswmm/engine/openswmm_gages.h	126	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_file_column	include/openswmm/engine/openswmm_gages.h	180	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_file_format	include/openswmm/engine/openswmm_gages.h	203	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_filename	include/openswmm/engine/openswmm_gages.h	154	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_rain_interval	include/openswmm/engine/openswmm_gages.h	117	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_rain_type	include/openswmm/engine/openswmm_gages.h	108	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_rain_units	include/openswmm/engine/openswmm_gages.h	221	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_rainfall	include/openswmm/engine/openswmm_gages.h	354	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_scale_factor	include/openswmm/engine/openswmm_gages.h	236	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_snow_factor	include/openswmm/engine/openswmm_gages.h	212	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_station_id	include/openswmm/engine/openswmm_gages.h	164	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_gage_set_timeseries	include/openswmm/engine/openswmm_gages.h	135	pyx_use	python/openswmm/engine/_gages.pyx
+swmm_get_crs	include/openswmm/engine/openswmm_model.h	560	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_get_current_time	include/openswmm/engine/openswmm_engine.h	413	existing_allowlist	python/openswmm/engine/_solver.pyx
+swmm_get_effective_threads	include/openswmm/engine/openswmm_engine.h	360	gap	
+swmm_get_end_time	include/openswmm/engine/openswmm_engine.h	412	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_error_at	include/openswmm/engine/openswmm_engine.h	319	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_error_count	include/openswmm/engine/openswmm_engine.h	318	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_event_count	include/openswmm/engine/openswmm_engine.h	441	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_flow_units	include/openswmm/engine/openswmm_engine.h	426	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_last_error	include/openswmm/engine/openswmm_engine.h	300	existing_allowlist	
+swmm_get_last_error_msg	include/openswmm/engine/openswmm_engine.h	301	existing_allowlist	
+swmm_get_max_courant	include/openswmm/engine/openswmm_massbalance.h	151	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_quality_continuity_error	include/openswmm/engine/openswmm_massbalance.h	52	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_quality_evap_loss	include/openswmm/engine/openswmm_massbalance.h	161	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_quality_seep_loss	include/openswmm/engine/openswmm_massbalance.h	158	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_routing_continuity_error	include/openswmm/engine/openswmm_massbalance.h	49	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_routing_stats	include/openswmm/engine/openswmm_massbalance.h	145	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_routing_step	include/openswmm/engine/openswmm_engine.h	414	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_routing_total	include/openswmm/engine/openswmm_massbalance.h	138	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_runoff_continuity_error	include/openswmm/engine/openswmm_massbalance.h	46	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_runoff_total	include/openswmm/engine/openswmm_massbalance.h	129	pyx_use	python/openswmm/engine/_massbalance.pyx
+swmm_get_start_time	include/openswmm/engine/openswmm_engine.h	411	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_steady_state_skip	include/openswmm/engine/openswmm_engine.h	480	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_thread_info	include/openswmm/engine/openswmm_engine.h	345	gap	
+swmm_get_transport_matrix	include/openswmm/engine/openswmm_engine.h	401	gap	
+swmm_get_unit_system	include/openswmm/engine/openswmm_engine.h	430	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_warning_at	include/openswmm/engine/openswmm_engine.h	321	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_get_warning_count	include/openswmm/engine/openswmm_engine.h	320	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_gpkg_begin	include/openswmm/engine/openswmm_geopackage.h	146	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_close	include/openswmm/engine/openswmm_geopackage.h	123	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_commit	include/openswmm/engine/openswmm_geopackage.h	153	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_create_observed_series	include/openswmm/engine/openswmm_geopackage.h	310	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_gage_count	include/openswmm/engine/openswmm_geopackage.h	216	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_is_registered	include/openswmm/engine/openswmm_geopackage.h	184	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_last_error	include/openswmm/engine/openswmm_geopackage.h	130	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_link_count	include/openswmm/engine/openswmm_geopackage.h	214	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_node_count	include/openswmm/engine/openswmm_geopackage.h	213	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_observed_series_count	include/openswmm/engine/openswmm_geopackage.h	370	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_observed_value_count	include/openswmm/engine/openswmm_geopackage.h	378	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_open	include/openswmm/engine/openswmm_geopackage.h	114	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_query_double	include/openswmm/engine/openswmm_geopackage.h	418	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_query_int	include/openswmm/engine/openswmm_geopackage.h	409	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_read_observed_values	include/openswmm/engine/openswmm_geopackage.h	392	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_read_result_ts	include/openswmm/engine/openswmm_geopackage.h	241	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_read_summary	include/openswmm/engine/openswmm_geopackage.h	283	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_register	include/openswmm/engine/openswmm_geopackage.h	175	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_result_ts_count	include/openswmm/engine/openswmm_geopackage.h	262	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_rollback	include/openswmm/engine/openswmm_geopackage.h	160	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_simulation_count	include/openswmm/engine/openswmm_geopackage.h	195	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_simulation_id	include/openswmm/engine/openswmm_geopackage.h	206	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_subcatch_count	include/openswmm/engine/openswmm_geopackage.h	215	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_topology_edge_count	include/openswmm/engine/openswmm_geopackage.h	217	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_variable_count	include/openswmm/engine/openswmm_geopackage.h	218	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_write_observed_value	include/openswmm/engine/openswmm_geopackage.h	328	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gpkg_write_observed_values	include/openswmm/engine/openswmm_geopackage.h	354	pyx_use	python/openswmm/engine/_geopackage.pyx
+swmm_gw2d_get_cell	include/openswmm/engine/openswmm_gw2d.h	261	gap	
+swmm_gw2d_get_cell_bulk	include/openswmm/engine/openswmm_gw2d.h	266	gap	
+swmm_gw2d_get_cell_conc	include/openswmm/engine/openswmm_gw2d.h	144	gap	
+swmm_gw2d_get_column	include/openswmm/engine/openswmm_gw2d.h	273	gap	
+swmm_gw2d_get_continuity_error	include/openswmm/engine/openswmm_gw2d.h	290	gap	
+swmm_gw2d_get_dimensions	include/openswmm/engine/openswmm_gw2d.h	257	gap	
+swmm_gw2d_get_ledger	include/openswmm/engine/openswmm_gw2d.h	278	gap	
+swmm_gw2d_get_species_ledger	include/openswmm/engine/openswmm_gw2d.h	149	gap	
+swmm_gw2d_get_tier_histogram	include/openswmm/engine/openswmm_gw2d.h	295	gap	
+swmm_gw2d_is_active	include/openswmm/engine/openswmm_gw2d.h	253	gap	
+swmm_gw2d_node_add	include/openswmm/engine/openswmm_gw2d.h	224	gap	
+swmm_gw2d_node_count	include/openswmm/engine/openswmm_gw2d.h	220	gap	
+swmm_gw2d_node_get	include/openswmm/engine/openswmm_gw2d.h	228	gap	
+swmm_gw2d_node_get_flags	include/openswmm/engine/openswmm_gw2d.h	240	gap	
+swmm_gw2d_node_remove	include/openswmm/engine/openswmm_gw2d.h	232	gap	
+swmm_gw2d_node_set_exchange	include/openswmm/engine/openswmm_gw2d.h	245	gap	
+swmm_gw2d_option_get	include/openswmm/engine/openswmm_gw2d.h	160	gap	
+swmm_gw2d_option_set	include/openswmm/engine/openswmm_gw2d.h	165	gap	
+swmm_gw2d_row_add	include/openswmm/engine/openswmm_gw2d.h	187	gap	
+swmm_gw2d_row_count	include/openswmm/engine/openswmm_gw2d.h	173	gap	
+swmm_gw2d_row_get	include/openswmm/engine/openswmm_gw2d.h	195	gap	
+swmm_gw2d_row_get_property	include/openswmm/engine/openswmm_gw2d.h	210	gap	
+swmm_gw2d_row_remove	include/openswmm/engine/openswmm_gw2d.h	214	gap	
+swmm_gw2d_row_set_property	include/openswmm/engine/openswmm_gw2d.h	206	gap	
+swmm_gw2d_species_count	include/openswmm/engine/openswmm_gw2d.h	134	gap	
+swmm_gw2d_species_name	include/openswmm/engine/openswmm_gw2d.h	138	gap	
+swmm_gw_boundary_quality_count	include/openswmm/engine/openswmm_gw_transport.h	152	gap	
+swmm_gw_boundary_quality_get	include/openswmm/engine/openswmm_gw_transport.h	153	gap	
+swmm_gw_boundary_quality_remove	include/openswmm/engine/openswmm_gw_transport.h	161	gap	
+swmm_gw_boundary_quality_set	include/openswmm/engine/openswmm_gw_transport.h	158	gap	
+swmm_gw_init_quality_count	include/openswmm/engine/openswmm_gw_transport.h	130	gap	
+swmm_gw_init_quality_file_get	include/openswmm/engine/openswmm_gw_transport.h	140	gap	
+swmm_gw_init_quality_file_set	include/openswmm/engine/openswmm_gw_transport.h	142	gap	
+swmm_gw_init_quality_get	include/openswmm/engine/openswmm_gw_transport.h	132	gap	
+swmm_gw_init_quality_remove	include/openswmm/engine/openswmm_gw_transport.h	138	gap	
+swmm_gw_init_quality_set	include/openswmm/engine/openswmm_gw_transport.h	135	gap	
+swmm_gw_params_count	include/openswmm/engine/openswmm_gw_transport.h	104	gap	
+swmm_gw_params_get	include/openswmm/engine/openswmm_gw_transport.h	106	gap	
+swmm_gw_params_remove	include/openswmm/engine/openswmm_gw_transport.h	111	gap	
+swmm_gw_params_set	include/openswmm/engine/openswmm_gw_transport.h	109	gap	
+swmm_gw_sorption_count	include/openswmm/engine/openswmm_gw_transport.h	117	gap	
+swmm_gw_sorption_get	include/openswmm/engine/openswmm_gw_transport.h	119	gap	
+swmm_gw_sorption_remove	include/openswmm/engine/openswmm_gw_transport.h	124	gap	
+swmm_gw_sorption_set	include/openswmm/engine/openswmm_gw_transport.h	122	gap	
+swmm_gw_source_count	include/openswmm/engine/openswmm_gw_transport.h	167	gap	
+swmm_gw_source_get	include/openswmm/engine/openswmm_gw_transport.h	168	gap	
+swmm_gw_source_remove	include/openswmm/engine/openswmm_gw_transport.h	174	gap	
+swmm_gw_source_set	include/openswmm/engine/openswmm_gw_transport.h	172	gap	
+swmm_gw_source_species_count	include/openswmm/engine/openswmm_gw_transport.h	177	gap	
+swmm_gw_source_species_get	include/openswmm/engine/openswmm_gw_transport.h	178	gap	
+swmm_gw_source_species_remove	include/openswmm/engine/openswmm_gw_transport.h	184	gap	
+swmm_gw_source_species_set	include/openswmm/engine/openswmm_gw_transport.h	182	gap	
+swmm_gw_transport_authored	include/openswmm/engine/openswmm_gw_transport.h	84	gap	
+swmm_gw_transport_option_get	include/openswmm/engine/openswmm_gw_transport.h	76	gap	
+swmm_gw_transport_option_set	include/openswmm/engine/openswmm_gw_transport.h	80	gap	
+swmm_gwf_function_count	include/openswmm/engine/openswmm_subcatchments.h	1269	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_gwf_function_name	include/openswmm/engine/openswmm_subcatchments.h	1281	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_gwf_validate_expression	include/openswmm/engine/openswmm_subcatchments.h	1233	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_gwf_variable_count	include/openswmm/engine/openswmm_subcatchments.h	1241	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_gwf_variable_description	include/openswmm/engine/openswmm_subcatchments.h	1262	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_gwf_variable_name	include/openswmm/engine/openswmm_subcatchments.h	1251	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_heat_clear_cloud	include/openswmm/engine/openswmm_heat.h	233	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_clear_source_temp	include/openswmm/engine/openswmm_heat.h	292	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_cloud	include/openswmm/engine/openswmm_heat.h	208	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_cloud_configured	include/openswmm/engine/openswmm_heat.h	204	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_cloud_timeseries	include/openswmm/engine/openswmm_heat.h	226	gap	
+swmm_heat_get_current_cloud	include/openswmm/engine/openswmm_heat.h	236	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_current_shortwave	include/openswmm/engine/openswmm_heat.h	180	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_effective_source_temp	include/openswmm/engine/openswmm_heat.h	329	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_enabled	include/openswmm/engine/openswmm_heat.h	124	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_module	include/openswmm/engine/openswmm_heat.h	127	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_node_override	include/openswmm/engine/openswmm_heat.h	300	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_radiative	include/openswmm/engine/openswmm_heat.h	136	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_shortwave_mode	include/openswmm/engine/openswmm_heat.h	151	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_shortwave_timeseries	include/openswmm/engine/openswmm_heat.h	174	gap	
+swmm_heat_get_solar	include/openswmm/engine/openswmm_heat.h	186	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_solar_sited	include/openswmm/engine/openswmm_heat.h	199	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_source_configured	include/openswmm/engine/openswmm_heat.h	284	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_get_source_temp	include/openswmm/engine/openswmm_heat.h	270	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_node_override_count	include/openswmm/engine/openswmm_heat.h	296	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_remove_node_override	include/openswmm/engine/openswmm_heat.h	321	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_cloud	include/openswmm/engine/openswmm_heat.h	214	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_cloud_timeseries	include/openswmm/engine/openswmm_heat.h	219	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_module	include/openswmm/engine/openswmm_heat.h	130	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_node_override	include/openswmm/engine/openswmm_heat.h	315	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_radiative	include/openswmm/engine/openswmm_heat.h	147	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_shortwave_mode	include/openswmm/engine/openswmm_heat.h	158	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_shortwave_timeseries	include/openswmm/engine/openswmm_heat.h	164	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_solar	include/openswmm/engine/openswmm_heat.h	192	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_set_source_temp	include/openswmm/engine/openswmm_heat.h	278	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_heat_source_count	include/openswmm/engine/openswmm_heat.h	264	pyx_use	python/openswmm/engine/_heat.pyx
+swmm_hotstart_apply	include/openswmm/engine/openswmm_hotstart.h	250	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_close	include/openswmm/engine/openswmm_hotstart.h	397	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_get_crs	include/openswmm/engine/openswmm_hotstart.h	344	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_get_sim_time	include/openswmm/engine/openswmm_hotstart.h	335	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_link_count	include/openswmm/engine/openswmm_hotstart.h	358	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_node_count	include/openswmm/engine/openswmm_hotstart.h	351	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_open	include/openswmm/engine/openswmm_hotstart.h	227	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_save	include/openswmm/engine/openswmm_hotstart.h	211	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_add	include/openswmm/engine/openswmm_hotstart.h	175	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_clear	include/openswmm/engine/openswmm_hotstart.h	191	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_count	include/openswmm/engine/openswmm_hotstart.h	114	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_get_datetime	include/openswmm/engine/openswmm_hotstart.h	135	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_get_path	include/openswmm/engine/openswmm_hotstart.h	124	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_remove	include/openswmm/engine/openswmm_hotstart.h	184	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_set_datetime	include/openswmm/engine/openswmm_hotstart.h	163	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_saves_set_path	include/openswmm/engine/openswmm_hotstart.h	152	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_set_link_depth	include/openswmm/engine/openswmm_hotstart.h	306	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_set_link_flow	include/openswmm/engine/openswmm_hotstart.h	293	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_set_node_depth	include/openswmm/engine/openswmm_hotstart.h	267	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_set_node_head	include/openswmm/engine/openswmm_hotstart.h	280	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_set_subcatch_runoff	include/openswmm/engine/openswmm_hotstart.h	319	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_warning	include/openswmm/engine/openswmm_hotstart.h	382	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hotstart_warning_count	include/openswmm/engine/openswmm_hotstart.h	373	pyx_use	python/openswmm/engine/_hotstart.pyx
+swmm_hydrograph_add	include/openswmm/engine/openswmm_inflows.h	274	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_add_gage	include/openswmm/engine/openswmm_inflows.h	316	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_analyze_impact	include/openswmm/engine/openswmm_edit.h	202	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_hydrograph_clear_group_months	include/openswmm/engine/openswmm_inflows.h	462	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_count	include/openswmm/engine/openswmm_inflows.h	306	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_delete	include/openswmm/engine/openswmm_edit.h	395	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_hydrograph_gage_count	include/openswmm/engine/openswmm_inflows.h	339	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_get	include/openswmm/engine/openswmm_inflows.h	296	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_get_gage	include/openswmm/engine/openswmm_inflows.h	331	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_group_count	include/openswmm/engine/openswmm_inflows.h	353	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_group_id	include/openswmm/engine/openswmm_inflows.h	368	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_group_rename	include/openswmm/engine/openswmm_inflows.h	486	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_remove_entry	include/openswmm/engine/openswmm_inflows.h	441	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_remove_group	include/openswmm/engine/openswmm_inflows.h	450	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_set_gage	include/openswmm/engine/openswmm_inflows.h	473	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_set_ia	include/openswmm/engine/openswmm_inflows.h	428	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_hydrograph_set_rtk	include/openswmm/engine/openswmm_inflows.h	412	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_impact_report_free	include/openswmm/engine/openswmm_edit.h	120	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_infil2d_defaults_count	include/openswmm/engine/openswmm_infil2d.h	220	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_cell	include/openswmm/engine/openswmm_infil2d.h	320	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_cum_bulk	include/openswmm/engine/openswmm_infil2d.h	412	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_default	include/openswmm/engine/openswmm_infil2d.h	234	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_default_tag	include/openswmm/engine/openswmm_infil2d.h	249	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_options	include/openswmm/engine/openswmm_infil2d.h	178	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_rate_bulk	include/openswmm/engine/openswmm_infil2d.h	392	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_get_total_volume	include/openswmm/engine/openswmm_infil2d.h	428	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_remove_default	include/openswmm/engine/openswmm_infil2d.h	290	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_set_cell	include/openswmm/engine/openswmm_infil2d.h	343	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_set_cells	include/openswmm/engine/openswmm_infil2d.h	368	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_set_default	include/openswmm/engine/openswmm_infil2d.h	273	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_infil2d_set_options	include/openswmm/engine/openswmm_infil2d.h	203	pyx_use	python/openswmm/engine/_2d.pyx
+swmm_init_quality_count	include/openswmm/engine/openswmm_initial_quality.h	59	pyx_use	python/openswmm/engine/_initial_quality.pyx
+swmm_init_quality_file_get	include/openswmm/engine/openswmm_initial_quality.h	114	gap	
+swmm_init_quality_file_set	include/openswmm/engine/openswmm_initial_quality.h	117	gap	
+swmm_init_quality_get	include/openswmm/engine/openswmm_initial_quality.h	72	pyx_use	python/openswmm/engine/_initial_quality.pyx
+swmm_init_quality_is_file	include/openswmm/engine/openswmm_initial_quality.h	120	gap	
+swmm_init_quality_remove	include/openswmm/engine/openswmm_initial_quality.h	102	pyx_use	python/openswmm/engine/_initial_quality.pyx
+swmm_init_quality_set	include/openswmm/engine/openswmm_initial_quality.h	91	pyx_use	python/openswmm/engine/_initial_quality.pyx
+swmm_inlet_add	include/openswmm/engine/openswmm_infrastructure.h	407	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_analyze_impact	include/openswmm/engine/openswmm_edit.h	182	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_inlet_count	include/openswmm/engine/openswmm_infrastructure.h	443	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_delete	include/openswmm/engine/openswmm_edit.h	375	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_inlet_get_comment	include/openswmm/engine/openswmm_infrastructure.h	599	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_get_design	include/openswmm/engine/openswmm_infrastructure.h	578	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_get_params	include/openswmm/engine/openswmm_infrastructure.h	481	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_get_type	include/openswmm/engine/openswmm_infrastructure.h	494	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_id	include/openswmm/engine/openswmm_infrastructure.h	459	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_index	include/openswmm/engine/openswmm_infrastructure.h	451	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_junction_fuse	include/openswmm/engine/openswmm_edit.h	555	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_inlet_rename	include/openswmm/engine/openswmm_infrastructure.h	422	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_set_comment	include/openswmm/engine/openswmm_infrastructure.h	600	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_set_design	include/openswmm/engine/openswmm_infrastructure.h	594	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_set_params	include/openswmm/engine/openswmm_infrastructure.h	435	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_count	include/openswmm/engine/openswmm_infrastructure.h	627	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_find_link	include/openswmm/engine/openswmm_infrastructure.h	630	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_find_node	include/openswmm/engine/openswmm_infrastructure.h	633	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_get	include/openswmm/engine/openswmm_infrastructure.h	639	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_remove	include/openswmm/engine/openswmm_infrastructure.h	662	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_inlet_usage_set	include/openswmm/engine/openswmm_infrastructure.h	655	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_is_between_events	include/openswmm/engine/openswmm_engine.h	437	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_landuse_add	include/openswmm/engine/openswmm_quality.h	56	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_landuse_analyze_impact	include/openswmm/engine/openswmm_edit.h	186	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_landuse_count	include/openswmm/engine/openswmm_quality.h	47	pyx_use	python/openswmm/engine/_quality.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_landuse_delete	include/openswmm/engine/openswmm_edit.h	382	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_landuse_get_sweep_interval	include/openswmm/engine/openswmm_quality.h	76	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_landuse_get_sweep_removal	include/openswmm/engine/openswmm_quality.h	82	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_landuse_id	include/openswmm/engine/openswmm_quality.h	53	pyx_use	python/openswmm/engine/_quality.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_landuse_index	include/openswmm/engine/openswmm_quality.h	50	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_quality.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_landuse_rename	include/openswmm/engine/openswmm_quality.h	70	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_landuse_set_sweep_interval	include/openswmm/engine/openswmm_quality.h	73	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_landuse_set_sweep_removal	include/openswmm/engine/openswmm_quality.h	79	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_lid_add	include/openswmm/engine/openswmm_infrastructure.h	680	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_analyze_impact	include/openswmm/engine/openswmm_edit.h	174	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_lid_count	include/openswmm/engine/openswmm_infrastructure.h	789	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_delete	include/openswmm/engine/openswmm_edit.h	361	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_lid_get_drain	include/openswmm/engine/openswmm_infrastructure.h	831	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_drainmat	include/openswmm/engine/openswmm_infrastructure.h	838	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_pavement	include/openswmm/engine/openswmm_infrastructure.h	834	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_soil	include/openswmm/engine/openswmm_infrastructure.h	825	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_storage	include/openswmm/engine/openswmm_infrastructure.h	828	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_surface	include/openswmm/engine/openswmm_infrastructure.h	822	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_get_type	include/openswmm/engine/openswmm_infrastructure.h	815	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_id	include/openswmm/engine/openswmm_infrastructure.h	805	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_index	include/openswmm/engine/openswmm_infrastructure.h	797	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_infrastructure.pyx
+swmm_lid_rename	include/openswmm/engine/openswmm_infrastructure.h	698	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_drain	include/openswmm/engine/openswmm_infrastructure.h	745	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_drainmat	include/openswmm/engine/openswmm_infrastructure.h	782	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_pavement	include/openswmm/engine/openswmm_infrastructure.h	765	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_soil	include/openswmm/engine/openswmm_infrastructure.h	723	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_storage	include/openswmm/engine/openswmm_infrastructure.h	734	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_set_surface	include/openswmm/engine/openswmm_infrastructure.h	709	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_usage_add	include/openswmm/engine/openswmm_infrastructure.h	860	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_usage_count	include/openswmm/engine/openswmm_infrastructure.h	869	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_usage_get	include/openswmm/engine/openswmm_infrastructure.h	886	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_lid_usage_remove	include/openswmm/engine/openswmm_infrastructure.h	896	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_link_add	include/openswmm/engine/openswmm_links.h	152	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_link_analyze_impact	include/openswmm/engine/openswmm_edit.h	138	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_link_convert	include/openswmm/engine/openswmm_edit.h	465	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_link_count	include/openswmm/engine/openswmm_links.h	114	pyx_use	python/openswmm/engine/_controls.pyx;python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_initial_quality.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_statistics.pyx
+swmm_link_create_xsect	include/openswmm/engine/openswmm_xsect.h	231	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_link_delete	include/openswmm/engine/openswmm_edit.h	235	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_link_delete_many	include/openswmm/engine/openswmm_edit.h	287	gap	
+swmm_link_get_barrels	include/openswmm/engine/openswmm_links.h	892	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_capacities_bulk	include/openswmm/engine/openswmm_links.h	1074	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_capacity	include/openswmm/engine/openswmm_links.h	620	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_closed	include/openswmm/engine/openswmm_links.h	681	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_control_setting	include/openswmm/engine/openswmm_links.h	655	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_control_settings_bulk	include/openswmm/engine/openswmm_links.h	1088	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_crest_height	include/openswmm/engine/openswmm_links.h	747	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_culvert_code	include/openswmm/engine/openswmm_links.h	874	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_depth	include/openswmm/engine/openswmm_links.h	602	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_depths_bulk	include/openswmm/engine/openswmm_links.h	1020	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_discharge_coeff	include/openswmm/engine/openswmm_links.h	765	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_end_contractions	include/openswmm/engine/openswmm_links.h	787	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_flap_gate	include/openswmm/engine/openswmm_links.h	834	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_flow	include/openswmm/engine/openswmm_links.h	584	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_flows_bulk	include/openswmm/engine/openswmm_links.h	1011	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_from_node	include/openswmm/engine/openswmm_links.h	195	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_hyd_power	include/openswmm/engine/openswmm_links.h	1213	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_hyd_powers_bulk	include/openswmm/engine/openswmm_links.h	1106	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_ids_bulk	include/openswmm/engine/openswmm_links.h	1128	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_initial_flow	include/openswmm/engine/openswmm_links.h	293	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_length	include/openswmm/engine/openswmm_links.h	562	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_loss_coeff	include/openswmm/engine/openswmm_links.h	813	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_max_flow	include/openswmm/engine/openswmm_links.h	307	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_offset_dn	include/openswmm/engine/openswmm_links.h	919	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_offset_up	include/openswmm/engine/openswmm_links.h	910	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_orifice_open_close_rate	include/openswmm/engine/openswmm_links.h	502	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_orifice_type	include/openswmm/engine/openswmm_links.h	347	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_outlet_expon	include/openswmm/engine/openswmm_links.h	461	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_outlet_rating_type	include/openswmm/engine/openswmm_links.h	439	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_pump_curve	include/openswmm/engine/openswmm_links.h	707	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_pump_init_state	include/openswmm/engine/openswmm_links.h	725	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_pump_shutoff_depth	include/openswmm/engine/openswmm_links.h	485	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_pump_startup_depth	include/openswmm/engine/openswmm_links.h	473	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_pump_stats_bulk	include/openswmm/engine/openswmm_links.h	1202	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_quality	include/openswmm/engine/openswmm_links.h	997	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_quality_bulk	include/openswmm/engine/openswmm_links.h	1039	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_roughness	include/openswmm/engine/openswmm_links.h	571	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_seep_rate	include/openswmm/engine/openswmm_links.h	852	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_slope	include/openswmm/engine/openswmm_links.h	901	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_slot_volume	include/openswmm/engine/openswmm_links.h	642	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_max_filling	include/openswmm/engine/openswmm_links.h	950	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_max_flow	include/openswmm/engine/openswmm_links.h	932	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_max_velocity	include/openswmm/engine/openswmm_links.h	941	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_peak_slot_share	include/openswmm/engine/openswmm_links.h	957	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_pump_cycles	include/openswmm/engine/openswmm_links.h	1138	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_pump_on_time	include/openswmm/engine/openswmm_links.h	1141	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_pump_volume	include/openswmm/engine/openswmm_links.h	1144	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_slot_share	include/openswmm/engine/openswmm_links.h	965	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_surcharge_time	include/openswmm/engine/openswmm_links.h	983	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_stat_vol_flow	include/openswmm/engine/openswmm_links.h	974	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_tag	include/openswmm/engine/openswmm_links.h	1225	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_target_setting	include/openswmm/engine/openswmm_links.h	669	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_target_settings_bulk	include/openswmm/engine/openswmm_links.h	1095	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_to_node	include/openswmm/engine/openswmm_links.h	204	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_type	include/openswmm/engine/openswmm_links.h	553	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_velocities_bulk	include/openswmm/engine/openswmm_links.h	1066	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_velocity	include/openswmm/engine/openswmm_links.h	611	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_volume	include/openswmm/engine/openswmm_links.h	629	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_volumes_bulk	include/openswmm/engine/openswmm_links.h	1081	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_weir_type	include/openswmm/engine/openswmm_links.h	397	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_get_xsect	include/openswmm/engine/openswmm_links.h	538	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_id	include/openswmm/engine/openswmm_links.h	130	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_index	include/openswmm/engine/openswmm_links.h	122	pyx_use	python/openswmm/engine/_controls.pyx;python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_initial_quality.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_spatial.pyx
+swmm_link_pop_last	include/openswmm/engine/openswmm_links.h	171	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_link_rename	include/openswmm/engine/openswmm_links.h	1218	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_barrels	include/openswmm/engine/openswmm_links.h	883	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_closed	include/openswmm/engine/openswmm_links.h	678	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_control_setting	include/openswmm/engine/openswmm_links.h	652	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_crest_height	include/openswmm/engine/openswmm_links.h	738	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_culvert_code	include/openswmm/engine/openswmm_links.h	865	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_discharge_coeff	include/openswmm/engine/openswmm_links.h	756	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_end_contractions	include/openswmm/engine/openswmm_links.h	778	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_flap_gate	include/openswmm/engine/openswmm_links.h	825	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_flow	include/openswmm/engine/openswmm_links.h	593	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_flows_bulk	include/openswmm/engine/openswmm_links.h	1029	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_initial_flow	include/openswmm/engine/openswmm_links.h	269	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_length	include/openswmm/engine/openswmm_links.h	233	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_link_set_loss_coeff	include/openswmm/engine/openswmm_links.h	802	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_max_flow	include/openswmm/engine/openswmm_links.h	278	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_nodes	include/openswmm/engine/openswmm_links.h	185	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_link_set_offset_dn	include/openswmm/engine/openswmm_links.h	260	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_offset_up	include/openswmm/engine/openswmm_links.h	251	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_orifice_open_close_rate	include/openswmm/engine/openswmm_links.h	499	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_orifice_type	include/openswmm/engine/openswmm_links.h	335	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_outlet_expon	include/openswmm/engine/openswmm_links.h	453	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_outlet_rating_type	include/openswmm/engine/openswmm_links.h	431	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_pump_curve	include/openswmm/engine/openswmm_links.h	698	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_pump_init_state	include/openswmm/engine/openswmm_links.h	716	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_pump_shutoff_depth	include/openswmm/engine/openswmm_links.h	482	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_pump_startup_depth	include/openswmm/engine/openswmm_links.h	470	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_quality	include/openswmm/engine/openswmm_pollutants.h	319	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_link_set_roughness	include/openswmm/engine/openswmm_links.h	242	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_link_set_seep_rate	include/openswmm/engine/openswmm_links.h	843	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_tag	include/openswmm/engine/openswmm_links.h	1229	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_target_setting	include/openswmm/engine/openswmm_links.h	666	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_weir_type	include/openswmm/engine/openswmm_links.h	385	pyx_use	python/openswmm/engine/_links.pyx
+swmm_link_set_xsect	include/openswmm/engine/openswmm_links.h	523	pyx_use	python/openswmm/engine/_links.pyx;python/openswmm/engine/_model.pyx
+swmm_links_restore_authored_orientation	include/openswmm/engine/openswmm_links.h	220	gap	
+swmm_model_write	include/openswmm/engine/openswmm_model.h	109	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_model_write_compat	include/openswmm/engine/openswmm_model.h	111	gap	
+swmm_model_write_with_plugin	include/openswmm/engine/openswmm_model.h	190	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_node_add	include/openswmm/engine/openswmm_nodes.h	105	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_analyze_impact	include/openswmm/engine/openswmm_edit.h	134	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_node_convert	include/openswmm/engine/openswmm_edit.h	447	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_node_count	include/openswmm/engine/openswmm_nodes.h	64	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_heat.pyx;python/openswmm/engine/_inflows.pyx;python/openswmm/engine/_initial_quality.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_nodes.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_quality.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_statistics.pyx;python/openswmm/engine/_subcatchments.pyx;python/openswmm/engine/_water_age.pyx
+swmm_node_delete	include/openswmm/engine/openswmm_edit.h	225	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_node_delete_many	include/openswmm/engine/openswmm_edit.h	282	gap	
+swmm_node_get_crown_elev	include/openswmm/engine/openswmm_nodes.h	831	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_degree	include/openswmm/engine/openswmm_nodes.h	867	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_depth	include/openswmm/engine/openswmm_nodes.h	348	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_depth_from_volume	include/openswmm/engine/openswmm_nodes.h	1095	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_depths_bulk	include/openswmm/engine/openswmm_nodes.h	920	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_divider_type	include/openswmm/engine/openswmm_nodes.h	791	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_exfil_params	include/openswmm/engine/openswmm_nodes.h	642	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_full_volume	include/openswmm/engine/openswmm_nodes.h	840	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_head	include/openswmm/engine/openswmm_nodes.h	366	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_heads_bulk	include/openswmm/engine/openswmm_nodes.h	929	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_ids_bulk	include/openswmm/engine/openswmm_nodes.h	1075	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_inflow	include/openswmm/engine/openswmm_nodes.h	411	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_inflows_bulk	include/openswmm/engine/openswmm_nodes.h	938	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_initial_depth	include/openswmm/engine/openswmm_nodes.h	822	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_invert_elev	include/openswmm/engine/openswmm_nodes.h	312	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_lateral_inflow	include/openswmm/engine/openswmm_nodes.h	389	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_lateral_inflows_bulk	include/openswmm/engine/openswmm_nodes.h	1034	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_losses	include/openswmm/engine/openswmm_nodes.h	849	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_losses_bulk	include/openswmm/engine/openswmm_nodes.h	1020	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_max_depth	include/openswmm/engine/openswmm_nodes.h	321	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_flap_gate	include/openswmm/engine/openswmm_nodes.h	754	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_param	include/openswmm/engine/openswmm_nodes.h	703	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_route_to	include/openswmm/engine/openswmm_nodes.h	1088	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_tidal	include/openswmm/engine/openswmm_nodes.h	719	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_timeseries	include/openswmm/engine/openswmm_nodes.h	733	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outfall_type	include/openswmm/engine/openswmm_nodes.h	667	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outflow	include/openswmm/engine/openswmm_nodes.h	858	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_outflows_bulk	include/openswmm/engine/openswmm_nodes.h	1007	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_overflow	include/openswmm/engine/openswmm_nodes.h	402	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_overflows_bulk	include/openswmm/engine/openswmm_nodes.h	947	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_ponded_area	include/openswmm/engine/openswmm_nodes.h	813	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_quality	include/openswmm/engine/openswmm_nodes.h	473	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_quality_bulk	include/openswmm/engine/openswmm_nodes.h	975	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_rim_depth	include/openswmm/engine/openswmm_nodes.h	335	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_stat_max_depth	include/openswmm/engine/openswmm_nodes.h	880	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_stat_max_overflow	include/openswmm/engine/openswmm_nodes.h	889	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_stat_time_flooded	include/openswmm/engine/openswmm_nodes.h	907	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_stat_vol_flooded	include/openswmm/engine/openswmm_nodes.h	898	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_storage_curve	include/openswmm/engine/openswmm_nodes.h	496	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_storage_functional	include/openswmm/engine/openswmm_nodes.h	522	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_storage_geometry	include/openswmm/engine/openswmm_nodes.h	597	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_storage_seep_rate	include/openswmm/engine/openswmm_nodes.h	616	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_storage_shape	include/openswmm/engine/openswmm_nodes.h	564	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_surcharge_depth	include/openswmm/engine/openswmm_nodes.h	804	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_tag	include/openswmm/engine/openswmm_nodes.h	1110	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_type	include/openswmm/engine/openswmm_nodes.h	215	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_volume	include/openswmm/engine/openswmm_nodes.h	375	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_get_volumes_bulk	include/openswmm/engine/openswmm_nodes.h	994	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_id	include/openswmm/engine/openswmm_nodes.h	80	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_index	include/openswmm/engine/openswmm_nodes.h	72	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_heat.pyx;python/openswmm/engine/_inflows.pyx;python/openswmm/engine/_initial_quality.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_nodes.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_quality.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_subcatchments.pyx;python/openswmm/engine/_water_age.pyx
+swmm_node_inlet_eligible	include/openswmm/engine/openswmm_nodes.h	293	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_is_inlet	include/openswmm/engine/openswmm_nodes.h	285	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_is_virtual	include/openswmm/engine/openswmm_nodes.h	230	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_pop_last	include/openswmm/engine/openswmm_nodes.h	128	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_rename	include/openswmm/engine/openswmm_nodes.h	1101	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_depth	include/openswmm/engine/openswmm_nodes.h	357	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_depths_bulk	include/openswmm/engine/openswmm_nodes.h	956	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_divider_type	include/openswmm/engine/openswmm_nodes.h	782	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_exfil_params	include/openswmm/engine/openswmm_nodes.h	631	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_head_boundary	include/openswmm/engine/openswmm_nodes.h	459	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_initial_depth	include/openswmm/engine/openswmm_nodes.h	181	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_inlet	include/openswmm/engine/openswmm_nodes.h	303	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_set_invert_elev	include/openswmm/engine/openswmm_nodes.h	141	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_set_lat_inflows_bulk	include/openswmm/engine/openswmm_nodes.h	965	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_lateral_inflow	include/openswmm/engine/openswmm_nodes.h	429	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_max_depth	include/openswmm/engine/openswmm_nodes.h	150	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_flap_gate	include/openswmm/engine/openswmm_nodes.h	745	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_route_to	include/openswmm/engine/openswmm_nodes.h	1085	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_stage	include/openswmm/engine/openswmm_nodes.h	676	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_tidal	include/openswmm/engine/openswmm_nodes.h	685	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_timeseries	include/openswmm/engine/openswmm_nodes.h	694	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_outfall_type	include/openswmm/engine/openswmm_nodes.h	658	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_pond_area	include/openswmm/engine/openswmm_nodes.h	172	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_quality	include/openswmm/engine/openswmm_pollutants.h	309	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_node_set_quality_mass_flux	include/openswmm/engine/openswmm_nodes.h	445	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_rim_depth	include/openswmm/engine/openswmm_nodes.h	202	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_storage_curve	include/openswmm/engine/openswmm_nodes.h	487	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_storage_functional	include/openswmm/engine/openswmm_nodes.h	511	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_storage_geometry	include/openswmm/engine/openswmm_nodes.h	585	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_storage_seep_rate	include/openswmm/engine/openswmm_nodes.h	607	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_storage_shape	include/openswmm/engine/openswmm_nodes.h	555	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_surcharge_depth	include/openswmm/engine/openswmm_nodes.h	159	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_tag	include/openswmm/engine/openswmm_nodes.h	1116	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_node_set_virtual	include/openswmm/engine/openswmm_nodes.h	252	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_nodes.pyx
+swmm_node_virtual_eligible	include/openswmm/engine/openswmm_nodes.h	271	pyx_use	python/openswmm/engine/_nodes.pyx
+swmm_options_get	include/openswmm/engine/openswmm_model.h	501	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_get_end_date	include/openswmm/engine/openswmm_model.h	591	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_get_ext	include/openswmm/engine/openswmm_model.h	531	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_get_report_start	include/openswmm/engine/openswmm_model.h	607	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_get_start_date	include/openswmm/engine/openswmm_model.h	575	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_set	include/openswmm/engine/openswmm_model.h	516	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_set_end_date	include/openswmm/engine/openswmm_model.h	599	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_set_ext	include/openswmm/engine/openswmm_model.h	546	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_set_report_start	include/openswmm/engine/openswmm_model.h	615	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_options_set_start_date	include/openswmm/engine/openswmm_model.h	583	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_output_close	include/openswmm/engine/openswmm_output.h	203	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_error_code	include/openswmm/engine/openswmm_output.h	618	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_flow_units	include/openswmm/engine/openswmm_output.h	222	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_link_attribute	include/openswmm/engine/openswmm_output.h	510	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_link_count	include/openswmm/engine/openswmm_output.h	243	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_link_id	include/openswmm/engine/openswmm_output.h	310	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_link_result	include/openswmm/engine/openswmm_output.h	371	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_link_series	include/openswmm/engine/openswmm_output.h	441	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_attribute	include/openswmm/engine/openswmm_output.h	494	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_count	include/openswmm/engine/openswmm_output.h	236	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_id	include/openswmm/engine/openswmm_output.h	301	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_result	include/openswmm/engine/openswmm_output.h	357	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_series	include/openswmm/engine/openswmm_output.h	423	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_stat_max_depth	include/openswmm/engine/openswmm_output.h	569	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_stat_max_overflow	include/openswmm/engine/openswmm_output.h	580	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_stat_time_flooded	include/openswmm/engine/openswmm_output.h	605	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_node_stat_vol_flooded	include/openswmm/engine/openswmm_output.h	592	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_period_count	include/openswmm/engine/openswmm_output.h	257	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_period_time	include/openswmm/engine/openswmm_output.h	533	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_pollut_count	include/openswmm/engine/openswmm_output.h	250	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_pollut_id	include/openswmm/engine/openswmm_output.h	327	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_report_step	include/openswmm/engine/openswmm_output.h	280	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_start_date	include/openswmm/engine/openswmm_output.h	272	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_subcatch_attribute	include/openswmm/engine/openswmm_output.h	478	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_subcatch_count	include/openswmm/engine/openswmm_output.h	229	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_subcatch_id	include/openswmm/engine/openswmm_output.h	292	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_subcatch_result	include/openswmm/engine/openswmm_output.h	343	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_subcatch_series	include/openswmm/engine/openswmm_output.h	405	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_system_result	include/openswmm/engine/openswmm_output.h	385	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_system_series	include/openswmm/engine/openswmm_output.h	458	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_get_version	include/openswmm/engine/openswmm_output.h	214	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_is_live	include/openswmm/engine/openswmm_output.h	196	gap	
+swmm_output_open	include/openswmm/engine/openswmm_output.h	160	pyx_use	python/openswmm/engine/_output_reader.pyx
+swmm_output_open_live	include/openswmm/engine/openswmm_output.h	176	gap	
+swmm_output_refresh	include/openswmm/engine/openswmm_output.h	190	gap	
+swmm_pattern_add	include/openswmm/engine/openswmm_tables.h	235	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_analyze_impact	include/openswmm/engine/openswmm_edit.h	162	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_pattern_count	include/openswmm/engine/openswmm_tables.h	252	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_delete	include/openswmm/engine/openswmm_edit.h	340	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_pattern_get_factor	include/openswmm/engine/openswmm_tables.h	301	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_get_factor_count	include/openswmm/engine/openswmm_tables.h	291	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_get_type	include/openswmm/engine/openswmm_tables.h	282	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_id	include/openswmm/engine/openswmm_tables.h	268	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_index	include/openswmm/engine/openswmm_tables.h	260	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_tables.pyx
+swmm_pattern_remove	include/openswmm/engine/openswmm_tables.h	322	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_rename	include/openswmm/engine/openswmm_tables.h	335	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_pattern_set_factors	include/openswmm/engine/openswmm_tables.h	245	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_plugin_get	include/openswmm/engine/openswmm_model.h	233	pyx_use	python/openswmm/engine/_model.pyx
+swmm_plugin_remove	include/openswmm/engine/openswmm_model.h	270	pyx_use	python/openswmm/engine/_model.pyx
+swmm_plugin_set	include/openswmm/engine/openswmm_model.h	256	pyx_use	python/openswmm/engine/_model.pyx
+swmm_plugins_count	include/openswmm/engine/openswmm_model.h	213	pyx_use	python/openswmm/engine/_model.pyx
+swmm_pollutant_add	include/openswmm/engine/openswmm_pollutants.h	79	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_analyze_impact	include/openswmm/engine/openswmm_edit.h	158	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_pollutant_count	include/openswmm/engine/openswmm_pollutants.h	50	pyx_use	python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_massbalance.pyx;python/openswmm/engine/_nodes.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_quality.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_pollutant_delete	include/openswmm/engine/openswmm_edit.h	329	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_pollutant_get_co_pollutant	include/openswmm/engine/openswmm_pollutants.h	277	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_dwf_conc	include/openswmm/engine/openswmm_pollutants.h	239	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_gw_conc	include/openswmm/engine/openswmm_pollutants.h	192	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_init_conc	include/openswmm/engine/openswmm_pollutants.h	201	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_kdecay	include/openswmm/engine/openswmm_pollutants.h	174	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_mwt	include/openswmm/engine/openswmm_pollutants.h	257	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_rain_conc	include/openswmm/engine/openswmm_pollutants.h	183	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_rdii_conc	include/openswmm/engine/openswmm_pollutants.h	219	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_snow_only	include/openswmm/engine/openswmm_pollutants.h	295	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_get_units	include/openswmm/engine/openswmm_pollutants.h	161	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_id	include/openswmm/engine/openswmm_pollutants.h	66	pyx_use	python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_pollutant_index	include/openswmm/engine/openswmm_pollutants.h	58	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_links.pyx;python/openswmm/engine/_massbalance.pyx;python/openswmm/engine/_nodes.pyx;python/openswmm/engine/_pollutants.pyx;python/openswmm/engine/_quality.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_pollutant_rename	include/openswmm/engine/openswmm_pollutants.h	94	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_co_pollutant	include/openswmm/engine/openswmm_pollutants.h	267	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_dwf_conc	include/openswmm/engine/openswmm_pollutants.h	230	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_gw_conc	include/openswmm/engine/openswmm_pollutants.h	143	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_init_conc	include/openswmm/engine/openswmm_pollutants.h	152	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_kdecay	include/openswmm/engine/openswmm_pollutants.h	125	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_mwt	include/openswmm/engine/openswmm_pollutants.h	248	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_rain_conc	include/openswmm/engine/openswmm_pollutants.h	134	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_rdii_conc	include/openswmm/engine/openswmm_pollutants.h	210	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_snow_only	include/openswmm/engine/openswmm_pollutants.h	286	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_pollutant_set_units	include/openswmm/engine/openswmm_pollutants.h	116	pyx_use	python/openswmm/engine/_pollutants.pyx
+swmm_process_component_count	include/openswmm/engine/openswmm_process_components.h	46	pyx_use	python/openswmm/engine/_process_components.pyx
+swmm_process_component_find	include/openswmm/engine/openswmm_process_components.h	60	pyx_use	python/openswmm/engine/_process_components.pyx
+swmm_process_component_get	include/openswmm/engine/openswmm_process_components.h	55	pyx_use	python/openswmm/engine/_process_components.pyx
+swmm_process_component_known_count	include/openswmm/engine/openswmm_process_components.h	83	gap	
+swmm_process_component_known_get	include/openswmm/engine/openswmm_process_components.h	93	gap	
+swmm_process_component_register	include/openswmm/engine/openswmm_process_components.h	67	pyx_use	python/openswmm/engine/_process_components.pyx
+swmm_process_component_remove	include/openswmm/engine/openswmm_process_components.h	71	pyx_use	python/openswmm/engine/_process_components.pyx
+swmm_rdii_add	include/openswmm/engine/openswmm_inflows.h	216	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_count	include/openswmm/engine/openswmm_inflows.h	610	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_decay_add	include/openswmm/engine/openswmm_inflows.h	549	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_decay_count	include/openswmm/engine/openswmm_inflows.h	585	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_decay_get	include/openswmm/engine/openswmm_inflows.h	574	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_decay_remove	include/openswmm/engine/openswmm_inflows.h	514	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_decay_set	include/openswmm/engine/openswmm_inflows.h	501	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_get	include/openswmm/engine/openswmm_inflows.h	229	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_rdii_remove	include/openswmm/engine/openswmm_inflows.h	239	pyx_use	python/openswmm/engine/_inflows.pyx
+swmm_reaction_coeff_add	include/openswmm/engine/openswmm_reactions.h	137	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_coeff_count	include/openswmm/engine/openswmm_reactions.h	92	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_coeff_get	include/openswmm/engine/openswmm_reactions.h	95	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_coeff_remove	include/openswmm/engine/openswmm_reactions.h	145	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_coeff_set_value	include/openswmm/engine/openswmm_reactions.h	141	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_expr_get	include/openswmm/engine/openswmm_reactions.h	109	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_expr_set	include/openswmm/engine/openswmm_reactions.h	162	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_function_count	include/openswmm/engine/openswmm_reactions.h	236	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_function_get	include/openswmm/engine/openswmm_reactions.h	239	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_hydvar_count	include/openswmm/engine/openswmm_reactions.h	229	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_hydvar_get	include/openswmm/engine/openswmm_reactions.h	232	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_elem_count	include/openswmm/engine/openswmm_reactions.h	175	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_elem_get	include/openswmm/engine/openswmm_reactions.h	176	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_elem_remove	include/openswmm/engine/openswmm_reactions.h	182	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_elem_set	include/openswmm/engine/openswmm_reactions.h	180	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_global_get	include/openswmm/engine/openswmm_reactions.h	171	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_init_global_set	include/openswmm/engine/openswmm_reactions.h	173	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_option_get	include/openswmm/engine/openswmm_reactions.h	117	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_option_set	include/openswmm/engine/openswmm_reactions.h	166	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_species_add	include/openswmm/engine/openswmm_reactions.h	129	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_species_count	include/openswmm/engine/openswmm_reactions.h	84	pyx_use	python/openswmm/engine/_quality.pyx;python/openswmm/engine/_reactions.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_reaction_species_get	include/openswmm/engine/openswmm_reactions.h	87	pyx_use	python/openswmm/engine/_quality.pyx;python/openswmm/engine/_reactions.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_reaction_species_remove	include/openswmm/engine/openswmm_reactions.h	134	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_term_add	include/openswmm/engine/openswmm_reactions.h	148	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_term_count	include/openswmm/engine/openswmm_reactions.h	99	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_term_get	include/openswmm/engine/openswmm_reactions.h	102	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_term_remove	include/openswmm/engine/openswmm_reactions.h	156	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_term_set_expr	include/openswmm/engine/openswmm_reactions.h	152	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reaction_validate_expression	include/openswmm/engine/openswmm_reactions.h	78	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reactions_apply_text	include/openswmm/engine/openswmm_reactions.h	215	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reactions_check_text	include/openswmm/engine/openswmm_reactions.h	205	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reactions_save	include/openswmm/engine/openswmm_reactions.h	222	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_reactions_serialize	include/openswmm/engine/openswmm_reactions.h	196	pyx_use	python/openswmm/engine/_reactions.pyx
+swmm_runoff_iface_close	include/openswmm/engine/openswmm_engine.h	562	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_runoff_iface_open_read	include/openswmm/engine/openswmm_engine.h	525	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_runoff_iface_open_write	include/openswmm/engine/openswmm_engine.h	514	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_runoff_iface_read_step	include/openswmm/engine/openswmm_engine.h	554	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_runoff_iface_save_step	include/openswmm/engine/openswmm_engine.h	540	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_set_progress_callback	include/openswmm/engine/openswmm_engine.h	287	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_set_steady_state_skip	include/openswmm/engine/openswmm_engine.h	481	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_set_step_begin_callback	include/openswmm/engine/openswmm_engine.h	291	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_set_step_end_callback	include/openswmm/engine/openswmm_engine.h	293	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_set_warning_callback	include/openswmm/engine/openswmm_engine.h	289	pyx_use	python/openswmm/engine/_solver.pyx
+swmm_snowpack_add	include/openswmm/engine/openswmm_subcatchments.h	1003	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_analyze_impact	include/openswmm/engine/openswmm_edit.h	170	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_snowpack_count	include/openswmm/engine/openswmm_subcatchments.h	972	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_delete	include/openswmm/engine/openswmm_edit.h	354	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_snowpack_get_impervious	include/openswmm/engine/openswmm_subcatchments.h	1062	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_get_pervious	include/openswmm/engine/openswmm_subcatchments.h	1071	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_get_plowable	include/openswmm/engine/openswmm_subcatchments.h	1053	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_get_removal	include/openswmm/engine/openswmm_subcatchments.h	1090	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_get_removal_subcatch	include/openswmm/engine/openswmm_subcatchments.h	1097	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_id	include/openswmm/engine/openswmm_subcatchments.h	988	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_index	include/openswmm/engine/openswmm_subcatchments.h	980	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_rename	include/openswmm/engine/openswmm_subcatchments.h	1022	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_set_impervious	include/openswmm/engine/openswmm_subcatchments.h	1058	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_set_pervious	include/openswmm/engine/openswmm_subcatchments.h	1067	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_set_plowable	include/openswmm/engine/openswmm_subcatchments.h	1049	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_set_removal	include/openswmm/engine/openswmm_subcatchments.h	1086	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_snowpack_set_removal_subcatch	include/openswmm/engine/openswmm_subcatchments.h	1095	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_spatial_get_crs	include/openswmm/engine/openswmm_spatial.h	65	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_gage_coord	include/openswmm/engine/openswmm_spatial.h	266	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_link_coord	include/openswmm/engine/openswmm_spatial.h	133	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_link_vertex_count	include/openswmm/engine/openswmm_spatial.h	166	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_link_vertices	include/openswmm/engine/openswmm_spatial.h	183	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_node_coord	include/openswmm/engine/openswmm_spatial.h	89	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_node_coords_bulk	include/openswmm/engine/openswmm_spatial.h	99	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_subcatch_coord	include/openswmm/engine/openswmm_spatial.h	207	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_subcatch_polygon	include/openswmm/engine/openswmm_spatial.h	242	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_get_subcatch_polygon_count	include/openswmm/engine/openswmm_spatial.h	231	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_crs	include/openswmm/engine/openswmm_spatial.h	56	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_gage_coord	include/openswmm/engine/openswmm_spatial.h	256	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_link_coord	include/openswmm/engine/openswmm_spatial.h	123	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_link_vertices	include/openswmm/engine/openswmm_spatial.h	152	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_node_coord	include/openswmm/engine/openswmm_spatial.h	79	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_node_coords_bulk	include/openswmm/engine/openswmm_spatial.h	109	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_subcatch_coord	include/openswmm/engine/openswmm_spatial.h	197	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_spatial_set_subcatch_polygon	include/openswmm/engine/openswmm_spatial.h	222	pyx_use	python/openswmm/engine/_spatial.pyx
+swmm_stat_link_max_filling	include/openswmm/engine/openswmm_statistics.h	68	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_max_filling_bulk	include/openswmm/engine/openswmm_statistics.h	159	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_max_flow	include/openswmm/engine/openswmm_statistics.h	62	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_max_flow_bulk	include/openswmm/engine/openswmm_statistics.h	97	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_max_velocity	include/openswmm/engine/openswmm_statistics.h	65	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_max_velocity_bulk	include/openswmm/engine/openswmm_statistics.h	151	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_surcharge_time	include/openswmm/engine/openswmm_statistics.h	74	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_surcharge_time_bulk	include/openswmm/engine/openswmm_statistics.h	175	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_vol_flow	include/openswmm/engine/openswmm_statistics.h	71	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_link_vol_flow_bulk	include/openswmm/engine/openswmm_statistics.h	167	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_max_depth	include/openswmm/engine/openswmm_statistics.h	46	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_max_depth_bulk	include/openswmm/engine/openswmm_statistics.h	94	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_max_overflow	include/openswmm/engine/openswmm_statistics.h	49	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_max_overflow_bulk	include/openswmm/engine/openswmm_statistics.h	115	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_time_flooded	include/openswmm/engine/openswmm_statistics.h	55	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_time_flooded_bulk	include/openswmm/engine/openswmm_statistics.h	129	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_vol_flooded	include/openswmm/engine/openswmm_statistics.h	52	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_node_vol_flooded_bulk	include/openswmm/engine/openswmm_statistics.h	122	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_subcatch_max_runoff	include/openswmm/engine/openswmm_statistics.h	87	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_subcatch_max_runoff_bulk	include/openswmm/engine/openswmm_statistics.h	136	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_subcatch_precip	include/openswmm/engine/openswmm_statistics.h	81	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_subcatch_runoff_vol	include/openswmm/engine/openswmm_statistics.h	84	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_stat_subcatch_runoff_vol_bulk	include/openswmm/engine/openswmm_statistics.h	100	pyx_use	python/openswmm/engine/_statistics.pyx
+swmm_street_add	include/openswmm/engine/openswmm_infrastructure.h	304	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_street_analyze_impact	include/openswmm/engine/openswmm_edit.h	178	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_street_count	include/openswmm/engine/openswmm_infrastructure.h	352	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_street_delete	include/openswmm/engine/openswmm_edit.h	368	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_street_get_params	include/openswmm/engine/openswmm_infrastructure.h	391	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_street_id	include/openswmm/engine/openswmm_infrastructure.h	368	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_street_index	include/openswmm/engine/openswmm_infrastructure.h	360	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_infrastructure.pyx
+swmm_street_rename	include/openswmm/engine/openswmm_infrastructure.h	323	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_street_set_params	include/openswmm/engine/openswmm_infrastructure.h	342	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_subcatch_add	include/openswmm/engine/openswmm_subcatchments.h	85	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_analyze_impact	include/openswmm/engine/openswmm_edit.h	142	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_subcatch_count	include/openswmm/engine/openswmm_subcatchments.h	50	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_infrastructure.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_statistics.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_delete	include/openswmm/engine/openswmm_edit.h	245	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_subcatch_delete_many	include/openswmm/engine/openswmm_edit.h	292	gap	
+swmm_subcatch_get_aquifer	include/openswmm/engine/openswmm_subcatchments.h	583	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_area	include/openswmm/engine/openswmm_subcatchments.h	244	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_coverage	include/openswmm/engine/openswmm_subcatchments.h	475	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_coverages	include/openswmm/engine/openswmm_subcatchments.h	490	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_ds_imperv	include/openswmm/engine/openswmm_subcatchments.h	317	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_ds_perv	include/openswmm/engine/openswmm_subcatchments.h	326	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_evap	include/openswmm/engine/openswmm_subcatchments.h	568	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_evap_bulk	include/openswmm/engine/openswmm_subcatchments.h	762	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_gage	include/openswmm/engine/openswmm_subcatchments.h	335	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_groundwater	include/openswmm/engine/openswmm_subcatchments.h	541	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_gw_node	include/openswmm/engine/openswmm_subcatchments.h	589	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_gw_params	include/openswmm/engine/openswmm_subcatchments.h	607	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_gw_state	include/openswmm/engine/openswmm_subcatchments.h	643	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_gwf_expression	include/openswmm/engine/openswmm_subcatchments.h	1187	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_ids_bulk	include/openswmm/engine/openswmm_subcatchments.h	796	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_imperv_pct	include/openswmm/engine/openswmm_subcatchments.h	253	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil	include/openswmm/engine/openswmm_subcatchments.h	689	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil_bulk	include/openswmm/engine/openswmm_subcatchments.h	770	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil_curve_number	include/openswmm/engine/openswmm_subcatchments.h	413	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil_green_ampt	include/openswmm/engine/openswmm_subcatchments.h	400	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil_horton	include/openswmm/engine/openswmm_subcatchments.h	387	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_infil_model	include/openswmm/engine/openswmm_subcatchments.h	375	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_initial_loading	include/openswmm/engine/openswmm_subcatchments.h	519	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_n_imperv	include/openswmm/engine/openswmm_subcatchments.h	299	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_n_perv	include/openswmm/engine/openswmm_subcatchments.h	308	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_outlet	include/openswmm/engine/openswmm_subcatchments.h	272	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_outlet_subcatch	include/openswmm/engine/openswmm_subcatchments.h	358	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_ponded_quality	include/openswmm/engine/openswmm_subcatchments.h	806	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_quality	include/openswmm/engine/openswmm_subcatchments.h	714	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_quality_bulk	include/openswmm/engine/openswmm_subcatchments.h	738	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_rain_scale_factor	include/openswmm/engine/openswmm_subcatchments.h	1130	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_rainfall	include/openswmm/engine/openswmm_subcatchments.h	550	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_rainfall_bulk	include/openswmm/engine/openswmm_subcatchments.h	754	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_runoff	include/openswmm/engine/openswmm_subcatchments.h	532	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_runoff_bulk	include/openswmm/engine/openswmm_subcatchments.h	728	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_slope	include/openswmm/engine/openswmm_subcatchments.h	290	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_snow_depth	include/openswmm/engine/openswmm_subcatchments.h	559	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_snow_depth_bulk	include/openswmm/engine/openswmm_subcatchments.h	780	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_snow_scale_factor	include/openswmm/engine/openswmm_subcatchments.h	1153	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_snow_state	include/openswmm/engine/openswmm_subcatchments.h	678	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_stat_max_runoff	include/openswmm/engine/openswmm_subcatchments.h	445	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_stat_precip	include/openswmm/engine/openswmm_subcatchments.h	427	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_stat_runoff_vol	include/openswmm/engine/openswmm_subcatchments.h	436	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_tag	include/openswmm/engine/openswmm_subcatchments.h	1104	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_width	include/openswmm/engine/openswmm_subcatchments.h	281	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_get_zero_imperv_pct	include/openswmm/engine/openswmm_subcatchments.h	263	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_id	include/openswmm/engine/openswmm_subcatchments.h	66	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_index	include/openswmm/engine/openswmm_subcatchments.h	58	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_forcing.pyx;python/openswmm/engine/_infrastructure.pyx;python/openswmm/engine/_spatial.pyx;python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_rename	include/openswmm/engine/openswmm_subcatchments.h	816	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_aquifer	include/openswmm/engine/openswmm_subcatchments.h	580	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_area	include/openswmm/engine/openswmm_subcatchments.h	107	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_coverage	include/openswmm/engine/openswmm_subcatchments.h	465	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_ds_imperv	include/openswmm/engine/openswmm_subcatchments.h	172	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_ds_perv	include/openswmm/engine/openswmm_subcatchments.h	181	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_gage	include/openswmm/engine/openswmm_subcatchments.h	190	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_gw_node	include/openswmm/engine/openswmm_subcatchments.h	586	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_gw_params	include/openswmm/engine/openswmm_subcatchments.h	601	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_gw_state	include/openswmm/engine/openswmm_subcatchments.h	631	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_gwf_expression	include/openswmm/engine/openswmm_subcatchments.h	1207	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_imperv_pct	include/openswmm/engine/openswmm_subcatchments.h	134	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_infil_curve_number	include/openswmm/engine/openswmm_subcatchments.h	215	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_infil_green_ampt	include/openswmm/engine/openswmm_subcatchments.h	200	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_infil_horton	include/openswmm/engine/openswmm_subcatchments.h	195	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_infil_model	include/openswmm/engine/openswmm_subcatchments.h	231	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_initial_loading	include/openswmm/engine/openswmm_subcatchments.h	509	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_n_imperv	include/openswmm/engine/openswmm_subcatchments.h	154	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_n_perv	include/openswmm/engine/openswmm_subcatchments.h	163	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_outlet	include/openswmm/engine/openswmm_subcatchments.h	98	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_outlet_subcatch	include/openswmm/engine/openswmm_subcatchments.h	349	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_ponded_quality	include/openswmm/engine/openswmm_subcatchments.h	810	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_rain_scale_factor	include/openswmm/engine/openswmm_subcatchments.h	1126	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_rainfall	include/openswmm/engine/openswmm_subcatchments.h	700	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_slope	include/openswmm/engine/openswmm_subcatchments.h	125	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_snow_scale_factor	include/openswmm/engine/openswmm_subcatchments.h	1149	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_snow_state	include/openswmm/engine/openswmm_subcatchments.h	662	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_tag	include/openswmm/engine/openswmm_subcatchments.h	1108	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_width	include/openswmm/engine/openswmm_subcatchments.h	116	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_subcatch_set_zero_imperv_pct	include/openswmm/engine/openswmm_subcatchments.h	145	pyx_use	python/openswmm/engine/_subcatchments.pyx
+swmm_table_add_point	include/openswmm/engine/openswmm_tables.h	132	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_analyze_impact	include/openswmm/engine/openswmm_edit.h	150	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_table_clear	include/openswmm/engine/openswmm_tables.h	160	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_count	include/openswmm/engine/openswmm_tables.h	50	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_tables.pyx
+swmm_table_delete	include/openswmm/engine/openswmm_edit.h	308	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_table_get_point	include/openswmm/engine/openswmm_tables.h	152	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_get_point_count	include/openswmm/engine/openswmm_tables.h	141	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_get_type	include/openswmm/engine/openswmm_tables.h	89	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_id	include/openswmm/engine/openswmm_tables.h	66	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_table_index	include/openswmm/engine/openswmm_tables.h	58	pyx_use	python/openswmm/engine/_edit.pyx;python/openswmm/engine/_tables.pyx
+swmm_table_lookup	include/openswmm/engine/openswmm_tables.h	219	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_timeseries_add	include/openswmm/engine/openswmm_tables.h	101	pyx_use	python/openswmm/engine/_tables.pyx
+swmm_timeseries_get_relative_info	include/openswmm/engine/openswmm_tables.h	180	gap	
+swmm_timeseries_set_relative_info	include/openswmm/engine/openswmm_tables.h	200	gap	
+swmm_title_add_line	include/openswmm/engine/openswmm_model.h	460	pyx_use	python/openswmm/engine/_model.pyx
+swmm_title_clear	include/openswmm/engine/openswmm_model.h	480	pyx_use	python/openswmm/engine/_model.pyx
+swmm_title_get_count	include/openswmm/engine/openswmm_model.h	435	pyx_use	python/openswmm/engine/_model.pyx
+swmm_title_get_line	include/openswmm/engine/openswmm_model.h	446	pyx_use	python/openswmm/engine/_model.pyx
+swmm_title_set	include/openswmm/engine/openswmm_model.h	472	pyx_use	python/openswmm/engine/_model.pyx
+swmm_transect_add	include/openswmm/engine/openswmm_infrastructure.h	51	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_add_station	include/openswmm/engine/openswmm_infrastructure.h	76	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_analyze_impact	include/openswmm/engine/openswmm_edit.h	154	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_transect_clear_stations	include/openswmm/engine/openswmm_infrastructure.h	265	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_count	include/openswmm/engine/openswmm_infrastructure.h	83	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_delete	include/openswmm/engine/openswmm_edit.h	317	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_transect_get_bank_stations	include/openswmm/engine/openswmm_infrastructure.h	144	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_comments	include/openswmm/engine/openswmm_infrastructure.h	233	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_encroachment_stations	include/openswmm/engine/openswmm_infrastructure.h	174	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_modifiers	include/openswmm/engine/openswmm_infrastructure.h	208	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_roughness	include/openswmm/engine/openswmm_infrastructure.h	118	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_station	include/openswmm/engine/openswmm_infrastructure.h	252	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_get_station_count	include/openswmm/engine/openswmm_infrastructure.h	241	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_id	include/openswmm/engine/openswmm_infrastructure.h	99	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_index	include/openswmm/engine/openswmm_infrastructure.h	91	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_remove	include/openswmm/engine/openswmm_infrastructure.h	292	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_rename	include/openswmm/engine/openswmm_infrastructure.h	278	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_set_bank_stations	include/openswmm/engine/openswmm_infrastructure.h	133	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_set_comments	include/openswmm/engine/openswmm_infrastructure.h	218	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_set_encroachment_stations	include/openswmm/engine/openswmm_infrastructure.h	163	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_set_modifiers	include/openswmm/engine/openswmm_infrastructure.h	196	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transect_set_roughness	include/openswmm/engine/openswmm_infrastructure.h	62	pyx_use	python/openswmm/engine/_infrastructure.pyx
+swmm_transport_boundary_count	include/openswmm/engine/openswmm_transport.h	101	gap	
+swmm_transport_class_name	include/openswmm/engine/openswmm_engine.h	405	gap	
+swmm_transport_conduit_disp_count	include/openswmm/engine/openswmm_transport.h	91	gap	
+swmm_transport_domain_name	include/openswmm/engine/openswmm_engine.h	404	gap	
+swmm_transport_get_boundary	include/openswmm/engine/openswmm_transport.h	114	gap	
+swmm_transport_get_conduit_disp	include/openswmm/engine/openswmm_transport.h	95	gap	
+swmm_transport_get_configured	include/openswmm/engine/openswmm_transport.h	59	gap	
+swmm_transport_get_dispersion_mode	include/openswmm/engine/openswmm_transport.h	63	gap	
+swmm_transport_get_dispersion_value	include/openswmm/engine/openswmm_transport.h	75	gap	
+swmm_transport_get_source	include/openswmm/engine/openswmm_transport.h	129	gap	
+swmm_transport_get_target_dx	include/openswmm/engine/openswmm_transport.h	83	gap	
+swmm_transport_set_dispersion_mode	include/openswmm/engine/openswmm_transport.h	71	gap	
+swmm_transport_set_dispersion_value	include/openswmm/engine/openswmm_transport.h	79	gap	
+swmm_transport_set_target_dx	include/openswmm/engine/openswmm_transport.h	87	gap	
+swmm_transport_source_count	include/openswmm/engine/openswmm_transport.h	121	gap	
+swmm_treatment_clear	include/openswmm/engine/openswmm_quality.h	197	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_treatment_get	include/openswmm/engine/openswmm_quality.h	186	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_treatment_set	include/openswmm/engine/openswmm_quality.h	174	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_treatment_validate_expression	include/openswmm/engine/openswmm_quality.h	223	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_userflag_def_count	include/openswmm/engine/openswmm_model.h	679	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_def_get	include/openswmm/engine/openswmm_model.h	692	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_define	include/openswmm/engine/openswmm_model.h	712	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_get_bool	include/openswmm/engine/openswmm_model.h	631	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_get_int	include/openswmm/engine/openswmm_model.h	640	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_get_real	include/openswmm/engine/openswmm_model.h	649	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_set_bool	include/openswmm/engine/openswmm_model.h	652	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_set_int	include/openswmm/engine/openswmm_model.h	655	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_set_real	include/openswmm/engine/openswmm_model.h	658	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_undefine	include/openswmm/engine/openswmm_model.h	725	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_value_clear	include/openswmm/engine/openswmm_model.h	778	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_value_get	include/openswmm/engine/openswmm_model.h	738	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_userflag_value_set	include/openswmm/engine/openswmm_model.h	761	pyx_use	python/openswmm/engine/_model.pyx;python/openswmm/engine/_solver.pyx
+swmm_validate_model	include/openswmm/engine/openswmm_model.h	78	pyx_use	python/openswmm/engine/_model.pyx
+swmm_virtual_junction_fuse	include/openswmm/engine/openswmm_edit.h	525	pyx_use	python/openswmm/engine/_edit.pyx
+swmm_washoff_get	include/openswmm/engine/openswmm_quality.h	158	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_washoff_set	include/openswmm/engine/openswmm_quality.h	141	pyx_use	python/openswmm/engine/_quality.pyx
+swmm_water_age_get_enabled	include/openswmm/engine/openswmm_water_age.h	68	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_get_global_source	include/openswmm/engine/openswmm_water_age.h	72	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_get_override	include/openswmm/engine/openswmm_water_age.h	93	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_override_count	include/openswmm/engine/openswmm_water_age.h	86	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_remove_override	include/openswmm/engine/openswmm_water_age.h	108	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_save	include/openswmm/engine/openswmm_water_age.h	117	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_set_global_source	include/openswmm/engine/openswmm_water_age.h	81	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_water_age_set_override	include/openswmm/engine/openswmm_water_age.h	103	pyx_use	python/openswmm/engine/_water_age.pyx
+swmm_xsect_area_of_depth	include/openswmm/engine/openswmm_xsect.h	301	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_area_of_depth_array	include/openswmm/engine/openswmm_xsect.h	440	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_area_of_sectfactor	include/openswmm/engine/openswmm_xsect.h	374	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_area_of_sectfactor_array	include/openswmm/engine/openswmm_xsect.h	464	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_create	include/openswmm/engine/openswmm_xsect.h	121	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_create_custom	include/openswmm/engine/openswmm_xsect.h	175	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_create_irregular	include/openswmm/engine/openswmm_xsect.h	152	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_create_street	include/openswmm/engine/openswmm_xsect.h	203	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_critical_depth	include/openswmm/engine/openswmm_xsect.h	397	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_critical_depth_array	include/openswmm/engine/openswmm_xsect.h	471	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_depth_of_area	include/openswmm/engine/openswmm_xsect.h	337	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_depth_of_area_array	include/openswmm/engine/openswmm_xsect.h	452	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_dsda	include/openswmm/engine/openswmm_xsect.h	386	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_dsda_array	include/openswmm/engine/openswmm_xsect.h	468	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_free	include/openswmm/engine/openswmm_xsect.h	70	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_full_properties	include/openswmm/engine/openswmm_xsect.h	415	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_get_shape	include/openswmm/engine/openswmm_xsect.h	254	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_get_units	include/openswmm/engine/openswmm_xsect.h	271	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_hydrad_of_area	include/openswmm/engine/openswmm_xsect.h	349	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_hydrad_of_area_array	include/openswmm/engine/openswmm_xsect.h	456	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_hydrad_of_depth	include/openswmm/engine/openswmm_xsect.h	325	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_hydrad_of_depth_array	include/openswmm/engine/openswmm_xsect.h	448	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_is_open	include/openswmm/engine/openswmm_xsect.h	427	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_sectfactor_of_area	include/openswmm/engine/openswmm_xsect.h	361	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_sectfactor_of_area_array	include/openswmm/engine/openswmm_xsect.h	460	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_shape_name	include/openswmm/engine/openswmm_xsect.h	285	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_width_of_depth	include/openswmm/engine/openswmm_xsect.h	313	pyx_use	python/openswmm/engine/_xsect.pyx
+swmm_xsect_width_of_depth_array	include/openswmm/engine/openswmm_xsect.h	444	pyx_use	python/openswmm/engine/_xsect.pyx

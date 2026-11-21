@@ -1,0 +1,174 @@
+[
+  {
+    "file": "external_only_results.2d.h5",
+    "fields": {
+      "Mesh2_face_gw_infil_capacity": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m s-1",
+        "finite": 5,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_remaining": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_refresh": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "s",
+        "finite": 5,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_pending": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_reject": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3 s-1",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_reject_cum": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_dunne_cum": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_infil_in": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m s-1",
+        "finite": 5,
+        "zero": 0
+      },
+      "groundwater_ledger": {
+        "shape": [
+          5,
+          15
+        ],
+        "units": "m3",
+        "finite": 75,
+        "zero": 55
+      }
+    }
+  },
+  {
+    "file": "off_results.2d.h5",
+    "fields": {
+      "Mesh2_face_gw_infil_capacity": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m s-1",
+        "finite": 0,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_remaining": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 0,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_refresh": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "s",
+        "finite": 0,
+        "zero": 0
+      },
+      "Mesh2_face_gw_infil_pending": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_reject": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3 s-1",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_reject_cum": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_dunne_cum": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m3",
+        "finite": 5,
+        "zero": 5
+      },
+      "Mesh2_face_gw_infil_in": {
+        "shape": [
+          5,
+          1
+        ],
+        "units": "m s-1",
+        "finite": 5,
+        "zero": 5
+      },
+      "groundwater_ledger": {
+        "shape": [
+          5,
+          15
+        ],
+        "units": "m3",
+        "finite": 75,
+        "zero": 65
+      }
+    }
+  }
+]

@@ -1,0 +1,3 @@
+{
+  "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature"
+}

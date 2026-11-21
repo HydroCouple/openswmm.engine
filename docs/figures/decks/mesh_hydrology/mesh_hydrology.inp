@@ -1,0 +1,147 @@
+;;============================================================================
+;; OpenSWMM — Rain, infiltration and groundwater on the mesh
+;;
+;; A 20 x 20 m patch of ground, meshed as eight triangles over nine vertices,
+;; with three soil tags and a drain in the middle. Two rain gages stand at
+;; opposite corners with different intensities, so the natural-neighbour
+;; interpolation has something to interpolate: every cell takes a different
+;; rainfall. Each tag infiltrates by its own method, and where the infiltrated
+;; water goes is one key.
+;;
+;;   RG_W (20 mm/hr)                                RG_E (5 mm/hr)
+;;        *----------------- mesh -----------------*
+;;                    drain at the centre -> J1 -> O1
+;;
+;; Used by the Application Manual's mesh-hydrology chapter. Variants in the
+;; figures change [2D_OPTIONS] INFIL_DESTINATION and nothing else.
+;;============================================================================
+
+[TITLE]
+Rain, infiltration and groundwater on the 2D mesh
+
+;//! [options]
+[OPTIONS]
+FLOW_UNITS           CMS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             03:00:00
+REPORT_STEP          00:01:00
+WET_STEP             00:01:00
+DRY_STEP             00:01:00
+ROUTING_STEP         5
+ALLOW_PONDING        NO
+;//! [options]
+
+[EVAPORATION]
+CONSTANT             0.0
+DRY_ONLY             NO
+
+;//! [gages]
+[RAINGAGES]
+;;Name  Format     Interval  SCF  Source
+RG_W    INTENSITY  1:00      1.0  TIMESERIES  TS_WEST
+RG_E    INTENSITY  1:00      1.0  TIMESERIES  TS_EAST
+
+[SYMBOLS]
+;;Gage  X      Y
+RG_W    -6.0   10.0
+RG_E    26.0   10.0
+;//! [gages]
+
+[TIMESERIES]
+;;Name    Date        Time   Value
+;; one hour of rain, then two hours of recession
+TS_WEST   01/01/2026  00:00  20.0
+TS_WEST   01/01/2026  01:00  0.0
+TS_WEST   01/01/2026  02:00  0.0
+TS_EAST   01/01/2026  00:00  5.0
+TS_EAST   01/01/2026  01:00  0.0
+TS_EAST   01/01/2026  02:00  0.0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1      6.0   2.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+O1      5.0   FREE  NO
+
+[CONDUITS]
+;;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J1    O1  30.0    0.013      0         0          0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  0.3    0      0      0      1
+
+;//! [twod]
+[2D_OPTIONS]
+INTEGRATOR           EXPLICIT
+LTS_TIERS            1
+MAX_TIMESTEP         5
+DRY_DEPTH            0.001
+COUPLING_CD          0.7
+REPORT_2D            YES
+RAINFALL_MODE        NATURAL_NEIGHBOUR
+INFILTRATION         YES
+INFIL_DESTINATION    AQUIFER_2D
+GROUNDWATER          YES
+OUTPUT_FILE          mesh_hydrology.h5
+;//! [twod]
+
+[2D_VERTICES]
+;;X      Y      Z
+ 0.0    0.0   10.00
+10.0    0.0   10.00
+20.0    0.0   10.00
+ 0.0   10.0   10.05
+10.0   10.0    9.90
+20.0   10.0   10.05
+ 0.0   20.0   10.10
+10.0   20.0   10.10
+20.0   20.0   10.10
+
+[2D_TRIANGLES]
+;;V1  V2  V3  MANNINGS_N  INIT_DEPTH  TAG
+0     1   4   0.030       0.0         LAWN
+0     4   3   0.030       0.0         LAWN
+1     2   5   0.018       0.0         PAVED
+1     5   4   0.018       0.0         PAVED
+3     4   7   0.045       0.0         WOODS
+3     7   6   0.045       0.0         WOODS
+4     5   8   0.030       0.0         LAWN
+4     8   7   0.030       0.0         LAWN
+
+;//! [infiltration]
+[2D_INFILTRATION_DEFAULTS]
+;;TAG    METHOD        P1    P2   P3   P4  P5  DEST
+*        HORTON        25.0  2.5  4.0  -   -
+PAVED    CONSTANT      1.0   -    -    -   -
+WOODS    GREEN_AMPT    3.5   0.4  0.30 -   -
+
+[2D_INFILTRATION_OPTIONS]
+INFIL_STEP           0:05:00
+;//! [infiltration]
+
+;//! [aquifer]
+[2D_AQUIFER_OPTIONS]
+SOIL_CHAR            GARDNER
+CLOSURE              AUTO
+M_LAYERS             8
+
+[2D_AQUIFER]
+;;Scope  KS    ZS   THETA_S  THETA_R  ALPHA  [keywords]
+*        36.0  4.0  0.45     0.10     2.0    HG0 1.0
+;//! [aquifer]
+
+[2D_VERTEX_NODE_MAP]
+;;VERTEX  SWMM_NODE  CD    AREA   ;; AREA ~ the 0.3 m pipe's own area, per the engine's warning
+   4      J1         0.70  0.07
+
+[REPORT]
+INPUT                NO
+CONTINUITY           YES
+NODES                ALL
+LINKS                ALL

@@ -1,0 +1,13 @@
+[2D_VERTICES]
+0 0 1 "tag with space"
+10 0 1 ""
+10 10 1 a"b c"d
+0 10 1 "x",
+5 5 1 "unterminated
+[2D_TRIANGLES]
+0 1 4 0.03
+1 2 4 0.03
+2 3 4 0.03
+3 0 4 0.03
+[2D_VERTEX_NODE_MAP]
+"tag with space" J1

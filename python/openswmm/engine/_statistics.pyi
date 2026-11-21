@@ -5,12 +5,35 @@ Simulation statistics (Pythonic v1 surface)
 Type stubs for :mod:`openswmm.engine._statistics`.
 """
 
-from typing import Any
+from typing import Any, List, NamedTuple
 
 import numpy as np
 from numpy.typing import NDArray
 
+from ._enums import SummaryObject, SummaryTable
 from ._solver import Solver
+
+
+class SummaryColumn(NamedTuple):
+    """One value column of a report summary table."""
+    name: str
+    units: str
+
+
+class SummaryRow(NamedTuple):
+    """The object one summary-table row describes (``object_index`` -1 for SYSTEM)."""
+    object_type: SummaryObject
+    object_index: int
+    label: str
+
+
+class ReportTable(NamedTuple):
+    """One report summary table; ``values`` is (rows, columns), NaN where blank."""
+    table: SummaryTable
+    title: str
+    columns: List[SummaryColumn]
+    rows: List[SummaryRow]
+    values: NDArray[Any]
 
 
 class Statistics:
@@ -86,3 +109,18 @@ class Statistics:
     def link_vol_flow_at(self, idx: int) -> float: ...
     def subcatchment_max_runoff_at(self, idx: int) -> float: ...
     def subcatchment_runoff_vol_at(self, idx: int) -> float: ...
+
+    # Report summary tables (the .rpt sections), readable once the run has
+    # ended and until the solver closes. Values in each column's units.
+    def summary_table(self, table: SummaryTable | int) -> ReportTable:
+        """Read one report summary table (Node Depth, Outfall Loading, Pumping, ...)."""
+        ...
+    def summary_tables(self) -> List[ReportTable]:
+        """Read every report summary table, in report order."""
+        ...
+    def summary_row_at(self, table: SummaryTable | int, row: int) -> SummaryRow:
+        """Identify one row of a summary table."""
+        ...
+    def summary_value_at(self, table: SummaryTable | int, row: int, column: int) -> float:
+        """Read one value of a summary table (NaN where the report prints nothing)."""
+        ...

@@ -1,0 +1,22 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+Note: Google Test filter = EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader:EngineCheckpoint.MeshOutputContinuationIsIndependentOfWallClockDelay:EngineCheckpoint.MeshRichardsLidThermalEnergyContinuesAcrossRestart
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from EngineCheckpoint
+[ RUN      ] EngineCheckpoint.MeshRichardsLidThermalEnergyContinuesAcrossRestart
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] EngineCheckpoint.MeshRichardsLidThermalEnergyContinuesAcrossRestart (1051 ms)
+[ RUN      ] EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] EngineCheckpoint.MeshFreshOutputRestoresAnInitialCheckpointWithoutChangingItsHeader (67 ms)
+[ RUN      ] EngineCheckpoint.MeshOutputContinuationIsIndependentOfWallClockDelay
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] EngineCheckpoint.MeshOutputContinuationIsIndependentOfWallClockDelay (1411 ms)
+[----------] 3 tests from EngineCheckpoint (2531 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (2531 ms total)
+[  PASSED  ] 3 tests.

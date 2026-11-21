@@ -1,0 +1,9 @@
+{#- HydroCouple layout (templates_path): PyData's layout plus the landing hero on the root page. -#}
+{%- extends "!layout.html" %}
+{%- block body_tag %}
+  <body data-default-mode="{{ default_mode }}"{% if hc_hero and pagename == root_doc %} class="hc-landing"{% endif %}>
+{%- endblock %}
+{%- block docs_navbar %}
+{{ super() }}
+{%- if hc_hero and pagename == root_doc %}{% include "hc-hero.html" %}{% endif %}
+{%- endblock docs_navbar %}

@@ -27,7 +27,7 @@ water in each link and the volume of water within each storage node. The
 methods used to obtain this hydraulic solution are described in Volume
 II of this manual.
 
-![](quality/media/media/image2.png "Objects2")
+![](quality/media/media/quality-image2.png "Objects2")
 <p><span id="_Toc454288773"
 class="anchor"></span><strong>Figure 5‑1 Representation of the
 conveyance network in SWMM</strong></p>
@@ -190,7 +190,7 @@ above 100 mg/L, which are not physically possible. These results support
 using the simple mixing equation 5-6 in place of the analytical solution
 for SWMM 5 as it provides accurate and robust water quality solutions.
 
-![](quality/media/media/image20.png "image20")
+![](quality/media/media/quality-image20.png "image20")
 <p><span id="_Toc454288775"
 class="anchor"></span><strong>Figure 5‑3 Comparison of completely mixed
 reactor equations for a step inflow</strong></p>
@@ -651,7 +651,7 @@ at 100 mg/L and begins to settle out once the inflow ceases. As the pond
 depth decreases while it empties more solids settle out reducing the TSS
 level until the residual concentration of 20 mg/L is reached.
 
-![TreatmentExample.png](quality/media/media/image21.png)
+![TreatmentExample.png](quality/media/media/quality-image21.png)
 
 **Figure 5‑4 Gravity settling treatment of TSS within a detention pond**
 
@@ -751,5 +751,29 @@ mass-balance accounting are implemented in
 during quality initialization in `src/engine/core/SWMMEngine.cpp`, and
 the C API entry points are declared in @ref openswmm_quality.h.
 
+@note The transport model described in this chapter — one or more
+continuously stirred tanks per link — remains the default and is
+unchanged. OpenSWMM additionally provides two engines that resolve
+concentration *along* a conduit rather than treating it as fully mixed:
+an Eulerian finite-volume engine and a Lagrangian parcel-tracking
+engine, both described in @ref quality_ref_ch7_ard_transport. They are
+selected with `[OPTIONS] QUALITY_SOLVER` and share this chapter's
+external loads, treatment expressions and mass-balance ledger.
 
+### 5.4.5 Treatment in storage-node LIDs
 
+Open-Source SWMM 6's storage-node LIDs extend this chapter's mixed-reactor
+accounting with explicit retained-cell inventories. Accepted water transfers
+carry the donating compartment's concentration and are debited/credited once.
+Layer-exit fixed removal and optional expressions act once per authored layer;
+resident retained mass decays with background plus layer rates. The connected
+mobile volume remains one mixed reactor with volume-weighted layer decay,
+not a sequence of saturated layer reactors. Physical surface bypasses do not
+receive every underlying layer's treatment.
+
+Reverse outfall water carrying pollutant is an external source; clean ZERO
+backflow carries no pollutant mass. Assess exported, reacted, flooded, seeped
+and still-stored mass over a common horizon. The full equations and restart
+behavior are in @ref quality_ref_lid_storage_formulation; accepted-volume
+hydraulics and backwater wetting are in @ref hydraulics_ref_lid_storage_formulation.
+These LID layer rules require Dynamic Wave with the Legacy quality solver.

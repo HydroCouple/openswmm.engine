@@ -1,0 +1,11 @@
+{
+  "suites": {
+    "test_engine_lid": 55,
+    "test_engine_runoff": 17,
+    "test_engine_surface_aquifer_receiving": 16,
+    "test_engine_surface_et_budget": 10,
+    "test_engine_surface_exchange": 15,
+    "test_engine_surface_ownership": 9
+  },
+  "total": 122
+}

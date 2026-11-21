@@ -68,6 +68,29 @@ class TestSpatial(EngineSolverCase):
         self.assertEqual(poly.ndim, 2)
         self.assertEqual(poly.shape[1], 2)
 
+    def test_multipart_polygon_roundtrip(self):
+        from pathlib import Path
+        from openswmm.engine import Solver
+        from tests._paths import artifact_dir
+
+        solver = self.opened_solver()
+        # Outer ring, nested hole, disjoint open final ring. Closing vertices
+        # carry the ring boundaries and must survive the Python and INP layers.
+        rings = np.array([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0],
+                          [2, 2], [4, 2], [4, 4], [2, 4], [2, 2],
+                          [20, 0], [30, 0], [30, 10], [20, 10]], dtype=float)
+        solver.spatial.set_subcatchment_polygon(0, rings)
+        actual = solver.spatial.subcatchment_polygon(0)
+        np.testing.assert_array_equal(actual, rings)
+        actual[:] = -999
+        np.testing.assert_array_equal(solver.spatial.subcatchment_polygon(0), rings)
+        saved = Path(artifact_dir(self)) / "multipart.inp"
+        solver.write(saved)
+        reopened = Solver(saved, saved.with_suffix('.rpt'))
+        self.addCleanup(self._close_destroy, reopened)
+        reopened.open()
+        np.testing.assert_array_equal(reopened.spatial.subcatchment_polygon(0), rings)
+
 
 # ---------------------------------------------------------------------------
 # Quality

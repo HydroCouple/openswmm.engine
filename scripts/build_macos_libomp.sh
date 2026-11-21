@@ -13,7 +13,15 @@
 #
 # Env:
 #   MACOSX_DEPLOYMENT_TARGET  minimum macOS version (default 11.0)
-#   LLVM_OPENMP_VERSION       LLVM release to build (default 18.1.8)
+#   LLVM_OPENMP_VERSION       LLVM release to build (default 20.1.8)
+#
+# The default must stay >= 20.x: AppleClang 17 (on the macos-15 runners since
+# 2026-08) emits __kmpc_dispatch_deinit at the end of schedule(dynamic/guided)
+# loops (e.g. ExplicitFvSolver::updateCells), and that runtime entry point
+# first appeared in the LLVM 20 OpenMP runtime (present in 20.1.0's dllexports,
+# absent through 19.1.7) — linking an older libomp fails with
+# "Undefined symbols: ___kmpc_dispatch_deinit". The post-install check below
+# asserts the built dylib actually exports it.
 #
 # NOTE: this runs in CI on macOS runners; it needs cmake + ninja on PATH
 # (the caller's `brew install ninja` covers ninja; runners ship cmake).
@@ -25,7 +33,7 @@
 set -euo pipefail
 
 TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
-LLVM_VER="${LLVM_OPENMP_VERSION:-18.1.8}"
+LLVM_VER="${LLVM_OPENMP_VERSION:-20.1.8}"
 
 case "$(uname -m)" in
   arm64)  ARCH=arm64;  PREFIX=/opt/homebrew/opt/libomp ;;
@@ -40,8 +48,14 @@ trap 'rm -rf "${work}"' EXIT
 cd "${work}"
 
 base="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VER}"
-curl -fLsS -o openmp.src.tar.xz "${base}/openmp-${LLVM_VER}.src.tar.xz"
-curl -fLsS -o cmake.src.tar.xz  "${base}/cmake-${LLVM_VER}.src.tar.xz"
+# Release-asset requests can hit transient 5xx responses. Retry both downloads
+# before unpacking, while keeping connection/request times bounded.
+curl -fLsS --retry 5 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 20 --max-time 120 \
+  -o openmp.src.tar.xz "${base}/openmp-${LLVM_VER}.src.tar.xz"
+curl -fLsS --retry 5 --retry-delay 2 --retry-max-time 120 \
+  --connect-timeout 20 --max-time 120 \
+  -o cmake.src.tar.xz "${base}/cmake-${LLVM_VER}.src.tar.xz"
 tar xf openmp.src.tar.xz
 tar xf cmake.src.tar.xz
 # The standalone openmp build references ../cmake/Modules from the matching
@@ -58,9 +72,28 @@ cmake -S "openmp-${LLVM_VER}.src" -B build-omp -G Ninja \
 
 cmake --build build-omp
 mkdir -p "${PREFIX}"
+# Drop stale artifacts from earlier installs (e.g. an old libomp.a — this
+# script only ships the dylib) so nothing outdated can be picked up.
+rm -f "${PREFIX}/lib/libomp.a"
 cmake --install build-omp
 
 echo ">>> installed:"
 ls -la "${PREFIX}/lib"
 # Confirm the produced dylib's minimum matches the requested target.
 otool -l "${PREFIX}/lib/libomp.dylib" | grep -A3 LC_BUILD_VERSION || true
+# Fail fast if the runtime predates the compiler's dispatch-loop codegen
+# (see the LLVM_OPENMP_VERSION note above) — a missing symbol here otherwise
+# surfaces much later as a cryptic engine link error.
+#
+# The symbol table is captured first and matched in-shell rather than piped
+# into `grep -q`. Under `set -o pipefail` that pipeline reports the producer's
+# status, and `grep -q` exits the moment it matches — which kills `nm` with
+# SIGPIPE (LLVM's nm prints "IO failure on output stream: Broken pipe") and
+# makes the pipeline fail EXACTLY WHEN THE SYMBOL IS PRESENT. The check
+# inverted itself: every macOS job failed here with the symbol in place.
+omp_syms="$(nm -g "${PREFIX}/lib/libomp.dylib")"
+if [[ "${omp_syms}" != *"___kmpc_dispatch_deinit"* ]]; then
+  echo "ERROR: libomp ${LLVM_VER} lacks ___kmpc_dispatch_deinit (need LLVM >= 20)" >&2
+  exit 1
+fi
+echo ">>> ___kmpc_dispatch_deinit present"

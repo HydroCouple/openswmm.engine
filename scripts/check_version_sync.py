@@ -5,11 +5,13 @@ Single-source-of-truth *enforcement* (review finding #6): rather than derive
 all three from one file (which would mean a fragile dynamic-version refactor of
 the CMake + scikit-build-core build), we keep the three declarations and gate
 them with this check in CI. They must normalize to the same (base, phase, num).
+Python wheels may add a .devN suffix before that native release; both Python
+packages and the companion dependency pin must share the exact full version.
 
 Sources:
   - CMakeLists.txt          project(... VERSION X.Y.Z) + OPENSWMM_PRERELEASE
   - vcpkg.json              "version-semver": "X.Y.Z-<phase>.<n>"
-  - python/pyproject.toml   [project] version = "X.Y.Z<a|b|rc><n>"  (PEP 440)
+  - python/pyproject.toml   [project] version = "X.Y.Z<a|b|rc><n>[.devN]"  (PEP 440)
 
 Run: python scripts/check_version_sync.py   (exit 0 = in sync, 1 = mismatch)
 """
@@ -51,9 +53,17 @@ def from_vcpkg(p: Path) -> tuple[str, str, int]:
     return _norm(base, phase, num)
 
 
+def python_version(p: Path) -> str:
+    """Read the complete Python release, including its development suffix."""
+    return re.search(r'^version\s*=\s*"([^"]+)"', p.read_text(), re.MULTILINE).group(1)
+
+
 def from_pyproject(p: Path) -> tuple[str, str, int]:
-    ver = re.search(r'^version\s*=\s*"([^"]+)"', p.read_text(), re.MULTILINE).group(1)
-    m = re.match(r"([0-9]+\.[0-9]+\.[0-9]+)(?:(a|b|rc)([0-9]+))?$", ver)
+    """Match the native release while allowing a Python-only .devN suffix."""
+    ver = python_version(p)
+    m = re.fullmatch(r"([0-9]+\.[0-9]+\.[0-9]+)(?:(a|b|rc)([0-9]+))?(?:\.dev[0-9]+)?", ver)
+    if m is None:
+        raise ValueError(f"Unsupported Python package version in {p}: {ver}")
     base, phase, num = m.groups()
     return _norm(base, phase, num)
 
@@ -77,11 +87,16 @@ def main() -> int:
     # its `openswmm == <ver>` dependency pin; that pin must track the shared
     # version too (the pyproject `version =` check above only covers the
     # companion's OWN version).
-    companion = (ROOT / "packages" / "gpu-omp" / "pyproject.toml").read_text()
-    pin = re.search(r'openswmm\s*==\s*([^"\'\s]+)', companion)
-    base_ver = re.search(r'^version\s*=\s*"([^"]+)"',
-                         (ROOT / "python" / "pyproject.toml").read_text(),
-                         re.MULTILINE).group(1)
+    companion_path = ROOT / "packages" / "gpu-omp" / "pyproject.toml"
+    base_ver = python_version(ROOT / "python" / "pyproject.toml")
+    companion_ver = python_version(companion_path)
+    if companion_ver != base_ver:
+        print(f"\nERROR: gpu-omp version {companion_ver} differs from base {base_ver}.",
+              file=sys.stderr)
+        return 1
+    print(f"  Python packages                  -> {base_ver} (exact match)")
+    companion = companion_path.read_text()
+    pin = re.search(r"openswmm\s*==\s*([^\"'\s]+)", companion)
     if not pin or pin.group(1) != base_ver:
         print(f"\nERROR: gpu-omp companion pins 'openswmm == "
               f"{pin.group(1) if pin else '?'}' but base is {base_ver}.",

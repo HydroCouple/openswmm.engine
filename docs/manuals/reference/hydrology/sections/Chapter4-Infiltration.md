@@ -82,7 +82,7 @@ In short, the NRCS provides an invaluable resource for information on
 soils and drainage of soils. The agency's data are ever more valuable as
 they increasingly reside on-line on the Web.
 
-![NRCS Table](hydrology/media/media/image15.png)
+![NRCS Table](hydrology/media/media/hydrology-image15.png)
 
 **Figure 4-1 Physical properties for Woodburn silt loam, Benton County, Oregon.**
 
@@ -134,7 +134,7 @@ where:
   : Thus for the case illustrated in Figure 4-2 runoff would be
   intermittent.
 
-![Horton infiltration curve](hydrology/media/media/figure4-2.png)
+![Horton infiltration curve](figures/png/hydrology_ch4_horton_curve.png)
 
 **Figure 4-2 The Horton infiltration curve**
 
@@ -159,7 +159,7 @@ before, there will in fact be times when infiltration *f* is less than
 
 \f[F(t) = \int_{0}^{t}{\min\left\lbrack f_{p},\ i \right\rbrack d\tau}\f] (4-4) 
 
-![Cumulative infiltration F as the area under the Horton curve](hydrology/media/media/figure4-3.png)
+![Cumulative infiltration F as the area under the Horton curve](figures/png/hydrology_ch4_horton_cumulative.png)
 
 **Figure 4-3 Cumulative infiltration F as the area under the Horton curve**
 
@@ -210,7 +210,7 @@ one can compute *t*<sub>w</sub> as:
 
 \f[t_{w} = t_{pr} - \frac{1}{k_{r}}\ln\left( \frac{f_{0} - f_{\infty}}{f_{0} - f_{r}} \right)\f] (4-8) 
 
-![Regeneration (recovery) of infiltration capacity during dry time steps](hydrology/media/media/figure4-4.png)
+![Regeneration (recovery) of infiltration capacity during dry time steps](figures/png/hydrology_ch4_horton_recovery.png)
 
 **Figure 4-4 Regeneration (recovery) of infiltration capacity during dry time steps**
 
@@ -746,7 +746,7 @@ F~s~* (Equation 4-29). The remainder of the curve corresponds to the
 potential rate computed with Equation 4-27. Note that the infiltration
 rate approaches *K*<sub>S</sub> (0.25 in/hr) asymptotically.
 
-![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](hydrology/media/media/figure4-6.png)
+![Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method](figures/png/hydrology_ch4_green_ampt_curve.png)
 
 **Figure 4-6 Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method**
 
@@ -849,7 +849,7 @@ functional dependence of the three internally computed recovery
 parameters *L*<sub>u</sub>, *k*<sub>r</sub>, and *T*<sub>r</sub> on the saturated hydraulic
 conductivity *K*<sub>S</sub>.
 
-![Green-Ampt recovery parameters as functions of hydraulic conductivity](hydrology/media/media/figure4-7.png)
+![Green-Ampt recovery parameters as functions of hydraulic conductivity](figures/png/hydrology_ch4_green_ampt_recovery_params.png)
 
 **Figure 4-7 Green-Ampt recovery parameters as functions of hydraulic conductivity**
 
@@ -1045,6 +1045,51 @@ discussed below. That is, *S* is a function of the curve number (Section
 table is known, or if typical depths are given for a soil on its Soil
 Survey Interpretation data, then Equation 4-39 may be solved for
 *θ*<sub>dmax</sub>.
+
+### 4.4.5 The Modified Green-Ampt Variant
+
+`[OPTIONS] INFILTRATION MODIFIED_GREEN_AMPT` (the legacy spelling; the engine
+also accepts `MOD_GREEN_AMPT`) selects a variant of §4.4 that differs from the
+original in exactly one branch of the unsaturated-surface calculation. Both
+share the saturation volume \f$F_s\f$ of (4-29), the saturated-phase solution
+(4-31)–(4-32) and the recovery routine of §4.4.2.
+
+Besides the cumulative infiltration \f$F\f$ and the upper-zone storage
+\f$F_u\f$, the engine keeps a timer \f$T\f$ — the time to drain the upper zone
+— set to \f$5400/L_u\f$ seconds whenever the intensity exceeds \f$K_s\f$ and
+counting down every step; when it has expired the soil is treated as having
+had a complete inter-event break. In the branch where rain falls but does not
+exceed \f$K_s\f$ (all of it infiltrates and the surface stays unsaturated):
+
+- **`GREEN_AMPT`** adds the step's infiltration to \f$F\f$ and \f$F_u\f$ and,
+  if \f$T\f$ has expired, recomputes the deficit from the upper-zone storage,
+  \f$\theta_d = (F_{u,max} - F_u)/L_u\f$, and **resets \f$F\f$ to zero** —
+  the wetting front's memory is discarded.
+- **`MODIFIED_GREEN_AMPT`** adds the step's infiltration to \f$F\f$ and
+  \f$F_u\f$ and nothing else; \f$F\f$ keeps accumulating.
+
+The no-rain recovery branch is shared: \f$F_u\f$ drains at \f$k_r F_{u,max}\f$
+with \f$k_r = L_u/90000\f$, the deficit is recomputed and \f$F\f$ reset once
+the timer has expired, and both reset the deficit to its maximum when
+\f$F_u\f$ reaches zero.
+
+**When to prefer it.** The difference shows on storms with a long,
+low-intensity leading period — hours of drizzle below \f$K_s\f$ before the
+main burst. Under the original the timer expires during the drizzle and
+\f$F\f$ is zeroed step after step, so the burst must infiltrate the full
+\f$F_s\f$ again before ponding: runoff starts late and infiltration is
+overstated. Under the modified variant the drizzle counts toward \f$F_s\f$ and
+runoff starts when the soil is actually full; for short intense events the two
+are identical. Prefer it for continuous simulation and for design storms with
+a leading tail — the reason SWMM 5.1 introduced it.
+
+**A note on the keyword.** Until 2026 the deck keyword `MODIFIED_GREEN_AMPT`
+was mapped to the original model, so eleven parity-corpus decks ran with
+\f$F\f$ reset between low-intensity steps. Both spellings now select the
+modified variant, carried into the kernel as the model enumerator (Chapter 8's
+per-cell infiltration selects it the same way).
+
+<!-- source: src/engine/hydrology/Infiltration.cpp:308-390 (grnampt_getUnsatInfil: recovery :317-336, rain ≤ Ks :339-349 with the GREEN_AMPT-only reset :345-348, timer :353), :393-407 (grnampt_getInfil dispatch); src/engine/input/handlers/OptionsHandler.cpp:155-165 (the aliases and the corpus note :157-160); src/engine/2d/infil/Infil2D.cpp:353-358 (the enum reaches the 2D kernel) -->
 
 ## 4.5 Curve Number Method
 
@@ -1395,7 +1440,7 @@ different infiltration patterns over time. These patterns are influenced
 not only by the parameters that were chosen for each method, but also by
 the temporal pattern of rainfall intensity that occurs during an event.
 
-![](hydrology/media/media/image24.png "image24")
+![](hydrology/media/media/hydrology-image24.png "image24")
 <p><span id="_Toc426447688"
 class="anchor"></span><strong>Figure 4-8 Infiltration rates produced by
 different methods for a 2-inch rainfall event.</strong></p>
@@ -1403,6 +1448,241 @@ different methods for a 2-inch rainfall event.</strong></p>
 (Numbers in parentheses are the fraction of rainfall that becomes
 runoff.)
 
+## 4.7 Frozen Ground {#hydrology_ref_frozen_ground}
 
+The infiltration methods above describe unfrozen soil. In cold climates ice
+in the soil pores blocks the paths water would take, and rain or snowmelt
+that falls on frozen ground runs off much as it does from an impervious
+surface (Kane and Stein, 1983; Koren et al., 1999; Niu and Yang, 2006).
+SWMM 5 has no representation of this: snow only withholds water in the pack,
+and melt then infiltrates at the full unfrozen rate. The only winter control
+is the calendar-driven monthly conductivity adjustment.
 
+The optional frozen-ground model adds a thermal state to the pervious area of
+a subcatchment and uses it to limit infiltration. It is active for the
+subcatchments named in the `[FROZEN_GROUND]` section (see
+@ref engine_manual_sect_FROZEN_GROUND) and has no effect on any other model.
+It works with every infiltration method of this chapter. The same slab and
+limit apply to the cells of a 2D mesh through the `[2D_FROZEN_GROUND]`
+section (Section 4.7.5), and a subcatchment's LID units take its limit
+(Section 4.7.6).
 
+### 4.7.1 Governing Equations
+
+The frost-active layer is treated as one slab of thickness *D* that holds a
+single state, its enthalpy *H* per unit area, measured from unfrozen ground
+at 0 °C. Storing enthalpy, and deriving temperature and ice content from it,
+is the enthalpy method for phase-change problems (Voller and Cross, 1981); it
+handles freezing and thawing with no special treatment of the moving front.
+
+With *C* the bulk volumetric heat capacity of the ground, *θ* the volume
+fraction of water that can freeze, *ρ<sub>w</sub>* the density of water and
+*L<sub>f</sub>* the latent heat of fusion, the latent heat held by the slab
+is
+
+\f[H_{f} = L_{f}\,\rho_{w}\,\theta\,D\f] (4-52)
+
+and the slab temperature *T* and frozen fraction *φ* follow from *H*:
+
+\f[T = \frac{H}{C D},\quad \phi = 0 \qquad\qquad \text{for } H \geq 0\f] (4-53)
+
+\f[T = 0,\quad \phi = -\frac{H}{H_{f}} \qquad\qquad \text{for } -H_{f} < H < 0\f] (4-54)
+
+\f[T = \frac{H + H_{f}}{C D},\quad \phi = 1 \qquad \text{for } H \leq -H_{f}\f] (4-55)
+
+Between the two sensible ranges the slab stays at 0 °C while its water
+freezes or melts. This plateau is what delays both freeze-up in early winter
+and thaw in spring.
+
+The slab exchanges heat with its surroundings through linear contacts, each
+with a conductance *G<sub>i</sub>* (W/m²·K) and a temperature
+*T<sub>i</sub>*:
+
+\f[\frac{dH}{dt} = \sum_{i} G_{i}\left( T_{i} - T \right)\f] (4-56)
+
+Four contacts are used. With *k* the thermal conductivity of the ground and
+*a<sub>s</sub>* the snow-covered fraction of the pervious area:
+
+| Contact | Conductance | Temperature |
+|---------|-------------|-------------|
+| Open surface | \f$(1 - a_{s})\,2k/D\f$ | ponded water temperature if heat transport tracks it, otherwise air temperature |
+| Snow-covered surface | \f$a_{s}\left( D/2k + d_{s}/k_{s} \right)^{-1}\f$ | the lower of air temperature and 0 °C |
+| Deep ground | \f$k/\left( z_{d} - D/2 \right)\f$ | deep ground temperature *T<sub>d</sub>* |
+| Infiltrating water | \f$\rho_{w} c_{w}\,f\f$ | the higher of the open-surface temperature and 0 °C |
+
+The surface contacts act from the middle of the slab to its upper face. Under
+snow the pack adds its own resistance in series: *d<sub>s</sub>* is the snow
+depth, found from the pack's water equivalent and the snow density
+*ρ<sub>s</sub>* as *d<sub>s</sub>* = SWE·*ρ<sub>w</sub>*/*ρ<sub>s</sub>*, and
+*k<sub>s</sub>* is the thermal conductivity of snow. Snow conducts heat
+poorly, so ground beneath an early, deep pack can stay unfrozen through cold
+weather that would freeze bare ground (Zhang, 2005). The deep contact
+represents the ground temperature *T<sub>d</sub>* at a depth
+*z<sub>d</sub>* where the seasonal swing is small. The last contact is the
+heat carried by the water that infiltrates at rate *f*; snowmelt reaches the
+ground at 0 °C, and warm rain thaws the slab quickly.
+
+### 4.7.2 Limiting Infiltration
+
+The frozen fraction sets the share of the pervious surface that still takes
+water:
+
+\f[F_{o} = \left( 1 - \phi \right)^{m}\f] (4-57)
+
+and the infiltration rate becomes
+
+\f[f = F_{o}\,f_{m}\f] (4-58)
+
+where *f<sub>m</sub>* is the rate the selected infiltration method computes.
+*F<sub>o</sub>* is 1 on unfrozen ground and exactly 0 once all of the slab's
+freezable water is ice. Treating frozen ground as an impermeable fraction of
+the surface is the approach of the frozen-ground schemes used in land-surface
+models (Koren et al., 1999; Niu and Yang, 2006). Water that is turned away
+stays on the surface and is routed as runoff in the usual way.
+
+The exponent *m* controls how fast ice closes the soil. If ice is viewed as
+pore space lost to flow, the power-law conductivity curve of Campbell (1974)
+gives a conductivity that falls as the liquid saturation raised to the power
+2*b* + 3, where *b* is the retention-curve exponent tabulated by soil texture
+by Clapp and Hornberger (1978). That exponent is about 11 for sand and larger
+for finer soils, and 11 is the default for *m*. The value is not well
+constrained by measurement. Reductions of this kind are empirical, and the
+related impedance-factor form used in soil physics codes (Lundin, 1990) has
+been criticized on that ground (Kurylyk and Watanabe, 2013), so *m* should be
+treated as a calibration parameter.
+
+### 4.7.3 Computational Scheme
+
+The slab is advanced once per runoff time step Δ*t*, after the runoff
+calculation of that step:
+
+1.  Form the four contacts from the air temperature, the pervious snow water
+    equivalent and covered fraction, the ponded depth and the infiltration
+    volume of the step just completed.
+
+2.  Solve the backward (implicit) form of Equation 4-56,
+
+    \f[H^{n+1} = H^{n} + \Delta t\sum_{i} G_{i}\left( T_{i} - T\left( H^{n+1} \right) \right)\f] (4-59)
+
+    Because *T*(*H*) in Equations 4-53 to 4-55 is piecewise linear and never
+    decreases, the equation has one solution and it is found directly: the
+    unfrozen branch is tried first, then the frozen branch, and otherwise the
+    slab is on the plateau with *T* = 0. The step is stable for any Δ*t* and
+    cannot carry the slab past the temperatures it is exchanging with.
+
+3.  Evaluate *φ* and *F<sub>o</sub>* from the new enthalpy.
+
+4.  In the next runoff step, if *F<sub>o</sub>* = 0 the infiltration method
+    is not called: no water infiltrates and the method's own memory (Horton
+    capacity, Green-Ampt wetting front, Curve Number storage) neither wets
+    nor recovers. Otherwise the method is evaluated as usual and its rate is
+    multiplied by *F<sub>o</sub>*.
+
+The factor therefore lags the ground state by one runoff step. The heat
+received through each contact is accumulated, and the sum of those amounts
+equals the change in slab enthalpy to round-off.
+
+### 4.7.4 Parameter Estimates and Limits
+
+| Parameter | Typical range | Default |
+|-----------|---------------|---------|
+| Thickness *D* (m) | 0.1 – 0.3 | 0.15 |
+| Ground conductivity *k* (W/m·K) | 0.5 – 2.5 | 1.5 |
+| Ground heat capacity *C* (J/m³·K) | 1.5×10⁶ – 3.0×10⁶ | 2.4×10⁶ |
+| Freezable water content *θ* | 0.1 – 0.45 | 0.30 |
+| Deep temperature *T<sub>d</sub>* (°C) | near the mean annual air temperature | 8 |
+| Deep depth *z<sub>d</sub>* (m) | 2 – 5 | 3 |
+| Exponent *m* | 2 – 25 | 11 |
+| Snow conductivity *k<sub>s</sub>* (W/m·K) | 0.05 – 0.6 | 0.25 |
+| Snow density *ρ<sub>s</sub>* (kg/m³) | 100 – 450 | 250 |
+
+The ranges are offered as starting points and not as measured limits. Snow
+conductivity rises with snow density and depends on the type of snow (Sturm
+et al., 1997).
+
+The following limits apply:
+
+-   One slab freezes on average. Real frost blocks infiltration once the top
+    few centimeters freeze, so *D* should be the frost-active layer and not
+    the whole soil profile. A thick slab under-predicts blocking early in
+    winter.
+-   The freezable water content is a fixed parameter. Dry frozen soil stays
+    more permeable than wet frozen soil (Kane and Stein, 1983); the model
+    does not follow soil moisture.
+-   The bare surface is held at the air temperature. Solar and long-wave
+    radiation at the ground surface are not included.
+-   Groundwater percolation below the infiltration zone is not affected.
+-   The limit also applies to the LID units of the subcatchment (Section
+    4.7.6). LID storage nodes (`[LID_NODES]`) are not on a subcatchment and
+    are not affected.
+-   A model with a `[FROZEN_GROUND]` section saves its hot start files in the
+    native full-state format, which requires dynamic wave routing.
+
+**Results.** A model with a `[FROZEN_GROUND]` section writes two more subcatchment variables to
+the binary output file at each report time: the frozen fraction of the slab
+(`SWMM_OUT_SUBCATCH_FROZEN_FRACTION`, code 65546) and its temperature in °C
+(`SWMM_OUT_SUBCATCH_FROZEN_GROUND_TEMP`, code 65547). They follow the pollutant columns, and the
+snow process columns when those are present, and are identified by code, not by position. A
+subcatchment with no row of its own and no `*` row is NaN. A model without the section writes
+neither, so its file layout is unchanged.
+
+### 4.7.5 Mesh Cells
+
+A `[2D_FROZEN_GROUND]` section (see @ref engine_manual_sect_2D_FROZEN_GROUND)
+gives mesh cells their own slabs. A row named `*` applies to every cell and
+a row named after a mesh tag applies to the cells that carry that tag; a tag
+row takes precedence over the `*` row, as in `[2D_INFILTRATION_DEFAULTS]`
+(@ref hydrology_ref_ch8_mesh_surface). A cell that no row covers has no slab
+and is not limited. Equations 4-52 to 4-58 apply unchanged, with these
+differences from the subcatchment form:
+
+-   The slab is advanced once per infiltration interval (`INFIL_STEP`), right
+    after the held infiltration rates are refreshed, and its factor scales
+    the rates of the next refresh. A cell whose factor is zero is not
+    advanced by its infiltration method and holds a zero rate.
+-   The surface contact uses the cell's air temperature, read the way the
+    mesh heat exchange reads it. A snow pack on the cell (`[2D_SNOW*]`)
+    insulates its covered fraction through the snow contact of Section 4.7.1,
+    using the pack's water equivalent.
+-   The water contact uses the held rate while the cell is wet or receiving
+    rain.
+-   Where a 2D aquifer owns a cell's intake, the factor multiplies the
+    aquifer's intake capacity under every vertical closure, at first and at
+    second order in time. A fully frozen cell has no capacity, so the aquifer
+    takes nothing and its soil state does not advance. Infiltration rates
+    prescribed at run time are the user's explicit rates and are not limited.
+-   The slab enthalpy and factor are part of the mesh state in surface
+    checkpoints.
+-   Where porous ground heat is also active, the soil heat column and the
+    slab are separate stores: the slab, not the column, decides freezing.
+
+The state of every cell is available from `swmm_infil2d_get_frozen_ground_bulk`.
+
+With the `INFILTRATION` group of `REPORT_2D_VARIABLES` selected, the 2D results file also
+carries the slab state at each report time as `Mesh2_face_frozen_fraction` (0 to 1) and
+`Mesh2_face_frozen_ground_temperature` (°C). Both datasets exist only when the model has a
+`[2D_FROZEN_GROUND]` section, and a cell that no row covers is NaN.
+
+### 4.7.6 LID Units
+
+A LID unit takes the infiltration factor of the subcatchment it sits in; it
+has no slab of its own and needs no input beyond the subcatchment's
+`[FROZEN_GROUND]` row. The factor is applied at the three places where water
+passes from a unit into the ground (@ref quality_ref_ch6_lid_controls):
+
+-   infiltration from the surface layer into the unit's soil layer, which is
+    not evaluated at all when the factor is zero, so its wetting front is
+    held;
+-   the permeability of a permeable pavement layer;
+-   exfiltration from the storage layer to the native soil.
+
+A unit on fully frozen ground therefore fills and overflows, or drains
+through its underdrain, as an impervious surface with storage would.
+Percolation between the layers of a unit, underdrain flow and evaporation
+are unchanged. Rain barrels, rooftop disconnection and green roofs put no
+water into the ground and are unchanged; a green roof's soil is on a roof and
+is not limited. Where LID units cover the whole pervious area of a
+subcatchment, the native infiltration rate they use is limited in the same
+way. The slab itself still takes heat only from the water infiltrating on the
+subcatchment's ordinary pervious area, and snowfall on LID area is treated as
+liquid, as it is without frozen ground.

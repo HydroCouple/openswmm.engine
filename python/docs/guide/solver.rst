@@ -14,8 +14,10 @@ Running a simulation — Solver
 The :class:`Solver` class is the entry point. It owns the SWMM engine
 handle, parses the input file, drives the simulation forward in time,
 and writes report and binary-output files. Every domain accessor —
-nodes, links, subcatchments, gages, controls, output, etc. — hangs off
+nodes, links, subcatchments, gages, controls, etc. — hangs off
 the Solver as a lazy attribute (``solver.nodes``, ``solver.links``, …).
+After ``end()``, ``solver.open_results()`` opens independent saved-result
+readers with named fields; see :doc:`results` for 1D/2D output access.
 
 ----
 
@@ -402,3 +404,12 @@ See also
 * :doc:`datetime` — SWMM DateTime ↔ Python ``datetime`` conversion.
 * :doc:`nodes`, :doc:`links`, :doc:`subcatchments`, :doc:`output_reader` —
   the most-used domain accessors.
+
+Compatibility output
+====================
+
+``solver.write_compat(path, InpProfile.FULL)`` writes native OpenSWMM input.
+``InpProfile.SWMM5`` targets the OpenSWMM legacy engine, while
+``InpProfile.SWMM5_STOCK`` targets stock EPA SWMM 5 input. Compatibility profiles
+may substitute or omit unsupported features. Inspect ``solver.open_warnings``
+after writing for conversion diagnostics. The live model is not modified.

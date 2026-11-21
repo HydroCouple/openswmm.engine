@@ -1,0 +1,13 @@
+# R4 receiving/source-boundary evidence — 2026-10-05
+
+The [qualification note](../../../plans/SURFACE_PROCESS_R4_SOURCE_QUALIFICATION_2026-10-05.md) describes implementation and remaining gates. This is an internal transaction/kernel milestone; runtime ownership activation remains blocked.
+
+[Dedicated results](results.json) record 15 passing cases. [Regression summary](regression-tests.log) covers six suites: exchange, ownership, aquifer receiving, surface ET, runoff and LID. The flat fixture uses two real runoff kernels with trial state restored before awards and installs bounded state only after settlement. A storage-trench fixture uses the existing LID kernel/native-bottom ceiling. It does not qualify every LID type, source graph, quality extraction or restart.
+
+The task-only source also passes all six suites, with **122 cases** including the 15 new cases. [Isolated test summary](isolated-tests.log), [isolated exchange results](isolated-results.json), [case counts](case-counts.json) and [source audit](source-audit.json) record that qualification. The reused isolated build checkout matches the archived task code and build files; it excludes unrelated working-tree test registrations. Audit hashes distinguish mixed working files from isolated files. The isolated [clock](isolated-clock.json) and [cadence](isolated-source-cadence.json) probes independently reproduce the gap and work count.
+
+The actual engine clock probe records routing completed at 0.5 s and runoff evaluated through 300 s. [Clock evidence](clock.json) confirms why future runoff losses cannot be delivered as current recharge. [Source cadence probe](source-cadence.json) records a two-source kernel-only comparison of one 300 s solve with 600 solves at 0.5 s over 100 repetitions; storage agrees. Its timings are machine-specific and exclude the rest of the model.
+
+The transaction checks its caller-supplied completed time; production scheduler/forcing integration is still absent. Receipt provenance is not yet installed in rejection returns or hot starts. No mesh weather suppression, complete spatial ET, source pollutant-loss correction or saved runtime results are claimed. The prior GUI authoring workflow remains unchanged and still shows runtime results as unavailable.
+
+The baseline is engine `389fbf484c2c151fe75f5bf664448ac419ce55c3`. [Area-conversion evidence](area-seam.json) records the legacy US/SI discrepancy and the explicit reviewed-area path. Unrelated staged and working changes are preserved; no push is requested. This internal milestone does not update the previously verified GUI app/SDK or add new GUI controls.
