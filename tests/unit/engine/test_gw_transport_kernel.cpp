@@ -1619,6 +1619,50 @@ TEST(GwTransportKernel, RechargingNodeUnderFvBooksItsMassOnce) {
     EXPECT_LT(std::fabs(quality), 1.0e-5) << "quality continuity " << quality * 100.0 << " %";
 }
 
+// The dynamic-wave twin. With the 2D surface carrying pollutant rows the 1D mix takes the
+// router's gross queues (NodeData::coupling_gross): the 2D spill is booked as outflow from its
+// own gross volume and the bed's recharge, which rides the node's negative net coupling flow,
+// only as exfiltration (flushAquiferNodeSpecies). Booking the spill as the negative net coupling
+// flow counted the recharge as node outflow as well. J1's outlet sits 1.9 m up, so the node holds
+// its head 0.4 m over the bed cell's table and recharges hard, below the ground, so nothing spills
+// to the mesh; the network's only outflow is then the outfall, and the quality outflow row must be
+// exactly the outfall's load. (The 1D continuity percentages are no instrument here: the same
+// deck without the mesh reads +17.9 % flow continuity under legacy and this engine alike.)
+TEST(GwTransportKernel, RechargingNodeUnderDynamicWaveBooksItsMassOnce) {
+    std::string body = seamDeck(0.5, 0.01, 0.0, 50.0);
+    const std::pair<std::string, std::string> edits[] = {
+        {"*  36.0  1.0", "*  3600.0  1.0"},
+        {"CELL 1  36.0  1.0", "CELL 1  3600.0  1.0"},
+        {"HG0 0.95", "HG0 0.5"},
+        {"C1 J1 O1 30.0 0.013 0 0 0", "C1 J1 O1 30.0 0.013 1.9 0 0"}};
+    for (const auto& [from, to] : edits) {
+        const auto at = body.find(from);
+        ASSERT_NE(at, std::string::npos) << from;
+        body.replace(at, from.size(), to);
+    }
+    Deck r = open("seam_node_in_dw", body);
+    ASSERT_TRUE(r.opened);
+    EXPECT_TRUE(run(r));
+    swmm_engine_end(r.e);
+    r.started = false;
+    const auto& ctx = r.eng->context();
+    const int o1 = ctx.node_names.find("O1");
+    ASSERT_GE(o1, 0);
+    const bool gross = ctx.nodes.coupling_gross;
+    const double led_node = r.eng->surfaceRouter2D().subsurface().state().led_node;
+    const double seep = ctx.mass_balance.qual_routing_seep[0];
+    const double outflow = ctx.mass_balance.qual_routing_outflow[0];
+    const double outfall = ctx.nodes.stat_total_load[static_cast<std::size_t>(o1)];
+    finish(r);
+    ASSERT_TRUE(gross) << "the 1D mix did not take the gross queues; nothing is tested";
+    ASSERT_LT(led_node, 0.0) << "the bed did not recharge; deck defect";
+    ASSERT_GT(seep, 1.0e-3 * outfall) << "the recharge carried too little mass to see; deck defect";
+    EXPECT_NEAR(outflow, outfall, 1.0e-9 * outfall)
+        << "the quality outflow row holds " << outflow - outfall
+        << " beyond the outfall's load (the recharge, booked as exfiltration, is " << seep
+        << "); either J1 spilled to the mesh or the recharge was booked as node outflow too";
+}
+
 TEST(GwTransportKernel, DrainingAquiferHandsItsMassToTheNodeQueue) {
     // A high table and no inflow: the aquifer drains into J1 through its
     // bed, and the mass must reach the node's coupling queue — the same

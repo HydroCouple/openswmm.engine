@@ -13568,6 +13568,115 @@ TEST(EngineCheckpoint, NetworkPollutantsFirstOrderSharedMeshOwnsPhysicalQueuesAn
 #endif
     }
 }
+// Routing checkpoints before version 6 carry no gross 1D<->2D exchange water
+// (NodeData::coupling_drain_queue and siblings). Their mass queue was paired against the net
+// water, so they restore with the gross queues rebuilt from the net queue: drained water is its
+// positive part, spilled water its negative part. The version 5 file is a version 6 checkpoint
+// with that block cut out, re-framed through the surface and engine records around it.
+TEST(EngineCheckpoint, RoutingVersion5RestoresTheGrossCouplingQueuesFromTheNetQueue) {
+    SWMMEngine a, b;
+    ASSERT_NO_THROW(startNetworkPollutants(a, "routing-v5-a", 0, true, true, 0));
+    ASSERT_NO_THROW(startNetworkPollutants(b, "routing-v5-b", 0, true, true, 0));
+    const int s = a.context().node_names.find("S");
+    ASSERT_GE(s, 0);
+    const auto us = static_cast<std::size_t>(s);
+    while (a.context().current_time < 1.237 || a.context().nodes.coupling_queue[us] == 0) {
+        ASSERT_LT(a.context().elapsed_ms, a.context().options.totalDurationMs())
+            << "no boundary with coupling water queued for the node";
+        ASSERT_NO_THROW(step(a));
+    }
+    const auto good = root() / "routing-v5-good.chk", old = root() / "routing-v5-old.chk";
+    ASSERT_EQ(a.saveCheckpoint(good.string()), "");
+
+    using Archive = detail::CompletedSourceArchive;
+    // A nested record is stored as a length-prefixed string that starts with its own
+    // length-prefixed magic: its 8-byte length sits 16 bytes before the magic's text.
+    const auto locate = [](const std::string& outer, const std::string& magic, std::size_t& at,
+                           uint64_t& size) {
+        const auto tag = outer.find(magic);
+        ASSERT_NE(tag, std::string::npos) << magic;
+        ASSERT_EQ(outer.find(magic, tag + 1), std::string::npos) << magic;
+        ASSERT_GE(tag, 16u);
+        at = tag - 16;
+        std::memcpy(&size, outer.data() + at, sizeof(size));
+        ASSERT_LE(size, outer.size() - at - 8);
+    };
+    const auto framed = [](std::string bytes) {
+        Archive a;
+        a(bytes);
+        return a.bytes();
+    };
+    std::string magic, model, payload;
+    uint32_t version = 0, sum = 0;
+    Archive file(bytes(good));
+    file(magic, version, model, sum, payload);
+    file.finish();
+
+    std::size_t s_at = 0;
+    uint64_t s_size = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        locate(payload, "OpenSWMM joint DW surface/source boundary", s_at, s_size));
+    std::string smagic, smodel, spayload;
+    uint32_t sversion = 0, endian = 0, long_bytes = 0, ssum = 0;
+    Archive surface(payload.substr(s_at + 8, s_size));
+    surface(smagic, sversion, endian, long_bytes, smodel, spayload, ssum);
+    surface.finish();
+
+    std::size_t h_at = 0;
+    uint64_t h_size = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        locate(spayload, "OpenSWMM accepted DW hydraulic boundary", h_at, h_size));
+    std::string hmagic, hmodel, body;
+    uint32_t hversion = 0, hsum = 0;
+    Archive hydraulic(spayload.substr(h_at + 8, h_size));
+    hydraulic(hmagic, hversion, hmodel, hsum, body);
+    hydraulic.finish();
+    ASSERT_EQ(hversion, 6u);
+
+    // Version 6 archives the four gross columns right after the node columns.
+    const auto& live = a.context().nodes;
+    auto drain = live.coupling_drain_queue, spill = live.coupling_spill_queue,
+         drain_in = live.coupling_drain_inflow, spill_out = live.coupling_spill_outflow;
+    ASSERT_TRUE(drain[us] != 0 || spill[us] != 0);
+    Archive block;
+    block.fixed(drain, spill, drain_in, spill_out);
+    const auto cut = body.find(block.bytes());
+    ASSERT_NE(cut, std::string::npos) << "the gross block is not where version 6 puts it";
+    ASSERT_EQ(body.find(block.bytes(), cut + 1), std::string::npos);
+    body.erase(cut, block.bytes().size());
+    hversion = 5;
+    hsum = crc(body);
+    Archive hout;
+    hout(hmagic, hversion, hmodel, hsum, body);
+    spayload.replace(h_at, h_size + 8, framed(hout.bytes()));
+    ssum = crc(spayload);
+    Archive sout;
+    sout(smagic, sversion, endian, long_bytes, smodel, spayload, ssum);
+    payload.replace(s_at, s_size + 8, framed(sout.bytes()));
+    sum = crc(payload);
+    Archive out;
+    out(magic, version, model, sum, payload);
+    write(old, out.bytes());
+
+    ASSERT_EQ(b.loadCheckpoint(old.string()), "");
+    const auto& restored = b.context().nodes;
+    EXPECT_EQ(restored.coupling_queue, live.coupling_queue);
+    EXPECT_EQ(restored.coupling_qual_queue, live.coupling_qual_queue);
+    EXPECT_EQ(restored.depth, live.depth);
+    EXPECT_EQ(b.context().links.flow, a.context().links.flow);
+    ASSERT_EQ(restored.coupling_drain_queue.size(), live.coupling_queue.size());
+    for (std::size_t i = 0; i < live.coupling_queue.size(); ++i) {
+        const double q = live.coupling_queue[i];
+        EXPECT_EQ(restored.coupling_drain_queue[i], std::max(0.0, q)) << i;
+        EXPECT_EQ(restored.coupling_spill_queue[i], std::max(0.0, -q)) << i;
+        EXPECT_EQ(restored.coupling_drain_inflow[i], 0.0) << i;
+        EXPECT_EQ(restored.coupling_spill_outflow[i], 0.0) << i;
+    }
+    while (b.context().elapsed_ms < b.context().options.totalDurationMs())
+        ASSERT_NO_THROW(step(b));
+    ASSERT_EQ(b.end(), 0);
+    ASSERT_EQ(a.end(), 0);
+}
 #endif
 
 TEST(EngineCheckpoint, NetworkPollutantsSignedNativeLoadsContinueAcrossReversal) {
