@@ -30,7 +30,6 @@
         {"id": "HydroCoupleSDK", "title": "SDK", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleSDK/", "published": false},
         {"id": "HydroCoupleComposer", "title": "Composer", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComposer/", "published": false},
         {"id": "HydroCoupleComponents", "title": "Provider components", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComponents/", "published": false},
-        {"id": "HydroCoupleOgc", "title": "OGC web service clients", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleOgc/", "published": true},
         {"id": "hydrocouple.platform", "title": "Execution platform", "kind": "Guide + API", "url": "https://www.hydrocouple.org/hydrocouple.platform/", "published": false},
         {"id": "water-ontology", "title": "Water ontology", "kind": "Reference", "url": "https://www.hydrocouple.org/water-ontology/", "published": false}
       ]
@@ -41,8 +40,7 @@
         {"id": "MeshKit", "title": "MeshKit", "kind": "C++ reference", "url": "https://www.hydrocouple.org/Meshkit/", "published": true},
         {"id": "MeshKit.python", "title": "MeshKit for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/Meshkit/python/", "published": true},
         {"id": "FVQual", "title": "FVQual", "kind": "C++ reference", "url": "https://www.hydrocouple.org/FVQual/", "published": false},
-        {"id": "FVQual.python", "title": "FVQual for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/FVQual/python/", "published": false},
-        {"id": "QPropertyModel", "title": "QPropertyModel", "kind": "C++ reference", "url": "https://cbuahin.github.io/QPropertyModel/", "published": false}
+        {"id": "FVQual.python", "title": "FVQual for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/FVQual/python/", "published": false}
       ]
     }
   ]
