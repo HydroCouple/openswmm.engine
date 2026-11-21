@@ -211,9 +211,9 @@ the router hands each node the drained mass through the same queue the
 volume takes, in the 1D engines' units, so mass over volume is still the
 cell's concentration exactly. Rows route by kind: pollutant rows into the
 node's species queue, the age row into the age-volume queue, the temperature
-row into the temperature-volume queue. **MSX rows go nowhere** — the 1D node
-has no reaction-species inflow accumulator for any loader yet — and their
-drained mass stays in the surface's coupling-loss ledger (§10.11). A rim
+row into the temperature-volume queue, and reaction-species rows into the
+reaction system's node queue, which feeds the node's external species inflow
+by the same rule. A rim
 often drains and spills within one window, and windows of both signs follow
 one another, so the hydraulics take the exchange as one net volume. The
 pollutant mix does not: beside the net volume the router queues the window's
@@ -240,7 +240,7 @@ scatters exactly as its volume does. Water arriving this way, or through an
 inflow boundary, is not runoff the cell produced (§10.7). Every pathway is
 ledgered per species.
 
-<!-- source: src/engine/2d/solver/ExplicitInertialSolver.cpp:318-347, 386-400, 1719-1766; src/engine/2d/SurfaceRouter2D.cpp:775-783, 1339-1366, 1487-1549, 1761-1787; src/engine/2d/data/SurfaceTransportState.hpp:102-121, 145-176, 224-241; plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:90-100 -->
+<!-- source: src/engine/2d/solver/ExplicitInertialSolver.cpp:318-347, 386-400, 1719-1766; src/engine/2d/SurfaceRouter2D.cpp:775-783, 1339-1366, 1487-1549, 1761-1787; src/engine/2d/data/SurfaceTransportState.hpp:102-121, 145-176, 224-241; src/engine/transport/components/ReactionModule/MsxLegacyTransport.cpp:372-399; plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:90-100 -->
 
 ## 10.5 Coverages
 
@@ -395,8 +395,7 @@ pollutant `COUNTS` rule. Three pollutant-only mechanisms are deliberately
 not mirrored: co-pollutant fractions, rain concentration (reaction species
 rain in clean), and kinetics inside the dry store — a built-up reaction
 species is inert until washed into water, where it reacts under the normal
-pipe-scope expressions per cell. The `WALL` and node-accumulator limits of
-§10.1 and §10.4 apply.
+pipe-scope expressions per cell. The `WALL` limit of §10.1 applies.
 
 <!-- source: src/engine/quality/MsxSurfaceQuality.hpp:17-50; src/engine/quality/MsxSurfaceQuality.cpp:17-25, 64-71; src/engine/2d/quality/SurfaceQuality2D.cpp:262-285; src/engine/2d/SurfaceRouter2D.cpp:739-746, 1519-1523; plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:429-496 -->
 
@@ -438,7 +437,7 @@ water only), and Python and MCP mirrors of the coverage API.
 | Mass-form state, donor-cell advection on the marcher's face fluxes (S1) | \status{Implemented} | The only advection scheme on the mesh |
 | Isotropic explicit dispersion with the max-principle limiter (S2) | \status{Implemented} | `[2D_OPTIONS] DISPERSION`; binds counted and warned |
 | Initial and boundary species; rainfall and evaporation rules (S2) | \status{Implemented} | §10.3, §10.2.5 |
-| 1D↔2D species, age and temperature tuple (S3) | \status{Implemented} | §10.4; reaction-species drain not received by the node |
+| 1D↔2D species, age and temperature tuple (S3) | \status{Implemented} | §10.4 |
 | Age, temperature and per-cell reactions (S4) | \status{Implemented} | §10.2.6 |
 | Cell coverages, buildup, washoff and sweeping (S7) | \status{Implemented} | §10.5–10.8; the meshed-vs-lumped band gate is open |
 | Reaction species that build up and wash off (BW-MSX) | \status{Implemented} | §10.9 |
@@ -446,7 +445,7 @@ water only), and Python and MCP mirrors of the coverage API.
 | Anisotropic dispersion tensor | \status{Planned} | Deferred until a field case shows the difference |
 | Per-cell surface heat fluxes and shading (S5), then a cell-resolved bed layer | \status{Planned} | The `CELL2D` token exists; no flux evaluation on cells |
 | GPU transport kernels (S6) | \status{Planned} | Rows run on the CPU marcher |
-| `WALL` species on the mesh; node-side MSX inflow accumulator; kinetics in the built-up store | \status{Planned} | Recorded seams of §10.1, §10.4 and §10.9 |
+| `WALL` species on the mesh; kinetics in the built-up store | \status{Planned} | Recorded seams of §10.1 and §10.9 |
 | `Mesh2_face_washoff`, hotstart carry, 2D species continuity rows | \status{Planned} | §10.10 |
 
 <!-- source: plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:220-259, 276-302, 403-413; plans/transport/TWOD_TRANSPORT_PLAN.md:258-311; src/engine/data/HeatOverrideData.hpp:81-103; src/engine/2d/SurfaceRouter2D.cpp:850-855, 1519-1523 -->
