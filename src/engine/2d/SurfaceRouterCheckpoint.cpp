@@ -627,7 +627,8 @@ std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx,
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_) {
         if (point.equalize)
-            return "Changing-volume exchange excludes equalization caps.";
+            return "Changing-volume exchange excludes equalization caps; set [2D_OPTIONS] "
+                   "COUPLING_EQUALIZE NO.";
         mapped.insert(point.node_idx);
     }
     if (mapped.size() != std::size_t(ctx.n_nodes()))

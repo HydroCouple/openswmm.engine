@@ -65,7 +65,7 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh, const Sim
     cp.law =
         authored(Key::LAW, v) ? static_cast<int8_t>(v) : static_cast<int8_t>(opts.coupling_law);
     const bool weir_orifice = cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE);
-    cp.equalize = opts.coupling_equalize >= 0 ? opts.coupling_equalize != 0 : weir_orifice;
+    cp.equalize = opts.coupling_equalize >= 0 ? opts.coupling_equalize != 0 : true;
     const bool chamber_node = authored(Key::CHAMBER_AREA, v);
     const double chamber_val = v * f2;
     cp.chamber_area = chamber_node ? chamber_val : cp.area;

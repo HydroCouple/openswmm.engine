@@ -2559,7 +2559,7 @@ Coupling to the 1D network
 | COUPLING_POND_MODE | FOOTPRINT / CHAMBER / TRACKING | FOOTPRINT | Above-rim pond-area policy: the mapped surface footprint, the 1D chamber area, or a relaxed tracking area. |
 | COUPLING_POND_RELAX | >= 0, seconds | 0 | Relaxation time for TRACKING; 0 selects five routing steps. |
 | COUPLING_RIM_BAND | DEFAULT or >= 0, metres | DEFAULT | Height above the rim over which pond area ramps in smoothly. DEFAULT selects 0 for FOOTPRINT and 0.05 m for CHAMBER or TRACKING. Always metres. |
-| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for WEIR_ORIFICE and disables it for ORIFICE. |
+| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for every junction coupling, as YES does; NO disables it. Before 2026-11-21 DEFAULT enabled it for WEIR_ORIFICE only. |
 
 Rainfall, evaporation and infiltration
 

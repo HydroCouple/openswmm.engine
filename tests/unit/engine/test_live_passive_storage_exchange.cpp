@@ -974,7 +974,7 @@ TEST(LivePassiveRecovery, ResolvedPointPolicyIsPartOfThePairedModelIdentity) {
     auto* points =
         const_cast<std::vector<CouplingPoint>*>(target.surfaceRouter2D().state().node_coupling);
     ASSERT_NE(points, nullptr);
-    points->at(0).equalize = true;
+    points->at(0).equalize = !points->at(0).equalize;
     ASSERT_TRUE(target.attachLivePassiveExchange().empty());
     ASSERT_TRUE(target.enableCheckpointing().empty());
     const auto water = target.surfaceRouter2D().state().volume;

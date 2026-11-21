@@ -350,7 +350,8 @@ struct SolverOptions2D {
     double coupling_rim_band = -1.0;
     /// [2D_OPTIONS] COUPLING_EQUALIZE YES|NO — cap each junction exchange so
     /// one coupling window cannot carry the 1D and 2D heads past each other.
-    /// -1 = per law (on under WEIR_ORIFICE, off under ORIFICE).
+    /// -1 = DEFAULT, on for every junction coupling (it was on only under WEIR_ORIFICE: an
+    /// ORIFICE point at a rim-full junction then reversed nearly every window).
     int8_t coupling_equalize = -1;
     bool report_2d = true; ///< Write 2D results to output
 

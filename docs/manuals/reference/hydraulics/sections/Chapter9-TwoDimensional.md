@@ -2030,9 +2030,19 @@ For non-storage coupled junctions, `COUPLING_POND_MODE FOOTPRINT`, `CHAMBER`
 and `TRACKING` select the effective above-rim storage. The smoothed area
 transition lies above the rim. Storage nodes retain their storage curves.
 `COUPLING_EQUALIZE` bounds the 1D-side exchange over the interval for which
-its head is held; the surface state evolves within that interval. It is
-not a proof that a frozen two-reservoir equilibrium is never crossed.
-Availability budgets still prevent spending donor water twice.
+its head is held, \f$|Q| \le |\Delta h| A_1/T\f$ with \f$A_1\f$ the node's
+pond area and \f$T\f$ the coupling window; the surface state evolves within
+that interval. It is not a proof that a frozen two-reservoir equilibrium is
+never crossed. Availability budgets still prevent spending donor water twice.
+It is on by default for every junction coupling (before 2026-11-21 only for
+`WEIR_ORIFICE`). Without it a junction sitting at its rim under the orifice law
+drains and spills back in turn: on the Bellinge groundwater-quality storm
+(04:30 to 06:30, `COUPLING_AREA AUTO`) the overflow chamber G70F62X reversed
+in 108 of 246 coupling windows, and the network exchanged 72 ML drained and
+246 ML spilled for a net of 174 ML spilled. With the cap it reverses in 7, the
+gross exchange falls to 55 and 233 ML, the net is 178 ML, and the surface
+depths differ by a relative L2 of 0.016 (two cells' maximum depth by more than
+5 cm).
 
 #### Node configuration, defaults and mesh registration {#hydraulics_node_coupling_configuration}
 

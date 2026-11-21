@@ -45,7 +45,7 @@ std::string model(bool positive, bool tail, int threads = 1, int groups = 3,
          "[2D_OPTIONS]\nMOMENTUM_EQUATION "
       << momentum << "\nINTEGRATOR EXPLICIT\nBACKEND CPU\nLTS_TIERS 1\nMAX_TIMESTEP "
       << (tail ? .25 : 1. / 512) << "\nCOUPLING_SYNC " << (tail ? .25 : 1. / 512)
-      << "\nREPORT_2D NO\n[2D_VERTICES]\n";
+      << "\nREPORT_2D NO\nCOUPLING_EQUALIZE NO\n[2D_VERTICES]\n";
     // Connected pools share the diagonal of a square, so water also moves between the two cells.
     const int per = connected ? 2 : 3; // vertices per triangle
     for (int k = 0; k < groups; ++k) {
@@ -604,9 +604,9 @@ TEST(ChangingVolumeExchange, UncheckpointedExecutionRefusesAnotherSurfaceOwnerBe
 }
 TEST(ChangingVolumeExchange, ResolvedEqualizationPolicyRefusesAttachment) {
     auto input = model(true, false);
-    const auto at = input.find("BACKEND CPU");
+    const auto at = input.find("COUPLING_EQUALIZE NO");
     ASSERT_NE(at, std::string::npos);
-    input.replace(at, std::strlen("BACKEND CPU"), "BACKEND CPU\nCOUPLING_EQUALIZE YES");
+    input.replace(at, std::strlen("COUPLING_EQUALIZE NO"), "COUPLING_EQUALIZE YES");
     SWMMEngine e;
     ASSERT_NO_FATAL_FAILURE(start(e, "equalize-refusal", input, false, false));
     const auto* points = e.surfaceRouter2D().state().node_coupling;

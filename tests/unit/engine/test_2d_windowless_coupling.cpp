@@ -77,11 +77,14 @@ namespace {
  *     area_token.
  * @param[in] weir True adds a 2 m2 transverse weir (0.05 x 40 m, crest 0.95 m up, top at J1's 1 m
  *     rim) from J1 to outfall O2.
+ * @param[in] equalize Raw COUPLING_EQUALIZE token; null leaves the option unset (DEFAULT).
+ * @param[in] outfall Raw O1 type tokens, e.g. "FIXED 1.05" to back J1 up past its rim.
  * @return Owned forty-minute CMS deck with 100 m2 pan, four LTS tiers and J1 vertex map.
  */
 std::string build_model(double area_token, bool auto_area, double sur_depth = 0.0,
                         const std::string& coupling_cd = "0.7", const char* row_tail = nullptr,
-                        bool weir = false) {
+                        bool weir = false, const char* equalize = nullptr,
+                        const char* outfall = "FREE") {
     std::ostringstream m;
     m << "[OPTIONS]\n"
          "FLOW_UNITS           CMS\n"
@@ -101,7 +104,8 @@ std::string build_model(double area_token, bool auto_area, double sur_depth = 0.
       << "         0\n"
          "\n"
          "[OUTFALLS]\n"
-         "O1     -0.5    FREE  NO\n"
+         "O1     -0.5    "
+      << outfall << "  NO\n"
       << (weir ? "O2     -0.5    FREE  NO\n" : "")
       << "\n"
          "[CONDUITS]\n"
@@ -125,6 +129,8 @@ std::string build_model(double area_token, bool auto_area, double sur_depth = 0.
          "REPORT_2D        NO\n";
     if (auto_area)
         m << "COUPLING_AREA    AUTO\n";
+    if (equalize)
+        m << "COUPLING_EQUALIZE " << equalize << "\n";
     m << "\n"
          "[2D_VERTICES]\n"
          " 0.0    0.0   1.0\n"
@@ -149,6 +155,8 @@ struct RunResult {
     bool ok = false;
     double received_1d = 0.0;
     double received_first_2min = 0.0; ///< 1D receipt while the drain is area-limited
+    long reversals = 0;               ///< steps whose J1 lateral inflow changed sign
+    long steps = 0;
     double given_2d_net = 0.0;
     double cont_2d = 0.0;
     std::string rpt_text;
@@ -171,19 +179,23 @@ struct RunResult {
  * @param[in] row_tail Optional raw map-row suffix replacing coefficient and area; null uses 0.7 and
  *     area_token.
  * @param[in] weir True adds build_model's transverse weir at J1.
+ * @param[in] equalize Raw COUPLING_EQUALIZE token, or null for DEFAULT.
+ * @param[in] outfall Raw O1 type tokens passed to build_model.
  * @return Owned receipt volumes m3, dimensionless continuity and report text; ok=false on
  *     setup/inactive/node/start refusal.
  */
 RunResult run(const fs::path& dir, const std::string& tag, double area_token, bool auto_area,
               double sur_depth = 0.0, const std::string& coupling_cd = "0.7",
-              const char* row_tail = nullptr, bool weir = false) {
+              const char* row_tail = nullptr, bool weir = false, const char* equalize = nullptr,
+              const char* outfall = "FREE") {
     RunResult r;
     const fs::path inp = dir / (tag + ".inp");
     const fs::path rpt = dir / (tag + ".rpt");
     const fs::path out = dir / (tag + ".out");
     {
         std::ofstream f(inp);
-        f << build_model(area_token, auto_area, sur_depth, coupling_cd, row_tail, weir);
+        f << build_model(area_token, auto_area, sur_depth, coupling_cd, row_tail, weir, equalize,
+                         outfall);
     }
 
     SWMM_Engine eng = swmm_engine_create();
@@ -213,7 +225,7 @@ RunResult run(const fs::path& dir, const std::string& tag, double area_token, bo
 
     constexpr double RAIN_OFF_S = 600.0;
     constexpr double RAIN_RATE = 0.001;
-    double elapsed = 0.0, prev = 0.0;
+    double elapsed = 0.0, prev = 0.0, last_lat = 0.0;
     while (true) {
         const double t_s = elapsed * 86400.0;
         swmm_2d_force_rainfall_uniform(eng, (t_s < RAIN_OFF_S) ? RAIN_RATE : 0.0,
@@ -224,6 +236,11 @@ RunResult run(const fs::path& dir, const std::string& tag, double area_token, bo
         prev = elapsed;
         double lat = 0.0;
         if (dt_s > 0.0 && swmm_node_get_lateral_inflow(eng, j1, &lat) == SWMM_OK) {
+            ++r.steps;
+            if (lat * last_lat < 0.0)
+                ++r.reversals;
+            if (lat != 0.0)
+                last_lat = lat;
             r.received_1d += lat * dt_s;
             if (elapsed * 86400.0 <= 120.0 + 1.0e-6)
                 r.received_first_2min += lat * dt_s;
@@ -336,6 +353,24 @@ TEST_F(WindowlessCoupling2DTest, AutoAreaIgnoresConnectedWeirs) {
         << "fixture does not discriminate a 2 m2 orifice from the derived area";
     EXPECT_NEAR(drv.received_first_2min, ref.received_first_2min, 0.01 * ref.received_first_2min)
         << "AUTO sized the area from the weir, not the conduit";
+}
+
+// COUPLING_EQUALIZE DEFAULT caps every junction exchange, ORIFICE points included, so one
+// coupling window cannot carry the 1D and 2D heads past each other. Without the cap an oversized
+// orifice on a junction at its rim drains and spills back in turn.
+TEST_F(WindowlessCoupling2DTest, EqualizeByDefaultStopsRimJunctionChurn) {
+    // O1 held at 1.05 m backs J1 up 5 cm past its rim, under the 2 m2 orifice the GUI writes.
+    // The 100 m2 pan takes 60 m3 of rain and settles at the outfall stage, keeping 5 m3.
+    RunResult off =
+        run(dir_, "equalize_off", 2.0, false, 0.0, "0.7", nullptr, false, "NO", "FIXED 1.05");
+    RunResult dflt = run(dir_, "equalize_default", 2.0, false, 0.0, "0.7", nullptr, false, nullptr,
+                         "FIXED 1.05");
+    ASSERT_TRUE(off.ok && dflt.ok);
+    EXPECT_GT(off.reversals, off.steps / 4) << "fixture no longer churns without the cap";
+    EXPECT_LT(dflt.reversals, dflt.steps / 20)
+        << dflt.reversals << " of " << dflt.steps << " steps reversed J1's exchange";
+    EXPECT_NEAR(dflt.given_2d_net, 55.0, 0.01 * 55.0) << "pan did not settle at the outfall stage";
+    EXPECT_NEAR(dflt.received_1d, dflt.given_2d_net, 5.0e-4 * dflt.given_2d_net);
 }
 
 // A map row without a CD token takes [2D_OPTIONS] COUPLING_CD: it must run
