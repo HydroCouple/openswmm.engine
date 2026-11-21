@@ -17776,7 +17776,7 @@
    "name": "period_times",
    "form": "property",
    "python": "OutputReader.period_times",
-   "doc": "All reporting-period times as a datetime64[s] numpy array.",
+   "doc": "All reporting-period times as a datetime64[us] numpy array.",
    "c": [
     "swmm_output_get_period_count",
     "swmm_output_get_period_time"
