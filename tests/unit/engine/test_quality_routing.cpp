@@ -725,6 +725,30 @@ TEST(QualityCouplingReceipt, WetStorageRetainsPositiveMassWithoutCarrierWater) {
     }
 }
 
+// A zero-volume junction that drains 2 cfs of 2D surface water at 4 mg/L in the same step it
+// spills 3 cfs back (net coupling -1 cfs). Mixed with the NET coupling water, the drained mass
+// had no carrier and a near-empty node read thousands of mg/L (5066 on Bellinge, then 35 kg of
+// outflow created in one routing step). With the gross drain water it reads the drain's 4.
+TEST(QualityCouplingReceipt, DrainMassMixesWithItsGrossWaterWhenTheNodeSpillsOnNet) {
+    SimulationContext ctx = makeContext(1);
+    QualitySolver solver;
+    solver.init(ctx.n_nodes(), ctx.n_links(), 1);
+    ctx.nodes.volume[0] = ctx.nodes.old_volume[0] = 0.0;
+    ctx.nodes.conc[0] = ctx.nodes.conc_old[0] = 0.0;
+    ctx.nodes.coupling_inflow[0] = -1.0; // net: spilling
+    ctx.nodes.coupling_gross = true;
+    ctx.nodes.coupling_drain_inflow[0] = 2.0;
+    ctx.nodes.coupling_spill_outflow[0] = 3.0;
+    ctx.nodes.coupling_qual_inflow[0] = 2.0 * 4.0;
+    ctx.mass_balance.resize_quality(1);
+
+    solver.execute(ctx, 1.0);
+
+    EXPECT_DOUBLE_EQ(ctx.nodes.qual_vol_in[0], 2.0);
+    EXPECT_NEAR(ctx.nodes.conc[0], 4.0, 1e-12);
+    EXPECT_DOUBLE_EQ(ctx.mass_balance.qual_routing_ex_in[0], 8.0);
+}
+
 TEST(QualityCouplingReceipt, PassiveCorrectionPreservesReactingAndStorageLidMixing) {
     // These native owners are outside the qualified passive receiving case.
     // Keep their historical no-carrier mixing rather than accepting a new

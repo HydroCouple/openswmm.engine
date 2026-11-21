@@ -1232,6 +1232,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         (void)nt;
         ctx.nodes.coupling_tuple_age = (tr.age_row >= 0);
         ctx.nodes.coupling_tuple_temp = (tr.temp_row >= 0);
+        // See the coupling exchange booking; set again on every window it queues.
+        ctx.nodes.coupling_gross = tr.n_species > 0 && !live_passive_exchange_ &&
+                                   !peer_passive_exchange_ &&
+                                   ctx.options.routing_model != RoutingModel::FV;
         if (tr.active()) {
             // S4: the temperature row starts at the INITIAL_STATE source
             // temperature (H1's convention for water in the network at t=0),
@@ -2930,12 +2934,27 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             const auto& tr = state_.transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             auto& q = ctx.nodes.coupling_qual_queue;
+            // Under the legacy-style 1D mix the node receives the GROSS drain mass with the
+            // gross drain water that carried it, and the gross spill leaves as its own volume
+            // (NodeData::coupling_drain_queue). The FV transport mixes its own water graph and
+            // keeps the paired net delivery below; the passive exchanges queue nothing here.
+            const bool gross = !live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 &&
+                               ctx.options.routing_model != RoutingModel::FV;
+            ctx.nodes.coupling_gross = gross;
             if (!live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 &&
                 !tr.exch_mass.empty()) {
                 for (std::size_t k = 0; k < n; ++k) {
                     const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
                     if ((ni + 1) * ns > q.size() || (k + 1) * ns > tr.exch_mass.size())
                         continue;
+                    if (gross && ni < ctx.nodes.coupling_drain_queue.size()) {
+                        const double spill = k < tr.exch_spill.size() ? tr.exch_spill[k] : 0.0;
+                        // Gross water whose difference is the point's net exchange.
+                        const double drain = std::max(0.0, exch[k] + spill);
+                        ctx.nodes.coupling_drain_queue[ni] += drain * options_.flow_2d_to_1d;
+                        ctx.nodes.coupling_spill_queue[ni] +=
+                            (drain - exch[k]) * options_.flow_2d_to_1d;
+                    }
                     // The exchange flip-flops across the rim within one
                     // window, and the VOLUME side nets (exch_ = ∫Q dt,
                     // signed) while exch_mass holds the drain GROSS. Handing
@@ -2966,7 +2985,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
                         mq.assign(static_cast<std::size_t>(ctx.n_nodes()) * nsp_all, 0.0);
                     for (std::size_t sp = 0; sp < ns; ++sp) {
                         double inc = tr.exch_mass[k * ns + sp];
-                        if (paired > 0.0 && (ni + 1) * ns <= node_row_conc_.size())
+                        if (!gross && paired > 0.0 && (ni + 1) * ns <= node_row_conc_.size())
                             inc -= paired * node_row_conc_[ni * ns + sp];
                         double* row = nullptr;
                         if (sp < npol) {
@@ -3040,6 +3059,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
                 continue;
             if (ni < ctx.nodes.coupling_volume.size())
                 ctx.nodes.coupling_volume[ni] += nv[ni] * options_.flow_2d_to_1d;
+            // Bed inflow carries the aquifer mass queued below; the recharge direction is
+            // booked as exfiltration there, not as a spill.
+            if (ctx.nodes.coupling_gross && nv[ni] > 0.0 &&
+                ni < ctx.nodes.coupling_drain_queue.size())
+                ctx.nodes.coupling_drain_queue[ni] += nv[ni] * options_.flow_2d_to_1d;
         }
         // T7.4: the tuple rides the same channel as the volume. Aquifer →
         // node mass goes into the node's coupling QUEUES, which

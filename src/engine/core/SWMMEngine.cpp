@@ -264,6 +264,7 @@ SWMMEngine::attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithme
             quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, preflight_history,
             quality::PassiveStorageLaw::CHANGING_VOLUME, water);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -288,6 +289,7 @@ std::string SWMMEngine::attachLiveChangingVolumeSlicedExchange(std::size_t capac
             quality::PassiveStorageLaw::CHANGING_VOLUME,
             quality::PassiveStorageWaterArithmetic::RETAIN_AGGREGATES);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -309,6 +311,7 @@ std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithme
             ctx_, surface_router_.state_, surface_router_.node_coupling_points_,
             surface_router_.options_.flow_2d_to_1d, capacity, arithmetic, preflight_history);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -6668,7 +6671,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         // Its water has already been booked by the inflow assembly. The 1D ->
         // 2D spill never entered the quality denominator, so it leaves in
         // full; the rest of the lateral flow keeps legacy's net rule.
-        const double spill = std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
+        // With the gross queues the drain water joined the denominator in full, so the whole
+        // 2D spill leaves here; the aquifer bed's recharge is booked as exfiltration by the 2D
+        // router, not as a spill.
+        const double spill =
+            ctx_.nodes.coupling_gross && uj < ctx_.nodes.coupling_spill_outflow.size()
+                ? ctx_.nodes.coupling_spill_outflow[uj]
+                : std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
         const double lat_withdrawal =
             spill + std::max(0.0, -(ctx_.nodes.lat_flow[uj] - ctx_.nodes.coupling_inflow[uj]));
         if (lat_withdrawal > 0.0 && !quality_.fvTransportAccepted()) {
@@ -12647,6 +12656,14 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
                     ctx_.nodes.coupling_qual_inflow[idx] =
                         drain_queue(ctx_.nodes.coupling_qual_queue[idx]);
                 }
+            }
+            // The gross water that carried the mass, and the gross spill (see
+            // NodeData::coupling_drain_queue), same rule.
+            if (uj < ctx_.nodes.coupling_drain_queue.size()) {
+                ctx_.nodes.coupling_drain_inflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_drain_queue[uj]);
+                ctx_.nodes.coupling_spill_outflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_spill_queue[uj]);
             }
             // S4: the age-volume and temperature-volume halves, same rule.
             if (uj < ctx_.nodes.coupling_age_vol_queue.size())

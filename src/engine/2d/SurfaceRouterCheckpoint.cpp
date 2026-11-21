@@ -588,7 +588,8 @@ std::string SurfaceRouter2D::coupledWaterProfile(const SimulationContext& ctx,
          {&n.user_lat_flow, &n.runoff_inflow, &n.gw_inflow, &n.ext_inflow, &n.dwf_inflow,
           &n.rdii_inflow, &n.iface_inflow, &n.lid_drain_inflow, &n.coupling_qual_queue,
           &n.coupling_qual_inflow, &n.coupling_age_vol_queue, &n.coupling_age_vol_inflow,
-          &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow})
+          &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow, &n.coupling_drain_queue,
+          &n.coupling_spill_queue, &n.coupling_drain_inflow, &n.coupling_spill_outflow})
         for (double value : *values)
             if (value != 0)
                 return "Coupled water checkpoint contains another node water source.";

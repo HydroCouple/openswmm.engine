@@ -213,12 +213,21 @@ cell's concentration exactly. Rows route by kind: pollutant rows into the
 node's species queue, the age row into the age-volume queue, the temperature
 row into the temperature-volume queue. **MSX rows go nowhere** — the 1D node
 has no reaction-species inflow accumulator for any loader yet — and their
-drained mass stays in the surface's coupling-loss ledger (§10.11). A rim that
-flip-flops within one window would hand the node gross mass with net water
-and make a junction fed at \f$c_0\f$ read above \f$c_0\f$, so the router
-pairs the window's spill against its drain first, at the node's published
-value, and leaves only the net-negative remainder to the node's volume drop,
-which removes it at the mixed concentration.
+drained mass stays in the surface's coupling-loss ledger (§10.11). A rim
+often drains and spills within one window, and windows of both signs follow
+one another, so the hydraulics take the exchange as one net volume. The
+pollutant mix does not: beside the net volume the router queues the window's
+gross drain water (and the aquifer bed's inflow, which carries its own queued
+mass) and its gross spill, delivered by the same rule as the mass, and the
+node mixes the drained mass with the gross water that carried it; the spill
+leaves as booked outflow at the mixed concentration. Mixed with the net water
+instead, a drain window's mass could arrive after a spill window had netted
+its water away, and a near-empty junction divided it by almost nothing (on the
+Bellinge example 5066 mg/L against a network near 4, then 35 kg of outflow
+created in one routing step). Under the FV transport, which mixes its own
+conservative water graph, the router still pairs the window's spill against
+its drain at the node's published value and hands the node the net-positive
+remainder.
 
 **Network to mesh.** A junction spill arrives at the **node's published row
 values**, frozen for the batch like the node head. All three 1D engines

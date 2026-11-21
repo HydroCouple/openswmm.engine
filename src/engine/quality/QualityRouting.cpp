@@ -650,7 +650,11 @@ void QualitySolver::addCouplingLoads(SimulationContext& ctx, double dt) {
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
-        const double q = nodes.coupling_inflow[ui];
+        // The carrier is the gross water that brought the coupling mass in when the 2D router
+        // queues it (NodeData::coupling_drain_queue); otherwise the net inflow.
+        const double q = nodes.coupling_gross && ui < nodes.coupling_drain_inflow.size()
+                             ? nodes.coupling_drain_inflow[ui]
+                             : nodes.coupling_inflow[ui];
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
             // S4: when the surface carries the row, the tuple's own

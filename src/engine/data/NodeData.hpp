@@ -371,6 +371,24 @@ struct NodeData {
     std::vector<double> coupling_temp_vol_queue;
     std::vector<double> coupling_age_vol_inflow;
     std::vector<double> coupling_temp_vol_inflow;
+
+    /**
+     * @brief GROSS water of the 1D<->2D exchange, beside the NET `coupling_queue` the
+     *        hydraulics take (1D ft3 queued; ft3/s delivered). `coupling_drain_queue` holds the
+     *        water that carried `coupling_qual_queue`'s mass in (2D drains and aquifer bed
+     *        inflow); `coupling_spill_queue` the 2D spill. Same queue/drain rule as
+     *        `coupling_qual_queue`, so the quality mix divides delivered mass by the water that
+     *        carried it. Mixed with the net instead, mass queued by a drain window could arrive
+     *        after a spill window had netted its water away, and a near-empty node divided it by
+     *        almost nothing. Used only while `coupling_gross` is set.
+     */
+    std::vector<double> coupling_drain_queue;
+    std::vector<double> coupling_spill_queue;
+    std::vector<double> coupling_drain_inflow;
+    std::vector<double> coupling_spill_outflow;
+    /// Set by SurfaceRouter2D while it queues the gross drain/spill water; the passive exchange
+    /// and the FV transport keep the paired net delivery and leave it clear.
+    bool coupling_gross = false;
     bool coupling_tuple_age = false; ///< set by SurfaceRouter2D at initialize
     bool coupling_tuple_temp = false;
 
@@ -800,6 +818,10 @@ struct NodeData {
         coupling_temp_vol_queue.assign(un, 0.0);
         coupling_age_vol_inflow.assign(un, 0.0);
         coupling_temp_vol_inflow.assign(un, 0.0);
+        coupling_drain_queue.assign(un, 0.0);
+        coupling_spill_queue.assign(un, 0.0);
+        coupling_drain_inflow.assign(un, 0.0);
+        coupling_spill_outflow.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
         coupling_qual_queue.clear();
@@ -901,6 +923,10 @@ struct NodeData {
         g(coupling_temp_vol_queue, 0.0);
         g(coupling_age_vol_inflow, 0.0);
         g(coupling_temp_vol_inflow, 0.0);
+        g(coupling_drain_queue, 0.0);
+        g(coupling_spill_queue, 0.0);
+        g(coupling_drain_inflow, 0.0);
+        g(coupling_spill_outflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         lid_drain_qual_vol_old.resize(un, 0.0);
@@ -1009,6 +1035,10 @@ struct NodeData {
         r(coupling_temp_vol_queue);
         r(coupling_age_vol_inflow);
         r(coupling_temp_vol_inflow);
+        r(coupling_drain_queue);
+        r(coupling_spill_queue);
+        r(coupling_drain_inflow);
+        r(coupling_spill_outflow);
         r(losses);
         r(crown_elev);
         r(degree);
@@ -1090,6 +1120,10 @@ struct NodeData {
         f(&NodeData::coupling_temp_vol_queue);
         f(&NodeData::coupling_age_vol_inflow);
         f(&NodeData::coupling_temp_vol_inflow);
+        f(&NodeData::coupling_drain_queue);
+        f(&NodeData::coupling_spill_queue);
+        f(&NodeData::coupling_drain_inflow);
+        f(&NodeData::coupling_spill_outflow);
         f(&NodeData::qual_vol_in);
         f(&NodeData::lid_drain_qual_vol);
         f(&NodeData::lid_drain_qual_vol_old);
@@ -1266,6 +1300,10 @@ struct NodeData {
         coupling_temp_vol_queue.shrink_to_fit();
         coupling_age_vol_inflow.shrink_to_fit();
         coupling_temp_vol_inflow.shrink_to_fit();
+        coupling_drain_queue.shrink_to_fit();
+        coupling_spill_queue.shrink_to_fit();
+        coupling_drain_inflow.shrink_to_fit();
+        coupling_spill_outflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
         coupling_qual_queue.shrink_to_fit();
@@ -1396,6 +1434,10 @@ struct NodeData {
         std::fill(coupling_temp_vol_queue.begin(), coupling_temp_vol_queue.end(), 0.0);
         std::fill(coupling_age_vol_inflow.begin(), coupling_age_vol_inflow.end(), 0.0);
         std::fill(coupling_temp_vol_inflow.begin(), coupling_temp_vol_inflow.end(), 0.0);
+        std::fill(coupling_drain_queue.begin(), coupling_drain_queue.end(), 0.0);
+        std::fill(coupling_spill_queue.begin(), coupling_spill_queue.end(), 0.0);
+        std::fill(coupling_drain_inflow.begin(), coupling_drain_inflow.end(), 0.0);
+        std::fill(coupling_spill_outflow.begin(), coupling_spill_outflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);
