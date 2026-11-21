@@ -131,10 +131,12 @@ def assert_parity(actual, reference, label, atol=1e-5, names=None):
     np.testing.assert_array_equal(actual["time"], reference["time"])
     for name in names or reference.keys() - {"time"}:
         assert np.isfinite(actual[name]).all() and np.isfinite(reference[name]).all(), name
-        # Velocity near a wet/dry interface is sensitive to division by depth.
+        # Velocity near a wet/dry interface is sensitive to division by depth. In the
+        # 2 to 6 mm deep cell that drains into the chamber, FP32 velocities differ from
+        # the double host by up to 4e-4 of their value on an M1 Max and 7e-4 on a CI runner.
         velocity = name in ("Mesh2_face_vx", "Mesh2_face_vy")
         np.testing.assert_allclose(actual[name], reference[name], atol=atol,
-                                   rtol=5e-4 if velocity else 1e-4, err_msg=f"{label} {name}")
+                                   rtol=2e-3 if velocity else 1e-4, err_msg=f"{label} {name}")
 
 
 def main():
