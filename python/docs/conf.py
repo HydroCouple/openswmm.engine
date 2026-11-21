@@ -212,16 +212,9 @@ html_theme_options = {
         "image_light": "images/hydrocouple_logo.png",
         "image_dark": "images/hydrocouple_logo.png",
     },
-    # Top-nav cross-link back to the Doxygen C/C++ engine docs.
-    # Deployment layout (see .github/workflows/documentation.yml):
-    #     /         Doxygen docs (root)
-    #     /python/  these (Sphinx) docs
-    # ``../index.html`` resolves to the Doxygen root when both sites are
-    # co-deployed under GitHub Pages.  When viewing the Sphinx docs
-    # locally without the Doxygen bundle, this link 404s — that's an
-    # accepted local-only limitation.
+    # Use the published manual URL from every nested Python page.
     "external_links": [
-        {"name": "C/C++ Engine Docs", "url": "../index.html"},
+        {"name": "C/C++ Engine Docs", "url": "https://www.hydrocouple.org/openswmm.engine/"},
     ],
     "icon_links": [
         {
@@ -240,6 +233,14 @@ html_theme_options = {
     "use_edit_page_button": False,
     "show_toc_level": 2,
     "navbar_end": ["theme-switcher.html", "navbar-icon-links.html"],
+} if not on_rtd else {
+    # Classic theme colors for the existing Read the Docs build.
+    "sidebarbgcolor": "#0a1c2e",
+    "sidebarlinkcolor": "#8ecfff",
+    "relbarbgcolor": "#00518c",
+    "headbgcolor": "#eef5fb",
+    "headtextcolor": "#0a1c2e",
+    "linkcolor": "#00518c",
 }
 
 html_logo = 'images/hydrocouple_logo.png'
@@ -247,7 +248,7 @@ html_title = 'OpenSWMM'
 html_favicon = 'images/hydrocouple_logo.png'
 
 html_static_path = ['_static']
-html_css_files = ['openswmm.css']
+html_css_files = ['openswmm.css', 'hydrocouple-palette.css']
 
 htmlhelp_basename = 'openswmmdoc'
 

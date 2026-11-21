@@ -1,0 +1,62 @@
+/* HydroCouple website colors for PyData's existing components. */
+html[data-theme="light"] {
+  --pst-color-background: #fafcfd;
+  --pst-color-on-background: #ffffff;
+  --pst-color-surface: #eef5fb;
+  --pst-color-text-base: #0a1c2e;
+  --pst-color-text-muted: #35516b;
+  --pst-color-primary: #00518c;
+  --pst-color-primary-bg: #d9edff;
+  --pst-color-primary-text: #ffffff;
+  --pst-color-accent: #0064a9;
+  --pst-color-accent-bg: #d9edff;
+  --pst-color-border: #c4d5e2;
+  --hc-diagram-edge: #356486;
+}
+
+html[data-theme="dark"] {
+  --pst-color-background: #101e2c;
+  --pst-color-on-background: #142637;
+  --pst-color-surface: #1a3043;
+  --pst-color-text-base: #eef5fb;
+  --pst-color-text-muted: #b6cadb;
+  --pst-color-primary: #8ecfff;
+  --pst-color-primary-bg: #203f59;
+  --pst-color-primary-text: #101e2c;
+  --pst-color-accent: #ffc16a;
+  --pst-color-accent-bg: #203f59;
+  --pst-color-border: #395268;
+  --hc-diagram-edge: #92b9d5;
+}
+
+html[data-theme] {
+  --pst-color-on-surface: var(--pst-color-text-base);
+  --pst-color-heading: var(--pst-color-text-base);
+  --pst-color-link: var(--pst-color-primary);
+  --pst-color-secondary: var(--pst-color-primary);
+  --pst-color-secondary-text: var(--pst-color-primary-text);
+  --pst-color-link-hover: var(--pst-color-primary);
+  --pst-color-inline-code: var(--pst-color-primary);
+  --pst-color-target: var(--pst-color-primary-bg);
+}
+
+/* Mermaid writes ID-scoped fill rules into each SVG. Pair the label with
+   its surface so switching modes also updates an already visible flowchart. */
+html[data-theme] .mermaid .node .label-container {
+  fill: var(--pst-color-surface) !important;
+  stroke: var(--hc-diagram-edge) !important;
+}
+html[data-theme] .mermaid .node .nodeLabel,
+html[data-theme] .mermaid .node .nodeLabel p,
+html[data-theme] .mermaid .node text {
+  color: var(--pst-color-on-surface) !important;
+  fill: var(--pst-color-on-surface) !important;
+}
+html[data-theme] .mermaid .flowchart-link {
+  stroke: var(--hc-diagram-edge) !important;
+}
+html[data-theme] .mermaid .edgeLabel,
+html[data-theme] .mermaid .edgeLabel p {
+  color: var(--pst-color-text-muted) !important;
+  background-color: var(--pst-color-on-background) !important;
+}
