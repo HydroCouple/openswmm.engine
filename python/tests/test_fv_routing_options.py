@@ -191,7 +191,7 @@ class FvRoutingOptions(unittest.TestCase):
             for key, bad in (("FV_RIEMANN", "ROE"),
                              ("FV_LIMITER", "NONESUCH"),
                              ("FV_SCALAR_SCHEME", "WENO"),
-                             ("FV_BACKEND", "METAL")):
+                             ("FV_BACKEND", "OPENCL")):
                 with self.assertRaises(EngineError, msg=key):
                     s.options[key] = bad
         finally:
