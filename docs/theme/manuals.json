@@ -1,5 +1,5 @@
 {
-  "_comment": "Single source for the cross-manual menu in every HydroCouple manual (Sphinx and Doxygen). URLs are the published GitHub Pages paths. Set published to false for a manual that has no deployment yet; the menu omits it.",
+  "_comment": "Single source for the cross-manual menu in every HydroCouple manual (Sphinx and Doxygen). URLs are the published GitHub Pages paths. Set published to true only once the URL returns 200; the menu omits unpublished manuals except on their own pages.",
   "home": "https://www.hydrocouple.org/",
   "hub": "https://www.hydrocouple.org/docs.html",
   "github": "https://github.com/HydroCouple",
@@ -16,7 +16,7 @@
         {"id": "openswmm.engine.python", "title": "Engine for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.engine/python/", "published": true},
         {"id": "openswmm.engine.wasm", "title": "Engine for WebAssembly", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.engine.wasm/", "published": false},
         {"id": "openswmm.gui", "title": "SWMMVis desktop application", "kind": "User manual", "url": "https://www.hydrocouple.org/openswmm.gui/", "published": true},
-        {"id": "hydrocouple.gui.data", "title": "SWMMVis data sources plugin", "kind": "Reference", "url": "https://www.hydrocouple.org/hydrocouple.gui.data/", "published": true},
+        {"id": "hydrocouple.gui.data", "title": "SWMMVis data sources plugin", "kind": "Reference", "url": "https://www.hydrocouple.org/hydrocouple.gui.data/", "published": false},
         {"id": "openswmm.mcp", "title": "MCP server", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.mcp/", "published": true},
         {"id": "openswmm.gymnasium", "title": "Gymnasium environments", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.gymnasium/", "published": true},
         {"id": "openswmm.engine.benchmarks", "title": "Benchmarks", "kind": "Guide", "url": "https://www.hydrocouple.org/openswmm.engine.benchmarks/docs/", "published": false}
@@ -27,7 +27,7 @@
       "manuals": [
         {"id": "HydroCouple", "title": "Interface standard", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCouple/", "published": true},
         {"id": "HydroCouple.python", "title": "Interface standard for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/HydroCouple/python/", "published": true},
-        {"id": "HydroCoupleSDK", "title": "SDK", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleSDK/", "published": true},
+        {"id": "HydroCoupleSDK", "title": "SDK", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleSDK/", "published": false},
         {"id": "HydroCoupleComposer", "title": "Composer", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComposer/", "published": false},
         {"id": "HydroCoupleComponents", "title": "Provider components", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComponents/", "published": false},
         {"id": "HydroCoupleOgc", "title": "OGC web service clients", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleOgc/", "published": true},
@@ -40,9 +40,9 @@
       "manuals": [
         {"id": "MeshKit", "title": "MeshKit", "kind": "C++ reference", "url": "https://www.hydrocouple.org/Meshkit/", "published": true},
         {"id": "MeshKit.python", "title": "MeshKit for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/Meshkit/python/", "published": true},
-        {"id": "FVQual", "title": "FVQual", "kind": "C++ reference", "url": "https://www.hydrocouple.org/FVQual/", "published": true},
-        {"id": "FVQual.python", "title": "FVQual for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/FVQual/python/", "published": true},
-        {"id": "QPropertyModel", "title": "QPropertyModel", "kind": "C++ reference", "url": "https://cbuahin.github.io/QPropertyModel/", "published": true}
+        {"id": "FVQual", "title": "FVQual", "kind": "C++ reference", "url": "https://www.hydrocouple.org/FVQual/", "published": false},
+        {"id": "FVQual.python", "title": "FVQual for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/FVQual/python/", "published": false},
+        {"id": "QPropertyModel", "title": "QPropertyModel", "kind": "C++ reference", "url": "https://cbuahin.github.io/QPropertyModel/", "published": false}
       ]
     }
   ]
