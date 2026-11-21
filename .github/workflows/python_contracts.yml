@@ -109,14 +109,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libhdf5-dev
       - run: python -m pip install 'cmake>=4.3' ninja 'Cython>=3.0.12' numpy pytest
-      - name: Configure bindings (2D without HDF5, as in the WebAssembly build)
+      # HDF5 model I/O is on because the platform's twin keeps its state in an HDF5 restart
+      # record, as the released wheels can; the 2D results writer stays off, as in the
+      # WebAssembly build.
+      - name: Configure bindings (HDF5 restart records, 2D without its HDF5 results writer)
         run: >-
           cmake -S python -B build/python-downstream -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DOPENSWMM_BUILD_GPU_PLUGIN=OFF
-          -DOPENSWMM_WITH_HDF5=OFF
+          -DOPENSWMM_WITH_HDF5=ON
           -DOPENSWMM_2D_HDF5_OUTPUT=OFF
           -DPython_EXECUTABLE=$(which python)
       - run: cmake --build build/python-downstream --parallel 2
