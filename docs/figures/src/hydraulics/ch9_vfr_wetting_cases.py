@@ -1,5 +1,5 @@
 """Wetting cases of a planar-bed triangular cell and the wetted-edge face
-gate (hydraulics Figure 9-3, §9.4 and §9.5.9).
+gate (hydraulics Figure 9-5, §9.4 and §9.5.9).
 
 The VFR closure treats each cell as a planar bed through its three vertex
 elevations z_1 ≤ z_2 ≤ z_3. A free surface η wets a triangle (η below

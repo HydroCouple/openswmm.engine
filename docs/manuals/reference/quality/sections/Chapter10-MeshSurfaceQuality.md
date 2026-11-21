@@ -229,6 +229,21 @@ conservative water graph, the router still pairs the window's spill against
 its drain at the node's published value and hands the node the net-positive
 remainder.
 
+Figure 10-2 replays one routing step at a zero-volume junction under both
+mixes. The drained mass is the same; only the water it is divided by
+differs. With the gross drain water the junction reads a value between the
+concentrations of its inflows, whatever its other inflow. With the net
+water it reads the drained mass over the other inflow alone, which grows
+without bound as that inflow vanishes.
+
+![Figure 10-2 Mixing drained pollutant with net or gross water](figures/png/quality_ch10_gross_volume_mixing.png)
+
+*Figure 10-2 Mixing drained pollutant at a zero-volume junction, synthetic
+with the engine's queue and mixing rules: (a) six 10 s exchange windows in one
+60 s routing step, 48 ft³ drained at 6 mg/L and 50 ft³ spilled; (b) the
+junction's concentration (mg/L) against its other inflow (cfs), mixed with
+the net water as before 2026-11-20 and with the gross drain water as now*
+
 **Network to mesh.** A junction spill arrives at the **node's published row
 values**, frozen for the batch like the node head. All three 1D engines
 publish `nodes.conc`, the reaction system its node concentrations, the age
@@ -278,9 +293,9 @@ lies inside a subcatchment polygon that itself has `[COVERAGES]` is reported
 in **one** warning naming the subcatchments, and the run proceeds.
 
 <!-- figure spec: one mesh cell with two land-use slices (60 % / 25 % / 15 % bare); buildup stores drawn per slice; arrows for runoff-step accrual, a sweeping event, and washoff into the cell's species row, with the row then advecting to a coupled node -->
-![Figure 10-2](figures/png/quality_ch10_cell_buildup_washoff.png)
+![Figure 10-3](figures/png/quality_ch10_cell_buildup_washoff.png)
 
-*Figure 10-2 Buildup and washoff on one mesh cell: land-use slices, accrual, sweeping and the mass handed to the network*
+*Figure 10-3 Buildup and washoff on one mesh cell: land-use slices, accrual, sweeping and the mass handed to the network*
 
 <!-- source: src/engine/2d/quality/SurfaceQuality2D.hpp:17-64, 100-115; src/engine/2d/quality/SurfaceQuality2D.cpp:93-137, 166-189, 238-327, 384-427; plans/transport/OVERLAND_TRANSPORT_HEAT_MSX_PLAN_2026-09-01.md:329-356, 388-393 -->
 

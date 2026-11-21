@@ -2,18 +2,19 @@
 ;; OpenSWMM — Rain, infiltration and groundwater on the mesh
 ;;
 ;; A 20 x 20 m patch of ground, meshed as eight triangles over nine vertices,
-;; with three soil tags and a drain in the middle. Two rain gages stand at
-;; opposite corners with different intensities, so the natural-neighbour
-;; interpolation has something to interpolate: every cell takes a different
-;; rainfall. Each tag infiltrates by its own method, and where the infiltrated
-;; water goes is one key.
+;; with three soil tags and a drain in the middle. Two rain gages stand on
+;; opposite sides with different intensities, so every cell takes a different
+;; rainfall; with only two gages the engine interpolates by inverse distance.
+;; A two-layer aquifer lies beneath every cell, so the aquifer, not the tag
+;; rows, decides how much water each cell takes in, and J1 is located at the
+;; drain vertex so the aquifer exchanges with it through a node bed.
 ;;
 ;;   RG_W (20 mm/hr)                                RG_E (5 mm/hr)
 ;;        *----------------- mesh -----------------*
 ;;                    drain at the centre -> J1 -> O1
 ;;
-;; Used by the Application Manual's mesh-hydrology chapter. Variants in the
-;; figures change [2D_OPTIONS] INFIL_DESTINATION and nothing else.
+;; Used by the Application Manual's mesh-hydrology chapter, which runs it as
+;; is; the Hydrology Reference's sigma-column figure runs variants of it.
 ;;============================================================================
 
 [TITLE]
@@ -76,6 +77,14 @@ C1      J1    O1  30.0    0.013      0         0          0
 ;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
 C1      CIRCULAR  0.3    0      0      0      1
 
+;//! [coordinates]
+[COORDINATES]
+;; J1 sits on the drain vertex (vertex 4), so NODE_ENROLMENT AUTO gives it a
+;; bed in the aquifer beneath the mesh
+;;Node  X      Y
+J1      10.0   10.0
+;//! [coordinates]
+
 ;//! [twod]
 [2D_OPTIONS]
 INTEGRATOR           EXPLICIT
@@ -86,7 +95,6 @@ COUPLING_CD          0.7
 REPORT_2D            YES
 RAINFALL_MODE        NATURAL_NEIGHBOUR
 INFILTRATION         YES
-INFIL_DESTINATION    AQUIFER_2D
 GROUNDWATER          YES
 OUTPUT_FILE          mesh_hydrology.h5
 ;//! [twod]

@@ -27,7 +27,26 @@ water in each link and the volume of water within each storage node. The
 methods used to obtain this hydraulic solution are described in Volume
 II of this manual.
 
-![](quality/media/media/quality-image2.png "Objects2")
+![Figure 5-1 Representation of the conveyance network](figures/png/eng_object_sketch.png)
+
+<div class="fig-hotspots" data-fig="eng_object_sketch">
+<span class="hs" data-box="0.0900,0.0768,0.2400,0.1375">@ref engine_manual_sect_RAINGAGES "Rain gage"</span>
+<span class="hs" data-box="0.0400,0.1696,0.2400,0.4911">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S1"</span>
+<span class="hs" data-box="0.2400,0.0982,0.4400,0.3839">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S2"</span>
+<span class="hs" data-box="0.1500,0.4018,0.3000,0.5089">@ref engine_manual_sect_JUNCTIONS "Junction"</span>
+<span class="hs" data-box="0.3000,0.5446,0.4000,0.6071">@ref engine_manual_sect_CONDUITS "Conduit"</span>
+<span class="hs" data-box="0.3900,0.4821,0.5000,0.5893">@ref engine_manual_sect_VIRTUAL_JUNCTIONS "Virtual junction"</span>
+<span class="hs" data-box="0.5500,0.3482,0.8200,0.4375">@ref engine_manual_sect_INLET_JUNCTIONS "Inlet junction"</span>
+<span class="hs" data-box="0.5900,0.2232,0.6700,0.3482">@ref engine_manual_sect_STREETS "Street conduit"</span>
+<span class="hs" data-box="0.7200,0.5089,0.8000,0.6161">@ref engine_manual_sect_DIVIDERS "Divider"</span>
+<span class="hs" data-box="0.8100,0.5089,0.9000,0.6429">@ref engine_manual_sect_WEIRS "Weir"</span>
+<span class="hs" data-box="0.6900,0.6339,0.8000,0.7232">@ref engine_manual_sect_ORIFICES "Orifice"</span>
+<span class="hs" data-box="0.7600,0.7411,0.8400,0.8482">@ref engine_manual_sect_STORAGE "Storage unit"</span>
+<span class="hs" data-box="0.8400,0.7411,0.9200,0.8482">@ref engine_manual_sect_PUMPS "Pump"</span>
+<span class="hs" data-box="0.9200,0.5982,1.0000,0.6875">@ref engine_manual_sect_OUTFALLS "Outfall"</span>
+<span class="hs" data-box="0.4500,0.6696,0.6700,0.9375">@ref engine_manual_sect_2D_TRIANGLES "2D mesh"</span>
+<span class="hs" data-box="0.4700,0.5804,0.5600,0.6696">@ref engine_manual_sect_2D_VERTEX_NODE_MAP "1D–2D exchange"</span>
+</div>
 <p><span id="_Toc454288773"
 class="anchor"></span><strong>Figure 5‑1 Representation of the
 conveyance network in SWMM</strong></p>

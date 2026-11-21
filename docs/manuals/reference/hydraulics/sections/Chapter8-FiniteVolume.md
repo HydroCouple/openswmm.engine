@@ -1840,6 +1840,11 @@ once, every substep runs there, and state and ledgers come back once.
 The solver object, its ledgers and everything outside the loop stay on
 the host. \status{Experimental}
 
+`FV_BACKEND AUTO`, the default, keeps the CPU solver at any mesh size: a
+plugin runs only when it is named, and `OPENSWMM_FV_BACKEND` overrides the
+key when set. Figure 9-12 (@ref hydraulics_ref_ch9_backend "Section 9.11.1")
+traces the choice and every fallback to the CPU, beside the 2D marcher's.
+
 The plugin integrates the global-step path only. With a device backend
 selected the solver therefore runs as if `FV_LTS NO` and
 `FV_COMPACTION NO` were set, and `FV_STRUCTURE_COUPLING SUBSTEP` is

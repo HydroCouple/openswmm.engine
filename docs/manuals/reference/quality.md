@@ -136,6 +136,8 @@ Figure 6-10. Moisture levels in the bio-retention cell with underdrain
 
 Figure 6-11. Flux rates through the bio-retention cell with underdrain
 
+Figure 6-12. A layered LID on a storage node (synthetic, from the engine's cell, port and Richards rules and the Engine Manual's example stack): (a) layers, runtime cells, retained and mobile water below the mobile table h, three links and where reverse inflow goes; (b) Richards cells and face laws; (c) retention and (d) conductivity curves (in/hr) of the illustrative materials
+
 Figure 7-1. Flux-limited advection in the Eulerian engine: the face stencil and a step front under UPWIND and the three MUSCL limiters
 
 Figure 7-2. The five phases of a Lagrangian transport step: drain, mix, release, decay and publish on one conduit's parcel slab
@@ -144,7 +146,9 @@ Figure 9-1. The heat budget of a water body: the six surface terms of the net fl
 
 Figure 10-1. The transport policy matrix: which species class moves in which domain, and the gate ladder the 2D surface passes
 
-Figure 10-2. Buildup and washoff on one mesh cell: land-use slices, accrual, sweeping and the mass handed to the network
+Figure 10-2. Mixing drained pollutant at a zero-volume junction, synthetic with the engine's queue and mixing rules: (a) six 10 s exchange windows in one 60 s routing step, 48 ft³ drained at 6 mg/L and 50 ft³ spilled; (b) the junction's concentration (mg/L) against its other inflow (cfs), mixed with the net water as before 2026-11-20 and with the gross drain water as now
+
+Figure 10-3. Buildup and washoff on one mesh cell: land-use slices, accrual, sweeping and the mass handed to the network
 
 <!-- END GENERATED -->
 

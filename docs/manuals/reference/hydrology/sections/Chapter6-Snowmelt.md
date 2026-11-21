@@ -662,10 +662,14 @@ situation when there is new snow needs to be discussed, starting from
 both zero and non-zero initial cover. The SWMM procedure again follows
 Anderson's NWS method (1973).
 
-![](hydrology/media/media/hydrology-image41.png "ii_07")
+![Figure 6-5 Effect of snow cover on areal depletion curves](figures/png/hydrology_ch6_adc_melt_progression.png)
 <p><span id="_Toc426447702"
 class="anchor"></span><strong>Figure 6-5 Effect of snow cover on areal
-depletion curves.</strong></p>
+depletion curves: (a) five curves A to E, (b) the definition sketch,
+(c)–(g) the pack under each curve at AWESI = 1.0, 0.8, 0.6 and 0.3, with
+its cover ASC and actual depth WS in multiples of SI (synthetic; ASC from
+the engine's ten-point curve interpolation, curve B being the natural-area
+curve of Figure 6-4).</strong></p>
 
 When there is new snow and *WSNOW* is already greater than or equal to
 *SI*, *ASC* remains unchanged at *1.0*. However, when there is new snow
@@ -730,13 +734,17 @@ fraction, *FWFRAC*, of the variable snow depth, *WSNOW*, at each time
 step. This volume (depth) must be filled before runoff from the snow
 pack occurs. The program maintains the depth of free water, *FW*, inches
 of water, for use in these computations. When
-*[Figure image not available in this format]*, the snow pack is fully ripe. The
+*FW* = *FWFRAC* × *WSNOW*, the snow pack is fully ripe. The
 procedure is sketched in Figure 6-6.
 
-![](hydrology/media/media/hydrology-image43.png "ii_08")
+![Figure 6-6 Schematic of liquid water routing through snow pack](figures/png/hydrology_ch6_snowpack_free_water.png)
 <p><span id="_Toc426447703"
 class="anchor"></span><strong>Figure 6-6 Schematic of liquid water
-routing through snow pack.</strong></p>
+routing through snow pack: (a) the pack and its free water; (b) melt
+entering and runoff leaving one pack, in in/hr; (c) its free water FW
+against the capacity FWFRAC × WSNOW, in inches (synthetic; a prescribed
+melt routed with the engine's free-water steps, WSNOW = 1 in at the start,
+FWFRAC = 0.10, no rain).</strong></p>
 
 The inclusion of the free water holding capacity via this simple
 reservoir-type routing delays and somewhat attenuates the appearance of

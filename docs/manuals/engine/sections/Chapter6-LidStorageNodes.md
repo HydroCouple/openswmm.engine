@@ -85,6 +85,18 @@ subdivided into five numerical cells; these are not additional user layers.
 The moisture profile stores retained water, while the network storage solver
 handles mobile water. Its depth/volume relationship includes available pore
 space and surface ponding. Reported node volume includes both water stores.
+Figure 6-1 draws the example stack of the previous section on a storage node:
+its seven runtime cells, both water stores at one instant, links at three
+elevations, and the optional Richards column described at the end of this
+chapter.
+
+![Figure 6-1 The example stack on a storage node](figures/png/hydraulics_ch2_lid_storage_node.png)
+
+*Figure 6-1 The example stack on a storage node (synthetic, from the engine's
+cell, port and Richards rules): (a) layers, runtime cells, retained and mobile
+water below the mobile table h, three links and where reverse inflow goes;
+(b) Richards cells and face laws; (c) retention and (d) conductivity curves
+(in/hr) of the illustrative materials below*
 
 `LidNode.cpp` prepares infiltration, percolation, evaporation and seepage and
 couples layer ports to the Dynamic Wave solve. Transfers from media to mobile
@@ -334,7 +346,8 @@ alpha > 0, n > 1, l >= 0, and specific storage Ss > 0. Alpha and Ss are in
 inverse metres in **both** input unit systems; they are not converted with
 project length units. Thickness and saturated conductivity retain their
 usual inches/mm and inches/hour or mm/hour units. The example materials are
-illustrative, not calibrated defaults.
+illustrative, not calibrated defaults; Figure 6-1 (c) and (d) plot their
+retention and conductivity curves.
 
 The solver evolves complete cell water volume. Unsaturated moisture follows
 van Genuchten retention; saturated storage is theta_s + Ss*h. Thus moisture

@@ -362,6 +362,7 @@ SOURCE_FILE together with [FILES] USE HOTSTART is an error. RECORD_FILE may not 
 MODE INITIAL_CONDITIONS is refused for models with heat transport, frozen ground or an independent groundwater clock, whose state needs the engine checkpoint; use CONTINUE with a continuation record. Records restore only on the kind of machine that wrote them (operating system, processor and byte order).
 In a run that saves binary results, a record with the engine checkpoint also carries the binary output written so far, so a run that continues from it writes the same binary output file as the uninterrupted run. This needs the built-in binary output writer, no 2D output file, and a new output file: an existing one is refused, by name, before the run. A continued run saves binary results exactly when its record carries them, and is refused otherwise. Such records grow with the output already written.
 Paths are relative to the input file, and are rewritten when the model is saved to another folder. A GeoPackage project and an HDF5 model keep the section. Export to SWMM 5 omits it.
+The lineage of a record and its storage layout are drawn in @ref engine_manual_ch3_restart_records.
 
 Example:
 ```

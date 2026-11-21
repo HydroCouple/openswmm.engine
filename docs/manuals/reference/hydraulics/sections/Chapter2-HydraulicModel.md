@@ -169,6 +169,18 @@ The flow terms use accepted directions. Rainfall must enter through a
 contributing subcatchment or external inflow; assigning a LID is not an
 additional rainfall source.
 
+Figure 2-2 (a) draws one such node at one instant: the example stack of
+@ref engine_manual_lid_storage, its seven runtime cells, the retained and
+mobile inventories of each cell, and links at three elevations.
+
+![Figure 2-2 A layered LID on a storage node](figures/png/hydraulics_ch2_lid_storage_node.png)
+
+**Figure 2-2 A layered LID on a storage node (synthetic, from the engine's cell,
+port and Richards rules and the Engine Manual's example stack): (a) layers,
+runtime cells, retained and mobile water below the mobile table h, three links
+and where reverse inflow goes; (b) Richards cells and face laws; (c) retention
+and (d) conductivity curves (in/hr) of the illustrative materials**
+
 **Gravity drainage.** MEDIA uses the exponential conductivity law of legacy
 SWMM LIDs, evaluated from the donor cell:
 
@@ -296,7 +308,9 @@ For negative pressure, effective saturation is
 At nonnegative pressure theta = porosity and K = Ks. Alpha and specific
 storage are inverse metres in either project unit system. They must be
 explicitly authored; existing conductivity slope and Green–Ampt suction
-are not converted into retention parameters.
+are not converted into retention parameters. Figure 2-2 (b) shows the
+column's cells and face laws, and (c) and (d) plot both curves for the
+Engine Manual's illustrative materials.
 
 The pond contact uses the mean of the first material's saturated conductivity
 and first-cell conductivity over a half-cell distance. Downward supply
@@ -528,7 +542,7 @@ kinematic wave methods of hydraulic analysis. Dynamic wave solutions
 tend to attenuate and disperse an inflow hydrograph as it routed
 downstream through a series of conduits while kinematic wave solutions
 show no attenuation, no dispersion, and some distortion of the
-hydrograph shape. This behavior is depicted in Figure 2-2 from Miller
+hydrograph shape. This behavior is depicted in Figure 2-3 from Miller
 (1984) which shows the results of routing an inflow hydrograph down a
 100-foot wide rectangular channel of 1% slope with a Manning's *n* of
 0.06.
@@ -554,7 +568,7 @@ hydrograph shape. This behavior is depicted in Figure 2-2 from Miller
 
 ![KWvsDW.png](hydraulics/media/media/hydraulics-image10.png)
 
-**Figure 2-2 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)**
+**Figure 2-3 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)**
 
 ## 2.3 Boundary and Initial Conditions
 

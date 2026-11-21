@@ -370,7 +370,7 @@ formula, and then applies Equation 6-13 as well, so the submergence is
 counted twice. Where the two regimes should meet (Equation 6-10) the
 flow then jumps by 1/*f*<sub>S</sub>. OpenSWMM keeps this under the default
 `NODE_CONTINUITY EXPLICIT`, and does not apply the factor to such an
-orifice under `SEMI_IMPLICIT` (Section 3.5 of
+orifice under `SEMI_IMPLICIT` (Section 3.5 and Figure 3-11 of
 @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
 
 ### 6.2.4 Flap Gate Head Loss Adjustment
@@ -442,7 +442,7 @@ compute *Q* it is:
 (6-17)
 
 Under `NODE_CONTINUITY SEMI_IMPLICIT` the flow of a submerged orifice at
-nearly equal heads and its derivative follow Section 3.5 of
+nearly equal heads and its derivative follow Section 3.5 and Figure 3-11 of
 @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3".
 
 ### 6.2.6 Summary of Orifice Computations
@@ -865,7 +865,7 @@ portions (see Equation 6-20).
 These derivatives are taken before the submergence factor of Equation
 6-26. Under `NODE_CONTINUITY SEMI_IMPLICIT` the flow of a submerged or
 surcharged weir at nearly equal heads and its derivative follow Section
-3.5 of @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3".
+3.5 and Figure 3-11 of @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3".
 
 ### 6.3.8 Summary of Weir Computations
 
@@ -993,7 +993,7 @@ must be computed:
 Under dynamic wave analysis an outlet's \f$\frac{dQ}{dH}\f$ is 0. Under
 `NODE_CONTINUITY SEMI_IMPLICIT`, below an effective head of 0.05 ft the
 flow instead runs linearly from zero to its rated value at 0.05 ft, and
-\f$\frac{dQ}{dH}\f$ is the slope of that line (Section 3.5 of
+\f$\frac{dQ}{dH}\f$ is the slope of that line (Section 3.5 and Figure 3-11 of
 @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
 
 

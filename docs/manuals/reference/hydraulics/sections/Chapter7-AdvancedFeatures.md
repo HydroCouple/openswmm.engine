@@ -1057,7 +1057,7 @@ downstream streets. When an inlet's sewer node reaches its full depth
 any excess flow that would cause it to flood is sent back through the
 inlet and onto the street.
 
-![DualDrainage.png](hydraulics/media/media/image63.png)
+![Figure 7-10 Representation of a dual drainage system](manuals/engine/figures/fig3-08-dual-drainage.png)
 
 **Figure 7-10 Representation of a dual drainage system**
 

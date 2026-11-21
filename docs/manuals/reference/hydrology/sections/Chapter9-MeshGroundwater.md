@@ -317,6 +317,30 @@ drainage; a
 specific yield vanishes, and the table oscillates at any step. The kinematic
 column therefore cannot hold a hydrostatic profile.
 
+Figure 9-3 runs both columns through an hour of rain. The model is the small
+mesh of Application Manual Chapter 7, with every cell on the σ closure and the
+table 1 m below the ground. On the cell that took in the most water (17 mm, of which 15.4 mm fell on
+it as rain), the
+capillary column starts at rest: its first reported recharge is
+\f$-1.7 \times 10^{-8}\f$ m/s, and its lower layers have not moved an hour
+later. The rain wets the top layers, and the front reaches the table and raises
+it by 49 mm over six hours while the column relaxes toward the hydrostatic
+profile over the higher table. Its table face passes water both ways: first a
+little upward (at most \f$6.6 \times 10^{-8}\f$ m/s), then downward once the
+front arrives. The kinematic column drains its hydrostatic seed from the first
+step (\f$8.7 \times 10^{-6}\f$ m/s). Its bottom layer falls from
+\f$\theta = 0.40\f$ to 0.15 and its top to \f$\theta_r\f$, and the table rises
+by 439 mm on the same infiltration. Both runs close the aquifer balance to
+0.000 %.
+
+![Figure 9-3 The capillary and kinematic sigma columns under the same rain](figures/png/hydrology_ch9_sigma_column.png)
+
+*Figure 9-3 The capillary (`CAPILLARY_DIFF YES`) and kinematic (`NO`) σ
+columns under the same hour of rain: θ in each of eight layers against depth
+below the ground at the start, 1 h and 6 h, with the water table (dashed), and
+the rise of the table in mm (simulated, `mesh_hydrology/mesh_hydrology.inp`
+with every cell on `CLOSURE SIGMA`, `HG0` 3.0 m and a 6 h run; cell 4, `WOODS`)*
+
 In both, the bottom flux adds the **handover** swept across the moving
 boundary, \f$F_{bot} = P_{bot} - \theta_{m-1}\dot L\f$. Both together are what
 the saturated zone gains, which is why the table is settled with
@@ -398,11 +422,50 @@ so a cell with many wet neighbours cannot be emptied several times over:
 
 \f[ \lvert Q_e \rvert \le \frac{\tfrac12\, T_e\, S_{y,\mathrm{donor}}\, A_{\mathrm{donor}}}{n_{f,\mathrm{donor}}\, \Delta t} \f]  (9-12)
 
+The shares of a donor's faces add up to at most half its drainable water, but
+they do not bound what the donor gives in one face pass. Water already committed to
+leave the cell is reserved first: lateral volumes that earlier face firings
+booked and the cell has not yet gathered, the drain of its node beds, conduit
+seepage and LID uptake. What remains,
+
+\f[ V_{avail} = S_{y,\mathrm{donor}}\, h_{g,\mathrm{donor}}\, A_{\mathrm{donor}} - V_{reserved}, \f]
+
+can be less than the faces ask. `GW_FACE_CAP` in `[2D_AQUIFER_OPTIONS]`
+decides how the faces share it:
+
+- **`RATIO`** (the default since 2026-11-19). Every face of the pass is sized
+  by (9-12), each donor's demand \f$D = \sum_e \lvert Q_e \rvert \Delta t_e\f$
+  is totaled over the faces it feeds, and all of those faces are scaled by one
+  ratio,
+  \f[ Q_e \leftarrow Q_e \, \min\!\bigl(1,\ V_{avail} / D\bigr). \f]
+  Each donor's \f$V_{avail}\f$ is taken before anything is booked, so the
+  result depends on neither the face order nor the thread count, and the pass
+  runs on `THREADS` workers. Models with porous heat, layered transport or LID
+  bed receipts run it on one thread, because those bookings are serial. A donor
+  that holds a LID bed is also bounded by the bed's own budget.
+- **`SEQUENTIAL`** (the rule before 2026-11-19). The faces are capped in list
+  order, each by the smaller of (9-12) and the water the faces before it left.
+  The first face takes its full share and the last takes what remains, so the
+  result depends on the face order, and the pass runs serially.
+
+Both rules conserve water, and transported mass rides the scaled water: the
+same kind of ratio is applied to each species' available mass. The two
+differ only where a donor runs short. Figure 9-4 shows one such donor.
+
+![Figure 9-4 GW_FACE_CAP on a donor that runs short](figures/png/hydrology_ch9_face_cap_sharing.png)
+
+*Figure 9-4 How `GW_FACE_CAP` shares a short donor's unreserved water among
+its three faces: each face's share-capped demand, and what `RATIO` and
+`SEQUENTIAL` (in two face orders) let through, in m³ per face pass (synthetic,
+from the engine's face-cap rules)*
+
 The volume \f$Q_e \Delta t\f$ is booked \f$\mp\f$ into the edge's two side
 accumulators at the face's cadence and gathered by each cell at its own firing
 — the surface marcher's strategy, which makes conservation across tiers
 inherited rather than re-proved (§9.9). Under `MODE PER_SUBCATCH` the edge
 topology is empty and (9-11) is never evaluated.
+
+<!-- source (GW_FACE_CAP, 2026-11-21): src/engine/2d/subsurface/SubsurfaceData.hpp:160-163 (face_cap_ratio, default true); src/engine/2d/subsurface/SubsurfaceSections.cpp:241-249 (parsing), :2018-2019 (writer); src/engine/2d/subsurface/SubsurfaceSolver.cpp:108 (kFaceShare 0.5), :1243-1253 (dispatch), :1254-1305 (SEQUENTIAL: cap against unreserved water :1287-1295, booking :1300-1301), :762-1080 (RATIO: pass 0 unreserved water :839-873, pass A per-face share :875-895, one ratio per donor and LID bed budget :897-915, scaled water :917-930, species ratio :1011-1051, booking :1039), :1887-1903 (unreservedDrainableWater); src/engine/2d/subsurface/SubsurfaceSolver.hpp:1526-1542 -->
 
 ### 9.5.3 Deep loss
 
@@ -434,9 +497,9 @@ cell's area when omitted. Table above pipe head is groundwater inflow, pipe
 head above table is exfiltration: one equation, no fitted coefficients.
 
 <!-- figure spec: a manhole in section within a mesh cell: pipe head z_inv + d, water table z_bed + h_g, the semi-confining bed of thickness d_C and conductivity K_c between them, arrows for both exchange directions with the caps annotated -->
-![Figure 9-3](figures/png/hydrology_ch9_node_bed_exchange.png)
+![Figure 9-5](figures/png/hydrology_ch9_node_bed_exchange.png)
 
-*Figure 9-3 Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it*
+*Figure 9-5 Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it*
 
 **Caps.** A drain (\f$Q > 0\f$) may take at most half the cell's drainable
 water per step, \f$\tfrac12 h_g S_y A / \Delta t\f$. A recharge
@@ -557,8 +620,9 @@ by what the table holds (§9.4.2) and counted as the negative share of recharge.
 
 ## 9.9 Time stepping and local time stepping
 
-The subsurface has no loop of its own. It joins the surface marcher's
-halving-order tier ladder through four hooks — tier assignment at every
+Under the default `GW_CLOCK SHARED` the subsurface has no loop of its own.
+(§9.9.1 describes the experimental alternative, `GW_CLOCK INDEPENDENT`.) It
+joins the surface marcher's halving-order tier ladder through four hooks — tier assignment at every
 rebuild, a face phase and a cell phase per due tier, and a settle before any
 re-tier — under two guarantees enforced by construction. **G-A,
 independence:** a cell's tier comes only from its own bound
@@ -617,6 +681,79 @@ firing. Nothing strands, since accumulators are gathered through incidences a
 re-tier does not change; continuity audits between firings must add them (§9.10).
 
 <!-- source: src/engine/2d/subsurface/SubsurfaceSolver.hpp:23-43 (hooks, G-A, G-B); src/engine/2d/subsurface/SubsurfaceSolver.cpp:312-389 (refreshDtCell: Δt_g :327-360, Δt_u :362-386), :391-400 (requiredTiers), :402-442 (assignTiers: ilogb :412-418, no pinning :420-426, face rule :429-441), :298-303, :965-971, :973-1003 (settle); src/engine/2d/subsurface/SubsurfaceData.hpp:113-114; src/engine/2d/subsurface/SubsurfaceSections.cpp:141-148; src/engine/2d/solver/ExplicitInertialSolver.cpp:728-737 (dt0 fold), :808-818 (ladder height, D-N1 not taken), :2077-2111 (macro-cycle order), :2219-2233 (tail); src/engine/2d/data/SolverOptions2D.hpp:389; plans/TWO_ZONE_GROUNDWATER_EXPLICIT_LTS_PLAN_2026-08-15.md:196-283 (§3.0, D-N1) -->
+
+### 9.9.1 The independent clock
+
+`GW_CLOCK INDEPENDENT` in `[2D_AQUIFER_OPTIONS]` takes the aquifer off the
+surface's tier ladder and schedules each cell on its own clock. It is
+\status{Experimental}: its accuracy, convergence and event-performance
+qualification is still open, and `SHARED` remains the default. It requires
+first-order integration (`RECONSTRUCTION_ORDER 1`).
+
+**Periods.** A cell fires with a period \f$P_k = 2^k\, \Delta t_b\f$, where
+\f$\Delta t_b\f$ is `GW_BASE_STEP`. Its deadlines lie on an absolute grid
+counted from the start of the run, \f$t = n P_k\f$, so an early or late firing
+never shifts its phase. The rung \f$k\f$ is the coarsest whose period stays
+within three limits:
+
+- the cell's stability bound \f$\min(\Delta t_g, \Delta t_u)\f$ of (9-17) and
+  (9-18), less the surface's `MAX_TIMESTEP`, the longest a cell may wait for a
+  check;
+- `GW_MAX_STEP` (default 3600 s);
+- an accuracy limit: the time the cell's head takes to move by
+  `GW_HEAD_TOLERANCE` (default 0.05) of \f$\max(h_g, 0.01\ \mathrm{m})\f$ at its
+  current inflow or outflow, times `GW_BUDGET_FRACTION` (default 0.5).
+
+Stability can select negative rungs, periods below the base, so a stiff cell
+subcycles. Accuracy alone never selects a period below the cell's accuracy
+floor. `GW_BASE_STEP AUTO` is 1 s, or 0.125 s when a node bed exchanges with
+the aquifer. In that case 0.125 s is the base for the cells that hold those
+beds, and every other cell keeps 1 s as its accuracy floor. A node bed
+exchanges at the hydraulic cadence: at a 1 s base the per-window exchange of a
+filling node bed differed from `SHARED` by 7.9 %, and at 0.125 s it matched.
+
+**Checks and receipts.** The surface keeps its own ladder; its step includes
+the aquifer's stability bound only under `GW_BINDS_SURFACE_DT YES`. The surface
+ends each base substep with a producer check. At a check, a stiff cell fires at
+each of its deadlines inside the substep, and every other cell whose deadline
+has come fires at the check. A face fires whenever either of its cells does,
+over the interval since it last fired. Infiltration, node exchange, conduit
+seepage and the other transfers into or out of a cell are booked as dated
+receipts. A firing gathers the receipts dated up to the last completed check,
+so water waits for a slow cell rather than being lost or applied early. The
+reported head is the last completed cell state, and the water received since
+then is counted in storage and continuity.
+
+**Early updates.** A cell whose waiting receipts outgrow a budget fires before
+its deadline. Inflow and outflow have separate budgets, each
+`GW_BUDGET_FRACTION` times the smaller of a head term, `GW_HEAD_TOLERANCE`
+times \f$S_y A \max(h_g, 0.01\ \mathrm{m})\f$, and the room the receipts
+can fill or the unreserved water they can draw. A σ column also budgets its
+top layer's intake and the water it holds for ET. The test runs when a check
+crosses a multiple of the cell's accuracy floor. After any firing, the receipt
+rates seen over the interval set a new accuracy limit, so a cell that is
+receiving water steps to a finer rung. It returns to a coarser rung only at a
+deadline the two rungs share. The clock statistics count the budget-triggered
+updates and the largest budget exceedances.
+
+Figure 9-6 schedules three cells by these rules and sets them against the
+shared ladder. Cell C waits on a 32 s period until a burst of receipts fills
+its budget, fires early at the next whole second, steps down to 8 s while the
+receipts keep arriving, and returns to 32 s at the next deadline the two
+periods share. Under `SHARED` the stiff cell A would also set the surface's
+base step, and C would fire on the top rung of the four-tier ladder every
+3.2 s.
+
+![Figure 9-6 The independent groundwater clock against the shared tier ladder](figures/png/hydrology_ch9_gw_clock_timeline.png)
+
+*Figure 9-6 When three aquifer cells fire under `GW_CLOCK INDEPENDENT`
+(stiff cell A subcycling at 0.25 s, B at 8 s, C at 32 s with a
+budget-triggered early update), against the surface's tiers and against the
+shared ladder; and the receipts waiting at cell C, in m³, against its budget
+(synthetic, from a replica of the engine's clock with `GW_BASE_STEP AUTO`
+= 1 s and the default budget keys)*
+
+<!-- source (independent clock, 2026-11-21): src/engine/2d/subsurface/SubsurfaceSections.cpp:187-223 (GW_CLOCK, GW_BASE_STEP, GW_MAX_STEP, GW_BINDS_SURFACE_DT, GW_BUDGET_FRACTION, GW_HEAD_TOLERANCE); src/engine/2d/subsurface/SubsurfaceData.hpp:142-153 (defaults, kDefaultBaseStep 1 s, kNodeBaseStep 0.125 s); src/engine/2d/subsurface/SubsurfaceSolver.cpp:342-343 (first order required), :478-492 (AUTO base step at node beds, 7.9 %); src/engine/2d/subsurface/GwClock.cpp:31-33 (period), :39-72 (select: stability less the surface allowance, GW_MAX_STEP, accuracy floor), :74-94 (absolute deadlines), :153-214 (event: faces over their interval, rung re-selection, loosening on a shared deadline), :216-270 (check: stiff subcycles, coarse cells at the check, early wakes); src/engine/2d/subsurface/SubsurfaceClock.cpp:12-53 (prepareClock: accuracy floors), :105-148 (cells: receipt-rate limit after a firing :131-146), :155-159 (accuracy), :160-213 (early: budget wake at the floor period), :339-389 (clockBudgets), :391-443 (clockAccuracyLimit); src/engine/2d/solver/ExplicitInertialSolver.cpp:1575-1580 (GW_BINDS_SURFACE_DT), :4274-4292 (producer check), :4357-4358 (one check per base substep); docs/manuals/engine/sections/Chapter2-InputFileReference.md:3217-3234 -->
 
 ## 9.10 Continuity ledger and reporting
 
@@ -720,6 +857,8 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | Column option | `CAPILLARY_DIFF YES` (default) / `NO` | Implicit mixed-form Darcy column, (9-8) and (9-9); `NO` keeps the explicit kinematic column | \status{Implemented} |
 | Mode | `MODE MESH` (default) | Kernel on the mesh cells with lateral Darcy | \status{Implemented} |
 | Mode | `MODE PER_SUBCATCH` | Today: the mesh kernel with lateral topology removed; the one-cell-per-subcatchment vehicle is not in the code | \status{Experimental} |
+| Lateral Darcy | `GW_FACE_CAP RATIO` (default) | One scale per donor, `min(1, unreserved water / demand)`, over its faces; independent of face order and threads (§9.5.2) | \status{Implemented} |
+| Lateral Darcy | `GW_FACE_CAP SEQUENTIAL` | Faces capped in list order against the water earlier faces left; the rule before 2026-11-19 (§9.5.2) | \status{Implemented} |
 | Deep loss | Linear \f$c_{loss} h_g / z_s\f$ | Chapter 5's (5-21) form | \status{Implemented} |
 | Deep loss | `[GWF] DEEP` expression | Named in the design record only | \status{Planned} |
 | Node exchange | `NODE_ENROLMENT AUTO` | Every node inside the mesh except outfalls, direct Darcy over the cell area | \status{Implemented} |
@@ -732,6 +871,7 @@ it is \f$m \times\f$ the cell count per step and off by default.
 | ET | `GW_ET NONE`, `CAPILLARY_RISE`, `BOUNDARY_ET`, `BOTH` | §9.8 | \status{Implemented} |
 | Time stepping | Standalone CLOSED_FORM/ENSLAVED/SIGMA transport/age/water-temperature FULL_SWE SSP-RK2 | Global tier, conserved equilibrium-water blends for ENSLAVED and layer-water blends with starting-state ALE velocity for SIGMA, knot-aligned wells and HEAD/FLOW quality edges, canonical bulk/layer species and age ledgers, symmetric groundwater/surface reactions, rollback and exact component checkpoint; a porous profile supports stored soil energy, midpoint/lateral conduction, chemical/age inventories and phase-aware reactions with sensible/latent soil ET and constant, project-series or held AIR thermal boundaries; a fully covered COUPLED/GROUND_COLUMN finite-contact profile also supports RK2 heat, chemical/age contact and reactions with nonlinear radiation, sensible atmosphere and accepted surface latent cooling; copied surface/groundwater sources, runtime aquifer HEAD/FLOW edges and rain/quality/ET/paired infiltration and authored surface STAGE/FLOW, in-memory series/rating, normal-flow boundaries and copied overrides use bounded stages, shared expiry and component continuation, with accepted rain reports; managed standalone RK2 sessions preserve native weather/calendar state, pending batches, copied prescriptions and numerical, binary or combined mesh-HDF5 history; disjoint water-only or qualified native LEGACY pollutant networks also preserve their actual hydraulic/quality state; independent owned degree-day/UEB snow supports water delivery with native or cached weather, full point/ledger restart and all four output modes; zero transport rows, heat disabled, no soil contact or copied weather are required; further heat, wider network quality and shared RK2 network owners remain guarded | \status{Experimental} |
 | Time stepping | Shared tier ladder, height `LTS_TIERS` | §9.9 | \status{Implemented} |
+| Time stepping | `GW_CLOCK INDEPENDENT` | Per-cell dyadic periods on an absolute clock, dated receipts, budget-triggered early updates; first-order integration only (§9.9.1) | \status{Experimental} |
 | Time stepping | Runtime tier count reaching the slowest cell (D-N1) | `requiredTiers()` exists; the marcher does not grow the ladder | \status{Planned} |
 | Verification law | Broadbridge–White | Exact Richards benchmark in the test harness; not selectable | \status{Retired} |
 | Backend | Host OpenMP raw CLOSED_FORM recharge | Optional ABI v1 and separate C/Python operator status; all stores, transport, reactions and heat remain CPU-owned. Other operators and CUDA/HIP/SYCL remain unqualified | \status{Experimental} |
@@ -805,6 +945,7 @@ UNSODA, and \f$K_c, d_C\f$ from a MODFLOW River package of the same area.
 | Soil laws, equilibrium storage, recharge, stress | `src/engine/2d/subsurface/SoilCharacteristic.hpp`, `.cpp` |
 | The σ column | `src/engine/2d/subsurface/SigmaColumn.hpp`, `.cpp` (`advanceColumn`, `columnDtLimit`, `seedHydrostatic`, `columnStorage`) |
 | The kernel | `src/engine/2d/subsurface/SubsurfaceSolver.hpp`, `.cpp` — `initialize()`; the hooks `refreshDtCell()`, `assignTiers()`, `fireGwFaces()`, `fireGwCells()`, `settle()`; `sampleNodeExchange()`; `bookInfiltrationFromSurface()`, `bookLinkSeepage()`, `takeToSurface()`; the per-cell `fireCell()` |
+| The independent clock | `src/engine/2d/subsurface/GwClock.hpp`, `.cpp` (`GwClock`: rung selection, absolute deadlines, checks); `src/engine/2d/subsurface/SubsurfaceClock.cpp` (`prepareClock()`, the clock owner's receipts and early updates, `clockBudgets()`, `clockAccuracyLimit()`) |
 | Grammar, units, resolution, writer | `src/engine/2d/subsurface/SubsurfaceSections.cpp` — `[2D_AQUIFER_OPTIONS]`, `[2D_AQUIFER]`, `[2D_AQUIFER_NODE]`; `gwUnitFactors()`, `resolveSubsurface()`, `resolveLinkSeepage()`; documented in @ref engine_manual_sect_2D_AQUIFER_OPTIONS "[2D_AQUIFER_OPTIONS]", @ref engine_manual_sect_2D_AQUIFER "[2D_AQUIFER]" and @ref engine_manual_sect_2D_AQUIFER_NODE "[2D_AQUIFER_NODE]", with the `GROUNDWATER` and `GW_ET` keys in @ref engine_manual_sect_2D_OPTIONS "[2D_OPTIONS]" of @ref engine_manual_ch2_input_file "the input-file chapter" |
 | Wiring into the router and marcher | `src/engine/2d/SurfaceRouter2D.cpp` `initialize()` (enable, resolve, `setSubsurface`, one-owner checks), `coAdvanceStep()` (node volumes to `coupling_volume`), `advancePostRouting()` (seepage booking); `src/engine/2d/solver/ExplicitInertialSolver.cpp` `syncAndRebuild()` (dt0 fold, tiers, pending-cell pinning), `runMacroCycle()` (hook order), `fireCellsImpl()` (infiltration down, return up) |
 | Report and results | `src/engine/plugins/DefaultReportPlugin.cpp` (2D Aquifer Continuity); `src/engine/2d/output/Default2DOutputPlugin.cpp` (`Mesh2_face_gw_*`, `groundwater_ledger`, `groundwater_node_exchange_cum`) |

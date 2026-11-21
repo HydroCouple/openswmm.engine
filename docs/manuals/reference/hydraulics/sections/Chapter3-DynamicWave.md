@@ -823,9 +823,13 @@ to the gravity-wave celerity of its cross-section:
 |---|---|---|---|
 | \f[\widehat{P}_{0} = \max\left( \frac{c_{pT}}{\alpha_{s}c_{g}},\ 1 \right), \qquad c_{g} = \sqrt{g\frac{A_{full}}{W_{max}}}\f] | | (3-39) | |
 
-where *α*<sub>s</sub> is a user-supplied surcharge shock parameter. Larger
-values of *α*<sub>s</sub> start the slot celerity closer to the gravity-wave
-celerity, easing the transition at the mixed-flow interface. While the
+where *α*<sub>s</sub> is a user-supplied surcharge shock parameter. A newly
+pressurized conduit's slot therefore starts at the pressure celerity
+*c*<sub>pT</sub>/\f$\widehat{P}_{0}\f$ = *α*<sub>s</sub>*c*<sub>g</sub> (or at *c*<sub>pT</sub> itself
+when *α*<sub>s</sub>*c*<sub>g</sub> exceeds it). Smaller values of *α*<sub>s</sub> start
+the slot celerity closer to the gravity-wave celerity, easing the
+transition at the mixed-flow interface; larger values start *P* closer
+to 1 and sharpen it. While the
 conduit remains surcharged, a provisional Preissmann number decays
 exponentially toward 1:
 
@@ -886,10 +890,38 @@ width reflects the conduit's pressurization state and history rather
 than its instantaneous depth, with the pressure-wave celerity as an
 explicit, user-controlled quantity.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): cross-section of a closed conduit surcharged under the dynamic Preissmann slot, showing the full conduit area A_full, the accumulated slot area A_s above the crown with top width T_s, the surcharge head h_s, and an inset timeline of the Preissmann number decaying from P_hat_0 toward 1 after pressurization at t_s. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-8-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
-![Figure 3-8](figure3-8-placeholder.png)
+Figure 3-8 runs the four surcharge treatments on one deck, changing
+nothing but `SURCHARGE_METHOD`. Three 400 ft pipes of 1 ft diameter take
+an inflow that ramps to 12 cfs over the first 10 minutes, against a
+full-pipe capacity near 1 cfs, so the chain surcharges for most of the
+run and the upstream junction floods at its 30 ft rim. Panels (a)–(c)
+draw the hydraulic grade line through the four nodes from the binary
+output, twice while the chain fills and once while it drains; panel (d)
+follows the head at J3 through the filling. The static and
+dynamic slots fill the chain at the same pace and settle on the same
+grade line. EXTRAN, whose surcharged nodes switch to Equation 3-28,
+reaches its steady line as soon as the pipes are full, overshooting at
+J3 by more than 5 ft for one reporting period on the way. TPA never
+invokes that branch, and the last pipe, which discharges to a free
+outfall, stays below full depth under it (as under EXTRAN). J3 then
+rises through the free-surface formula against the surface area that
+the partly full pipe contributes (Section 3.3.2), and takes about
+26 minutes to reach its steady head. With the default
+`DPS_DECAY_TIME` of 0.5 s, the dynamic slot's widened slot lasts a
+single routing step. *P* is not written to any output, so panel (e)
+evaluates Equation 3-40 with the engine's constants for this deck's
+pipe (\f$\widehat{P}_{0}\f$ = 5.44 from Equation 3-39) and marks it at
+the run's minimum and average routing steps. The engine updates
+\f$\widehat{P}\f$ once per routing step, and the shortest step is
+1.93 s, by which time Equation 3-40 has returned \f$\widehat{P}\f$ to 1
+within one part in 10<sup>16</sup>. That is why the dynamic and static
+slots coincide here.
 
-*Figure 3-8 Conceptual representation of the dynamic Preissmann slot*
+![Figure 3-8 The four surcharge treatments on one overloaded pipe chain](figures/png/hydraulics_ch3_surcharge_methods.png)
+
+*Figure 3-8 The four surcharge treatments on deck `slot_surcharge.inp`:
+grade lines (ft) while the chain fills and drains, the head at J3, and
+the dynamic slot's Preissmann number from Equation 3-40*
 
 The pressurization life cycle of a conduit end under the dynamic slot
 is summarized in Figure 3-9.
@@ -1642,6 +1674,21 @@ outlet's head, is at least \f$\delta\f$; there only the flow derivatives
 differ. Stepped (Type 2) pump curves and the conduit end surface areas
 of Section 3.3.2 are unchanged.
 
+Figure 3-11 draws the three rows of the table as the engine computes
+them, for illustrative structures: the flow (top) and the
+\f$dQ/dH\f$ handed to the node update (bottom) under each setting.
+Under `EXPLICIT` the submerged weir's flow has an unbounded slope at
+equal heads while it reports the constant free-flow slope; the bottom
+orifice's flow jumps at \f$H^{*}\f$ by 1/*f*<sub>S</sub>, 1.23 here; and the outlet
+switches between its rated flow and none with a \f$dQ/dH\f$ of 0.
+
+![Figure 3-11 Regulator laws under explicit and semi-implicit node continuity](figures/png/hydraulics_ch3_si_regulator_laws.png)
+
+*Figure 3-11 Flow and dQ/dH (cfs, cfs/ft) under `EXPLICIT` and
+`SEMI_IMPLICIT` for a submerged weir, a bottom orifice with tailwater
+above its opening, and outlet ratings at small heads (synthetic, from the
+engine's laws, δ = 0.05 ft)*
+
 **Implementation.** The unified branch is implemented in
 `setNodeDepth` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`); the option is declared in
@@ -1750,7 +1797,7 @@ the underlying flow balance is still unsatisfied; with acceleration
 disabled the two tests coincide and the criterion reduces exactly to
 that of Section 3.2.
 
-Figure 3-11 summarizes one accelerated iteration.
+Figure 3-12 summarizes one accelerated iteration.
 
 <!-- workflow: anderson_iteration -->
 <pre class="mermaid">
@@ -1775,7 +1822,7 @@ flowchart TD
 <span data-node="K">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: convergence"</span>
 </div>
 
-*Figure 3-11 Workflow of one Anderson-accelerated iteration of the
+*Figure 3-12 Workflow of one Anderson-accelerated iteration of the
 successive-approximation loop (rendered diagram)*
 
 **Implementation.** The mixing update, the residual gate and the

@@ -1977,6 +1977,16 @@ Dynamic Wave routing with `QUALITY_SOLVER LEGACY`. Its retained-cell and
 shared mobile-water inventories are described in
 @ref hydraulics_ref_lid_storage_formulation. They do not imply independent
 saturated plug-flow reactors or separate ARD, MSX or heat layer reactors.
+Figure 6-12 shows the two inventories at one instant and the ports whose
+accepted transfers carry the mass described below.
+
+![Figure 6-12 A layered LID on a storage node](figures/png/hydraulics_ch2_lid_storage_node.png)
+
+**Figure 6-12 A layered LID on a storage node (synthetic, from the engine's cell,
+port and Richards rules and the Engine Manual's example stack): (a) layers,
+runtime cells, retained and mobile water below the mobile table h, three links
+and where reverse inflow goes; (b) Richards cells and face laws; (c) retention
+and (d) conductivity curves (in/hr) of the illustrative materials**
 
 ### 6.7.1 Accepted water transfers carry mass
 

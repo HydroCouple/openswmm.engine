@@ -90,15 +90,36 @@ carries a temperature computed from a vanishing volume — the 2 °C
 excursion at `J5` at three minutes is that, not a physical result. The
 same caution applies to every concentration during a cold start.
 
+**The species itself is in the output, and it is the expression's answer.**
+The committed `.rxn` doses nothing: its only `CL2` is a `[REACTION_QUALITY]`
+initial value in a network that starts empty, so its run writes a column of
+zeros. The run behind Figure 9-2 adds one source row, which doses the
+inflow at `J1` at 2.0 mg/L, and the `[REACTION_REPORT]` block quoted below:
+
+```
+[REACTION_SOURCES]
+CONC  J1  CL2  2.0
+```
+
+![Figure 9-2 Concentration of the reaction species CL2 read from the output](figures/png/workflow_ch9_reaction_species.png)
+
+*Figure 9-2 Concentration of the reaction species CL2 read from the run's output (mg/L): (a) at each node as the line fills; (b) at steady state against the travel time from the inflow, with the heat component on (computed 18 °C) and with `HEAT_TRANSPORT OFF` (the 20 °C fallback), over the first-order solution of the `.rxn` expression. Simulated, `transport_demo/transport_demo.inp` with a `CONC` source of 2.0 mg/L at `J1`*
+
+Water reaches `J5` 4.8 minutes after it enters. In that time `CL2` falls from
+2.0 to 1.9586 mg/L at the computed 18 °C, and to 1.9527 mg/L at the 20 °C
+fallback. Both runs agree with C = 2.0 exp(−kb θ^(TEMP − 20) τ), with kb
+and θ from the `.rxn` file and τ the water age less the inflow's source age,
+to within 1 × 10⁻⁵ mg/L at every node. The 0.006 mg/L between the two runs
+is the temperature correction of Figure 9-1, acting for five minutes.
+
 ## Species output and remaining limits
 
-Reaction species are written as named native result columns after pollutants,
-water age and temperature. The original figure above illustrates the thermal
-rate multiplier; it does not display the species concentrations. Species
-columns are available to the output reader and GUI even when they are absent
-from `[POLLUTANTS]`.
-
-`[REACTION_REPORT]` can select a subset without changing what the engine
+Reaction species are written as named native result columns after the
+pollutants, water age and temperature. On this deck the columns are
+`TRACER`, `DECAY`, `__WATER_AGE__`, `__TEMPERATURE__` and `CL2`, so the
+output reader and the GUI read `CL2` like a pollutant although
+`[POLLUTANTS]` never declares it. Without `[REACTION_REPORT]` every species
+is written; the section selects a subset without changing what the engine
 computes:
 
 ```

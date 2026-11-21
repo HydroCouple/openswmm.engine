@@ -68,6 +68,9 @@ Physical junction chamber area
 (ft² or m²). Its default is zero, preserving legacy behavior. Positive values
 define real chamber volume below the rim, including above pipe crowns. They
 are independent of ``ponded_area`` and the numerical ``MIN_SURFAREA`` setting.
+The hydraulics reference manual's section "Physical junction chamber storage"
+draws the chamber, plots its volume against depth, and shows how a connected
+conduit's water is shared between its two ends.
 
 Use the explicit lifecycle when editing geometry: the Solver context manager
 initializes and starts immediately.

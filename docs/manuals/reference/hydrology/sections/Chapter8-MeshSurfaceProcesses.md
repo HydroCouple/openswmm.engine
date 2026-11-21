@@ -297,7 +297,8 @@ infiltration step the held rate of a cell is multiplied by the slab's
 infiltration factor, and a fully frozen cell is not advanced by its method
 and holds a zero rate. The same factor limits the intake of a 2D aquifer
 where one owns the cell. The formulation and its mesh-specific details are
-given in @ref hydrology_ref_frozen_ground (Section 4.7.5).
+given in @ref hydrology_ref_frozen_ground (Section 4.7.5); Figure 4-9 there
+draws the slab, its infiltration factor and its heat contacts.
 
 ## 8.4 Infiltration destination
 

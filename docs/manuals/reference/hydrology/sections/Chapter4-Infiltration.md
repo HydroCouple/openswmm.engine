@@ -699,9 +699,9 @@ beginning at the surface (Figure 4-5). In the wetted zone the moisture
 content *θ* is at saturation *θ*<sub>s</sub> while the moisture content in the
 un-wetted zone is at some known initial level *θ*<sub>i</sub>.
 
-![Two-zone representation of the Green-Ampt infiltration model](hydrology/media/media/figure4-5.png)
+![Two-zone representation of the Green-Ampt infiltration model](figures/png/hydrology_ch4_green_ampt_zones.png)
 
-**Figure 4-5 Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006)**
+**Figure 4-5 Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006): (a) the wetted zone at θ<sub>s</sub> above the wetting front and the unwetted zone at θ<sub>i</sub> below it; (b) the moisture profile, whose shaded area is the cumulative infiltration F = L<sub>s</sub>θ<sub>d</sub> (synthetic, the example of Figure 4-6 at F = 1.0 in, so L<sub>s</sub> = 5.0 in)**
 
 The water velocity within the wetted zone is given by Darcy's Law as a
 function of the saturated hydraulic conductivity *K*<sub>S</sub>, the capillary
@@ -714,7 +714,7 @@ surface *L*<sub>s</sub>:
 The depth of the saturated layer *L*<sub>s</sub> can be expressed in terms of the
 cumulative infiltration, *F*, and the initial moisture deficit to be
 filled below the wetting front, *θ*<sub>d</sub> = *θ*<sub>s</sub> - *θ*<sub>i</sub> as
-*[Figure image not available in this format]*. Substituting this into Equation 4-26 and
+\f$L_{s} = F/\theta_{d}\f$ (Figure 4-5b). Substituting this into Equation 4-26 and
 assuming that *d* is small compared to the other depths gives the
 Green-Ampt equation for saturated conditions:
 
@@ -1550,6 +1550,17 @@ constrained by measurement. Reductions of this kind are empirical, and the
 related impedance-factor form used in soil physics codes (Lundin, 1990) has
 been criticized on that ground (Kurylyk and Watanabe, 2013), so *m* should be
 treated as a calibration parameter.
+
+Figure 4-9 draws these relations for the default slab of Section 4.7.4: the
+0 °C plateau of Equations 4-53 to 4-55, the factor of Equation 4-57 for
+three exponents, and the four contacts of Equation 4-56. With the default
+*m* = 11, a slab whose freezable water is only 6 % ice already halves
+infiltration, and a 50 mm snow pack cuts the surface contact from 20 to
+about 1.2 W/m²·K.
+
+![Frozen ground: temperature and frozen fraction against enthalpy, the infiltration factor, and the heat contacts of the slab](figures/png/hydrology_ch4_frozen_ground.png)
+
+**Figure 4-9 The frozen-ground slab at its defaults: (a) temperature T (°C) and frozen fraction φ against the enthalpy H (MJ/m²), with the 0 °C plateau of width H<sub>f</sub> = 15.0 MJ/m²; (b) the infiltration factor F<sub>o</sub> = (1 − φ)<sup>m</sup> for m = 2, 11 and 25; (c) the four heat contacts, with conductances in W/m²·K for a 50 mm snow pack and 5 mm/h of infiltration (synthetic, from the engine's slab functions)**
 
 ### 4.7.3 Computational Scheme
 
