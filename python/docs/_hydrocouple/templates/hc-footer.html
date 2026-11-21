@@ -1,0 +1,13 @@
+{#- Footer band: project links plus the hydrocouple.org links. -#}
+<div class="hc-footer">
+  <div class="hc-footer__brand">
+    <img src="{{ pathto('_static/hc/hydrocouple_logo.png', 1) }}" alt="" width="24" height="24">
+    <span>{{ hc_project_label }}</span>
+  </div>
+  <nav class="hc-footer__links" aria-label="HydroCouple">
+    <a href="{{ hc_manuals.home }}">hydrocouple.org</a>
+    {%- for link in hc_manuals.links %}<a href="{{ link.url }}">{{ link.title }}</a>{%- endfor %}
+    <a href="{{ hc_repository }}">Source</a>
+  </nav>
+  <p class="hc-footer__note">{% if copyright %}© {{ copyright }}. {% endif %}Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> and the <a href="https://pydata-sphinx-theme.readthedocs.io/">PyData theme</a>.</p>
+</div>

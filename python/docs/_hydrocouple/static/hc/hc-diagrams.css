@@ -1,0 +1,59 @@
+/* HydroCouple documentation theme: diagram viewer (js/hc-diagrams.js), both generators. */
+.hc-diagram {
+  margin: 1.2rem 0;
+  border: 1px solid var(--hc-line);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+  box-shadow: var(--hc-shadow);
+  overflow: hidden;
+}
+.hc-diagram__toolbar, .hc-diagram-dialog__bar {
+  display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem;
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--hc-line);
+  background: var(--hc-raised);
+}
+.hc-diagram__button, .hc-diagram-dialog__close {
+  min-width: 1.8rem; height: 1.65rem; padding: 0 0.55rem;
+  font: 600 0.8rem/1 var(--hc-font-body);
+  color: var(--hc-link);
+  background: var(--hc-surface);
+  border: 1px solid var(--hc-line);
+  border-radius: var(--hc-radius-small);
+  cursor: pointer;
+}
+.hc-diagram__button:hover, .hc-diagram-dialog__close:hover { color: var(--hc-link-hover); border-color: var(--hc-line-strong); }
+.hc-diagram__button:focus-visible, .hc-diagram-dialog__close:focus-visible,
+.hc-diagram__viewport:focus-visible { outline: 2px solid var(--hc-accent); outline-offset: 2px; }
+.hc-diagram__viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 3rem;
+  background: var(--hc-surface);
+  cursor: grab;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.hc-diagram__viewport.is-dragging { cursor: grabbing; }
+.hc-diagram__canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.hc-diagram__canvas > svg { display: block; max-width: none !important; }
+.hc-diagram__source { margin: 0; padding: 0.8rem 1rem; white-space: pre-wrap; font-family: var(--hc-font-mono); font-size: 0.85rem; color: var(--hc-text); }
+.hc-diagram--error .hc-diagram__viewport { cursor: default; }
+.hc-diagram--error .hc-diagram__canvas { position: static; transform: none !important; }
+
+.hc-diagram-dialog {
+  width: min(96vw, 1800px); height: 92vh; max-width: none; max-height: none;
+  padding: 0;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--hc-line);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  box-shadow: var(--hc-shadow-lift);
+}
+.hc-diagram-dialog:not([open]) { display: none; }
+.hc-diagram-dialog::backdrop { background: rgba(4, 12, 20, 0.62); }
+.hc-diagram-dialog__bar { flex: 0 0 auto; }
+.hc-diagram-dialog__bar .hc-diagram__toolbar { border: 0; padding: 0; background: transparent; }
+.hc-diagram-dialog .hc-diagram__viewport { flex: 1 1 auto; height: auto !important; touch-action: none; }

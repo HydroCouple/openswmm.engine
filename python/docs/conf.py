@@ -108,9 +108,6 @@ extensions = [
     # sphinx-design: tab-set / grid / grid-item-card directives used in
     # the User Guide and Migration pages.
     'sphinx_design',
-    # sphinxcontrib-mermaid: workflow / state diagrams (.. mermaid::)
-    # rendered client-side, matching the Doxygen manuals.
-    'sphinxcontrib.mermaid',
 ]
 
 # MyST (Markdown) settings
@@ -200,11 +197,7 @@ exclude_patterns = [
     'LEGACY_API_EXPANSION_PLAN.md',
 ]
 
-on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
-if not on_rtd:
-    html_theme = 'pydata_sphinx_theme'
-else:
-    html_theme = 'default'
+html_theme = 'pydata_sphinx_theme'
 
 html_theme_options = {
     "logo": {
@@ -233,14 +226,6 @@ html_theme_options = {
     "use_edit_page_button": False,
     "show_toc_level": 2,
     "navbar_end": ["theme-switcher.html", "navbar-icon-links.html"],
-} if not on_rtd else {
-    # Classic theme colors for the existing Read the Docs build.
-    "sidebarbgcolor": "#0a1c2e",
-    "sidebarlinkcolor": "#8ecfff",
-    "relbarbgcolor": "#00518c",
-    "headbgcolor": "#eef5fb",
-    "headtextcolor": "#0a1c2e",
-    "linkcolor": "#00518c",
 }
 
 html_logo = 'images/hydrocouple_logo.png'
@@ -248,7 +233,7 @@ html_title = 'OpenSWMM'
 html_favicon = 'images/hydrocouple_logo.png'
 
 html_static_path = ['_static']
-html_css_files = ['openswmm.css', 'hydrocouple-palette.css']
+html_css_files = ['openswmm.css']
 
 htmlhelp_basename = 'openswmmdoc'
 
@@ -455,3 +440,27 @@ def _epytext_to_rst(app, what, name, obj, options, lines):
 def setup(app):
     app.connect('autodoc-skip-member', skip_member)
     app.connect('autodoc-process-docstring', _epytext_to_rst)
+
+
+# -- HydroCouple documentation theme ---------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_hydrocouple"))
+import hydrocouple_theme  # noqa: E402
+
+hydrocouple_theme.configure(
+    globals(),
+    manual_id="openswmm.engine.python",
+    project_label="OpenSWMM Engine · Python",
+    repository="https://github.com/HydroCouple/openswmm.engine",
+    hero={
+        "kicker": "OpenSWMM Engine · Python",
+        "title": "Storm water modeling from Python",
+        "lede": "The openswmm package runs the reentrant OpenSWMM 6 engine and the SWMM 5 "
+                "compatibility layer: build and edit models, step simulations, and read "
+                "results as numpy arrays.",
+        "actions": [
+            {"label": "Get started", "url": "guide/quickstart", "style": "solid"},
+            {"label": "API reference", "url": "api", "style": "ghost"},
+            {"label": "C/C++ engine manual", "url": "https://www.hydrocouple.org/openswmm.engine/", "style": "ghost"},
+        ],
+    },
+)

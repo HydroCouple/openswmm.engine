@@ -1,0 +1,164 @@
+/* HydroCouple documentation theme: design tokens.
+ *
+ * Light values are the hydrocouple.org palette (css/site.css). The website has no dark
+ * mode, so the dark values are derived from it: deep-water surfaces, lighter blues for
+ * links, and soft status backgrounds. Every text pair is checked to at least 4.5:1 by
+ * contrast.py beside this file.
+ *
+ * Both generators use these tokens. PyData Sphinx sets html[data-theme="light|dark"];
+ * doxygen-awesome sets html.light-mode / html.dark-mode, or follows the system setting
+ * when neither class is present.
+ */
+:root,
+html[data-theme="light"],
+html.light-mode {
+  --hc-bg: #fafcfd;
+  --hc-surface: #ffffff;
+  --hc-raised: #eef5fb;
+  --hc-line: #d7e5f0;
+  --hc-line-strong: #9fb8cc;
+  --hc-text: #0a1c2e;
+  --hc-text-muted: #35516b;
+  --hc-link: #0068b0;
+  --hc-link-hover: #00518c;
+  --hc-primary: #0071bf;
+  --hc-primary-deep: #00518c;
+  --hc-on-primary: #ffffff;
+  --hc-accent: #0096ff;
+  --hc-accent-soft: #d9edff;
+  --hc-on-accent-soft: #00467a;
+  --hc-code-bg: #f1f6fb;
+  --hc-code-text: #0a1c2e;
+  --hc-inline-code: #00467a;
+  --hc-inline-code-bg: #e8f1f9;
+  --hc-flag: #f29f38;
+  --hc-flag-soft: #fdf0dc;
+  --hc-on-flag-soft: #6b3a00;
+  --hc-ok: #2e8b57;
+  --hc-ok-soft: #e3f3ea;
+  --hc-on-ok-soft: #1b5434;
+  --hc-planned: #7a6ea8;
+  --hc-planned-soft: #ece8f6;
+  --hc-on-planned-soft: #463b78;
+  --hc-danger: #b42318;
+  --hc-danger-soft: #fdecea;
+  --hc-on-danger-soft: #8a1a12;
+  --hc-nav-bg: rgba(250, 252, 253, 0.92);
+  --hc-hero-from: #00518c;
+  --hc-hero-mid: #0071bf;
+  --hc-hero-to: #1a8ae0;
+  --hc-on-hero: #ffffff;
+  --hc-hero-lede: #f2f9ff;
+  --hc-hero-kicker: #bfe1ff;
+  --hc-diagram-node: #eef5fb;
+  --hc-diagram-edge: #356486;
+  --hc-shadow: 0 2px 10px rgba(11, 31, 42, 0.07);
+  --hc-shadow-lift: 0 10px 30px rgba(11, 31, 42, 0.12);
+  --hc-radius: 12px;
+  --hc-radius-small: 8px;
+  --hc-font-head: "Sora", "Segoe UI", system-ui, sans-serif;
+  --hc-font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --hc-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --hc-topbar-height: 60px;
+  --hc-footer-bg: #0a1c2e;
+  --hc-footer-text: #c8d8e6;
+  --hc-footer-link: #9ccdf5;
+  --hc-footer-muted: #9fb3c4;
+  --hc-footer-line: #1c3a55;
+  color-scheme: light;
+}
+
+html[data-theme="dark"],
+html.dark-mode {
+  --hc-bg: #0b1622;
+  --hc-surface: #0f1d2c;
+  --hc-raised: #142739;
+  --hc-line: #233a50;
+  --hc-line-strong: #4a6a86;
+  --hc-text: #e8f1f8;
+  --hc-text-muted: #a8bfd3;
+  --hc-link: #6cc0ff;
+  --hc-link-hover: #a5d8ff;
+  --hc-primary: #3aa6f5;
+  --hc-primary-deep: #8ecfff;
+  --hc-on-primary: #06121d;
+  --hc-accent: #33a8ff;
+  --hc-accent-soft: #16385a;
+  --hc-on-accent-soft: #d4ebff;
+  --hc-code-bg: #0e2033;
+  --hc-code-text: #e8f1f8;
+  --hc-inline-code: #a9dbff;
+  --hc-inline-code-bg: #173048;
+  --hc-flag: #f6b25c;
+  --hc-flag-soft: #35260f;
+  --hc-on-flag-soft: #ffd9a3;
+  --hc-ok: #5ccf94;
+  --hc-ok-soft: #10301e;
+  --hc-on-ok-soft: #b5ecd0;
+  --hc-planned: #b3a6ea;
+  --hc-planned-soft: #262040;
+  --hc-on-planned-soft: #d9d1ff;
+  --hc-danger: #ff8a80;
+  --hc-danger-soft: #3b1614;
+  --hc-on-danger-soft: #ffc9c3;
+  --hc-nav-bg: rgba(11, 22, 34, 0.9);
+  --hc-hero-from: #031a2e;
+  --hc-hero-mid: #00457a;
+  --hc-hero-to: #0068b0;
+  --hc-on-hero: #ffffff;
+  --hc-hero-lede: #d6ebff;
+  --hc-hero-kicker: #9ed1ff;
+  --hc-diagram-node: #142739;
+  --hc-diagram-edge: #92b9d5;
+  --hc-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --hc-shadow-lift: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --hc-footer-bg: #06101a;
+  --hc-footer-line: #183049;
+  color-scheme: dark;
+}
+
+/* doxygen-awesome before its toggle script runs, or with no stored choice: follow the system. */
+@media (prefers-color-scheme: dark) {
+  html:not(.light-mode):not([data-theme]) {
+    --hc-bg: #0b1622;
+    --hc-surface: #0f1d2c;
+    --hc-raised: #142739;
+    --hc-line: #233a50;
+    --hc-line-strong: #4a6a86;
+    --hc-text: #e8f1f8;
+    --hc-text-muted: #a8bfd3;
+    --hc-link: #6cc0ff;
+    --hc-link-hover: #a5d8ff;
+    --hc-primary: #3aa6f5;
+    --hc-primary-deep: #8ecfff;
+    --hc-on-primary: #06121d;
+    --hc-accent: #33a8ff;
+    --hc-accent-soft: #16385a;
+    --hc-on-accent-soft: #d4ebff;
+    --hc-code-bg: #0e2033;
+    --hc-code-text: #e8f1f8;
+    --hc-inline-code: #a9dbff;
+    --hc-inline-code-bg: #173048;
+    --hc-flag: #f6b25c;
+    --hc-flag-soft: #35260f;
+    --hc-on-flag-soft: #ffd9a3;
+    --hc-ok: #5ccf94;
+    --hc-ok-soft: #10301e;
+    --hc-on-ok-soft: #b5ecd0;
+    --hc-planned: #b3a6ea;
+    --hc-planned-soft: #262040;
+    --hc-on-planned-soft: #d9d1ff;
+    --hc-danger: #ff8a80;
+    --hc-danger-soft: #3b1614;
+    --hc-on-danger-soft: #ffc9c3;
+    --hc-nav-bg: rgba(11, 22, 34, 0.9);
+    --hc-hero-from: #031a2e;
+    --hc-hero-mid: #00457a;
+    --hc-hero-to: #0068b0;
+    --hc-hero-lede: #d6ebff;
+    --hc-hero-kicker: #9ed1ff;
+    --hc-diagram-node: #142739;
+    --hc-diagram-edge: #92b9d5;
+    color-scheme: dark;
+  }
+}
