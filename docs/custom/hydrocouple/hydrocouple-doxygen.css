@@ -218,6 +218,11 @@ doxygen-awesome-dark-mode-toggle { display: none !important; }
 /* ---------- Doxygen menu bar and search ---------- */
 #main-nav, #main-menu, .sm-dox, .sm-dox ul { background: var(--hc-bg) !important; }
 #main-nav { border-bottom: 1px solid var(--hc-line); }
+/* On wide screens Doxygen's tabs.css hides its small-screen menu button by moving it
+   99999 px up, but its container sits at the right edge of the page, so the button
+   stuck out past it and every page scrolled sideways. The full menu is always shown at
+   these widths, so the button is not needed there. */
+@media (min-width: 768px) { .main-menu-btn { display: none; } }
 .sm-dox a, .sm-dox a:focus, .sm-dox a:active, .sm-dox a.highlighted {
   color: var(--hc-text-muted) !important;
   font-family: var(--hc-font-body); font-weight: 500;
