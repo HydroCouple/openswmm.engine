@@ -85,8 +85,8 @@ private:
     std::vector<std::vector<int>> incident_;
     std::vector<double> face_last_, due_, latest_;
     Queue fine_, coarse_, limits_;
-    std::size_t base_cells_ = 0; // derived occupancy, rebuilt on restore
-    std::vector<int> floor_;     // per-cell accuracy floor rung; empty = base
+    std::size_t base_cells_ = 0;                // derived occupancy, rebuilt on restore
+    std::vector<int> floor_;                    // per-cell accuracy floor rung; empty = base
     std::vector<std::vector<int>> floor_cells_; // derived from floor_ at construction
 
     int select(double bound, double accuracy = 1e30, int floor = 0) const;

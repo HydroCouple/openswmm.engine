@@ -372,7 +372,7 @@ private:
     DView d_cmass_, d_saccL_, d_saccR_, d_rain_conc_, d_csrc_, d_runoff_;
     DView d_species_ledger_; ///< per-cell rain, coupling and infiltration mass since publication
     DView d_species_ledger_runs_; ///< d_species_ledger_ summed over runs of cells
-    IView d_binds_;          ///< per-face dispersion limiter binds since publication
+    IView d_binds_;               ///< per-face dispersion limiter binds since publication
     DView d_bc_conc_, d_bc_gain_, d_bc_loss_, d_bc_req_mass_, d_bc_app_mass_;
     DView d_exch_mass_, d_exch_spill_, d_cp_gain_, d_node_conc_;
     bool has_csrc_ = false, has_runoff_ = false, has_node_conc_ = false;

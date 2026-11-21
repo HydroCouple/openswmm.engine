@@ -88,7 +88,7 @@ struct Counters {
     long n_deep_copy = 0;
     unsigned long long bytes_h2d = 0, bytes_d2h = 0, bytes_same = 0;
     unsigned long long bytes_fill = 0; ///< scalar fills of a view: no host array crosses
-    std::vector<KernelEntry> kernels; ///< indexed by kernel id
+    std::vector<KernelEntry> kernels;  ///< indexed by kernel id
     std::map<std::string, std::uint64_t> label_id;
 };
 

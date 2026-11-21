@@ -2151,7 +2151,7 @@ private:
     /// One cell of fireGwCellList: its exact horizon, then source/boundary knots.
     void fireListedCell(int cell, double dt, SurfaceStateData& surf, double time,
                         double accepted_end, GwFiringOrigin origin, double intake_through);
-    long parallel_cell_sweeps_ = 0; ///< diagnostic count of sweeps fired in parallel
+    long parallel_cell_sweeps_ = 0;       ///< diagnostic count of sweeps fired in parallel
     long parallel_ratio_face_passes_ = 0; ///< RATIO face passes run on more than one thread
     // Per-thread journals; transient within one sweep, never copied or saved.
     struct JournalScratch {

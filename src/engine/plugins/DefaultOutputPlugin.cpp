@@ -374,8 +374,8 @@ void DefaultOutputPlugin::writeHeader(const SimulationContext& ctx) {
     n_subcatch_vars_ = 8 + n_polluts_ + (snow_process_ ? SubcatchSnapshot::snow_process_count : 0) +
                        (frozen_ground_ ? SubcatchSnapshot::frozen_ground_count
                                        : 0); // rainfall..soilmoist + pollutants + extensions
-    n_node_vars_ = 6 + n_polluts_;          // depth..overflow + pollutants
-    n_link_vars_ = 5 + n_polluts_;          // flow..capacity + pollutants
+    n_node_vars_ = 6 + n_polluts_;           // depth..overflow + pollutants
+    n_link_vars_ = 5 + n_polluts_;           // flow..capacity + pollutants
 
     // Magic, version, flow units, counts
     writeInt4(MAGIC_NUMBER);

@@ -127,11 +127,11 @@ struct ColumnStep {
     ColumnTransfers* transfers = nullptr; ///< optional accepted-sweep receipt
 
     // ---- out ----
-    double f_top = 0.0;       ///< accepted top flux (m/s) — `q_in` after rejection
-    double rejected = 0.0;    ///< `q_in − f_top` (m/s, ≥ 0) back to the surface
-    double f_bot = 0.0;       ///< total bottom flux incl. handover (m/s)
-    double et_taken = 0.0;    ///< ET actually removed (m/s, ≤ `q_et`)
-    double theta_bot = 0.0;   ///< bottom-layer θ after the sweep (specific yield)
+    double f_top = 0.0;     ///< accepted top flux (m/s) — `q_in` after rejection
+    double rejected = 0.0;  ///< `q_in − f_top` (m/s, ≥ 0) back to the surface
+    double f_bot = 0.0;     ///< total bottom flux incl. handover (m/s)
+    double et_taken = 0.0;  ///< ET actually removed (m/s, ≤ `q_et`)
+    double theta_bot = 0.0; ///< bottom-layer θ after the sweep (specific yield)
     /// The kinematic Courant bound (s): the explicit column's stability bound, the capillary
     /// column's accuracy bound.
     double dt_limit = 1.0e30;

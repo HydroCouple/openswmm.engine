@@ -153,7 +153,7 @@ struct GwOptions {
     double budget_fraction = 0.5, head_tolerance = 0.05;
     SoilChar soil_char = SoilChar::RUSSO;
     GwClosure closure = GwClosure::AUTO;
-    int m_layers = 8;               ///< σ layers under closure B (global default)
+    int m_layers = 8; ///< σ layers under closure B (global default)
     /// Closure B: the implicit capillary (Darcy) column, default since 2026-11-19 (S2); NO keeps
     /// the explicit gravity-only (kinematic) column.
     bool capillary_diff = true;

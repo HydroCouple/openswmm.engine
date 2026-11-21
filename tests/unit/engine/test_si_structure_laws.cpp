@@ -61,8 +61,8 @@ constexpr double STAGE = 1.0;     ///< ft, fixed outfall stage = tailwater head 
  * @param[in] inflow Constant inflow to J1 (cfs).
  * @return Deck text.
  */
-std::string deck(const std::string& continuity, const std::string& link,
-                 const std::string& outfall, double y0, double inflow) {
+std::string deck(const std::string& continuity, const std::string& link, const std::string& outfall,
+                 double y0, double inflow) {
     std::ostringstream f;
     f << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nLINK_OFFSETS DEPTH\n"
       << "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 01:00:00\n"
@@ -71,7 +71,8 @@ std::string deck(const std::string& continuity, const std::string& link,
     if (continuity != "EXPLICIT")
         f << "NODE_CONTINUITY " << continuity << "\n";
     f << "[STORAGE]\nJ1 0 10 " << y0 << " FUNCTIONAL 0 0 1000 0 0\n"
-      << "[OUTFALLS]\n" << outfall << "\n"
+      << "[OUTFALLS]\n"
+      << outfall << "\n"
       << link << "[INFLOWS]\nJ1 FLOW \"\" FLOW 1.0 1.0 " << inflow << "\n"
       << "[REPORT]\nINPUT NO\n";
     return f.str();
@@ -86,9 +87,10 @@ std::string orificeDeck(const std::string& continuity, double inflow) {
 
 /// Transverse weir, 4 ft long, 3 ft high, Cw 3.33, crest at J1's invert; tailwater 1 ft above.
 std::string weirDeck(const std::string& continuity, double inflow) {
-    return deck(continuity,
-                "[WEIRS]\nL1 J1 O1 TRANSVERSE 0 3.33 NO 0 0 YES\n[XSECTIONS]\nL1 RECT_OPEN 3 4 0 0\n",
-                "O1 -1 FIXED 1.0 NO", 1.0, inflow);
+    return deck(
+        continuity,
+        "[WEIRS]\nL1 J1 O1 TRANSVERSE 0 3.33 NO 0 0 YES\n[XSECTIONS]\nL1 RECT_OPEN 3 4 0 0\n",
+        "O1 -1 FIXED 1.0 NO", 1.0, inflow);
 }
 
 /// Flow regulator: tabular outlet rated 1 cfs at every depth, to a free outfall.
@@ -252,8 +254,8 @@ TEST(SemiImplicitStructureLaws, SubmergedWeirRunsLinearlyBelowSmoothingHead) {
 TEST(SemiImplicitStructureLaws, SubmergedWeirSlopeIncludesSubmergence) {
     const double inflow = 6.0;
     // Above d the law is legacy's: both continuity options settle at the same depth.
-    const double dh = solve([](double x) { return weirLegacy(STAGE + x, STAGE); }, inflow,
-                            D_SMOOTH, 1.0);
+    const double dh =
+        solve([](double x) { return weirLegacy(STAGE + x, STAGE); }, inflow, D_SMOOTH, 1.0);
     ASSERT_GT(dh, D_SMOOTH);
 
     const Trace si = run("weir_above_d_si", weirDeck("SEMI_IMPLICIT", inflow), false);

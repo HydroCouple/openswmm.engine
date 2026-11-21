@@ -1905,9 +1905,10 @@ TEST(Aquifer2D, AutoBaseStepFloorsOnlyNodeBedCells) {
 // the node-bed cell at every 0.125 s check, the rest only at 1 s checks. Checking every cell at
 // every 0.125 s was a third of an independent-clock run's wall time on Bellinge.
 TEST(Aquifer2D, AutoBaseStepChecksBudgetsAtEachCellsOwnFloor) {
-    auto r = openDeck("floor-auto-bed-budget",
-                      deck(aquiferSection("", "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n", "J1 1\n"),
-                           "INFILTRATION NO\n", 0.));
+    auto r =
+        openDeck("floor-auto-bed-budget",
+                 deck(aquiferSection("", "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n", "J1 1\n"),
+                      "INFILTRATION NO\n", 0.));
     ASSERT_TRUE(r.opened);
     ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
@@ -1941,7 +1942,8 @@ TEST(Aquifer2D, AutoBaseStepChecksBudgetsAtEachCellsOwnFloor) {
         gw.advanceClock(.125 * k, surface.state(), false);
     }
     EXPECT_EQ(gw.cellCompletedTime(other), 1.);
-    EXPECT_GE(std::accumulate(clock->budget_firings.begin(), clock->budget_firings.end(), 0ull), 2ull);
+    EXPECT_GE(std::accumulate(clock->budget_firings.begin(), clock->budget_firings.end(), 0ull),
+              2ull);
     finish(r);
 }
 
