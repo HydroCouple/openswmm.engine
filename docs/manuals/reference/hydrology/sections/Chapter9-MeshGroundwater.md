@@ -345,7 +345,7 @@ one.
 
 In the kinematic column positivity is a per-layer availability share: a layer
 may not export more than it holds above residual in one step; the capillary
-column stays within $[	heta_r, 	heta_s]$ by construction. After the update \f$\theta\f$ is
+column stays within \f$[\theta_r, \theta_s]\f$ by construction. After the update \f$\theta\f$ is
 re-derived from the new geometry. A rising table compresses every layer, and a
 layer whose water then exceeds \f$\theta_s L_1 \Delta\sigma\f$ is saturated:
 the surplus cascades downward and whatever reaches the bottom is reported as an

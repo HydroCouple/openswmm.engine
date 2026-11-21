@@ -179,7 +179,7 @@ A run can keep its restart states inside a GeoPackage or an HDF5 file instead of
 
 In a GeoPackage, records are kept in the restart_records and restart_record_chunks tables, under the simulations row of their run. That row also keeps the model that was run, the engine version, when the run started and finished, and, for a run that started from a record, the source file, run, record and mode. A GeoPackage can hold model, results, report and restart records together, and several runs; each execution adds a new run and never changes the rows of an earlier one.
 
-In an HDF5 file, records are kept under the /restart group: /restart/runs/<run ID> holds the run's attributes and its model as input text, and /restart/runs/<run ID>/records/<record ID> holds each record as a byte dataset with its attributes. A record's status attribute is written last.
+In an HDF5 file, records are kept under the `/restart` group: `/restart/runs/<run ID>` holds the run's attributes and its model as input text, and `/restart/runs/<run ID>/records/<record ID>` holds each record as a byte dataset with its attributes. A record's status attribute is written last.
 
 The swmm_restart_inspect_json() function and the Python inspect_restart_file() function list the runs and records of a file without changing it.
 
