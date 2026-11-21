@@ -102,8 +102,8 @@ TEST(BackendInfo, EveryPluginBackendAnswersWithADeviceOrAReason) {
 }
 
 #if defined(OPENSWMM_TEST_HAVE_OMP_PLUGIN) && defined(OPENSWMM_HAS_2D)
-// The build that registered this test also built the OpenMP plugin beside the
-// engine, so both solvers must find it and no GPU plugin.
+// The build that registered this test also built the OpenMP plugin, so both
+// solvers must find it and no usable GPU plugin.
 TEST(BackendInfo, TheBuiltOpenMpPluginIsFoundForBothSolvers) {
     for (int solver : {SWMM_BACKEND_SOLVER_FV_NETWORK, SWMM_BACKEND_SOLVER_2D_SURFACE}) {
         SWMM_BackendInfo info{};
@@ -115,7 +115,12 @@ TEST(BackendInfo, TheBuiltOpenMpPluginIsFoundForBothSolvers) {
     SWMM_BackendInfo cuda{};
     ASSERT_EQ(swmm_backend_info(SWMM_BACKEND_SOLVER_FV_NETWORK, "CUDA", &cuda), SWMM_OK);
     EXPECT_EQ(cuda.usable, 0);
-    EXPECT_NE(std::string(cuda.reason).find("not installed"), std::string::npos) << cuda.reason;
+    // Windows stages the 2D safety test's fake CUDA plugin, which has no 1D
+    // solver, beside every test executable, where this engine also looks.
+    const std::string reason = cuda.reason;
+    EXPECT_TRUE(reason.find("not installed") != std::string::npos ||
+                reason.find("does not provide this solver") != std::string::npos)
+        << reason;
 }
 #endif
 

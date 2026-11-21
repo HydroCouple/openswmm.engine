@@ -877,6 +877,12 @@ add_gtest_unit(test_engine_backend_info test_backend_info.cpp)
 if(OPENSWMM_BUILD_GPU_PLUGIN AND OPENSWMM_GPU_BACKEND STREQUAL "omp" AND TARGET openswmm_gpu_omp)
     target_compile_definitions(test_engine_backend_info PRIVATE OPENSWMM_TEST_HAVE_OMP_PLUGIN)
     add_dependencies(test_engine_backend_info openswmm_gpu_omp)
+    # MSVC tests link the engine statically, so it looks beside the test
+    # executable, and the plugin is built elsewhere.
+    if(WIN32)
+        set_tests_properties(test_engine_backend_info PROPERTIES
+            ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
 endif()
 
 # 1D finite volume device backend (hydraulics/fv/gpu): the plugin's substep
