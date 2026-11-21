@@ -114,6 +114,11 @@ jobs:
             grep -F 'face_operator=metal queue_device=' metal.log
             grep -E 'face_worker_complete sweeps=[1-9][0-9]* evaluations=[1-9][0-9]*' metal.log
           fi
+      # The image's python3 is 3.15, for which h5py has no wheel (and the runner no HDF5 to
+      # build one against).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Check 1D and 2D finite-volume routing and hydraulic results
         shell: bash
         env:
