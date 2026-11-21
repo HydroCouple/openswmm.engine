@@ -321,6 +321,26 @@ div.toc h3 {
 div.toc li a { color: var(--hc-text-muted) !important; }
 div.toc li a.active, div.toc li a:hover { color: var(--hc-link-hover) !important; }
 
+/* Doxygen 1.14+ markup: inline code as span.tt, the right-hand page outline (#page-nav),
+   the tree-view sync icon and the tree's edge. Doxygen's own stylesheet gives them fixed light
+   colors, which stay light in dark mode. */
+span.tt {
+  background: var(--hc-inline-code-bg) !important;
+  color: var(--hc-inline-code) !important;
+  border: 0 !important;
+  border-radius: 6px;
+  padding: 0.08em 0.35em;
+}
+a span.tt { color: var(--hc-link) !important; }
+#page-nav, .page-nav-panel { background: var(--hc-bg) !important; border-color: var(--hc-line) !important; }
+#page-nav-resize-handle { background: var(--hc-line) !important; }
+#page-nav li.vis { background: var(--hc-accent-soft) !important; }
+#page-nav a:is(:link, :visited) { color: var(--hc-text-muted) !important; }
+#page-nav li.vis > .item a:is(:link, :visited) { color: var(--hc-on-accent-soft) !important; }
+#page-nav a:is(:hover, :focus) { color: var(--hc-link-hover) !important; }
+div.nav-sync-icon { background: var(--hc-surface) !important; border-color: var(--hc-line) !important; }
+#nav-tree { border-color: var(--hc-line) !important; }
+
 /* Bottom bar (breadcrumb and generator note) */
 #nav-path, #nav-path ul {
   background: var(--hc-raised) !important;
