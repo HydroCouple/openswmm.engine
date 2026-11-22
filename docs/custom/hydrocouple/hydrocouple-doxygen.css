@@ -343,6 +343,9 @@ a span.tt { color: var(--hc-link) !important; }
 #page-nav a:is(:link, :visited) { color: var(--hc-text-muted) !important; }
 #page-nav li.vis > .item a:is(:link, :visited) { color: var(--hc-on-accent-soft) !important; }
 #page-nav a:is(:hover, :focus) { color: var(--hc-link-hover) !important; }
+/* The outline copies each heading's anchor into its entry, and doxygen-awesome makes a.anchor a
+   block: every entry's text dropped below its indent, so all levels lined up flush left. */
+ul.page-outline a.anchor { display: none; }
 div.nav-sync-icon { background: var(--hc-surface) !important; border-color: var(--hc-line) !important; }
 #nav-tree { border-color: var(--hc-line) !important; }
 
