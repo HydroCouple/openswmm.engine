@@ -16,7 +16,7 @@
         {"id": "openswmm.engine.python", "title": "Engine for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.engine/python/", "published": true},
         {"id": "openswmm.engine.wasm", "title": "Engine for WebAssembly", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.engine.wasm/", "published": false},
         {"id": "openswmm.gui", "title": "SWMMVis desktop application", "kind": "User manual", "url": "https://www.hydrocouple.org/openswmm.gui/", "published": true},
-        {"id": "hydrocouple.gui.data", "title": "SWMMVis data sources plugin", "kind": "Reference", "url": "https://www.hydrocouple.org/hydrocouple.gui.data/", "published": false},
+        {"id": "hydrocouple.gui.data", "title": "SWMMVis data sources plugin", "kind": "Reference", "url": "https://www.hydrocouple.org/hydrocouple.gui.data/", "published": true},
         {"id": "openswmm.mcp", "title": "MCP server", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.mcp/", "published": true},
         {"id": "openswmm.gymnasium", "title": "Gymnasium environments", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.gymnasium/", "published": true},
         {"id": "openswmm.engine.benchmarks", "title": "Benchmarks", "kind": "Guide", "url": "https://www.hydrocouple.org/openswmm.engine.benchmarks/docs/", "published": false}
@@ -29,7 +29,7 @@
         {"id": "HydroCouple.python", "title": "Interface standard for Python", "kind": "Guide + API", "url": "https://www.hydrocouple.org/HydroCouple/python/", "published": true},
         {"id": "HydroCoupleSDK", "title": "SDK", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleSDK/", "published": false},
         {"id": "HydroCoupleComposer", "title": "Composer", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComposer/", "published": false},
-        {"id": "HydroCoupleComponents", "title": "Provider components", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComponents/", "published": false},
+        {"id": "HydroCoupleComponents", "title": "Provider components", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComponents/", "published": true},
         {"id": "hydrocouple.platform", "title": "Execution platform", "kind": "Guide + API", "url": "https://www.hydrocouple.org/hydrocouple.platform/", "published": false},
         {"id": "water-ontology", "title": "Water ontology", "kind": "Reference", "url": "https://www.hydrocouple.org/water-ontology/", "published": false}
       ]
