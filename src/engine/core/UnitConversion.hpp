@@ -161,6 +161,20 @@ static constexpr double IN_TO_MM = 25.4;      ///< in → mm, legacy MMperINCH
 // components. Never use these where legacy parity applies.
 static constexpr double FT3_TO_M3_EXACT = 0.028316846592; ///< ft³ → m³, exact
 static constexpr double FT3_TO_L_EXACT = 28.316846592;    ///< ft³ → L, exact
+static constexpr double FT2_TO_M2_EXACT = 0.09290304;     ///< ft² → m², exact (0.3048²)
+
+/// Display flow units → m³/s, exact, indexed by FlowUnits (CFS, GPM, MGD, CMS,
+/// LPS, MLD), for the SI-internal consumers (flow tracing, 2D boundary
+/// conditions). Not derived from Qcf: its legacy-truncated entries serve the
+/// 1D engine's parity and would put a 1e-5 error into these.
+static constexpr double FLOW_TO_M3S_EXACT[6] = {
+    FT3_TO_M3_EXACT,     // CFS
+    6.30901964e-05,      // GPM: 3.785411784e-3 m³ / 60 s
+    0.04381263638888889, // MGD: 3785.411784 m³ / 86400 s
+    1.0,                 // CMS
+    0.001,               // LPS
+    0.011574074074074073 // MLD: 1000 m³ / 86400 s
+};
 
 // ============================================================================
 // UCF function — matching legacy UCF()

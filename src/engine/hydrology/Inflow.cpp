@@ -269,9 +269,8 @@ void InflowSolver::init(SimulationContext& ctx) {
             // Internal quality unit is ft3 x mg/L, so a user-supplied MASS rate
             // divides by the liters-per-ft3 factor exactly as legacy does
             // (inflow.c: "if ( type == MASS_INFLOW ) cf /= LperFT3").
-            constexpr double L_PER_FT3 = 28.317; // legacy consts.h LperFT3
             if (is_mass)
-                cf /= L_PER_FT3;
+                cf /= ucf::FT3_TO_L;
         }
         ext_inflows_.conv_factor[ui] = cf;
 
@@ -740,7 +739,7 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
             const auto node = static_cast<std::size_t>(source.node);
             const double water = std::max(0.0, ctx.nodes.ext_inflow[node]) +
                                  std::max(0.0, ctx.nodes.dwf_inflow[node]);
-            const double rate = source.value * factor * (source.mass ? 1.0 / 28.317 : water);
+            const double rate = source.value * factor * (source.mass ? 1.0 / ucf::FT3_TO_L : water);
             rx.msx_ext_mass_in[node * ns + static_cast<std::size_t>(source.species)] += rate;
         }
     }

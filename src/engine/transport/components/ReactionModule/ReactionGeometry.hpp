@@ -10,6 +10,7 @@
  */
 
 #pragma once
+#include "../../../core/UnitConversion.hpp"
 #include "../../../core/SimulationContext.hpp"
 #include "../../../hydraulics/Link.hpp"
 #include "../../../hydraulics/XSectBatch.hpp"
@@ -77,7 +78,7 @@ inline double reactionWallArea(const SimulationContext& c, bool link_element, in
  */
 inline double reactionAreaVolume(const SimulationContext& c, bool link_element, int e,
                                  double volume) {
-    return volume > .0353147 ? reactionWallArea(c, link_element, e) / (volume * 28.317) : 0.;
+    return volume > .0353147 ? reactionWallArea(c, link_element, e) / (volume * ucf::FT3_TO_L) : 0.;
 }
 /**
  * @brief Build per-species active-to-reference wall coverage multipliers.

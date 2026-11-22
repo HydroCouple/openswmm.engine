@@ -419,7 +419,7 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
         next.wind = ctx.forcing.effective_wind(next.wind / .44704) * .44704;
     }
     if (next.longwave_source == RadiationOrigin::Computed) {
-        const double kelvin = next.temperature + 273.15;
+        const double kelvin = next.temperature + constants::KELVIN_OFFSET;
         const double vapour =
             std::max(0., saturatedVapourPressure(next.temperature) * next.humidity);
         const double emissivity = 1.08 * (1 - std::exp(-std::pow(vapour / 100, kelvin / 2016)));

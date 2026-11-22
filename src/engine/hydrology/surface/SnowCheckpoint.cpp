@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "SnowCheckpoint.hpp"
 #include "MeshSnow.hpp"
 #include "DegreeDaySnow.hpp"
@@ -122,7 +123,8 @@ void point(Archive& a, ueb::State& s) {
     double duration = 0;
     a.sequence(s.history, [&](auto& h) {
         scalars(a, h.seconds, h.surface, h.bulk);
-        require(h.seconds > 0 && h.surface > -273.15 && h.bulk > -273.15,
+        require(h.seconds > 0 && h.surface > -constants::KELVIN_OFFSET &&
+                    h.bulk > -constants::KELVIN_OFFSET,
                 "Invalid snow checkpoint thermal history.");
         duration += h.seconds;
     });

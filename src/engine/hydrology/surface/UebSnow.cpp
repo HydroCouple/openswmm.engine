@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "UebSnow.hpp"
 #include "UebReference.hpp"
 #include <algorithm>
@@ -84,8 +85,9 @@ std::string stateError(const State& s) {
         return "Invalid UEB snow inventory.";
     double duration = 0;
     for (const auto& h : s.history) {
-        if (!finite(h.seconds) || h.seconds <= 0 || !finite(h.surface) || h.surface <= -273.15 ||
-            !finite(h.bulk) || h.bulk <= -273.15)
+        if (!finite(h.seconds) || h.seconds <= 0 || !finite(h.surface) ||
+            h.surface <= -constants::KELVIN_OFFSET || !finite(h.bulk) ||
+            h.bulk <= -constants::KELVIN_OFFSET)
             return "Invalid UEB thermal history.";
         duration += h.seconds;
     }
@@ -134,7 +136,7 @@ bool step(State& state, const Parameters& p, const Site& site, const Forcing& f,
                                           p.rain_temperature,
                                           p.snow_temperature,
                                           0,
-                                          273.15,
+                                          constants::KELVIN_OFFSET,
                                           p.emissivity,
                                           2.0747e-7,
                                           latent_heat,
@@ -225,7 +227,8 @@ bool step(State& state, const Parameters& p, const Site& site, const Forcing& f,
         std::abs(next.water_residual) > 1e-10 * std::max(1., state.water + next.rain + next.snow) ||
         std::abs(next.energy_residual) >
             1e-10 * std::max({1., std::abs(state.energy), std::abs(next.net_energy)}) ||
-        next.surface_temperature <= -273.15 || next.bulk_temperature <= -273.15 || diagnostics > 0)
+        next.surface_temperature <= -constants::KELVIN_OFFSET ||
+        next.bulk_temperature <= -constants::KELVIN_OFFSET || diagnostics > 0)
         return false;
     state.energy = water[1];
     state.water = water[2];
@@ -324,7 +327,7 @@ std::string Parameters::validate() const {
                      max_step})
         if (!finite(x))
             return "Nonfinite UEB parameter.";
-    if (rain_temperature <= snow_temperature || snow_temperature <= -273.15 ||
+    if (rain_temperature <= snow_temperature || snow_temperature <= -constants::KELVIN_OFFSET ||
         !fraction(emissivity) || roughness <= 0 || measurement_height <= roughness ||
         snow_density <= 0 || snow_density >= 917 || soil_density <= 0 || soil_heat_capacity <= 0 ||
         active_soil_depth <= 0 || liquid_retention < 0 ||

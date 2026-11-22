@@ -156,7 +156,6 @@ public:
 
 private:
     static constexpr double MISSING = -1.0e10;
-    static constexpr double MM_PER_INCH = 25.4;
     static constexpr int MAX_LINE = 512;
 
     // File state

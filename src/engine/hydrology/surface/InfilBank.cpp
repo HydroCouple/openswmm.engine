@@ -79,15 +79,15 @@ double InfilBank::rateFeet(int e, double precip, double runon, double depth, dou
     if (owners_[e] == Owner::EXTERNAL || dt <= 0.0)
         return 0.0;
     const double f = evaluate(e, precip, runon, depth, dt, factors);
-    cumulative_[e] += std::max(0.0, f * 0.3048) * dt;
+    cumulative_[e] += std::max(0.0, f * ucf::FT_TO_M) * dt;
     return f;
 }
 double InfilBank::rate(int e, double precip, double runon, double depth, double dt,
                        Factors factors) {
-    constexpr double feet_per_metre = 3.280839895013123;
+    constexpr double feet_per_metre = 1.0 / ucf::FT_TO_M; // == 3.280839895013123 bit for bit
     return std::max(0.0, rateFeet(e, precip * feet_per_metre, runon * feet_per_metre,
                                   depth * feet_per_metre, dt, factors) *
-                             0.3048);
+                             ucf::FT_TO_M);
 }
 double InfilBank::evaluate(int i, double precip, double runon, double depth, double dt,
                            Factors factors) {

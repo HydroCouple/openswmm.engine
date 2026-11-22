@@ -1098,7 +1098,6 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
         // std::pow with the legacy literal exponents (1.5 / 0.83 / 1.67 /
         // 2.5; NOT x·sqrt(x) closed forms) — then divides the CMS result by
         // M3perFT3 for SI. Replicated op-for-op for bit parity.
-        constexpr double M3perFT3 = 0.028317; // legacy consts.h
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         const double ucfL = ucf::Ucf[ucf::LENGTH][us];
         auto weirFlow = [&](double head_ft, double dir_f, double& q1_out, double& q2_out) {
@@ -1152,8 +1151,8 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
             }
             }
             if (us == 1) { // SI: CMS → CFS (legacy link.c:2404-2408)
-                q1_out /= M3perFT3;
-                q2_out /= M3perFT3;
+                q1_out /= ucf::FT3_TO_M3;
+                q2_out /= ucf::FT3_TO_M3;
             }
         };
 

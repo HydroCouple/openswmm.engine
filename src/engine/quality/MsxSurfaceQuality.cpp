@@ -689,7 +689,6 @@ void reactPondedPools(SimulationContext& ctx, double dt, SurfaceScratch& scratch
     auto& workspace = scratch.workspace;
     workspace.init(rx);
     const double area_factor = ucf::UCF(ucf::LANDAREA, ctx.options);
-    constexpr double litres_per_ft3 = 28.317;
     for (int sc = 0; sc < ctx.n_subcatches(); ++sc) {
         const auto i = static_cast<std::size_t>(sc);
         if (!rx.wet_enabled(sc))
@@ -715,11 +714,11 @@ void reactPondedPools(SimulationContext& ctx, double dt, SurfaceScratch& scratch
                               ctx.subcatches.lid_return_applied_cfs[i] * dt;
         if (!(volume > 0.0))
             continue; // a dry store is not a reactor
-        const double litres = volume * litres_per_ft3;
+        const double litres = volume * ucf::FT3_TO_L;
         for (int m = 0; m < ns; ++m) {
             const auto k = surface.sidx(sc, m);
             const double rain = m < static_cast<int>(rx.rain_conc.size()) ? rx.rain_conc[m] : 0.0;
-            mixed[k] = surface.ponded_qual[k] + rain * litres_per_ft3 * rain_volume +
+            mixed[k] = surface.ponded_qual[k] + rain * ucf::FT3_TO_L * rain_volume +
                        surface.runon_qual_rate[k] * dt;
         }
         if (volume <= quality::ZERO_VOLUME)
@@ -966,7 +965,7 @@ void addLidDrain(SimulationContext& ctx, int control, int sc, int node, double d
                          static_cast<std::size_t>(m)] += drain_cfs * c_src * (1.0 - rmvl);
         if (!to_perv) {
             const double w =
-                drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+                drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * s.mcf[static_cast<std::size_t>(m)];
             if (source)
                 s.led_subcatch_load[s.sidx(sc, m)] += w;
             if (w > 0.0) {
@@ -1017,10 +1016,10 @@ void addLidDrainRunon(SimulationContext& ctx, int control, int sc, int receiver,
         const double c_src = source ? source[m] : s.washoff_conc[s.sidx(sc, m)];
         const auto k = s.sidx(receiver, m);
         if (k < s.lid_drain_runon_load.size())
-            s.lid_drain_runon_load[k] += (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
+            s.lid_drain_runon_load[k] += (drain_cfs * c_src * ucf::FT3_TO_L) * (1.0 - rmvl);
         if (!to_perv) {
             const double w =
-                drain_cfs * c_src * dt_runoff * 28.317 * s.mcf[static_cast<std::size_t>(m)];
+                drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * s.mcf[static_cast<std::size_t>(m)];
             if (source)
                 s.led_subcatch_load[s.sidx(sc, m)] += w;
             if (w > 0.0) {
@@ -1106,10 +1105,10 @@ double remainingBuildup(const SimulationContext& ctx, int m) noexcept {
     }
     for (std::size_t k = std::size_t(m); k < ctx.reactions.lid.mass.size();
          k += std::size_t(s.n_species))
-        total += ctx.reactions.lid.mass[k] * 28.317 * s.mcf[m];
+        total += ctx.reactions.lid.mass[k] * ucf::FT3_TO_L * s.mcf[m];
     for (std::size_t k = std::size_t(m); k < ctx.reactions.lid.surface_carry.size();
          k += std::size_t(s.n_species))
-        total += ctx.reactions.lid.surface_carry[k] * 28.317 * s.mcf[m];
+        total += ctx.reactions.lid.surface_carry[k] * ucf::FT3_TO_L * s.mcf[m];
     if (static_cast<std::size_t>(m) < s.led_ponded_lost.size())
         total += s.led_ponded_lost[static_cast<std::size_t>(m)];
     return total;
@@ -1147,7 +1146,7 @@ void addRunon(SimulationContext& ctx, int donor, int receiver, double q) noexcep
     for (int m = 0; m < s.n_species; ++m) {
         const auto src = s.sidx(donor, m), dst = s.sidx(receiver, m);
         if (src < s.washoff_conc_old.size() && dst < s.runon_qual_rate.size())
-            s.runon_qual_rate[dst] += q * s.washoff_conc_old[src] * 28.317;
+            s.runon_qual_rate[dst] += q * s.washoff_conc_old[src] * ucf::FT3_TO_L;
     }
 }
 

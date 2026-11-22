@@ -34,6 +34,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/Constants.hpp"
 #include "RadiativeExchange.hpp"
 
 #include "HeatOverrides.hpp"
@@ -64,7 +65,7 @@ namespace {
  * @return (t_c+273.15)^4 K4; no physical range/overflow repair. Pure/allocation-free.
  */
 double kelvin4(double t_c) noexcept {
-    const double k = t_c + kKelvinOffset;
+    const double k = t_c + constants::KELVIN_OFFSET;
     return k * k * k * k;
 }
 

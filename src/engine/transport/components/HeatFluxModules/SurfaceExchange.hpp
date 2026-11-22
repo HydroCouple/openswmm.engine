@@ -70,6 +70,7 @@
 #ifndef OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 #define OPENSWMM_ENGINE_TRANSPORT_SURFACE_EXCHANGE_HPP
 
+#include "../../../core/UnitConversion.hpp"
 #include "../../../data/HeatOverrideData.hpp" // HeatElement (PE1)
 
 namespace openswmm {
@@ -173,10 +174,10 @@ double relaxT(double j0, double j1, double h, double area_m2, double vol_m3, dou
 /// Returns `t0_c` when `J′ ≤ 0`, matching `relaxT`'s fallback.
 double equilibriumT(double t0_c, double j0, double j1, double h) noexcept;
 
-/// ft² → m². Exported with `relaxT`, which is useless without it.
-inline constexpr double kSqFtToSqM = 0.09290304;
-/// ft³ → m³.
-inline constexpr double kCuFtToCuM = 0.028316846592;
+/// ft² → m² and ft³ → m³: the heat modules read the exact ucf factors under
+/// these names (one value each, defined once in UnitConversion.hpp).
+inline constexpr double kSqFtToSqM = ucf::FT2_TO_M2_EXACT;
+inline constexpr double kCuFtToCuM = ucf::FT3_TO_M3_EXACT;
 /// mph → m/s. `ClimateState::wind_speed` is mph.
 inline constexpr double kMphToMs = 0.44704;
 

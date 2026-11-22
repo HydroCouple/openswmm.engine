@@ -1042,8 +1042,6 @@ private:
         const double t_gr = bed_on ? th::groundTemperature(ctx) : 0.0;
         const double rho = ctx.options.water_density;
         const double cp = ctx.options.water_specific_heat;
-        constexpr double kSqFt = 0.09290304;
-        constexpr double kCuFt = 0.028316846592;
 
         auto& hs = ctx.heat_state;
         const int nl = ctx.n_links();
@@ -1065,9 +1063,9 @@ private:
                     continue;
                 const double t = hs.node_temp[un];
                 const HeatElement ne = HeatElement::node(n);
-                hs.node_temp[un] +=
-                    th::relaxT(th::netFluxOut(ctx, ne, t), th::netFluxOut(ctx, ne, t + th::kProbeC),
-                               th::kProbeC, a * kSqFt, vol * kCuFt, dt, rho, cp);
+                hs.node_temp[un] += th::relaxT(
+                    th::netFluxOut(ctx, ne, t), th::netFluxOut(ctx, ne, t + th::kProbeC),
+                    th::kProbeC, a * ucf::FT2_TO_M2_EXACT, vol * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
             }
         }
 
@@ -1107,7 +1105,8 @@ private:
             // Heat: one pair/relaxation against the mean, uniform dT.
             if (heat_on) {
                 const double t_mean = scratch_[static_cast<std::size_t>(L.temp_row)];
-                const double surf_m2 = flux_on ? th::linkFreeSurfaceFt2(ctx, l) * kSqFt : 0.0;
+                const double surf_m2 =
+                    flux_on ? th::linkFreeSurfaceFt2(ctx, l) * ucf::FT2_TO_M2_EXACT : 0.0;
                 double d_tw = 0.0;
                 bool bed_stepped = false;
                 if (bed_on && ul < bed.link_temp.size()) {
@@ -1130,7 +1129,7 @@ private:
                 if (!bed_stepped && flux_on && surf_m2 > 0.0) {
                     d_tw = th::relaxT(th::netFluxOut(ctx, le, t_mean),
                                       th::netFluxOut(ctx, le, t_mean + th::kProbeC), th::kProbeC,
-                                      surf_m2, vol_ft3 * kCuFt, dt, rho, cp);
+                                      surf_m2, vol_ft3 * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
                 }
                 if (d_tw != 0.0)
                     for (int i = 0; i < cnt; ++i)
@@ -1154,8 +1153,8 @@ private:
                         const double c_mean = scratch_[static_cast<std::size_t>(row)];
                         double& cb = bed.link_conc[ul * static_cast<std::size_t>(n_bed) +
                                                    static_cast<std::size_t>(b)];
-                        const th::SolutePairStep st =
-                            th::exchangePair(c_mean, cb, vol_ft3 * kCuFt, vol_b, q_exch, dt);
+                        const th::SolutePairStep st = th::exchangePair(
+                            c_mean, cb, vol_ft3 * ucf::FT3_TO_M3_EXACT, vol_b, q_exch, dt);
                         if (st.dc_w != 0.0)
                             for (int i = 0; i < cnt; ++i)
                                 store_.set_seg_conc(l, i, row,

@@ -4225,7 +4225,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                                 static_cast<std::size_t>(p);
                                 if (ri < ctx_.subcatches.lid_drain_runon_qual.size())
                                     ctx_.subcatches.lid_drain_runon_qual[ri] +=
-                                        (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
+                                        (drain_cfs * c_src * ucf::FT3_TO_L) * (1.0 - rmvl);
                                 if (!g.to_perv[uu]) {
                                     const double mass_ucf_d = ucf::UCF(ucf::MASS, ctx_.options);
                                     double mcf_d = mass_ucf_d;
@@ -4243,7 +4243,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                             break;
                                         }
                                     }
-                                    const double w = drain_cfs * c_src * dt_runoff * 28.317 * mcf_d;
+                                    const double w =
+                                        drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * mcf_d;
                                     if (w > 0.0) {
                                         ctx_.mass_balance
                                             .qual_bmp_removal[static_cast<std::size_t>(p)] +=
@@ -4345,7 +4346,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                     }
                                     // c_src is mg/L, so LperFT3 brings
                                     // cfs·mg/L·s to concentration mass.
-                                    const double w = drain_cfs * c_src * dt_runoff * 28.317 * mcf_d;
+                                    const double w =
+                                        drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * mcf_d;
                                     if (w > 0.0) {
                                         if (upd < ctx_.mass_balance.qual_bmp_removal.size())
                                             ctx_.mass_balance.qual_bmp_removal[upd] += rmvl * w;
@@ -5287,7 +5289,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
         surface_router_.drainSubcatchRecharge(gw_2d_recharge_vol_);
         if (!gw_2d_recharge_vol_.empty()) {
             gw_infil_with_2d_.assign(gw_infil_rate_.begin(), gw_infil_rate_.end());
-            constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
+            constexpr double kM3ToFt3 = 1.0 / (ucf::FT_TO_M * ucf::FT_TO_M * ucf::FT_TO_M);
             for (int i = 0; i < ns && i < static_cast<int>(gw_2d_recharge_vol_.size()); ++i) {
                 const auto ui = static_cast<std::size_t>(i);
                 const double vol_m3 = gw_2d_recharge_vol_[ui];
@@ -6543,7 +6545,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 if (q_in > 0.0 && q_out > 0.0) {
                     ctx_.mass_balance.routing_external += q_out * dt_routing;
                     ctx_.mass_balance.step_ext_inflow += q_out;
-                    ctx_.outfall_exports.reverse_m3[uj] += q_out * dt_routing * 0.028316846592;
+                    ctx_.outfall_exports.reverse_m3[uj] +=
+                        q_out * dt_routing * ucf::FT3_TO_M3_EXACT;
                 }
                 if (q_out > 0.0 && q_in <= 0.0) {
                     q_sys = -q_out;
@@ -6563,9 +6566,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // Publish the SAME committed discharge as continuity, before
                 // report-window filtering. This is accounting only: no source
                 // or hydraulic state is changed by an external consumer.
-                constexpr double cubicMetresPerCubicFoot = 0.028316846592;
                 auto& exports = ctx_.outfall_exports;
-                const double volume = q_sys * dt_routing * cubicMetresPerCubicFoot;
+                const double volume = q_sys * dt_routing * ucf::FT3_TO_M3_EXACT;
                 exports.water_m3[uj] += volume;
                 if (ctx_.options.heat_transport && uj < ctx_.heat_state.node_temp.size())
                     exports.heat_j[uj] += volume * ctx_.heat_state.node_temp[uj] *
@@ -6594,7 +6596,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // here (after the step_ext_inflow consumption at the top of
                 // this function) for the per-step snapshot only.
                 ctx_.mass_balance.routing_external += -q_sys * dt_routing;
-                ctx_.outfall_exports.reverse_m3[uj] += -q_sys * dt_routing * 0.028316846592;
+                ctx_.outfall_exports.reverse_m3[uj] += -q_sys * dt_routing * ucf::FT3_TO_M3_EXACT;
                 ctx_.mass_balance.step_ext_inflow += -q_sys;
             }
             // Legacy node_getSystemOutflow zeroes an outfall's overflow and
@@ -9327,8 +9329,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                     snap.thermal2d_lid_layer_authored_index.push_back(cell.layer);
                     snap.thermal2d_lid_layer_node_id.push_back(
                         ctx_.node_names.name_of(binding.node));
-                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * 0.3048);
-                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * 0.3048);
+                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * ucf::FT_TO_M);
+                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * ucf::FT_TO_M);
                     snap.thermal2d_lid_layer_area_m2.push_back(graph.physical_area_m2[physical]);
                     snap.thermal2d_lid_layer_temperature.push_back(
                         capacity > 0.0 ? energy / capacity : missing);
@@ -12511,8 +12513,9 @@ void SWMMEngine::assembleRunon() noexcept {
                                static_cast<std::size_t>(p);
                     if (src < ctx_.subcatches.conc_old.size() &&
                         dst < ctx_.subcatches.runon_qual_rate.size())
-                        ctx_.subcatches.runon_qual_rate[dst] +=
-                            ctx_.subcatches.runoff[ui] * ctx_.subcatches.conc_old[src] * 28.317;
+                        ctx_.subcatches.runon_qual_rate[dst] += ctx_.subcatches.runoff[ui] *
+                                                                ctx_.subcatches.conc_old[src] *
+                                                                ucf::FT3_TO_L;
                 }
             }
             // Multispecies Phase 2: the reaction species ride the same water.

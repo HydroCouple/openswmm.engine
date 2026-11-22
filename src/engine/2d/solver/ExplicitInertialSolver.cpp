@@ -28,6 +28,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "ExplicitInertialSolver.hpp"
 #include "../../quality/PassiveStorageAdmission.hpp"
@@ -1871,6 +1872,13 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
     if (vfr_face)
         edges_.buildVfrFaces(*mesh_);
 
+    // libomp on WebAssembly invokes a parallel region with at most 15 captured
+    // variables, so the per-face constants travel as one struct.
+    const struct {
+        double theta, dry, froude_max, blend, beta3, beta4;
+        bool advection, physical_time_blend, has_quads, species, vfr_face;
+    } c{theta,     dry,     froude_max, blend, beta3, beta4, advection, physical_time_blend,
+        has_quads, species, vfr_face};
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
         const int e = faces[static_cast<std::size_t>(k)];
@@ -1881,9 +1889,9 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         const double width = ed.xi[e] * ed.conveyance[e];
         const int a = ed.cL[e], b = ed.cR[e];
         const double hf =
-            vfr_face ? inertial::faceFlowDepthVfr(head[a], head[b], ed.ze_lo[e], ed.ze_hi[e])
-                     : inertial::faceFlowDepth(head[a], head[b], ed.zface[e]);
-        if (hf <= dry) {
+            c.vfr_face ? inertial::faceFlowDepthVfr(head[a], head[b], ed.ze_lo[e], ed.ze_hi[e])
+                       : inertial::faceFlowDepth(head[a], head[b], ed.zface[e]);
+        if (hf <= c.dry) {
             q_[e] = 0.0;
             continue;
         }
@@ -1893,8 +1901,8 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
             const double qfx = 0.5 * (qcx_[a] + qcx_[b]);
             const double qfy = 0.5 * (qcy_[a] + qcy_[b]);
             const double qn = qfx * ed.nx[e] + qfy * ed.ny[e];
-            qhat = physical_time_blend ? q_[e] + blend * (qn - q_[e])
-                                       : theta * q_[e] + (1.0 - theta) * qn;
+            qhat = c.physical_time_blend ? q_[e] + c.blend * (qn - q_[e])
+                                         : c.theta * q_[e] + (1.0 - c.theta) * qn;
             // Friction magnitude: the face flow VECTOR, floored at |q_n| so
             // a face whose reconstruction lags its own discharge (front
             // arrival, first firing after activation) never under-damps.
@@ -1908,9 +1916,9 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         // wet — a wet/dry front keeps the pure local-inertial law, whose
         // robustness there is the reason this scheme exists.
         double adv = 0.0;
-        if (advection && !qcx_.empty()) {
+        if (c.advection && !qcx_.empty()) {
             const double hL = depth[a], hR = depth[b];
-            if (hL > dry && hR > dry) {
+            if (hL > c.dry && hR > c.dry) {
                 const double unL = (qcx_[a] * ed.nx[e] + qcy_[a] * ed.ny[e]) / hL;
                 const double unR = (qcx_[b] * ed.nx[e] + qcy_[b] * ed.ny[e]) / hR;
                 adv = inertial::inertialAdvection(q_[e], unL, hL, unR, hR, ed.inv_dx_normal[e]);
@@ -1922,7 +1930,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         if (qn1 != 0.0)
             qn1 = inertial::inertialFaceUpdate(q_[e], qhat, hf, dt_f, slope, ed.n2_face[e], q_mag,
                                                adv);
-        qn1 = inertial::froudeCap(qn1, hf, froude_max);
+        qn1 = inertial::froudeCap(qn1, hf, c.froude_max);
 
         // Positivity at face cadence: this face may take at most a β/3 share
         // of its exporting cell's volume over the exporter's WHOLE cell cycle.
@@ -1933,7 +1941,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         const int exp_cell = (qn1 > 0.0) ? a : b;
         const int refire = global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
         const double beta_share =
-            (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
+            (c.has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? c.beta4 : c.beta3;
         const double budget = beta_share / refire * std::max(volume[exp_cell], 0.0);
         const double take = std::fabs(qn1) * width * dt_f;
         if (take > budget)
@@ -1945,7 +1953,7 @@ void ExplicitInertialSolver::fireFacesInertial(const std::vector<int>& faces, do
         face_accum_[face_accum_stride_ * (e)] -= dM;
         face_accum_[face_accum_stride_ * (e) + 1] += dM;
 
-        if (species)
+        if (c.species)
             bookFaceSpecies(e, a, b, dM, hf, dt_f, global_step);
     }
     face_passes_ += na;
@@ -2018,6 +2026,13 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
     const bool species = species_on_;
     const bool has_quads = has_quads_;
 
+    // libomp on WebAssembly invokes a parallel region with at most 15 captured
+    // variables, so the per-face constants travel as one struct.
+    const struct {
+        double beta3, beta4, dry;
+        std::size_t depth_offset;
+        bool so, species, has_quads;
+    } c{beta3, beta4, dry, depth_offset, so, species, has_quads};
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int k = 0; k < na; ++k) {
         const int e = faces[static_cast<std::size_t>(k)];
@@ -2025,7 +2040,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
         swe::FaceFlux F;
         double cLx, cLy, cRx, cRy;
         bool wet;
-        if (so) {
+        if (c.so) {
             // MUSCL: extrapolate eta, depth and velocity to the face.
             // Reconstructing depth with eta removes the artificial bed step
             // that otherwise remains even on a smooth, fully wet slope.
@@ -2037,8 +2052,10 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             const double aya = ed.my[e] - mesh_->tri_cy[a];
             const double axb = ed.mx[e] - mesh_->tri_cx[b];
             const double ayb = ed.my[e] - mesh_->tri_cy[b];
-            const double ua = (ha > dry) ? qcx_[a] / ha : 0.0, va = (ha > dry) ? qcy_[a] / ha : 0.0;
-            const double ub = (hb > dry) ? qcx_[b] / hb : 0.0, vb = (hb > dry) ? qcy_[b] / hb : 0.0;
+            const double ua = (ha > c.dry) ? qcx_[a] / ha : 0.0,
+                         va = (ha > c.dry) ? qcy_[a] / ha : 0.0;
+            const double ub = (hb > c.dry) ? qcx_[b] / hb : 0.0,
+                         vb = (hb > c.dry) ? qcy_[b] / hb : 0.0;
             const double etaLf = head[a] + gex_[a] * axa + gey_[a] * aya;
             const double etaRf = head[b] + gex_[b] * axb + gey_[b] * ayb;
             const double uLf = ua + gux_[a] * axa + guy_[a] * aya;
@@ -2046,15 +2063,15 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             const double uRf = ub + gux_[b] * axb + guy_[b] * ayb;
             const double vRf = vb + gvx_[b] * axb + gvy_[b] * ayb;
             const double hLf =
-                std::max(0.0, ha + gex_[depth_offset + a] * axa + gey_[depth_offset + a] * aya);
+                std::max(0.0, ha + gex_[c.depth_offset + a] * axa + gey_[c.depth_offset + a] * aya);
             const double hRf =
-                std::max(0.0, hb + gex_[depth_offset + b] * axb + gey_[depth_offset + b] * ayb);
+                std::max(0.0, hb + gex_[c.depth_offset + b] * axb + gey_[c.depth_offset + b] * ayb);
             wet = swe::faceFluxReconBed(etaLf, uLf, vLf, za, ha, etaRf, uRf, vRf, zb, hb, ed.nx[e],
-                                        ed.ny[e], dry, F, cLx, cLy, cRx, cRy, etaLf - hLf,
+                                        ed.ny[e], c.dry, F, cLx, cLy, cRx, cRy, etaLf - hLf,
                                         etaRf - hRf);
         } else {
             wet = swe::faceFlux(head[a], depth[a], qcx_[a], qcy_[a], head[b], depth[b], qcx_[b],
-                                qcy_[b], ed.nx[e], ed.ny[e], dry, F, cLx, cLy, cRx, cRy);
+                                qcy_[b], ed.nx[e], ed.ny[e], c.dry, F, cLx, cLy, cRx, cRy);
         }
         // Dry-dry face: no flux, no correction (faceFlux zeroes both), so
         // nothing to book — the accumulator read-modify-writes of zero and
@@ -2062,7 +2079,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
         // gets its call.
         if (!wet) {
             q_[e] = 0.0;
-            if (species) {
+            if (c.species) {
                 const double hf0 = std::max(head[a], head[b]) - ed.zface[e];
                 bookFaceSpecies(e, a, b, 0.0, (hf0 > 0.0) ? hf0 : 0.0, dt_f, global_step);
             }
@@ -2079,7 +2096,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
             const int exp_cell = (fh > 0.0) ? a : b;
             const int refire = global_step ? 1 : (1 << (tier_[exp_cell] - face_tier_[e]));
             const double beta_share =
-                (has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? beta4 : beta3;
+                (c.has_quads && mesh_->cell_vertex_count(exp_cell) == 4) ? c.beta4 : c.beta3;
             const double budget = beta_share / refire * std::max(volume[exp_cell], 0.0);
             const double take = std::fabs(fh) * ed.xi[e] * dt_f;
             if (take > budget) {
@@ -2103,7 +2120,7 @@ void ExplicitInertialSolver::fireFacesSwe(const std::vector<int>& faces, double 
 
         // Species ride the mass flux at the face depth the inertial law
         // would have used (dispersion conductance only).
-        if (species) {
+        if (c.species) {
             const double hf = std::max(head[a], head[b]) - ed.zface[e];
             bookFaceSpecies(e, a, b, dM, (hf > 0.0) ? hf : 0.0, dt_f, global_step);
         }
@@ -3313,7 +3330,7 @@ std::string ExplicitInertialSolver::rk2ThermalProfileError() const {
             if (state_->volume[i] > 0) {
                 const double temperature =
                     tr.cell_mass[tr.idx(tr.temp_row, int(i))] / state_->volume[i];
-                if (!(temperature + 273.15 > 0) ||
+                if (!(temperature + constants::KELVIN_OFFSET > 0) ||
                     !(transport::heat::latentHeatOfVaporization(temperature) > 0))
                     return "Invalid accepted RK2 latent-cooling temperature.";
             }
@@ -3767,7 +3784,7 @@ void ExplicitInertialSolver::runRk2Step(double interval, double start, unsigned 
                             !std::isfinite(h.water_j[i]))
                             throw std::runtime_error("Invalid RK2 surface latent energy proposal.");
                         if ((volume <= 0 && h.latent_j[i] != latent_before[i]) ||
-                            (volume > 0 && !(mass / volume + 273.15 > 0)))
+                            (volume > 0 && !(mass / volume + constants::KELVIN_OFFSET > 0)))
                             throw SurfaceLatentIntervalLimit(
                                 "RK2 latent cooling requires a smaller admissible coupled interval.");
                     }

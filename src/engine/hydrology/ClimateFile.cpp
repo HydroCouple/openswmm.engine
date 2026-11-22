@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/UnitConversion.hpp"
 #include "ClimateFile.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 #include "../core/DateTime.hpp"
@@ -363,7 +364,7 @@ void ClimateFileReader::parseGhcndLine(const char* line) {
             if (temp_units_ == DEG_C10)
                 v /= 10.0; // tenths mm → mm
             if (unit_system_ == 0)
-                v /= MM_PER_INCH; // mm → inches for US
+                v /= ucf::IN_TO_MM; // mm → inches for US
         } else if (i == WIND) {
             if (wind_type_ == WDMV) {
                 // WDMV: km/day in GHCND → convert to mph
@@ -460,7 +461,7 @@ void ClimateFileReader::parseTD3200Line(const char* line) {
         } else if (var == EVAP) {
             v /= 100.0; // hundredths of inches → inches
             if (unit_system_ == 1)
-                v *= MM_PER_INCH; // → mm for SI
+                v *= ucf::IN_TO_MM; // → mm for SI
         } else if (var == WIND) {
             v /= 24.0; // miles/day → mph
         }
@@ -520,7 +521,7 @@ void ClimateFileReader::parseDLY0204Line(const char* line) {
         } else if (var == EVAP) {
             v /= 10.0; // tenths mm → mm
             if (unit_system_ == 0)
-                v /= MM_PER_INCH; // → inches for US
+                v /= ucf::IN_TO_MM; // → inches for US
         }
 
         file_data_[var][d] = v;

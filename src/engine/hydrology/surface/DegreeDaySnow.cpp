@@ -459,8 +459,8 @@ void DegreeDaySnow::step(int e, const surface::SnowInputs& input, surface::SnowO
         return;
     const auto ui = static_cast<std::size_t>(e);
     const double dt = input.dt_s;
-    const double rain = input.rain_m / 0.3048 / dt;
-    const double snow = input.snow_m / 0.3048 / dt;
+    const double rain = input.rain_m / ucf::FT_TO_M / dt;
+    const double snow = input.snow_m / ucf::FT_TO_M / dt;
     const double temp = input.Ta_C * 1.8 + 32.0;
     const double wind = input.wind_ms / 0.44704;
     // Point-element accumulation: batch plowing remains the subcatchment
@@ -477,9 +477,9 @@ void DegreeDaySnow::step(int e, const surface::SnowInputs& input, surface::SnowO
     soa_.wsnow[ui] += added;
     meltElement(ui, e % N_SUBAREAS, dt, temp, rain, snow,
                 rainMeltRate(temp, wind, input.gamma, input.ea, rain));
-    output.melt_m = soa_.imelt[ui] * dt * 0.3048;
+    output.melt_m = soa_.imelt[ui] * dt * ucf::FT_TO_M;
     output.throughfall_m = input.rain_m * (1.0 - soa_.asc[ui]);
-    output.swe_m = (soa_.wsnow[ui] + soa_.fw[ui]) * 0.3048;
+    output.swe_m = (soa_.wsnow[ui] + soa_.fw[ui]) * ucf::FT_TO_M;
     output.cover_frac = soa_.asc[ui];
 }
 

@@ -360,10 +360,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // collapsed to 1.0 for SI projects, leaving every coupled head/depth off
     // by 3.28× and every exchanged flow/volume off by 35× — corrupting the
     // coupled mass balance. They describe the 1D side, which is always feet.)
-    constexpr double ft_to_m = 0.3048;
-    options_.len_1d_to_2d = ft_to_m;
-    options_.len_2d_to_1d = 1.0 / ft_to_m;
-    options_.vol_1d_to_2d = ft_to_m * ft_to_m * ft_to_m;
+    options_.len_1d_to_2d = ucf::FT_TO_M;
+    options_.len_2d_to_1d = 1.0 / ucf::FT_TO_M;
+    options_.vol_1d_to_2d = ucf::FT_TO_M * ucf::FT_TO_M * ucf::FT_TO_M;
     options_.flow_1d_to_2d = options_.vol_1d_to_2d;
     options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
 
@@ -371,7 +370,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // (feet for US, metres for SI), so its scaling to the SI solver IS driven
     // by FLOW_UNITS: US → ft→m (0.3048); SI → already metres (no-op).
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    const double mesh_to_si = (us == 0) ? ft_to_m : 1.0;
+    const double mesh_to_si = (us == 0) ? ucf::FT_TO_M : 1.0;
 
     // CONSTANT SPECIFIED_STAGE heads live in the mesh sections and share the
     // mesh's vertical datum, so they convert with the same factor and under
@@ -2614,8 +2613,9 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         // pre-E2 sink; CLIMATE = unforced cells take the project
         // [EVAPORATION] rate (climate_state.evap_rate is internal ft/s);
         // NO = the sink stays zero and forcing is ignored.
-        const double evap_base =
-            (options_.evaporation == 2) ? std::max(0.0, ctx.climate_state.evap_rate) * 0.3048 : 0.0;
+        const double evap_base = (options_.evaporation == 2)
+                                     ? std::max(0.0, ctx.climate_state.evap_rate) * ucf::FT_TO_M
+                                     : 0.0;
         std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), evap_base);
         const bool evap_on = options_.evaporation != 0;
         for (std::size_t i = 0; i < state_.depth.size(); ++i) {

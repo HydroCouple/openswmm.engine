@@ -689,10 +689,10 @@ GwUnitFactors gwUnitFactors(const SimulationContext& ctx) noexcept {
     GwUnitFactors f;
     const int sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     if (sys == 0) {               // US
-        f.length = 0.3048;        // ft  → m
+        f.length = ucf::FT_TO_M;  // ft  → m
         f.rate = 0.0254 / 3600.0; // in/hr → m/s
-        f.inv_len = 1.0 / 0.3048; // 1/ft → 1/m
-        f.area = 0.3048 * 0.3048; // ft² → m²
+        f.inv_len = 1.0 / ucf::FT_TO_M;       // 1/ft → 1/m
+        f.area = ucf::FT_TO_M * ucf::FT_TO_M; // ft² → m²
     } else {                      // SI
         f.length = 1.0;           // m
         f.rate = 0.001 / 3600.0;  // mm/hr → m/s
@@ -1631,7 +1631,8 @@ SurfaceOwnershipPreview resolveSurfaceOwnership(const SimulationContext& ctx, co
     SurfaceOwnershipPreview p;
     const double projectLength = gwUnitFactors(ctx).length;
     const double meshLength = (opts.mesh_units_si || opts.mesh_scaled_to_si) ? 1.0 : projectLength;
-    const double areaUnit = projectLength == 1 ? 10000.0 : 43560.0 * .3048 * .3048;
+    const double areaUnit =
+        projectLength == 1 ? 10000.0 : ucf::ACRES_TO_FT2 * ucf::FT_TO_M * ucf::FT_TO_M;
     auto cancelled = [&](int done) {
         if (progress && !progress(done, mesh.n_cells() + ctx.n_subcatches())) {
             p.cancelled = true;

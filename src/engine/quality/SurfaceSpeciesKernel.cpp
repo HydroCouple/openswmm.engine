@@ -148,7 +148,6 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                 // mcf_p mirrors legacy landuse.c:167-169: UCF(MASS) for mg,
                 // /1000 for µg, 1.0 for counts.
                 const double mcf_p = (*b.mcf)[static_cast<std::size_t>(p)];
-                constexpr double kLperFt3 = 28.317;
                 double total_washoff_load = 0.0; // concen. mass units / sec
                 // legacy landuse_getAvgBmpEffic(j, p): the coverage-weighted
                 // BMP removal fraction, which findPondedLoads applies to the
@@ -375,7 +374,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                         double load = 0.0; // concen. mass units / sec
                         switch (wp.type) {
                         case landuse::WashoffType::EMC:
-                            load = wp.coeff * kLperFt3 * q * frac;
+                            load = wp.coeff * ucf::FT3_TO_L * q * frac;
                             break;
                         // EXPON and RATING both close through legacy's
                         // landuse_getWashoffLoad (landuse.c:351):
@@ -505,7 +504,6 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                 // to mix into.
                 const double non_lid_ft2_pq = area_ft2_full_pq - lid_ft2_pq;
                 if (sq_idx < (*b.ponded_qual).size() && non_lid_ft2_pq > 0.0) {
-                    constexpr double L_PER_FT3 = 28.317; // liters per ft3
                     auto up = static_cast<std::size_t>(p);
                     // Every volume here is over the NON-LID area: legacy forms
                     // vRain, the ponded store and the closing pondedQual on
@@ -543,7 +541,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
 
                     // Wet deposition mass: c_rain[mg/L] * LperFT3[L/ft3] * v_rain[ft3]
                     double c_rain_pq = (up < (*b.c_rain).size()) ? (*b.c_rain)[up] : 0.0;
-                    double w_rain_pq = c_rain_pq * L_PER_FT3 * v_rain_pq;
+                    double w_rain_pq = c_rain_pq * ucf::FT3_TO_L * v_rain_pq;
 
                     // Accumulate wet deposition in mass balance — LEDGER
                     // booking, so convert to user mass at the seam (legacy
@@ -652,7 +650,6 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                     if (lid_ft2 > 0.0 && dt_runoff > 0.0 &&
                         !(b.lid_reactor_mask && ui < b.lid_reactor_mask->size() &&
                           (*b.lid_reactor_mask)[ui])) {
-                        constexpr double L_PER_FT3_37 = 28.317;
                         // legacy `vLidRain = Subcatch[j].rainfall * lidArea *
                         // tStep`, and Subcatch[j].rainfall is INTERNAL ft/sec.
                         // This read ctx.gages.rainfall, which carries the
@@ -671,7 +668,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                         double c_rain37 = (up37 < (*b.c_rain).size()) ? (*b.c_rain)[up37] : 0.0;
                         // Wet deposition on LID area (mass/sec)
                         double v_lid_rain = rrate37 * lid_ft2 * dt_runoff;        // ft³
-                        double w_lid_rain = c_rain37 * L_PER_FT3_37 * v_lid_rain; // mg
+                        double w_lid_rain = c_rain37 * ucf::FT3_TO_L * v_lid_rain; // mg
                         if (w_lid_rain > 0.0) {
                             total_washoff_load += w_lid_rain / dt_runoff;
                             // legacy books the LID footprint's share of the
@@ -709,7 +706,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                 // concentrations were in incompatible units before this.
                 double conc = 0.0;
                 if (q_out1 > 0.0 && total_washoff_load > 0.0)
-                    conc = total_washoff_load / q_out1 / kLperFt3;
+                    conc = total_washoff_load / q_out1 / ucf::FT3_TO_L;
 
                 (*b.conc)[sq_idx] = conc;
 
@@ -772,7 +769,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                     // legacy books the co-pollutant's share as BUILDUP_LOAD so
                     // the ledger balances — this mass was never on the ground.
                     const double mcf_cp = (*b.mcf)[up];
-                    const double w = add * q_out1 * 28.317;
+                    const double w = add * q_out1 * ucf::FT3_TO_L;
                     if (up < (*b.led_surface_buildup).size())
                         (*b.led_surface_buildup)[up] += w * dt_runoff * mcf_cp;
                 }
@@ -819,8 +816,6 @@ void bookPostLid(SimulationContext& ctx, Block& b, double dt_runoff,
     if (np <= 0 || ns <= 0 || ctx.options.ignore_quality)
         return;
 
-    constexpr double kLperFt3 = 28.317;
-
     // legacy VlidInfil — infiltration into the native soil beneath the units,
     // the same sum stepGroundwater forms for the aquifer's recharge.
     // g.infil_loss is a DEPTH over this step, so × area is already ft³.
@@ -834,8 +829,8 @@ void bookPostLid(SimulationContext& ctx, Block& b, double dt_runoff,
                 ctx.subcatches.outlet_node[ui] >= 0 || ctx.subcatches.outlet_subcatch[ui] == i;
             for (int sp = 0; sp < np; ++sp) {
                 const auto k = ui * std::size_t(np) + sp;
-                const double mass =
-                    (*b.conc)[k] * ctx.subcatches.runoff[ui] * dt_runoff * 28.317 * (*b.mcf)[sp];
+                const double mass = (*b.conc)[k] * ctx.subcatches.runoff[ui] * dt_runoff *
+                                    ucf::FT3_TO_L * (*b.mcf)[sp];
                 (*b.total_load)[k] += mass;
                 if (reaches)
                     (*b.led_runoff_load)[sp] += mass;
@@ -873,7 +868,7 @@ void bookPostLid(SimulationContext& ctx, Block& b, double dt_runoff,
                 continue;
             // stepSurfaceQuality stored legacy's `newQual[p] = cOut/LperFT3`,
             // so cOut reads straight back out — no second array to carry.
-            const double c_out = (*b.conc)[sq_idx] * kLperFt3;
+            const double c_out = (*b.conc)[sq_idx] * ucf::FT3_TO_L;
             if (c_out <= 0.0)
                 continue;
 

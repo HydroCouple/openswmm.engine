@@ -23,6 +23,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/UnitConversion.hpp"
 #include "../core/Constants.hpp"
 #include "Radiation.hpp"
 #include <stdexcept>
@@ -40,9 +41,6 @@ namespace {
 
 constexpr double kDegRad = constants::PI_EXACT / 180.0;
 constexpr double kRadDeg = 180.0 / constants::PI_EXACT;
-
-/// Feet → metres. `ClimateState::elev` is feet (legacy `Temp.elev`).
-constexpr double kFtToM = 0.3048;
 
 } // namespace
 
@@ -327,7 +325,7 @@ void updateSolarForcing(SimulationContext& ctx, double seconds, bool mesh_enable
         // site the parser deliberately admits.
         const double elev_m = snow.site          ? snow.site->elevation
                               : sc.has_elevation ? sc.elevation_m
-                                                 : ctx.climate_state.elev * kFtToM;
+                                                 : ctx.climate_state.elev * ucf::FT_TO_M;
 
         jin = birdClearSkyGHI(pos, pressureFromElevation(elev_m), sc);
         break;

@@ -421,7 +421,7 @@ ReportTable outfallLoading(const SimulationContext& ctx, int only_row) {
                                                              : 1.0;
             double load =
                 ((idx < ctx.nodes.stat_total_load.size()) ? ctx.nodes.stat_total_load[idx] : 0.0) *
-                28.317 * mcf;
+                ucf::FT3_TO_L * mcf;
             pol_totals[static_cast<std::size_t>(p)] += load;
             if (mu == MassUnits::COUNTS_PER_L && load > 0.0)
                 load = std::log10(load);

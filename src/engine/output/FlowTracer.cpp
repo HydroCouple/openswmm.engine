@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/UnitConversion.hpp"
 #include "FlowTracer.hpp"
 #include "OutputReader.hpp"
 #include <algorithm>
@@ -421,10 +422,8 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
         error = "No valid reporting periods or units";
         return SWMM_TRACE_INVALID;
     }
-    constexpr double flowFactors[] = {0.028316846592, 0.0000630901964,     0.04381263638888889, 1,
-                                      0.001,          0.011574074074074073};
-    double fq = flowFactors[info.source_flow_units], fl = info.source_flow_units < 3 ? 0.3048 : 1,
-           fvol = fl * fl * fl;
+    double fq = ucf::FLOW_TO_M3S_EXACT[info.source_flow_units],
+           fl = info.source_flow_units < 3 ? ucf::FT_TO_M : 1, fvol = fl * fl * fl;
     na.assign(nodes.size(), {});
     la.assign(links.size(), {});
     struct Sample {

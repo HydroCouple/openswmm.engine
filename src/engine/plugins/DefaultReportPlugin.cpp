@@ -30,6 +30,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "DefaultReportPlugin.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
@@ -1020,7 +1021,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     // 10^6 gal (ltr) column.
     const int cont_us = si_report ? 1 : 0;
     const double cont_vcf1 = ucf::Ucf[ucf::LENGTH][cont_us] * ucf::Ucf[ucf::LANDAREA][cont_us];
-    const double cont_vcf2 = si_report ? 2.4466 / 86400.0 : 0.64632 / 86400.0;
+    const double cont_vcf2 = (si_report ? ucf::Qcf[5] : ucf::Qcf[2]) / constants::SEC_PER_DAY;
     const double cont_mass = ucf::Ucf[ucf::MASS][cont_us]; // mg -> lb | kg
     const char* load_word = si_report ? "kg" : "lbs";
     // A count pollutant's loads print as LOG10 under "LogN" (legacy statsrpt.c).
@@ -1260,7 +1261,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         std::fprintf(f, "\n  Reaction Booster Injection (declared species mass units)\n");
         for (int species = 0; species < ctx.reactions.n_species(); ++species)
             std::fprintf(f, "  %-24s %.10g %s\n", ctx.reactions.species_name[species].c_str(),
-                         ctx.reactions.booster_mass[species] * 28.317,
+                         ctx.reactions.booster_mass[species] * ucf::FT3_TO_L,
                          ctx.reactions.species_units[species].c_str());
         std::fprintf(f, "\n");
     }
@@ -1664,7 +1665,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             // 2D ledger volumes are SI m³; the 1D balance is internal ft³
             // regardless of flow units (legacy parity; land_vcf/mvol_vcf
             // convert ft³ → report units), so convert the exchange to ft³.
-            const double m3_to_1d = 1.0 / 0.028316846592;
+            const double m3_to_1d = 1.0 / ucf::FT3_TO_M3_EXACT;
             const double spill_1d = mb2.coupling_1d_to_2d_in * m3_to_1d;
             const double drain_1d = mb2.coupling_2d_to_1d_out * m3_to_1d;
 
@@ -1700,7 +1701,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     if (ctx.n_nodes() > 0 && !opt.ignore_routing && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-        static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, int p) {
             return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
         };
@@ -1733,10 +1733,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 const double x = raw[static_cast<std::size_t>(k)];
                 double y;
                 if (mu == MassUnits::COUNTS_PER_L) {
-                    const double z = LperFT3 * x;
+                    const double z = ucf::FT3_TO_L * x;
                     y = z > 0.0 ? std::log10(z) : z;
                 } else {
-                    double cf = LperFT3 * cont_mass;
+                    double cf = ucf::FT3_TO_L * cont_mass;
                     if (mu == MassUnits::UG_PER_L)
                         cf /= 1000.0;
                     y = x * cf;
@@ -1799,7 +1799,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (std::size_t s = 0; s < uns; ++s)
             if (!rx.species_is_wall[s])
                 bulk.push_back(s);
-        static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, std::size_t s) {
             return s < v.size() ? v[s] : 0.0;
         };
@@ -1836,7 +1835,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             std::string u = s < rx.species_units.size() ? rx.species_units[s] : std::string();
             for (auto& ch : u)
                 ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-            double cf = LperFT3;
+            double cf = ucf::FT3_TO_L;
             if (u.rfind("MG", 0) == 0) {
                 cf *= cont_mass;
                 unit_word[s] = load_word;
@@ -2669,9 +2668,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 header = true;
             }
             const auto uj = static_cast<std::size_t>(j);
-            const double reverse_ft3 = uj < ctx.outfall_exports.reverse_m3.size()
-                                           ? ctx.outfall_exports.reverse_m3[uj] / 0.028316846592
-                                           : 0.0;
+            const double reverse_ft3 =
+                uj < ctx.outfall_exports.reverse_m3.size()
+                    ? ctx.outfall_exports.reverse_m3[uj] / ucf::FT3_TO_M3_EXACT
+                    : 0.0;
             std::fprintf(f, "\n  %-20s %10.2f   %10.2f", ctx.node_names.name_of(j).c_str(),
                          engaged / 3600.0, submerged / 3600.0);
             if (max_stage > -1.0e29)
@@ -3435,7 +3435,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     if (route_rpt && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
-        static constexpr double LT_PER_FT3 = 28.317;
         // Per-pollutant unit and conversion
         std::vector<double> mass_cf(static_cast<std::size_t>(np));
         std::vector<const char*> unit_str(static_cast<std::size_t>(np));
@@ -3444,9 +3443,9 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             MassUnits mu =
                 (up < ctx.pollutants.units.size()) ? ctx.pollutants.units[up] : MassUnits::MG_PER_L;
             unit_str[up] = (mu == MassUnits::COUNTS_PER_L) ? "LogN" : load_word;
-            mass_cf[up] = LT_PER_FT3 * ((mu == MassUnits::MG_PER_L)   ? cont_mass
-                                        : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
-                                                                      : 1.0);
+            mass_cf[up] = ucf::FT3_TO_L * ((mu == MassUnits::MG_PER_L)   ? cont_mass
+                                           : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
+                                                                         : 1.0);
         }
 
         WRITE(f, "***************************");
