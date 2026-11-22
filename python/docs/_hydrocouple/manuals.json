@@ -19,7 +19,7 @@
         {"id": "hydrocouple.gui.data", "title": "SWMMVis data sources plugin", "kind": "Reference", "url": "https://www.hydrocouple.org/hydrocouple.gui.data/", "published": true},
         {"id": "openswmm.mcp", "title": "MCP server", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.mcp/", "published": true},
         {"id": "openswmm.gymnasium", "title": "Gymnasium environments", "kind": "Guide + API", "url": "https://www.hydrocouple.org/openswmm.gymnasium/", "published": true},
-        {"id": "openswmm.engine.benchmarks", "title": "Benchmarks", "kind": "Guide", "url": "https://www.hydrocouple.org/openswmm.engine.benchmarks/docs/", "published": false}
+        {"id": "openswmm.engine.benchmarks", "title": "Benchmarks", "kind": "Guide", "url": "https://www.hydrocouple.org/openswmm.engine.benchmarks/docs/", "published": true}
       ]
     },
     {
