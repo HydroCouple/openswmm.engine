@@ -12,6 +12,7 @@
 
 #ifdef OPENSWMM_HAS_2D
 
+#include "../../core/Constants.hpp"
 #include "Default2DOutputPlugin.hpp"
 #include "../../io/Hdf5Mutex.hpp"
 #include "../../io/Hdf5ObjectCreation.hpp"
@@ -333,7 +334,7 @@ std::string Default2DOutputPlugin::configureOutput(const SolverOptions2D& opts,
                 return buf;
             }
         }
-        report_2d_step_days_ = opts.report_2d_step / 86400.0;
+        report_2d_step_days_ = opts.report_2d_step / constants::SEC_PER_DAY;
     }
     return {};
 }

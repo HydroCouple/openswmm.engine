@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "HourlyMeteorology.hpp"
 #include "../input/InputParseUtils.hpp"
 #include "../input/Tokenizer.hpp"
@@ -61,7 +62,7 @@ std::string HourlyMeteorology::read(std::istream& stream) {
         if (v[0] <= -100 || v[0] > 70 || v[1] < 0 || v[1] > 100 || v[2] < 0 || v[3] < 0 || v[4] < 0)
             return error();
         if (!candidate.empty() &&
-            std::abs((record.date - candidate.back().date) * 86400. - 3600.) > 1e-5)
+            std::abs((record.date - candidate.back().date) * constants::SEC_PER_DAY - 3600.) > 1e-5)
             return "Hourly meteorology must have consecutive, unique hourly records; gap or duplicate at line " +
                    std::to_string(line_number) + ".";
         candidate.push_back(record);
@@ -82,7 +83,7 @@ std::string HourlyMeteorology::average(double start, double seconds,
     // OLE day number can round the end back to the start, giving zero
     // coverage and NaNs after normalization. Records are consecutive hours
     // (validated by read), so their integer offsets also avoid tiny gaps.
-    double offset = (start - records_.front().date) * 86400.;
+    double offset = (start - records_.front().date) * constants::SEC_PER_DAY;
     const double nearest_hour = std::round(offset / 3600.) * 3600.;
     if (std::abs(offset - nearest_hour) <= tolerance)
         offset = nearest_hour;

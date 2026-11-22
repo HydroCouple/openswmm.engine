@@ -40,7 +40,7 @@ std::string seriesAverage(SimulationContext& ctx, int index, double date, double
     if (index < 0 || index >= int(ctx.tables.count()))
         return "Radiation time series was not found.";
     auto& table = ctx.tables[index];
-    const double end = date + seconds / 86400.;
+    const double end = date + seconds / constants::SEC_PER_DAY;
     if (table.x.empty() || table.y.size() != table.x.size() ||
         (coverage && (date < table.x.front() || end > table.x.back())))
         return "Time series " + table.id + " does not cover the forcing interval.";
@@ -189,8 +189,8 @@ std::string initializeRadiation(SimulationContext& ctx) {
         if (ctx.options.end_date > ctx.options.start_date) {
             std::array<double, 5> values;
             const auto error = ctx.snowpacks.meteorology.average(
-                ctx.options.start_date, (ctx.options.end_date - ctx.options.start_date) * 86400.,
-                values);
+                ctx.options.start_date,
+                (ctx.options.end_date - ctx.options.start_date) * constants::SEC_PER_DAY, values);
             if (!error.empty())
                 return error;
         }
@@ -253,7 +253,8 @@ std::string initializeRadiation(SimulationContext& ctx) {
 }
 std::string resolveRadiation(SimulationContext& ctx, double date, double seconds,
                              RadiationState& output) {
-    if (!std::isfinite(date) || !std::isfinite(seconds) || seconds <= 0 || seconds > 86400)
+    if (!std::isfinite(date) || !std::isfinite(seconds) || seconds <= 0 ||
+        seconds > constants::SEC_PER_DAY_INT)
         return "Invalid radiation interval.";
     const auto& cfg = ctx.snowpacks.config;
     const auto& climate = ctx.climate_state;
@@ -369,7 +370,7 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
             temperature += climate.adjust_temp[mon];
         } else if (ctx.options.temp_source == 2 && !ctx.snowpacks.daily_weather.empty()) {
             double sum = 0, span = 0;
-            const double end = date + seconds / 86400.;
+            const double end = date + seconds / constants::SEC_PER_DAY;
             for (double a = date; a < end;) {
                 const double day = std::floor(a), b = std::min(end, day + 1);
                 const auto& records = ctx.snowpacks.daily_weather;

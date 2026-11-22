@@ -42,6 +42,7 @@
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 #define OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 
+#include "Constants.hpp"
 #include "FilePathPair.hpp"
 #include <string>
 #include <vector>
@@ -852,7 +853,8 @@ struct SimulationOptions {
     double totalDurationMs() const {
         if (total_duration_ms >= 0.0)
             return total_duration_ms;
-        return std::floor(std::round((end_date - start_date) * 86400000.0) / 1000.0) * 1000.0;
+        return std::floor(std::round((end_date - start_date) * constants::MSEC_PER_DAY) / 1000.0) *
+               1000.0;
     }
 };
 

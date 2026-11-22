@@ -34,6 +34,7 @@ extern const double legacy_consts_MISSING;
 extern const double legacy_consts_FUDGE;
 extern const double legacy_consts_FLOW_TOL;
 extern const double legacy_consts_SECperDAY;
+extern const double legacy_consts_MSECperDAY;
 extern const double legacy_consts_MperFT;
 extern const double legacy_consts_LperFT3;
 extern const double legacy_consts_M3perFT3;
@@ -57,6 +58,8 @@ TEST(ConstantsLegacyParity, PhysicalAndNumericalConstantsMatchConstsH) {
     EXPECT_EQ(constants::FUDGE, legacy_consts_FUDGE);
     EXPECT_EQ(constants::FLOW_TOL, legacy_consts_FLOW_TOL);
     EXPECT_EQ(constants::SEC_PER_DAY, legacy_consts_SECperDAY);
+    EXPECT_EQ(constants::MSEC_PER_DAY, legacy_consts_MSECperDAY);
+    EXPECT_EQ(constants::SEC_PER_DAY_INT, 86400);
 }
 
 TEST(ConstantsLegacyParity, FixedUnitFactorsMatchConstsH) {

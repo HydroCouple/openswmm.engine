@@ -487,7 +487,7 @@ void LIDSolver::init(SimulationContext& ctx) {
             }
         }
         // legacy lid_initState: dryTime starts at DRY_DAYS
-        g.dry_time[us] = ctx.options.dry_days * 86400.0;
+        g.dry_time[us] = ctx.options.dry_days * constants::SEC_PER_DAY;
         g.old_drain_flow[us] = 0.0;
     }
 
@@ -1795,7 +1795,7 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
     k.P = &view;
     k.G = &g;
     k.U = u;
-    k.old_runoff_days = old_runoff_sec / 86400.0;
+    k.old_runoff_days = old_runoff_sec / constants::SEC_PER_DAY;
     k.SpatialFraction = spatial_fraction;
     k.SpatialLimit = spatial_limit;
     k.Completed = completed;
@@ -2220,7 +2220,7 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g, st
 
     // --- format the current row into the held buffer
     const double new_sec = old_runoff_sec_ + dt;
-    const double when = ctx.options.start_date + new_sec / 86400.0;
+    const double when = ctx.options.start_date + new_sec / constants::SEC_PER_DAY;
     int yy, mo, dd, hh, mi, ss;
     datetime::decodeDate(when, yy, mo, dd);
     datetime::decodeTime(when, hh, mi, ss);

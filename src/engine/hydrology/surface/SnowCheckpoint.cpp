@@ -128,7 +128,8 @@ void point(Archive& a, ueb::State& s) {
                 "Invalid snow checkpoint thermal history.");
         duration += h.seconds;
     });
-    require(duration <= 86400. + 1e-7, "Snow checkpoint thermal history exceeds 24 hours.");
+    require(duration <= constants::SEC_PER_DAY + 1e-7,
+            "Snow checkpoint thermal history exceeds 24 hours.");
 }
 /** @brief Stream a covered-point state and verify whole-footprint water consistency.
  * @param[in,out] a Native reader/writer; can advance before validation fails.

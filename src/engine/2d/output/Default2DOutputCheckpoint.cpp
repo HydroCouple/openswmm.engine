@@ -11,6 +11,7 @@
  */
 
 #ifdef OPENSWMM_HAS_2D
+#include "../../core/Constants.hpp"
 #include "Default2DOutputPlugin.hpp"
 #include "../subsurface/SourceResultHistory.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
@@ -639,7 +640,9 @@ void Default2DOutputPlugin::validateCheckpoint(hid_t file, const SimulationConte
             upper = mid;
     }
     const double ratio =
-        report_2d_step_days_ > 0 ? report_2d_step_days_ * 86400 / ctx.options.report_step : 1;
+        report_2d_step_days_ > 0
+            ? report_2d_step_days_ * constants::SEC_PER_DAY_INT / ctx.options.report_step
+            : 1;
     require(std::isfinite(ratio) && ratio >= 1 && ratio <= std::numeric_limits<int>::max(),
             "Invalid mesh reporting interval.");
     const int stride = static_cast<int>(std::round(ratio));

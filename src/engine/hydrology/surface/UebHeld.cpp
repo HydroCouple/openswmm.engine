@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "UebHeld.hpp"
 #include <algorithm>
 #include <cmath>
@@ -44,7 +45,7 @@ void historyAt(State& state, const State& start, double elapsed, const Fluxes& f
     double total = 0;
     for (const auto& h : state.history)
         total += h.seconds;
-    double excess = std::max(0., total - 86400.);
+    double excess = std::max(0., total - constants::SEC_PER_DAY);
     std::size_t remove = 0;
     while (remove < state.history.size() && excess >= state.history[remove].seconds) {
         excess -= state.history[remove].seconds;

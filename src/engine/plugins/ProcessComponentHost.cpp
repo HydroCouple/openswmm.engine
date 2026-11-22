@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+#include "../core/Constants.hpp"
 #include "ProcessComponentHost.hpp"
 #include "PluginFactory.hpp"
 #include "../core/SimulationContext.hpp"
@@ -249,7 +250,7 @@ struct Binding {
         checked(engine, swmm_get_start_time(engine, &start));
         checked(engine, swmm_get_end_time(engine, &end));
         epoch = start + 2415018.5;
-        const double duration = std::round((end - start) * 86400000.) / 1000.;
+        const double duration = std::round((end - start) * constants::MSEC_PER_DAY) / 1000.;
         times = config.at("exports").at("exchange_times_s").get<std::vector<double>>();
         double prior = 0;
         for (double value : times) {
@@ -279,7 +280,7 @@ struct Binding {
             require(key == "outfalls" || key == "exchange_times_s", "unknown exports key " + key);
         donor.add("transfer_id", HC::DataKind::String);
         donor.add("epoch_julian_day", HC::DataKind::Float64, "day", 0, 0, 1,
-                  HC::ValueKind::Intensive, 86400);
+                  HC::ValueKind::Intensive, constants::SEC_PER_DAY_INT);
         donor.add("interval_start_s", HC::DataKind::Float64, "s", 0, 0, 1);
         donor.add("interval_end_s", HC::DataKind::Float64, "s", 0, 0, 1);
         donor.add("water_m3", HC::DataKind::Float64, "m3", 3, 0, 0, HC::ValueKind::Extensive);

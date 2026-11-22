@@ -58,6 +58,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
@@ -2154,8 +2155,8 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows, const GwTranspor
                     // A negative decay means "use the [POLLUTANTS] Kdecay",
                     // which the engine already holds in 1/s; an authored one
                     // is 1/day.
-                    tr_.decay[tr_.idx(s, i)] =
-                        (r.decay >= 0.0) ? r.decay / 86400.0 : pollutantDecay(s, pollut_decay);
+                    tr_.decay[tr_.idx(s, i)] = (r.decay >= 0.0) ? r.decay / constants::SEC_PER_DAY
+                                                                : pollutantDecay(s, pollut_decay);
                 }
             }
         }

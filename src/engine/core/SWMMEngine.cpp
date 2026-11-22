@@ -26,6 +26,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "SWMMEngine.hpp"
 #include "RunId.hpp"
 #include <version.h>
@@ -2324,10 +2325,11 @@ int SWMMEngine::start(int save_results) noexcept {
                 hotstart_save_done_[k] =
                     entry.datetime != 0.0 &&
                     ctx_.elapsed_ms + 1.0 >=
-                        (entry.datetime - ctx_.options.start_date) * 86400000.0;
+                        (entry.datetime - ctx_.options.start_date) * constants::MSEC_PER_DAY;
             }
             // Continuing needs time left to run after the restored step.
-            const double total_ms = (ctx_.options.end_date - ctx_.options.start_date) * 86400000.0;
+            const double total_ms =
+                (ctx_.options.end_date - ctx_.options.start_date) * constants::MSEC_PER_DAY;
             if (!ctx_.restart_receipt.run_id.empty() && ctx_.elapsed_ms + 1.0 >= total_ms) {
                 set_error(CFFI_ERR_HOTSTART,
                           ("[RESTART] the run ends at or before restored record " +
@@ -3574,7 +3576,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                 ctx_, dt_runoff, ctx_.climate_state.temperature, ctx_.climate_state.wind_speed,
                 snow_rain_.data(), snow_snow_.data(), ctx_.climate_state.gamma,
                 ctx_.climate_state.ea);
-            const double snow_date = ctx_.options.start_date + old_runoff_time_ / 86400.;
+            const double snow_date =
+                ctx_.options.start_date + old_runoff_time_ / constants::SEC_PER_DAY;
             if (const auto error = surface::ueb::advanceSubcatchments(
                     ctx_, snow_.state(), snow_date, old_runoff_time_, dt_runoff, snow_rain_.data(),
                     snow_snow_.data());
@@ -9687,7 +9690,7 @@ std::string SWMMEngine::writeDueHotstartSaves() {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() || hotstart_save_done_[k])
             continue;
-        const double due_ms = (entry.datetime - ctx_.options.start_date) * 86400000.0;
+        const double due_ms = (entry.datetime - ctx_.options.start_date) * constants::MSEC_PER_DAY;
         if (ctx_.elapsed_ms + 1.0 < due_ms)
             continue;
         if (auto error = writeHotstartSave(entry); !error.empty())
@@ -9959,17 +9962,19 @@ std::string SWMMEngine::beginRestartRecording() {
     if (error = store->beginRun(ctx_, run); !error.empty())
         return "[RESTART] " + error;
 
-    const double total_ms = (ctx_.options.end_date - ctx_.options.start_date) * 86400000.0;
+    const double total_ms =
+        (ctx_.options.end_date - ctx_.options.start_date) * constants::MSEC_PER_DAY;
     for (const double at : r.record_at) {
         if (at <= 0.0)
             restart_end_ = true;
         else
-            restart_due_.emplace_back((at - ctx_.options.start_date) * 86400000.0, at);
+            restart_due_.emplace_back((at - ctx_.options.start_date) * constants::MSEC_PER_DAY, at);
     }
     if (r.record_every > 0.0)
         for (int k = 1; k * r.record_every * 1000.0 < total_ms - 1.0; ++k)
             restart_due_.emplace_back(k * r.record_every * 1000.0,
-                                      ctx_.options.start_date + k * r.record_every / 86400.0);
+                                      ctx_.options.start_date +
+                                          k * r.record_every / constants::SEC_PER_DAY);
     if (r.record_at.empty() && r.record_every <= 0.0)
         restart_end_ = true;
     std::sort(restart_due_.begin(), restart_due_.end());
@@ -9994,8 +9999,9 @@ std::string SWMMEngine::recordRestart(double requested) {
         if (const auto error = checkpointBytes(snapshot); !error.empty())
             return "[RESTART] cannot capture a continuation record: " + error;
         try {
-            snapshot = wrapContinuationRecord(
-                std::move(snapshot), ctx_.options.start_date + ctx_.elapsed_ms / 86400000.0);
+            snapshot = wrapContinuationRecord(std::move(snapshot),
+                                              ctx_.options.start_date +
+                                                  ctx_.elapsed_ms / constants::MSEC_PER_DAY);
         } catch (const std::exception& e) {
             return std::string("[RESTART] cannot capture a continuation record: ") + e.what();
         }
@@ -10012,7 +10018,7 @@ std::string SWMMEngine::recordRestart(double requested) {
     std::snprintf(id, sizeof id, "rec_%06d", record.ordinal);
     record.record_id = id;
     record.created_at = restart::utcNow();
-    record.model_datetime = ctx_.options.start_date + ctx_.elapsed_ms / 86400000.0;
+    record.model_datetime = ctx_.options.start_date + ctx_.elapsed_ms / constants::MSEC_PER_DAY;
     record.elapsed_seconds = ctx_.elapsed_ms / 1000.0;
     record.requested_datetime = requested;
     record.hsf_version = static_cast<int>(hs->header.version);
@@ -10609,7 +10615,8 @@ void SWMMEngine::validate_project() noexcept {
                 double dx_min = tx[1] - tx[0];
                 for (std::size_t k = 2; k < tx.size(); ++k)
                     dx_min = std::min(dx_min, tx[k] - tx[k - 1]);
-                const int ts_interval = static_cast<int>(std::floor(dx_min * 86400.0 + 0.5));
+                const int ts_interval =
+                    static_cast<int>(std::floor(dx_min * constants::SEC_PER_DAY + 0.5));
                 if (ts_interval > 0 && ctx_.gages.interval_sec[ug] > ts_interval)
                     ctx_.errors.push_back(
                         format_error(ERR_RAIN_GAGE_INTERVAL, ctx_.gage_names.name_of(g)));

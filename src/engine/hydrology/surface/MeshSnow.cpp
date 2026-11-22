@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "core/ThreadInfo.hpp"
 #include <exception>
@@ -346,8 +347,9 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
             (std::floor((start + 1e-7) / configuration.step_) + 1) * configuration.step_;
         double horizon = std::min(boundary - start, ctx.options.totalDurationMs() / 1000. - start);
         if (!ctx.snowpacks.meteorology.empty()) {
-            const double hour =
-                (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + start;
+            const double hour = (ctx.options.start_date - std::floor(ctx.options.start_date)) *
+                                    constants::SEC_PER_DAY +
+                                start;
             horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
         }
         if (snowTransientForcing(ctx))
@@ -472,14 +474,15 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
             // a previous segment changed the covered area.
             if (ground_contact && held.pending())
                 ueb::closeHeld(held);
-            const double date = ctx.options.start_date + at / 86400.;
+            const double date = ctx.options.start_date + at / constants::SEC_PER_DAY;
             double prescribed_qg = site_[i].ground_heat;
             const double boundary =
                 (std::floor((at + 1e-7) / configuration.step_) + 1) * configuration.step_;
             double horizon = std::min(boundary - at, ctx.options.totalDurationMs() / 1000. - at);
             if (!ctx.snowpacks.meteorology.empty()) {
-                const double hour =
-                    (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + at;
+                const double hour = (ctx.options.start_date - std::floor(ctx.options.start_date)) *
+                                        constants::SEC_PER_DAY +
+                                    at;
                 horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
             }
             if (snowTransientForcing(ctx))

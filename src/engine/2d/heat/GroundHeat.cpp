@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "GroundHeat.hpp"
 #include "../../hydrology/surface/MeshSnow.hpp"
@@ -117,11 +118,11 @@ double boundaryValueAt(SimulationContext& ctx, const std::string& kind, const st
     if (series < 0)
         return boundaryValue(ctx, kind, arg, series);
     const auto& table = ctx.tables[series];
-    const double origin = ctx.options.start_date, date = origin + time / 86400.;
+    const double origin = ctx.options.start_date, date = origin + time / constants::SEC_PER_DAY;
     if (table.x.empty() || table.x.size() != table.y.size())
         throw std::runtime_error("Ground thermal series has no matching time/value rows.");
-    const double first = (table.x.front() - origin) * 86400.,
-                 last = (table.x.back() - origin) * 86400.;
+    const double first = (table.x.front() - origin) * constants::SEC_PER_DAY,
+                 last = (table.x.back() - origin) * constants::SEC_PER_DAY;
     if (time < first || time > last) {
         if (kind == "TIMESERIES") {
             if (date < table.x.front() || date > table.x.back())
@@ -138,10 +139,12 @@ double boundaryValueAt(SimulationContext& ctx, const std::string& kind, const st
     if (time == last)
         return table.y.back();
     const auto upper = std::upper_bound(
-        table.x.begin(), table.x.end(), time,
-        [origin](double seconds, double date) { return seconds < (date - origin) * 86400.; });
+        table.x.begin(), table.x.end(), time, [origin](double seconds, double date) {
+            return seconds < (date - origin) * constants::SEC_PER_DAY;
+        });
     const auto j = std::size_t(upper - table.x.begin());
-    const double a = (table.x[j - 1] - origin) * 86400., b = (table.x[j] - origin) * 86400.;
+    const double a = (table.x[j - 1] - origin) * constants::SEC_PER_DAY,
+                 b = (table.x[j] - origin) * constants::SEC_PER_DAY;
     return table.y[j - 1] + (time - a) * (table.y[j] - table.y[j - 1]) / (b - a);
 }
 }
@@ -440,14 +443,14 @@ void GroundHeatState::appendRk2Cuts(double start, double end, std::vector<double
                 (j && table.x[j] <= table.x[j - 1]))
                 throw std::runtime_error(
                     "Ground thermal series must have finite, strictly increasing times and finite values.");
-            const double time = (table.x[j] - origin) * 86400.;
+            const double time = (table.x[j] - origin) * constants::SEC_PER_DAY;
             if (!std::isfinite(time))
                 throw std::runtime_error("Ground thermal series elapsed time overflow.");
             if (time > start && time < end)
                 cuts.push_back(time);
         }
-        if (kind == "TIMESERIES" &&
-            (origin + start / 86400. < table.x.front() || origin + end / 86400. > table.x.back()))
+        if (kind == "TIMESERIES" && (origin + start / constants::SEC_PER_DAY < table.x.front() ||
+                                     origin + end / constants::SEC_PER_DAY > table.x.back()))
             throw std::runtime_error(
                 "Ground temperature series does not cover the coupled interval.");
     };

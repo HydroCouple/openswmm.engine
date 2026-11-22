@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "GwSourceResolver.hpp"
 #include "GwTransportData.hpp"
 #include "../data/MeshData.hpp"
@@ -62,7 +63,7 @@ GwSourceSignal resolveGwSignal(SimulationContext& ctx, double value, const std::
     auto& table = ctx.tables.tables[static_cast<std::size_t>(index)];
     GwSourceSignal out;
     auto append = [&](double x, double y) {
-        const double t = (x - ctx.options.start_date) * 86400.;
+        const double t = (x - ctx.options.start_date) * constants::SEC_PER_DAY;
         if (!std::isfinite(t) || !std::isfinite(y) || (!out.times.empty() && t <= out.times.back()))
             error("series '" + name +
                   "' needs finite, strictly increasing times and finite values");

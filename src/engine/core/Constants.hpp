@@ -91,7 +91,15 @@ constexpr double MEXP = 5.0 / 3.0;
 constexpr double VISCOS = 1.1e-5;
 
 /// Seconds per day.
+/// @see Legacy: SECperDAY in consts.h
 constexpr double SEC_PER_DAY = 86400.0;
+
+/// Seconds per day as an integer, for whole-second modulo and division.
+constexpr int SEC_PER_DAY_INT = static_cast<int>(SEC_PER_DAY);
+
+/// Milliseconds per day.
+/// @see Legacy: MSECperDAY in consts.h
+constexpr double MSEC_PER_DAY = 8.64e7;
 
 /// Feet per inch.
 constexpr double FT_PER_IN = 1.0 / 12.0;

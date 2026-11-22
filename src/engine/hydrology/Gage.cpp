@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Gage.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -454,8 +455,8 @@ double gageNextRateChange(const SimulationContext& ctx, int j, double date, doub
     const auto* table = gageRainSeries(ctx, j);
     if (!table || table->x.empty() || ctx.options.ignore_rainfall)
         return limit;
-    constexpr double tolerance = 1e-5 / 86400.;
-    const double duration = ctx.gages.interval_sec[j] / 86400.;
+    constexpr double tolerance = 1e-5 / constants::SEC_PER_DAY;
+    const double duration = ctx.gages.interval_sec[j] / constants::SEC_PER_DAY;
     int current = ctx.gages.st_cur[j];
     double end = date, rate = 0;
     if (current >= 0) {

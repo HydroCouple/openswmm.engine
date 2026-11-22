@@ -23,6 +23,7 @@ const double legacy_consts_MISSING = MISSING;
 const double legacy_consts_FUDGE = FUDGE;
 const double legacy_consts_FLOW_TOL = FLOW_TOL;
 const double legacy_consts_SECperDAY = SECperDAY;
+const double legacy_consts_MSECperDAY = MSECperDAY;
 const double legacy_consts_MperFT = MperFT;
 const double legacy_consts_LperFT3 = LperFT3;
 const double legacy_consts_M3perFT3 = M3perFT3;

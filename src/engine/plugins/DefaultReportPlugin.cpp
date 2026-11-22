@@ -166,8 +166,8 @@ static void elapsedToParts(double date, double report_start, int& days, int& hrs
     if (x <= 0.0)
         return;
     days = static_cast<int>(x);
-    int secs = static_cast<int>(std::floor((x - std::floor(x)) * 86400.0 + 0.5));
-    if (secs >= 86400)
+    int secs = static_cast<int>(std::floor((x - std::floor(x)) * constants::SEC_PER_DAY + 0.5));
+    if (secs >= constants::SEC_PER_DAY_INT)
         secs = 86399;
     const int total_mins = secs / 60;
     hrs = total_mins / 60;
@@ -449,7 +449,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
                 std::fprintf(f, "\n  %-20s %5s%10.2f%10.2f%10.2f",
                              ctx.pollutant_names.name_of(i).c_str(),
                              (u >= 0 && u <= 2) ? kQualUnits[u] : "MG/L", P.c_rain[ui], P.c_gw[ui],
-                             P.k_decay[ui] * 86400.0);
+                             P.k_decay[ui] * constants::SEC_PER_DAY);
                 if (P.co_pollut[ui] >= 0)
                     std::fprintf(f, "    %-s  (%.2f)",
                                  ctx.pollutant_names.name_of(P.co_pollut[ui]).c_str(),
@@ -938,13 +938,13 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
     std::fprintf(f, "\n  Antecedent Dry Days ...... %.1f", opt.dry_days);
 
     // Legacy formats these through datetime_encodeTime, which wraps at 24 h.
-    secsToHMS(static_cast<int>(opt.report_step) % 86400, buf, sizeof(buf));
+    secsToHMS(static_cast<int>(opt.report_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
     std::fprintf(f, "\n  Report Time Step ......... %s", buf);
 
     if (ctx.n_subcatches() > 0) {
-        secsToHMS(static_cast<int>(opt.wet_step) % 86400, buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.wet_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
         std::fprintf(f, "\n  Wet Time Step ............ %s", buf);
-        secsToHMS(static_cast<int>(opt.dry_step) % 86400, buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.dry_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
         std::fprintf(f, "\n  Dry Time Step ............ %s", buf);
     }
 
@@ -3543,8 +3543,8 @@ void DefaultReportPlugin::write_timing(std::FILE* f, const SimulationContext& ct
         } else {
             // Legacy rolls whole days into a "d." prefix ahead of hh:mm:ss.
             long es = static_cast<long>(elapsed_secs);
-            long days = es / 86400L;
-            long rem = es % 86400L;
+            long days = es / constants::SEC_PER_DAY_INT;
+            long rem = es % constants::SEC_PER_DAY_INT;
             if (days > 0)
                 std::fprintf(f, "%ld.", days);
             std::fprintf(f, "%02ld:%02ld:%02ld", rem / 3600L, (rem % 3600L) / 60L, rem % 60L);

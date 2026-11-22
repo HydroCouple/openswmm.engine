@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
@@ -311,8 +312,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
     // are evaluated at the END of the step. routing-outfall-tidal read the
     // calendar hour of the step's START, rounded to whole seconds.
     const double new_routing_ms = ctx.elapsed_ms + 1000.0 * dt_routing;
-    constexpr double kMsecPerDay = 86400000.0; // legacy MSECperDAY
-    const double elapsed_days = new_routing_ms / kMsecPerDay;
+    const double elapsed_days = new_routing_ms / constants::MSEC_PER_DAY;
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
     // Each link finds if either end is an outfall and computes yNorm + yCrit.

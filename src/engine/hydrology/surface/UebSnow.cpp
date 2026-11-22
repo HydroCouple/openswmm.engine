@@ -64,7 +64,7 @@ void remember(State& state, double dt, double ts, double tb) {
     double duration = 0;
     for (const auto& h : state.history)
         duration += h.seconds;
-    double excess = std::max(0., duration - 86400.);
+    double excess = std::max(0., duration - constants::SEC_PER_DAY);
     std::size_t erase = 0;
     while (erase < state.history.size() && excess >= state.history[erase].seconds) {
         excess -= state.history[erase].seconds;
@@ -91,7 +91,7 @@ std::string stateError(const State& s) {
             return "Invalid UEB thermal history.";
         duration += h.seconds;
     }
-    if (!finite(duration) || duration > 86400. + 1e-7)
+    if (!finite(duration) || duration > constants::SEC_PER_DAY + 1e-7)
         return "UEB thermal history exceeds 24 hours.";
     return {};
 }

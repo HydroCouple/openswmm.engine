@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "FlowTracer.hpp"
 #include "OutputReader.hpp"
@@ -484,7 +485,7 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
                 la[i].first_volume_m3 = cur.lv[lm[i]] * fvol;
         }
         if (t || info.periods == 1) {
-            double dt = t ? (date - last) * 86400 : 1;
+            double dt = t ? (date - last) * constants::SEC_PER_DAY_INT : 1;
             if (!(dt > 0)) {
                 error = "Reporting timestamps must increase";
                 return SWMM_TRACE_INVALID;
@@ -516,7 +517,7 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
         last = date;
         std::swap(prev, cur);
     }
-    info.duration_s = (info.last_report_date - info.first_report_date) * 86400;
+    info.duration_s = (info.last_report_date - info.first_report_date) * constants::SEC_PER_DAY_INT;
     double duration = info.periods == 1 ? 1 : info.duration_s;
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& a = na[i];

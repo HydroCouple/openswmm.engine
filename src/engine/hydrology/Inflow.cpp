@@ -720,7 +720,8 @@ void InflowSolver::computeAll(SimulationContext& ctx, double current_date, doubl
         const auto want = static_cast<std::size_t>(ctx.n_nodes()) * ns;
         if (rx.msx_ext_mass_in.size() != want)
             rx.msx_ext_mass_in.assign(want, 0.0);
-        const double seconds = std::max(0.0, (current_date - ctx.options.start_date) * 86400.0);
+        const double seconds =
+            std::max(0.0, (current_date - ctx.options.start_date) * constants::SEC_PER_DAY);
         for (const auto& source : rx.sources) {
             if (source.booster)
                 continue; // applied after the receiving node mixes its water

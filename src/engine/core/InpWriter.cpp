@@ -179,7 +179,7 @@ template <std::size_t N>
 static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
     const double nearest = std::round(seconds);
     const double ulp = std::abs(std::nextafter(day, std::numeric_limits<double>::infinity()) - day);
-    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0))
+    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * constants::SEC_PER_DAY))
         seconds = nearest;
     const auto h = static_cast<long long>(std::floor(seconds / 3600.0));
     const int m = static_cast<int>(std::floor((seconds - h * 3600.0) / 60.0));
@@ -194,7 +194,7 @@ static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed
 }
 
 template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
-    fmt_elapsed(buf, (oadate - std::floor(oadate)) * 86400.0, oadate);
+    fmt_elapsed(buf, (oadate - std::floor(oadate)) * constants::SEC_PER_DAY, oadate);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
@@ -4606,7 +4606,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                         // 24:00 and not the truncated-then-rounded "23:60".
                         const double xv = tb.x[k] - tb.rel_anchor;
                         char elapsed[64];
-                        fmt_elapsed(elapsed, xv * 86400.0, tb.x[k], true);
+                        fmt_elapsed(elapsed, xv * constants::SEC_PER_DAY, tb.x[k], true);
                         std::fprintf(f, "%-16s %s %.17g\n", tN(ctx, t), elapsed, tb.y[k]);
                     } else {
                         fmt_date(dateBuf, tb.x[k]);

@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "SourceSnow.hpp"
 #include "SnowCheckpoint.hpp"
 #include "UebSubcatchments.hpp"
@@ -84,7 +85,7 @@ void SourceSnow::advance(SimulationContext& c, int group, double start, double e
     auto& book = ledger_.at(group);
     if (book.end != start || end <= start)
         throw std::runtime_error("Noncontiguous completed snow source clock.");
-    const double dt = end - start, date = c.options.start_date + start / 86400.;
+    const double dt = end - start, date = c.options.start_date + start / constants::SEC_PER_DAY;
     const int n = c.n_subcatches();
     auto& state = solver_.state();
     std::fill(state.enabled.begin(), state.enabled.end(), 0);

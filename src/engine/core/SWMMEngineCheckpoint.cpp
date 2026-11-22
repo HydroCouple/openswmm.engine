@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "SWMMEngine.hpp"
 #include "HotStartManager.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
@@ -678,7 +679,7 @@ CheckpointInspection::Reports inspectReports(std::string bytes, bool mesh,
                 grid * step_ms == next_report_ms,
             "Invalid inspected report grid.");
     const auto completed = static_cast<int>(grid) - 1;
-    const double ratio = mesh && cadence > 0 ? cadence * 86400 / step : 1;
+    const double ratio = mesh && cadence > 0 ? cadence * constants::SEC_PER_DAY_INT / step : 1;
     require(std::isfinite(ratio) && ratio >= 1 && ratio <= std::numeric_limits<int>::max(),
             "Invalid inspected report cadence.");
     const auto stride = static_cast<int>(std::round(ratio));
@@ -2301,7 +2302,7 @@ SWMMEngine::continuationModel(double record_time,
             if (rain_only[k] && read_elsewhere(ctx_.tables.tables[k].id))
                 rain_only[k] = 0;
     }
-    constexpr double half_ms = 0.5 / 86400000.0;
+    constexpr double half_ms = 0.5 / constants::MSEC_PER_DAY;
     for (std::size_t k = 0; k < ctx_.tables.tables.size(); ++k) {
         auto t = ctx_.tables.tables[k];
         if (cut && t.type == TableType::TIMESERIES && t.num_cols <= 1) {

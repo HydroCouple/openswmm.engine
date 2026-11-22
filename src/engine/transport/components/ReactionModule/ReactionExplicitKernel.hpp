@@ -43,6 +43,7 @@
 #include <cmath>
 #include <limits>
 
+#include "../../../core/Constants.hpp"
 #include "../../../data/ReactionTokens.hpp"
 
 #ifndef OPENSWMM_KERNEL_FN
@@ -71,7 +72,7 @@ inline double rateUnitFactor(int units) {
     case 2:
         return 1.0 / 3600.0;
     default:
-        return 1.0 / 86400.0;
+        return 1.0 / constants::SEC_PER_DAY;
     }
 }
 
