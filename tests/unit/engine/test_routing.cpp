@@ -38,6 +38,7 @@
 #include "hydraulics/Routing.hpp"
 #include "hydraulics/XSectBatch.hpp"
 #include "hydraulics/ForceMain.hpp"
+#include "hydraulics/HydClosureKernels.hpp"
 #include "hydraulics/Node.hpp"
 #include "core/Constants.hpp"
 #include "core/SimulationContext.hpp"
@@ -83,6 +84,22 @@ TEST(DWConstants, SlotCrownCutoff) {
 
 TEST(DWConstants, SlotWidthFactor) {
     EXPECT_DOUBLE_EQ(SLOT_WIDTH_FACTOR, 0.001);
+}
+
+// ============================================================================
+// Froude number: one definition for DW and FV
+// ============================================================================
+
+TEST(FroudeNumber, IsLegacyLinkGetFroudeForm) {
+    // legacy link.c: fabs(v) / sqrt(GRAVITY * y), in that order. The FV path
+    // used to compute |v| * INV_SQRT_GRAVITY / sqrt(y) with a mistyped
+    // INV_SQRT_GRAVITY = 0.17622692584 (1/sqrt(32.2) = 0.17622684421...),
+    // 4.6e-7 relative high; that constant no longer exists.
+    for (double v : {-3.2, 0.0, 0.75, 12.0})
+        for (double y : {0.01, 0.4, 2.5, 30.0})
+            EXPECT_EQ(hydkernels::froudeNumber(v, y), std::fabs(v) / std::sqrt(32.2 * y))
+                << "v=" << v << " y=" << y;
+    EXPECT_NE(hydkernels::froudeNumber(1.0, 1.0), 0.17622692584);
 }
 
 // ============================================================================

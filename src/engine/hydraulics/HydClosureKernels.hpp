@@ -46,6 +46,8 @@
 
 #include <cmath>
 
+#include "../core/Constants.hpp"
+
 // Same convention as InertialKernels.hpp:45 / FvKernels.hpp: host builds get
 // plain `inline`; a device build defines this to KOKKOS_INLINE_FUNCTION before
 // including the header.
@@ -66,6 +68,20 @@ inline constexpr double kViscosity = 1.1e-5;
 
 /// Gravity in internal units, matching constants::GRAVITY.
 inline constexpr double kGravity = 32.2;
+
+/**
+ * @brief Froude number of a conduit flow, in legacy link_getFroude's form.
+ *
+ * @param[in] velocity  Flow velocity (ft/s); the sign is dropped.
+ * @param[in] hyd_depth Hydraulic depth A/W (ft), caller-guaranteed > 0.
+ * @return |v| / sqrt(GRAVITY * hyd_depth), evaluated in exactly that order:
+ *         the dynamic wave classifier sits on knife-edges at Fr = 0.5 and 1,
+ *         and a precomputed sqrt(g) times sqrt(y) reorders the rounding.
+ */
+inline double froudeNumber(double velocity, double hyd_depth) {
+    const double v_abs = (velocity < 0.0) ? -velocity : velocity;
+    return v_abs / std::sqrt(constants::GRAVITY * hyd_depth);
+}
 
 /**
  * @brief Compute Hazen-Williams friction slope from velocity and hydraulic radius.

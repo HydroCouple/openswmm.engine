@@ -60,12 +60,6 @@ namespace constants {
 /// @see Legacy: GRAVITY in consts.h
 constexpr double GRAVITY = 32.2;
 
-/// sqrt(GRAVITY) — precomputed to avoid per-element std::sqrt in Froude calc.
-constexpr double SQRT_GRAVITY = 5.67450438786; // sqrt(32.2)
-
-/// 1.0 / sqrt(GRAVITY) — multiply instead of divide in Froude computation.
-constexpr double INV_SQRT_GRAVITY = 0.17622692584; // 1.0 / sqrt(32.2)
-
 /// Gravitational acceleration in SI (m/s²) for the solvers that work in
 /// meters: the 2D surface, subsurface and heat solvers and their 1D-2D
 /// exchange laws. Legacy defines SI_GRAVITY 9.81 in consts.h but never uses

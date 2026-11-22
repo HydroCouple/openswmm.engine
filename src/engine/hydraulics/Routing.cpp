@@ -38,6 +38,7 @@
 #include "AquiferLinkExchange.hpp" // G-X4
 #include "Divider.hpp"
 #include "ForceMain.hpp"
+#include "HydClosureKernels.hpp"
 #include "Node.hpp"
 #include "Link.hpp"
 #include "TopoSort.hpp"
@@ -2106,9 +2107,7 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         const double hyd_depth = (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
                                      ? a_conv / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
                                      : 0.0;
-        ctx.links.froude[uj] =
-            (hyd_depth > 0.0) ? std::fabs(v) * constants::INV_SQRT_GRAVITY / std::sqrt(hyd_depth)
-                              : 0.0;
+        ctx.links.froude[uj] = (hyd_depth > 0.0) ? hydkernels::froudeNumber(v, hyd_depth) : 0.0;
 
         // Flow class and the end-full flags. Neither was ever written under FV,
         // so the Flow Classification Summary read 100 % dry on every model and

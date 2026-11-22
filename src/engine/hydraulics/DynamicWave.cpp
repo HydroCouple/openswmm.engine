@@ -61,6 +61,7 @@
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 #include "ForceMain.hpp"
+#include "HydClosureKernels.hpp"
 #include "Culvert.hpp"
 #include "AquiferLinkExchange.hpp"      // G-X4
 #include "../2d/coupling/PondModel.hpp" // coupled-junction pond area
@@ -128,8 +129,6 @@ extern long g_trace_rstep_sn;
 namespace dynwave {
 
 using constants::GRAVITY;
-using constants::SQRT_GRAVITY;
-using constants::INV_SQRT_GRAVITY;
 using constants::FUDGE;
 
 // ============================================================================
@@ -3038,12 +3037,12 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step, s
             // pass getLinkStep's 0.01 gate and set the variable step. Only
             // W == 0 short-circuits — legacy's A/0 = inf gives Fr = 0 too.
             double dh = (wMid > 0.0) ? aFr / wMid : 0.0;
-            // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
-            // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated
-            // sqrt(32.2)) times sqrt(dh) differs by ~3e-9 and reorders the FP
-            // ops; that shifts Froude across the sigma (0.5/1.0) and SUB/SUPER
-            // critical knife-edges, amplifying into macroscopic transients.
-            fr = (dh > 0.0) ? absv / std::sqrt(constants::GRAVITY * dh) : 0.0;
+            // PARITY: legacy link_getFroude computes fabs(v) / sqrt(GRAVITY * y)
+            // (link.c); froudeNumber() is that expression in that order. A
+            // precomputed sqrt(g) times sqrt(dh) reorders the FP ops and shifts
+            // Froude across the sigma (0.5/1.0) and SUB/SUPER critical
+            // knife-edges, amplifying into macroscopic transients.
+            fr = (dh > 0.0) ? hydkernels::froudeNumber(absv, dh) : 0.0;
         }
 
         // Reclassify SUBCRITICAL → SUPERCRITICAL
