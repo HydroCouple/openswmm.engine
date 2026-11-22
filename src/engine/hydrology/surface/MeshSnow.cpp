@@ -132,7 +132,7 @@ std::string MeshSnow::initialize(SimulationContext& ctx,
             const int e = i * 3 + 2;
             dd.dhmin[e] = p[0] * ucf::Ucf[ucf::TEMPERATURE][units] / ucf::Ucf[ucf::RAINFALL][units];
             dd.dhmax[e] = p[1] * ucf::Ucf[ucf::TEMPERATURE][units] / ucf::Ucf[ucf::RAINFALL][units];
-            dd.tbase[e] = units == 1 ? p[2] * 1.8 + 32 : p[2];
+            dd.tbase[e] = units == 1 ? p[2] * constants::F_PER_C + constants::F_AT_0C : p[2];
             dd.ati[e] = dd.tbase[e];
             dd.fwfrac[e] = p[3];
             dd.wsnow[e] = p[4] * factor / .3048;
@@ -539,7 +539,10 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
                 if (auto error = climate::resolveRadiation(ctx, date, dt, weather); !error.empty())
                     return error;
                 const double fraction =
-                    weather.temperature <= (ctx.climate_state.snow_divt - 32) * 5 / 9 ? 1 : 0;
+                    weather.temperature <=
+                            (ctx.climate_state.snow_divt - constants::F_AT_0C) * 5 / 9
+                        ? 1
+                        : 0;
                 SnowInputs forcing;
                 forcing.dt_s = dt;
                 forcing.rain_m = (1 - fraction) * rain[i] * dt;
@@ -547,7 +550,7 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
                 forcing.Ta_C = weather.temperature;
                 forcing.wind_ms = weather.wind;
                 forcing.gamma = ctx.climate_state.gamma;
-                const double temp = weather.temperature * 1.8 + 32;
+                const double temp = weather.temperature * constants::F_PER_C + constants::F_AT_0C;
                 forcing.ea = 8.1175e6 * std::exp(-7701.544 / (temp + 405.0265));
                 const int day = datetime::dayOfYear(date);
                 if (day != melt_day) {

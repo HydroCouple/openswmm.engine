@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "DegreeDaySnow.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -47,7 +48,7 @@ void SnowSoA::resize(int n) {
     wsnow.assign(total, 0.0);
     fw.assign(total, 0.0);
     coldc.assign(total, 0.0);
-    ati.assign(total, 32.0);
+    ati.assign(total, constants::F_AT_0C);
     // 1.0, matching legacy `snow_initSnowpack` (snow.c:199). The new-snow
     // ADC index starts ABOVE any real pack, so `awesi < awe` sends the first
     // depleting step to the regular curve. Initialising it to 0 makes
@@ -58,7 +59,7 @@ void SnowSoA::resize(int n) {
     // starts BELOW its SD100 never takes that branch.
     awe.assign(total, 1.0);
     imelt.assign(total, 0.0);
-    tbase.assign(total, 32.0);
+    tbase.assign(total, constants::F_AT_0C);
     dhm.assign(total, 0.0);
     dhmin.assign(total, 0.0);
     dhmax.assign(total, 0.0);
@@ -203,7 +204,7 @@ double DegreeDaySnow::rainMeltRate(double temp, double wind, double gamma, doubl
     rainfall = rainfall * 43200.0; // convert rain to in/hr
     if (rainfall > 0.02) {
         double uadj = 0.006 * wind;
-        double t1 = temp - 32.0;
+        double t1 = temp - constants::F_AT_0C;
         double t2 = 7.5 * gamma * uadj;
         double t3 = 8.5 * uadj * (ea - 0.18);
         double smelt = t1 * (0.001167 + t2 + 0.007 * rainfall) + t3;
@@ -461,7 +462,7 @@ void DegreeDaySnow::step(int e, const surface::SnowInputs& input, surface::SnowO
     const double dt = input.dt_s;
     const double rain = input.rain_m / ucf::FT_TO_M / dt;
     const double snow = input.snow_m / ucf::FT_TO_M / dt;
-    const double temp = input.Ta_C * 1.8 + 32.0;
+    const double temp = input.Ta_C * constants::F_PER_C + constants::F_AT_0C;
     const double wind = input.wind_ms / 0.44704;
     // Point-element accumulation: batch plowing remains the subcatchment
     // driver's responsibility. step() includes snowfall exactly once.

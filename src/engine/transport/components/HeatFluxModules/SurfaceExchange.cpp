@@ -30,6 +30,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/Constants.hpp"
 #include "SurfaceExchange.hpp"
 
 #include <algorithm>
@@ -76,7 +77,7 @@ double netFluxOut(double t_w, double t_air, double rh, double wind_ms, double a,
  * allocation.
  */
 double airTempCelsius(const SimulationContext& ctx) noexcept {
-    return (ctx.climate_state.temperature - 32.0) * 5.0 / 9.0;
+    return (ctx.climate_state.temperature - constants::F_AT_0C) * 5.0 / 9.0;
 }
 
 /**
@@ -273,7 +274,7 @@ double surfaceFluxOut(const SimulationContext& ctx, const HeatElement& elem, dou
     const double t_air = ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature);
     const double rh = ctx.forcing.elementHumidity(elem, ctx.climate_state.humidity);
     const double wind = ctx.forcing.elementWindMph(elem, ctx.climate_state.wind_speed);
-    return netFluxOut(t_w, (t_air - 32.0) * 5.0 / 9.0, rh, wind * kMphToMs,
+    return netFluxOut(t_w, (t_air - constants::F_AT_0C) * 5.0 / 9.0, rh, wind * kMphToMs,
                       ctx.options.wind_func_coeff_a, ctx.options.wind_func_coeff_b,
                       ctx.options.water_density, ctx.options.pressure_ratio);
 }

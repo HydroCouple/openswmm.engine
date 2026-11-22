@@ -73,7 +73,7 @@ double hargreaves(double latitude, int day_of_year, double t_avg, double t_range
     double a = 2.0 * PI / 365.0;
 
     // Convert to Celsius
-    double ta = (t_avg - 32.0) * 5.0 / 9.0;
+    double ta = (t_avg - constants::F_AT_0C) * 5.0 / 9.0;
     double tr = t_range * 5.0 / 9.0;
     tr = std::max(tr, 0.0);
 

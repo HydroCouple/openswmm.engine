@@ -106,7 +106,10 @@ void SourceSnow::advance(SimulationContext& c, int group, double start, double e
                       (cfg.parameters.rain_temperature - weather.temperature) /
                           (cfg.parameters.rain_temperature - cfg.parameters.snow_temperature),
                       0., 1.)
-                : (weather.temperature <= (c.climate_state.snow_divt - 32) / 1.8 ? 1. : 0.);
+                : (weather.temperature <=
+                           (c.climate_state.snow_divt - constants::F_AT_0C) / constants::F_PER_C
+                       ? 1.
+                       : 0.);
         const auto site = cfg.packs.find(p);
         const double drift = ueb && site != cfg.packs.end() ? site->second.site.drift : 1;
         const double raw = w.raw_precipitation >= 0 ? w.raw_precipitation : w.rain;
@@ -127,7 +130,7 @@ void SourceSnow::advance(SimulationContext& c, int group, double start, double e
     const double removed = state.removed, sublimation = c.snowpacks.runtime.sublimation;
     solver_.setMeltCoeffs(datetime::dayOfYear(date));
     solver_.plowSnow(c, dt, snow.data());
-    const double temp = weather.temperature * 1.8 + 32;
+    const double temp = weather.temperature * constants::F_PER_C + constants::F_AT_0C;
     const double ea = 8.1175e6 * std::exp(-7701.544 / (temp + 405.0265));
     solver_.execute(c, dt, temp, weather.wind / .44704, rain.data(), snow.data(),
                     c.climate_state.gamma, ea);

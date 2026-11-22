@@ -43,6 +43,8 @@
 
 #include <array>
 
+#include "Constants.hpp"
+
 namespace openswmm {
 
 struct SimulationOptions;
@@ -276,7 +278,7 @@ struct DisplayUnits {
      * @return tF for unit_system==0, otherwise (tF-32)*5/9 in deg C.
      */
     double temperature(double tF) const {
-        return unit_system == 0 ? tF : (5.0 / 9.0) * (tF - 32.0);
+        return unit_system == 0 ? tF : (5.0 / 9.0) * (tF - constants::F_AT_0C);
     }
 };
 

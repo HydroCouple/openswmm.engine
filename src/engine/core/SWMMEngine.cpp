@@ -3234,7 +3234,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             // adjustment is added.
             if (unit_sys == 1)
                 ctx_.climate_state.temperature_src =
-                    (9. / 5.) * ctx_.climate_state.temperature_src + 32.0;
+                    (9. / 5.) * ctx_.climate_state.temperature_src + constants::F_AT_0C;
             ctx_.climate_state.temperature_src += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
@@ -3376,8 +3376,9 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             if (ctx_.options.humidity_var == 1) {
                 // Dew point: SI decks author degC, US decks degF; the air
                 // temperature is held in degF internally.
-                const double td_c = (unit_sys == 1) ? h : (h - 32.0) * 5.0 / 9.0;
-                const double ta_c = (ctx_.climate_state.temperature - 32.0) * 5.0 / 9.0;
+                const double td_c = (unit_sys == 1) ? h : (h - constants::F_AT_0C) * 5.0 / 9.0;
+                const double ta_c =
+                    (ctx_.climate_state.temperature - constants::F_AT_0C) * 5.0 / 9.0;
                 using openswmm::transport::heat::saturationVapourPressure;
                 h = 100.0 * saturationVapourPressure(td_c) / saturationVapourPressure(ta_c);
             }
@@ -3391,7 +3392,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             const auto error = ctx_.snowpacks.meteorology.average(abs_time, 1, met);
             if (!error.empty())
                 throw std::runtime_error(error);
-            ctx_.climate_state.temperature = ctx_.forcing.effective_temperature(met[0] * 1.8 + 32);
+            ctx_.climate_state.temperature = ctx_.forcing.effective_temperature(
+                met[0] * constants::F_PER_C + constants::F_AT_0C);
             ctx_.climate_state.wind_speed = ctx_.forcing.effective_wind(met[2] / .44704);
             ctx_.climate_state.humidity = met[1];
             const double ta = ctx_.climate_state.temperature;
@@ -11534,7 +11536,7 @@ void SWMMEngine::initHydrology() noexcept {
         ctx_.climate_state.elev = ctx_.options.snow_elev / ucf::UCF(ucf::LENGTH, ctx_.options);
         ctx_.climate_state.snow_divt =
             (ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)) == 1)
-                ? 9. / 5. * ctx_.options.snow_divt + 32.0
+                ? 9. / 5. * ctx_.options.snow_divt + constants::F_AT_0C
                 : ctx_.options.snow_divt;
 
         // Transfer longitude/solar-time correction. The [TEMPERATURE] SNOWMELT

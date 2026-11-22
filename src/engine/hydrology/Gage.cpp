@@ -94,7 +94,8 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     if (!ctx.options.ignore_snow_melt && pack >= 0 &&
         snow_config.modelFor(pack) == surface::SnowKind::Ueb) {
         const auto& p = snow_config.parameters;
-        const double temperature = (ctx.climate_state.temperature - 32.) / 1.8;
+        const double temperature =
+            (ctx.climate_state.temperature - constants::F_AT_0C) / constants::F_PER_C;
         const double fraction = snow_config.division_temperature
                                     ? (is_snowing ? 1. : 0.)
                                     : std::clamp((p.rain_temperature - temperature) /

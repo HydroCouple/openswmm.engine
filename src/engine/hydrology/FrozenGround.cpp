@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "FrozenGround.hpp"
 
@@ -111,7 +112,7 @@ void advanceSubcatchments(SimulationContext& ctx, const runoff::RunoffSoA& soa, 
     auto& f = ctx.frozen_ground;
     if (!f.enabled() || dt <= 0.0)
         return;
-    const double air = (ctx.climate_state.temperature - 32.0) / 1.8;
+    const double air = (ctx.climate_state.temperature - constants::F_AT_0C) / constants::F_PER_C;
     const auto& heat = ctx.heat_state;
     const bool heat_on = ctx.options.heat_transport;
     const std::size_t n = f.enthalpy.size();

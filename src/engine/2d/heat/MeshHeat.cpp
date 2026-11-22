@@ -132,8 +132,9 @@ MeshAtmosphericFlux outward(const MeshHeatState& h, int i, double t, double evap
     MeshAtmosphericFlux flux;
     flux.radiation = h.radiative ? radiativeFluxOut(ctx, elem, t, true) : 0;
     if (h.surface) {
-        const double air =
-            (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) - 32) * 5. / 9;
+        const double air = (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) -
+                            constants::F_AT_0C) *
+                           5. / 9;
         const double wind =
             ctx.forcing.elementWindMph(elem, ctx.climate_state.wind_speed) * kMphToMs;
         const double transfer =

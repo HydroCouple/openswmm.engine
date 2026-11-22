@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "ClimateFile.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
@@ -309,14 +310,14 @@ void ClimateFileReader::parseUserLine(const char* line) {
         double v = std::atof(s0);
         // User-prepared files: temps in user units, convert if SI
         if (unit_system_ == 1)
-            v = v * 9.0 / 5.0 + 32.0; // °C → °F
+            v = v * 9.0 / 5.0 + constants::F_AT_0C; // °C → °F
         file_data_[TMAX][d] = v;
     }
     // TMIN
     if (s1[0] != '\0' && s1[0] != '*') {
         double v = std::atof(s1);
         if (unit_system_ == 1)
-            v = v * 9.0 / 5.0 + 32.0;
+            v = v * 9.0 / 5.0 + constants::F_AT_0C;
         file_data_[TMIN][d] = v;
     }
     // EVAP
@@ -356,9 +357,9 @@ void ClimateFileReader::parseGhcndLine(const char* line) {
         // Convert based on variable type and units
         if (i == TMIN || i == TMAX) {
             if (temp_units_ == DEG_C10)
-                v = v / 10.0 * 9.0 / 5.0 + 32.0; // tenths °C → °F
+                v = v / 10.0 * 9.0 / 5.0 + constants::F_AT_0C; // tenths °C → °F
             else if (temp_units_ == DEG_C)
-                v = v * 9.0 / 5.0 + 32.0; // °C → °F
+                v = v * 9.0 / 5.0 + constants::F_AT_0C; // °C → °F
             // DEG_F: no conversion
         } else if (i == EVAP) {
             if (temp_units_ == DEG_C10)
@@ -517,7 +518,7 @@ void ClimateFileReader::parseDLY0204Line(const char* line) {
         // Unit conversions
         if (var == TMIN || var == TMAX) {
             // Tenths of degrees Celsius → °F
-            v = v / 10.0 * 9.0 / 5.0 + 32.0;
+            v = v / 10.0 * 9.0 / 5.0 + constants::F_AT_0C;
         } else if (var == EVAP) {
             v /= 10.0; // tenths mm → mm
             if (unit_system_ == 0)

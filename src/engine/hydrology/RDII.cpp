@@ -437,7 +437,7 @@ double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
  * @param tf Fahrenheit value, borrowed by value.
  * @return (tf-32)*5/9; no finite/range checks or state mutation. */
 static inline double fToC(double tf) {
-    return (tf - 32.0) * 5.0 / 9.0;
+    return (tf - constants::F_AT_0C) * 5.0 / 9.0;
 }
 
 // ---------------------------------------------------------------------------

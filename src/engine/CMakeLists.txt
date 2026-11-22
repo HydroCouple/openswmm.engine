@@ -171,6 +171,11 @@ if(APPLE)
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
 elseif(NOT EMSCRIPTEN)
     find_package(OpenMP)
+elseif(CMAKE_CXX_FLAGS MATCHES "-fopenmp")
+    # Emscripten 6.0.9+ ships an OpenMP runtime over WebAssembly threads; a WASM
+    # package opts in by compiling with -fopenmp -pthread, and only then do the
+    # parallel solver loops make sense there.
+    find_package(OpenMP)
 endif()
 
 if(OpenMP_FOUND OR TARGET OpenMP::OpenMP_CXX)

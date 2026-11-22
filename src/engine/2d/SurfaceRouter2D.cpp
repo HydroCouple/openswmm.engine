@@ -2473,8 +2473,8 @@ void SurfaceRouter2D::advanceFrozenGround(const SimulationContext& ctx, double d
         // Each cell's own air temperature, as the mesh heat exchange reads it.
         const double air =
             (ctx.forcing.elementAirTempF(HeatElement::cell2d(cell), ctx.climate_state.temperature) -
-             32.0) /
-            1.8;
+             constants::F_AT_0C) /
+            constants::F_PER_C;
         // Snow on the cell insulates the covered share of the ground.
         double cover = 0.0, swe = 0.0;
         if (state_.snow.owns(cell) && i < snow.size()) {
