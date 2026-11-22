@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Transect.hpp"
 #include "../data/InfraData.hpp"
 #include <cmath>
@@ -34,8 +35,6 @@
 
 namespace openswmm {
 namespace transect {
-
-static constexpr double PHI = 1.486;
 
 // Faithful 1:1 port of legacy transect.c (transect_validate + createTables +
 // getGeometry + getSliceGeom + getFlow). AREA and WIDTH are the same geometric
@@ -132,7 +131,7 @@ void buildTables(TransectData& td, bool add_end_walls) {
                 n = nLeft;
             if (X[static_cast<size_t>(k)] > xRightBank)
                 n = nRight;
-            return PHI / n * a * std::pow(a / wp, 2.0 / 3.0);
+            return constants::PHI / n * a * std::pow(a / wp, 2.0 / 3.0);
         }
         return 0.0;
     };
@@ -197,7 +196,7 @@ void buildTables(TransectData& td, bool add_end_walls) {
         if (areaT == 0.0)
             td.hrad_tbl[idx] = td.hrad_tbl[idx - 1];
         else
-            td.hrad_tbl[idx] = std::pow(qSum * nChannel / PHI / areaT, 1.5);
+            td.hrad_tbl[idx] = std::pow(qSum * nChannel / constants::PHI / areaT, 1.5);
     }
 
     // PARITY: legacy setMaxSectionFactor (transect.c:596-618) — the physical

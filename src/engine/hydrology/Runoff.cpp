@@ -122,11 +122,12 @@ void RunoffSoA::computeAlpha() {
             // i.e. divide by area BEFORE multiplying sqrt(slope), and divide by N
             // as a separate final step — do NOT fold (N*area) into one denominator
             // (that reassociation differs by ~1 ULP and biases every pow() output).
-            alpha_imperv[ui] = (n_imperv[ui] > 0.0 && area_imperv > 0.0)
-                                   ? PHI * width[ui] / area_imperv * sq_slope / n_imperv[ui]
-                                   : 0.0;
+            alpha_imperv[ui] =
+                (n_imperv[ui] > 0.0 && area_imperv > 0.0)
+                    ? constants::PHI * width[ui] / area_imperv * sq_slope / n_imperv[ui]
+                    : 0.0;
             alpha_perv[ui] = (n_perv[ui] > 0.0 && area_perv > 0.0)
-                                 ? PHI * width[ui] / area_perv * sq_slope / n_perv[ui]
+                                 ? constants::PHI * width[ui] / area_perv * sq_slope / n_perv[ui]
                                  : 0.0;
         }
     }

@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "LID.hpp"
 #include "../core/SimulationContext.hpp"
@@ -394,22 +395,22 @@ void LIDSolver::init(SimulationContext& ctx) {
         }
 
         // Legacy validateLidProc (lid.c): the derived parameters, in its
-        // operation order. PHI is legacy's 1.486.
+        // operation order. constants::PHI is legacy's 1.486.
         {
-            constexpr double PHI = 1.486;
             if (g.type == LIDType::VEG_SWALE) {
                 g.surf_alpha[us] =
                     (g.surf_rough[us] * g.surf_slope[us] > 0.0 && g.surf_store[us] != 0.0)
-                        ? PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us]
+                        ? constants::PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us]
                         : 0.0;
             } else {
-                g.surf_alpha[us] = (g.surf_rough[us] > 0.0)
-                                       ? PHI / g.surf_rough[us] * std::sqrt(g.surf_slope[us])
-                                       : 0.0;
+                g.surf_alpha[us] = (g.surf_rough[us] > 0.0) ? constants::PHI / g.surf_rough[us] *
+                                                                  std::sqrt(g.surf_slope[us])
+                                                            : 0.0;
             }
-            g.drainmat_alpha[us] = (g.drainmat_rough[us] > 0.0)
-                                       ? PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us])
-                                       : 0.0;
+            g.drainmat_alpha[us] =
+                (g.drainmat_rough[us] > 0.0)
+                    ? constants::PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us])
+                    : 0.0;
             // Clogging factors become the treated volume (ft) at which the
             // layer is fully clogged: void volume times the user's factor.
             if (g.pave_thick[us] > 0.0)

@@ -23,6 +23,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Radiation.hpp"
 #include <stdexcept>
 
@@ -37,9 +38,8 @@ namespace openswmm::climate {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
-constexpr double kDegRad = kPi / 180.0;
-constexpr double kRadDeg = 180.0 / kPi;
+constexpr double kDegRad = constants::PI_EXACT / 180.0;
+constexpr double kRadDeg = 180.0 / constants::PI_EXACT;
 
 /// Feet → metres. `ClimateState::elev` is feet (legacy `Temp.elev`).
 constexpr double kFtToM = 0.3048;
@@ -61,8 +61,8 @@ SolarPosition solarPosition(int day_of_year, double hour_local, double lat_deg, 
     // Fractional year, radians. The (hour − 12)/24 term puts the fit at the
     // instant rather than at local midnight; omitting it costs ~0.2° of
     // declination at the equinoxes, where declination moves fastest.
-    const double g =
-        2.0 * kPi / 365.0 * (static_cast<double>(day_of_year) - 1.0 + (hour_local - 12.0) / 24.0);
+    const double g = 2.0 * constants::PI_EXACT / 365.0 *
+                     (static_cast<double>(day_of_year) - 1.0 + (hour_local - 12.0) / 24.0);
 
     const double c1 = std::cos(g), s1 = std::sin(g);
     const double c2 = std::cos(2.0 * g), s2 = std::sin(2.0 * g);

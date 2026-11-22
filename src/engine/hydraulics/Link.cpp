@@ -25,6 +25,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Link.hpp"
 #include "XSectBatch.hpp"
 
@@ -191,12 +192,11 @@ double getCapacity(const XSectParams& xs, double depth) {
 
 double getHydPower(double flow, double head_upstream, double head_downstream) {
     // P = gamma * Q * hL
-    // gamma = specific weight of water = 62.4 lb/ft³
+    // gamma = specific weight of water (constants::GAMMA_WATER, lb/ft³)
     // Q = flow (ft³/s), hL = head loss (ft)
     // Result in ft·lb/s (divide by 550 for horsepower)
-    constexpr double GAMMA = 62.4; // lb/ft³
     double hL = head_upstream - head_downstream;
-    return GAMMA * std::fabs(flow) * std::fabs(hL);
+    return constants::GAMMA_WATER * std::fabs(flow) * std::fabs(hL);
 }
 
 // ============================================================================

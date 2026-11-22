@@ -60,13 +60,17 @@
 #include <limits>
 #include <type_traits>
 
+#include "../../core/Constants.hpp"
+
 #ifndef OPENSWMM_KERNEL_FN
 #define OPENSWMM_KERNEL_FN inline
 #endif
 
 namespace openswmm::twoD::swe {
 
-inline constexpr double kGravity = 9.80665;
+/// The SWE kernels read constants::GRAVITY_SI under this name (one value,
+/// defined once in Constants.hpp).
+inline constexpr double kGravity = constants::GRAVITY_SI;
 
 /// True when @p x is neither NaN nor infinite.
 /// @note Not std::isfinite: with the MSVC standard library it is a host-only template, and

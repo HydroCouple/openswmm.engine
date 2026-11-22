@@ -16,6 +16,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "NodeCoupling.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../core/UnitConversion.hpp"
@@ -121,12 +122,11 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh, const Sim
         c.c_oi = c.c_oo = cp.cd; // legacy map-row CD
 
     // ---- Geometry (SI) ---------------------------------------------------
-    constexpr double kPi = 3.14159265358979323846;
     // Default manhole: 1.2 m, or 4 ft in US units.
     const double d_default = (f == 1.0) ? 1.2 : 4.0 * f;
     const double d = authored(Key::D, v) ? v * f : d_default;
-    double area = kPi * d * d / 4.0;
-    double perim = kPi * d;
+    double area = constants::PI_EXACT * d * d / 4.0;
+    double perim = constants::PI_EXACT * d;
     const bool area_node = authored(Key::AREA, v);
     const double area_val = v * f2;
     double perim_val = 0.0;
@@ -152,7 +152,7 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh, const Sim
             if (a_ft2 > 0.0)
                 area = a_ft2 * opts.len_1d_to_2d * opts.len_1d_to_2d;
         }
-        perim = perim_node ? perim_val : std::sqrt(4.0 * kPi * area);
+        perim = perim_node ? perim_val : std::sqrt(4.0 * constants::PI_EXACT * area);
         break;
     }
     default: // MANHOLE

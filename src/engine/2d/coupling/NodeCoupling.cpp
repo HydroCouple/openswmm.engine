@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "NodeCoupling.hpp"
 #include "PondModel.hpp"
 #include "../mesh/VertexReconstruction.hpp" // vertexHeadAt (on-demand single-vertex head)
@@ -22,8 +23,6 @@
 namespace openswmm::twoD {
 
 namespace {
-
-constexpr double GRAVITY = 9.80665; // m/s²
 
 /// Regularization head (m) below which the orifice √-law is replaced by a C¹
 /// quadratic. The bare law Q = Cd·A·sign(Δh)·√(2g|Δh|) has dQ/dΔh → ∞ as
@@ -64,7 +63,7 @@ inline double orificeFlow(double dh, double cd, double area) noexcept {
     if (a < 1.0e-12)
         return 0.0;
     const double sign = (dh > 0.0) ? 1.0 : -1.0;
-    return sign * cd * area * std::sqrt(2.0 * GRAVITY) * orificePhi(a);
+    return sign * cd * area * std::sqrt(2.0 * constants::GRAVITY_SI) * orificePhi(a);
 }
 
 /**
@@ -424,7 +423,7 @@ double computeNodeCouplingDQdh1d(const CouplingPoint& cp, const MeshData& mesh,
         const double inv_sqrt_e = 1.0 / std::sqrt(ORIFICE_H_EPS);
         phi_p = 1.5 * inv_sqrt_e - (inv_sqrt_e / ORIFICE_H_EPS) * a;
     }
-    double G = cp.cd * A_eff * std::sqrt(2.0 * GRAVITY) * phi_p;
+    double G = cp.cd * A_eff * std::sqrt(2.0 * constants::GRAVITY_SI) * phi_p;
 
     constexpr double CAP_BAND = 0.05;
     const double ct = std::min(1.0, std::max(0.0, (h_max - crown) / CAP_BAND));

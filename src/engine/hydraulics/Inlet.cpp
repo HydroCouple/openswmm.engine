@@ -662,7 +662,7 @@ Geom InletSolver::geomOf(const SimulationContext& ctx, int ii, const XSectParams
 
     // --- Beta = 1.486·√SL / n (Conduit[k].beta), used only by the channel
     //     drop-grate branch of getGrateInletCapture.
-    g.beta = (g.n > 0.0 && g.sl > 0.0) ? 1.486 * std::sqrt(g.sl) / g.n : 0.0;
+    g.beta = (g.n > 0.0 && g.sl > 0.0) ? constants::PHI * std::sqrt(g.sl) / g.n : 0.0;
     return g;
 }
 

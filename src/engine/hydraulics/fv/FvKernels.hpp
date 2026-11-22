@@ -63,6 +63,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../../core/Constants.hpp"
 #include "FvOptions.hpp"
 #include "NetworkMeshData.hpp"
 
@@ -76,9 +77,9 @@
 
 namespace openswmm::fv::kernels {
 
-/// Gravity in internal units. Matches constants::GRAVITY — spelled here so the
-/// header stays dependency-free for the plugin build.
-inline constexpr double kGravity = 32.2;
+/// Gravity in internal units: the FV kernels and solvers read constants::GRAVITY
+/// under this name (one value, defined once in Constants.hpp).
+inline constexpr double kGravity = constants::GRAVITY;
 
 /// Depth below which a cell is treated as dry: no velocity, no flux, no
 /// celerity contribution. The threshold is 1e-7 ft; the separate area floor

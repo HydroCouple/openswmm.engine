@@ -61,6 +61,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../core/Constants.hpp"
 #include "XSectLookup.hpp"
 #include "../data/LinkData.hpp"
 
@@ -73,12 +74,13 @@
 
 namespace openswmm::xsect {
 
-// Constants matching legacy consts.h / xsect.c exactly (for bit-faithful
-// parity). They moved here with the bodies that use them; setParams() in
-// XSection.cpp reads the same definitions rather than a second copy.
-inline constexpr double TINY = 1.0e-6;
-inline constexpr double PI = 3.141592654;
-inline constexpr double GRAVITY = 32.2;
+// The legacy-faithful constants (consts.h / xsect.c values) come from
+// Constants.hpp; these using-declarations keep them addressable as
+// xsect::TINY, xsect::PI and xsect::GRAVITY for the kernels and for
+// setParams() in XSection.cpp.
+using constants::TINY;
+using constants::PI;
+using constants::GRAVITY;
 
 inline constexpr double RECT_ALFMAX = 0.97;
 inline constexpr double RECT_TRIANG_ALFMAX = 0.98;

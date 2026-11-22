@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "2d/coupling/ExchangeLaw.hpp"
+#include "core/Constants.hpp"
 
 using namespace openswmm::twoD::exchange;
 
@@ -225,7 +226,7 @@ TEST(ExchangeLaw, WeirGovernsShallowOrificeGovernsDeep) {
     const auto g = manhole(d);
     Coefficients c;
     c.c_sw = 2.0 / 3.0 * c.c_w;
-    const double s2g = std::sqrt(2.0 * kGravity);
+    const double s2g = std::sqrt(2.0 * openswmm::constants::GRAVITY_SI);
     const double h_cross = 1.5 * c.c_oi * g.a_orif / (c.c_w * g.l_weir);
     EXPECT_NEAR(h_cross / d, 0.116, 0.001);
     for (double hs : {0.03, 0.05, 0.3, 0.5}) {

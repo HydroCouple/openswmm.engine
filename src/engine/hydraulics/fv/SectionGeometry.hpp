@@ -61,11 +61,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../../core/Constants.hpp"
 #include "../XSectBatch.hpp"
 
 namespace openswmm::fv::secgeom {
-
-inline constexpr double kPi = 3.14159265358979323846;
 
 /// Legacy `RECT_ALFMAX` (xsect.c): the filling fraction above which a closed
 /// rectangle's wetted perimeter is ramped toward the full-pipe value, so R(h)
@@ -104,7 +103,7 @@ inline double circArea(double r, double y) {
     if (y <= 0.0)
         return 0.0;
     if (y >= 2.0 * r)
-        return kPi * r * r;
+        return constants::PI_EXACT * r * r;
     const double th = circTheta(r, y);
     return 0.5 * r * r * (th - std::sin(th));
 }
@@ -137,7 +136,7 @@ inline double circPerim(double r, double y) {
     if (y <= 0.0)
         return 0.0;
     if (y >= 2.0 * r)
-        return 2.0 * kPi * r;
+        return 2.0 * constants::PI_EXACT * r;
     return r * circTheta(r, y);
 }
 

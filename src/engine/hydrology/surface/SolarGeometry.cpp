@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "SolarGeometry.hpp"
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@
 
 namespace openswmm::surface {
 namespace {
-constexpr double pi = 3.14159265358979323846, rad = pi / 180;
+constexpr double rad = constants::PI_EXACT / 180;
 struct Harmonic {
     double a, b, c;
     /** @brief Evaluate the stored first-order harmonic.
@@ -40,10 +41,10 @@ struct Harmonic {
             return;
         const double offset = std::atan2(c, b), angle = std::acos(-a / r);
         for (double base : {offset - angle, offset + angle}) {
-            const int first = int(std::ceil((lo - base) / (2 * pi)));
-            const int last = int(std::floor((hi - base) / (2 * pi)));
+            const int first = int(std::ceil((lo - base) / (2 * constants::PI_EXACT)));
+            const int last = int(std::floor((hi - base) / (2 * constants::PI_EXACT)));
             for (int k = first; k <= last; ++k) {
-                const double x = base + k * 2 * pi;
+                const double x = base + k * 2 * constants::PI_EXACT;
                 if (x > lo && x < hi)
                     cuts.push_back(x);
             }
@@ -67,7 +68,8 @@ SolarIntegral solarIntegral(double latitude, double declination, double hour_sta
     const Harmonic plane{std::sin(dec) * (north * std::cos(lat) + up * std::sin(lat)),
                          std::cos(dec) * (up * std::cos(lat) - north * std::sin(lat)),
                          -east * std::cos(dec)};
-    const double lo = std::remainder(hour_start, 360.) * rad, hi = lo + duration_hours * pi / 12;
+    const double lo = std::remainder(hour_start, 360.) * rad,
+                 hi = lo + duration_hours * constants::PI_EXACT / 12;
     std::vector<double> cuts{lo, hi};
     horizontal.roots(lo, hi, cuts);
     plane.roots(lo, hi, cuts);

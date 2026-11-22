@@ -1024,12 +1024,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                                                 start.end());
                 return;
             }
-            constexpr double kPi = 3.14159265358979323846;
             const double cx = cp.vertex_idx >= 0 ? mesh_.vx[cp.vertex_idx] : mesh_.tri_cx[cell];
             const double cy = cp.vertex_idx >= 0 ? mesh_.vy[cp.vertex_idx] : mesh_.tri_cy[cell];
             const double d_struct = cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)
-                                        ? cp.geo.l_weir / kPi
-                                        : 2.0 * std::sqrt(cp.area / kPi);
+                                        ? cp.geo.l_weir / constants::PI_EXACT
+                                        : 2.0 * std::sqrt(cp.area / constants::PI_EXACT);
             const double r = std::max(d_struct, std::sqrt(mesh_.tri_area[cell]));
             constexpr std::size_t kMaxCells = 256;
             std::vector<int> queue = start, marked = start;
@@ -1878,7 +1877,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         (ctx.snowpacks.mesh_config.assigned() ||
          ctx.snowpacks.mesh_config.mode == surface::MeshSnowConfig::Mode::Yes)) {
         std::vector<surface::MeshSnowGeometry> geometry(mesh_.n_cells());
-        constexpr double degrees = 180. / 3.14159265358979323846;
+        constexpr double degrees = 180. / constants::PI_EXACT;
         for (int i = 0; i < mesh_.n_cells(); ++i) {
             auto& g = geometry[i];
             g.area = mesh_.tri_area[i];

@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Radiation.hpp"
 #include "ClimateFile.hpp"
 #include "surface/SolarGeometry.hpp"
@@ -113,7 +114,6 @@ double dailyRange(SimulationContext& ctx, double date) {
  * Near-zero curve-period denominators use legacy finite fallbacks; input validity,
  * interval length and finite output are not checked here. */
 double meanDailyTemperature(const ClimateState& s, double a, double b) {
-    const double pi = 3.14159265358979323846;
     double sum = 0;
     const auto integrate = [&](double lo, double hi, double base, double amplitude, double phase,
                                double frequency) {
@@ -125,8 +125,8 @@ double meanDailyTemperature(const ClimateState& s, double a, double b) {
                        (std::cos(phase + frequency * lo) - std::cos(phase + frequency * hi)) /
                        frequency;
     };
-    const double night = pi / (std::abs(s.dydif) > 1e-10 ? s.dydif : 1.);
-    const double daylight = pi / (std::abs(s.dhrdy) > 1e-10 ? s.dhrdy : -1.);
+    const double night = constants::PI_EXACT / (std::abs(s.dydif) > 1e-10 ? s.dydif : 1.);
+    const double daylight = constants::PI_EXACT / (std::abs(s.dhrdy) > 1e-10 ? s.dhrdy : -1.);
     integrate(0, s.hrsr, s.tmin_daily, .5 * (s.prev_tmax - s.tmin_daily), night * s.hrsr, -night);
     integrate(s.hrsr, s.hrss, .5 * (s.tmin_daily + s.tmax_daily),
               .5 * (s.tmax_daily - s.tmin_daily), daylight * s.hrday, -daylight);

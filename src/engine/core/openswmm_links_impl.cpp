@@ -1375,14 +1375,14 @@ SWMM_ENGINE_API int swmm_link_get_hyd_powers_bulk(SWMM_Engine engine, double* bu
         return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_links());
-    constexpr double GAMMA = 62.4;
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const int n1 = ctx.links.node1[ui];
         const int n2 = ctx.links.node2[ui];
         const double h1 = (n1 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
         const double h2 = (n2 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
-        buf[i] = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+        buf[i] =
+            openswmm::constants::GAMMA_WATER * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
     }
     return SWMM_OK;
 }
@@ -1917,9 +1917,9 @@ SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double*
     int n2 = ctx.links.node2[ui];
     double h1 = (n1 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
     double h2 = (n2 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
-    constexpr double GAMMA = 62.4;
     if (power)
-        *power = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+        *power =
+            openswmm::constants::GAMMA_WATER * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
     return SWMM_OK;
 }
 

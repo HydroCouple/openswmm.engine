@@ -51,6 +51,8 @@
 
 #include <cmath>
 
+#include "../../core/Constants.hpp"
+
 #if defined(KOKKOS_INLINE_FUNCTION)
 #define OPENSWMM_EXCHANGE_HD KOKKOS_INLINE_FUNCTION
 #else
@@ -59,7 +61,6 @@
 
 namespace openswmm::twoD::exchange {
 
-constexpr double kGravity = 9.80665; ///< m/s²
 constexpr double kSigmaBand = 0.1;   ///< submergence blend width
 
 /// A coupling point's structure, SI.
@@ -198,7 +199,7 @@ struct Result {
 OPENSWMM_EXCHANGE_HD Result exchange(const Geometry& geo, const Coefficients& c, double h2,
                                      double h1) {
     Result r;
-    const double s2g = std::sqrt(2.0 * kGravity);
+    const double s2g = std::sqrt(2.0 * constants::GRAVITY_SI);
     const double z = geo.z_crest;
     const double eps = c.h_eps;
 
