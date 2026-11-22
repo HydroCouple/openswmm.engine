@@ -185,13 +185,6 @@ public:
      * @param ctx  Simulation context.
      */
     static bool simulation_complete(const SimulationContext& ctx) noexcept;
-
-    // -----------------------------------------------------------------------
-    // Constants
-    // -----------------------------------------------------------------------
-
-    /** @brief Seconds per day (exact). */
-    static constexpr double SEC_PER_DAY = 86400.0;
 };
 
 } /* namespace openswmm::hydraulics */

@@ -3015,7 +3015,7 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             }
         }
         if (elapsed_time)
-            *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
+            *elapsed_time = ctx_.current_time / constants::SEC_PER_DAY;
         acceptMaterialBoundary();
         if (!deferred_split_acceptance)
             tracePhase(SWMM_PHASE_STEP_ACCEPTED, phase_start, dt_next);
@@ -10762,8 +10762,7 @@ void SWMMEngine::push_report_warning(const std::string& message, int code) noexc
 void SWMMEngine::emit_progress() noexcept {
     if (!callbacks_.on_progress)
         return;
-    const double total = (ctx_.options.end_date - ctx_.options.start_date) *
-                         hydraulics::TimestepController::SEC_PER_DAY;
+    const double total = (ctx_.options.end_date - ctx_.options.start_date) * constants::SEC_PER_DAY;
     const double frac = (total > 0.0) ? (ctx_.current_time / total) : 0.0;
     callbacks_.on_progress(static_cast<void*>(this), frac, ctx_.current_date,
                            callbacks_.progress_ud);

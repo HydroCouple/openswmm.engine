@@ -143,9 +143,24 @@ inline constexpr std::array<double, 6> Qcf_inv = detail::makeQcfInv();
 // Convenience constants — common fixed conversions not unit-system dependent
 // ============================================================================
 
-static constexpr double ACRES_TO_FT2 = 43560.0;   ///< 1 acre = 43560 ft²
+// Seconds per day is constants::SEC_PER_DAY (Constants.hpp); it has no copy here.
+
+static constexpr double ACRES_TO_FT2 = 43560.0;   ///< 1 acre = 43560 ft² (Ucf[GWFLOW][US])
 static constexpr double FT3_TO_MGAL = 7.48052e-6; ///< ft³ → million gallons
-static constexpr double SEC_PER_DAY = 86400.0;    ///< seconds per day
+
+// Legacy-faithful fixed factors (consts.h MperFT, LperFT3, M3perFT3, MMperINCH).
+// The 1D engine's mass, concentration and length conversions compute with
+// these truncated literals; test_constants_legacy_parity.cpp pins them.
+static constexpr double FT_TO_M = 0.3048;     ///< ft → m (exact; also Ucf[LENGTH][SI])
+static constexpr double FT3_TO_L = 28.317;    ///< ft³ → L, legacy LperFT3 (loads, conc.)
+static constexpr double FT3_TO_M3 = 0.028317; ///< ft³ → m³, legacy M3perFT3 (table: 0.02832)
+static constexpr double IN_TO_MM = 25.4;      ///< in → mm, legacy MMperINCH
+
+// Exact volume factors (0.3048³) for the solvers that work in SI and have no
+// legacy counterpart: the 2D solver's 1D-2D exchange and the transport
+// components. Never use these where legacy parity applies.
+static constexpr double FT3_TO_M3_EXACT = 0.028316846592; ///< ft³ → m³, exact
+static constexpr double FT3_TO_L_EXACT = 28.316846592;    ///< ft³ → L, exact
 
 // ============================================================================
 // UCF function — matching legacy UCF()

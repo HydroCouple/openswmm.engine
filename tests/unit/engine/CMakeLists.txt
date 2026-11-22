@@ -587,6 +587,14 @@ add_gtest_unit(test_engine_controls
     test_controls_legacy_parity.cpp
 )
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
+# The legacy-faithful constants equal consts.h / swmm5.c bit for bit. consts.h's
+# macros (PI, TINY, MISSING, TRUE, ...) collide with the C++ names, so a C shim
+# exposes them as doubles instead of the test including the header.
+add_gtest_unit(test_engine_constants_legacy_parity
+    test_constants_legacy_parity.cpp
+    legacy_consts_values.c)
+target_include_directories(test_engine_constants_legacy_parity
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/legacy/engine)
 add_gtest_unit(test_engine_storage
     test_storage_shapes.cpp
     test_pump_ideal_curve.cpp

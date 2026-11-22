@@ -46,6 +46,7 @@
 #include "../data/SurfaceTransportState.hpp"
 #include "../../core/DateTime.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/Constants.hpp"
 #include "../../core/UnitConversion.hpp"
 #include "../../input/InputParseUtils.hpp"
 #include "../../input/Tokenizer.hpp"
@@ -648,7 +649,7 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
     if (tr.gained_washoff.size() != static_cast<std::size_t>(tr.n_species))
         tr.gained_washoff.assign(static_cast<std::size_t>(tr.n_species), 0.0);
 
-    const double dt_days = dt_runoff / ucf::SEC_PER_DAY;
+    const double dt_days = dt_runoff / constants::SEC_PER_DAY;
     // washoff-law unit factors
     const double q_to_display = si_ ? 1000.0 * 3600.0 : 39.3700787 * 3600.0; // m/s → mm/hr | in/hr
     const double ucf_flow = ucf::UCF(ucf::FLOW, ctx.options);                // cfs → display flow

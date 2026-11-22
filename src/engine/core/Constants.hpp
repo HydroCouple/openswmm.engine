@@ -23,6 +23,15 @@
  *
  *          - Physical: gravity, viscosity, Manning's factor
  *          - Mathematical: pi
+ *
+ *          Two families live here on purpose. The legacy-faithful values
+ *          (PI, GRAVITY, PHI, ...) are the literals legacy SWMM computes
+ *          with; the 1D engine's bit-identity with 5.3.0 depends on them,
+ *          so they are never "corrected". The exact values (PI_EXACT,
+ *          GRAVITY_SI, ...) serve the parts with no legacy counterpart:
+ *          the 2D solver, the FV solvers, UEB snow, radiation. A site picks
+ *          one family knowingly; test_constants_legacy_parity.cpp pins the
+ *          first family to consts.h bit for bit.
  *          - Numerical: tolerances, thresholds, limits
  *          - DynamicWave solver: under-relaxation, velocity caps, slot widths
  *          - ODE solver: RK45 coefficients
@@ -57,8 +66,23 @@ constexpr double SQRT_GRAVITY = 5.67450438786; // sqrt(32.2)
 /// 1.0 / sqrt(GRAVITY) — multiply instead of divide in Froude computation.
 constexpr double INV_SQRT_GRAVITY = 0.17622692584; // 1.0 / sqrt(32.2)
 
-/// Pi.
+/// Gravitational acceleration in SI (m/s²) for the solvers that work in
+/// meters: the 2D surface, subsurface and heat solvers and their 1D-2D
+/// exchange laws. Legacy defines SI_GRAVITY 9.81 in consts.h but never uses
+/// it, so nothing ties this to a legacy value.
+constexpr double GRAVITY_SI = 9.80665;
+
+/// Pi to the precision legacy uses (`#define PI 3.141592654` in consts.h).
+/// Every 1D geometry and routing path computes with this value: full double
+/// pi differs by 1.3e-10 relative, enough to move a storage unit's depth off
+/// legacy's bits on the first routing step.
 constexpr double PI = 3.141592654;
+
+/// Full-precision pi for the parts with no legacy counterpart (2D meshes and
+/// exchange structures, FV section geometry, solar geometry, radiation).
+/// Written as a literal so GPU kernel translation units need no <numbers>;
+/// test_constants_legacy_parity.cpp asserts it equals std::numbers::pi.
+constexpr double PI_EXACT = 3.14159265358979323846;
 
 /// Manning's equation US customary unit factor (1.486).
 /// Q = (PHI/n) * A * R^(2/3) * S^(1/2) where PHI = 1.486 for US, 1.0 for SI.
@@ -80,6 +104,20 @@ constexpr double FT_PER_IN = 1.0 / 12.0;
 
 /// Inches per foot.
 constexpr double IN_PER_FT = 12.0;
+
+/// Degrees Fahrenheit per degree Celsius (the scale of °C → °F).
+/// Equals Ucf[TEMPERATURE][SI]; a delta converts with the scale alone, an
+/// absolute temperature with `t_c * F_PER_C + F_AT_0C`.
+constexpr double F_PER_C = 1.8;
+
+/// Fahrenheit reading of 0 °C.
+constexpr double F_AT_0C = 32.0;
+
+/// Kelvin reading of 0 °C.
+constexpr double KELVIN_OFFSET = 273.15;
+
+/// Specific weight of water (lb/ft³), for pump power: γ·Q·h in ft·lb/s.
+constexpr double GAMMA_WATER = 62.4;
 
 // ============================================================================
 // Numerical thresholds and tolerances

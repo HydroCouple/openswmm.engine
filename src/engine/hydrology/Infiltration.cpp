@@ -25,6 +25,7 @@
  */
 
 #include "Infiltration.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/SimulationOptions.hpp"
 #include <cmath>
@@ -49,7 +50,7 @@ void horton_init(HortonState& state, double f0, double fmin, double decay, doubl
     state.decay = decay / 3600.0; // 1/hr → 1/sec (time-only, unit-system independent)
     // regen parameter is drying time in days (matching legacy infil.c line 350)
     // Legacy: regen = -log(1.0 - 0.98) / p[3] / SECperDAY
-    state.regen = (regen > 0.0) ? -std::log(1.0 - 0.98) / regen / ucf::SEC_PER_DAY : 0.0;
+    state.regen = (regen > 0.0) ? -std::log(1.0 - 0.98) / regen / constants::SEC_PER_DAY : 0.0;
     state.Fmax = (Fmax > 0.0) ? Fmax / ucf_depth : 0.0; // in/mm → ft (0 = unlimited)
     state.tp = 0.0;
     state.Fe = 0.0;
@@ -457,8 +458,7 @@ void curvenum_init(CurveNumState& state, double CN, double regen_days) {
     state.F = 0.0;
     state.f = 0.0;
     // Legacy: regen = 1.0 / (dryingTime_days * SECperDAY)
-    constexpr double SEC_PER_DAY = 86400.0;
-    state.regen = (regen_days > 0.0) ? 1.0 / (regen_days * SEC_PER_DAY) : 0.0;
+    state.regen = (regen_days > 0.0) ? 1.0 / (regen_days * constants::SEC_PER_DAY) : 0.0;
     state.T = 0.0;
     state.Tmax = (state.regen > 0.0) ? 0.06 / state.regen : 1.0e10;
 }

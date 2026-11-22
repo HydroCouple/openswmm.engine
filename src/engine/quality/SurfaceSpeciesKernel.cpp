@@ -16,6 +16,7 @@
 #include <cmath>
 
 #include "../core/SimulationContext.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/DateTime.hpp"
 #include "../data/TableData.hpp"
@@ -77,7 +78,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
         int nlu = b.nlu;
         // legacy consts.h MIN_RUNOFF: 2.31481e-8 ft/sec = 0.001 in/hr.
         constexpr double MIN_RUNOFF_FTS = 2.31481e-8;
-        double dt_days = dt_runoff / ucf::SEC_PER_DAY;
+        double dt_days = dt_runoff / constants::SEC_PER_DAY;
 
         const double ucf_landarea_sq = ucf::UCF(ucf::LANDAREA, ctx.options);
         for (int i = 0; i < ctx.n_subcatches(); ++i) {
