@@ -35,15 +35,12 @@
 #include "../hydraulics/Transect.hpp"
 #include "TypeHelpers.hpp"
 #include "StringCase.hpp"
+#include "Constants.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 // ============================================================================
 // ABI ⇄ storage shape-code parity (compile-time)
@@ -828,7 +825,9 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx, int shape, 
     case openswmm::XsectShape::CIRCULAR: {
         double d = geom1;
         ctx.links.xsect_y_full[uidx] = d;
-        ctx.links.xsect_a_full[uidx] = M_PI * d * d / 4.0;
+        // Same expression as xsect::setParams, so the placeholder equals the
+        // geometry resolve_cross_references computes at finalize bit for bit.
+        ctx.links.xsect_a_full[uidx] = openswmm::constants::PI / 4.0 * d * d;
         ctx.links.xsect_w_max[uidx] = d;
         break;
     }

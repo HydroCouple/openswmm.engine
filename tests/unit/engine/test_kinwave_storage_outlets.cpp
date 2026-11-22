@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <numbers>
 #include <string>
 
 #include <openswmm/engine/openswmm_engine.h>
@@ -242,7 +243,7 @@ TEST(KinwaveStorageOutlets, OrificeDischargeIsPhysicallyAchievable) {
     // Q = Cd*A*sqrt(2*g*h), evaluated at the deepest the pond ever got. This
     // is the ceiling the issue computed by hand: 34.99 cfs would have needed
     // ~154 ft of head on a 0.83 ft orifice.
-    const double area = M_PI * kOrifDiam * kOrifDiam / 4.0;
+    const double area = std::numbers::pi * kOrifDiam * kOrifDiam / 4.0;
     const double q_ceiling = kOrifCd * area * std::sqrt(2.0 * kGravity * r.max_depth);
 
     EXPECT_LE(r.peak_orifice, q_ceiling * 1.05)

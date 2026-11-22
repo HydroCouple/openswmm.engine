@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <fstream>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,6 +39,7 @@
 #include "hydraulics/XSectBatch.hpp"
 #include "hydraulics/ForceMain.hpp"
 #include "hydraulics/Node.hpp"
+#include "core/Constants.hpp"
 #include "core/SimulationContext.hpp"
 
 #ifndef BENCHMARK_DATA_DIR
@@ -398,7 +400,8 @@ TEST(XSectGeometry, CircularAreaAtHalfDepth) {
     // where theta = pi (180 deg) → area = pi*D^2/8 = pi*16/8 = 2*pi ≈ 6.283
     double a = xsect::getAofY(xs, 2.0);
     double expected =
-        M_PI * 4.0; // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
+        std::numbers::pi *
+        4.0; // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
     EXPECT_NEAR(a, xs.a_full / 2.0, 0.01 * xs.a_full);
 }
 
@@ -408,7 +411,7 @@ TEST(XSectGeometry, CircularFullArea) {
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
     // Full area = pi*D^2/4 = pi*9/4 ≈ 7.069
-    double expected = M_PI * 9.0 / 4.0;
+    double expected = std::numbers::pi * 9.0 / 4.0;
     EXPECT_NEAR(xs.a_full, expected, 0.01);
 }
 
@@ -636,7 +639,7 @@ protected:
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
             ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::CIRCULAR);
             ctx.links.xsect_y_full[i] = 2.0;
-            ctx.links.xsect_a_full[i] = M_PI; // π·1²
+            ctx.links.xsect_a_full[i] = constants::PI; // π·1², as setParams computes it
             ctx.links.xsect_r_full[i] = 0.5;  // full-flow hyd. radius D/4 (2 ft pipe)
             ctx.links.xsect_w_max[i] = 2.0;
             C.roughness[cr] = 0.013;
@@ -1065,7 +1068,7 @@ TEST(DPS, InitialPreissmannNumber) {
     double alpha = 3.0;
 
     // Circular pipe D=3ft: A_full = pi*9/4, T_w = 3ft
-    double A_full = M_PI * 9.0 / 4.0;
+    double A_full = std::numbers::pi * 9.0 / 4.0;
     double T_w = 3.0;
     double l_D = A_full / T_w;            // hydraulic depth
     double c_g = std::sqrt(32.174 * l_D); // gravity-wave celerity

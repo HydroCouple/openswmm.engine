@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <numbers>
 #include <vector>
 
 #include "fv_test_support.hpp"
@@ -276,7 +277,7 @@ HeadLossResult runHeadLoss(double celerity, bool implicit_on, double q_in = 50.0
 
 TEST(PressHeadLoss, matchesManningAndIsSlotWidthInvariant) {
     // Analytic: S_f = (n·V / (φ·R^(2/3)))², h_f = S_f · L.
-    const double A = 0.25 * M_PI * 9.0;
+    const double A = 0.25 * std::numbers::pi * 9.0;
     const double V = 50.0 / A;
     const double R = 0.75;
     const double sf = std::pow(0.013 * V / (1.486 * std::pow(R, 2.0 / 3.0)), 2.0);
@@ -388,7 +389,7 @@ TEST(PressBore, arrivalMatchesTheQuasiSteadyFillAndIsCelerityStable) {
     // t(L_w) = (2/3)·L_w^(3/2)·ΔA / (K·√H_d).
     FvGeometry g;
     buildGeometry(circular(3.0), false, 150.0, g);
-    const double a_full = 0.25 * M_PI * 9.0;
+    const double a_full = 0.25 * std::numbers::pi * 9.0;
     const double a0 = k::areaOfDepth(g, 0.3);
     const double K = (1.486 / 0.013) * a_full * std::pow(0.75, 2.0 / 3.0);
     const double hd = 12.0 - 3.0;

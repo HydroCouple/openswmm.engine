@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <numbers>
 #include <random>
 #include <sstream>
 #include <string>
@@ -691,7 +692,7 @@ static double srivastavaYeh(double L, double qA, double qB, double t, double a, 
     double sum = steady(qB);
     for (int k = 1; k <= 80; ++k) {
         const auto g = [&](double l) { return std::sin(l * L) + 2 * l * std::cos(l * L); };
-        double lo = (k - .5) * M_PI / L, hi = k * M_PI / L;
+        double lo = (k - .5) * std::numbers::pi / L, hi = k * std::numbers::pi / L;
         for (int it = 0; it < 200; ++it) {
             const double mid = .5 * (lo + hi);
             ((g(lo) > 0) == (g(mid) > 0) ? lo : hi) = mid;
