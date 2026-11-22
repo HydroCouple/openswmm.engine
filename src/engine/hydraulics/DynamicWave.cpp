@@ -771,7 +771,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // Dynamic Preissmann Slot (DPS) initialization
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         // Convert c_pT from m/s to ft/s (internal units)
-        dps_config_.c_pT = ctx.options.dps_target_celerity * 3.28084;
+        dps_config_.c_pT = ctx.options.dps_target_celerity / ucf::FT_TO_M;
         dps_config_.alpha = std::max(ctx.options.dps_alpha, 2.0);
         dps_config_.r = std::max(ctx.options.dps_decay_time, 0.001);
         dps_config_.c_pT_sq = dps_config_.c_pT * dps_config_.c_pT;

@@ -1972,7 +1972,7 @@ int qfm_(doublereal* ub, doublereal* w, doublereal* a, doublereal* ta, doublerea
     static thread_local doublereal cp = 1.005;
     static thread_local doublereal ra = 287.;
     static thread_local doublereal rhow = 1e3;
-    static thread_local doublereal g = 9.81;
+    static thread_local doublereal g = kGravity;
     static thread_local doublereal w1day = .261799;
 
     doublereal d__1{};

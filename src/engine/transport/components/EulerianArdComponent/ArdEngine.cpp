@@ -23,6 +23,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/Constants.hpp"
 #include "ArdEngine.hpp"
 #include "../ReactionModule/ReactionSources.hpp"
 #include "../../../core/CompletedSourceArchive.hpp"
@@ -230,8 +231,6 @@ constexpr double kTempCeilC = 100.0;
 constexpr double kZeroVolumeFt3 = 0.0353147;
 
 // --- E3 Fischer auto-computation guards (all internal ft units) -------------
-/// g (ft/s²) for the shear velocity U* = √(g·Y·S).
-constexpr double kGravity = 32.174;
 /// Slope floor: a dead-flat conduit has S = 0 and the formula divides by
 /// U* — the same reason legacy SWMM floors conduit slopes. Physics below
 /// this floor is dominated by mixing the formula does not model anyway.
@@ -821,7 +820,7 @@ void ArdEngine::updateDispersion(SimulationContext& ctx) {
                         const double b_w = a / y;
                         const double s =
                             std::max(std::fabs(ctx.link_subtypes.conduits.slope[ucr]), kMinSlope);
-                        const double ustar = std::sqrt(kGravity * y * s);
+                        const double ustar = std::sqrt(constants::GRAVITY * y * s);
                         d = 0.011 * vel * vel * b_w * b_w / (y * ustar);
                     }
                 }

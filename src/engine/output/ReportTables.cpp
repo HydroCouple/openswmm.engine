@@ -54,8 +54,7 @@ struct Units {
         depth_vcf = du.raindepth;
         len_ucf = du.length;
         svol_ucf = du.volume;
-        // legacy statsrpt.c's own factor for every summary-table volume
-        Vcf = si ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
+        Vcf = du.mvol; // legacy statsrpt.c Vcf: 7.48 | 28.317 per 1e6 ft³
         cont_mass = ucf::Ucf[ucf::MASS][si ? 1 : 0]; // mg -> lb | kg
         flow = du.flow_word;
         vol = du.mvol_word;

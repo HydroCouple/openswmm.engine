@@ -1012,9 +1012,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     const double len_ucf = du.length;      // ft  → ft | m  (depth/HGL/velocity)
     const double svol_ucf = du.volume;     // ft³ → ft³ | m³ (storage volume)
     const char* len_word = du.length_word; // Feet | Meters
-    // legacy statsrpt.c's own factor for every summary-table volume
-    // (7.48 gal/ft3, 28.317 L/ft3 — not the massbal/continuity constants).
-    const double Vcf = si_report ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
+    const double Vcf = mvol_vcf;           // legacy statsrpt.c Vcf: 7.48 | 28.317 per 1e6 ft³
     const char* vol_word = du.mvol_word; // 10^6 gal | 10^6 ltr
     // legacy report.c continuity factors: UCF(LENGTH) * UCF(LANDAREA) for
     // acre-feet / hectare-m, and MGDperCFS (MLDperCFS) / SECperDAY for the
@@ -3339,7 +3337,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             WRITE(f, "");
             WRITE(f, "No inlet statistics available.");
         } else {
-            static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
+            static constexpr double FT3_TO_KGAL = ucf::FT3_TO_GAL / 1000.0;
             std::fprintf(
                 f,
                 "\n\n  ------------------------------------------------------------------------------------------------------------------------------------------"

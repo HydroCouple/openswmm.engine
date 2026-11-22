@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "core/Constants.hpp"
+#include "core/SimulationOptions.hpp"
 #include "core/UnitConversion.hpp"
 
 #include <cmath>
@@ -106,6 +107,20 @@ TEST(ConstantsLegacyParity, UcfAndQcfTablesMatchSwmm5c) {
     // The table entries that double as fixed factors are the same object.
     EXPECT_EQ(ucf::Ucf[ucf::LENGTH][1], ucf::FT_TO_M);
     EXPECT_EQ(ucf::Ucf[ucf::GWFLOW][0], ucf::ACRES_TO_FT2);
+}
+
+TEST(ConstantsLegacyParity, ReportVolumeFactorsMatchStatsrptAndReportC) {
+    for (int fu = 0; fu < 6; ++fu) {
+        SimulationOptions opts;
+        opts.flow_units = static_cast<FlowUnits>(fu);
+        const ucf::DisplayUnits du = ucf::DisplayUnits::from(opts);
+        const int us = fu < 3 ? 0 : 1;
+        // statsrpt.c:108-112: Vcf = 7.48 / 1.0e6 (US) | 28.317 / 1.0e6 (SI)
+        EXPECT_EQ(du.mvol, (us ? 28.317 : 7.48) / 1.0e6) << "flow units " << fu;
+        // report.c:433: ucf1 = UCF(LENGTH) * UCF(LANDAREA)
+        EXPECT_EQ(du.landvol, ucf::Ucf[ucf::LENGTH][us] * ucf::Ucf[ucf::LANDAREA][us])
+            << "flow units " << fu;
+    }
 }
 
 TEST(ConstantsLegacyParity, ExactFamilyIsDistinctFromTheLegacyFamily) {

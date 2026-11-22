@@ -396,16 +396,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // STAGE (x-axis) shares the mesh vertical datum and converts with
     // bc_stage_scale_ at lookup time.
     {
-        static constexpr double kFlowToCms[6] = {
-            0.028316846592, // CFS
-            6.30901964e-05, // GPM
-            0.043812636574, // MGD
-            1.0,            // CMS
-            0.001,          // LPS
-            0.011574074074  // MLD
-        };
         const int fu = static_cast<int>(ctx.options.flow_units);
-        bc_flow_scale_ = (fu >= 0 && fu < 6) ? kFlowToCms[fu] : 1.0;
+        bc_flow_scale_ = (fu >= 0 && fu < 6) ? ucf::FLOW_TO_M3S_EXACT[fu] : 1.0;
     }
 
     // Record the factor that applies to this mesh — metres per model-CRS
