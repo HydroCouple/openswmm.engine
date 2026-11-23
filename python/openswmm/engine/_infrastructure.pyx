@@ -1407,7 +1407,7 @@ class LIDs:
 
     @_record_access
     def node_snapshot(self, node):
-        """Owned assignment/anchor snapshot; *_ft fields are exact internal feet."""
+        """Owned assignment/anchor snapshot; ``*_ft`` fields are exact internal feet."""
         cdef SWMM_Engine h = _h(self._solver)
         cdef int n = _resolve_index(h, node, swmm_node_index, swmm_node_count, "Node")
         cdef SWMM_StorageLidState value
