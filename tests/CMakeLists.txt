@@ -169,6 +169,9 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_size_code_overrides
         COMMAND $<TARGET_FILE:test_solver_size_code_overrides>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_slot_area_monotonic
+        COMMAND $<TARGET_FILE:test_solver_slot_area_monotonic>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
     # NOT the data directory: this one reads "./data/gage_scalefactor.inp",
     # so its working directory is the PARENT of the others'.
     add_test(NAME test_legacy_gage_scalefactor
@@ -192,6 +195,7 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_transect_x1_layouts
         test_legacy_solver_xsect_error_names_link
         test_legacy_solver_size_code_overrides
+        test_legacy_solver_slot_area_monotonic
         test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"

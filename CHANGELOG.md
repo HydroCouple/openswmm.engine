@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **The Preissmann slot area rises monotonically with head.** Under `SURCHARGE_METHOD SLOT` the area assigned to a conduit shrank between about 1.29 and 1.78 diameters of head, so a closed system filled from one end lost volume, in both engines. Code review CON-18, #171.
 - **Ellipse and arch size codes are read from Geom3.** A zero Geom2 made Geom1 the size code even when Geom3 held the code the manual documents, and a fractional size code was truncated silently; both are read as documented now and a code that is not a whole number is an error, in both engines. Code review IO-12, #172.
 - **Invalid cross-section geometry names its conduit.** Geometry the shape rules refuse was reported as ERROR 211 "invalid number" with an empty token; it is reported as a cross-section error naming the conduit now, in both engines. Code review IO-13, #175.
 - **The manual's 11-item X1 transect line is read correctly.** Every X1 line was read in the GUI's 10-item layout, so a line in the manual's layout had its Lfactor read as Wfactor and the section came out scaled; both layouts are recognised now, in both engines. Code review IO-29, #173.

@@ -1318,6 +1318,10 @@ add_test(NAME test_engine_perf_timers_disabled
         $<TARGET_FILE:test_engine_perf_timers>
         --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate:ProcessPerf.DisabledProfilingDoesNotAccumulate)
 set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
+add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
+add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
+# Preissmann slot area monotonic in head under SURCHARGE_METHOD SLOT (code review CON-18, #171).
+add_gtest_unit(test_engine_dw_slot_area_monotonic test_dw_slot_area_monotonic.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over
