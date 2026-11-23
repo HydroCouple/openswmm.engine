@@ -3280,6 +3280,50 @@ void resolve_cross_references(SimulationContext& ctx) {
     }
 
     // -------------------------------------------------------------------------
+    // Regulator cross-section shape (legacy ERROR 143)
+    // -------------------------------------------------------------------------
+    // PARITY link.c orifice_validate / weir_validate: an orifice must be
+    // CIRCULAR or RECT_CLOSED, and a weir's shape is fixed by its type
+    // (TRANSVERSE, SIDEFLOW and ROADWAY: RECT_OPEN; V-NOTCH: TRIANGULAR;
+    // TRAPEZOIDAL: TRAPEZOIDAL), because each flow equation takes its crest
+    // length, notch slope or opening from that shape. v6 ran any shape, so a
+    // V-notch weir on a RECT_OPEN section passed no flow without a message.
+    // A regulator with no [XSECTIONS] row is refused too, as in legacy, whose
+    // default section is DUMMY. v6 defaults it to CIRCULAR with Geom1 0, and
+    // every allowed shape refuses Geom1 <= 0 at read, so that marks the
+    // missing row.
+    for (int j = 0; j < n_links; ++j) {
+        auto uj = static_cast<std::size_t>(j);
+        const auto lt = ctx.links.type[uj];
+        if (lt != LinkType::ORIFICE && lt != LinkType::WEIR)
+            continue;
+        const XsectShape shape = ctx.links.xsect_shape[uj];
+        bool valid = false;
+        if (lt == LinkType::ORIFICE) {
+            valid = shape == XsectShape::CIRCULAR || shape == XsectShape::RECT_CLOSED;
+        } else {
+            const int wr = ctx.link_subtypes.weir_row(j);
+            const int wt =
+                (wr >= 0) ? static_cast<int>(
+                                ctx.link_subtypes.weirs.weir_type[static_cast<std::size_t>(wr)])
+                          : 0;
+            switch (wt) {
+            case 2: // V-NOTCH
+                valid = shape == XsectShape::TRIANGULAR;
+                break;
+            case 3: // TRAPEZOIDAL
+                valid = shape == XsectShape::TRAPEZOIDAL;
+                break;
+            default: // TRANSVERSE, SIDEFLOW, ROADWAY
+                valid = shape == XsectShape::RECT_OPEN;
+                break;
+            }
+        }
+        if (!valid || !(ctx.links.xsect_geom1[uj] > 0.0))
+            ctx.errors.push_back(format_error(ERR_REGULATOR_SHAPE, ctx.link_names.name_of(j)));
+    }
+
+    // -------------------------------------------------------------------------
     // Regulator crest below downstream invert (legacy WARNING 10)
     // -------------------------------------------------------------------------
     // PARITY link.c link_validate:424-439: for ORIFICE/WEIR/OUTLET links whose

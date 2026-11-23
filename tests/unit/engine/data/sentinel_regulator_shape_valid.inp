@@ -1,0 +1,53 @@
+[TITLE]
+Every orifice and weir type on the cross-section shape its flow equation uses
+
+[OPTIONS]
+FLOW_UNITS     CFS
+FLOW_ROUTING   DYNWAVE
+START_DATE     01/01/2020
+START_TIME     00:00:00
+END_DATE       01/01/2020
+END_TIME       01:00:00
+REPORT_STEP    00:15:00
+ROUTING_STEP   5
+
+[STORAGE]
+;;Name  Elev  MaxDepth  InitDepth  Shape       Coeff  Expon  Const
+SU1     100   10        0          FUNCTIONAL  0      0      1000
+
+[OUTFALLS]
+;;Name  Elev  Type
+O_OR_C     95    FREE
+O_OR_R     95    FREE
+O_W_TR     95    FREE
+O_W_SF     95    FREE
+O_W_VN     95    FREE
+O_W_TZ     95    FREE
+O_W_RD     95    FREE
+
+[INFLOWS]
+;;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline
+SU1     FLOW         ""       FLOW  1.0      1.0      5.0
+
+[ORIFICES]
+;;Name  From  To  Type    Offset  Cd    Gated
+OR_C    SU1   O_OR_C  SIDE    0       0.65  NO
+OR_R    SU1   O_OR_R  BOTTOM  0       0.65  NO
+
+[WEIRS]
+;;Name  From  To  Type         CrestHt  Cd    Gated  EC  Cd2   Sur  Width  Surface
+W_TR    SU1   O_W_TR  TRANSVERSE   1        3.33  NO     0   0     NO
+W_SF    SU1   O_W_SF  SIDEFLOW     1        3.33  NO     0   0     NO
+W_VN    SU1   O_W_VN  V-NOTCH      1        2.5   NO     0   0     NO
+W_TZ    SU1   O_W_TZ  TRAPEZOIDAL  1        3.33  NO     0   3.0   NO
+W_RD    SU1   O_W_RD  ROADWAY      1        3.0   NO     0   0     NO   20     PAVED
+
+[XSECTIONS]
+;;Link  Shape        Geom1  Geom2  Geom3  Geom4
+OR_C    CIRCULAR     0.5    0      0      0
+OR_R    RECT_CLOSED  0.5    1      0      0
+W_TR    RECT_OPEN    3      5      0      0
+W_SF    RECT_OPEN    3      5      0      0
+W_VN    TRIANGULAR   3      6      0      0
+W_TZ    TRAPEZOIDAL  3      5      1      1
+W_RD    RECT_OPEN    3      20     0      0

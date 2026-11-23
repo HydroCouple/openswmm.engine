@@ -18,6 +18,8 @@
  *   [TEMPERATURE]  FILE start date (`*` = none) shifts the file days read;
  *                  a day missing one of Tmin/Tmax keeps that one's last value.
  *   [RAINGAGES]    FILE start date skips records dated earlier.
+ *   [ORIFICES]/[WEIRS] a section shape the type's equation does not use, or
+ *                  no [XSECTIONS] row = ERROR 143.
  *
  * Fixtures live in tests/unit/engine/data/ (the test's WORKING_DIRECTORY).
  */
@@ -347,6 +349,31 @@ TEST(SentinelParityGroundwater, NonNumericFieldIs211) {
     EXPECT_NE(run_model("sentinel_gw_bad_number", rpt), SWMM_OK);
     EXPECT_TRUE(contains(rpt, "ERROR 211")) << rpt;
     EXPECT_TRUE(contains(rpt, "abc")) << rpt;
+}
+
+// ---------------------------------------------------------------------------
+// [ORIFICES] / [WEIRS] cross-section shape
+// ---------------------------------------------------------------------------
+
+// legacy orifice_validate / weir_validate: an orifice must be CIRCULAR or
+// RECT_CLOSED; TRANSVERSE, SIDEFLOW and ROADWAY weirs RECT_OPEN, V-NOTCH
+// TRIANGULAR and TRAPEZOIDAL TRAPEZOIDAL. A regulator with no [XSECTIONS] row
+// is refused as well. v6 ran them all, a V-notch weir on RECT_OPEN with no flow.
+TEST(SentinelParityRegulators, ShapeTheEquationDoesNotUseIs143) {
+    std::string rpt;
+    EXPECT_NE(run_model("sentinel_regulator_shape_invalid", rpt), SWMM_OK);
+    for (const char* link :
+         {"OR_OPEN", "OR_TRI", "OR_NONE", "W_CIRC", "W_SIDE", "W_VRECT", "W_TRECT", "W_NONE"})
+        EXPECT_TRUE(contains(rpt, std::string("ERROR 143: Regulator ") + link +
+                                      " has invalid cross-section shape."))
+            << link << "\n"
+            << rpt;
+}
+
+TEST(SentinelParityRegulators, EveryTypeOnItsOwnShapeOpens) {
+    std::string rpt;
+    EXPECT_EQ(run_model("sentinel_regulator_shape_valid", rpt), SWMM_OK) << rpt;
+    EXPECT_FALSE(contains(rpt, "ERROR")) << rpt;
 }
 
 // ---------------------------------------------------------------------------
