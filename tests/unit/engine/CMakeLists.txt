@@ -308,6 +308,8 @@ add_gtest_unit(test_engine_transect_table_stability test_transect_table_stabilit
 add_gtest_unit(test_engine_xsect_lookup_out_of_range test_xsect_lookup_out_of_range.cpp)
 # Invalid cross-section geometry is reported against its conduit (code review IO-13, #175).
 add_gtest_unit(test_engine_xsect_error_names_link test_xsect_error_names_link.cpp)
+# Ellipse/arch size code in Geom3 vs. a zero Geom2, fractional codes (code review IO-12, #172).
+add_gtest_unit(test_engine_xsect_size_code_overrides test_xsect_size_code_overrides.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,

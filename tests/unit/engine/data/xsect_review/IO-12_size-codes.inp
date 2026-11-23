@@ -1,0 +1,52 @@
+[TITLE]
+IO-12 standard sizes given by size code
+
+[OPTIONS]
+FLOW_UNITS     CFS
+FLOW_ROUTING   DYNWAVE
+START_DATE     01/01/2020
+START_TIME     00:00:00
+END_DATE       01/01/2020
+END_TIME       01:00:00
+REPORT_STEP    00:15:00
+ROUTING_STEP   5
+
+[JUNCTIONS]
+;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1     100   10        0          0         0
+J2     100   10        0          0         0
+J3     100   10        0          0         0
+J4     100   10        0          0         0
+
+[OUTFALLS]
+O1     99    FREE
+O2     99    FREE
+O3     99    FREE
+O4     99    FREE
+
+[CONDUITS]
+;Name  From  To  Length  N      Z1  Z2  Q0  Qmax
+C1     J1    O1  1000    0.013  0   0   0   0
+C2     J2    O2  1000    0.013  0   0   0   0
+C3     J3    O3  1000    0.013  0   0   0   0
+C4     J4    O4  1000    0.013  0   0   0   0
+
+[XSECTIONS]
+;Link  Shape          Geom1  Geom2  Geom3  Geom4
+;C1-C3: full height and size code given, width left to the size code
+;C4: SWMM 5.0 form (size code in Geom1, Geom2 = 0), still used by old files
+C1     HORIZ_ELLIPSE  2      0      4      0
+C2     VERT_ELLIPSE   3.17   0      4      0
+C3     ARCH           5.17   0      12     0
+C4     HORIZ_ELLIPSE  4      0      0      0
+
+[INFLOWS]
+J1     FLOW  ""  FLOW  1.0  1.0  1
+J2     FLOW  ""  FLOW  1.0  1.0  1
+J3     FLOW  ""  FLOW  1.0  1.0  1
+J4     FLOW  ""  FLOW  1.0  1.0  1
+
+[REPORT]
+INPUT  YES
+NODES  ALL
+LINKS  ALL

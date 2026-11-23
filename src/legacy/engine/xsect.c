@@ -572,12 +572,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case HORIZ_ELLIPSE:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. ellipse pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesEllipse)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesEllipse)
                 return FALSE;
             xsect->yFull = MinorAxis_Ellipse[index] / 12.;
             xsect->wMax = MajorAxis_Ellipse[index] / 12.;
@@ -600,12 +600,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case VERT_ELLIPSE:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. ellipse pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesEllipse)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesEllipse)
                 return FALSE;
             xsect->yFull = MajorAxis_Ellipse[index] / 12.;
             xsect->wMax = MinorAxis_Ellipse[index] / 12.;
@@ -628,12 +628,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case ARCH:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. arch pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesArch)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesArch)
                 return FALSE;
             xsect->yFull = Yfull_Arch[index] / 12.; // Yfull units are inches
             xsect->wMax = Wmax_Arch[index] / 12.;   // Wmax units are inches

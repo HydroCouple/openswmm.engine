@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **Ellipse and arch size codes are read from Geom3.** A zero Geom2 made Geom1 the size code even when Geom3 held the code the manual documents, and a fractional size code was truncated silently; both are read as documented now and a code that is not a whole number is an error, in both engines. Code review IO-12, #172.
 - **Invalid cross-section geometry names its conduit.** Geometry the shape rules refuse was reported as ERROR 211 "invalid number" with an empty token; it is reported as a cross-section error naming the conduit now, in both engines. Code review IO-13, #175.
 - **The manual's 11-item X1 transect line is read correctly.** Every X1 line was read in the GUI's 10-item layout, so a line in the manual's layout had its Lfactor read as Wfactor and the section came out scaled; both layouts are recognised now, in both engines. Code review IO-29, #173.
 - **Cross-section table lookups guard an out-of-range or NaN ratio.** A NaN or very large depth or area ratio was converted to an int table index unchecked (undefined behaviour; a segmentation fault on x86), in both engines. Code review CRASH-07, #174.
