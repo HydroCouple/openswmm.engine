@@ -470,7 +470,12 @@ class SurfaceResults:
 
     @property
     def period_times(self) -> NDArray[Any]:
-        """Report dates from the file's declared CF units, at microsecond precision."""
+        """Report dates from the file's declared CF units, at microsecond precision.
+
+        As in :attr:`OutputReader.period_times`, the 1 ms that SWMM adds to each
+        report date is removed from values that are not on a whole second, so
+        1D and 2D times of one run are equal.
+        """
         values = self.reader.read('/time')
         units = self.reader.attributes('/time').get('units', '')
         match = re.fullmatch(r'(days|hours|minutes|seconds) since (.+)', units)
@@ -479,7 +484,14 @@ class SurfaceResults:
         scale = {'days': 86400, 'hours': 3600, 'minutes': 60, 'seconds': 1}[match[1]]
         if not np.isfinite(values).all():
             raise ValueError('Non-finite report dates in output')
-        return np.datetime64(match[2], 'us') + np.rint(values * scale * 1e6).astype('timedelta64[us]')
+        # Whole units and the fraction separately, so absolute day numbers
+        # round to the exact microsecond.
+        whole = np.floor(values)
+        us = (whole.astype(np.int64) * (scale * 1000000)
+              + np.rint((values - whole) * (scale * 1e6)).astype(np.int64))
+        times = np.datetime64(match[2], 'us') + us.astype('timedelta64[us]')
+        offset = times != times.astype('datetime64[s]')
+        return times - np.where(offset, np.timedelta64(1000, 'us'), np.timedelta64(0, 'us'))
 
     @property
     def mesh(self) -> ResultMesh:
