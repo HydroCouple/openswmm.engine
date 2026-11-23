@@ -591,6 +591,8 @@ add_gtest_unit(test_engine_controls
     test_control_rule_runtime_add.cpp
     test_controls_legacy_parity.cpp
 )
+# Both [TRANSECTS] X1 line layouts, 10 items (GUI) and 11 (manual) (code review IO-29, #173).
+add_gtest_unit(test_engine_transect_x1_layouts test_transect_x1_layouts.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 # The legacy-faithful constants equal consts.h / swmm5.c bit for bit. consts.h's
 # macros (PI, TINY, MISSING, TRUE, ...) collide with the C++ names, so a C shim
