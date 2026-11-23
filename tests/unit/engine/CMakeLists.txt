@@ -312,6 +312,8 @@ add_gtest_unit(test_engine_xsect_error_names_link test_xsect_error_names_link.cp
 add_gtest_unit(test_engine_xsect_size_code_overrides test_xsect_size_code_overrides.cpp)
 # Custom elliptical pipes take the area of their own axes (code review CON-17, #170).
 add_gtest_unit(test_engine_xsect_custom_ellipse test_xsect_custom_ellipse.cpp)
+# Standard ARCH size code 31 full hydraulic radius (code review NUM-20, #167).
+add_gtest_unit(test_engine_xsect_arch_size_codes test_xsect_arch_size_codes.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,

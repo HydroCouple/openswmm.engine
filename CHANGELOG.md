@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **Standard ARCH size code 31 has the full hydraulic radius its shape implies.** The corrugated-steel 36 × 46 in entry of the arch table was about 25 % low, so that one standard pipe routed less than its neighbours, in both engines. Code review NUM-20, #167.
 - **Transect bank stations are found in SI with a station width factor.** The scaled station values were compared for exact equality, so a transect in metres with a width factor lost its banks and took the channel roughness throughout, in both engines. Code review NUM-23, #168.
 - **A transect's right end wall counts in the wetted perimeter.** Only the left wall was added when an end station lies below the full height, so a section and its mirror image routed differently, in both engines. Code review NUM-24, #169.
 - **Custom elliptical pipes get the area of their own axes.** A HORIZ_ELLIPSE or VERT_ELLIPSE with custom dimensions (size code 0) was scaled by the standard ellipse's factors of its height alone, so a 2 × 6 ft ellipse had the area of a 2 × 3.17 ft one and routing lost the difference, in both engines. Code review CON-17, #170.
