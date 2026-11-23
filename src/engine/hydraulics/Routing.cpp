@@ -447,6 +447,7 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     switch (model_) {
     case RouteModel::KINWAVE: {
         kw_solver_.init(n_links, groups_);
+        kw_solver_.seedInitialState(ctx);
         // Build topological link order for upstream → downstream processing
         std::vector<int> sorted;
         const std::vector<int> divert = buildDivertLinks(ctx);

@@ -1937,6 +1937,9 @@ if(OPENSWMM_BUILD_2D)
 endif()
 
 # OpenSWMM issue #2 / USEPA #216 and #234: conduit loss conservation.
+# A kinematic-wave conduit with an initial flow starts carrying it, as in
+# legacy (benchmarks 193-h-h-si-units-elements).
+add_gtest_unit(test_engine_kw_initial_flow test_kw_initial_flow.cpp)
 add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
 target_compile_definitions(test_engine_conduit_losses PRIVATE
     ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")

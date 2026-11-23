@@ -189,6 +189,20 @@ public:
     void init(int n_conduits, const XSectGroups& groups);
 
     /**
+     * @brief Seed the previous-step state from each conduit's starting flow.
+     *
+     * Legacy initLinks (flowrout.c) sets Conduit.q1 = q2 = newFlow / barrels and
+     * a1 = a2 = A(newDepth) before the first step; init() zeroes them, so a
+     * kinematic-wave conduit with an initial flow (InitFlow, or a hot start)
+     * started the run empty. Call after init(), once links.flow and
+     * links.depth hold the starting state. Conduits starting without flow, and
+     * DUMMY conduits, keep the zero state, which is legacy's A(0).
+     *
+     * @param[in] ctx Context whose links hold their initial flow and depth.
+     */
+    void seedInitialState(const SimulationContext& ctx);
+
+    /**
      * @brief Copy the topologically sorted global link order used for tree routing.
      *
      * Owned order copy; empty selects natural-link-order fallback at execute. Does not validate

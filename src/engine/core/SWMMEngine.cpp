@@ -1613,6 +1613,15 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    // Legacy flowrout_init runs initNodeDepths (with the outfall depths) and
+    // initLinkDepths for dynamic wave only; kinematic-wave and steady models
+    // start with dry junctions and empty flowless conduits. Run for them, the
+    // junction depth fed the first kinematic-wave step a volume drain legacy
+    // does not have (benchmarks 193-h-h-si-units-elements). FV keeps the
+    // DW-class start.
+    const bool dw_class_init = ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+                               ctx_.options.routing_model == RoutingModel::FV;
+
     // initNodeDepths (legacy flowrout.c): seed each non-storage / non-outfall
     // junction's initial depth from the AVERAGE of its connecting links' flow
     // depths (y = link.depth + offset1), so a node on a q0 conduit inherits that
@@ -1624,7 +1633,7 @@ int SWMMEngine::initialize() noexcept {
     // boundary depths are preserved (set below). Must run AFTER the q0 loop
     // (which sets link depths) and BEFORE the q0=0 backwater fill (which reads
     // node depths).
-    {
+    if (dw_class_init) {
         const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
         const int nn = ctx_.n_nodes();
         std::vector<double> acc(static_cast<std::size_t>(nn), 0.0);
@@ -1692,34 +1701,38 @@ int SWMMEngine::initialize() noexcept {
     // (routing-outfall-tidal, routing-outfall-timeseries). Legacy calls it
     // per LINK, so only an outfall some link names in that per-link choice
     // of end gets a depth (buildOutfallLinkMap); the others stay at 0.
-    outfall::buildOutfallLinkMap(ctx_);
-    outfall::setAllOutfallDepths(ctx_, 0.0);
-    for (int j = 0; j < ctx_.n_links(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx_.links.type[uj] != LinkType::CONDUIT)
-            continue;
-        if (ctx_.links.q0[uj] != 0.0)
-            continue; // q0 conduits already at normal depth
-        double yfull = ctx_.links.xsect_y_full[uj];
-        int n1 = ctx_.links.node1[uj];
-        int n2 = ctx_.links.node2[uj];
-        if (n1 < 0 || n2 < 0)
-            continue;
-        double y1 = std::clamp(
-            ctx_.nodes.depth[static_cast<std::size_t>(n1)] - ctx_.links.offset1[uj], 0.0, yfull);
-        double y2 = std::clamp(
-            ctx_.nodes.depth[static_cast<std::size_t>(n2)] - ctx_.links.offset2[uj], 0.0, yfull);
-        double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
-        ctx_.links.depth[uj] = y;
-        ctx_.links.old_depth[uj] = y;
-        XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
-        const int cr = ctx_.link_subtypes.conduit_row(j);
-        const auto& CD = ctx_.link_subtypes.conduits;
-        int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
-        double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
-        double vol = xsect::getAofY(xs, y) * len * barrels;
-        ctx_.links.volume[uj] = vol;
-        ctx_.links.old_volume[uj] = vol;
+    if (dw_class_init) {
+        outfall::buildOutfallLinkMap(ctx_);
+        outfall::setAllOutfallDepths(ctx_, 0.0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.links.type[uj] != LinkType::CONDUIT)
+                continue;
+            if (ctx_.links.q0[uj] != 0.0)
+                continue; // q0 conduits already at normal depth
+            double yfull = ctx_.links.xsect_y_full[uj];
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            if (n1 < 0 || n2 < 0)
+                continue;
+            double y1 =
+                std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n1)] - ctx_.links.offset1[uj],
+                           0.0, yfull);
+            double y2 =
+                std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n2)] - ctx_.links.offset2[uj],
+                           0.0, yfull);
+            double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
+            ctx_.links.depth[uj] = y;
+            ctx_.links.old_depth[uj] = y;
+            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const auto& CD = ctx_.link_subtypes.conduits;
+            int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+            double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
+            double vol = xsect::getAofY(xs, y) * len * barrels;
+            ctx_.links.volume[uj] = vol;
+            ctx_.links.old_volume[uj] = vol;
+        }
     }
 
     // ── USE HOTSTART: load saved routing state from a hot-start file ──
