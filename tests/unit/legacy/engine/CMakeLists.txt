@@ -54,6 +54,8 @@ function(add_solver_test TEST_NAME SOURCE_FILE)
 endfunction()
 
 add_solver_test(test_solver_api          test_solver_api.cpp)
+# An empty link's pollutant concentration is 0, not NaN (qualrout.c flux block).
+add_solver_test(test_solver_empty_link_quality test_solver_empty_link_quality.cpp)
 add_solver_test(test_solver_errors       test_solver_errors.cpp)
 add_solver_test(test_solver_hotstart     test_solver_hotstart.cpp)
 add_solver_test(test_solver_shapes       test_solver_shapes.cpp)

@@ -358,9 +358,14 @@ void findLinkQual(int i, double tStep) {
         }
 
         // --- Calculate bounded externally provided api pollutant flux and update mass balance
+        // --- (only when there is a flux and a volume to carry it: an empty
+        //     link has v1 + qIn*tStep == 0, and dividing by it wrote NaN
+        //     concentrations for every dry link with no inflow)
         cOut = Link[i].apiExtQualMassFlux[p];
 
-        if (cOut < 0.0) {
+        if (cOut == 0.0 || v1 + qIn * tStep <= 0.0) {
+            // no external flux, or nothing to carry it
+        } else if (cOut < 0.0) {
             cOut = -cOut * tStep / (v1 + qIn * tStep);
             cOut = MIN(c2, MAX(0.0, cOut));
             c2 -= cOut;
@@ -439,15 +444,21 @@ void findSFLinkQual(int i, double qSeep, double fEvap, double tStep)
         qIn = fabs(Conduit[k].q1) * barrels;
         v1 = Link[i].oldVolume;
 
-        cOut = Link[j].apiExtQualMassFlux[p];
+        // --- this link's flux (j is the upstream NODE index, so Link[j] read
+        //     another link's flux, or past the end of Link[] when a node
+        //     index exceeds the link count), and only when there is a flux
+        //     and a volume to carry it, as in findLinkQual
+        cOut = Link[i].apiExtQualMassFlux[p];
 
-        if (cOut < 0.0) {
+        if (cOut == 0.0 || v1 + qIn * tStep <= 0.0) {
+            // no external flux, or nothing to carry it
+        } else if (cOut < 0.0) {
             cOut = -cOut * tStep / (v1 + qIn * tStep);
             cOut = MIN(c2, MAX(0.0, cOut));
             c2 -= cOut;
 
             cOut = cOut * (v1 + qIn * tStep);
-            Link[j].totalLoad[p] -= cOut;
+            Link[i].totalLoad[p] -= cOut;
 
             cOut = cOut / tStep;
             massbal_addOutflowQual(p, cOut, FALSE);
@@ -456,7 +467,7 @@ void findSFLinkQual(int i, double qSeep, double fEvap, double tStep)
             c2 += cOut;
 
             cOut = cOut * (v1 + qIn * tStep);
-            Link[j].totalLoad[p] += cOut;
+            Link[i].totalLoad[p] += cOut;
 
             cOut = cOut / tStep;
             massbal_addInflowQual(EXTERNAL_INFLOW, p, cOut);
