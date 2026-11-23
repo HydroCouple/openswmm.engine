@@ -186,6 +186,7 @@ class TestFractionalPeriodTimes(unittest.TestCase):
         start = np.datetime64("1998-01-01T00:00:00", "us")
         expected = start + np.arange(1, periods + 1, dtype=np.int64) * np.timedelta64(step_us, "us")
         np.testing.assert_array_equal(times, expected)
+        self.assertEqual(reader.report_step, timedelta(microseconds=step_us))
         # Each Python time is the native period time less the 1 ms report offset.
         epoch = np.datetime64("1899-12-30", "us")
         for i, days in enumerate(raw):

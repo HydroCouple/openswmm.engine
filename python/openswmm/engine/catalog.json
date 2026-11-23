@@ -17844,7 +17844,7 @@
    "name": "report_step",
    "form": "property",
    "python": "OutputReader.report_step",
-   "doc": "Read the output configured reporting interval.",
+   "doc": "Reporting interval, including a sub-second step.",
    "c": [
     "swmm_output_get_report_step"
    ],

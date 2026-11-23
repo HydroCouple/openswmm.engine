@@ -181,6 +181,15 @@ cdef class OutputReader:
 
     @property
     def report_step(self) -> timedelta:
+        """Reporting interval, including a sub-second step.
+
+        The file header stores whole seconds (0 for a 0.05 s step), so the
+        interval is the spacing of the first two saved period times; the
+        header value is used when fewer than two periods are saved.
+        """
+        times = self.period_times
+        if len(times) >= 2:
+            return timedelta(microseconds=int((times[1] - times[0]) / np.timedelta64(1, 'us')))
         return timedelta(seconds=swmm_output_get_report_step(self._h()))
 
     @property

@@ -37,9 +37,11 @@
 
 #include <gtest/gtest.h>
 
+#include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_output.h>
 
 #include <cmath>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -167,6 +169,37 @@ TEST_F(OutputNodeStatsTest, VolFloodedImpliesTimeFlooded) {
 // ---------------------------------------------------------------------------
 // Error paths — invalid arguments must return -1 without touching `value`.
 // ---------------------------------------------------------------------------
+
+// The .out header stores the report step as whole seconds, so a 0.5 s step
+// reads 0 there; the flooding statistics take the step from the saved dates.
+TEST(OutputNodeStatsSubSecond, FloodingStatsUseTheSavedHalfSecondStep) {
+    const char* inp = "node_stats_half_second.inp";
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\n"
+             "REPORT_STEP 0:00:00.5\nROUTING_STEP 0.1\nVARIABLE_STEP 0\n"
+             "[JUNCTIONS]\nJ 10 0.5\n[OUTFALLS]\nO 0 FREE NO\n"
+             "[CONDUITS]\nC J O 100 0.013 0 0\n[XSECTIONS]\nC CIRCULAR 0.2 0 0 0 1\n"
+             "[INFLOWS]\nJ FLOW \"\" FLOW 1.0 1 5\n"
+             "[COORDINATES]\nJ 0 0\nO 100 0\n[REPORT]\nNODES ALL\nLINKS ALL\n";
+    }
+    ASSERT_EQ(
+        swmm_engine_run(inp, "node_stats_half_second.rpt", "node_stats_half_second.out", nullptr),
+        0);
+    SWMM_Output out = swmm_output_open("node_stats_half_second.out");
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(swmm_output_get_report_step(out), 0);
+    ASSERT_EQ(swmm_output_get_period_count(out), 20);
+    double seconds = 0.0, volume = 0.0;
+    ASSERT_EQ(swmm_output_get_node_stat_time_flooded(out, 0, &seconds), 0);
+    ASSERT_EQ(swmm_output_get_node_stat_vol_flooded(out, 0, &volume), 0);
+    EXPECT_GT(seconds, 0.0);
+    EXPECT_GT(volume, 0.0);
+    EXPECT_DOUBLE_EQ(seconds / 0.5, std::round(seconds / 0.5));
+    EXPECT_LE(seconds, 10.0);
+    swmm_output_close(out);
+}
 
 TEST_F(OutputNodeStatsTest, NullHandleReturnsMinusOne) {
     double v = 42.0;
