@@ -1478,7 +1478,7 @@ struct XsectEval {
         if (y > xs.y_bot)
             return rect_round_getRofA(xs, rect_round_getAofY(xs, y));
         double theta1 = 2.0 * std::acos(1.0 - y / xs.r_bot);
-        return 0.5 * xs.r_bot * (1.0 - std::sin(theta1)) / theta1;
+        return 0.5 * xs.r_bot * (1.0 - std::sin(theta1) / theta1);
     }
 
     /**
