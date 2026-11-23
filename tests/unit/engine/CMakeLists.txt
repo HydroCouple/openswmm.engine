@@ -601,6 +601,8 @@ add_gtest_unit(test_engine_controls
 add_gtest_unit(test_engine_transect_x1_layouts test_transect_x1_layouts.cpp)
 # Transect right end wall in the wetted perimeter (code review NUM-24, #169).
 add_gtest_unit(test_engine_transect_right_wall test_transect_right_wall.cpp)
+# Transect bank stations in SI with a width factor (code review NUM-23, #168).
+add_gtest_unit(test_engine_transect_si_width_factor test_transect_si_width_factor.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
 # The legacy-faithful constants equal consts.h / swmm5.c bit for bit. consts.h's
 # macros (PI, TINY, MISSING, TRUE, ...) collide with the C++ names, so a C shim
