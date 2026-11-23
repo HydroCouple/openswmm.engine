@@ -42,6 +42,8 @@
 
 #include <openswmm/engine/openswmm_climate.h>
 #include <openswmm/engine/openswmm_engine.h>
+#include <openswmm/engine/openswmm_model.h>
+#include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_forcing.h>
 #include <openswmm/engine/openswmm_gages.h>
 #include <openswmm/engine/openswmm_infrastructure.h>
@@ -374,6 +376,55 @@ TEST(SentinelParityRegulators, EveryTypeOnItsOwnShapeOpens) {
     std::string rpt;
     EXPECT_EQ(run_model("sentinel_regulator_shape_valid", rpt), SWMM_OK) << rpt;
     EXPECT_FALSE(contains(rpt, "ERROR")) << rpt;
+}
+
+// A row whose Geom1 is 0 on an allowed shape: the [XSECTIONS] handler reports
+// the number (legacy's only message, since it stops reading there) and the
+// shape check, which sees no dimension, adds ERROR 143. v6 reports every
+// error it finds, so both are expected.
+TEST(SentinelParityRegulators, Geom1ZeroOnAnAllowedShapeReportsBoth) {
+    std::string rpt;
+    EXPECT_NE(run_model("sentinel_regulator_geom1_zero", rpt), SWMM_OK);
+    EXPECT_TRUE(contains(rpt, "ERROR 211: invalid number 0 for Geom1 of link W_TR")) << rpt;
+    EXPECT_TRUE(contains(rpt, "ERROR 143: Regulator W_TR has invalid cross-section shape.")) << rpt;
+    for (const char* link : {"OR_C", "OR_R", "W_SF", "W_VN", "W_TZ", "W_RD"})
+        EXPECT_FALSE(contains(rpt, std::string("Regulator ") + link)) << link << "\n" << rpt;
+}
+
+// The programmatic builder reaches the same check through swmm_finalize_model,
+// which runs resolve_cross_references and then fails the finalize on any
+// recorded error, as a file open does.
+TEST(SentinelParityRegulators, BuiltOrificeOnAnOpenShapeFailsFinalizeWith143) {
+    for (const bool allowed : {false, true}) {
+        SWMM_Engine e = swmm_engine_new();
+        ASSERT_NE(e, nullptr);
+        ASSERT_EQ(swmm_node_add(e, "J1", SWMM_NODE_JUNCTION), SWMM_OK);
+        ASSERT_EQ(swmm_node_add(e, "O1", SWMM_NODE_OUTFALL), SWMM_OK);
+        ASSERT_EQ(swmm_node_set_invert_elev(e, 0, 10.0), SWMM_OK);
+        ASSERT_EQ(swmm_node_set_max_depth(e, 0, 5.0), SWMM_OK);
+        ASSERT_EQ(swmm_node_set_invert_elev(e, 1, 9.0), SWMM_OK);
+        ASSERT_EQ(swmm_link_add(e, "OR1", SWMM_LINK_ORIFICE), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_nodes(e, 0, 0, 1), SWMM_OK);
+        ASSERT_EQ(swmm_link_set_xsect(e, 0, allowed ? SWMM_XSECT_CIRCULAR : SWMM_XSECT_RECT_OPEN,
+                                      1.0, 2.0, 0.0, 0.0),
+                  SWMM_OK);
+        const int rc = swmm_finalize_model(e);
+        std::string errors;
+        for (int i = 0; i < swmm_get_error_count(e); ++i)
+            if (const char* m = swmm_get_error_at(e, i))
+                errors += std::string(m) + "\n";
+        if (allowed) {
+            EXPECT_EQ(rc, SWMM_OK) << errors;
+            EXPECT_FALSE(contains(errors, "ERROR 143")) << errors;
+        } else {
+            EXPECT_NE(rc, SWMM_OK) << errors;
+            EXPECT_TRUE(
+                contains(errors, "ERROR 143: Regulator OR1 has invalid cross-section shape."))
+                << errors;
+        }
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
+    }
 }
 
 // ---------------------------------------------------------------------------
