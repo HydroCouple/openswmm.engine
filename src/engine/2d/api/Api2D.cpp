@@ -156,7 +156,8 @@ int swmm_2d_geometry_scale_to_si(SWMM_Engine engine, double* scale) {
     const auto& options = router2d.options();
     const bool us =
         openswmm::ucf::getUnitSystem(static_cast<int>(eng->context().options.flow_units)) == 0;
-    *scale = options.mesh_units_si || options.mesh_scaled_to_si || !us ? 1.0 : 0.3048;
+    *scale =
+        options.mesh_units_si || options.mesh_scaled_to_si || !us ? 1.0 : openswmm::ucf::FT_TO_M;
     return SWMM_OK;
 }
 

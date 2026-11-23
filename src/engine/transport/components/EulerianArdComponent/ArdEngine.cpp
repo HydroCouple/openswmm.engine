@@ -1718,7 +1718,6 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
             bed.cell_temp = std::move(keep_temp);
     }
 
-    constexpr double kSqFtToSqM = 0.09290304;
     const auto unc = static_cast<std::size_t>(ncells);
     const auto une = static_cast<std::size_t>(n_exch);
 
@@ -1743,7 +1742,7 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
         const double rh = fv::kernels::hydRadOfDepth(g, h);
         if (!(rh > 0.0))
             continue;
-        const double bed_m2 = (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM;
+        const double bed_m2 = (area_x / rh) * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT;
 
         // PE2: the parent link's bed material (cells resolve to their link,
         // D-PE1), so the ARD bed and the LEGACY/LARD beds read one config.
@@ -1807,8 +1806,6 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     // them (SolarRadiation.hpp).
     heat::updateSolarForcing(ctx, dt);
 
-    constexpr double kSqFtToSqM = 0.09290304;
-
     const double rho = ctx.options.water_density;
     const double cp = ctx.options.water_specific_heat;
 
@@ -1860,7 +1857,7 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         if (g.is_open) {
             const double width = fv::kernels::widthOfDepth(g, h);
             if (width > 0.0)
-                surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
+                surf_m2 = width * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT;
         }
 
         const double t_w = state_.cell_phi[tr * unc + c];
@@ -1874,7 +1871,8 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // link derivation one level up.
         if (bed_on && c < ctx.bed_state.cell_temp.size()) {
             const double rh = fv::kernels::hydRadOfDepth(g, h);
-            const double bed_m2 = (rh > 0.0) ? (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM : 0.0;
+            const double bed_m2 =
+                (rh > 0.0) ? (area_x / rh) * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT : 0.0;
             // PE2: the parent link's bed attributes and boundary.
             const auto& sd_c = heat::sedimentFor(ctx, ce);
             const heat::BedCoupling bc = heat::bedCouplingFromContact(
@@ -1921,9 +1919,9 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         const HeatElement ne = HeatElement::node(nd);
         // relaxT, same as the cell loop above — the node stores had the same
         // explicit step and the same thin-volume failure mode.
-        const double dT =
-            heat::relaxT(flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC), heat::kProbeC,
-                         area_ft2 * kSqFtToSqM, vol_ft3 * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
+        const double dT = heat::relaxT(flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC),
+                                       heat::kProbeC, area_ft2 * ucf::FT2_TO_M2_EXACT,
+                                       vol_ft3 * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
         // The store carries MASS (conc x volume), so a temperature
         // change of dT is a mass change of dT x volume.
         node_mass_[und * uns + tr] += dT * vol_ft3;

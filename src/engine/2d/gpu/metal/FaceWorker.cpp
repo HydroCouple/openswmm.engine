@@ -18,7 +18,7 @@ namespace openswmm::twoD::metal {
 KOKKOS_INLINE_FUNCTION FaceOutput flux(FaceInput f, StepParams p) {
     if (f.h <= p.dry)
         return {0.f, 0.f};
-    const float g = 9.80665f;
+    const float g = static_cast<float>(constants::GRAVITY_SI);
     const float h73 = f.h * f.h * Kokkos::pow(f.h, 1.f / 3.f);
     float q = (f.qhat - p.dt * (g * f.h * f.slope)) / (1.f + g * p.dt * f.n2 * f.qmag / h73);
     const float cap = p.fr * f.h * Kokkos::sqrt(g * f.h);
