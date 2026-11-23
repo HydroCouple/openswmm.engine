@@ -310,6 +310,8 @@ add_gtest_unit(test_engine_xsect_lookup_out_of_range test_xsect_lookup_out_of_ra
 add_gtest_unit(test_engine_xsect_error_names_link test_xsect_error_names_link.cpp)
 # Ellipse/arch size code in Geom3 vs. a zero Geom2, fractional codes (code review IO-12, #172).
 add_gtest_unit(test_engine_xsect_size_code_overrides test_xsect_size_code_overrides.cpp)
+# Custom elliptical pipes take the area of their own axes (code review CON-17, #170).
+add_gtest_unit(test_engine_xsect_custom_ellipse test_xsect_custom_ellipse.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,
