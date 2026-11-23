@@ -886,10 +886,12 @@ width reflects the conduit's pressurization state and history rather
 than its instantaneous depth, with the pressure-wave celerity as an
 explicit, user-controlled quantity.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): cross-section of a closed conduit surcharged under the dynamic Preissmann slot, showing the full conduit area A_full, the accumulated slot area A_s above the crown with top width T_s, the surcharge head h_s, and an inset timeline of the Preissmann number decaying from P_hat_0 toward 1 after pressurization at t_s. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-8-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
-![Figure 3-8](figure3-8-placeholder.png)
+![Figure 3-8](figures/png/hydraulics_ch3_surcharge_methods.png)
 
-*Figure 3-8 Conceptual representation of the dynamic Preissmann slot*
+*Figure 3-8 The four surcharge treatments on one overloaded pipe chain: the hydraulic
+grade line while the chain fills and drains under EXTRAN, SLOT, DYNAMIC_SLOT and TPA,
+the head at the node where the methods differ most, and the provisional Preissmann
+number of the dynamic slot after a pipe first pressurizes*
 
 The pressurization life cycle of a conduit end under the dynamic slot
 is summarized in Figure 3-9.
@@ -1662,6 +1664,13 @@ changes them as follows; under `EXPLICIT` they are exactly as in SWMM 5.
 | Bottom orifice in its weir regime with \f$H_{2}\f$ above the opening | Its head is already the head difference \f$H_{1} - H_{2}\f$ (Equation 6-6), and the factor of Equation 6-13 is applied as well, so submergence is counted twice; at \f$H^{*}\f$ the flow jumps by \f$1/f_{S}\f$, and an inflow inside the jump has no steady state | The factor is not applied, so the weir and orifice formulas meet at \f$H^{*}\f$ (Equation 6-10) |
 | Outlet rating at small heads | A rating that starts at a nonzero flow (a flow regulator), or a power below one, switches an outlet on a nearly empty node between its rated flow and none, and its \f$dQ/dH\f$ is 0 | Below an effective head of \f$\delta\f$ the flow runs linearly from zero to the rating's value at \f$\delta\f$, and \f$dQ/dH\f$ is the slope of that line |
 
+![Figure 3-11](figures/png/hydraulics_ch3_si_regulator_laws.png)
+
+*Figure 3-11 The three regulator laws that semi-implicit node continuity changes: the
+flow (top) and the dQ/dH handed to the node head update (bottom) under EXPLICIT and
+SEMI_IMPLICIT, for a submerged transverse weir, a bottom orifice with tailwater above
+its opening, and outlets rated from a nonzero flow or with a power below one*
+
 Apart from the bottom orifice, the flow laws are those of SWMM 5
 wherever the head difference across a submerged regulator, or an
 outlet's head, is at least \f$\delta\f$; there only the flow derivatives
@@ -1776,7 +1785,7 @@ the underlying flow balance is still unsatisfied; with acceleration
 disabled the two tests coincide and the criterion reduces exactly to
 that of Section 3.2.
 
-Figure 3-11 summarizes one accelerated iteration.
+Figure 3-12 summarizes one accelerated iteration.
 
 <!-- workflow: anderson_iteration -->
 <pre class="mermaid">
@@ -1801,7 +1810,7 @@ flowchart TD
 <span data-node="K">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: convergence"</span>
 </div>
 
-*Figure 3-11 Workflow of one Anderson-accelerated iteration of the
+*Figure 3-12 Workflow of one Anderson-accelerated iteration of the
 successive-approximation loop (rendered diagram)*
 
 **Implementation.** The mixing update, the residual gate and the

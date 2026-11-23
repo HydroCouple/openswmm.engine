@@ -77,13 +77,13 @@ Figure 3-6 Outflow hydrographs for example conduit -I
 
 Figure 3-7 Outflow hydrographs for example conduit – II
 
-Figure 3-8 The four surcharge treatments on deck `slot_surcharge.inp`: grade lines (ft) while the chain fills and drains, the head at J3, and the dynamic slot's Preissmann number from Equation 3-40
+Figure 3-8 The four surcharge treatments on one overloaded pipe chain: the hydraulic grade line while the chain fills and drains under EXTRAN, SLOT, DYNAMIC_SLOT and TPA, the head at the node where the methods differ most, and the provisional Preissmann number of the dynamic slot after a pipe first pressurizes
 
 Figure 3-9 State transitions of the dynamic Preissmann slot at a conduit end (rendered diagram; states and transitions as implemented in `updateDPSState`)
 
 Figure 3-10 Virtual junction representation of a conduit grade break
 
-Figure 3-11 Flow and dQ/dH (cfs, cfs/ft) under `EXPLICIT` and `SEMI_IMPLICIT` for a submerged weir, a bottom orifice with tailwater above its opening, and outlet ratings at small heads (synthetic, from the engine's laws, δ = 0.05 ft)
+Figure 3-11 The three regulator laws that semi-implicit node continuity changes: the flow (top) and the dQ/dH handed to the node head update (bottom) under EXPLICIT and SEMI_IMPLICIT, for a submerged transverse weir, a bottom orifice with tailwater above its opening, and outlets rated from a nonzero flow or with a power below one
 
 Figure 3-12 Workflow of one Anderson-accelerated iteration of the successive-approximation loop (rendered diagram)
 
