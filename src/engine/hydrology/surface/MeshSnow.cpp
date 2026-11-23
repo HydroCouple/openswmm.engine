@@ -356,17 +356,17 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
             horizon = std::min(horizon, span);
         // Only consume an existing single UEB prediction. Preparing weather
         // changes shared table cursors/radiation; contact and DD stay scalar.
-        const bool prepared =
-            start < end - 1e-9 && !(start + span < end - 1e-9) && span <= horizon &&
-            std::all_of(
-                configuration.active_cells_.begin(), configuration.active_cells_.end(),
-                [&](int i) {
-                    return configuration.kind_[i] == SnowKind::Ueb &&
-                           !configuration.groundContactEnabled(i) && held_[i].pending() &&
-                           span <= held_[i].duration - held_[i].elapsed && std::isfinite(rain[i]) &&
-                           rain[i] >= 0 && std::isfinite(catch_factor[i]) && catch_factor[i] >= 0 &&
-                           precipitation_[i] == rain[i] && catch_[i] == catch_factor[i];
-                });
+        const auto heldForThisSpan = [&](int i) {
+            return configuration.kind_[i] == SnowKind::Ueb &&
+                   !configuration.groundContactEnabled(i) && held_[i].pending() &&
+                   span <= held_[i].duration - held_[i].elapsed && std::isfinite(rain[i]) &&
+                   rain[i] >= 0 && std::isfinite(catch_factor[i]) && catch_factor[i] >= 0 &&
+                   precipitation_[i] == rain[i] && catch_[i] == catch_factor[i];
+        };
+        const bool prepared = start < end - 1e-9 && !(start + span < end - 1e-9) &&
+                              span <= horizon &&
+                              std::all_of(configuration.active_cells_.begin(),
+                                          configuration.active_cells_.end(), heldForThisSpan);
         if (prepared) {
             auto consumeCell = [&](int i) -> std::string {
                 auto& held = held_[i];
