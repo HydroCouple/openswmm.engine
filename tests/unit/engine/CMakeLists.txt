@@ -330,6 +330,9 @@ add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
 # Inlet designs, inlet usage rows and [INLET_JUNCTIONS] IO / validation / edits
 # (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
 add_gtest_unit(test_engine_inlet_junction_io test_inlet_junction_io.cpp)
+# IGNORE_ROUTING skips the routing-layout checks, as legacy does (benchmarks
+# 3525-nodes: KINWAVE adverse conduits with routing ignored).
+add_gtest_unit(test_engine_ignore_routing_layout test_ignore_routing_layout.cpp)
 # Species/age loads carried by a lateral at a virtual junction, every routing
 # x quality-solver pair (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md E4).
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)

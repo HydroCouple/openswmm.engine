@@ -10880,7 +10880,13 @@ void SWMMEngine::initHydraulics() noexcept {
 
     // Gap #83: Outfall connectivity + no-outlets validation
     // Gap #84: Conduit adverse slope (non-DW) + regulator from non-storage
-    {
+    //
+    // Legacy runs all of these, and the routing-loop check below, only from
+    // routing_open (flowrout_init and toposort_sortLinks), which swmm_start
+    // calls only when DoRouting (swmm5.c:743, 760). With IGNORE_ROUTING YES
+    // none of them runs: 3525-nodes, a KINWAVE deck with adverse conduits,
+    // runs in legacy and failed here with ERROR 115.
+    if (!ctx_.options.ignore_routing) {
         int n_nl = ctx_.n_nodes();
         int n_ll = ctx_.n_links();
         std::vector<int> n_in(static_cast<std::size_t>(n_nl), 0);
@@ -11016,7 +11022,7 @@ void SWMMEngine::initHydraulics() noexcept {
     }
 
     // Gap #44: detect routing loop — matching legacy ERR_LOOP in toposort.c
-    if (router_.hasCycle()) {
+    if (!ctx_.options.ignore_routing && router_.hasCycle()) {
         set_error(SWMM_ERR_PARSE, "Routing loop detected: network contains a cycle that cannot "
                                   "be topologically sorted (KW/STEADY routing only).");
     }
