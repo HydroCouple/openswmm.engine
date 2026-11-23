@@ -1364,7 +1364,7 @@ double xsect_getYcrit(TXsect* xsect, double q) {
         // --- first estimate yCritical for an equivalent circular conduit
         //     using 1.01 * (q2g / yFull)^(1/4)
         y = 1.01 * pow(q2g / xsect->yFull, 1. / 4.);
-        if (y >= xsect->yFull)
+        if (!(y < xsect->yFull)) // also NaN
             y = 0.97 * xsect->yFull;
 
         // --- then find ratio of conduit area to equiv. circular area
@@ -1509,7 +1509,13 @@ double tabular_getdSdA(TXsect* xsect, double a, double* table, int nItems) {
     double dSdA;
 
     // --- find which segment of table contains alpha
-    i = (int)(alpha / delta);
+    //     (alpha outside 0-1, or NaN, cannot be converted to a table index)
+    if (!(alpha > 0.0))
+        i = 0;
+    else if (alpha > 1.0)
+        i = nItems - 2;
+    else
+        i = (int)(alpha / delta);
     if (i >= nItems - 1)
         i = nItems - 2;
 
@@ -1556,7 +1562,12 @@ double lookup(double x, double* table, int nItems) {
     int i;
 
     // --- find which segment of table contains x
+    //     (x outside 0-1, or NaN, cannot be converted to a table index)
     delta = 1.0 / ((double)nItems - 1);
+    if (!(x > 0.0))
+        return table[0];
+    if (x > 1.0)
+        return table[nItems - 1];
     i = (int)(x / delta);
     if (i >= nItems - 1)
         return table[nItems - 1];

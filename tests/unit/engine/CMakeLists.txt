@@ -304,6 +304,8 @@ add_gtest_unit(test_engine_xsect
 add_gtest_unit(test_engine_transect_table_stability test_transect_table_stability.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
+# Table lookups with an out-of-range or NaN ratio survive (code review CRASH-07, #174).
+add_gtest_unit(test_engine_xsect_lookup_out_of_range test_xsect_lookup_out_of_range.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,

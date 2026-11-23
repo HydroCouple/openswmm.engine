@@ -1,0 +1,32 @@
+[TITLE]
+CRASH-07: conduit C1 has a diameter of nan, which the legacy reader accepts
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         10
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1      100   10        0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type
+O1      99    FREE
+
+[CONDUITS]
+;;Name  From  To  Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J1    O1  400     0.013      0         0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1      CIRCULAR  nan    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  Time Series  Type  Mfactor  Sfactor  Baseline
+J1      FLOW         ""           FLOW  1.0      1.0      1.0
