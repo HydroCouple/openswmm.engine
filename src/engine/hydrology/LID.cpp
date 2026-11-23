@@ -461,6 +461,10 @@ void LIDSolver::init(SimulationContext& ctx) {
         if (g.stor_thick[us] > 0.0) {
             g.stor_depth[us] = initSat * g.stor_thick[us];
         }
+        // legacy lid_initState: a unit that starts with water makes the
+        // first runoff step a wet one (HasWetLids); is_wet stayed 0 until the
+        // unit's first step, so that step ran at the dry step.
+        g.is_wet[us] = initSat > 0.0 ? 1 : 0;
 
         // The unit's own Green-Ampt state for surface-to-soil infiltration
         // (legacy validateLidGroup lid.c:1173-1185 + lid_initState): the soil

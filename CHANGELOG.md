@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **A LID unit that starts with water makes the first runoff step a wet one, as in the legacy solver.** The 6.0 engine marked every unit dry until its first step, so a model that starts in dry weather with a `[LID_USAGE]` initial saturation above 0 took the dry time step first: on benchmarks `greenroofs` a green roof starting 1 % saturated exfiltrated its stored water over one hour instead of 30 minutes, and its subcatchment's infiltration loss read half of the legacy value for the first two reports. Results change only for such models, and only until the first wet step.
 - **FORCE_MAIN full flow uses the Manning section factor.** A force main's full-flow section factor was Hazen-Williams' A·R^0.63 while every consumer multiplies it by 1.486·√S/n, so force mains carried 5–8 % too much when full, in both engines. Code review NUM-07, #166.
 - **Standard ARCH size code 31 has the full hydraulic radius its shape implies.** The corrugated-steel 36 × 46 in entry of the arch table was about 25 % low, so that one standard pipe routed less than its neighbours, in both engines. Code review NUM-20, #167.
 - **Transect bank stations are found in SI with a station width factor.** The scaled station values were compared for exact equality, so a transect in metres with a width factor lost its banks and took the channel roughness throughout, in both engines. Code review NUM-23, #168.
