@@ -2600,6 +2600,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         gage_changed = rates[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ || state_.forcing_dirty || gage_changed) {
         state_.forcing_dirty = false;
+        state_.forcing_step_sync = false;
         updateRainfall(ctx);
         // E2 [2D_OPTIONS] EVAPORATION: YES (default) = forcing only, the
         // pre-E2 sink; CLIMATE = unforced cells take the project
@@ -3678,7 +3679,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     }
     const double sync = couplingSyncSpan(ctx, options_);
     const bool lid_heat_sync = ctx.options.heat_transport && subsurface_.lidReceiptsEnabled();
-    if (lid_heat_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
+    // A prescription written through the forcing API during this routing
+    // step ends the batch here, so it applies over exactly this step (the
+    // per-step semantics the API documents) rather than from the next
+    // batch, which can begin one or more routing steps later when the
+    // variable routing step runs shorter than the sync span.
+    if (lid_heat_sync || state_.forcing_step_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;
         coAdvanceStep(ctx, span, t);

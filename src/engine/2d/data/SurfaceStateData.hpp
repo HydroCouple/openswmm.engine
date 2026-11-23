@@ -271,6 +271,14 @@ struct SurfaceStateData {
     std::vector<double> coupling_native;
     bool forcing_dirty = false;
 
+    /// Set by the forcing API together with forcing_dirty; makes the routing step in which
+    /// a prescription was written end its 2D sync batch, so the prescription applies over
+    /// exactly that step even when the batch span (COUPLING_SYNC, or a variable routing
+    /// step shorter than the nominal one) would otherwise carry it into later steps.
+    /// Cleared when the co-advance consumes forcing_dirty. Not checkpointed: it lives only
+    /// between an API call and the end of the same routing step.
+    bool forcing_step_sync = false;
+
     /// Sticky companion to forcing_dirty: set by the forcing API the first
     /// time any prescription is written, never cleared. clear_reset_forcings()
     /// is called once per routing step and is O(n_cells); on a model that

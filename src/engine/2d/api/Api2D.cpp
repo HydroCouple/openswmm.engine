@@ -1326,6 +1326,7 @@ int swmm_2d_force_rainfall(SWMM_Engine engine, int idx, double value, int mode, 
     s.rainfall_force_val.set(idx, value);
     s.rainfall_persist.set(idx, static_cast<int8_t>(persist));
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }
@@ -1350,6 +1351,7 @@ int swmm_2d_force_rainfall_uniform(SWMM_Engine engine, double value, int mode, i
         s.rainfall_persist.set(i, static_cast<int8_t>(persist));
     }
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }
@@ -1372,6 +1374,7 @@ int swmm_2d_force_evap(SWMM_Engine engine, int idx, double value, int mode, int 
     s.evap_force_val.set(idx, value);
     s.evap_persist.set(idx, static_cast<int8_t>(persist));
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }
@@ -1396,6 +1399,7 @@ int swmm_2d_force_evap_uniform(SWMM_Engine engine, double value, int mode, int p
         s.evap_persist.set(i, static_cast<int8_t>(persist));
     }
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }
@@ -1416,6 +1420,7 @@ int swmm_2d_force_coupling_flux(SWMM_Engine engine, int idx, double value, int m
     s.coupling_force_val.set(idx, value);
     s.coupling_persist.set(idx, static_cast<int8_t>(persist));
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }
@@ -1441,6 +1446,7 @@ int swmm_2d_force_clear_all(SWMM_Engine engine) {
         s.coupling_persist.set(i, 0);
     }
     s.forcing_dirty = true;
+    s.forcing_step_sync = true;
     s.forcing_ever_set = true;
     return SWMM_OK;
 }

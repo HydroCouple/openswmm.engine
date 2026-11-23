@@ -2369,9 +2369,13 @@ the 2D domain) with `mode` selecting override or add and `persist`
 selecting one-shot or persistent application; `swmm_2d_force_rainfall`
 / `swmm_2d_force_evap` (and their `_uniform` variants) do the same for
 the meteorological sources, and `swmm_2d_force_clear_all` clears every
-prescription. One-shot prescriptions expire after the step they apply
-to; any change marks the forcing state dirty so it takes effect on the
-very next batch regardless of the 30 s refresh cadence.
+prescription. A change made between routing steps ends the sync batch
+at the end of the step it was made in, so it applies over exactly that
+step even when the batch would otherwise span several steps (a
+`COUPLING_SYNC` span, or a variable routing step running shorter than
+the nominal one); one-shot prescriptions then expire on the step after.
+Any change also marks the forcing state dirty, bypassing the 30 s
+refresh cadence.
 
 Implementation: the exchange law and its sensitivity are
 @ref openswmm::twoD::computeNodeCouplingQ and

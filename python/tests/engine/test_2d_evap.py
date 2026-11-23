@@ -37,14 +37,27 @@ _TWOD_INP = os.path.join(_REPO_ROOT, "examples", "2d_complete_example.inp")
 _OUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 
 
-def _solver(name):
+def _solver(name, inp=_TWOD_INP):
     os.makedirs(_OUT_DIR, exist_ok=True)
     base = os.path.join(_OUT_DIR, name)
-    s = Solver(_TWOD_INP, base + ".rpt", base + ".out")
+    s = Solver(inp, base + ".rpt", base + ".out")
     s.open()
     s.initialize()
     s.start()
     return s
+
+
+def _batched_inp(name):
+    """Copy the 2D example with COUPLING_SYNC 60, so a 2D sync batch spans four
+    15 s routing steps; written next to the test outputs."""
+    os.makedirs(_OUT_DIR, exist_ok=True)
+    with open(_TWOD_INP, encoding="utf-8") as f:
+        text = f.read()
+    assert text.count("[2D_OPTIONS]\n") == 1
+    out = os.path.join(_OUT_DIR, name + ".inp")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(text.replace("[2D_OPTIONS]\n", "[2D_OPTIONS]\nCOUPLING_SYNC           60\n"))
+    return out
 
 
 _MM_HR_TO_MS = 1.0 / (1000.0 * 3600.0)  # mm/hr → m/s
@@ -111,6 +124,28 @@ class TestSurface2dEvap(unittest.TestCase):
             after_more = surf.get_mass_balance()["evap_out"]
             # The post-reset growth is at most the single-step delta's noise,
             # i.e. far less than if the prescription had persisted.
+            self.assertLessEqual(after_more - after_one, delta1 * 0.5 + 1e-9)
+        finally:
+            s.end(); s.close(); s.destroy()
+
+    def test_one_shot_applies_within_the_step_under_batching(self):
+        """A RESET prescription applies over the routing step it was set in,
+        even when the 2D sync batch would otherwise span several steps."""
+        s = _solver("twod_evap_oneshot_batched", _batched_inp("twod_evap_oneshot_batched"))
+        try:
+            surf = s.surface2d
+            surf.force_rainfall_uniform(30.0 * _MM_HR_TO_MS, persist=ForcingPersist.PERSIST)
+            for _ in range(5):
+                s.step()
+            before = surf.get_mass_balance()["evap_out"]
+            surf.force_evap_uniform(10.0 * _MM_HR_TO_MS)
+            s.step()
+            after_one = surf.get_mass_balance()["evap_out"]
+            self.assertGreater(after_one, before)
+            delta1 = after_one - before
+            s.step()
+            s.step()
+            after_more = surf.get_mass_balance()["evap_out"]
             self.assertLessEqual(after_more - after_one, delta1 * 0.5 + 1e-9)
         finally:
             s.end(); s.close(); s.destroy()
