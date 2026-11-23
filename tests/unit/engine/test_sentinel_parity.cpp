@@ -20,6 +20,8 @@
  *   [RAINGAGES]    FILE start date skips records dated earlier.
  *   [ORIFICES]/[WEIRS] a section shape the type's equation does not use, or
  *                  no [XSECTIONS] row = ERROR 143.
+ *   [XSECTIONS]    conduit Barrels below 1 or non-numeric = ERROR 211, also
+ *                  when the row precedes [CONDUITS]; not read for IRREGULAR.
  *
  * Fixtures live in tests/unit/engine/data/ (the test's WORKING_DIRECTORY).
  */
@@ -425,6 +427,36 @@ TEST(SentinelParityRegulators, BuiltOrificeOnAnOpenShapeFailsFinalizeWith143) {
         swmm_engine_close(e);
         swmm_engine_destroy(e);
     }
+}
+
+// [XSECTIONS] Barrels
+// ---------------------------------------------------------------------------
+
+// legacy link.c reads a conduit's Barrels with atoi and stops with ERROR 211
+// when the count is not positive. v6 kept the default 1 without a message.
+TEST(SentinelParityXsections, BarrelsBelowOneIs211) {
+    for (const char* stem :
+         {"sentinel_xsect_barrels_zero", "sentinel_xsect_barrels_text",
+          "sentinel_xsect_barrels_fraction", "sentinel_xsect_barrels_negative_before_conduit"}) {
+        std::string rpt;
+        EXPECT_NE(run_model(stem, rpt), SWMM_OK) << stem;
+        EXPECT_TRUE(contains(rpt, "ERROR 211")) << stem << "\n" << rpt;
+        EXPECT_TRUE(contains(rpt, "Barrels of link C1")) << stem << "\n" << rpt;
+    }
+}
+
+// legacy returns before the Barrels item for IRREGULAR (and STREET) sections,
+// so a bad count there runs with one barrel instead of stopping.
+TEST(SentinelParityXsections, IrregularBarrelsZeroKeepsOneBarrel) {
+    const std::string stem = "sentinel_xsect_barrels_irregular_zero";
+    const std::string inp = stem + ".inp", rpt = stem + ".rpt", out = stem + ".out";
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), rpt.c_str(), out.c_str(), nullptr), SWMM_OK);
+    int barrels = 0;
+    EXPECT_EQ(swmm_link_get_barrels(e, swmm_link_index(e, "C1"), &barrels), SWMM_OK);
+    EXPECT_EQ(barrels, 1);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 // ---------------------------------------------------------------------------
