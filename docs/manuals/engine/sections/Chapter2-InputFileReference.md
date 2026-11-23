@@ -1759,7 +1759,7 @@ Func    mathematical function expressing treatment result in terms of pollutant 
 
 Remarks:
 Treatment functions can be any well-formed mathematical expression involving:
-    inlet pollutant concentrations (use the pollutant name to represent a concentration)
+    pollutant concentrations (use the pollutant name to represent a concentration: the inflow concentration in an R function, the node's concentration before treatment in a C function; the two are equal at a node that holds no water)
     removal of other pollutants (use R_ pre-pended to the pollutant name to represent removal)
     process variables which include:
 FLOW     for flow rate into node (user’s flow units)

@@ -1946,6 +1946,10 @@ endif()
 # A kinematic-wave conduit with an initial flow starts carrying it, as in
 # legacy (benchmarks 193-h-h-si-units-elements).
 add_gtest_unit(test_engine_kw_initial_flow test_kw_initial_flow.cpp)
+# A pollutant name in a treatment expression reads the concentration the
+# expression's type calls for (Reference Manual Vol. III 5.4.2), in both
+# engines (benchmarks 193-h-h-si-units-elements).
+add_gtest_unit(test_engine_treatment_expression_type test_treatment_expression_type.cpp)
 add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
 target_compile_definitions(test_engine_conduit_losses PRIVATE
     ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")

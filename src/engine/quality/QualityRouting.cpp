@@ -2211,21 +2211,12 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
         for (int p = 0; p < np; ++p)
             treat.removal[static_cast<std::size_t>(p)] = -1.0;
 
-        // 4b. What a BARE pollutant name reads. legacy getVariableValue
-        // (treatmnt.c:344-351) gives Cin[p] when THAT pollutant's treatment
-        // at this node is a removal equation, and the node's current
-        // concentration otherwise — so the choice depends on the OTHER
-        // pollutant's equation type, not this one's. Resolved here, where the
-        // per-pollutant compiled expressions are in hand, and handed to the
-        // evaluator as a plain array.
-        std::vector<double> cpollut(static_cast<std::size_t>(np), 0.0);
-        for (int p = 0; p < np; ++p) {
-            const auto up2 = static_cast<std::size_t>(p);
-            const auto ci = uj * static_cast<std::size_t>(np) + up2;
-            const bool p_is_removal = ci < treat.compiled.size() && treat.compiled[ci].is_removal;
-            cpollut[up2] =
-                p_is_removal ? treat.cin[up2] : ((ci < nodes.conc.size()) ? nodes.conc[ci] : 0.0);
-        }
+        // 4b. What a bare pollutant name reads: the inflow concentrations in
+        // a removal (R =) expression, the node's concentrations before
+        // treatment in a concentration (C =) expression (SWMM 5 Reference
+        // Manual Vol. III, section 5.4.2). The evaluated expression's type
+        // decides, not the named pollutant's own equation.
+        const double* c_nodes = nodes.conc.data() + uj * static_cast<std::size_t>(np);
 
         // 5. Evaluate treatment for each pollutant (with co-treatment + cycle detection)
         //    Uses the legacy getRemoval() pattern:
@@ -2298,9 +2289,9 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
                 if (x < 0.0 || x > 1.0)
                     x = 0.0;
 
-            double result =
-                treatment::evaluate(expr, c_in, dt, hrt_hours, q, v, d, treat.cin.data(),
-                                    r_view.data(), np, area, cpollut.data());
+            double result = treatment::evaluate(expr, c_in, dt, hrt_hours, q, v, d,
+                                                treat.cin.data(), r_view.data(), np, area,
+                                                expr.is_removal ? treat.cin.data() : c_nodes);
             result = std::max(result, 0.0);
 
             if (expr.is_removal) {
