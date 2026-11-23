@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **FORCE_MAIN full flow uses the Manning section factor.** A force main's full-flow section factor was Hazen-Williams' A·R^0.63 while every consumer multiplies it by 1.486·√S/n, so force mains carried 5–8 % too much when full, in both engines. Code review NUM-07, #166.
 - **Standard ARCH size code 31 has the full hydraulic radius its shape implies.** The corrugated-steel 36 × 46 in entry of the arch table was about 25 % low, so that one standard pipe routed less than its neighbours, in both engines. Code review NUM-20, #167.
 - **Transect bank stations are found in SI with a station width factor.** The scaled station values were compared for exact equality, so a transect in metres with a width factor lost its banks and took the channel roughness throughout, in both engines. Code review NUM-23, #168.
 - **A transect's right end wall counts in the wetted perimeter.** Only the left wall was added when an end station lies below the full height, so a section and its mirror image routed differently, in both engines. Code review NUM-24, #169.

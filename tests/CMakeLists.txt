@@ -184,6 +184,9 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
     add_test(NAME test_legacy_solver_arch_size_codes
         COMMAND $<TARGET_FILE:test_solver_arch_size_codes>
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
+    add_test(NAME test_legacy_solver_force_main_full_flow
+        COMMAND $<TARGET_FILE:test_solver_force_main_full_flow>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/unit/legacy/engine/data)
     # NOT the data directory: this one reads "./data/gage_scalefactor.inp",
     # so its working directory is the PARENT of the others'.
     add_test(NAME test_legacy_gage_scalefactor
@@ -212,6 +215,7 @@ if(OPENSWMM_BUILD_UNIT_TESTS)
         test_legacy_solver_transect_right_wall
         test_legacy_solver_transect_si_width_factor
         test_legacy_solver_arch_size_codes
+        test_legacy_solver_force_main_full_flow
         test_legacy_gage_scalefactor
         test_legacy_output
         PROPERTIES LABELS "unit"
