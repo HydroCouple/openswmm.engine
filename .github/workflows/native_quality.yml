@@ -42,6 +42,20 @@ jobs:
           git clang-format-19 --binary clang-format-19 --style=file --diff \
             --extensions c,cc,cpp,cxx,h,hh,hpp,hxx,inl,ipp "$BASE" HEAD
 
+  constants:
+    name: Constants defined once
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # Every physical constant and unit factor lives in Constants.hpp or
+      # UnitConversion.hpp; a literal copy elsewhere is a second definition.
+      - name: Scan the engine sources for literal copies of its constants
+        run: python3 scripts/lint_constants.py
+      - name: Prove the scan can fail
+        run: python3 scripts/lint_constants_negative.py
+
   linux:
     name: ${{ matrix.check }}
     runs-on: ubuntu-24.04
