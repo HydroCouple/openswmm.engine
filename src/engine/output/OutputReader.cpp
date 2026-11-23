@@ -34,6 +34,7 @@
 
 #include "OutputReader.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
+#include "core/Constants.hpp"
 
 #include <cmath>
 #include <cstdlib>
@@ -506,7 +507,7 @@ double OutputReader::reportStepSeconds() const {
         return static_cast<double>(report_step_);
     // A date resolves to about a microsecond: a spacing within 2 us of a
     // whole millisecond is that millisecond.
-    long long us = std::llround((t1 - t0) * 86400.0e6);
+    long long us = std::llround((t1 - t0) * (constants::SEC_PER_DAY * 1.0e6)); // days -> us
     const long long ms = std::llround(static_cast<double>(us) / 1000.0);
     if (std::llabs(us - ms * 1000) <= 2)
         us = ms * 1000;
