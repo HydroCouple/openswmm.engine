@@ -127,7 +127,7 @@ def run(args, root, network, surface, *, receipt_trace=False, tiers=1, momentum=
     return fields
 
 
-def assert_parity(actual, reference, label, atol=1e-5, names=None):
+def assert_parity(actual, reference, label, atol=1e-5, names=None, velocity_atol=None):
     np.testing.assert_array_equal(actual["time"], reference["time"])
     for name in names or reference.keys() - {"time"}:
         assert np.isfinite(actual[name]).all() and np.isfinite(reference[name]).all(), name
@@ -135,7 +135,8 @@ def assert_parity(actual, reference, label, atol=1e-5, names=None):
         # 2 to 6 mm deep cell that drains into the chamber, FP32 velocities differ from
         # the double host by up to 4e-4 of their value on an M1 Max and 7e-4 on a CI runner.
         velocity = name in ("Mesh2_face_vx", "Mesh2_face_vy")
-        np.testing.assert_allclose(actual[name], reference[name], atol=atol,
+        np.testing.assert_allclose(actual[name], reference[name],
+                                   atol=velocity_atol if velocity and velocity_atol else atol,
                                    rtol=2e-3 if velocity else 1e-4, err_msg=f"{label} {name}")
 
 
@@ -169,9 +170,15 @@ def main():
             # The draining film is thin, so FP32 differences show above 1e-5 (at most
             # 4.3e-5 on an M1 Max, 5.9e-5 with the CPU control). Giving every firing
             # the whole budget share instead moves depths 7e-3 m and velocities 6e-2 m/s.
+            # Velocities get 1e-3: with the equalize cap on by default (3bdd6e2c), two
+            # faces of the LOCAL_INERTIAL case swing from -1.1 m/s to +0.03 m/s inside
+            # report step 9, and the FP32 flux error of that swing, 3.8e-4 m/s on the CPU
+            # control, lands on a value near zero. 1e-3 is still 60 times below the
+            # 6e-2 m/s a wrong budget share would show.
             # The network is left out: its weir turns erratic late in this case, and a
             # 1e-7 THETA change on the double host moves its link flows by 2e-3 m3/s.
             assert_parity(actual, reference, f"LTS_TIERS 4 {momentum}", atol=2e-4,
+                          velocity_atol=1e-3,
                           names=("Mesh2_face_depth", "Mesh2_face_vx", "Mesh2_face_vy"))
     print(f"PASS 1D, 2D and coupled FV face routing and hydraulic parity, single and multiple "
           f"LTS tiers ({args.operator})")
