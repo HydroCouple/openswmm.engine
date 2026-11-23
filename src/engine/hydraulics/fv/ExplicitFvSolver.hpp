@@ -1544,6 +1544,31 @@ private:
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
+
+    /// Relative margin on the acceptance comparison, so a census that lands
+    /// EXACTLY on the threshold is rejected deterministically instead of by
+    /// last-bit rounding. That is the one case the test most needs to catch:
+    /// a step far past CFL saturates the positivity limiter, which clamps the
+    /// outflow to vol/dt and so caps the Courant number at exactly one, and
+    /// the post-step census then returns cfl*dt — a pure function of the step
+    /// taken, carrying no information about whether it was admissible. With
+    /// the default cfl equal to kStepAcceptRatio the comparison is the exact
+    /// tie 0.5*dt >= 0.5*dt. Measured on the R2 pressurized head-loss fixture
+    /// (PR #180, 2026-11-23): substeps to steady flow were 204 at c = 700..1000
+    /// but 3764 at 500 and 8528..11842 at 1100..1500 — the oversized accepted
+    /// first step injected a spurious water hammer that the following
+    /// substeps then resolved. Rejecting the tie flattens the sweep to
+    /// 204..208, strictly less work. See
+    /// PressCensus.substepCountDoesNotTurnOnTheAcceptanceTie.
+    static constexpr double kStepAcceptEps = 1.0e-9;
+
+    /// The acceptance test every post-step census uses: the stable step the
+    /// reached state allows must exceed kStepAcceptRatio of the step taken by
+    /// the margin above. `dt_taken` is the step the censused cells advanced
+    /// by (a tier-k cell's is 2^k times the base step).
+    static constexpr bool stepAdmissible(double dt_post, double dt_taken) noexcept {
+        return dt_post >= kStepAcceptRatio * dt_taken * (1.0 + kStepAcceptEps);
+    }
     static constexpr int kMaxStepRetries = 8;
 
     /// Substep floor — a loop guard only, far below any stable step this

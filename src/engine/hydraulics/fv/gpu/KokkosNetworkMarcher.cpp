@@ -75,6 +75,7 @@ using Range = Kokkos::RangePolicy<ExecSpace>;
 
 // The substep loop's constants (ExplicitFvSolver.hpp).
 constexpr double kStepAcceptRatio = 0.5;
+constexpr double kStepAcceptEps = 1.0e-9; // a census on the threshold rejects
 constexpr int kMaxStepRetries = 8;
 constexpr double kMinSubstep = 1.0e-6;
 
@@ -892,7 +893,7 @@ FvDeviceResult KokkosNetworkMarcher::advance(const FvDeviceAdvance& step) {
                 if (attempt >= kMaxStepRetries || dt <= kMinSubstep)
                     break;
                 const double dt_post = census();
-                if (dt_post >= kStepAcceptRatio * dt) {
+                if (dt_post >= kStepAcceptRatio * dt * (1.0 + kStepAcceptEps)) {
                     // The accepted state is the one the next substep censuses.
                     dt_census = dt_post;
                     have_census = true;

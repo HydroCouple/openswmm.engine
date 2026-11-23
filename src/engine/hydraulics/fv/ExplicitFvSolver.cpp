@@ -5153,7 +5153,7 @@ bool ExplicitFvSolver::macroCycleCellsAdmissible(double dt0) {
         if (!tpaCell(uc) && (g.is_open || state_->cell_h[uc] < g.y_crown))
             continue;
         const double dt_post = cellStableDt(c);
-        if (dt_post >= kStepAcceptRatio * static_cast<double>(1 << k) * dt0)
+        if (stepAdmissible(dt_post, static_cast<double>(1 << k) * dt0))
             continue;
         if (cell_dt_cap_.size() != static_cast<std::size_t>(nc))
             cell_dt_cap_.assign(static_cast<std::size_t>(nc), 1.0e30);
@@ -5536,7 +5536,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                 // the same post-step rejection applies — with the accumulators
                 // cleared on rollback, since the fluxes that produced them are
                 // being discarded with the state that produced them.
-                if (censusDt() < kStepAcceptRatio * dt0 || !macroCycleCellsAdmissible(dt0)) {
+                if (!stepAdmissible(censusDt(), dt0) || !macroCycleCellsAdmissible(dt0)) {
                     ++n_macro_rejected_;
                     perf::count(perf::n_fv_macro_rejected);
                     restoreState();
@@ -5591,8 +5591,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
                             reconstructState();
                         saveState();
                         runMacroCycle(dt0f, nsubf, forcing, t - t_current);
-                        if (censusDt() < kStepAcceptRatio * dt0f ||
-                            !macroCycleCellsAdmissible(dt0f)) {
+                        if (!stepAdmissible(censusDt(), dt0f) || !macroCycleCellsAdmissible(dt0f)) {
                             ++n_macro_rejected_;
                             perf::count(perf::n_fv_macro_rejected);
                             restoreState();
@@ -5688,7 +5687,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
 
             if (pressure_candidate_) {
                 const double post = pressure_ok ? censusDt(anyPressurizedCell()) : 0.0;
-                if (pressure_ok && post >= kStepAcceptRatio * dt)
+                if (pressure_ok && stepAdmissible(post, dt))
                     break;
                 restoreState();
                 ++pressure_rejections_;
@@ -5709,7 +5708,7 @@ double ExplicitFvSolver::advanceImpl(double t_current, double t_target,
             // memoryless, so re-derive it (a cell may have crossed the crown
             // inside the step, in EITHER direction).
             const double dt_post = censusDt(anyPressurizedCell());
-            if (dt_post >= kStepAcceptRatio * dt)
+            if (stepAdmissible(dt_post, dt))
                 break; // admissible
             restoreState();
             dt = std::max(0.9 * dt_post, kMinSubstep);
