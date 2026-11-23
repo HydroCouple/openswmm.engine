@@ -47,13 +47,13 @@ enum ProcessVarType {
 //-----------------------------------------------------------------------------
 //  Shared variables
 //-----------------------------------------------------------------------------
-static int ErrCode; // treatment error code
-static int J;       // index of node being analyzed
-static double Dt;   // curent time step (sec)
-static double Q;    // node inflow (cfs)
-static double V;    // node volume (ft3)
-static double* R;   // array of pollut. removals
-static double* Cin; // node inflow concentrations
+static int ErrCode;  // treatment error code
+static int J;        // index of node being analyzed
+static double Dt;    // curent time step (sec)
+static double Q;     // node inflow (cfs)
+static double V;     // node volume (ft3)
+static double* R;    // array of pollut. removals
+static double* Cin;  // node inflow concentrations
 static int ExprType; // REMOVAL or CONCEN: type of the expression being evaluated
 
 //-----------------------------------------------------------------------------
