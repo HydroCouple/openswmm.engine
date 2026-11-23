@@ -61,7 +61,7 @@ namespace datetime {
 
 static constexpr int DateDelta = constants::DATE_DELTA;      ///< Gregorian ordinal of 1899-12-30
 static constexpr double SecsPerDay = constants::SEC_PER_DAY; ///< Seconds per day
-static constexpr double OneSecond = 1.1574074e-5; ///< 1 second as fractional days
+static constexpr double OneSecond = 1.1574074e-5;            ///< 1 second as fractional days
 
 // ============================================================================
 // Date/time type — same as legacy DateTime (double)

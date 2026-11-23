@@ -688,14 +688,14 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg, std::vector<std::string>&
 GwUnitFactors gwUnitFactors(const SimulationContext& ctx) noexcept {
     GwUnitFactors f;
     const int sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    if (sys == 0) {               // US
-        f.length = ucf::FT_TO_M;  // ft  → m
-        f.rate = 0.0254 / 3600.0; // in/hr → m/s
+    if (sys == 0) {                           // US
+        f.length = ucf::FT_TO_M;              // ft  → m
+        f.rate = 0.0254 / 3600.0;             // in/hr → m/s
         f.inv_len = 1.0 / ucf::FT_TO_M;       // 1/ft → 1/m
         f.area = ucf::FT_TO_M * ucf::FT_TO_M; // ft² → m²
-    } else {                      // SI
-        f.length = 1.0;           // m
-        f.rate = 0.001 / 3600.0;  // mm/hr → m/s
+    } else {                                  // SI
+        f.length = 1.0;                       // m
+        f.rate = 0.001 / 3600.0;              // mm/hr → m/s
         f.inv_len = 1.0;
         f.area = 1.0;
     }

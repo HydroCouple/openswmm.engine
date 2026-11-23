@@ -61,7 +61,7 @@
 
 namespace openswmm::twoD::exchange {
 
-constexpr double kSigmaBand = 0.1;   ///< submergence blend width
+constexpr double kSigmaBand = 0.1; ///< submergence blend width
 
 /// A coupling point's structure, SI.
 struct Geometry {

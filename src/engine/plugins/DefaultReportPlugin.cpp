@@ -1013,7 +1013,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     const double svol_ucf = du.volume;     // ft³ → ft³ | m³ (storage volume)
     const char* len_word = du.length_word; // Feet | Meters
     const double Vcf = mvol_vcf;           // legacy statsrpt.c Vcf: 7.48 | 28.317 per 1e6 ft³
-    const char* vol_word = du.mvol_word; // 10^6 gal | 10^6 ltr
+    const char* vol_word = du.mvol_word;   // 10^6 gal | 10^6 ltr
     // legacy report.c continuity factors: UCF(LENGTH) * UCF(LANDAREA) for
     // acre-feet / hectare-m, and MGDperCFS (MLDperCFS) / SECperDAY for the
     // 10^6 gal (ltr) column.

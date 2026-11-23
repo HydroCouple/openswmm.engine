@@ -147,8 +147,8 @@ inline constexpr std::array<double, 6> Qcf_inv = detail::makeQcfInv();
 
 // Seconds per day is constants::SEC_PER_DAY (Constants.hpp); it has no copy here.
 
-static constexpr double ACRES_TO_FT2 = 43560.0;   ///< 1 acre = 43560 ft² (Ucf[GWFLOW][US])
-static constexpr double FT3_TO_GAL = 7.48;        ///< ft³ → gal as legacy prints (statsrpt.c Vcf)
+static constexpr double ACRES_TO_FT2 = 43560.0; ///< 1 acre = 43560 ft² (Ucf[GWFLOW][US])
+static constexpr double FT3_TO_GAL = 7.48;      ///< ft³ → gal as legacy prints (statsrpt.c Vcf)
 
 // Legacy-faithful fixed factors (consts.h MperFT, LperFT3, M3perFT3, MMperINCH).
 // The 1D engine's mass, concentration and length conversions compute with

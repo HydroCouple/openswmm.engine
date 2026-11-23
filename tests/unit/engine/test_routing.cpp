@@ -657,7 +657,7 @@ protected:
             ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::CIRCULAR);
             ctx.links.xsect_y_full[i] = 2.0;
             ctx.links.xsect_a_full[i] = constants::PI; // π·1², as setParams computes it
-            ctx.links.xsect_r_full[i] = 0.5;  // full-flow hyd. radius D/4 (2 ft pipe)
+            ctx.links.xsect_r_full[i] = 0.5;           // full-flow hyd. radius D/4 (2 ft pipe)
             ctx.links.xsect_w_max[i] = 2.0;
             C.roughness[cr] = 0.013;
             C.length[cr] = 400.0;

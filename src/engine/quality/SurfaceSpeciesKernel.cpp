@@ -667,7 +667,7 @@ void step(SimulationContext& ctx, Block& b, double dt_runoff, double old_runoff_
                         auto up37 = static_cast<std::size_t>(p);
                         double c_rain37 = (up37 < (*b.c_rain).size()) ? (*b.c_rain)[up37] : 0.0;
                         // Wet deposition on LID area (mass/sec)
-                        double v_lid_rain = rrate37 * lid_ft2 * dt_runoff;        // ft³
+                        double v_lid_rain = rrate37 * lid_ft2 * dt_runoff;         // ft³
                         double w_lid_rain = c_rain37 * ucf::FT3_TO_L * v_lid_rain; // mg
                         if (w_lid_rain > 0.0) {
                             total_washoff_load += w_lid_rain / dt_runoff;
