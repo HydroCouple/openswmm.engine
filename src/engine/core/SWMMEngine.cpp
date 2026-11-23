@@ -1521,7 +1521,12 @@ int SWMMEngine::initialize() noexcept {
     // convention (NodeData::rpt_full_volume), so seed its initial volume the
     // way legacy node_initState does: fullVolume * (initDepth / fullDepth) —
     // 0 for a plain junction, the wet-well share for a Type-1 pump inlet.
-    if (ctx_.options.routing_model == RoutingModel::DYNWAVE) {
+    // Kinematic wave and steady flow start the same way in legacy; the
+    // MIN_SURFAREA volume a junction's InitDepth otherwise became changed its
+    // outlet conduit's flow from the first step (benchmarks
+    // 193-h-h-si-units-elements). FV keeps full_volume as its node area and
+    // has no legacy start to follow.
+    if (ctx_.options.routing_model != RoutingModel::FV) {
         for (int i = 0; i < ctx_.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (ctx_.nodes.type[ui] == NodeType::STORAGE)
