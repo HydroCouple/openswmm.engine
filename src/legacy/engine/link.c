@@ -258,7 +258,7 @@ int link_readXsectParams(char* tok[], int ntoks) {
             x[3] = 0.0;
         }
         if (!xsect_setParams(&Link[j].xsect, k, x, UCF(LENGTH))) {
-            return error_setInpError(ERR_NUMBER, "");
+            return error_setInpError(ERR_XSECT, tok[0]);
         }
 
         // --- parse number of barrels if present

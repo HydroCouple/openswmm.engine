@@ -3808,7 +3808,7 @@ void resolve_cross_references(SimulationContext& ctx) {
                     // setParams has answered "I cannot build a section from
                     // this" — the same verdict legacy's xsect_setParams returns
                     // as FALSE, and legacy refuses the deck on it
-                    // (link.c:250, ERROR 211 naming an empty token). v6 computed
+                    // (link.c:250, ERROR 119 naming the link). v6 computed
                     // the verdict and then threw it away, falling through to the
                     // rectangular fallback below: a MODBASKETHANDLE with a top
                     // width of 0, which has no geometry at all, ran as a

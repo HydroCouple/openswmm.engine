@@ -23,6 +23,7 @@ retroactive.
 
 ## [Unreleased]
 
+- **Invalid cross-section geometry names its conduit.** Geometry the shape rules refuse was reported as ERROR 211 "invalid number" with an empty token; it is reported as a cross-section error naming the conduit now, in both engines. Code review IO-13, #175.
 - **The manual's 11-item X1 transect line is read correctly.** Every X1 line was read in the GUI's 10-item layout, so a line in the manual's layout had its Lfactor read as Wfactor and the section came out scaled; both layouts are recognised now, in both engines. Code review IO-29, #173.
 - **Cross-section table lookups guard an out-of-range or NaN ratio.** A NaN or very large depth or area ratio was converted to an int table index unchecked (undefined behaviour; a segmentation fault on x86), in both engines. Code review CRASH-07, #174.
 - A conduit's `[XSECTIONS]` Barrels item below 1 or not a number (`0`, `-3`, `0.5`, `abc`) stops the open with ERROR 211 naming the link, as in the legacy solver. It used to run with one barrel and no message. As in legacy, IRREGULAR and STREET sections keep one barrel instead of stopping. None of the 249,036 conduit rows with a Barrels item in 10,595 local model files used such a value.

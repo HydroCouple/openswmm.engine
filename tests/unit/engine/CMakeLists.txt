@@ -306,6 +306,8 @@ add_gtest_unit(test_engine_transect_table_stability test_transect_table_stabilit
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
 # Table lookups with an out-of-range or NaN ratio survive (code review CRASH-07, #174).
 add_gtest_unit(test_engine_xsect_lookup_out_of_range test_xsect_lookup_out_of_range.cpp)
+# Invalid cross-section geometry is reported against its conduit (code review IO-13, #175).
+add_gtest_unit(test_engine_xsect_error_names_link test_xsect_error_names_link.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,

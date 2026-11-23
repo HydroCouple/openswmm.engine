@@ -594,9 +594,9 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             continue;
         }
         // Legacy xsect_setParams (xsect.c:233) refuses Geom1 <= 0 for every
-        // shape but DUMMY, and link.c:250 reports it as ERR_NUMBER with an
-        // empty token, relying on the line number it prints. v6 reports parse
-        // errors without one, so the message names the value, the column and
+        // shape but DUMMY, and link.c:250 reports it as ERR_XSECT naming the
+        // link (code review IO-13). v6 reports parse errors without a line
+        // number, so its message names the value, the column and
         // the link. (CUSTOM's own Geom1 test is link.c:226.)
         if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
             ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT &&
