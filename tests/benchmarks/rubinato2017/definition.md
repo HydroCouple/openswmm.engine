@@ -65,6 +65,19 @@ was a reconstruction error; the surcharge-percentage definition directly
 constrains Q3. Absolute fit remains report-only, but the suite separately
 gates completion, direction, two-window drift and ordinary 1D continuity.
 
+## Long-window check (23 November 2026)
+
+`PhysicalShaftSensitivity` runs each row for 900 s. `shaft_vs_table2.csv` keeps
+the 180-240 s and 240-300 s rates (`q_previous_lps`, `q_num_lps`) and adds
+`q_long_lps` (mean rate over 300-900 s), `q_minute_min_lps` and
+`q_minute_max_lps` (extremes of the one-minute rates in that span),
+`long_windows` (their count) and `steady` (YES when they stay within 2 % of the
+mean). `continuity_pct` and `duration_s` now describe the 900 s run. Seven rows
+are not steady at the 0.5 s step (S2_2, S2_3, S2_5, S4_1, S4_4, S4_6, S4_7); the
+S4 rows drop and recover for minutes at a time, so their 240-300 s rate depends
+on the sequence of 2D steps and changed with the 16 November 2026 time-step
+limiter. The other three tests still run 300 s.
+
 Review report and proposed publication text: `docs/validation/rubinato2017/`.
 The original junction representation is retained as evidence of its large
 continuity errors. Neither that representation nor the physical-shaft
