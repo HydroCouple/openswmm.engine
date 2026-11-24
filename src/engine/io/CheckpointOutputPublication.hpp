@@ -76,7 +76,10 @@ public:
      * Filesystem and allocation exceptions may propagate. Reserved backups are
      * removed if construction fails.
      * @details Reserves hard-linked rollback headers and copies destination
-     * permissions to staging files. It neither closes writer handles nor takes
+     * permissions to staging files. Where the file system has no hard links (Emscripten's
+     * in-memory file system), a header is a copy of the fresh destination, and the
+     * destination's device and inode stand in for the link's identity check; a rollback then
+     * restores the header bytes under a new inode. It neither closes writer handles nor takes
      * responsibility for removing staging files.
      */
     explicit CheckpointOutputPublication(std::vector<Output>);
@@ -107,6 +110,8 @@ private:
         Output output;
         std::filesystem::path backup;
         bool published = false, retain = false;
+        bool copied = false;                ///< the backup is a copy, not a hard link
+        std::uint64_t device = 0, node = 0; ///< the destination's identity when copied
     };
     std::vector<Entry> entries_;
     /**

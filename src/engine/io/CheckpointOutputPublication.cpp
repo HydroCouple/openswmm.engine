@@ -266,8 +266,26 @@ CheckpointOutputPublication::CheckpointOutputPublication(std::vector<Output> out
                     entry.backup = std::move(backup);
                     break;
                 }
-                if (ec != std::errc::file_exists)
-                    break;
+                if (ec == std::errc::file_exists)
+                    continue;
+#ifndef _WIN32
+                if (ec == std::errc::too_many_links || ec == std::errc::operation_not_supported ||
+                    ec == std::errc::function_not_supported ||
+                    ec == std::errc::operation_not_permitted) {
+                    // No hard links on this file system (Emscripten's in-memory file system
+                    // reports EMLINK): keep a copy of the fresh header, and the destination's
+                    // identity for publish() to check in place of the link.
+                    struct stat named{};
+                    if (stat(entry.output.destination.c_str(), &named) == 0 &&
+                        std::filesystem::copy_file(entry.output.destination, backup, ec) && !ec) {
+                        entry.backup = std::move(backup);
+                        entry.copied = true;
+                        entry.device = std::uint64_t(named.st_dev);
+                        entry.node = std::uint64_t(named.st_ino);
+                    }
+                }
+#endif
+                break;
             }
             require(!entry.backup.empty(), "Cannot reserve checkpoint output rollback header.");
         }
@@ -290,11 +308,24 @@ void CheckpointOutputPublication::cleanup() noexcept {
 }
 // Contract: openswmm::io::CheckpointOutputPublication::publish.
 void CheckpointOutputPublication::publish() {
+    // The destination is still the file the header was reserved from: the hard link names the
+    // same file, or the device and inode recorded beside a copied header match.
+    auto same = [](const Entry& entry) {
+        if (!entry.copied)
+            return std::filesystem::equivalent(entry.output.destination, entry.backup);
+#ifndef _WIN32
+        struct stat named{};
+        return stat(entry.output.destination.c_str(), &named) == 0 &&
+               std::uint64_t(named.st_dev) == entry.device &&
+               std::uint64_t(named.st_ino) == entry.node;
+#else
+        return false;
+#endif
+    };
     for (const auto& entry : entries_) {
         require(!entry.published && fresh(entry.output),
                 "Checkpoint destination changed before publication.");
-        require(std::filesystem::equivalent(entry.output.destination, entry.backup),
-                "Checkpoint destination identity changed before publication.");
+        require(same(entry), "Checkpoint destination identity changed before publication.");
     }
     std::error_code error;
     for (auto& entry : entries_) {
