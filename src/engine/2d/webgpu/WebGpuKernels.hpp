@@ -1643,6 +1643,7 @@ fn sweBoundary(i: u32, k: u32, ty: u32, L: f32, nMan: f32, dt: f32) -> vec3<f32>
       if (qOut < 0.0) {
         let ci = sqrt(P.g * hi);
         if (abs(un) < ci) { hg = depthFromInvariant(un + 2.0 * ci, qOut, hi); }
+        hg = max(hg, pow(qOut * qOut / P.g, 1.0 / 3.0)); // at most a critical inflow (issue #214)
       }
     } else {
       hg = pow(qOut * qOut / P.g, 1.0 / 3.0);

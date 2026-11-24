@@ -640,14 +640,24 @@ OPENSWMM_KERNEL_FN BoundaryFlux boundaryFlux(int type, double length, double nx,
         //   * dry cell            — critical depth (dry-bed inflow),
         //   * subcritical inflow  — from the outgoing invariant u + 2c
         //                           together with q (one characteristic
-        //                           leaves, so depth is NOT free),
-        //   * supercritical inflow / any outflow — the interior depth.
+        //                           leaves, so depth is NOT free), never
+        //                           below the critical depth of q,
+        //   * supercritical inflow — the critical depth of q: no
+        //                           characteristic leaves, and one prescribed
+        //                           quantity admits at most a critical inflow,
+        //   * any outflow          — the interior depth.
+        // The supercritical inflow used to copy the interior depth, so a
+        // SPECIFIED_FLOW inlet that once ran shallow and fast (a dry start
+        // makes the first ghost critical) fed its own jet: q was right but
+        // the depth sat at 4-30 % of the analytic value for tens of metres
+        // on the SWASHES MacDonald channels (issue #214).
         if (h_i > dry) {
             h_g = h_i;
             if (q_out < 0.0) { // inflow
                 const double c_i = std::sqrt(kGravity * h_i);
                 if (std::fabs(u_n) < c_i) // subcritical
                     h_g = depthFromInvariantAndDischarge(u_n + 2.0 * c_i, q_out, h_i);
+                h_g = std::max(h_g, criticalDepth(q_out));
             }
             eta_g = z_i + h_g;
         } else {

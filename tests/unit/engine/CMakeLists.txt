@@ -1017,6 +1017,12 @@ if(OPENSWMM_BUILD_2D)
     # Outfalls on the 2D surface: flap-gated tailwater, TAILWATER_RELAX,
     # COUPLING_HEAD sampling, SPREAD delivery, the tailwater report.
     add_gtest_unit(test_engine_2d_outfall_boundary test_2d_outfall_boundary.cpp)
+    # A SPECIFIED_FLOW inflow under FULL_SWE admits at most a critical inflow
+    # (issue #214): kernel pin of swe::boundaryFlux plus two mild-slope strips
+    # whose steady inlet depth is the Manning normal depth.
+    add_gtest_unit(test_engine_2d_inflow_boundary test_2d_inflow_boundary.cpp)
+    target_compile_definitions(test_engine_2d_inflow_boundary PRIVATE
+        OPENSWMM_INFLOW_BC_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     # 1D↔2D coupling unit-system equivalence — runs the same physical coupled
     # model in CMS and CFS and asserts matching 2D depths/continuity. Guards the
     # always-feet⇄metres coupling factors (the 1D side is always feet-internal).
