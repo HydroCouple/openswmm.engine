@@ -397,19 +397,22 @@ void DWSolver::updateTpaLatch(SimulationContext& ctx) {
     }
 }
 
-// DPS-style geometry override (called where applyDPSGeometry is): engaged
-// when latched OR above the crown cutoff (memoryless above the crown — the
-// latch only matters below it). Area rides the SIGNED slot line
-// A = A_full + w_tpa·(y − y_full) — "shrinkage" for sub-atmospheric heads —
-// width is the constant w_tpa, the hydraulic radius stays r_full (the slot
-// carries no wetted perimeter), and both ends contribute slot surface area
-// to node continuity (the latch keeps sealed heads meaningful).
+// Sub-atmospheric override (called where applyDPSGeometry is): a LATCHED
+// conduit — both ends sealed and full when the latch set — keeps the signed
+// slot line A = A_full + w_tpa·(y − y_full) below the crown ("shrinkage" for
+// sub-atmospheric heads), width w_tpa, hydraulic radius r_full (the slot
+// carries no wetted perimeter), and both ends contribute slot surface area to
+// node continuity. Above the crown every closed conduit rides the same line
+// through STEP B (width) and STEP E (area) of the ordinary geometry pass, so
+// A(y) is continuous and the end nodes' heads are booked in the link volume.
 void DWSolver::applyTpaGeometry(SimulationContext& ctx) {
     auto& links = ctx.links;
     for (int ci = 0; ci < n_conduits_; ++ci) {
         const auto uci = static_cast<std::size_t>(ci);
         const int j = conduit_idx_[uci];
         const auto uj = static_cast<std::size_t>(j);
+        if (!tpa_engaged_.empty())
+            tpa_engaged_[uci] = 0;
         if (is_open_[uj])
             continue;
         const double yf = links.xsect_y_full[uj];
@@ -420,22 +423,112 @@ void DWSolver::applyTpaGeometry(SimulationContext& ctx) {
         const double w = tpa_w_[uci];
         if (w <= 0.0)
             continue;
+        const bool latched = tpa_latch_[uci] != 0;
+        const double y1 = depth1_[uj];
+        const double y2 = depth2_[uj];
         const double yMid = depth_mid_[uj];
-        const bool engaged = (tpa_latch_[uci] != 0) || (yMid >= SLOT_CROWN_CUTOFF * yf);
-        if (!engaged)
+        const bool pressurized = latched || y1 >= yf || y2 >= yf || yMid >= yf;
+        if (!tpa_engaged_.empty())
+            tpa_engaged_[uci] = pressurized ? uint8_t{1} : uint8_t{0};
+        if (!pressurized)
             continue;
-
-        auto line_area = [&](double y) { return std::max(af + w * (y - yf), 0.05 * af); };
-        area_mid_[uj] = line_area(yMid);
-        area1_[uj] = line_area(depth1_[uj]);
-        area2_[uj] = line_area(depth2_[uj]);
-        width_mid_[uj] = w;
         const double L = cached_length_[uj];
-        const double slot_surf_per_end = 0.25 * w * L; // (w+w)·L/4 convention
-        surf_area1_[uj] = slot_surf_per_end;
-        surf_area2_[uj] = slot_surf_per_end;
-        hrad_mid_[uj] = rf; // slot/elastic area carries no wetted perimeter
+        if (latched) {
+            auto line_area = [&](double y) { return std::max(af + w * (y - yf), 0.05 * af); };
+            area_mid_[uj] = line_area(yMid);
+            area1_[uj] = line_area(y1);
+            area2_[uj] = line_area(y2);
+            width_mid_[uj] = w;
+            surf_area1_[uj] = 0.5 * w * L;
+            surf_area2_[uj] = 0.5 * w * L;
+            hrad_mid_[uj] = rf; // slot/elastic area carries no wetted perimeter
+        } else if (links.flow_class[uj] == FlowClass::SUBCRITICAL) {
+            // A half-pipe's surface area is the derivative of the half-volume it books,
+            // 0.5·L·A(y_end): the top width at the end — w above the crown (STEP B), the
+            // section's own width below it. Legacy's (B_end + B_mid)·L/4 average assumes a
+            // water surface running from the end to the midpoint; a conduit pressurized at
+            // one end has none, its "mid depth" is a head average and its mid width w, so
+            // the average halved the free end's area and the node there moved twice as far
+            // as the water it received allowed, creating volume in the pipe.
+            surf_area1_[uj] = 0.5 * L * width1_[uj];
+            surf_area2_[uj] = 0.5 * L * width2_[uj] * fasnh_[uj];
+        }
     }
+}
+
+// ---- SWMM_TPA_BUDGET diagnostic: node volume + half-conduit volumes per node ----
+void DWSolver::tpaBudgetStore(const SimulationContext& ctx, std::vector<double>& out) const {
+    const auto& links = ctx.links;
+    const auto& nodes = ctx.nodes;
+    out.assign(nodes.volume.size(), 0.0);
+    for (std::size_t ui = 0; ui < out.size(); ++ui)
+        out[ui] = nodes.volume[ui];
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const auto uci = static_cast<std::size_t>(ci);
+        const auto uj = static_cast<std::size_t>(conduit_idx_[uci]);
+        const double half = 0.5 * cached_length_[uj] * barrels_d_[uj];
+        const int n1 = links.node1[uj], n2 = links.node2[uj];
+        if (n1 >= 0)
+            out[static_cast<std::size_t>(n1)] += half * area1_[uj];
+        if (n2 >= 0)
+            out[static_cast<std::size_t>(n2)] += half * area2_[uj];
+    }
+}
+
+void DWSolver::tpaBudgetSnapshot(const SimulationContext& ctx) {
+    tpaBudgetStore(ctx, tpa_budget_store_);
+    tpa_budget_depth_.assign(ctx.nodes.depth.begin(), ctx.nodes.depth.end());
+    std::fill(tpa_budget_dV_.begin(), tpa_budget_dV_.end(), 0.0);
+}
+
+void DWSolver::tpaBudgetWrite(const SimulationContext& ctx, double dt) {
+    (void)dt;
+    const auto& links = ctx.links;
+    const auto& nodes = ctx.nodes;
+    std::vector<double> store;
+    tpaBudgetStore(ctx, store);
+    const std::size_t un = store.size();
+    std::vector<int> n_cond(un, 0), n_full_uneng(un, 0), n_switch(un, 0), n_eng(un, 0);
+    for (int ci = 0; ci < n_conduits_; ++ci) {
+        const auto uci = static_cast<std::size_t>(ci);
+        const auto uj = static_cast<std::size_t>(conduit_idx_[uci]);
+        const double yf = links.xsect_y_full[uj];
+        const bool eng = tpa_engaged_[uci] != 0;
+        const bool sw = tpa_engaged_[uci] != tpa_budget_engaged_prev_[uci];
+        const int ends[2] = {links.node1[uj], links.node2[uj]};
+        const double yend[2] = {depth1_[uj], depth2_[uj]};
+        for (int k = 0; k < 2; ++k) {
+            if (ends[k] < 0)
+                continue;
+            const auto ue = static_cast<std::size_t>(ends[k]);
+            ++n_cond[ue];
+            if (!eng && yf > 0.0 && yend[k] >= yf)
+                ++n_full_uneng[ue];
+            if (sw)
+                ++n_switch[ue];
+            if (eng)
+                ++n_eng[ue];
+        }
+    }
+    ++tpa_budget_step_;
+    double sum_dV = 0.0, sum_ds = 0.0;
+    for (std::size_t ui = 0; ui < un; ++ui) {
+        const int type = static_cast<int>(nodes.type[ui]);
+        const double dV = tpa_budget_dV_[ui];
+        const double ds = store[ui] - tpa_budget_store_[ui];
+        if (type != static_cast<int>(NodeType::OUTFALL)) {
+            sum_dV += dV;
+            sum_ds += ds;
+        }
+        std::fprintf(tpa_budget_file_, "%d,%zu,%d,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,%d,%d,%d\n",
+                     tpa_budget_step_, ui, type, dV, ds, dV - ds, tpa_budget_depth_[ui],
+                     nodes.depth[ui], xnode_.new_surf_area[ui], n_cond[ui], n_full_uneng[ui],
+                     n_switch[ui], n_eng[ui]);
+    }
+    std::fprintf(tpa_budget_file_, "%d,-1,-1,%.9g,%.9g,%.9g,0,0,0,0,0,0,0\n", tpa_budget_step_,
+                 sum_dV, sum_ds, sum_dV - sum_ds);
+    std::fflush(tpa_budget_file_);
+    tpa_budget_engaged_prev_.assign(tpa_engaged_.begin(), tpa_engaged_.end());
 }
 
 // ============================================================================
@@ -788,6 +881,23 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
         tpa_w_.assign(ucn, 0.0);
         tpa_latch_.assign(ucn, 0);
         tpa_latch_changed_.assign(ucn, 0);
+        tpa_engaged_.assign(ucn, 0);
+        if (const char* path = std::getenv("SWMM_TPA_BUDGET")) {
+            if (tpa_budget_file_)
+                std::fclose(tpa_budget_file_);
+            tpa_budget_file_ = std::fopen(path, "w");
+            if (tpa_budget_file_) {
+                const auto un = static_cast<std::size_t>(n_nodes);
+                tpa_budget_dV_.assign(un, 0.0);
+                tpa_budget_store_.assign(un, 0.0);
+                tpa_budget_depth_.assign(un, 0.0);
+                tpa_budget_engaged_prev_.assign(ucn, 0);
+                tpa_budget_step_ = 0;
+                std::fprintf(tpa_budget_file_,
+                             "step,node,type,dV,dstore,gap,depth_old,depth_new,surf_area,"
+                             "n_conduits,n_full_unengaged,n_switched,n_engaged\n");
+            }
+        }
         for (int ci = 0; ci < n_conduits_; ++ci) {
             const auto uj = static_cast<std::size_t>(conduit_idx_[static_cast<std::size_t>(ci)]);
             const double af = ctx.links.xsect_a_full[uj];
@@ -1376,8 +1486,11 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
 
     // TPA latch (issue #156 Phase 5): advanced once per routing step from the
     // last committed state, so Picard/Anderson iterate a FIXED operator.
-    if (surcharge_method == SurchargeMethod::TPA)
+    if (surcharge_method == SurchargeMethod::TPA) {
+        if (tpa_budget_file_)
+            tpaBudgetSnapshot(ctx);
         updateTpaLatch(ctx);
+    }
 
     // Clear bypass flags at the start of each timestep
     // (matching legacy initRoutingStep: Link[i].bypassed = FALSE)
@@ -1640,6 +1753,8 @@ int DWSolver::execute(SimulationContext& ctx, double dt,
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         updateDPSState(ctx, dt);
     }
+    if (tpa_budget_file_)
+        tpaBudgetWrite(ctx, dt);
 
     // Post-Picard: virtual-junction momentum-residual diagnostic (no-op when
     // the model has no virtual junctions).
@@ -1941,13 +2056,14 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
     // prep wrote wcap_d1/d2/dm based on STEP A's freshly written depth1/2/mid
     // — now we compute and write wcap_d* directly from the depth values that
     // are still in registers, avoiding a second cache traversal.
-    // Both SLOT and DYNAMIC_SLOT skip the depth/width crown clamp so the
+    // SLOT, DYNAMIC_SLOT and TPA skip the depth/width crown clamp so the
     // surcharged depth propagates through to applyDPSGeometry (DPS) or the
     // Sjoberg slot override (SLOT).  Without this, the midpoint depth clamps
     // to y_full and the slot machinery sees a non-surcharged state even when
     // node depth has clearly exceeded the crown.
     const bool slot_mode = (surcharge_method == SurchargeMethod::SLOT ||
-                            surcharge_method == SurchargeMethod::DYNAMIC_SLOT);
+                            surcharge_method == SurchargeMethod::DYNAMIC_SLOT ||
+                            surcharge_method == SurchargeMethod::TPA);
 // B2 threading: orphaned `omp for` on the persistent team. Per-conduit
 // single-producer writes (depth1/2/mid, h1/h2, fasnh, wcap_*) from
 // read-only node depths — bit-exact at any thread count. SIMD inside
@@ -2058,13 +2174,23 @@ void DWSolver::computeLinkGeometry(SimulationContext& ctx) {
             // tabulated top width whenever getSlotWidth() is nonzero, i.e.
             // from the crown cutoff (0.985257·yFull) upward — not only above
             // full depth. Below the cutoff getSlotWidth() is 0 by itself.
-            double ws = getSlotWidth(depth1_[uj], yf, wm, shape);
+            // TPA (issue #156): at and above the crown a closed conduit's top width is its
+            // constant slot width w = g·A_full/a², so the end nodes see the same compliance
+            // the link books (STEP E rides the matching line A_full + w·(y − y_full)).
+            const bool tpa = surcharge_method == SurchargeMethod::TPA;
+            const double w_tpa = tpa ? tpa_w_[uci] : 0.0;
+            auto slot_w = [&](double y) {
+                if (tpa)
+                    return (w_tpa > 0.0 && !isOpenShape(shape) && y >= yf) ? w_tpa : 0.0;
+                return getSlotWidth(y, yf, wm, shape);
+            };
+            double ws = slot_w(depth1_[uj]);
             if (ws > 0.0)
                 width1_[uj] = ws;
-            ws = getSlotWidth(depth2_[uj], yf, wm, shape);
+            ws = slot_w(depth2_[uj]);
             if (ws > 0.0)
                 width2_[uj] = ws;
-            ws = getSlotWidth(depth_mid_[uj], yf, wm, shape);
+            ws = slot_w(depth_mid_[uj]);
             if (ws > 0.0)
                 width_mid_[uj] = ws;
         }
@@ -2674,21 +2800,39 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             // full depth every kernel already returns aFull/rFull (tables end
             // at 1.0, formula shapes reproduce setParams), so the strict test
             // is numerically the same and leaves the kernel values in place.
+            // TPA (issue #156): above the crown the conduit rides its constant slot line
+            // A = A_full + w·(y − y_full), top width w — the width STEP B gave the end
+            // nodes, so the head they carry is booked in the link's volume.
+            const bool tpa_line = surcharge_method == SurchargeMethod::TPA && !tile_is_open_[uci] &&
+                                  tpa_w_[uci] > 0.0;
             if (depth1_[uj] > yf) {
-                const double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
-                area1_[uj] = af + (wSlot > 0.0 ? slotArea(depth1_[uj], yf, wm) : 0.0);
+                if (tpa_line) {
+                    area1_[uj] = af + tpa_w_[uci] * (depth1_[uj] - yf);
+                } else {
+                    const double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
+                    area1_[uj] = af + (wSlot > 0.0 ? slotArea(depth1_[uj], yf, wm) : 0.0);
+                }
                 hrad1_[uj] = rf;
             }
             if (depth2_[uj] > yf) {
-                const double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
-                area2_[uj] = af + (wSlot > 0.0 ? slotArea(depth2_[uj], yf, wm) : 0.0);
+                if (tpa_line) {
+                    area2_[uj] = af + tpa_w_[uci] * (depth2_[uj] - yf);
+                } else {
+                    const double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
+                    area2_[uj] = af + (wSlot > 0.0 ? slotArea(depth2_[uj], yf, wm) : 0.0);
+                }
             }
             const double yMid = depth_mid_[uj];
             if (yMid > yf) {
-                const double wSlot = getSlotWidth(yMid, yf, wm, shape);
-                area_mid_[uj] = af + (wSlot > 0.0 ? slotArea(yMid, yf, wm) : 0.0);
-                if (wSlot > 0.0)
-                    width_mid_[uj] = wSlot;
+                if (tpa_line) {
+                    area_mid_[uj] = af + tpa_w_[uci] * (yMid - yf);
+                    width_mid_[uj] = tpa_w_[uci];
+                } else {
+                    const double wSlot = getSlotWidth(yMid, yf, wm, shape);
+                    area_mid_[uj] = af + (wSlot > 0.0 ? slotArea(yMid, yf, wm) : 0.0);
+                    if (wSlot > 0.0)
+                        width_mid_[uj] = wSlot;
+                }
                 hrad_mid_[uj] = rf;
             }
         }
@@ -3846,7 +3990,7 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     // is_surcharged still holds the PREVIOUS evaluation's branch here (set
     // inside setNodeDepth from its input depth); updateNodeDepthsTeam skips the
     // node as well when the current evaluation takes the surcharge branch.
-    if (surcharge_method == SurchargeMethod::EXTRAN &&
+    if ((surcharge_method == SurchargeMethod::EXTRAN || surcharge_method == SurchargeMethod::TPA) &&
         node_continuity == NodeContinuity::EXPLICIT) {
         for (int i = 0; i < n_nodes_; ++i) {
             auto ui = static_cast<std::size_t>(i);
@@ -3991,8 +4135,10 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                                     int& unconv_shared) {
     auto& nodes = ctx.nodes;
     const bool use_anderson = anderson_accel;
+    // EXTRAN and TPA take the dq/dh surcharge branch under EXPLICIT.
     const bool extran_explicit =
-        surcharge_method == SurchargeMethod::EXTRAN && node_continuity == NodeContinuity::EXPLICIT;
+        (surcharge_method == SurchargeMethod::EXTRAN || surcharge_method == SurchargeMethod::TPA) &&
+        node_continuity == NodeContinuity::EXPLICIT;
     int local_unconv = 0; // per-thread partial of the unconverged-node count
 
 // Phase 1: Compute G(y) for each node via setNodeDepth.
@@ -4207,7 +4353,14 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
     // MIN_SURFAREA storage smearing is the thing the feature removes; the
     // natural area is the correct continuity linearization and their
     // committed volume stays identically zero).
-    if (t.is_virtual == 0 && nodes.storage_area[ui] == 0.0)
+    // TPA (issue #156): a junction above its crown is a sealed manhole with no storage of its
+    // own. Under SEMI_IMPLICIT it keeps only the conduits' slot surface (the denominator stays
+    // bounded through Σdq/dh as the area vanishes); under EXPLICIT the dq/dh surcharge branch
+    // below takes over, as for EXTRAN.
+    const bool tpa_sealed =
+        surcharge_method == SurchargeMethod::TPA && !is_ponded && yCrown > 0.0 && y_last > yCrown;
+    if (t.is_virtual == 0 && nodes.storage_area[ui] == 0.0 &&
+        !(tpa_sealed && node_continuity == NodeContinuity::SEMI_IMPLICIT))
         surf_area = std::max(surf_area, min_surf_area_);
     else if (t.is_virtual != 0 && nodes.lat_flow[ui] != 0.0 && ui < vj_wet_floor_.size())
         surf_area = std::max(surf_area, vj_wet_floor_[ui]);
@@ -4227,8 +4380,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
                 continue;
             target -= chamberPipeVolumeChange(ctx, node_idx, link, area1_[link], area2_[link],
                                               aa_y_prev_.data());
-            if ((surcharge_method == SurchargeMethod::EXTRAN ||
-                 surcharge_method == SurchargeMethod::TPA) &&
+            if (surcharge_method == SurchargeMethod::EXTRAN &&
                 !isOpenShape(ctx.links.xsect_shape[link])) {
                 const bool upstream = ctx.links.node1[link] == node_idx;
                 const double end_depth = upstream ? depth1_[link] : depth2_[link];
@@ -4370,7 +4522,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
 
     // --- Determine if node is surcharged ---
     //
-    // The flag is used by AA skip logic, statistics, and (for EXTRAN only)
+    // The flag is used by AA skip logic, statistics, and (for EXTRAN and TPA)
     // the explicit continuity branch's dQ/dH path.  EXTRAN and DYNAMIC_SLOT
     // share the same geometric definition (depth above crown), but only
     // EXTRAN actually switches to the dQ/dH formulation — DYNAMIC_SLOT
@@ -4379,7 +4531,8 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
     // dy = dV / A_surf path with hs implicit in y.
     bool is_surcharged = false;
     if (surcharge_method == SurchargeMethod::EXTRAN ||
-        surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
+        surcharge_method == SurchargeMethod::DYNAMIC_SLOT ||
+        surcharge_method == SurchargeMethod::TPA) {
         if (is_ponded) {
             is_surcharged = false;
         } else if (is_storage) {
@@ -4471,7 +4624,11 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
     // surf_area1/2 by applyDPSGeometry) so the standard dV/A path produces
     // physically sensible head evolution with `head = invert + y =
     // invert + y_full + hs` falling out naturally when y > y_full.
-    const bool use_surcharge_dqdh = is_surcharged && (surcharge_method == SurchargeMethod::EXTRAN);
+    // TPA (issue #156): a junction above its crown is a sealed manhole with no storage of its
+    // own, so it takes the same zero-storage dQ/dH update as EXTRAN; the conduits' slot
+    // compliance w is booked in their volumes, not at the node.
+    const bool use_surcharge_dqdh = is_surcharged && (surcharge_method == SurchargeMethod::EXTRAN ||
+                                                      surcharge_method == SurchargeMethod::TPA);
 
     double y_new;
 
@@ -4692,6 +4849,8 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
     auto& nodes = ctx.nodes;
     auto ui = static_cast<std::size_t>(node_idx);
     const NodeTile& t = node_tile_[ui];
+    if (!tpa_budget_dV_.empty())
+        tpa_budget_dV_[ui] = dV;
 
     // --- Depth cannot be negative ---
     y_new = std::max(y_new, 0.0);

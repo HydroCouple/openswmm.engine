@@ -52,6 +52,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <cstdio>
 #include <vector>
 
 namespace openswmm {
@@ -1207,6 +1208,19 @@ private:
     std::vector<uint8_t> tpa_latch_;
     /// Latch transitions this routing step (for the AA skip walk, §B3).
     std::vector<uint8_t> tpa_latch_changed_;
+    /// Engaged state per conduit after the last applyTpaGeometry pass (diagnostic).
+    std::vector<uint8_t> tpa_engaged_;
+    // SWMM_TPA_BUDGET=<csv>: per-node step budget — accepted dV against the change in booked
+    // storage (node volume + half-conduit volumes at the node). Diagnostic only.
+    std::FILE* tpa_budget_file_ = nullptr;
+    int tpa_budget_step_ = 0;
+    std::vector<double> tpa_budget_dV_;
+    std::vector<double> tpa_budget_store_;
+    std::vector<double> tpa_budget_depth_;
+    std::vector<uint8_t> tpa_budget_engaged_prev_;
+    void tpaBudgetStore(const SimulationContext& ctx, std::vector<double>& out) const;
+    void tpaBudgetSnapshot(const SimulationContext& ctx);
+    void tpaBudgetWrite(const SimulationContext& ctx, double dt);
 
     /**
      * @brief Advance sub-atmospheric regime history once before the Picard loop.
@@ -1223,12 +1237,13 @@ private:
     void updateTpaLatch(SimulationContext& ctx);
 
     /**
-     * @brief Apply the signed TPA slot-line geometry to engaged closed conduits.
+     * @brief Keep the signed TPA slot line below the crown for latched (sub-atmospheric) conduits.
      *
-     * Requires initialized tpa widths/latches and current depths. Engages when latched or midpoint
-     * reaches SLOT_CROWN_CUTOFF*y_full. Overrides end/mid area with
-     * max(a_full+w*(y-y_full),0.05*a_full), width w, full hydraulic radius and endpoint slot surface
-     * contributions. ctx is read-only; only working geometry changes. Run serially after batch
+     * Requires initialized tpa widths/latches and current depths. Acts on latched conduits only:
+     * overrides end/mid area with max(a_full+w*(y-y_full),0.05*a_full), width w, full hydraulic
+     * radius and endpoint slot surface contributions. Above the crown every closed conduit already
+     * rides the same line through STEP B (width w) and STEP E (area) of computeLinkGeometry /
+     * momentumKernels. ctx is read-only; only working geometry changes. Run serially after batch
      * geometry.
      *
      * @param[in] ctx Matching resolved context; all solver conduit/node maps and geometry/history

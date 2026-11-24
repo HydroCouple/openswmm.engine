@@ -356,6 +356,7 @@ add_gtest_unit(test_engine_fv_closure
     test_dw_unsteady_friction.cpp
     test_fv_tpa_closure.cpp
     test_dw_tpa.cpp
+    test_tpa_continuity.cpp
 )
 add_gtest_unit(test_engine_fv_pressurized_implicit test_fv_pressurized_implicit.cpp)
 add_gtest_unit(test_engine_fv_pressure_reference test_fv_pressure_reference.cpp)
@@ -1330,6 +1331,8 @@ add_test(NAME test_engine_perf_timers_disabled
 set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
 add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
 add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
+# TPA conserves water on a pumped force main at least as well as EXTRAN (TPA mass-conservation plan).
+add_gtest_unit(test_engine_tpa_continuity test_tpa_continuity.cpp)
 # Preissmann slot area monotonic in head under SURCHARGE_METHOD SLOT (code review CON-18, #171).
 add_gtest_unit(test_engine_dw_slot_area_monotonic test_dw_slot_area_monotonic.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
