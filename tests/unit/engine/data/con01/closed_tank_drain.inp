@@ -1,0 +1,46 @@
+[TITLE]
+CON-01: closed storage S1 (1000 ft2, full depth 10 ft, surcharge depth 5 ft) with no links,
+starting surcharged at 15 ft (full: 10,000 ft3); 1 cfs withdrawn for 1 h, EXTRAN.
+It must end with 6,400 ft3 at 6.4 ft. J1-C1-O1 is only there because SWMM needs an outfall.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+REPORT_STEP          00:01:00
+WET_STEP             00:05:00
+DRY_STEP             00:05:00
+ROUTING_STEP         5
+VARIABLE_STEP        0
+SURCHARGE_METHOD     EXTRAN
+
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded
+J1     0    5        0         0        0
+
+[OUTFALLS]
+O1     -1   FREE
+
+[STORAGE]
+;;Name Elev MaxD InitD Shape     A1 A2 A0   SurDepth Fevap
+S1     0    10   15    FUNCTIONAL 0  0  1000 5        0
+
+[CONDUITS]
+C1     J1  O1  100  0.013  0  0  0  0
+
+[XSECTIONS]
+C1     CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+S1  FLOW  ""  FLOW 1.0 1.0 -1
+
+[REPORT]
+NODES ALL
+LINKS ALL
+

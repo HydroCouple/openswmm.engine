@@ -397,6 +397,11 @@ void initNodeStates() {
             Xnode[i].newSurfArea = node_getSurfArea(i, Node[i].newDepth);
         }
 
+        // --- a closed storage unit has no free surface above its full depth
+        if (Node[i].type == STORAGE && Node[i].surDepth > 0.0 &&
+            Node[i].newDepth > Node[i].fullDepth)
+            Xnode[i].newSurfArea = 0.0;
+
         // --- initialize nodal inflow & outflow
         Node[i].inflow = 0.0;
         Node[i].outflow = Node[i].losses;

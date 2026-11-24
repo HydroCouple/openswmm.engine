@@ -1417,3 +1417,126 @@ TEST(ClosedStorageOutletTest, ExtranHeadIsNotFrozenAndTheTankDrains) {
     EXPECT_NEAR(v6.outfall_volume, legacy.outfall_volume, 0.01 * legacy.outfall_volume);
     EXPECT_NEAR(api_continuity * 100.0, v6.continuity_pct, 0.01);
 }
+
+// ---------------------------------------------------------------------------
+// Code review CON-01: a closed storage unit (surcharge depth > 0) has no free
+// surface above its full depth. Its volume is capped at the full volume there,
+// and giving it the curve area as a free surface stored A x SurDepth of water the
+// ledger never booked: +13.9% routing continuity filling the review's tank,
+// -36.0% draining it (legacy; +9.4% in 6.0, which also booked the curve volume
+// of a tank starting above its rim), +7.0% for a SLOT tank between pipes. The
+// decks are the review's, run through both engines.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct RoutingLedger {
+    double continuity_pct = 0.0, flooding_acft = 0.0, initial_acft = 0.0, final_acft = 0.0;
+    bool found = false;
+};
+
+RoutingLedger readRoutingLedger(const std::string& rpt_path) {
+    RoutingLedger r;
+    std::ifstream in(rpt_path);
+    std::string line;
+    bool routing = false;
+    auto first_number = [](const std::string& l) {
+        const auto dots = l.rfind("....");
+        std::istringstream ss(l.substr(dots == std::string::npos ? 0 : dots + 4));
+        double v = 0.0;
+        ss >> v;
+        return v;
+    };
+    while (std::getline(in, line)) {
+        if (line.find("Flow Routing Continuity") != std::string::npos) {
+            routing = true;
+            r.found = true;
+            continue;
+        }
+        if (!routing)
+            continue;
+        if (line.find("Flooding Loss") != std::string::npos)
+            r.flooding_acft = first_number(line);
+        else if (line.find("Initial Stored Volume") != std::string::npos)
+            r.initial_acft = first_number(line);
+        else if (line.find("Final Stored Volume") != std::string::npos)
+            r.final_acft = first_number(line);
+        else if (line.find("Continuity Error (%)") != std::string::npos) {
+            r.continuity_pct = std::stod(line.substr(line.rfind(' ') + 1));
+            break;
+        }
+    }
+    return r;
+}
+
+struct EnginePair {
+    RoutingLedger legacy, v6;
+};
+
+EnginePair runBothEngines(const std::string& deck, const std::string& tag) {
+    std::filesystem::create_directories("massbalance_out");
+    const std::string base = "massbalance_out/" + tag;
+    EnginePair out;
+    if (swmm_run(deck.c_str(), (base + ".legacy.rpt").c_str(), (base + ".legacy.out").c_str()) == 0)
+        out.legacy = readRoutingLedger(base + ".legacy.rpt");
+    SWMM_Engine e = swmm_engine_create();
+    if (swmm_engine_open(e, deck.c_str(), (base + ".rpt").c_str(), (base + ".out").c_str(),
+                         nullptr) == SWMM_OK &&
+        swmm_engine_initialize(e) == SWMM_OK && swmm_engine_start(e, 1) == SWMM_OK) {
+        double elapsed = 0.0;
+        do {
+            if (swmm_engine_step(e, &elapsed) != SWMM_OK)
+                break;
+        } while (elapsed > 0.0);
+        swmm_engine_end(e);
+        swmm_engine_report(e);
+        swmm_engine_close(e);
+        out.v6 = readRoutingLedger(base + ".rpt");
+    }
+    swmm_engine_destroy(e);
+    return out;
+}
+
+constexpr double kAcreFt = 43560.0; // ft3
+
+} // namespace
+
+// A 1,000 ft2 tank, 10 ft full plus 5 ft of surcharge, takes 10 cfs for an hour:
+// full after 1,000 s, so 26,000 ft3 of the 36,000 ft3 must flood.
+TEST(ClosedStorageBandTest, FillingTankFloodsWhatItCannotHold) {
+    const auto r = runBothEngines("con01/closed_tank_fill.inp", "con01_fill");
+    for (const auto* led : {&r.legacy, &r.v6}) {
+        SCOPED_TRACE(led == &r.legacy ? "legacy 5.3.0" : "6.0");
+        ASSERT_TRUE(led->found);
+        EXPECT_LT(std::fabs(led->continuity_pct), 1.0) << led->continuity_pct;
+        EXPECT_NEAR(led->flooding_acft, 26000.0 / kAcreFt, 0.02);
+        EXPECT_NEAR(led->final_acft, 10000.0 / kAcreFt, 0.002);
+    }
+    EXPECT_NEAR(r.v6.continuity_pct, r.legacy.continuity_pct, 0.05);
+}
+
+// The same tank starts at 15 ft, full at 10,000 ft3, and loses 1 cfs for an hour:
+// it books the full volume at the start and ends at 6,400 ft3.
+TEST(ClosedStorageBandTest, DrainingTankStartsFullAndKeepsWhatWasNotWithdrawn) {
+    const auto r = runBothEngines("con01/closed_tank_drain.inp", "con01_drain");
+    for (const auto* led : {&r.legacy, &r.v6}) {
+        SCOPED_TRACE(led == &r.legacy ? "legacy 5.3.0" : "6.0");
+        ASSERT_TRUE(led->found);
+        EXPECT_LT(std::fabs(led->continuity_pct), 1.0) << led->continuity_pct;
+        EXPECT_NEAR(led->initial_acft, 10000.0 / kAcreFt, 0.002);
+        EXPECT_NEAR(led->final_acft, 6400.0 / kAcreFt, 0.002);
+    }
+    EXPECT_NEAR(r.v6.continuity_pct, r.legacy.continuity_pct, 0.05);
+}
+
+// A 2,000 ft2 closed tank between a 2 ft inflow pipe and a 1 ft outlet pipe under
+// SURCHARGE_METHOD SLOT: the band used to hold 10,000 ft3 (+7% continuity).
+TEST(ClosedStorageBandTest, SlotTankBetweenPipesConservesWater) {
+    const auto r = runBothEngines("con01/slot_tank.inp", "con01_slot");
+    for (const auto* led : {&r.legacy, &r.v6}) {
+        SCOPED_TRACE(led == &r.legacy ? "legacy 5.3.0" : "6.0");
+        ASSERT_TRUE(led->found);
+        EXPECT_LT(std::fabs(led->continuity_pct), 1.0) << led->continuity_pct;
+        EXPECT_GT(led->flooding_acft, 1.2);
+    }
+    EXPECT_NEAR(r.v6.continuity_pct, r.legacy.continuity_pct, 0.05);
+}

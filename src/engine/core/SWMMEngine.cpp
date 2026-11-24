@@ -1446,6 +1446,17 @@ int SWMMEngine::initialize() noexcept {
                 ctx_.nodes, i, fd, &ctx_.tables,
                 ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)), &ctx_.node_subtypes);
         }
+        // Code review CON-01: a storage unit that starts above its full depth
+        // booked the storage-curve volume at that depth, which no later step
+        // keeps once full_volume caps node::getVolume. Legacy node_initState
+        // books the full volume. With ALLOW_PONDING the curve above the rim
+        // stands for the unit's pond, and the 2D-coupled exchange tanks rely on
+        // that reading, so the cap applies to a closed unit only.
+        if (ctx_.nodes.type[ui] == NodeType::STORAGE && !ctx_.options.allow_ponding && fd > 0.0 &&
+            d > fd && ctx_.nodes.full_volume[ui] > 0.0) {
+            ctx_.nodes.volume[ui] = ctx_.nodes.full_volume[ui];
+            ctx_.nodes.old_volume[ui] = ctx_.nodes.full_volume[ui];
+        }
     }
 
     // Legacy-convention full volume (NodeData::rpt_full_volume, legacy

@@ -1827,6 +1827,15 @@ void DWSolver::initNodeStates(SimulationContext& ctx) {
                                                     unit_sys, &ctx.node_subtypes)
                               : node::getSurfArea(nodes, i, nodes.depth[ui], &ctx.tables, unit_sys,
                                                   &ctx.node_subtypes);
+            // A closed storage unit (surcharge depth > 0) has no free surface
+            // above its full depth: its volume is capped at the full volume
+            // there, so giving it the curve area stored A·SurDepth of water the
+            // ledger never booked (code review CON-01; issues #4 / #47). Above
+            // the rim it moves with its links' areas, floored at MIN_SURFAREA,
+            // like a surcharged junction. A unit that may pond keeps its pond.
+            if (t.sur_depth > 0.0 && nodes.depth[ui] > t.full_depth &&
+                !(node_can_pond && t.ponded_area > 0.0))
+                xnode_.new_surf_area[ui] = 0.0;
         }
 
         if (nodes.storage_area[ui] > 0.0)

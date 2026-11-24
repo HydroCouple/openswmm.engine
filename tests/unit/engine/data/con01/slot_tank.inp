@@ -1,0 +1,43 @@
+[TITLE]
+CON-01: closed tank S2 (2000 ft2, full depth 10 ft, surcharge depth 5 ft) between inflow
+pipe C1 and a smaller outlet pipe C2; SURCHARGE_METHOD SLOT; 20 cfs for 2 h, so S2
+fills, surcharges and floods.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+REPORT_STEP          00:10:00
+ROUTING_STEP         2
+VARIABLE_STEP        0
+SURCHARGE_METHOD     SLOT
+
+[JUNCTIONS]
+J1     2    20       0         0        0
+
+[OUTFALLS]
+O1     -2   FREE
+
+[STORAGE]
+;;Name Elev MaxD InitD Shape     A1 A2 A0   SurDepth Fevap
+S2     0    10   0     FUNCTIONAL 0  0  2000 5        0
+
+[CONDUITS]
+C1     J1  S2  100  0.013  0  2  0  0
+C2     S2  O1  200  0.013  0  0  0  0
+
+[XSECTIONS]
+C1     CIRCULAR 2 0 0 0 1
+C2     CIRCULAR 1 0 0 0 1
+
+[INFLOWS]
+J1     FLOW  ""  FLOW 1.0 1.0 20
+
+[REPORT]
+NODES ALL
+LINKS ALL
