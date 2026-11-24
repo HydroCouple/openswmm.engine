@@ -487,8 +487,10 @@ void handle_inlet_junctions(SimulationContext& ctx, const std::vector<std::strin
  *
  * Keyword-prefix forms TEMP/EVAP/RAIN/CONDUCT need twelve values; conductivity<=0 defaults one.
  * Temperature/evap offsets stay authored project units, rainfall/conductivity are factors.
- * N-PERV/DSTORE/INFIL require currently known subcatchment and time-pattern names;
- * unresolved/short/unknown rows silently skip. Grows assignment vectors but does not clear previous
+ * N-PERV/DSTORE/INFIL name a subcatchment and a time pattern; a row naming one not read yet (the
+ * writer puts [ADJUSTMENTS] before [SUBCATCHMENTS] and [PATTERNS]) is deferred for InputReader to
+ * replay once the whole deck is read, and a name still unknown then is ERROR 209, as in legacy
+ * SWMM. Short and unknown-keyword rows skip. Grows assignment vectors but does not clear previous
  * entries, apply adjustments, convert units or set runtime pattern flags.
  *
  * @param[in,out] ctx Authored context stores/errors updated incrementally; caller maintains
@@ -553,6 +555,8 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 if (usi >= ctx.subcatch_n_perv_pattern.size())
                     ctx.subcatch_n_perv_pattern.resize(usi + 1, -1);
                 ctx.subcatch_n_perv_pattern[usi] = pi;
+            } else {
+                ctx.deferred_section_rows.emplace_back("ADJUSTMENTS", line);
             }
         } else if (kw("DSTORE") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
@@ -562,6 +566,8 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 if (usi >= ctx.subcatch_d_store_pattern.size())
                     ctx.subcatch_d_store_pattern.resize(usi + 1, -1);
                 ctx.subcatch_d_store_pattern[usi] = pi;
+            } else {
+                ctx.deferred_section_rows.emplace_back("ADJUSTMENTS", line);
             }
         } else if (kw("INFIL") && tok.size() >= 3) {
             const int si = ctx.subcatch_names.find(tok[1]);
@@ -571,6 +577,8 @@ void handle_adjustments(SimulationContext& ctx, const std::vector<std::string>& 
                 if (usi >= ctx.subcatch_infil_pattern.size())
                     ctx.subcatch_infil_pattern.resize(usi + 1, -1);
                 ctx.subcatch_infil_pattern[usi] = pi;
+            } else {
+                ctx.deferred_section_rows.emplace_back("ADJUSTMENTS", line);
             }
         }
     }

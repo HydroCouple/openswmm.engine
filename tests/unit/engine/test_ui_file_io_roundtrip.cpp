@@ -202,6 +202,75 @@ N-PERV S1 PAT
     }
 }
 
+// The writer puts [ADJUSTMENTS] before [SUBCATCHMENTS] and [PATTERNS]. Its per-subcatchment rows
+// must still bind when read (they were dropped, so the second save lost them and a deck written in
+// that order ran without them) and survive repeated saves; a name that never appears is ERROR 209,
+// as in legacy SWMM.
+TEST(UiFileIO, SubcatchmentAdjustmentsBindBeforeTheirSectionsAndSurviveRepeatedSaves) {
+    const auto root = std::filesystem::absolute("ui_file_io_roundtrip");
+    std::filesystem::create_directories(root);
+    const std::string head = R"([OPTIONS]
+FLOW_UNITS CFS
+INFILTRATION HORTON
+FLOW_ROUTING KINWAVE
+START_DATE 01/01/2020
+END_DATE 01/01/2020
+END_TIME 06:00:00
+[ADJUSTMENTS]
+TEMP -2 -1 0 1 2 3 4 5 4 3 2 1
+)";
+    const std::string tail = R"([RAINGAGES]
+RG1 INTENSITY 0:15 1.0 TIMESERIES TS1
+[TIMESERIES]
+TS1 0:00 0.0
+TS1 1:00 1.0
+TS1 2:00 0.0
+[SUBCATCHMENTS]
+S1 RG1 O1 10 50 500 0.5 0
+S2 RG1 O1 5 40 300 0.5 0
+[SUBAREAS]
+S1 0.01 0.1 0.05 0.05 25 OUTLET
+S2 0.01 0.1 0.05 0.05 25 OUTLET
+[INFILTRATION]
+S1 3.0 0.5 4 7 0
+S2 3.0 0.5 4 7 0
+[OUTFALLS]
+O1 0 FREE NO
+[PATTERNS]
+PAT MONTHLY 1.0 1.0 1.1 1.2 1.3 1.3 1.3 1.2 1.1 1.0 1.0 1.0
+)";
+    const auto write = [](const std::filesystem::path& path, const std::string& text) {
+        std::ofstream(path) << text;
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream in(path);
+        return std::string{std::istreambuf_iterator<char>(in), {}};
+    };
+    const auto source = root / "adjustments_source.inp";
+    write(source, head + "N-PERV S1 PAT\nDSTORE S1 PAT\nINFIL S2 PAT\n" + tail);
+    std::filesystem::path previous = source;
+    std::string first;
+    for (int generation = 1; generation <= 3; ++generation) {
+        SCOPED_TRACE(generation);
+        Engine engine;
+        ASSERT_EQ(swmm_engine_open(engine, previous.string().c_str(), "", "", nullptr), 0);
+        const auto target = root / ("adjustments_gen" + std::to_string(generation) + ".inp");
+        ASSERT_EQ(swmm_model_write_with_plugin(engine, target.string().c_str(), nullptr), 0);
+        const std::string text = read(target);
+        for (const char* row : {"N-PERV", "DSTORE", "INFIL"})
+            EXPECT_NE(text.find(row), std::string::npos) << row << " lost:\n" << text;
+        if (generation == 1)
+            first = text;
+        else
+            EXPECT_EQ(text, first) << "a repeated save changed the deck";
+        previous = target;
+    }
+    const auto unknown = root / "adjustments_unknown.inp";
+    write(unknown, head + "N-PERV NOPE PAT\n" + tail);
+    Engine refused;
+    EXPECT_NE(swmm_engine_open(refused, unknown.string().c_str(), "", "", nullptr), 0);
+}
+
 TEST(UiFileIO, Draft2DOptionsPersistWithoutMesh) {
 #ifdef OPENSWMM_HAS_2D
     const auto root = std::filesystem::absolute("ui_file_io_roundtrip");
