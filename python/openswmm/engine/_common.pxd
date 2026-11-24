@@ -659,6 +659,7 @@ cdef extern from "openswmm_gages.h":
 cdef extern from "openswmm_massbalance.h":
     cdef int swmm_get_runoff_continuity_error(SWMM_Engine e, double* error)
     cdef int swmm_get_routing_continuity_error(SWMM_Engine e, double* error)
+    cdef int swmm_get_routing_report_continuity_error(SWMM_Engine e, double* error)
     cdef int swmm_get_quality_continuity_error(SWMM_Engine e, int pollutant_idx, double* error)
     cdef int swmm_get_runoff_total(SWMM_Engine e, int component, double* volume)
     cdef int swmm_get_routing_total(SWMM_Engine e, int component, double* volume)

@@ -27,6 +27,10 @@ class MassBalance:
         """Flow-routing continuity (mass-balance) error as a fraction (0.001 means 0.1%)."""
         ...
     @property
+    def routing_report_continuity_error(self) -> float:
+        """Flow-routing continuity error as the report prints it, as a fraction (0.001 means 0.1%)."""
+        ...
+    @property
     def routing_diagnostics(self) -> RoutingDiagnostics:
         """Routing-solver time-step diagnostics (step sizes, Courant number,
         convergence counts) as a :class:`RoutingDiagnostics` record."""

@@ -72,6 +72,22 @@ SWMM_ENGINE_API int swmm_get_runoff_continuity_error(SWMM_Engine engine, double*
 SWMM_ENGINE_API int swmm_get_routing_continuity_error(SWMM_Engine engine, double* error);
 
 /**
+ * @brief Compute the routing continuity error the report prints, as a fraction.
+ *
+ * This is the "Continuity Error (%)" of the report's Flow Routing Continuity block divided by 100.
+ * It is formed from the printed totals, which integrate each flow term over half steps as SWMM 5
+ * does (finite-volume routing uses accepted-window volumes), with SWMM 5's rules: a negative term
+ * moves to the other side of the balance and an imbalance under 1 ft3 reads zero.
+ * swmm_get_routing_continuity_error() is the exact ledger's residual and can differ from it.
+ *
+ * @param[in] engine Non-null live engine. No lifecycle guard is imposed; a running query reflects
+ *     the totals accumulated so far.
+ * @param[out] error Optional fraction output, e.g. 0.001 means 0.1%.
+ * @return SWMM_OK, or SWMM_ERR_BADHANDLE for null engine.
+ */
+SWMM_ENGINE_API int swmm_get_routing_report_continuity_error(SWMM_Engine engine, double* error);
+
+/**
  * @brief Compute a pollutant routing-continuity residual from stored mass totals.
  *
  * Sums the implementation wet-deposition/runoff/wet/RDII/dry-weather/external inflow terms plus

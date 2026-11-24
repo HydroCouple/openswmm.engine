@@ -1528,6 +1528,40 @@ struct SimulationContext {
             return (total_in > 0.0) ? (total_in - total_out) / total_in : 0.0;
         }
 
+        /// Routing continuity error (fraction) as the report prints it: from the
+        /// printed terms (`routing_report`) with legacy massbal_getFlowError's
+        /// rules — a signed term moves to the other side, an imbalance under
+        /// 1 ft³ reads zero, and the error is relative to the inflow side.
+        /// `routing_error()` remains the exact ledger's residual.
+        double routing_report_error() const {
+            const auto& rr = routing_report;
+            double tin = routing_init_storage + rr[1] + rr[4] + rr[3];
+            double tout = routing_final_storage + rr[6] + rr[7] + rr[9] + rr[10];
+            if (rr[0] >= 0.0)
+                tin += rr[0];
+            else
+                tout -= rr[0];
+            if (rr[2] >= 0.0)
+                tin += rr[2];
+            else
+                tout -= rr[2];
+            if (rr[5] >= 0.0)
+                tin += rr[5];
+            else
+                tout -= rr[5];
+            if (rr[8] >= 0.0)
+                tout += rr[8];
+            else
+                tin -= rr[8];
+            if (std::fabs(tin - tout) < 1.0)
+                return 0.0;
+            if (std::fabs(tin) > 0.0)
+                return 1.0 - tout / tin;
+            if (std::fabs(tout) > 0.0)
+                return tin / tout - 1.0;
+            return 0.0;
+        }
+
         /// Groundwater continuity error (fraction). Gap #72.
         double gw_error() const {
             double total_in = gw_infil + gw_init_storage;

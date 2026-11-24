@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -1016,6 +1017,45 @@ double rptValueAfter(const std::string& rpt, const std::string& label, bool* fou
 }
 
 } // namespace
+
+// The report prints its routing continuity error from half-step totals with
+// the SWMM 5 rules; swmm_get_routing_report_continuity_error returns that
+// number, which is not the exact ledger's residual on this filling transient.
+TEST_F(ForcedInflowMassBalanceTest, ReportContinuityApiMatchesThePrintedValue) {
+    openModel("report_continuity");
+    ASSERT_EQ(swmm_node_set_lateral_inflow(engine_, node_, 1.0), SWMM_OK);
+    int guard = 0;
+    do {
+        step();
+    } while (elapsed_ > 0.0 && ++guard < 100000);
+    ASSERT_EQ(swmm_engine_end(engine_), 0) << swmm_get_last_error_msg(engine_);
+
+    double exact = 0.0, reported = 0.0;
+    ASSERT_EQ(swmm_get_routing_continuity_error(engine_, &exact), SWMM_OK);
+    ASSERT_EQ(swmm_get_routing_report_continuity_error(engine_, &reported), SWMM_OK);
+    ASSERT_EQ(swmm_engine_report(engine_), 0) << swmm_get_last_error_msg(engine_);
+    swmm_engine_close(engine_);
+    swmm_engine_destroy(engine_);
+    engine_ = nullptr;
+
+    std::ifstream fin(forcedOutPath("report_continuity.rpt"));
+    ASSERT_TRUE(fin.good()) << "no report was written";
+    std::stringstream ss;
+    ss << fin.rdbuf();
+    const std::string text = ss.str();
+    const std::size_t block = text.find("Flow Routing Continuity");
+    ASSERT_NE(block, std::string::npos);
+    bool found = false;
+    const double printed = rptValueAfter(text.substr(block), "Continuity Error (%)", &found);
+    ASSERT_TRUE(found);
+
+    char want[32];
+    std::snprintf(want, sizeof(want), "%.3f", 100.0 * reported);
+    EXPECT_DOUBLE_EQ(printed, std::atof(want)) << "API " << 100.0 * reported << " %";
+    // Fixture check: the two quantities differ here by more than the printed precision.
+    EXPECT_GT(std::fabs(100.0 * (reported - exact)), 0.001)
+        << "exact " << 100.0 * exact << " %, report " << 100.0 * reported << " %";
+}
 
 TEST(QualityLedgerSeamTest, SummaryAndLedgerAgreeAndCarryTheKnownMass) {
     const std::string inp = forcedOutPath("qual_seam.inp");

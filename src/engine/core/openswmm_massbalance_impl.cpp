@@ -51,6 +51,13 @@ SWMM_ENGINE_API int swmm_get_routing_continuity_error(SWMM_Engine engine, double
     return SWMM_OK;
 }
 
+SWMM_ENGINE_API int swmm_get_routing_report_continuity_error(SWMM_Engine engine, double* error) {
+    CHECK_HANDLE(engine);
+    if (error)
+        *error = to_engine(engine)->context().mass_balance.routing_report_error();
+    return SWMM_OK;
+}
+
 SWMM_ENGINE_API int swmm_get_quality_continuity_error(SWMM_Engine engine, int pollutant_idx,
                                                       double* error) {
     CHECK_HANDLE(engine);

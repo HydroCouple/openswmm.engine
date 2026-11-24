@@ -1386,36 +1386,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 row("Final Slot Storage .......", slot_ft3);
         }
 
-        // legacy massbal_getFlowError: signed terms move sides; |in - out|
-        // under 1 ft3 reads 0 (TINY).
-        {
-            double tin = mb.routing_init_storage + rr[1] + rr[4] + rr[3];
-            double tout = mb.routing_final_storage + rr[6] + rr[7] + rr[9] + rr[10];
-            if (rr[0] >= 0.0)
-                tin += rr[0];
-            else
-                tout -= rr[0];
-            if (rr[2] >= 0.0)
-                tin += rr[2];
-            else
-                tout -= rr[2];
-            if (rr[5] >= 0.0)
-                tin += rr[5];
-            else
-                tout -= rr[5];
-            if (rr[8] >= 0.0)
-                tout += rr[8];
-            else
-                tin -= rr[8];
-            double pct = 0.0;
-            if (std::fabs(tin - tout) < 1.0)
-                pct = 0.0;
-            else if (std::fabs(tin) > 0.0)
-                pct = 100.0 * (1.0 - tout / tin);
-            else if (std::fabs(tout) > 0.0)
-                pct = 100.0 * (tin / tout - 1.0);
-            std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", pct);
-        }
+        // legacy massbal_getFlowError (MassBalance::routing_report_error).
+        std::fprintf(f, "\n  Continuity Error (%%) .....%14.3f", 100.0 * mb.routing_report_error());
     }
 
     // =====================================================================
