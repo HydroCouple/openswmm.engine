@@ -19,6 +19,7 @@
 #include <openswmm/engine/openswmm_pollutants.h>
 #include <openswmm/engine/openswmm_reactions.h>
 #include <openswmm/engine/openswmm_model.h>
+#include <version.h>
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <chrono>
@@ -989,11 +990,11 @@ public:
     std::string email() const override { return {}; }
     /**
      * @brief Read declared component-factory version metadata.
-     * @return Declared6.0.0-alpha.4 component version string, not a runtime engine query.
+     * @return The engine version the module was built from, not a runtime engine query.
      * @note Copies may allocate; no component creation, file access, physical/clock or registry
      * mutation.
      */
-    std::string version() const override { return "6.0.0-alpha.4"; }
+    std::string version() const override { return OPENSWMM_VERSION_FULL; }
     /**
      * @brief Read declared component-factory tags metadata.
      * @return Owning set of declared discovery tags: SWMM,network,outfalls,one-way.

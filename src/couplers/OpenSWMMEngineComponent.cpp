@@ -23,6 +23,7 @@
 #include <openswmm/engine/openswmm_hotstart.h>
 #include <openswmm/engine/openswmm_checkpoint.h>
 #include <openswmm/engine/openswmm_snow.h>
+#include <version.h>
 #ifdef OPENSWMM_HAS_2D
 #include <openswmm/engine/openswmm_2d.h>
 #include <openswmm/engine/openswmm_gw2d.h>
@@ -2361,11 +2362,11 @@ public:
     std::string email() const override { return {}; }
     /**
      * @brief Read declared component-factory version metadata.
-     * @return Declared6.0.0-alpha.4 component version string, not a runtime engine query.
+     * @return The engine version the module was built from, not a runtime engine query.
      * @note Copies may allocate; no component creation, file access, physical/clock or registry
      * mutation.
      */
-    std::string version() const override { return "6.0.0-alpha.4"; }
+    std::string version() const override { return OPENSWMM_VERSION_FULL; }
     /**
      * @brief Read declared component-factory tags metadata.
      * @return Owning set of declared discovery tags:

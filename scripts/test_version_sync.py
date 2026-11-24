@@ -17,14 +17,26 @@ class VersionSyncTests(unittest.TestCase):
             root = Path(tmp)
             (root / "python").mkdir()
             (root / "packages/gpu-omp").mkdir(parents=True)
-            (root / "CMakeLists.txt").write_text(
-                f'project(openswmm VERSION 6.0.0)\nset(OPENSWMM_PRERELEASE "{native}")\n')
             suffix = f"-{native}" if native else ""
+            semver = "6.0.0" + suffix
+            (root / "CMakeLists.txt").write_text(
+                f"# Version:     {semver} (refactored engine)\n"
+                f'project(openswmm VERSION 6.0.0)\nset(OPENSWMM_PRERELEASE "{native}")\n')
             (root / "vcpkg.json").write_text(
                 '{"version-semver": "6.0.0' + suffix + '"}')
             (root / "python/pyproject.toml").write_text(f'version = "{base}"\n')
             (root / "packages/gpu-omp/pyproject.toml").write_text(
                 f'version = "{companion}"\ndependencies = ["openswmm == {pin}"]\n')
+            # The files that restate the version, in step with the native release.
+            (root / "python/CMakeLists.txt").write_text("project(openswmm-python VERSION 6.0.0)\n")
+            (root / "packages/gpu-omp/CMakeLists.txt").write_text(
+                "project(openswmm-gpu-omp VERSION 6.0.0 LANGUAGES CXX)\n")
+            (root / "docs").mkdir()
+            (root / "docs/Doxyfile").write_text(
+                f'PROJECT_NUMBER = {semver}\nPROJECT_BRIEF = "Engine ({semver})"\n')
+            (root / "CITATION.cff").write_text(f'version: "{semver}"\n')
+            (root / "python/docs").mkdir()
+            (root / "python/docs/conf.py").write_text(f"if True:\n    version = '{base}'\n")
             with patch.object(sync, "ROOT", root), redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                 return sync.main()
 
