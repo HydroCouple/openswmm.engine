@@ -35,6 +35,7 @@
 #include <openswmm/engine/openswmm_massbalance.h>
 #include <openswmm/engine/openswmm_model.h>
 #include <openswmm/engine/openswmm_nodes.h>
+#include <openswmm/legacy/engine/openswmm_solver.h> // swmm_run: legacy SWMM 5.3
 
 #include "core/SWMMEngine.hpp"
 
@@ -1291,4 +1292,128 @@ TEST_F(MassBalanceApiTest, FloodedWaterCarriesItsMixedPollutantConcentration) {
     ASSERT_GT(mb().routing_flooding, 0.0);
     EXPECT_NEAR(mb().qual_routing_flood[0], 10.0 * mb().routing_flooding,
                 1e-8 * mb().routing_flooding);
+}
+
+// ---------------------------------------------------------------------------
+// Issues #4 / #47 (USEPA #210): a closed storage unit drained only by a throttled
+// outlet under the EXTRAN surcharge method. EPA 5.2.4 froze the head at the rim
+// (the surcharge update has no dq/dh from an outlet) and lost the inflow: -221%
+// routing continuity on the reporter's deck. The fork's legacy 5.3.0 and 6.0
+// engines let the head rise above the rim and drain the tank back to the outlet
+// crest, and the two agree with each other.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct ClosedStorageSummary {
+    double continuity_pct = 0.0, avg_depth = 0.0, max_depth = 0.0;
+    double flood_volume = 0.0, outfall_volume = 0.0;
+    bool found_depth = false, found_outfall = false;
+};
+
+ClosedStorageSummary summarizeClosedStorage(const std::string& rpt_path) {
+    ClosedStorageSummary r;
+    std::ifstream in(rpt_path);
+    std::string line, section;
+    while (std::getline(in, line)) {
+        if (line.find("Flow Routing Continuity") != std::string::npos)
+            section = "routing";
+        else if (line.find("Node Depth Summary") != std::string::npos)
+            section = "depth";
+        else if (line.find("Node Flooding Summary") != std::string::npos)
+            section = "flood";
+        else if (line.find("Outfall Loading Summary") != std::string::npos)
+            section = "outfall";
+        else if (line.find("Summary") != std::string::npos ||
+                 line.find("Continuity") != std::string::npos)
+            section.clear();
+        std::istringstream ss(line);
+        std::string name;
+        ss >> name;
+        if (section == "routing" && line.find("Continuity Error (%)") != std::string::npos) {
+            r.continuity_pct = std::stod(line.substr(line.rfind(' ') + 1));
+        } else if (section == "depth" && name == "TR0") {
+            std::string type;
+            ss >> type >> r.avg_depth >> r.max_depth;
+            r.found_depth = true;
+        } else if (section == "flood" && name == "TR0") {
+            double hours = 0.0, max_rate = 0.0;
+            std::string day, time;
+            ss >> hours >> max_rate >> day >> time >> r.flood_volume;
+        } else if (section == "outfall" && name == "OF1") {
+            double freq = 0.0, avg = 0.0, max = 0.0;
+            ss >> freq >> avg >> max >> r.outfall_volume;
+            r.found_outfall = true;
+        }
+    }
+    return r;
+}
+
+} // namespace
+
+TEST(ClosedStorageOutletTest, ExtranHeadIsNotFrozenAndTheTankDrains) {
+    std::filesystem::create_directories("massbalance_out");
+    const std::string inp = "massbalance_out/closed_storage_outlet.inp";
+    {
+        // 0.55 m3/s for an hour into a 0.6 m deep tank (8.2 m2, surcharge depth
+        // 100 m) whose outlet passes at most 0.4 m3/s: 0.15 m3/s has to go up
+        // the band and come back down once the inflow stops.
+        std::ofstream f(inp, std::ios::trunc);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nINFILTRATION HORTON\nFLOW_ROUTING DYNWAVE\n"
+             "LINK_OFFSETS DEPTH\nSTART_DATE 01/01/2010\nSTART_TIME 00:00:00\n"
+             "REPORT_START_DATE 01/01/2010\nREPORT_START_TIME 00:00:00\nEND_DATE 01/01/2010\n"
+             "END_TIME 06:00:00\nREPORT_STEP 00:01:00\nWET_STEP 00:05:00\nDRY_STEP 01:00:00\n"
+             "ROUTING_STEP 1\nSURCHARGE_METHOD EXTRAN\nMIN_SURFAREA 1.167\nMAX_TRIALS 8\n"
+             "HEAD_TOLERANCE 0.0015\n\n"
+             "[OUTFALLS]\nOF1 2.0 FREE NO\n\n"
+             "[STORAGE]\nTR0 2.0 0.6 0 TABULAR TR0_StorageCurve 100 0\n\n"
+             "[OUTLETS]\nOUT1 TR0 OF1 0.5 TABULAR/DEPTH OutletRating NO\n\n"
+             "[INFLOWS]\nTR0 FLOW INFLOW FLOW 1.0 1.0 0\n\n"
+             "[CURVES]\nOutletRating Rating 0.0 0.0\nOutletRating 0.1 0.4\nOutletRating 0.7 0.4\n"
+             "TR0_StorageCurve Storage 0.0 8.21238333\nTR0_StorageCurve 10 8.21238333\n\n"
+             "[TIMESERIES]\nINFLOW 0:00 0.55\nINFLOW 0:59 0.55\nINFLOW 1:00 0.0\nINFLOW 6:00 0.0\n\n"
+             "[REPORT]\nINPUT NO\nCONTINUITY YES\nFLOWSTATS YES\nNODES ALL\nLINKS ALL\n";
+    }
+    // Inflow time series are interpolated: 0.55 for 59 min, then a one-minute ramp.
+    const double inflow_mltr = (0.55 * 59.0 * 60.0 + 0.5 * 0.55 * 60.0) / 1000.0;
+
+    // Legacy 5.3.0 engine.
+    ASSERT_EQ(swmm_run(inp.c_str(), "massbalance_out/closed_storage_outlet.legacy.rpt",
+                       "massbalance_out/closed_storage_outlet.legacy.out"),
+              0);
+    const auto legacy = summarizeClosedStorage("massbalance_out/closed_storage_outlet.legacy.rpt");
+
+    // 6.0 engine.
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), "massbalance_out/closed_storage_outlet.rpt",
+                               "massbalance_out/closed_storage_outlet.out", nullptr),
+              SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+    double api_continuity = 0.0;
+    ASSERT_EQ(swmm_get_routing_continuity_error(e, &api_continuity), SWMM_OK);
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    const auto v6 = summarizeClosedStorage("massbalance_out/closed_storage_outlet.rpt");
+
+    for (const auto* pair : {&legacy, &v6}) {
+        const auto& r = *pair;
+        SCOPED_TRACE(pair == &legacy ? "legacy 5.3.0" : "6.0");
+        ASSERT_TRUE(r.found_depth && r.found_outfall);
+        EXPECT_LT(std::fabs(r.continuity_pct), 1.0) << "continuity " << r.continuity_pct;
+        EXPECT_GT(r.max_depth, 0.6) << "the tank must pressurize above its rim";
+        EXPECT_LE(r.max_depth, 100.6 + 1e-6) << "never above full depth + surcharge depth";
+        EXPECT_LT(r.avg_depth, 0.5 * r.max_depth) << "a frozen head keeps avg == max";
+        // Whatever the band does not hold must leave by the outlet or as flooding.
+        EXPECT_NEAR(r.outfall_volume + r.flood_volume, inflow_mltr, 0.02 * inflow_mltr);
+    }
+    EXPECT_NEAR(v6.max_depth, legacy.max_depth, 0.01 * legacy.max_depth);
+    EXPECT_NEAR(v6.outfall_volume, legacy.outfall_volume, 0.01 * legacy.outfall_volume);
+    EXPECT_NEAR(api_continuity * 100.0, v6.continuity_pct, 0.01);
 }
