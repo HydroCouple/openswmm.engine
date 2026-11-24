@@ -541,6 +541,16 @@ if(OPENSWMM_BUILD_2D)
         set_property(SOURCE 2d/solver/SurfaceSolverFactory.cpp APPEND PROPERTY
             COMPILE_DEFINITIONS OPENSWMM_ENABLE_METAL_FACES)
     endif()
+    # WebGPU marcher (browser build). Only its own TU includes webgpu.h; the factory sees a
+    # plain C++ header. The emdawnwebgpu port supplies the C API and its JavaScript glue.
+    if(OPENSWMM_ENABLE_WEBGPU)
+        list(APPEND OPENSWMM_2D_SOURCES 2d/webgpu/WebGpuSurfaceSolver.cpp)
+        set_property(SOURCE 2d/solver/SurfaceSolverFactory.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS OPENSWMM_ENABLE_WEBGPU)
+        set_property(SOURCE 2d/webgpu/WebGpuSurfaceSolver.cpp APPEND PROPERTY
+            COMPILE_OPTIONS --use-port=emdawnwebgpu)
+        target_link_options(openswmm_engine PUBLIC --use-port=emdawnwebgpu)
+    endif()
 
     # Default2DOutputPlugin writes the [2D_OPTIONS] OUTPUT_FILE results as
     # CF-1.11/UGRID-1.0 HDF5. It is the 2D module's only HDF5 user, so

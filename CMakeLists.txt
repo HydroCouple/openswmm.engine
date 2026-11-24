@@ -155,6 +155,15 @@ if(OPENSWMM_ENABLE_METAL_FACES)
     endif()
 endif()
 
+# The browser build's WebGPU 2D marcher (src/engine/2d/webgpu, [2D_OPTIONS] BACKEND WEBGPU).
+# Emscripten only, and useful only in a threads build: the engine thread blocks while a
+# dedicated GPU pthread drives WebGPU (without threads the marcher reports no device and the
+# CPU marcher runs).
+option(OPENSWMM_ENABLE_WEBGPU "Build the WebGPU 2D surface marcher (Emscripten builds only)" OFF)
+if(OPENSWMM_ENABLE_WEBGPU AND (NOT EMSCRIPTEN OR NOT OPENSWMM_BUILD_2D))
+    message(FATAL_ERROR "OPENSWMM_ENABLE_WEBGPU requires an Emscripten build with the 2D module")
+endif()
+
 # Portable binaries by default. ON adds -mcpu=native to both engines on arm64,
 # tuning them for the build machine: on a host with SVE (Graviton3/4, Neoverse
 # N2/V2, Azure Cobalt) the compiler then emits SVE, and the libraries die with
