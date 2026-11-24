@@ -146,7 +146,9 @@ bool linkIsDry(const SimulationContext& ctx, int link) {
  */
 bool nodeIsReactor(const SimulationContext& ctx, int node) {
     const auto ui = static_cast<std::size_t>(node);
-    return ctx.nodes.type[ui] == NodeType::STORAGE || ctx.nodes.old_volume[ui] > ZERO_VOLUME;
+    // A SEMI_IMPLICIT junction holding surcharge water (NodeData::held_volume) mixes over it.
+    return ctx.nodes.type[ui] == NodeType::STORAGE ||
+           ctx.nodes.old_volume[ui] + ctx.nodes.old_held_volume[ui] > ZERO_VOLUME;
 }
 
 // Review B1 (2026-10-15): one owner for the storage evaporation factor, so the
@@ -237,7 +239,8 @@ void updateUntreatedStorageHrt(SimulationContext& ctx, double dt) {
  */
 bool nodeIsDry(const SimulationContext& ctx, int node, double q_in) {
     const auto ui = static_cast<std::size_t>(node);
-    return (ctx.nodes.volume[ui] <= ZERO_VOLUME || ctx.nodes.depth[ui] <= ZERO_DEPTH) &&
+    return (ctx.nodes.volume[ui] + ctx.nodes.held_volume[ui] <= ZERO_VOLUME ||
+            ctx.nodes.depth[ui] <= ZERO_DEPTH) &&
            q_in <= LEGACY_ZERO;
 }
 
@@ -650,7 +653,11 @@ void QualitySolver::addCouplingLoads(SimulationContext& ctx, double dt) {
 
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<std::size_t>(i);
-        const double q = nodes.coupling_inflow[ui];
+        // The carrier is the gross water that brought the coupling mass in when the 2D router
+        // queues it (NodeData::coupling_drain_queue); otherwise the net inflow.
+        const double q = nodes.coupling_gross && ui < nodes.coupling_drain_inflow.size()
+                             ? nodes.coupling_drain_inflow[ui]
+                             : nodes.coupling_inflow[ui];
         if (q > 0.0) {
             nodes.qual_vol_in[ui] += q * dt;
             // S4: when the surface carries the row, the tuple's own
@@ -1624,7 +1631,8 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt,
 #endif
     for (int i = 0; i < ctx.n_nodes(); ++i) {
         auto ui = static_cast<size_t>(i);
-        const double v_old = nodes.old_volume[ui];
+        // Including the surcharge water a SEMI_IMPLICIT junction holds (NodeData::held_volume).
+        const double v_old = nodes.old_volume[ui] + nodes.old_held_volume[ui];
         const double v_in = nodes.qual_vol_in[ui];
         const bool is_storage = (nodes.type[ui] == NodeType::STORAGE);
         const bool zero_bf = zero_bf_opt && nodes.type[ui] == NodeType::OUTFALL;
@@ -1798,7 +1806,8 @@ void QualitySolver::mixAtNodes(SimulationContext& ctx, double dt,
 
             if (dry) {
                 if (up < mb.qual_routing_final_dry.size())
-                    mb.qual_routing_final_dry[up] += c_new * nodes.volume[ui];
+                    mb.qual_routing_final_dry[up] +=
+                        c_new * (nodes.volume[ui] + nodes.held_volume[ui]);
                 c_new = 0.0;
             }
 
@@ -2161,7 +2170,10 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
         double q = q_raw * ucf_flow; // flow in user units
         // legacy passes vAvg = (oldVolume + newVolume)/2 as the V process
         // variable (qualrout.c:121, 141) — not the end-of-step volume.
-        double v = (nodes.old_volume[uj] + nodes.volume[uj]) * 0.5; // ft3
+        // Including a SEMI_IMPLICIT junction's held surcharge water (NodeData::held_volume).
+        double v = (nodes.old_volume[uj] + nodes.old_held_volume[uj] + nodes.volume[uj] +
+                    nodes.held_volume[uj]) *
+                   0.5; // ft3
         double d_ft = (nodes.depth[uj] + nodes.old_depth[uj]) * 0.5;
         double d = d_ft * ucf_length; // depth in user units
 
@@ -2199,21 +2211,12 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
         for (int p = 0; p < np; ++p)
             treat.removal[static_cast<std::size_t>(p)] = -1.0;
 
-        // 4b. What a BARE pollutant name reads. legacy getVariableValue
-        // (treatmnt.c:344-351) gives Cin[p] when THAT pollutant's treatment
-        // at this node is a removal equation, and the node's current
-        // concentration otherwise — so the choice depends on the OTHER
-        // pollutant's equation type, not this one's. Resolved here, where the
-        // per-pollutant compiled expressions are in hand, and handed to the
-        // evaluator as a plain array.
-        std::vector<double> cpollut(static_cast<std::size_t>(np), 0.0);
-        for (int p = 0; p < np; ++p) {
-            const auto up2 = static_cast<std::size_t>(p);
-            const auto ci = uj * static_cast<std::size_t>(np) + up2;
-            const bool p_is_removal = ci < treat.compiled.size() && treat.compiled[ci].is_removal;
-            cpollut[up2] =
-                p_is_removal ? treat.cin[up2] : ((ci < nodes.conc.size()) ? nodes.conc[ci] : 0.0);
-        }
+        // 4b. What a bare pollutant name reads: the inflow concentrations in
+        // a removal (R =) expression, the node's concentrations before
+        // treatment in a concentration (C =) expression (SWMM 5 Reference
+        // Manual Vol. III, section 5.4.2). The evaluated expression's type
+        // decides, not the named pollutant's own equation.
+        const double* c_nodes = nodes.conc.data() + uj * static_cast<std::size_t>(np);
 
         // 5. Evaluate treatment for each pollutant (with co-treatment + cycle detection)
         //    Uses the legacy getRemoval() pattern:
@@ -2286,9 +2289,9 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
                 if (x < 0.0 || x > 1.0)
                     x = 0.0;
 
-            double result =
-                treatment::evaluate(expr, c_in, dt, hrt_hours, q, v, d, treat.cin.data(),
-                                    r_view.data(), np, area, cpollut.data());
+            double result = treatment::evaluate(expr, c_in, dt, hrt_hours, q, v, d,
+                                                treat.cin.data(), r_view.data(), np, area,
+                                                expr.is_removal ? treat.cin.data() : c_nodes);
             result = std::max(result, 0.0);
 
             if (expr.is_removal) {
@@ -2321,7 +2324,7 @@ void applyNodeTreatment(SimulationContext& ctx, int j, double dt, double q_raw, 
         // Legacy mass loss formula (treatmnt.c lines 262-263):
         //   massLost = (Cin*q*tStep + oldQual*oldVol - cOut*(q*tStep + oldVol)) / tStep
         // where q is in ft3/s (internal), oldQual/oldVol are pre-quality-step values.
-        double v_old = nodes.old_volume[uj];
+        double v_old = nodes.old_volume[uj] + nodes.old_held_volume[uj];
         for (int p = 0; p < np; ++p) {
             double R = treat.removal[static_cast<std::size_t>(p)];
             if (R <= 0.0)

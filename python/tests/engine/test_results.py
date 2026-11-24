@@ -81,6 +81,8 @@ def test_named_1d_fields_and_python_slices(saved):
             field.read(objects=[0])
         # 2D uses a different report cadence; it must keep its own time axis.
         assert len(result.times) > len(result.surface.period_times)
+        # A 2D report shares its instant with a 1D report, to the microsecond.
+        assert np.isin(result.surface.period_times, result.times).all()
         assert result.times.dtype.kind == result.surface.period_times.dtype.kind == 'M'
         assert field.units == ('m' if raw.flow_units.name == 'CMS' else 'ft')
         assert result.surface.depth.units == 'm'

@@ -34,6 +34,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/Constants.hpp"
 #include "RadiativeExchange.hpp"
 
 #include "HeatOverrides.hpp"
@@ -64,7 +65,7 @@ namespace {
  * @return (t_c+273.15)^4 K4; no physical range/overflow repair. Pure/allocation-free.
  */
 double kelvin4(double t_c) noexcept {
-    const double k = t_c + kKelvinOffset;
+    const double k = t_c + constants::KELVIN_OFFSET;
     return k * k * k * k;
 }
 
@@ -256,7 +257,8 @@ double radiativeFluxOut(const SimulationContext& ctx, const HeatElement& elem, d
     const RadiativeConfig& rc = radiativeFor(ctx, elem);
     // PE4: per-element climate, resolved at the flux call (see SurfaceExchange).
     const double t_air_c =
-        (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) - 32.0) * 5.0 / 9.0;
+        (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) - constants::F_AT_0C) *
+        5.0 / 9.0;
     const double rh = ctx.forcing.elementHumidity(elem, ctx.climate_state.humidity);
     // PE4: a coupled shade model can push Jin per element outright; the deck
     // states one incident resource and SHADE_FACTOR modulates it. Precedence

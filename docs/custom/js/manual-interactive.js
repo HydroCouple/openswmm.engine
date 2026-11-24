@@ -251,8 +251,8 @@
   window.ManualInteractive = {
     init: function (mermaid) {
       try { initFigures(); } catch (e) { if (window.console) console.warn("manual-interactive: figures", e); }
-      if (!mermaid) return;
       try { injectClicks(); } catch (e) { if (window.console) console.warn("manual-interactive: click injection", e); }
+      if (!mermaid) return;
       var run = mermaid.run ? mermaid.run({ querySelector: "pre.mermaid" }) : Promise.resolve(mermaid.init(undefined, "pre.mermaid"));
       Promise.resolve(run).then(wrapMermaids, function (e) {
         if (window.console) console.warn("manual-interactive: mermaid", e);

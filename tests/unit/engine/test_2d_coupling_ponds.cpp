@@ -236,7 +236,7 @@ TEST(CouplingPonds, TrackingPondFollowsTheWetFootprintAboveTheChamber) {
 // flips between draining and spilling; the regime-aware law with the
 // equalisation cap and a tracking pond flips less.
 TEST(CouplingPonds, EqualisationReducesDrainSpillReversals) {
-    const PondRun legacy = run("churn_legacy", "");
+    const PondRun legacy = run("churn_legacy", "COUPLING_EQUALIZE NO\n");
     const PondRun law = run("churn_weir_only", "COUPLING_LAW WEIR_ORIFICE\nCOUPLING_EQUALIZE NO\n");
     const PondRun fine =
         run("churn_weir_tracking_equalize",

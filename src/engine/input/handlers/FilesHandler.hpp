@@ -64,6 +64,19 @@ namespace openswmm::input {
  */
 void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines);
 
+/**
+ * @brief Parse the [RESTART] section into SimulationContext::restart.
+ *
+ * Rows are `KEY value...`: SOURCE_FILE, SOURCE_RUN, SOURCE_RECORD, MODE, RECORD_FILE,
+ * RECORD_FORMAT, RECORD_AT (END or date time, repeatable), RECORD_EVERY (HH:MM:SS or seconds) and
+ * RECORD_CONTINUATION (YES or NO). An unknown key or value is an input error; whether the settings
+ * agree with each other and with [FILES] is checked when the engine initializes.
+ *
+ * @param[in,out] ctx Context receiving the settings and any input errors.
+ * @param[in] lines Borrowed raw section rows without the header.
+ */
+void handle_restart(SimulationContext& ctx, const std::vector<std::string>& lines);
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_FILES_HANDLER_HPP */

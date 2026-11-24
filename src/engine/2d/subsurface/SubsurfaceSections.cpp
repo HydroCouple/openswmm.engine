@@ -238,6 +238,15 @@ std::string parseAquiferOptionsLine(const std::vector<std::string>& tokens, GwOp
         opts.m_layers = m;
         return {};
     }
+    if (iequals(k, "GW_FACE_CAP")) {
+        if (iequals(v, "RATIO"))
+            opts.face_cap_ratio = true;
+        else if (iequals(v, "SEQUENTIAL"))
+            opts.face_cap_ratio = false;
+        else
+            return "GW_FACE_CAP must be SEQUENTIAL or RATIO: " + v;
+        return {};
+    }
     if (iequals(k, "CAPILLARY_DIFF")) {
         if (!boolTok(v, opts.capillary_diff))
             return "CAPILLARY_DIFF must be YES/NO: " + v;
@@ -679,14 +688,14 @@ void registerSubsurfaceSections(SubsurfaceConfig& cfg, std::vector<std::string>&
 GwUnitFactors gwUnitFactors(const SimulationContext& ctx) noexcept {
     GwUnitFactors f;
     const int sys = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    if (sys == 0) {               // US
-        f.length = 0.3048;        // ft  → m
-        f.rate = 0.0254 / 3600.0; // in/hr → m/s
-        f.inv_len = 1.0 / 0.3048; // 1/ft → 1/m
-        f.area = 0.3048 * 0.3048; // ft² → m²
-    } else {                      // SI
-        f.length = 1.0;           // m
-        f.rate = 0.001 / 3600.0;  // mm/hr → m/s
+    if (sys == 0) {                           // US
+        f.length = ucf::FT_TO_M;              // ft  → m
+        f.rate = 0.0254 / 3600.0;             // in/hr → m/s
+        f.inv_len = 1.0 / ucf::FT_TO_M;       // 1/ft → 1/m
+        f.area = ucf::FT_TO_M * ucf::FT_TO_M; // ft² → m²
+    } else {                                  // SI
+        f.length = 1.0;                       // m
+        f.rate = 0.001 / 3600.0;              // mm/hr → m/s
         f.inv_len = 1.0;
         f.area = 1.0;
     }
@@ -1622,7 +1631,8 @@ SurfaceOwnershipPreview resolveSurfaceOwnership(const SimulationContext& ctx, co
     SurfaceOwnershipPreview p;
     const double projectLength = gwUnitFactors(ctx).length;
     const double meshLength = (opts.mesh_units_si || opts.mesh_scaled_to_si) ? 1.0 : projectLength;
-    const double areaUnit = projectLength == 1 ? 10000.0 : 43560.0 * .3048 * .3048;
+    const double areaUnit =
+        projectLength == 1 ? 10000.0 : ucf::ACRES_TO_FT2 * ucf::FT_TO_M * ucf::FT_TO_M;
     auto cancelled = [&](int done) {
         if (progress && !progress(done, mesh.n_cells() + ctx.n_subcatches())) {
             p.cancelled = true;
@@ -2006,6 +2016,8 @@ void writeSubsurfaceSections(const SubsurfaceConfig& cfg,
             kv("M_LAYERS", std::to_string(cfg.options.m_layers));
         if (cfg.options.capillary_diff != d.capillary_diff)
             kv("CAPILLARY_DIFF", cfg.options.capillary_diff ? "YES" : "NO");
+        if (cfg.options.face_cap_ratio != d.face_cap_ratio)
+            kv("GW_FACE_CAP", cfg.options.face_cap_ratio ? "RATIO" : "SEQUENTIAL");
         if (cfg.options.c_gw != d.c_gw)
             kv("C_GW", fmt(cfg.options.c_gw));
         if (cfg.options.c_col != d.c_col)

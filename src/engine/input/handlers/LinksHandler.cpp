@@ -51,6 +51,7 @@
 #include "../InputParseUtils.hpp"
 
 #include <charconv>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -593,9 +594,9 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
             continue;
         }
         // Legacy xsect_setParams (xsect.c:233) refuses Geom1 <= 0 for every
-        // shape but DUMMY, and link.c:250 reports it as ERR_NUMBER with an
-        // empty token, relying on the line number it prints. v6 reports parse
-        // errors without one, so the message names the value, the column and
+        // shape but DUMMY, and link.c:250 reports it as ERR_XSECT naming the
+        // link (code review IO-13). v6 reports parse errors without a line
+        // number, so its message names the value, the column and
         // the link. (CUSTOM's own Geom1 test is link.c:226.)
         if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
             ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT &&
@@ -665,10 +666,23 @@ void handle_xsections(SimulationContext& ctx, const std::vector<std::string>& li
         // section: dual-write the conduit side-table row if it exists (the
         // [CONDUITS] handler created it); no-op for non-conduit links.
         const int cr = ctx.link_subtypes.conduit_row(idx);
+        // Legacy link.c reads the count with atoi and stops with ERR_NUMBER when it
+        // is not positive (0, -3, "abc", 0.5); v6 used to keep the default 1
+        // without a message. Legacy never reads the item for IRREGULAR and STREET,
+        // so there a bad value keeps the default as before. The range test also
+        // keeps NaN, inf and values past INT_MAX away from the int conversion.
         if (tok.size() > 6 && cr >= 0) {
-            int barrels = static_cast<int>(to_double(tok[6]));
-            if (barrels > 0)
-                ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] = barrels;
+            const double barrels = to_double(tok[6]);
+            if (barrels >= 1.0 && barrels <= std::numeric_limits<int>::max()) {
+                ctx.link_subtypes.conduits.barrels[static_cast<std::size_t>(cr)] =
+                    static_cast<int>(barrels);
+            } else if (ctx.links.xsect_shape[idx] != XsectShape::IRREGULAR &&
+                       ctx.links.xsect_shape[idx] != XsectShape::STREET_XSECT) {
+                ctx.errors.push_back(format_error(ERR_NUMBER, tok[6],
+                                                  "for Barrels of link " + tok[0] +
+                                                      " in [XSECTIONS] (must be >= 1)"));
+                continue;
+            }
         }
 
         // Culvert code (optional, token 7)
@@ -852,9 +866,12 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
             ctx.transects.x_left_encroachment.push_back(tok.size() > 5 ? to_double(tok[5]) : 0.0);
             ctx.transects.x_right_encroachment.push_back(tok.size() > 6 ? to_double(tok[6]) : 0.0);
 
-            double lFactor = (tok.size() > 7) ? to_double(tok[7]) : 1.0;
-            double xFactor = (tok.size() > 8) ? to_double(tok[8]) : 1.0;
-            double yFactor = (tok.size() > 9) ? to_double(tok[9]) : 0.0;
+            // The layout given in the manual has a third placeholder zero
+            // (11 items); its factors start one item later.
+            const std::size_t f = (tok.size() > 10) ? 8 : 7;
+            double lFactor = (tok.size() > f) ? to_double(tok[f]) : 1.0;
+            double xFactor = (tok.size() > f + 1) ? to_double(tok[f + 1]) : 1.0;
+            double yFactor = (tok.size() > f + 2) ? to_double(tok[f + 2]) : 0.0;
             if (lFactor == 0.0)
                 lFactor = 1.0;
             if (xFactor == 0.0)

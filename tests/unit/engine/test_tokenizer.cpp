@@ -150,6 +150,19 @@ TEST(TokenizerTest, QuotedKeyValueInCsvPreservesCommaAndSpaces) {
                 ElementsAre("component", R"(config="Config Folder/a, b.rxn")", "version=1"));
 }
 
+// Legacy getTokens (input.c:926) treats a quote as a quote only at the start
+// of a token. A link named 24"CULVERT in the benchmarks corpus (2-weirs-4subs)
+// opened a quoted run that never closed, so its [XSECTIONS] row read as one
+// token and the deck failed with ERROR 203 where legacy runs it.
+TEST(TokenizerTest, QuoteInsideANameIsPartOfTheName) {
+    EXPECT_THAT(Tokenizer::tokenize("24\"CULVERT\tCIRCULAR\t2.0\t8.0\t3.0\t3.0\t1\t0"),
+                ElementsAre("24\"CULVERT", "CIRCULAR", "2.0", "8.0", "3.0", "3.0", "1", "0"));
+    EXPECT_THAT(Tokenizer::tokenize("C1 24\"CULVERT J2 ; note \"quoted\""),
+                ElementsAre("C1", "24\"CULVERT", "J2"));
+    EXPECT_THAT(Tokenizer::tokenize("24\"CULVERT,CIRCULAR,2.0"),
+                ElementsAre("24\"CULVERT", "CIRCULAR", "2.0"));
+}
+
 // ============================================================================
 // tokenize_views
 // ============================================================================

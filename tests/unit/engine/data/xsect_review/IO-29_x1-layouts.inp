@@ -1,0 +1,52 @@
+[TITLE]
+IO-29 the same transect with an X1 line in each of the two layouts
+
+[OPTIONS]
+FLOW_UNITS     CFS
+FLOW_ROUTING   DYNWAVE
+START_DATE     01/01/2020
+START_TIME     00:00:00
+END_DATE       01/01/2020
+END_TIME       01:00:00
+REPORT_STEP    00:15:00
+ROUTING_STEP   5
+
+[JUNCTIONS]
+;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1     100   10        0          0         0
+J2     100   10        0          0         0
+
+[OUTFALLS]
+O1     99    FREE
+O2     99    FREE
+
+[CONDUITS]
+;Name  From  To  Length  N     Z1  Z2  Q0  Qmax
+C1     J1    O1  1000    0.03  0   0   0   0
+C2     J2    O2  1000    0.03  0   0   0   0
+
+[XSECTIONS]
+C1     IRREGULAR  T1
+C2     IRREGULAR  T2
+
+[INFLOWS]
+J1     FLOW  ""  FLOW  1.0  1.0  20
+J2     FLOW  ""  FLOW  1.0  1.0  20
+
+[TRANSECTS]
+;T1 and T2 are the same channel with a meander factor (Lfactor) of 2.0.
+;T1: X1 line as the GUI writes it, two placeholder zeros (10 items)
+;    X1 Name Nsta Xleft Xright 0 0 Lfactor Wfactor Eoffset
+NC  0.05  0.05  0.03
+X1  T1  4  10  30  0  0  2.0  0  0
+GR  105 0   100 10   100 30   105 40
+;T2: X1 line as the manual documents it, three placeholder zeros (11 items)
+;    X1 Name Nsta Xleft Xright 0 0 0 Lfactor Wfactor Eoffset
+NC  0.05  0.05  0.03
+X1  T2  4  10  30  0  0  0  2.0  0  0
+GR  105 0   100 10   100 30   105 40
+
+[REPORT]
+INPUT  YES
+NODES  ALL
+LINKS  ALL

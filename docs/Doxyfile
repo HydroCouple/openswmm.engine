@@ -215,7 +215,7 @@ SHORT_NAMES            = NO
 # explicit @brief command for a brief description.)
 # The default value is: NO.
 
-JAVADOC_AUTOBRIEF      = NO
+JAVADOC_AUTOBRIEF      = YES
 
 # If the JAVADOC_BANNER tag is set to YES then Doxygen will interpret a line
 # such as
@@ -234,7 +234,7 @@ JAVADOC_BANNER         = NO
 # a brief description.)
 # The default value is: NO.
 
-QT_AUTOBRIEF           = NO
+QT_AUTOBRIEF           = YES
 
 # The MULTILINE_CPP_IS_BRIEF tag can be set to YES to make Doxygen treat a
 # multi-line C++ special comment block (i.e. a block of //! or /// comments) as
@@ -291,8 +291,8 @@ TAB_SIZE               = 4
 # @} or use a double escape (\\{ and \\})
 
 ALIASES                = "license=\par License^^" \
-                         "description=\par Discription\n" \
-                         "mod=\par Modified\n" \
+                         "description=\par Description^^" \
+                         "mod=\par Modified^^" \
                          "moditem{3}=\b \date\1 \author\2 \3\n" \
                          "status{1}=\htmlonly<span class=\"status-badge\" data-status=\"\1\">\1</span>\endhtmlonly"
 
@@ -999,11 +999,7 @@ INPUT                  = ../README.md \
                          ../src/legacy/engine \
                          ../src/legacy/output \
                          ../src/engine \
-                         ../src/solver \
-                         ../src/output \
                          ../include \
-                         ./images/*.png \
-                         ./manuals/engine/figures/*.png \
                          ./authors.md \
                          ./manuals/manuals.md \
                          ./manuals/engine \
@@ -1483,6 +1479,10 @@ HTML_STYLESHEET        =
 # This tag requires that the tag GENERATE_HTML is set to YES.
 
 HTML_EXTRA_STYLESHEET  = ./custom/css/doxygen-awesome.css \
+                         ./custom/hydrocouple/hc-fonts.css \
+                         ./custom/hydrocouple/hc-tokens.css \
+                         ./custom/hydrocouple/hc-diagrams.css \
+                         ./custom/hydrocouple/hydrocouple-doxygen.css \
                          ./custom/css/manual.css
 
 # The HTML_EXTRA_FILES tag can be used to specify one or more extra images or
@@ -1500,6 +1500,20 @@ HTML_EXTRA_FILES       = custom/js/doxygen-awesome-darkmode-toggle.js \
                          custom/js/doxygen-awesome-tabs.js \
                          custom/js/manual-interactive.js \
                          custom/mathjax-config.js \
+                         custom/hydrocouple/hc-doxygen.js \
+                         custom/hydrocouple/hc-diagrams.js \
+                         custom/hydrocouple/hydrocouple_logo.png \
+                         custom/hydrocouple/inter-greek.woff2 \
+                         custom/hydrocouple/inter-latin-ext.woff2 \
+                         custom/hydrocouple/inter-latin.woff2 \
+                         custom/hydrocouple/jetbrains-mono-greek.woff2 \
+                         custom/hydrocouple/jetbrains-mono-latin-ext.woff2 \
+                         custom/hydrocouple/jetbrains-mono-latin.woff2 \
+                         custom/hydrocouple/sora-latin-ext.woff2 \
+                         custom/hydrocouple/sora-latin.woff2 \
+                         custom/hydrocouple/inter-OFL.txt \
+                         custom/hydrocouple/jetbrainsmono-OFL.txt \
+                         custom/hydrocouple/sora-OFL.txt \
                          manuals/reference/hydraulics/downloads/rubinato2017_review.pdf \
                          manuals/reference/hydraulics/downloads/rubinato2017_steady_comparison.csv \
                          manuals/reference/hydraulics/downloads/rubinato2017_results_summary.json \

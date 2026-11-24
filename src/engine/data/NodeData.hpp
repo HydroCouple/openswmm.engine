@@ -238,6 +238,17 @@ struct NodeData {
     std::vector<double> volume;
 
     /**
+     * @brief Water a junction holds above its crown under NODE_CONTINUITY SEMI_IMPLICIT, beside
+     *        `volume` (ft3).
+     * @details Eq. 3-45 stores a surcharged junction's head change over the conduits' crown-cutoff
+     *          surface area; DWSolver::commitNodeDepthState books that water here. `volume` keeps
+     *          the legacy convention untouched, so no hydraulic reader sees it; the junction's
+     *          water is volume + held_volume (reported volume, mass balance, node mixing). Zero
+     *          below the crown and for every other node and option.
+     */
+    std::vector<double> held_volume;
+
+    /**
      * @brief Current lateral inflow (project flow units).
      * @see Legacy: Node[i].newLatFlow
      */
@@ -372,6 +383,24 @@ struct NodeData {
     std::vector<double> coupling_temp_vol_queue;
     std::vector<double> coupling_age_vol_inflow;
     std::vector<double> coupling_temp_vol_inflow;
+
+    /**
+     * @brief GROSS water of the 1D<->2D exchange, beside the NET `coupling_queue` the
+     *        hydraulics take (1D ft3 queued; ft3/s delivered). `coupling_drain_queue` holds the
+     *        water that carried `coupling_qual_queue`'s mass in (2D drains and aquifer bed
+     *        inflow); `coupling_spill_queue` the 2D spill. Same queue/drain rule as
+     *        `coupling_qual_queue`, so the quality mix divides delivered mass by the water that
+     *        carried it. Mixed with the net instead, mass queued by a drain window could arrive
+     *        after a spill window had netted its water away, and a near-empty node divided it by
+     *        almost nothing. Used only while `coupling_gross` is set.
+     */
+    std::vector<double> coupling_drain_queue;
+    std::vector<double> coupling_spill_queue;
+    std::vector<double> coupling_drain_inflow;
+    std::vector<double> coupling_spill_outflow;
+    /// Set by SurfaceRouter2D while it queues the gross drain/spill water; the passive exchange
+    /// and the FV transport keep the paired net delivery and leave it clear.
+    bool coupling_gross = false;
     bool coupling_tuple_age = false; ///< set by SurfaceRouter2D at initialize
     bool coupling_tuple_temp = false;
 
@@ -570,6 +599,8 @@ struct NodeData {
 
     /** @brief Volume at the previous timestep. */
     std::vector<double> old_volume;
+    /// held_volume at the start of the routing step (save_hyd_state).
+    std::vector<double> old_held_volume;
 
     /** @brief Lateral flow at the previous timestep. */
     std::vector<double> old_lat_flow;
@@ -786,6 +817,7 @@ struct NodeData {
         depth.assign(un, 0.0);
         head.assign(un, 0.0);
         volume.assign(un, 0.0);
+        held_volume.assign(un, 0.0);
         lat_flow.assign(un, 0.0);
         user_lat_flow.assign(un, 0.0);
         runoff_inflow.assign(un, 0.0);
@@ -801,6 +833,10 @@ struct NodeData {
         coupling_temp_vol_queue.assign(un, 0.0);
         coupling_age_vol_inflow.assign(un, 0.0);
         coupling_temp_vol_inflow.assign(un, 0.0);
+        coupling_drain_queue.assign(un, 0.0);
+        coupling_spill_queue.assign(un, 0.0);
+        coupling_drain_inflow.assign(un, 0.0);
+        coupling_spill_outflow.assign(un, 0.0);
         qual_mass_in.clear();
         iface_qual_mass.clear();
         coupling_qual_queue.clear();
@@ -824,6 +860,7 @@ struct NodeData {
         rpt_full_volume.assign(un, 0.0);
         old_depth.assign(un, 0.0);
         old_volume.assign(un, 0.0);
+        old_held_volume.assign(un, 0.0);
         old_lat_flow.assign(un, 0.0);
         old_inflow.assign(un, 0.0);
 
@@ -887,6 +924,7 @@ struct NodeData {
         g(depth, 0.0);
         g(head, 0.0);
         g(volume, 0.0);
+        g(held_volume, 0.0);
         g(lat_flow, 0.0);
         g(user_lat_flow, 0.0);
         g(runoff_inflow, 0.0);
@@ -902,6 +940,10 @@ struct NodeData {
         g(coupling_temp_vol_queue, 0.0);
         g(coupling_age_vol_inflow, 0.0);
         g(coupling_temp_vol_inflow, 0.0);
+        g(coupling_drain_queue, 0.0);
+        g(coupling_spill_queue, 0.0);
+        g(coupling_drain_inflow, 0.0);
+        g(coupling_spill_outflow, 0.0);
         qual_vol_in.resize(un, 0.0);
         lid_drain_qual_vol.resize(un, 0.0);
         lid_drain_qual_vol_old.resize(un, 0.0);
@@ -917,6 +959,7 @@ struct NodeData {
         g(rpt_full_volume, 0.0);
         g(old_depth, 0.0);
         g(old_volume, 0.0);
+        g(old_held_volume, 0.0);
         g(old_lat_flow, 0.0);
         g(old_inflow, 0.0);
         comments.resize(un, std::string{});
@@ -992,6 +1035,7 @@ struct NodeData {
         r(depth);
         r(head);
         r(volume);
+        r(held_volume);
         r(lat_flow);
         r(user_lat_flow);
         r(runoff_inflow);
@@ -1010,6 +1054,10 @@ struct NodeData {
         r(coupling_temp_vol_queue);
         r(coupling_age_vol_inflow);
         r(coupling_temp_vol_inflow);
+        r(coupling_drain_queue);
+        r(coupling_spill_queue);
+        r(coupling_drain_inflow);
+        r(coupling_spill_outflow);
         r(losses);
         r(crown_elev);
         r(degree);
@@ -1018,6 +1066,7 @@ struct NodeData {
         r(rpt_full_volume);
         r(old_depth);
         r(old_volume);
+        r(old_held_volume);
         r(old_lat_flow);
         r(old_inflow);
         r(rpt_flag);
@@ -1075,6 +1124,7 @@ struct NodeData {
         f(&NodeData::depth);
         f(&NodeData::head);
         f(&NodeData::volume);
+        f(&NodeData::held_volume);
         f(&NodeData::lat_flow);
         f(&NodeData::user_lat_flow);
         f(&NodeData::runoff_inflow);
@@ -1091,6 +1141,10 @@ struct NodeData {
         f(&NodeData::coupling_temp_vol_queue);
         f(&NodeData::coupling_age_vol_inflow);
         f(&NodeData::coupling_temp_vol_inflow);
+        f(&NodeData::coupling_drain_queue);
+        f(&NodeData::coupling_spill_queue);
+        f(&NodeData::coupling_drain_inflow);
+        f(&NodeData::coupling_spill_outflow);
         f(&NodeData::qual_vol_in);
         f(&NodeData::lid_drain_qual_vol);
         f(&NodeData::lid_drain_qual_vol_old);
@@ -1107,6 +1161,7 @@ struct NodeData {
         f(&NodeData::rpt_full_volume);
         f(&NodeData::old_depth);
         f(&NodeData::old_volume);
+        f(&NodeData::old_held_volume);
         f(&NodeData::old_lat_flow);
         f(&NodeData::old_inflow);
         f(&NodeData::comments);
@@ -1252,6 +1307,7 @@ struct NodeData {
         depth.shrink_to_fit();
         head.shrink_to_fit();
         volume.shrink_to_fit();
+        held_volume.shrink_to_fit();
         lat_flow.shrink_to_fit();
         user_lat_flow.shrink_to_fit();
         runoff_inflow.shrink_to_fit();
@@ -1267,6 +1323,10 @@ struct NodeData {
         coupling_temp_vol_queue.shrink_to_fit();
         coupling_age_vol_inflow.shrink_to_fit();
         coupling_temp_vol_inflow.shrink_to_fit();
+        coupling_drain_queue.shrink_to_fit();
+        coupling_spill_queue.shrink_to_fit();
+        coupling_drain_inflow.shrink_to_fit();
+        coupling_spill_outflow.shrink_to_fit();
         qual_mass_in.shrink_to_fit();
         iface_qual_mass.shrink_to_fit();
         coupling_qual_queue.shrink_to_fit();
@@ -1288,6 +1348,7 @@ struct NodeData {
         rpt_full_volume.shrink_to_fit();
         old_depth.shrink_to_fit();
         old_volume.shrink_to_fit();
+        old_held_volume.shrink_to_fit();
         old_lat_flow.shrink_to_fit();
         old_inflow.shrink_to_fit();
 
@@ -1337,6 +1398,7 @@ struct NodeData {
     void save_hyd_state() noexcept {
         std::copy(depth.begin(), depth.end(), old_depth.begin());
         std::copy(volume.begin(), volume.end(), old_volume.begin());
+        std::copy(held_volume.begin(), held_volume.end(), old_held_volume.begin());
         std::copy(inflow.begin(), inflow.end(), old_inflow.begin());
         // Save net inflow for trapezoidal averaging in next step
         for (std::size_t i = 0; i < inflow.size(); ++i) {
@@ -1374,7 +1436,9 @@ struct NodeData {
         }
         // Volumes must be computed from init_depth by caller (needs table data)
         std::fill(volume.begin(), volume.end(), 0.0);
+        std::fill(held_volume.begin(), held_volume.end(), 0.0);
         std::fill(old_volume.begin(), old_volume.end(), 0.0);
+        std::fill(old_held_volume.begin(), old_held_volume.end(), 0.0);
         // Zero flows
         std::fill(lat_flow.begin(), lat_flow.end(), 0.0);
         std::fill(inflow.begin(), inflow.end(), 0.0);
@@ -1397,6 +1461,10 @@ struct NodeData {
         std::fill(coupling_temp_vol_queue.begin(), coupling_temp_vol_queue.end(), 0.0);
         std::fill(coupling_age_vol_inflow.begin(), coupling_age_vol_inflow.end(), 0.0);
         std::fill(coupling_temp_vol_inflow.begin(), coupling_temp_vol_inflow.end(), 0.0);
+        std::fill(coupling_drain_queue.begin(), coupling_drain_queue.end(), 0.0);
+        std::fill(coupling_spill_queue.begin(), coupling_spill_queue.end(), 0.0);
+        std::fill(coupling_drain_inflow.begin(), coupling_drain_inflow.end(), 0.0);
+        std::fill(coupling_spill_outflow.begin(), coupling_spill_outflow.end(), 0.0);
         clearInflowSources();
         std::fill(conc.begin(), conc.end(), 0.0);
         std::fill(conc_old.begin(), conc_old.end(), 0.0);

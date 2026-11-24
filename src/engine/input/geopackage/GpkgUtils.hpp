@@ -351,6 +351,22 @@ inline std::vector<uint8_t> column_blob(sqlite3_stmt* stmt, int col) {
     return {data, data + size};
 }
 
+/**
+ * @brief Step a write statement and throw when it does not finish.
+ *
+ * @param[in] db Connection that prepared @p statement; its message becomes the error text.
+ * @param[in] statement Bound statement expected to return SQLITE_DONE. It is reset on failure.
+ * @throws GpkgError carrying the SQLite result code for any other result.
+ */
+inline void checked_model_step(sqlite3* db, sqlite3_stmt* statement) {
+    const int rc = sqlite3_step(statement);
+    if (rc != SQLITE_DONE) {
+        const std::string error = sqlite3_errmsg(db);
+        sqlite3_reset(statement);
+        throw GpkgError(error, rc);
+    }
+}
+
 // RAII transaction guard.
 //
 // The destructor rolls a not-yet-committed transaction back, but does so

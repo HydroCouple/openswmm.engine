@@ -180,10 +180,11 @@ WE water equivalent
 - **Figure 4-2** The Horton infiltration curve
 - **Figure 4-3** Cumulative infiltration F as the area under the Horton curve
 - **Figure 4-4** Regeneration (recovery) of infiltration capacity during dry time steps
-- **Figure 4-5** Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006)
+- **Figure 4-5** Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006): (a) the wetted zone at θs above the wetting front and the unwetted zone at θi below it; (b) the moisture profile, whose shaded area is the cumulative infiltration F = Lsθd (synthetic, the example of Figure 4-6 at F = 1.0 in, so Ls = 5.0 in)
 - **Figure 4-6** Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method
 - **Figure 4-7** Green-Ampt recovery parameters as functions of hydraulic conductivity
 - **Figure 4-8** Infiltration rates produced by different methods for a 2-inch rainfall event.
+- **Figure 4-9** The frozen-ground slab at its defaults: (a) temperature T (°C) and frozen fraction φ against the enthalpy H (MJ/m²), with the 0 °C plateau of width Hf = 15.0 MJ/m²; (b) the infiltration factor Fo = (1 − φ)m for m = 2, 11 and 25; (c) the four heat contacts, with conductances in W/m²·K for a 50 mm snow pack and 5 mm/h of infiltration (synthetic, from the engine's slab functions)
 
 - **Figure 5-1** Definitional sketch of the two-zone groundwater model.
 - **Figure 5-2** Heights used to compute lateral groundwater flow rate.
@@ -199,8 +200,8 @@ WE water equivalent
 - **Figure 6-2** Subcatchment partitionings used for snowmelt and runoff.
 - **Figure 6-3** Seasonal variation of melt coefficients.
 - **Figure 6-4** Typical areal depletion curve for natural area (Anderson, 1973, p. 3-15) and temporary curve for new snow.
-- **Figure 6-5** Effect of snow cover on areal depletion curves.
-- **Figure 6-6** Schematic of liquid water routing through snow pack.
+- **Figure 6-5** Effect of snow cover on areal depletion curves: (a) five curves A to E, (b) the definition sketch, (c)–(g) the pack under each curve at AWESI = 1.0, 0.8, 0.6 and 0.3, with its cover ASC and actual depth WS in multiples of SI (synthetic; ASC from the engine's ten-point curve interpolation, curve B being the natural-area curve of Figure 6-4).
+- **Figure 6-6** Schematic of liquid water routing through snow pack: (a) the pack and its free water; (b) melt entering and runoff leaving one pack, in in/hr; (c) its free water FW against the capacity FWFRAC × WSNOW, in inches (synthetic; a prescribed melt routed with the engine's free-water steps, WSNOW = 1 in at the start, FWFRAC = 0.10, no rain).
 - **Figure 6-7** Continuous air temperature for illustrative snowmelt example.
 - **Figure 6-8** Precipitation amounts for illustrative snowmelt example.
 - **Figure 6-9** Snow pack depth for illustrative snowmelt example.
@@ -224,7 +225,10 @@ WE water equivalent
 
 - **Figure 9-1** One aquifer column and its fluxes, with the unsaturated zone held as a bulk store (closure A) and as sigma layers (closure B)
 - **Figure 9-2** Retention and relative conductivity of the four soil-characteristic laws at their default parameters
-- **Figure 9-3** Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it
+- **Figure 9-3** The capillary (`CAPILLARY_DIFF YES`) and kinematic (`NO`) σ columns under the same hour of rain: θ in each of eight layers against depth below the ground at the start, 1 h and 6 h, with the water table (dashed), and the rise of the table in mm (simulated, `mesh_hydrology/mesh_hydrology.inp` with every cell on `CLOSURE SIGMA`, `HG0` 3.0 m and a 6 h run; cell 4, `WOODS`)
+- **Figure 9-4** How `GW_FACE_CAP` shares a short donor's unreserved water among its three faces: each face's share-capped demand, and what `RATIO` and `SEQUENTIAL` (in two face orders) let through, in m³ per face pass (synthetic, from the engine's face-cap rules)
+- **Figure 9-5** Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it
+- **Figure 9-6** When three aquifer cells fire under `GW_CLOCK INDEPENDENT` (stiff cell A subcycling at 0.25 s, B at 8 s, C at 32 s with a budget-triggered early update), against the surface's tiers and against the shared ladder; and the receipts waiting at cell C, in m³, against its budget (synthetic, from a replica of the engine's clock with `GW_BASE_STEP AUTO` = 1 s and the default budget keys)
 
 <!-- END GENERATED -->
 

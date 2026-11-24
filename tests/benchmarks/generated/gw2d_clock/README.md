@@ -172,13 +172,13 @@ legacy comparison and failure exit status. The reference's build/patch provenanc
 and exact production-INDEPENDENT equivalence must be retained. Approved saved-run
 reanalysis is under `tests/output/gw2d_clock_2026-10-31/node_reference_amendment/`.
 
-`matched_node_reference.patch` is the minimal diagnostic change for a separate
-reference build: both SHARED and INDEPENDENT use actual sub-millimetre recharge
-geometry. Apply it only to a separate reference source copy, build its CLI, and
-pass that CLI as `REFERENCE_ENGINE`. Record its source/patch/library hashes and
-verify its INDEPENDENT node outputs are identical to the production CLI. This
-reference is qualified for the node fixture; it is not a production mode or a
-replacement for the SHARED exact-output regression suite.
+**Since 2026-11-18 production SHARED is the matched reference.** Both clocks use
+the actual sub-millimetre recharge geometry and the corrected drainage sign, so
+the separate reference build is no longer needed: all 18 node gates pass at
+`GW_BASE_STEP AUTO` against production SHARED with zero error (run
+`gw_clock_node_accuracy.py ENGINE OUTPUT --gw-base-step AUTO` without
+`--reference-engine`). The former `matched_node_reference.patch` no longer
+applies to the source and was removed; its history is in git.
 
 The eight near-zero-return producer-convergence failures are resolved at unchanged
 limits. INDEPENDENT uses actual sub-mm storage geometry with the existing recharge

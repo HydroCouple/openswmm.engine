@@ -55,6 +55,7 @@ static double Xrightbank;              // station where right overbank begins
 static double Xfactor;                 // multiplier for station spacing
 static double Yfactor;                 // factor added to station elevations
 static double Lfactor;                 // main channel/flood plain length
+static int LastSlice;                  // slice that ends the last sub-section
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)
@@ -187,6 +188,14 @@ int transect_readParams(int* count, char* tok[], int ntoks)
                 return error_setInpError(ERR_NUMBER, tok[i]);
         }
 
+        // --- the layout given in the manual has three placeholder zeros
+        //     before Lfactor (11 items) instead of two (10 items)
+        if (ntoks >= 11)
+            for (i = 7; i < 10; i++) {
+                if (!getDouble(tok[i + 1], &x[i]))
+                    return error_setInpError(ERR_NUMBER, tok[i + 1]);
+            }
+
         // --- update total transect count
         *count = index + 1;
 
@@ -272,6 +281,10 @@ void transect_validate(int j) {
     Nstations++;
     Station[Nstations] = Station[Nstations - 1];
     Elev[Nstations] = Elev[0];
+
+    // --- the right end wall belongs to the last sub-section, as the
+    //     left end wall belongs to the first one
+    LastSlice = Nstations;
 
     // --- create geometry tables
     Transect[j].nTbl = N_TRANSECT_TBL;
@@ -413,9 +426,9 @@ int setParams(int j, char* id, double x[]) {
     Xfactor = x[8]; // station location multiplier
     if (Xfactor == 0.0)
         Xfactor = 1.0;
-    Xleftbank *= Xfactor;         // adjusted left bank
-    Xrightbank *= Xfactor;        // adjusted right bank
-    Yfactor = x[9] / UCF(LENGTH); // elevation offset
+    Xleftbank = x[3] * Xfactor / UCF(LENGTH);  // adjusted left bank
+    Xrightbank = x[4] * Xfactor / UCF(LENGTH); // adjusted right bank
+    Yfactor = x[9] / UCF(LENGTH);              // elevation offset
     Nstations = 0;
     return 0;
 }
@@ -602,7 +615,7 @@ double getFlow(int k, double a, double wp, int findFlow) {
 
     if (findFlow == FALSE) {
         // --- flow needs updating if we are at last station
-        if (k == Nstations - 1)
+        if (k == LastSlice)
             findFlow = TRUE;
 
         // --- flow needs updating if we are at end of left overbank and
@@ -728,6 +741,9 @@ void transect_createStreetTransect(TStreet* street)
         Nstations = 8;
         street->transect.nTbl = N_TRANSECT_TBL;
     }
+
+    // --- the last slice (crown or right sidewalk) forms its own sub-section
+    LastSlice = Nstations - 1;
 
     // --- assign Manning's N to street
     Nchannel = street->roughness;

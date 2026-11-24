@@ -363,6 +363,16 @@ the computed flow value:
 \f[f_{S} = \left\lbrack 1 - \left( \frac{H_{2}}{H_{1}} \right)^{1.5} \right\rbrack^{0.385}\f]   
 (6-13)
 
+In the SWMM 5 code a bottom orifice whose downstream head *H*<sub>2</sub> is
+above *Z*<sub>O</sub> uses the head difference *H*<sub>1</sub> - *H*<sub>2</sub> of Equation 6-6
+both to decide whether it is in its weir regime and in the weir
+formula, and then applies Equation 6-13 as well, so the submergence is
+counted twice. Where the two regimes should meet (Equation 6-10) the
+flow then jumps by 1/*f*<sub>S</sub>. OpenSWMM keeps this under the default
+`NODE_CONTINUITY EXPLICIT`, and does not apply the factor to such an
+orifice under `SEMI_IMPLICIT` (Section 3.5 and Figure 3-11 of
+@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
+
 ### 6.2.4 Flap Gate Head Loss Adjustment
 
 When an orifice has a flap gate it adds a small amount of head loss for
@@ -430,6 +440,10 @@ compute *Q* it is:
 
 \f[\frac{dQ}{dH} = 1.5\frac{Q}{\left( H_{1} - Z_{O} \right)}\f]   
 (6-17)
+
+Under `NODE_CONTINUITY SEMI_IMPLICIT` the flow of a submerged orifice at
+nearly equal heads and its derivative follow Section 3.5 and Figure 3-11 of
+@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3".
 
 ### 6.2.6 Summary of Orifice Computations
 
@@ -848,6 +862,11 @@ Note: For trapezoidal openings, *Q*<sub>R</sub> is the flow through the central
 rectangular portion and *Q*<sub>T</sub> is the flow through the triangular end
 portions (see Equation 6-20).
 
+These derivatives are taken before the submergence factor of Equation
+6-26. Under `NODE_CONTINUITY SEMI_IMPLICIT` the flow of a submerged or
+surcharged weir at nearly equal heads and its derivative follow Section
+3.5 and Figure 3-11 of @ref hydraulics_ref_ch3_dynamic_wave "Chapter 3".
+
 ### 6.3.8 Summary of Weir Computations
 
 The computational steps used to compute flow through a weir link can be
@@ -970,6 +989,12 @@ must be computed:
 
 5.  Multiply *Q* by whatever outlet setting is currently in effect and
     change its sign if reverse flow occurs.
+
+Under dynamic wave analysis an outlet's \f$\frac{dQ}{dH}\f$ is 0. Under
+`NODE_CONTINUITY SEMI_IMPLICIT`, below an effective head of 0.05 ft the
+flow instead runs linearly from zero to its rated value at 0.05 ft, and
+\f$\frac{dQ}{dH}\f$ is the slope of that line (Section 3.5 and Figure 3-11 of
+@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
 
 
 

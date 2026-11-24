@@ -33,6 +33,8 @@ struct GroundPorewaterColumn {
      * - unnamed transport owner (in,out): Canonical transport owner with matching SIGMA
      * species/layers and cell extent.
      * - cell (in): Target cell index in that owner.
+     * - claims (in): Optional current saturated outgoing reservation per species; null keeps
+     * the map's own (see SigmaPorewaterMap::publish).
      * @return Empty when inactive or successfully published/refreshed; otherwise
      * sigma.publish()'s diagnostic, without refreshing the derived views. The map handles
      * pending receipt validation.
@@ -40,7 +42,8 @@ struct GroundPorewaterColumn {
      * access to both objects and must occur at the phase where pending contact receipts become
      * canonical.
      */
-    std::string publishSigma(SubsurfaceTransportState&, int cell);
+    std::string publishSigma(SubsurfaceTransportState&, int cell,
+                             const std::vector<double>* claims = nullptr);
     /**
      * @brief Rebuild physical-layer mass and reservation views from an active SIGMA overlap map.
      * @note Does nothing without an active map. Otherwise zeros mass/reserved_out and gathers

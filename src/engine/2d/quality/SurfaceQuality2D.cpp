@@ -46,6 +46,7 @@
 #include "../data/SurfaceTransportState.hpp"
 #include "../../core/DateTime.hpp"
 #include "../../core/SimulationContext.hpp"
+#include "../../core/Constants.hpp"
 #include "../../core/UnitConversion.hpp"
 #include "../../input/InputParseUtils.hpp"
 #include "../../input/Tokenizer.hpp"
@@ -57,11 +58,10 @@ namespace {
 
 constexpr double kSqMPerAcre = 4046.8564224;
 constexpr double kSqMPerHa = 10000.0;
-constexpr double kM3PerFt3 = 0.028316846592;
 // legacy consts.h MIN_RUNOFF, 2.31481e-8 ft/s (0.001 in/hr), in m/s — the
 // subcatchment kernel's dry/wet threshold for buildup and washoff
 // (Multispecies Phase 2, S5; this was 1e-9 ft/s, the old MSX copy's value).
-constexpr double kMinRunoffMs = 2.31481e-8 * 0.3048;
+constexpr double kMinRunoffMs = 2.31481e-8 * ucf::FT_TO_M;
 
 /**
  * @brief Compare a C++ token with a nonnull zero-terminated keyword ignoring case.
@@ -648,7 +648,7 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
     if (tr.gained_washoff.size() != static_cast<std::size_t>(tr.n_species))
         tr.gained_washoff.assign(static_cast<std::size_t>(tr.n_species), 0.0);
 
-    const double dt_days = dt_runoff / ucf::SEC_PER_DAY;
+    const double dt_days = dt_runoff / constants::SEC_PER_DAY;
     // washoff-law unit factors
     const double q_to_display = si_ ? 1000.0 * 3600.0 : 39.3700787 * 3600.0; // m/s → mm/hr | in/hr
     const double ucf_flow = ucf::UCF(ucf::FLOW, ctx.options);                // cfs → display flow
@@ -670,7 +670,7 @@ void SurfaceQuality2D::step(const SimulationContext& ctx, const MeshData& mesh,
         const double q_ms = (area_m2 > 0.0) ? v_out / dt_runoff / area_m2 : 0.0; // m/s
         const double Q_m3s = v_out / dt_runoff;
         const double q_expon = q_ms * q_to_display;
-        const double q_flow = (Q_m3s / kM3PerFt3) * ucf_flow;
+        const double q_flow = (Q_m3s / ucf::FT3_TO_M3_EXACT) * ucf_flow;
         if (q_ms >= kMinRunoffMs)
             wet_runoff_vol_[uc] += v_out;
 

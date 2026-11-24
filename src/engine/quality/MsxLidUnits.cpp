@@ -106,7 +106,7 @@ void initializeUnits(SimulationContext& c, const lid::LIDSolver& solver) {
                 for (int sp = 0; sp < ns; ++sp) {
                     const double mass = r.init_global[sp] * v[k];
                     s.mass[(flat * layers + k) * ns + sp] = mass;
-                    r.surface.led_init_buildup[sp] += mass * 28.317 * r.surface.mcf[sp];
+                    r.surface.led_init_buildup[sp] += mass * ucf::FT3_TO_L * r.surface.mcf[sp];
                 }
             }
         }
@@ -195,10 +195,11 @@ void routeUnits(SimulationContext& c, const lid::LIDSolver& solver, double dt) {
                     const auto index = std::size_t(sc) * ns + sp;
                     const double runon =
                         index < r.surface.runon_qual_rate.size()
-                            ? r.surface.runon_qual_rate[index] * dt * fraction / 28.317
+                            ? r.surface.runon_qual_rate[index] * dt * fraction / ucf::FT3_TO_L
                             : 0.;
                     arrivals[first * ns + sp] = cr * rain + runon;
-                    r.surface.led_wet_deposition[sp] += cr * rain * 28.317 * r.surface.mcf[sp];
+                    r.surface.led_wet_deposition[sp] +=
+                        cr * rain * ucf::FT3_TO_L * r.surface.mcf[sp];
                 }
                 const double surface = std::max(0., g.surface_runoff[u]) * area * dt;
                 const double drain = std::max(0., g.drain_flow[u]) * area * dt;
@@ -227,7 +228,7 @@ void routeUnits(SimulationContext& c, const lid::LIDSolver& solver, double dt) {
                             }
                             reactPool(c, control, k + 1, pool, mass, dt, temp, reacted, clamped);
                             for (int sp = 0; sp < ns; ++sp) {
-                                const double factor = 28.317 * r.surface.mcf[sp];
+                                const double factor = ucf::FT3_TO_L * r.surface.mcf[sp];
                                 r.surface.led_reacted[sp] += reacted[sp] * factor;
                                 r.surface.led_reaction_clamped[sp] += clamped[sp] * factor;
                             }
@@ -249,7 +250,7 @@ void routeUnits(SimulationContext& c, const lid::LIDSolver& solver, double dt) {
                             if (k == drain_layer)
                                 s.drain_conc[flat * ns + sp] = drain > 0 ? concentration : 0.;
                             r.surface.led_infil_loss[sp] +=
-                                concentration * vi * 28.317 * r.surface.mcf[sp];
+                                concentration * vi * ucf::FT3_TO_L * r.surface.mcf[sp];
                             mass[sp] = std::max(0., mass[sp] - concentration * outgoing);
                         }
                         s.old_water[flat * layers + k] = water[k];

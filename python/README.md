@@ -94,7 +94,7 @@ OpenSWMM Engine is a community-driven, open-source continuation of the EPA Storm
 #### Implemented
 
 - **Semi-Implicit Node Continuity** — Single-equation free-surface/surcharge formulation that removes the legacy two-branch discontinuity. Enabled via `NODE_CONTINUITY SEMI_IMPLICIT` (default). [Reference »](https://hydrocouple.org/openswmm.engine)
-- **Anderson Acceleration for Picard Iteration** — Depth-2 mixing of residual history cuts iteration counts 25–50% on stiff surcharge transitions with safe fall-back to standard Picard. Enabled via `ANDERSON_ACCEL YES`.
+- **Anderson Acceleration for Picard Iteration** — Two-point mixing of each node's last two head updates where the update is smooth, with fall-back to standard Picard elsewhere. Whether it saves iterations depends on the network (hydraulics manual §3.6). Enabled via `ANDERSON_ACCEL YES`.
 - **Spatially Explicit Overland Flow & Groundwater (2D)** — 2D overland-flow grid coupled to the 1D pipe network. Surcharge re-routes over terrain to downstream nodes, lateral groundwater exchanges are tracked explicitly, and green-infrastructure placement is spatially resolved.
 - **Dynamic Preissmann Slot** — Geometry-dependent slot width replaces the fixed-width slot at the free-surface / pressurized transition, improving stability for rapidly filling or draining conduits.
 - **Physics-Based Initial Abstraction Recovery** — RDII initial abstraction now evolves as an exponential depletion/recovery process with additive base + thermal recovery rates and frozen-ground suppression. Seasonal RDII variation emerges from temperature dynamics on a single RTK set per sewershed — no monthly parameter tables required. Configured via the new `[RDII_DECAY]` input section.

@@ -89,7 +89,6 @@ struct CompletedSubareaWater {
 constexpr double MEXP =
     1.6666667; ///< Manning's exponent (legacy subcatch.c:55 literal — match bit-for-bit, NOT 5.0/3.0)
 constexpr double ODETOL = 0.0001; ///< ODE solver tolerance (matching legacy)
-constexpr double PHI = 1.486;     ///< Manning's US customary constant
 
 // ============================================================================
 // Per-subcatchment subarea state (SoA for vectorization)

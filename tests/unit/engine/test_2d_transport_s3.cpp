@@ -254,20 +254,15 @@ TEST(SurfaceTransportS3, DrainDeliversCellConcentrationToTheNode) {
     for (double q : ctx.nodes.coupling_qual_queue)
         queued += q;
     const double received = ctx.mass_balance.qual_routing_ex_in[0] + queued;
-    // What the 1D quality path received must be EXACTLY c0 × the volume the
-    // 2D→1D out-ledger booked. The rim exchange flip-flops across whole
-    // windows (the check measured 98 m³ spilled back over a 50 m³ pond — the
-    // pond recycles), and the two sides split cleanly by window sign:
-    // positive-net windows put their volume in the out-ledger and their mass
-    // (at the cell's c0) in the queue — this identity; negative-net windows
-    // subtract volume from the SIGNED volume queue and their mass leaves the
-    // node implicitly through its volume drop at the mixed concentration —
-    // which is what keeps J1 reading exactly c0 (the first assert). The
-    // within-window mixing residue is the pairing debit and has no ledger of
-    // its own. Measured: 20898.1528 == 4 × 147.9424 × f to the digit.
-    EXPECT_NEAR(received, c0 * drained * f, 1.0e-9 * c0 * drained * f)
-        << "the queue's delivered mass does not match c0 × the out-ledger "
-           "volume: mass and volume queues drained by different rules";
+    // What the 1D quality path received must be EXACTLY the mass the 2D
+    // drained, gross: the node is handed every drain window's mass with the
+    // gross water that carried it (NodeData::coupling_drain_queue), and the
+    // rim's spill-backs leave the node as booked outflow at its mixed
+    // concentration. The pairing this replaced handed the node only the
+    // net-positive windows' mass with net water, so a drain window's mass could
+    // arrive after a spill window had netted its water away.
+    EXPECT_NEAR(received, tr.lost_coupling[0] * f, 1.0e-9 * c0 * drained * f)
+        << "the 1D did not receive the 2D's gross drained mass";
     close(r);
 }
 

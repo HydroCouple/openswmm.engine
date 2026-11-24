@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Radiation.hpp"
 #include "ClimateFile.hpp"
 #include "surface/SolarGeometry.hpp"
@@ -39,7 +40,7 @@ std::string seriesAverage(SimulationContext& ctx, int index, double date, double
     if (index < 0 || index >= int(ctx.tables.count()))
         return "Radiation time series was not found.";
     auto& table = ctx.tables[index];
-    const double end = date + seconds / 86400.;
+    const double end = date + seconds / constants::SEC_PER_DAY;
     if (table.x.empty() || table.y.size() != table.x.size() ||
         (coverage && (date < table.x.front() || end > table.x.back())))
         return "Time series " + table.id + " does not cover the forcing interval.";
@@ -113,7 +114,6 @@ double dailyRange(SimulationContext& ctx, double date) {
  * Near-zero curve-period denominators use legacy finite fallbacks; input validity,
  * interval length and finite output are not checked here. */
 double meanDailyTemperature(const ClimateState& s, double a, double b) {
-    const double pi = 3.14159265358979323846;
     double sum = 0;
     const auto integrate = [&](double lo, double hi, double base, double amplitude, double phase,
                                double frequency) {
@@ -125,8 +125,8 @@ double meanDailyTemperature(const ClimateState& s, double a, double b) {
                        (std::cos(phase + frequency * lo) - std::cos(phase + frequency * hi)) /
                        frequency;
     };
-    const double night = pi / (std::abs(s.dydif) > 1e-10 ? s.dydif : 1.);
-    const double daylight = pi / (std::abs(s.dhrdy) > 1e-10 ? s.dhrdy : -1.);
+    const double night = constants::PI_EXACT / (std::abs(s.dydif) > 1e-10 ? s.dydif : 1.);
+    const double daylight = constants::PI_EXACT / (std::abs(s.dhrdy) > 1e-10 ? s.dhrdy : -1.);
     integrate(0, s.hrsr, s.tmin_daily, .5 * (s.prev_tmax - s.tmin_daily), night * s.hrsr, -night);
     integrate(s.hrsr, s.hrss, .5 * (s.tmin_daily + s.tmax_daily),
               .5 * (s.tmax_daily - s.tmin_daily), daylight * s.hrday, -daylight);
@@ -189,8 +189,8 @@ std::string initializeRadiation(SimulationContext& ctx) {
         if (ctx.options.end_date > ctx.options.start_date) {
             std::array<double, 5> values;
             const auto error = ctx.snowpacks.meteorology.average(
-                ctx.options.start_date, (ctx.options.end_date - ctx.options.start_date) * 86400.,
-                values);
+                ctx.options.start_date,
+                (ctx.options.end_date - ctx.options.start_date) * constants::SEC_PER_DAY, values);
             if (!error.empty())
                 return error;
         }
@@ -253,7 +253,8 @@ std::string initializeRadiation(SimulationContext& ctx) {
 }
 std::string resolveRadiation(SimulationContext& ctx, double date, double seconds,
                              RadiationState& output) {
-    if (!std::isfinite(date) || !std::isfinite(seconds) || seconds <= 0 || seconds > 86400)
+    if (!std::isfinite(date) || !std::isfinite(seconds) || seconds <= 0 ||
+        seconds > constants::SEC_PER_DAY_INT)
         return "Invalid radiation interval.";
     const auto& cfg = ctx.snowpacks.config;
     const auto& climate = ctx.climate_state;
@@ -261,7 +262,7 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
     RadiationState next;
     next.date = date;
     next.seconds = seconds;
-    next.temperature = (climate.temperature - 32) * 5 / 9;
+    next.temperature = (climate.temperature - constants::F_AT_0C) * 5 / 9;
     next.humidity = climate.humidity * .01;
     next.wind = climate.wind_speed * .44704;
     // Legacy dtlong is a solar-time correction in hours; when longitude is
@@ -365,11 +366,11 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
                 !error.empty())
                 return error;
             if (si)
-                temperature = temperature * 1.8 + 32;
+                temperature = temperature * constants::F_PER_C + constants::F_AT_0C;
             temperature += climate.adjust_temp[mon];
         } else if (ctx.options.temp_source == 2 && !ctx.snowpacks.daily_weather.empty()) {
             double sum = 0, span = 0;
-            const double end = date + seconds / 86400.;
+            const double end = date + seconds / constants::SEC_PER_DAY;
             for (double a = date; a < end;) {
                 const double day = std::floor(a), b = std::min(end, day + 1);
                 const auto& records = ctx.snowpacks.daily_weather;
@@ -399,7 +400,8 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
             if (row != rows.end())
                 wind = row->wind;
         }
-        next.temperature = (ctx.forcing.effective_temperature(temperature) - 32) * 5 / 9;
+        next.temperature =
+            (ctx.forcing.effective_temperature(temperature) - constants::F_AT_0C) * 5 / 9;
         next.wind = ctx.forcing.effective_wind(wind) * .44704;
         double humidity = ctx.options.humidity[mon];
         if (climate.humidity_ts_index >= 0)
@@ -408,18 +410,20 @@ std::string resolveRadiation(SimulationContext& ctx, double date, double seconds
                 !error.empty())
                 return error;
         if (ctx.options.humidity_var == 1) {
-            const double dew = si ? humidity : (humidity - 32) * 5 / 9;
+            const double dew = si ? humidity : (humidity - constants::F_AT_0C) * 5 / 9;
             humidity =
                 100 * saturatedVapourPressure(dew) / saturatedVapourPressure(next.temperature);
         }
         next.humidity = std::clamp(humidity * .01, 0., 1.);
     } else {
-        next.temperature =
-            (ctx.forcing.effective_temperature(next.temperature * 1.8 + 32) - 32) * 5 / 9;
+        next.temperature = (ctx.forcing.effective_temperature(
+                                next.temperature * constants::F_PER_C + constants::F_AT_0C) -
+                            constants::F_AT_0C) *
+                           5 / 9;
         next.wind = ctx.forcing.effective_wind(next.wind / .44704) * .44704;
     }
     if (next.longwave_source == RadiationOrigin::Computed) {
-        const double kelvin = next.temperature + 273.15;
+        const double kelvin = next.temperature + constants::KELVIN_OFFSET;
         const double vapour =
             std::max(0., saturatedVapourPressure(next.temperature) * next.humidity);
         const double emissivity = 1.08 * (1 - std::exp(-std::pow(vapour / 100, kelvin / 2016)));
@@ -453,7 +457,8 @@ std::string resolveUebForcing(SimulationContext& ctx, double date, double second
         next.cosine = geometry.cosine;
         if (ctx.snowpacks.config.division_temperature)
             next.snow_fraction =
-                next.temperature <= (ctx.climate_state.snow_divt - 32) * 5 / 9 ? 1 : 0;
+                next.temperature <= (ctx.climate_state.snow_divt - constants::F_AT_0C) * 5 / 9 ? 1
+                                                                                               : 0;
         // Preserve measured horizontal radiation at night as the reference
         // does. A zero astronomical denominator cannot define a slope ratio.
         next.shortwave = slope == 0 || geometry.horizontal <= 0

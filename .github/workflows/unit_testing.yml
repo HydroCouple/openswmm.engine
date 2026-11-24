@@ -180,6 +180,7 @@ jobs:
           path: |
             build-${{ matrix.vcpkg_triplet }}/Testing/Temporary/
             build-${{ matrix.vcpkg_triplet }}/unit-tests.xml
+            build-${{ matrix.vcpkg_triplet }}/CMakeFiles/CMakeConfigureLog.yaml
           if-no-files-found: ignore
 
       - name: Diagnose Linux unit-test segfaults (gdb)

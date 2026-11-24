@@ -59,11 +59,35 @@ jobs:
           python/tests/engine/test_atomic_editor_records.py python/tests/engine/test_native_split.py
           python/tests/engine/test_checked_authoring.py python/tests/engine/test_passive_material.py -q
 
+  ontology:
+    name: Ontology against this catalog
+    # water-ontology generates its SWMM model classes from catalog.json. Additions need
+    # nothing there; a path it uses that disappears is a schema migration, so it fails here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: HydroCouple/water-ontology
+          # The branch that has --compat; change to main once it is merged.
+          ref: feature/governed-swmm-sqlite
+          path: downstream/water-ontology
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pyyaml
+      - name: Ontology catalog compatibility
+        working-directory: downstream/water-ontology
+        run: >-
+          python -m generators.catalog_to_linkml
+          --catalog "$GITHUB_WORKSPACE/python/openswmm/engine/catalog.json" --compat
+
   downstream:
-    name: MCP and gymnasium against this catalog
+    name: MCP, gymnasium and the platform against this commit
     # The MCP server and gymnasium address the engine through catalog.json paths; this
     # job runs their catalog contract tests on bindings built from this commit, so a
-    # catalog change that breaks them fails here rather than after a release.
+    # catalog change that breaks them fails here rather than after a release. The
+    # platform's runners drive the Solver directly, so its engine tests run here too.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -77,17 +101,25 @@ jobs:
           repository: HydroCouple/openswmm.gymnasium
           ref: dev
           path: downstream/openswmm.gymnasium
+      - uses: actions/checkout@v5
+        with:
+          repository: HydroCouple/hydrocouple.platform
+          ref: dev
+          path: downstream/hydrocouple.platform
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev libhdf5-dev
       - run: python -m pip install 'cmake>=4.3' ninja 'Cython>=3.0.12' numpy pytest
-      - name: Configure bindings (2D without HDF5, as in the WebAssembly build)
+      # HDF5 model I/O is on because the platform's twin keeps its state in an HDF5 restart
+      # record, as the released wheels can; the 2D results writer stays off, as in the
+      # WebAssembly build.
+      - name: Configure bindings (HDF5 restart records, 2D without its HDF5 results writer)
         run: >-
           cmake -S python -B build/python-downstream -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DOPENSWMM_BUILD_GPU_PLUGIN=OFF
-          -DOPENSWMM_WITH_HDF5=OFF
+          -DOPENSWMM_WITH_HDF5=ON
           -DOPENSWMM_2D_HDF5_OUTPUT=OFF
           -DPython_EXECUTABLE=$(which python)
       - run: cmake --build build/python-downstream --parallel 2
@@ -99,6 +131,7 @@ jobs:
           python -m pip install 'gymnasium>=1.0' 'pydantic>=2' 'pydantic-settings>=2' \
             'platypus-opt>=1.2' 'fastmcp>=3.2,<4' pytest-asyncio
           python -m pip install --no-deps -e downstream/openswmm.gymnasium -e downstream/openswmm.mcp
+          python -m pip install -e 'downstream/hydrocouple.platform[server,agent]' pgserver
       - name: MCP catalog contracts
         working-directory: downstream/openswmm.mcp
         env:
@@ -109,3 +142,8 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/openswmm
         run: python -m pytest tests/unit/test_catalog_fields.py tests/unit/test_engine_capabilities.py -q
+      - name: Platform simulations and studies on these bindings
+        working-directory: downstream/hydrocouple.platform
+        env:
+          PYTHONPATH: ${{ runner.temp }}/openswmm
+        run: python -m pytest -m "engine and not k8s" -q

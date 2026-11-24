@@ -35,16 +35,9 @@ namespace forcemain {
 
 // Both friction laws now live in HydClosureKernels.hpp so the identical bodies
 // compile for the host solvers and for the device backend; these are the
-// public entry points and nothing more.
-//
-// The kernel header cannot include Constants.hpp (it has to stay
-// dependency-free for the plugin build), so it carries its own copy of the
-// viscosity. Pin the two together here: getting them out of step shifted the
-// Darcy-Weisbach slope by 0.7 % and the reference-curve benchmark caught it.
-static_assert(hydkernels::kViscosity == constants::VISCOS,
-              "HydClosureKernels::kViscosity must equal constants::VISCOS");
-static_assert(hydkernels::kGravity == constants::GRAVITY,
-              "HydClosureKernels::kGravity must equal constants::GRAVITY");
+// public entry points and nothing more. The kernel header reads its
+// viscosity and gravity from Constants.hpp; it used to carry copies, and
+// getting them out of step once shifted the Darcy-Weisbach slope by 0.7 %.
 
 double getFricSlope_HW(double velocity, double hyd_rad, double c_hw) {
     return hydkernels::fricSlopeHW(velocity, hyd_rad, c_hw);
@@ -120,12 +113,11 @@ double getEquivN(FrictionModel model, double r_bot, double y_full, double slope,
 double getRoughFactor(FrictionModel model, double r_bot, double length_factor) {
     if (length_factor <= 0.0)
         length_factor = 1.0;
-    constexpr double G = 32.2;
     switch (model) {
     case FrictionModel::HAZEN_WILLIAMS: {
         // legacy: GRAVITY / pow(1.318 * rBot * pow(lengthFactor, 0.54), 1.852)
         double denom = 1.318 * r_bot * std::pow(length_factor, 0.54);
-        return (denom > 0.0) ? G / std::pow(denom, 1.852) : 0.0;
+        return (denom > 0.0) ? constants::GRAVITY / std::pow(denom, 1.852) : 0.0;
     }
     case FrictionModel::DARCY_WEISBACH:
         // legacy: 1.0 / 8.0 / lengthFactor

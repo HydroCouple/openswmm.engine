@@ -23,6 +23,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/Constants.hpp"
 #include "ArdEngine.hpp"
 #include "../ReactionModule/ReactionSources.hpp"
 #include "../../../core/CompletedSourceArchive.hpp"
@@ -230,8 +231,6 @@ constexpr double kTempCeilC = 100.0;
 constexpr double kZeroVolumeFt3 = 0.0353147;
 
 // --- E3 Fischer auto-computation guards (all internal ft units) -------------
-/// g (ft/s²) for the shear velocity U* = √(g·Y·S).
-constexpr double kGravity = 32.174;
 /// Slope floor: a dead-flat conduit has S = 0 and the formula divides by
 /// U* — the same reason legacy SWMM floors conduit slopes. Physics below
 /// this floor is dominated by mixing the formula does not model anyway.
@@ -639,7 +638,7 @@ void ArdEngine::updateTransportRows(SimulationContext& ctx) {
         if (ts >= 0 && ts < static_cast<int>(ctx.tables.count()))
             r = table_tseries_lookup_cursor(ctx.tables[ts],
                                             ctx.current_date) /
-                kLitersPerFt3; // ts values are species mass/s
+                ucf::FT3_TO_L_EXACT; // ts values are species mass/s
         // P1.4: the sign is CARRIED. This was `std::max(0.0, r)`, which
         // silently zeroed a negative rate before the apply loop ever saw
         // it — so a [TRANSPORT_SOURCES] extraction row did nothing at all,
@@ -821,7 +820,7 @@ void ArdEngine::updateDispersion(SimulationContext& ctx) {
                         const double b_w = a / y;
                         const double s =
                             std::max(std::fabs(ctx.link_subtypes.conduits.slope[ucr]), kMinSlope);
-                        const double ustar = std::sqrt(kGravity * y * s);
+                        const double ustar = std::sqrt(constants::GRAVITY * y * s);
                         d = 0.011 * vel * vel * b_w * b_w / (y * ustar);
                     }
                 }
@@ -1719,8 +1718,6 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
             bed.cell_temp = std::move(keep_temp);
     }
 
-    constexpr double kSqFtToSqM = 0.09290304;
-    constexpr double kCuFtToCuM = 0.028316846592;
     const auto unc = static_cast<std::size_t>(ncells);
     const auto une = static_cast<std::size_t>(n_exch);
 
@@ -1745,12 +1742,12 @@ void ArdEngine::applyBedSoluteExchange(SimulationContext& ctx, double dt) {
         const double rh = fv::kernels::hydRadOfDepth(g, h);
         if (!(rh > 0.0))
             continue;
-        const double bed_m2 = (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM;
+        const double bed_m2 = (area_x / rh) * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT;
 
         // PE2: the parent link's bed material (cells resolve to their link,
         // D-PE1), so the ARD bed and the LEGACY/LARD beds read one config.
         const auto& sd_c = heat::sedimentFor(ctx, HeatElement::link(cellLink(c)));
-        const double vol_w = vol_ft3 * kCuFtToCuM;
+        const double vol_w = vol_ft3 * ucf::FT3_TO_M3_EXACT;
         const double vol_b = bed_m2 * sd_c.bed_thickness;
         const double q_exch = heat::bedExchangeQ(sd_c, bed_m2);
         if (!(q_exch > 0.0) || !(vol_b > 0.0))
@@ -1809,9 +1806,6 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
     // them (SolarRadiation.hpp).
     heat::updateSolarForcing(ctx, dt);
 
-    constexpr double kSqFtToSqM = 0.09290304;
-    constexpr double kCuFtToCuM = 0.028316846592;
-
     const double rho = ctx.options.water_density;
     const double cp = ctx.options.water_specific_heat;
 
@@ -1863,7 +1857,7 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         if (g.is_open) {
             const double width = fv::kernels::widthOfDepth(g, h);
             if (width > 0.0)
-                surf_m2 = width * mesh_.cell_dx[c] * kSqFtToSqM;
+                surf_m2 = width * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT;
         }
 
         const double t_w = state_.cell_phi[tr * unc + c];
@@ -1877,7 +1871,8 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // link derivation one level up.
         if (bed_on && c < ctx.bed_state.cell_temp.size()) {
             const double rh = fv::kernels::hydRadOfDepth(g, h);
-            const double bed_m2 = (rh > 0.0) ? (area_x / rh) * mesh_.cell_dx[c] * kSqFtToSqM : 0.0;
+            const double bed_m2 =
+                (rh > 0.0) ? (area_x / rh) * mesh_.cell_dx[c] * ucf::FT2_TO_M2_EXACT : 0.0;
             // PE2: the parent link's bed attributes and boundary.
             const auto& sd_c = heat::sedimentFor(ctx, ce);
             const heat::BedCoupling bc = heat::bedCouplingFromContact(
@@ -1903,7 +1898,7 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         // handoff); fixed here with the same relaxT the other bindings use.
         state_.cell_phi[tr * unc + c] +=
             heat::relaxT(flux_out(ce, t_w), flux_out(ce, t_w + heat::kProbeC), heat::kProbeC,
-                         surf_m2, vol_ft3 * kCuFtToCuM, dt, rho, cp);
+                         surf_m2, vol_ft3 * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
     }
 
     // ---- Node stores ----------------------------------------------------
@@ -1924,9 +1919,9 @@ void ArdEngine::applyHeatFluxes(SimulationContext& ctx, double dt) {
         const HeatElement ne = HeatElement::node(nd);
         // relaxT, same as the cell loop above — the node stores had the same
         // explicit step and the same thin-volume failure mode.
-        const double dT =
-            heat::relaxT(flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC), heat::kProbeC,
-                         area_ft2 * kSqFtToSqM, vol_ft3 * kCuFtToCuM, dt, rho, cp);
+        const double dT = heat::relaxT(flux_out(ne, t_w), flux_out(ne, t_w + heat::kProbeC),
+                                       heat::kProbeC, area_ft2 * ucf::FT2_TO_M2_EXACT,
+                                       vol_ft3 * ucf::FT3_TO_M3_EXACT, dt, rho, cp);
         // The store carries MASS (conc x volume), so a temperature
         // change of dT is a mass change of dT x volume.
         node_mass_[und * uns + tr] += dT * vol_ft3;

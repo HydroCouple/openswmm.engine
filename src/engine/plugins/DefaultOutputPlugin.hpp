@@ -146,6 +146,15 @@ private:
      * Normal staged cleanup does not remove other preexisting paths. */
     std::shared_ptr<PreparedCheckpoint> prepareCheckpoint(const SimulationContext& ctx,
                                                           double next_report_ms, std::string bytes);
+    /** @brief Overwrite the rainfall of the last report written: each reported subcatchment's
+     * and the system's.
+     *
+     * The report at a [RESTART] record's own time reads the rain that starts then; a run that
+     * continues from the record into longer rain series writes it, as the uninterrupted run did.
+     * @param subcatch_rain Report rainfall of every subcatchment, in model order.
+     * @param sys_rain System rainfall as the report's float32 area-weighted sum.
+     * Requires an open writer with at least one period; throws on an I/O failure. */
+    void rewriteLastReportRain(const std::vector<double>& subcatch_rain, float sys_rain);
     /** @brief Publish one validated staged output, then adopt its already open stream.
      * @param[in,out] prepared Exclusive prepared owner, consumed on successful adoption.
      * Publication exceptions occur before adoption; rollback follows CheckpointOutputPublication.

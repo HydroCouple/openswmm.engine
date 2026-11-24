@@ -521,3 +521,66 @@ TEST(GpkgExternalContentReader, HotstartSaveFormatRoundTrip) {
     EXPECT_EQ(rctx.files.hotstart_saves[2].format, openswmm::HotstartFormat::LEGACY);
     EXPECT_DOUBLE_EQ(rctx.files.hotstart_saves[2].datetime, 46036.5);
 }
+
+// ---------------------------------------------------------------------------
+// A slot's state must cover the model exactly. A node the model no longer has,
+// or a model node the slot has no row for, was skipped or zero-filled, so the
+// rebuilt hot start file silently disagreed with what was saved.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/** @brief Store a two-node, one-link, no-pollutant legacy USE slot under @p stem. */
+DbPtr slotForJ1O1L1(const std::string& stem) {
+    const fs::path src = testDir() / (stem + ".hsf");
+    {
+        std::ofstream o(src, std::ios::binary);
+        o.write("SWMM5-HOTSTART4", 15);
+        for (int32_t v : {0, 0, 2, 1, 0, 0})
+            o.write(reinterpret_cast<const char*>(&v), 4);
+        for (float f : {0.5f, 0.1f, 0.0f, 0.0f, 1.75f, 0.4f, 1.0f})
+            o.write(reinterpret_cast<const char*>(&f), 4);
+    }
+    auto db = freshDb(stem);
+    plantMinimalModel(db.get(), "sim1");
+    SimulationContext wctx;
+    wctx.node_names.add("J1");
+    wctx.node_names.add("O1");
+    wctx.link_names.add("L1");
+    wctx.files.hotstart_use_path = src.string();
+    write_external_content(db.get(), wctx, "sim1");
+    return db;
+}
+
+} // namespace
+
+TEST(GpkgExternalContentReader, HotstartSlotNamingAnUnknownNodeIsRefused) {
+    const std::string stem = "hotstart_slot_unknown_node";
+    auto db = slotForJ1O1L1(stem);
+    SimulationContext rctx; // O1 was renamed to O2 after the save
+    rctx.node_names.add("J1");
+    rctx.node_names.add("O2");
+    rctx.link_names.add("L1");
+    try {
+        read_external_content(db.get(), rctx, "sim1", scratchDirFor(dbPathFor(stem)));
+        FAIL() << "a slot with an unknown node was hydrated";
+    } catch (const GpkgError& e) {
+        EXPECT_NE(std::string(e.what()).find("O1"), std::string::npos) << e.what();
+    }
+}
+
+TEST(GpkgExternalContentReader, HotstartSlotMissingAModelLinkIsRefused) {
+    const std::string stem = "hotstart_slot_missing_link";
+    auto db = slotForJ1O1L1(stem);
+    SimulationContext rctx; // L2 was added after the save
+    rctx.node_names.add("J1");
+    rctx.node_names.add("O1");
+    rctx.link_names.add("L1");
+    rctx.link_names.add("L2");
+    try {
+        read_external_content(db.get(), rctx, "sim1", scratchDirFor(dbPathFor(stem)));
+        FAIL() << "a slot without a row for L2 was hydrated";
+    } catch (const GpkgError& e) {
+        EXPECT_NE(std::string(e.what()).find("L2"), std::string::npos) << e.what();
+    }
+}

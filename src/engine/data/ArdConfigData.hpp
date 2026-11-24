@@ -181,10 +181,6 @@ struct ArdConfigData {
     }
 };
 
-/// Litres per cubic foot — the species-mass/s → internal conc·ft³/s source
-/// conversion (internal MSX store mass is concentration (mass/L) × ft³).
-inline constexpr double kLitersPerFt3 = 28.316846592;
-
 } // namespace openswmm
 
 #endif // OPENSWMM_ENGINE_DATA_ARD_CONFIG_DATA_HPP

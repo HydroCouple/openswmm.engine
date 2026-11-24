@@ -31,6 +31,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace fs = std::filesystem;
 
@@ -311,8 +312,19 @@ RelativeResult makeRelative(const std::string& target_absolute, const std::strin
         return r;
     }
 
-    const std::string tgt_fs = toForwardSlashes(target_absolute);
-    const std::string anc_fs = toForwardSlashes(anchor_dir);
+    // A relative target or anchor is relative to the working directory: a model opened by a
+    // relative path stores its references that way. Without this the root-less path was read
+    // as if it hung from the filesystem root, and a model written to another folder pointed
+    // at "../../.." up to "/" and then at the relative path.
+    const auto absolute = [](const std::string& path) {
+        if (isAbsolutePath(path))
+            return path;
+        std::error_code ec;
+        const fs::path abs = fs::absolute(openswmm::io::utf8_path(toForwardSlashes(path)), ec);
+        return ec ? path : openswmm::io::path_utf8(abs.lexically_normal(), /*generic=*/true);
+    };
+    const std::string tgt_fs = toForwardSlashes(absolute(target_absolute));
+    const std::string anc_fs = toForwardSlashes(absolute(anchor_dir));
 
     // Cross-volume check on root_name. Compared case-insensitively for the
     // drive letter case; UNC shares are compared case-sensitively (server

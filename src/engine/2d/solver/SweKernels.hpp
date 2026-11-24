@@ -58,6 +58,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
+
+#include "../../core/Constants.hpp"
 
 #ifndef OPENSWMM_KERNEL_FN
 #define OPENSWMM_KERNEL_FN inline
@@ -65,7 +68,9 @@
 
 namespace openswmm::twoD::swe {
 
-inline constexpr double kGravity = 9.80665;
+/// The SWE kernels read constants::GRAVITY_SI under this name (one value,
+/// defined once in Constants.hpp).
+inline constexpr double kGravity = constants::GRAVITY_SI;
 
 /// True when @p x is neither NaN nor infinite.
 /// @note Not std::isfinite: with the MSVC standard library it is a host-only template, and
@@ -77,21 +82,23 @@ OPENSWMM_KERNEL_FN bool isFinite(double x) noexcept {
 /// One side of a face in the face-normal frame after hydrostatic
 /// reconstruction. `h` is the reconstructed depth h*, (un, ut) the normal and
 /// tangential velocity components (zero when the cell is dry).
-struct FaceSide {
-    double h = 0.0;
-    double un = 0.0;
-    double ut = 0.0;
+template <class Real> struct FaceSideT {
+    Real h = 0.0;
+    Real un = 0.0;
+    Real ut = 0.0;
 };
+using FaceSide = FaceSideT<double>;
 
 /// Flux through the face, positive L→R: mass (m²/s), momentum in the x/y
 /// frame (m³/s²). `sstar` is the HLLC contact speed used to upwind passive
 /// scalars (species ride the mass flux from the side S* points away from).
-struct FaceFlux {
-    double mass = 0.0;
-    double mx = 0.0;
-    double my = 0.0;
-    double sstar = 0.0;
+template <class Real> struct FaceFluxT {
+    Real mass = 0.0;
+    Real mx = 0.0;
+    Real my = 0.0;
+    Real sstar = 0.0;
 };
+using FaceFlux = FaceFluxT<double>;
 
 /**
  * @brief Physical flux of the SWE in the normal frame: [h·un, h·un² + ½g h², h·un·ut].
@@ -104,10 +111,11 @@ struct FaceFlux {
  * @note Pure scalar host/device evaluation; outputs must be distinct and must not alias input
  * fields. No validation, allocation or state mutation.
  */
-OPENSWMM_KERNEL_FN void physicalFlux(const FaceSide& s, double& fh, double& fn,
-                                     double& ft) noexcept {
+template <class Real>
+OPENSWMM_KERNEL_FN void physicalFlux(const FaceSideT<Real>& s, Real& fh, Real& fn,
+                                     Real& ft) noexcept {
     fh = s.h * s.un;
-    fn = s.h * s.un * s.un + 0.5 * kGravity * s.h * s.h;
+    fn = s.h * s.un * s.un + Real(0.5) * Real(kGravity) * s.h * s.h;
     ft = s.h * s.un * s.ut;
 }
 
@@ -124,23 +132,24 @@ OPENSWMM_KERNEL_FN void physicalFlux(const FaceSide& s, double& fh, double& fn,
  * @note Both-dry faces return zero speeds. Caller supplies distinct output scalars and valid
  * finite depths; no allocation, mutation or robust-predicate error status.
  */
-OPENSWMM_KERNEL_FN void waveSpeeds(const FaceSide& L, const FaceSide& R, double& sl,
-                                   double& sr) noexcept {
-    const double cl = std::sqrt(kGravity * L.h);
-    const double cr = std::sqrt(kGravity * R.h);
-    if (L.h > 0.0 && R.h > 0.0) {
-        const double ustar = 0.5 * (L.un + R.un) + cl - cr;
-        const double cstar = 0.5 * (cl + cr) + 0.25 * (L.un - R.un);
+template <class Real>
+OPENSWMM_KERNEL_FN void waveSpeeds(const FaceSideT<Real>& L, const FaceSideT<Real>& R, Real& sl,
+                                   Real& sr) noexcept {
+    const Real cl = std::sqrt(Real(kGravity) * L.h);
+    const Real cr = std::sqrt(Real(kGravity) * R.h);
+    if (L.h > Real(0.0) && R.h > Real(0.0)) {
+        const Real ustar = Real(0.5) * (L.un + R.un) + cl - cr;
+        const Real cstar = Real(0.5) * (cl + cr) + Real(0.25) * (L.un - R.un);
         sl = std::min(L.un - cl, ustar - cstar);
         sr = std::max(R.un + cr, ustar + cstar);
-    } else if (L.h > 0.0) { // dry right
+    } else if (L.h > Real(0.0)) { // dry right
         sl = L.un - cl;
-        sr = L.un + 2.0 * cl;
-    } else if (R.h > 0.0) { // dry left
-        sl = R.un - 2.0 * cr;
+        sr = L.un + Real(2.0) * cl;
+    } else if (R.h > Real(0.0)) { // dry left
+        sl = R.un - Real(2.0) * cr;
         sr = R.un + cr;
     } else {
-        sl = sr = 0.0;
+        sl = sr = Real(0.0);
     }
 }
 
@@ -159,28 +168,30 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceSide& L, const FaceSide& R, double&
  * denominator falls back to mean normal velocity. Distinct outputs and finite nonnegative depths
  * are required. No allocation or model-state mutation.
  */
-OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R, double& fh, double& fn,
-                                 double& ft, double& sstar) noexcept {
-    if (L.h <= 0.0 && R.h <= 0.0) {
-        fh = fn = ft = 0.0;
-        sstar = 0.0;
+template <class Real>
+OPENSWMM_KERNEL_FN void hllcFlux(const FaceSideT<Real>& L, const FaceSideT<Real>& R, Real& fh,
+                                 Real& fn, Real& ft, Real& sstar) noexcept {
+    if (L.h <= Real(0.0) && R.h <= Real(0.0)) {
+        fh = fn = ft = Real(0.0);
+        sstar = Real(0.0);
         return;
     }
-    double sl, sr;
+    Real sl, sr;
     waveSpeeds(L, R, sl, sr);
-    double fhl, fnl, ftl, fhr, fnr, ftr;
+    Real fhl, fnl, ftl, fhr, fnr, ftr;
     // Contact speed (Toro Eq. 10.70) — falls back to the mean normal
     // velocity when the denominator degenerates (both sides at rest).
-    const double dl = L.h * (L.un - sl), dr = R.h * (R.un - sr);
-    const double den = dr - dl;
-    sstar = (std::fabs(den) > 1.0e-14) ? (sl * dr - sr * dl) / den : 0.5 * (L.un + R.un);
+    const Real dl = L.h * (L.un - sl), dr = R.h * (R.un - sr);
+    const Real den = dr - dl;
+    sstar =
+        (std::fabs(den) > Real(1.0e-14)) ? (sl * dr - sr * dl) / den : Real(0.5) * (L.un + R.un);
 
-    if (sl >= 0.0) {
+    if (sl >= Real(0.0)) {
         physicalFlux(L, fhl, fnl, ftl);
         fh = fhl;
         fn = fnl;
         ft = ftl;
-    } else if (sr <= 0.0) {
+    } else if (sr <= Real(0.0)) {
         physicalFlux(R, fhr, fnr, ftr);
         fh = fhr;
         fn = fnr;
@@ -189,11 +200,11 @@ OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R, double& f
         // HLL middle state for mass and normal momentum.
         physicalFlux(L, fhl, fnl, ftl);
         physicalFlux(R, fhr, fnr, ftr);
-        const double inv = 1.0 / (sr - sl);
+        const Real inv = Real(1.0) / (sr - sl);
         fh = (sr * fhl - sl * fhr + sl * sr * (R.h - L.h)) * inv;
         fn = (sr * fnl - sl * fnr + sl * sr * (R.h * R.un - L.h * L.un)) * inv;
         // Tangential momentum: passive scalar upwinded on the contact.
-        ft = fh * ((sstar >= 0.0) ? L.ut : R.ut);
+        ft = fh * ((sstar >= Real(0.0)) ? L.ut : R.ut);
     }
 }
 
@@ -226,46 +237,51 @@ OPENSWMM_KERNEL_FN void hllcFlux(const FaceSide& L, const FaceSide& R, double& f
  * host/device function; no validation, ownership transfer, allocation or timestep update.
  * Multiply momentum/source terms by face length and dt in the caller.
  */
-OPENSWMM_KERNEL_FN bool faceFlux(double etaL, double hL, double qxL, double qyL, double etaR,
-                                 double hR, double qxR, double qyR, double nx, double ny,
-                                 double h_dry, FaceFlux& out, double& corrL_x, double& corrL_y,
-                                 double& corrR_x, double& corrR_y) noexcept {
+template <class Real>
+OPENSWMM_KERNEL_FN bool faceFlux(std::type_identity_t<Real> etaL, std::type_identity_t<Real> hL,
+                                 std::type_identity_t<Real> qxL, std::type_identity_t<Real> qyL,
+                                 std::type_identity_t<Real> etaR, std::type_identity_t<Real> hR,
+                                 std::type_identity_t<Real> qxR, std::type_identity_t<Real> qyR,
+                                 std::type_identity_t<Real> nx, std::type_identity_t<Real> ny,
+                                 std::type_identity_t<Real> h_dry, FaceFluxT<Real>& out,
+                                 Real& corrL_x, Real& corrL_y, Real& corrR_x,
+                                 Real& corrR_y) noexcept {
     // Beds consistent with the storage: z = η − h̄ (FLAT closure: the cell
     // mean bed; VFR: the flat-equivalent bed, which is what keeps a uniform η
     // an exact rest state under either closure).
-    const double zL = etaL - hL, zR = etaR - hR;
-    const double zf = (zL > zR) ? zL : zR;
-    FaceSide L, R;
-    L.h = (etaL - zf > 0.0) ? etaL - zf : 0.0;
-    R.h = (etaR - zf > 0.0) ? etaR - zf : 0.0;
+    const Real zL = etaL - hL, zR = etaR - hR;
+    const Real zf = (zL > zR) ? zL : zR;
+    FaceSideT<Real> L, R;
+    L.h = (etaL - zf > Real(0.0)) ? etaL - zf : Real(0.0);
+    R.h = (etaR - zf > Real(0.0)) ? etaR - zf : Real(0.0);
     // A side whose reconstructed depth is negligible carries no velocity
     // (avoids q/h blow-ups at fronts); the hydrostatic reconstruction alone
     // already removes the "dry cell standing higher" flux.
-    const double tx = -ny, ty = nx;
-    if (hL > h_dry && L.h > 0.0) {
-        const double ux = qxL / hL, uy = qyL / hL;
+    const Real tx = -ny, ty = nx;
+    if (hL > h_dry && L.h > Real(0.0)) {
+        const Real ux = qxL / hL, uy = qyL / hL;
         L.un = ux * nx + uy * ny;
         L.ut = ux * tx + uy * ty;
     }
-    if (hR > h_dry && R.h > 0.0) {
-        const double ux = qxR / hR, uy = qyR / hR;
+    if (hR > h_dry && R.h > Real(0.0)) {
+        const Real ux = qxR / hR, uy = qyR / hR;
         R.un = ux * nx + uy * ny;
         R.ut = ux * tx + uy * ty;
     }
     // Hydrostatic pressure remains on the wet side of a blocked face.
     // Dropping it when BOTH reconstructed depths vanish accelerates a lake
     // away from its shoreline even though no water can cross this face.
-    const double cL = 0.5 * kGravity * (L.h * L.h - hL * hL);
-    const double cR = 0.5 * kGravity * (R.h * R.h - hR * hR);
+    const Real cL = Real(0.5) * Real(kGravity) * (L.h * L.h - hL * hL);
+    const Real cR = Real(0.5) * Real(kGravity) * (R.h * R.h - hR * hR);
     corrL_x = cL * nx;
     corrL_y = cL * ny;
     corrR_x = -cR * nx;
     corrR_y = -cR * ny;
-    if (L.h <= 0.0 && R.h <= 0.0) {
-        out = FaceFlux{};
-        return cL != 0.0 || cR != 0.0;
+    if (L.h <= Real(0.0) && R.h <= Real(0.0)) {
+        out = FaceFluxT<Real>{};
+        return cL != Real(0.0) || cR != Real(0.0);
     }
-    double fh, fn, ft, sstar;
+    Real fh, fn, ft, sstar;
     hllcFlux(L, R, fh, fn, ft, sstar);
     out.mass = fh;
     out.mx = fn * nx + ft * tx;

@@ -16,6 +16,7 @@ The input file for command line SWMM has the same format as the project file use
 [OPTIONS]            analysis options
 [REPORT]                output reporting instructions
 [FILES]                interface file options
+[RESTART]              restart records in GeoPackage and HDF5 files
 
 [RAINGAGES]        rain gage information
 [EVAPORATION]        evaporation data
@@ -175,8 +176,8 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 | SLOPE_WEIGHTING | YES / NO / TRUE / FALSE / 1 / 0 | — | Retired compatibility option with no solver effect. YES and NO also accept legacy prefix matches; other values are rejected. When supplied, the value is retained in the extension-options map and can be read through `swmm_options_get_ext()`. |
 | INERTIAL_DAMPING | NONE / PARTIAL / FULL | PARTIAL | Handling of the momentum inertial terms: kept in full (NONE), reduced toward critical flow and dropped when supercritical (PARTIAL), or dropped (FULL). Hydraulics §3.3.3. |
 | NORMAL_FLOW_LIMITED | SLOPE / FROUDE / BOTH / NEITHER | BOTH | Test that flags supercritical flow to be limited to normal flow: water-surface slope, Froude number, both, or neither. Hydraulics §3.3.4. |
-| NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. Hydraulics §3.5. |
-| ANDERSON_ACCEL | YES / TRUE / 1 / NO | NO | Accelerates the Picard head iteration with depth-2 Anderson mixing, typically cutting trials by 25 to 50 percent. Hydraulics §3.6. |
+| NODE_CONTINUITY | EXPLICIT / SEMI_IMPLICIT | EXPLICIT | Node head update: the legacy two-branch formulation, or the unified semi-implicit one that folds flow gradients into the depth update. SEMI_IMPLICIT also changes three regulator laws that keep it from converging: submerged orifices and weirs run linearly below a 0.05 ft head difference, a bottom orifice under tailwater is corrected for submergence once, and outlets ramp below a 0.05 ft head. Hydraulics §3.5. |
+| ANDERSON_ACCEL | YES / TRUE / 1 / NO | NO | Blends each node's two most recent Picard head updates (two-point Anderson mixing) where the update is smooth. Whether it saves trials depends on the network; compare the report's Routing Time Step Summary with the option on and off. Hydraulics §3.6. |
 
 #### Pressurisation and friction
 
@@ -215,8 +216,8 @@ These keys are read only under FLOW_ROUTING FV; under any other routing model th
 | FV_LTS_MAX_TIERS | number | 6 | Cap on the local-time-stepping tier spread; 6 allows a 64-fold spread, and the hard ceiling is 8. Hydraulics §8.5.6. |
 | FV_NODE_FEEDBACK_DT | YES / NO / FALSE / 0 / OFF | NO | Bounds the explicit step by the algebraic-junction feedback limit at pressurised junctions; removes oscillation at 10 to 14 times the wall cost. Hydraulics §8.6.1. |
 | FV_CFL_CENSUS_INTERVAL | number | 1 | Substeps between full Courant censuses; 1 recomputes every substep. Hydraulics §8.5.5. |
-| FV_BACKEND | CPU / AUTO / OMP / CUDA / HIP / SYCL | AUTO | Kernel backend; AUTO tries plugins above FV_MIN_PARALLEL_CELLS and otherwise stays on the CPU. |
-| FV_MIN_PARALLEL_CELLS | number | 20000 | Cell count below which FV_BACKEND AUTO stays on the CPU. |
+| FV_BACKEND | CPU / AUTO / OMP / CUDA / HIP / SYCL | AUTO | Where the substep loop runs. CPU and AUTO use the built-in solver. OMP, CUDA, HIP and SYCL name a Kokkos plugin: the loop then steps globally with every cell active and holds structure and boundary flows over the routing step, whatever FV_LTS, FV_COMPACTION and FV_STRUCTURE_COUPLING say. A model outside the plugin's scope, or a plugin or device that is absent, runs on the CPU solver with a notice. The OPENSWMM_FV_BACKEND environment variable overrides the key. Hydraulics §8.9.1. |
+| FV_MIN_PARALLEL_CELLS | number | 20000 | Reserved. Read and written, but AUTO does not select a plugin at any size. |
 
 #### Water quality and transport
 
@@ -322,10 +323,59 @@ Remarks:
 Refer to @ref engine_manual_ch3_files for a description of interface files. Rainfall, Runoff, and RDII files can either be used or saved in a run, but not both. A run can both use and save a Hot Start file (with different names).
 A LEGACY save is refused when age, heat, LID-layer scalars, UEB snow, an active 2D surface or runtime coupling would be lost. Record-format NATIVE saves cannot preserve heat, conventional LID-layer scalars or ARD/LAGRANGIAN transport inventories; those combinations require a qualified full engine checkpoint. CLI SAVE HOTSTART requests using ARD/LAGRANGIAN transport currently fail explicitly. Thermal CLI saves also fail if a full checkpoint cannot be prepared. An unsupported save never replaces an existing restart file.
 
-USE HOTSTART reads either format, recognising it from the file itself. The format keyword must follow the date and time when both are given. Any other word in its place is ignored with a warning, and the default format is used. A row with exactly a date after the file name and one more item must give a valid date and time, or it is an error (ERROR 213), as in EPA SWMM. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files; it gives them back unchanged, subcatchment state included.
+A Hot Start file that cannot be written, for example because its folder does not exist, stops the run with an error that names the file; the run does not finish with a warning. An existing file that is not a Hot Start file, such as a GeoPackage or an HDF5 file, is never overwritten: the save is refused and the file is left unchanged. To keep restart states in such a file, use the [RESTART] section — see @ref engine_manual_sect_RESTART.
+
+USE HOTSTART reads either format, recognizing it from the file itself. The format keyword must follow the date and time when both are given. Any other word in its place is ignored with a warning, and the default format is used. A row with exactly a date after the file name and one more item must give a valid date and time, or it is an error (ERROR 213), as in EPA SWMM. EPA SWMM 5 ignores the keyword, so a row carrying it still opens there, but it then also ignores a date and time on the same row and saves at the end of the run; export to SWMM 5 omits the keyword. A NATIVE file cannot be read by EPA SWMM 5. A GeoPackage stores the format choice but embeds only SWMM 5 format Hot Start files of version 4 (SWMM 5.1 and later); it gives them back unchanged, subcatchment state included. Older SWMM 5 versions are refused by name. When a GeoPackage project is opened, its embedded state must name exactly the model's nodes and links; a node or link that is missing from the state, or state for one the model no longer has, is an error that names it.
 Enclose the external file name in double quotes if it contains spaces and include its full path if it resides in a different directory than the SWMM input file. 
 
  
+### Section: [RESTART] {#engine_manual_sect_RESTART}
+
+Purpose:
+(OpenSWMM extension.) Starts the run from a restart record saved in a GeoPackage or HDF5 file, and records this run's own restart states into such a file.
+
+Formats:
+SOURCE_FILE           Fname
+SOURCE_RUN            RunID
+SOURCE_RECORD         RecordID / LATEST
+MODE                  INITIAL_CONDITIONS / CONTINUE
+RECORD_FILE           Fname
+RECORD_FORMAT         GEOPACKAGE / HDF5
+RECORD_AT             END / Date Time
+RECORD_EVERY          Time
+RECORD_CONTINUATION   YES / NO
+
+Parameters:
+SOURCE_FILE  is the GeoPackage or HDF5 file holding the record to start from. Without it the run starts from its own initial conditions.
+SOURCE_RUN  is the ID of the run, within that file, that wrote the record. It may be omitted when the file holds a single run.
+SOURCE_RECORD  is the ID of the record, such as rec_000002, or LATEST for the run's last complete record. LATEST is resolved once, when the run starts, and the run's provenance names the record it chose.
+MODE  is INITIAL_CONDITIONS (the default) or CONTINUE. INITIAL_CONDITIONS takes the saved state of the nodes, links and subcatchments as the model's initial conditions at the model's own start date, and opens new mass balances. CONTINUE resumes the original run at the saved time, with its clocks, numerical history and mass balances; it needs a record written with RECORD_CONTINUATION YES, the same engine version and an end date after the record. The model may differ from the one that wrote the record only by a later end date and by time series points after the record, as a digital twin's next cycle adds the rain that arrived since; any other difference is refused, naming the part that differs. A series only rain gages read with INTENSITY or VOLUME data keeps its points before the record; any other series, which is interpolated, also keeps its first point at or after the record.
+RECORD_FILE  is the GeoPackage or HDF5 file this run records its restart states into. A missing file is created. An existing GeoPackage takes another run; an existing HDF5 file must already hold restart records or be empty.
+RECORD_FORMAT  is GEOPACKAGE or HDF5. It is required with RECORD_FILE and is never inferred from the file name. An existing file of another kind is refused and left unchanged.
+RECORD_AT  is END, or a date (month/day/year) and time (hours:minutes:seconds). Each line adds one record. A dated record is taken at the end of the first time step that reaches that moment; the record keeps both the requested time and the time of that step. Without RECORD_AT or RECORD_EVERY one record is taken at the end of the run.
+RECORD_EVERY  is an interval (hours:minutes:seconds, or seconds) between records, counted from the start of the run.
+RECORD_CONTINUATION  YES stores the engine checkpoint in each record so that a later run can CONTINUE from it, and ends a routing step and a runoff step at each dated or RECORD_EVERY record's time, as the end of a run does, so that a run continued from the record steps exactly as this one does. Default NO. The checkpoint holds the runtime forcing set through the API on node lateral inflow, node head boundary, link flow, link setting, subcatchment rainfall, subcatchment evaporation, gage rainfall and climate evaporation, which the continued run applies; a forcing of any other channel stops the run with an error naming it.
+
+Remarks:
+Each record holds the bytes of a native Hot Start file taken at an accepted time step, so a record restores exactly as the same Hot Start file would. Every run is given a unique ID (run_ followed by the start time in UTC and a random tag), and each record an ID unique within its run. A record is complete only once all of it is written; incomplete records cannot be selected. A run that starts from a record names the source file, run, record and mode as its parent in the file it records into, and in a GeoPackage results file.
+SOURCE_FILE together with [FILES] USE HOTSTART is an error. RECORD_FILE may not be the source file, the input file, the report or binary output file, or the 2D output file. A RECORD_AT time outside the simulation period is an error, and a record that cannot be written stops the run with an error.
+MODE INITIAL_CONDITIONS is refused for models with heat transport, frozen ground or an independent groundwater clock, whose state needs the engine checkpoint; use CONTINUE with a continuation record. Records restore only on the kind of machine that wrote them (operating system, processor and byte order).
+In a run that saves binary results, a record with the engine checkpoint also carries the binary output written so far, so a run that continues from it writes the same binary output file as the uninterrupted run. This needs the built-in binary output writer, no 2D output file, and a new output file: an existing one is refused, by name, before the run. A continued run saves binary results exactly when its record carries them, and is refused otherwise. Such records grow with the output already written.
+Paths are relative to the input file, and are rewritten when the model is saved to another folder. A GeoPackage project and an HDF5 model keep the section. Export to SWMM 5 omits it.
+The lineage of a record and its storage layout are drawn in @ref engine_manual_ch3_restart_records.
+
+Example:
+```
+[RESTART]
+SOURCE_FILE          "warmup.gpkg"
+SOURCE_RECORD        LATEST
+MODE                 INITIAL_CONDITIONS
+RECORD_FILE          "storm_states.h5"
+RECORD_FORMAT        HDF5
+RECORD_EVERY         01:00:00
+RECORD_AT            END
+```
+
 ### Section: [RAINGAGES] {#engine_manual_sect_RAINGAGES}
 
 Purpose:
@@ -1709,7 +1759,7 @@ Func    mathematical function expressing treatment result in terms of pollutant 
 
 Remarks:
 Treatment functions can be any well-formed mathematical expression involving:
-    inlet pollutant concentrations (use the pollutant name to represent a concentration)
+    pollutant concentrations (use the pollutant name to represent a concentration: the inflow concentration in an R function, the node's concentration before treatment in a C function; the two are equal at a node that holds no water)
     removal of other pollutants (use R_ pre-pended to the pollutant name to represent removal)
     process variables which include:
 FLOW     for flow rate into node (user’s flow units)
@@ -2509,7 +2559,7 @@ Coupling to the 1D network
 | COUPLING_POND_MODE | FOOTPRINT / CHAMBER / TRACKING | FOOTPRINT | Above-rim pond-area policy: the mapped surface footprint, the 1D chamber area, or a relaxed tracking area. |
 | COUPLING_POND_RELAX | >= 0, seconds | 0 | Relaxation time for TRACKING; 0 selects five routing steps. |
 | COUPLING_RIM_BAND | DEFAULT or >= 0, metres | DEFAULT | Height above the rim over which pond area ramps in smoothly. DEFAULT selects 0 for FOOTPRINT and 0.05 m for CHAMBER or TRACKING. Always metres. |
-| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for WEIR_ORIFICE and disables it for ORIFICE. |
+| COUPLING_EQUALIZE | YES / NO / DEFAULT | DEFAULT | Caps an exchange so one coupling window cannot carry the 1D and 2D heads past each other. DEFAULT enables the cap for every junction coupling, as YES does; NO disables it. Before 2026-11-21 DEFAULT enabled it for WEIR_ORIFICE only. |
 
 Rainfall, evaporation and infiltration
 
@@ -2527,7 +2577,7 @@ Groundwater
 | Keyword | Values | Default | Description |
 |---|---|---|---|
 | GROUNDWATER | YES / ON / NO / OFF / AUTO | AUTO | Process enable for the integrated 2D subsurface. AUTO runs the kernel when any [2D_AQUIFER_OPTIONS], [2D_AQUIFER] or [2D_AQUIFER_NODE] row was authored; NO keeps the rows and runs without the subsurface; YES with no rows warns. |
-| GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Alias of the [2D_AQUIFER_OPTIONS] key of the same name. A value spelled here is folded into [2D_AQUIFER_OPTIONS] when the model opens and is never stored in two places. |
+| GW_ET | AUTO / NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | AUTO | Alias of the [2D_AQUIFER_OPTIONS] key of the same name. A value spelled here is folded into [2D_AQUIFER_OPTIONS] when the model opens and is never stored in two places. |
 
 Heat
 
@@ -3157,13 +3207,14 @@ Parameters:
 | SOIL_CHAR | RUSSO / GARDNER / BROOKS_COREY / VAN_GENUCHTEN | RUSSO | Soil-characteristic law shaping conductivity and water content against pressure head, for rows that do not set their own. |
 | CLOSURE | AUTO / CLOSED_FORM / ENSLAVED / SIGMA | AUTO | Unsaturated-zone closure: a bulk store with a quasi-steady recharge (CLOSED_FORM), that store made algebraic in the water table (ENSLAVED), or an explicit column of sigma layers (SIGMA). AUTO selects per cell at initialise. |
 | M_LAYERS | 2 .. 128 | 8 | Number of sigma layers of a SIGMA column, for rows that do not set their own. |
-| CAPILLARY_DIFF | YES / TRUE / 1 / NO / FALSE / 0 | NO | Optional diffusive term of the SIGMA column. |
+| CAPILLARY_DIFF | YES / TRUE / 1 / NO / FALSE / 0 | YES | SIGMA column physics. YES: capillary (Darcy) flow on suction, solved implicitly, so a column at rest stays at rest and the column has no stability step limit. NO: the explicit gravity-only (kinematic) column, the default before 2026-11-19; a checkpoint written by an earlier engine on a deck that did not set this key restores only with NO. |
+| GW_FACE_CAP | SEQUENTIAL / RATIO | RATIO | How lateral aquifer faces share a donor cell's drainable water and solute within one face pass. RATIO totals every face's demand on a donor and scales all of them by one ratio when the donor cannot supply it all; the result does not depend on face order or thread count, and the pass runs on `THREADS` workers (models with porous heat, layered transport or LID bed receipts use the same rule on one thread). SEQUENTIAL, the rule before 2026-11-19, caps each face against what the faces before it left, so results depend on face order and the pass runs serially. Both conserve water and mass; they differ only where a donor runs short. |
 | C_GW | (0, 1] | 0.5 | Stability safety factor of the saturated-zone step. |
-| C_COL | (0, 1] | 0.9 | Stability safety factor of the unsaturated column step. |
+| C_COL | (0, 1] | 0.9 | Courant factor of the unsaturated column step: a stability bound for the kinematic column, an accuracy bound for the capillary one. |
 | FORCE_CLOSED_FORM | YES / TRUE / 1 / NO / FALSE / 0 | NO | Suppress the automatic switch away from CLOSED_FORM on strongly capillary soils. |
 | MODE | MESH / PER_SUBCATCH | MESH | MESH runs one aquifer cell under every mesh cell. PER_SUBCATCH runs one degenerate cell per subcatchment with no lateral flow, exchanging with the outlet node. |
 | DUNNE | YES / TRUE / 1 / NO / FALSE / 0 | YES | Saturation-excess transfer from the aquifer to the surface cell above it. Exists for comparison runs; NO breaks the mass balance between the two domains. |
-| GW_ET | NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | NONE | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. |
+| GW_ET | AUTO / NONE / CAPILLARY_RISE / BOUNDARY_ET / BOTH | AUTO | Subsurface evapotranspiration: capillary rise from the water table, removal at the top of the unsaturated column, both, or neither. AUTO is BOTH for a mesh aquifer and NONE under MODE PER_SUBCATCH. The capillary SIGMA column (`CAPILLARY_DIFF YES`) exchanges water with the table in both directions under every value; for it the key selects only the removal at the column top. |
 | GW_CLOCK | SHARED / INDEPENDENT | SHARED | SHARED schedules groundwater on the surface time steps. The experimental INDEPENDENT mode schedules each aquifer cell from its stability limit and elapsed simulation time. It requires first-order CPU integration. |
 | GW_BASE_STEP | AUTO / positive seconds | AUTO | Base interval for the independent clock. Cell periods are powers of two times this interval. Stiff cells can take shorter steps. AUTO uses 1 s, and 0.125 s for the cells that hold a node bed exchanging with the aquifer (the ladder's base is then 0.125 s, and every other cell keeps 1 s as its accuracy floor). |
 | GW_BUDGET_FRACTION | (0,1] | 0.5 | Fraction of directional storage/head room consumed before an independent update. |

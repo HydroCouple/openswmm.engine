@@ -40,7 +40,7 @@ independently of any running engine.
         attrs = out.node_attributes("J1", period=10)
         print(attrs[OutNodeVar.DEPTH], attrs[OutNodeVar.HEAD])
 
-        # period_times is a datetime64[s] array ready for matplotlib.
+        # period_times is a datetime64[us] array ready for matplotlib.
         ax.plot(out.period_times, depths)
 """
 
@@ -85,7 +85,7 @@ cdef class OutputReader:
     cdef object _link_ids
     cdef object _subcatch_ids
     cdef object _pollutant_ids
-    cdef object _period_times   # cached np.ndarray[datetime64[s]]
+    cdef object _period_times   # cached np.ndarray[datetime64[us]]
 
     def __init__(self, path, *, bint live=False):
         from threading import RLock
@@ -181,6 +181,15 @@ cdef class OutputReader:
 
     @property
     def report_step(self) -> timedelta:
+        """Reporting interval, including a sub-second step.
+
+        The file header stores whole seconds (0 for a 0.05 s step), so the
+        interval is the spacing of the first two saved period times; the
+        header value is used when fewer than two periods are saved.
+        """
+        times = self.period_times
+        if len(times) >= 2:
+            return timedelta(microseconds=int((times[1] - times[0]) / np.timedelta64(1, 'us')))
         return timedelta(seconds=swmm_output_get_report_step(self._h()))
 
     @property
@@ -303,7 +312,13 @@ cdef class OutputReader:
 
     @property
     def period_times(self) -> np.ndarray:
-        """All reporting-period times as a ``datetime64[s]`` numpy array.
+        """All reporting-period times as a ``datetime64[us]`` numpy array.
+
+        Sub-second report steps keep their fractional times. SWMM writes each
+        report date 1 ms after its instant; that offset is removed from every
+        value that is not on a whole second, so a 5-minute run reads
+        ``00:05:00`` and a 0.05 s run ``00:00:00.050``. A value already on a
+        whole second is kept as written.
 
         Computed lazily and cached so the second access is free.
         """
@@ -313,13 +328,20 @@ cdef class OutputReader:
         cdef int n = swmm_output_get_period_count(self._h())
         cdef double t = 0.0
         cdef int rc
-        py_dts = np.empty(n, dtype='datetime64[s]')
+        days = np.empty(n, dtype=np.float64)
         for i in range(n):
             rc = swmm_output_get_period_time(self._h(), i, &t)
             if rc != 0:
                 from ._exceptions import raise_for_code
                 raise_for_code(rc)
-            py_dts[i] = np.datetime64(oadate_to_datetime(t).replace(microsecond=0))
+            days[i] = t
+        # Whole days and the day fraction separately: the fraction is exact, so
+        # rounding it to microseconds recovers a millisecond-grid stamp exactly.
+        whole = np.floor(days)
+        us = (whole.astype(np.int64) * 86400000000
+              + np.rint((days - whole) * 86400000000.0).astype(np.int64))
+        us -= np.where(us % 1000000 != 0, 1000, 0)
+        py_dts = np.datetime64('1899-12-30', 'us') + us.astype('timedelta64[us]')
         self._period_times = py_dts
         return py_dts
 

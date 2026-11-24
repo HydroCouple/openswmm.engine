@@ -1,0 +1,40 @@
+[TITLE]
+NUM-07: kinematic wave, 2 cfs into a 1 ft FORCE_MAIN and into a 1 ft CIRCULAR pipe, both n = 0.013, 1000 ft at 0.1%
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         KINWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             02:00:00
+REPORT_STEP          00:15:00
+ROUTING_STEP         5
+
+[JUNCTIONS]
+;;Name Elev MaxDepth InitDepth SurDepth Aponded
+J1     101  5        0         0        0
+J2     101  5        0         0        0
+
+[OUTFALLS]
+O1     100  FREE
+O2     100  FREE
+
+[CONDUITS]
+;;Name From To Length N InOffset OutOffset InitFlow
+FM1    J1   O1 1000   0.013 0 0 0
+CIRC1  J2   O2 1000   0.013 0 0 0
+
+[XSECTIONS]
+FM1    FORCE_MAIN 1        130  0 0 1
+CIRC1  CIRCULAR   1        0    0 0 1
+
+[INFLOWS]
+J1  FLOW  ""  FLOW 1.0 1.0 2.0
+J2  FLOW  ""  FLOW 1.0 1.0 2.0
+
+[REPORT]
+INPUT YES
+LINKS ALL

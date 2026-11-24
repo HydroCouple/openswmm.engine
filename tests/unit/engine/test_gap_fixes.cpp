@@ -1950,7 +1950,7 @@ TEST(TopoSortCycle44, RouterHasCycleFlagSet) {
     ctx.links.node2[1] = 0; // forms cycle
     ctx.links.xsect_shape[0] = ctx.links.xsect_shape[1] = openswmm::XsectShape::CIRCULAR;
     ctx.links.xsect_y_full[0] = ctx.links.xsect_y_full[1] = 1.0;
-    ctx.links.xsect_a_full[0] = ctx.links.xsect_a_full[1] = M_PI / 4.0;
+    ctx.links.xsect_a_full[0] = ctx.links.xsect_a_full[1] = constants::PI / 4.0;
 
     openswmm::Router router;
     router.init(ctx, openswmm::RouteModel::KINWAVE);

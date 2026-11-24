@@ -44,6 +44,7 @@
 #include <openswmm/engine/openswmm_nodes.h>
 #include <openswmm/engine/openswmm_xsect.h>
 
+#include "core/SWMMEngine.hpp"
 #include "data/LinkData.hpp"
 #include "hydraulics/Link.hpp"
 #include "hydraulics/XSectBatch.hpp"
@@ -785,6 +786,26 @@ TEST(XSectLinkBound, HandleOutlivesTheEngine) {
     // The handle deep-copied its geometry, so it still answers correctly.
     EXPECT_DOUBLE_EQ(areaAt(bound.get(), 1.0), before);
     EXPECT_NEAR(before, kPi / 8.0 * 2.0 * 2.0, 1e-4);
+}
+
+TEST(XSectLinkBound, SetXsectCircularPlaceholderMatchesTheResolvedGeometryBitForBit) {
+    // swmm_link_set_xsect stores derived y_full/a_full/w_max as a placeholder
+    // until swmm_finalize_model, when resolve_cross_references recomputes them
+    // through xsect::setParams. Both must evaluate the same expression with the
+    // same pi (the legacy-truncated constants::PI); otherwise a pipe set through
+    // the API differs from the same pipe read from a file until finalize.
+    SWMM_Engine e = makeConduitModel(SWMM_XSECT_CIRCULAR, 2.5, 0.0);
+    const int li = swmm_link_index(e, "C1");
+    const auto& links = static_cast<openswmm::SWMMEngine*>(e)->context().links;
+    const auto uli = static_cast<std::size_t>(li);
+    const double placeholder = links.xsect_a_full[uli];
+
+    ASSERT_EQ(swmm_finalize_model(e), SWMM_OK);
+    EXPECT_EQ(links.xsect_a_full[uli], placeholder);
+    EXPECT_EQ(links.xsect_a_full[uli], kPi / 4.0 * 2.5 * 2.5);
+
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
 }
 
 TEST(XSectLinkBound, RejectsOutOfRangeIndex) {

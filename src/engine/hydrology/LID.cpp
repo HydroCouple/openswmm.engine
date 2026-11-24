@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "LID.hpp"
 #include "../core/SimulationContext.hpp"
@@ -394,22 +395,22 @@ void LIDSolver::init(SimulationContext& ctx) {
         }
 
         // Legacy validateLidProc (lid.c): the derived parameters, in its
-        // operation order. PHI is legacy's 1.486.
+        // operation order. constants::PHI is legacy's 1.486.
         {
-            constexpr double PHI = 1.486;
             if (g.type == LIDType::VEG_SWALE) {
                 g.surf_alpha[us] =
                     (g.surf_rough[us] * g.surf_slope[us] > 0.0 && g.surf_store[us] != 0.0)
-                        ? PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us]
+                        ? constants::PHI * std::sqrt(g.surf_slope[us]) / g.surf_rough[us]
                         : 0.0;
             } else {
-                g.surf_alpha[us] = (g.surf_rough[us] > 0.0)
-                                       ? PHI / g.surf_rough[us] * std::sqrt(g.surf_slope[us])
-                                       : 0.0;
+                g.surf_alpha[us] = (g.surf_rough[us] > 0.0) ? constants::PHI / g.surf_rough[us] *
+                                                                  std::sqrt(g.surf_slope[us])
+                                                            : 0.0;
             }
-            g.drainmat_alpha[us] = (g.drainmat_rough[us] > 0.0)
-                                       ? PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us])
-                                       : 0.0;
+            g.drainmat_alpha[us] =
+                (g.drainmat_rough[us] > 0.0)
+                    ? constants::PHI / g.drainmat_rough[us] * std::sqrt(g.surf_slope[us])
+                    : 0.0;
             // Clogging factors become the treated volume (ft) at which the
             // layer is fully clogged: void volume times the user's factor.
             if (g.pave_thick[us] > 0.0)
@@ -460,6 +461,10 @@ void LIDSolver::init(SimulationContext& ctx) {
         if (g.stor_thick[us] > 0.0) {
             g.stor_depth[us] = initSat * g.stor_thick[us];
         }
+        // legacy lid_initState: a unit that starts with water makes the
+        // first runoff step a wet one (HasWetLids); is_wet stayed 0 until the
+        // unit's first step, so that step ran at the dry step.
+        g.is_wet[us] = initSat > 0.0 ? 1 : 0;
 
         // The unit's own Green-Ampt state for surface-to-soil infiltration
         // (legacy validateLidGroup lid.c:1173-1185 + lid_initState): the soil
@@ -486,7 +491,7 @@ void LIDSolver::init(SimulationContext& ctx) {
             }
         }
         // legacy lid_initState: dryTime starts at DRY_DAYS
-        g.dry_time[us] = ctx.options.dry_days * 86400.0;
+        g.dry_time[us] = ctx.options.dry_days * constants::SEC_PER_DAY;
         g.old_drain_flow[us] = 0.0;
     }
 
@@ -1794,7 +1799,7 @@ inline void runUnitLegacy(LIDGroupSoA& g, std::size_t u, double inflow, double e
     k.P = &view;
     k.G = &g;
     k.U = u;
-    k.old_runoff_days = old_runoff_sec / 86400.0;
+    k.old_runoff_days = old_runoff_sec / constants::SEC_PER_DAY;
     k.SpatialFraction = spatial_fraction;
     k.SpatialLimit = spatial_limit;
     k.Completed = completed;
@@ -2219,7 +2224,7 @@ void LIDSolver::saveLidReport(SimulationContext& ctx, int gi, LIDGroupSoA& g, st
 
     // --- format the current row into the held buffer
     const double new_sec = old_runoff_sec_ + dt;
-    const double when = ctx.options.start_date + new_sec / 86400.0;
+    const double when = ctx.options.start_date + new_sec / constants::SEC_PER_DAY;
     int yy, mo, dd, hh, mi, ss;
     datetime::decodeDate(when, yy, mo, dd);
     datetime::decodeTime(when, hh, mi, ss);

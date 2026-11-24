@@ -412,7 +412,7 @@ static double updateIA_linear(const UnitHydParams& uh, UHResponseData& rd, int m
         rd.ia_used += (rainDepth - netRainDepth);
     } else {
         // Recover IA during dry period
-        rd.ia_used -= dt_sec / 86400.0 * uh.iaRecov[m][k];
+        rd.ia_used -= dt_sec / constants::SEC_PER_DAY * uh.iaRecov[m][k];
         rd.ia_used = std::max(rd.ia_used, 0.0);
         netRainDepth = 0.0;
     }
@@ -437,7 +437,7 @@ double getRecoveryRate(const ExpDecayParams& dp, double T_celsius) {
  * @param tf Fahrenheit value, borrowed by value.
  * @return (tf-32)*5/9; no finite/range checks or state mutation. */
 static inline double fToC(double tf) {
-    return (tf - 32.0) * 5.0 / 9.0;
+    return (tf - constants::F_AT_0C) * 5.0 / 9.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +477,8 @@ double updateIA_exp(const UnitHydParams& uh, UHResponseData& rd, const ExpDecayP
             rd.swe += rainDepth;
             rainDepth = 0.0; // snowfall: no liquid input
         } else if (rd.swe > 0.0) {
-            double melt = std::min(rd.swe, dp.snow_ddf * (T_c - dp.snow_T) * dt_sec / 86400.0);
+            double melt =
+                std::min(rd.swe, dp.snow_ddf * (T_c - dp.snow_T) * dt_sec / constants::SEC_PER_DAY);
             rd.swe -= melt;
             rainDepth += melt; // rain-on-snow adds
         }

@@ -25,6 +25,7 @@
  */
 
 #include "Landuse.hpp"
+#include "../core/Constants.hpp"
 #include "../core/UnitConversion.hpp"
 #include <cmath>
 #include <algorithm>
@@ -148,7 +149,7 @@ static double getBuildupDays(const BuildupParams& bp, double mass) {
  */
 void LanduseSolver::computeBuildup(SurfaceQualitySoA& sq, const double* /*area*/,
                                    const double* /*curb_length*/, double dt, int n_subcatch) {
-    double dt_days = dt / ucf::SEC_PER_DAY;
+    double dt_days = dt / constants::SEC_PER_DAY;
 
     // Batch: for each (subcatch, pollutant) — vectorisable inner loop
     for (int p = 0; p < n_pollutants_; ++p) {

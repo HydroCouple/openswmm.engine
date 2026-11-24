@@ -4,14 +4,24 @@
 Each mode has profiled and unprofiled runs, checked for exact numerical parity.
 Completed measurements are resumable only with identical inputs and binaries.
 Performance targets are recorded as pass/fail observations, not accuracy waivers.
+
+--window START END (each "MM/DD/YYYY HH:MM:SS") runs a cut of the event instead of the whole of
+it: the deck's start, report start and end are rewritten and nothing else. A window that starts
+after the event's start has no antecedent wetting, so its numbers describe that regime (a storm
+burst, a rain-free stretch), not the full event. Each run also records the engine process's CPU
+time and the load average around it, so a comparison made on a shared machine can be judged.
+--settle-load MAX waits, before each run and for at most --settle-wait seconds, until the 1-minute
+load average is at or below MAX; the wait and whether the load settled are recorded with the run.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
+import resource
 import statistics
 import subprocess
 import time
@@ -50,8 +60,17 @@ def save(path, value):
     pending.replace(path)
 
 
-def prepare(source, mode):
+def prepare(source, mode, window=None):
     text = source.read_text()
+    if window:
+        for key, value in (("START_DATE", window[0].strftime("%m/%d/%Y")),
+                           ("START_TIME", window[0].strftime("%H:%M:%S")),
+                           ("REPORT_START_DATE", window[0].strftime("%m/%d/%Y")),
+                           ("REPORT_START_TIME", window[0].strftime("%H:%M:%S")),
+                           ("END_DATE", window[1].strftime("%m/%d/%Y")),
+                           ("END_TIME", window[1].strftime("%H:%M:%S"))):
+            text, count = re.subn(rf"^(\s*{key}\s+)[^\n]*", rf"\g<1>{value}", text, flags=re.M)
+            assert count == 1, key
     text = re.sub(r"^\s*(?:GW_CLOCK|BACKEND|OUTPUT_FILE)\s+[^\n]*\n", "", text, flags=re.M)
     text = text.replace("[2D_OPTIONS]", "[2D_OPTIONS]\nBACKEND CPU\nOUTPUT_FILE fields.2d.h5", 1)
     if "[2D_AQUIFER_OPTIONS]" in text:
@@ -64,7 +83,15 @@ def prepare(source, mode):
     return text, dependencies
 
 
-def measure(cli, dest, profiled, expected_seconds):
+def settle(maximum, wait):
+    """Wait until the 1-minute load average is <= maximum, at most `wait` s; return (s, settled)."""
+    started = time.perf_counter()
+    while os.getloadavg()[0] > maximum and time.perf_counter() - started < wait:
+        time.sleep(15)
+    return time.perf_counter() - started, os.getloadavg()[0] <= maximum
+
+
+def measure(cli, dest, profiled, expected_seconds, slack=1e-8, quiet=None):
     env = dict(os.environ)
     for key in list(env):
         if key.startswith(("GW_STUDY_", "GW_CONTROL_", "OPENSWMM_PERF")) or key in (
@@ -73,11 +100,16 @@ def measure(cli, dest, profiled, expected_seconds):
             env.pop(key)
     if profiled:
         env.update(OPENSWMM_PERF="1", OPENSWMM_GW_CLOCK_CELLS="1")
+    waited, settled = settle(*quiet) if quiet else (0.0, None)
+    load_before = os.getloadavg()[0]
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter()
     with (dest / "console.log").open("w") as log:
         subprocess.run([str(cli), "model.inp", "model.rpt", "model.out"], cwd=dest, env=env,
                        stdout=log, stderr=subprocess.STDOUT, check=True)
     elapsed = time.perf_counter() - started
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu = after.ru_utime + after.ru_stime - before.ru_utime - before.ru_stime
     log = (dest / "console.log").read_text()
     assert "[PERF-PROCESS-INVALID]" not in log, dest
     assert b"ERROR " not in (dest / "model.rpt").read_bytes(), dest
@@ -85,13 +117,15 @@ def measure(cli, dest, profiled, expected_seconds):
     if profiled:
         validate_clock(clocks)
         if expected_seconds is not None:
-            assert abs(float(clocks["summary"][0]["seconds"]) - expected_seconds) < 1e-8
+            assert abs(float(clocks["summary"][0]["seconds"]) - expected_seconds) <= slack
         assert all(int(row["invalid_interval"]) == 0 for row in clocks["-CLOSURE"])
     else:
         assert not clocks
     phases = {group: dict(re.findall(r"([\w.]+)=([^\s]+)", body))
               for group, body in re.findall(r"\[PERF-([^]]+)\]([^\n]+)", log)}
-    return {"wall_seconds": elapsed, "out_sha256": sha(dest / "model.out"),
+    return {"wall_seconds": elapsed, "cpu_seconds": cpu,
+            "load_average_1min": [load_before, os.getloadavg()[0]],
+            "settle_wait_seconds": waited, "load_settled": settled, "out_sha256": sha(dest / "model.out"),
             "report_payload_sha256": hashlib.sha256(report_payload(dest / "model.rpt")).hexdigest(),
             "datasets": datasets(dest / "fields.2d.h5"), "clock": clocks, "phases": phases}
 
@@ -101,9 +135,14 @@ def phase_total(row, group):
 
 
 def summarize(out, pairs):
-    wall, gw, surface, firings, cost = {}, {}, {}, {}, {}
+    wall, cpu, load, gw, surface, firings, cost = {}, {}, {}, {}, {}, {}, {}
     for mode in ("SHARED", "INDEPENDENT"):
         wall[mode] = statistics.median(pair[mode]["plain"]["wall_seconds"] for pair in pairs)
+        # Measurements saved before CPU time was recorded have neither key.
+        cpu[mode] = statistics.median(pair[mode]["plain"].get("cpu_seconds", math.nan)
+                                      for pair in pairs)
+        load[mode] = max(max(pair[mode][label].get("load_average_1min", [math.nan]))
+                         for pair in pairs for label in ("profiled", "plain"))
         gw[mode] = statistics.median(phase_total(pair[mode]["profiled"], "GW2D") for pair in pairs)
         surface[mode] = statistics.median(phase_total(pair[mode]["profiled"], "2D") for pair in pairs)
         counts = [int(pair[mode]["profiled"]["clock"]["summary"][0]["firings"]) for pair in pairs]
@@ -125,6 +164,9 @@ def summarize(out, pairs):
     ratio = gw["SHARED"] / gw["INDEPENDENT"]
     regression = surface["INDEPENDENT"] / surface["SHARED"] - 1
     return {"repeats": len(pairs), "median_unprofiled_wall_seconds": wall,
+            "median_unprofiled_cpu_seconds": cpu,
+            "unprofiled_cpu_speed_ratio": cpu["SHARED"] / cpu["INDEPENDENT"],
+            "highest_load_average_1min": load,
             "median_gw_process_seconds": gw, "median_surface_process_seconds": surface,
             "physical_firings": firings, "gw_process_seconds_per_firing": cost,
             "gw_process_speed_ratio": ratio, "surface_process_relative_change": regression,
@@ -136,13 +178,26 @@ def summarize(out, pairs):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("engine", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--suite", choices=("soa", "bellinge"), required=True)
     parser.add_argument("--bellinge", type=Path)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--settle-load", type=float, metavar="MAX",
+                        help="wait for the 1-minute load average to fall to MAX before each run")
+    parser.add_argument("--settle-wait", type=float, default=900, metavar="SECONDS")
+    parser.add_argument("--window", nargs=2, metavar=("START", "END"),
+                        help='run only this part of the Bellinge event, "MM/DD/YYYY HH:MM:SS" each')
     args = parser.parse_args()
+    window = None
+    if args.window:
+        if args.suite != "bellinge":
+            parser.error("--window applies to the Bellinge suite")
+        window = [datetime.datetime.strptime(value, "%m/%d/%Y %H:%M:%S") for value in args.window]
+        if window[1] <= window[0]:
+            parser.error("--window END must be after START")
     if args.repeat < 1:
         parser.error("--repeat must be positive")
     if args.suite == "bellinge" and not args.bellinge:
@@ -154,14 +209,14 @@ def main():
     cli, out = args.engine.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     provenance = {"engine": engine(cli), "cli_sha256": sha(cli), "script_sha256": sha(Path(__file__)),
-                  "suite": args.suite, "repeats": args.repeat,
+                  "suite": args.suite, "repeats": args.repeat, "window": args.window,
                   "edits": ["CPU backend", "local HDF5 output path", "explicit clock mode"],
                   "inputs": {str(p): sha(p) for p in sources},
                   "timing": "isolated sequential runs; unprofiled wall time; separate exclusive process timers"}
     prepared = {}
     for source in sources:
         for mode in ("SHARED", "INDEPENDENT"):
-            prepared[source, mode] = prepare(source, mode)
+            prepared[source, mode] = prepare(source, mode, window)
     dependencies = {str(p.resolve()): sha(p) for _, deps in prepared.values() for p in deps}
     provenance["dependencies"] = dependencies
     path = out / "provenance.json"
@@ -172,7 +227,9 @@ def main():
     result = {"provenance": provenance, "status": "running", "cases": {}}
     try:
         for source in sources:
-            name = "bellinge_full" if args.suite == "bellinge" else source.stem
+            name = source.stem
+            if args.suite == "bellinge":
+                name = "bellinge_window" if window else "bellinge_full"
             pairs = []
             for repeat in range(args.repeat):
                 pair = {}
@@ -197,7 +254,14 @@ def main():
                         assert engine(cli) == provenance["engine"], "Engine changed during measurement"
                         print(f"Starting {name} #{repeat} {mode} {label}", flush=True)
                         expected = 172680 if args.suite == "bellinge" else None
-                        row = measure(cli, dest, label == "profiled", expected)
+                        if window:
+                            expected = (window[1] - window[0]).total_seconds()
+                        # A window that starts on a whole minute reports one second less
+                        # than its length (7199 s for two hours); the full event is exact.
+                        row = measure(cli, dest, label == "profiled", expected,
+                                      1 + 1e-8 if window else 1e-8,
+                                      (args.settle_load, args.settle_wait)
+                                      if args.settle_load is not None else None)
                         pair[mode][label] = row
                         save(measurement, row)
                         print(f"Completed in {row['wall_seconds']:.3f} s", flush=True)
@@ -208,7 +272,8 @@ def main():
                 result["cases"][name] = {"summary": summary, "runs": pairs}
                 save(out / "results.json", result)
                 print(name, json.dumps({k: summary[k] for k in ("gw_process_speed_ratio",
-                      "surface_process_relative_change", "unprofiled_wall_speed_ratio")}), flush=True)
+                      "surface_process_relative_change", "unprofiled_wall_speed_ratio",
+                      "unprofiled_cpu_speed_ratio")}), flush=True)
         result["status"] = "complete"
         save(out / "results.json", result)
         save(out / "progress.json", {"status": "complete"})

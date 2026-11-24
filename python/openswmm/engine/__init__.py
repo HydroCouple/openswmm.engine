@@ -178,7 +178,7 @@ Advanced forcing
 # =============================================================================
 # Engine lifecycle & errors
 # =============================================================================
-from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID, abi_tag
+from ._solver import Solver, run, run_with_callback, GEOPACKAGE_PLUGIN_ID, abi_tag, backend_info
 from ._exceptions import (
     EngineError,
     BadHandleError,
@@ -227,7 +227,7 @@ from ._gages import Gages
 # =============================================================================
 # Simulation state & I/O
 # =============================================================================
-from ._hotstart import HotStart
+from ._hotstart import HotStart, RestartSettings, inspect_restart_file, probe_restart_file
 from ._massbalance import MassBalance
 from ._statistics import Statistics
 from ._output_reader import OutputReader
@@ -340,6 +340,7 @@ from ._enums import (
 
 __all__ = [
     "abi_tag",
+    "backend_info",
     # --- DateTime conversion (SWMM DateTime <-> Python datetime) ---
     "oadate_to_datetime", "datetime_to_oadate", "datetime_api",
     # --- Engine lifecycle & errors ---
@@ -364,7 +365,7 @@ __all__ = [
     "Nodes", "Links", "Subcatchments", "Gages",
     "Aquifers", "Snowpacks",
     # --- Simulation state & I/O ---
-    "HotStart", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
+    "HotStart", "RestartSettings", "inspect_restart_file", "probe_restart_file", "MassBalance", "Statistics", "OutputReader", "Output2DReader",
     "Results", "ResultField", "SeriesField", "SurfaceField", "SurfaceResults", "ResultMesh",
     "capabilities",
     # --- Hydrology, water quality, and time-varying inputs ---
@@ -422,6 +423,8 @@ from ._enums import (
     Heat2DValue as Heat2DValue, EvapPreviewStatus as EvapPreviewStatus, EvapType as EvapType, TempSource as TempSource, WindType as WindType, HumidityType as HumidityType, HumidityVar as HumidityVar, HeatElemKind as HeatElemKind, InpProfile as InpProfile, TransportDispersionMode as TransportDispersionMode, UnitSystem as UnitSystem
 )
 __all__ += ['EvapType', 'TempSource', 'WindType', 'HumidityType', 'HumidityVar', 'HeatElemKind', 'InpProfile', 'TransportDispersionMode', 'UnitSystem']
+from ._enums import BackendSolver as BackendSolver
+__all__ += ['BackendSolver']
 
 from ._transport import (Transport as Transport, ThreadInfo as ThreadInfo, EffectiveThreads as EffectiveThreads, TransportCell as TransportCell, TransportRow as TransportRow, ConduitDispersion as ConduitDispersion, transport_domain_name as transport_domain_name, transport_class_name as transport_class_name)
 from ._enums import (TransportDomain as TransportDomain, TransportClass as TransportClass, TransportState as TransportState)

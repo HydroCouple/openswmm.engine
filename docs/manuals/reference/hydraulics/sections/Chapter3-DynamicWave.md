@@ -886,10 +886,12 @@ width reflects the conduit's pressurization state and history rather
 than its instantaneous depth, with the pressure-wave celerity as an
 explicit, user-controlled quantity.
 
-<!-- PLACEHOLDER IMAGE (replace with final drawing): cross-section of a closed conduit surcharged under the dynamic Preissmann slot, showing the full conduit area A_full, the accumulated slot area A_s above the crown with top width T_s, the surcharge head h_s, and an inset timeline of the Preissmann number decaying from P_hat_0 toward 1 after pressurization at t_s. Regenerate or replace docs/manuals/reference/hydraulics/media/media/figure3-8-placeholder.png (source: scripts/generate_placeholder_figures.py). -->
-![Figure 3-8](figure3-8-placeholder.png)
+![Figure 3-8](figures/png/hydraulics_ch3_surcharge_methods.png)
 
-*Figure 3-8 Conceptual representation of the dynamic Preissmann slot*
+*Figure 3-8 The four surcharge treatments on one overloaded pipe chain: the hydraulic
+grade line while the chain fills and drains under EXTRAN, SLOT, DYNAMIC_SLOT and TPA,
+the head at the node where the methods differ most, and the provisional Preissmann
+number of the dynamic slot after a pipe first pressurizes*
 
 The pressurization life cycle of a conduit end under the dynamic slot
 is summarized in Figure 3-9.
@@ -1584,26 +1586,34 @@ selected with the `NODE_CONTINUITY` option:
 
 The semi-implicit formulation recognizes that the flows entering the
 head update of Equation 3-15 themselves depend on the head being
-solved for. Linearizing the net nodal flow about the current head
-estimate using the flow gradients of Equation 3-27,
-\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q + \sum\frac{\partial Q}{\partial H}\mathrm{\Delta}H\f$,
+solved for. The flows of iteration *k*, \f$\sum Q\left( H_{k} \right)\f$, were
+computed at the latest head estimate \f$H_{k}\f$. Linearizing the net nodal
+flow about that estimate using the flow gradients of Equation 3-27,
+\f$\sum Q^{t + \mathrm{\Delta}t} \approx \sum Q\left( H_{k} \right) + \sum\frac{\partial Q}{\partial H}\left( H_{k + 1} - H_{k} \right)\f$,
 and carrying the correction into the trapezoidal head update yields a
 single equation used at every non-outfall node regardless of its
 surcharge state:
 
 | | | | |
 |---|---|---|---|
-| \f[H^{t + \mathrm{\Delta}t} = H^{t} + \frac{\frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
+| \f[H_{k + 1} = H_{k} + \frac{A_{S}\left( H^{t} - H_{k} \right) + \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q\left( H_{k} \right) \right)}{\max\left( A_{S} + \frac{\mathrm{\Delta}t}{2}\sum\frac{\partial Q}{\partial H},\ A_{Smin} \right)}\f] | | (3-45) | |
 
 where \f$A_{S}\f$ is the node assembly surface area of Equation 3-22 and
 the flow derivatives are those computed during the flow update, exactly
-as in Section 3.3.5. When the surface area dominates the denominator
-the update reduces to the ordinary free-surface formula 3-15; as a node
-approaches and passes through surcharge the flow-derivative term takes
-on the role that the surcharge formula 3-28 plays in the explicit
-scheme, with the minimum surface area *A*<sub>Smin</sub> bounding the
-denominator from below. The under-relaxation of Step 5 of the solution
-procedure and the ponding rules of Section 3.3.7 apply unchanged.
+as in Section 3.3.5. The flow-derivative term multiplies the change
+from \f$H_{k}\f$, not from \f$H^{t}\f$: \f$\sum Q\left( H_{k} \right)\f$ already contains the
+flow response to \f$H_{k} - H^{t}\f$, and applying the derivative to the
+whole step would count that response twice. When the iteration has
+converged (\f$H_{k + 1} = H_{k}\f$) Equation 3-45 reduces to
+\f$A_{S}\left( H^{t + \mathrm{\Delta}t} - H^{t} \right) = \frac{\mathrm{\Delta}t}{2}\left( \sum Q^{t} + \sum Q^{t + \mathrm{\Delta}t} \right)\f$,
+the free-surface continuity of Equation 3-15: below the crown both
+formulations converge to the same heads, and the flow-derivative term
+only shortens the path. As a node approaches and passes through
+surcharge the flow-derivative term takes on the role that the
+surcharge formula 3-28 plays in the explicit scheme, with the minimum
+surface area *A*<sub>Smin</sub> bounding both \f$A_{S}\f$ and the denominator from
+below. The under-relaxation of Step 5 of the solution procedure and
+the ponding rules of Section 3.3.7 apply unchanged.
 
 The practical consequence is that the head-update operator has no
 branch at the crown: a node passes into and out of surcharge through
@@ -1612,6 +1622,60 @@ convergence acceleration of Section 3.6, whose validity depends on the
 smoothness of the iteration operator, and it is the recommended node
 continuity setting for models containing virtual junctions
 (Section 3.3.10).
+
+**Water held above the crown.** Above the crown, \f$A_{S}\f$ keeps each
+closed conduit's surface area at the crown cutoff (as in SWMM 5, a closed
+conduit's top width is taken at 0.985257 of its full depth once the water
+reaches it), so the head of a surcharged node rises over that area as a free
+surface would and the node stores water there. The conduits are full and a
+junction's own volume is booked as zero, as in SWMM 5, so that water would be
+in no volume: the routing continuity table counted it as lost while the node
+was surcharged and as gained while it drained. On the Bellinge 1D network
+through the storm of 29 June 2012 the continuity error read 3.64 % at 06:30
+against 0.41 % under `EXPLICIT`, and fell to -0.11 % by 12:30. Under
+`SEMI_IMPLICIT` a surcharged junction (not a storage unit, a chamber, a
+Type-1 pump wet well, a LID node or an inlet) therefore books that water
+beside its volume: the storage its head update makes above the crown while it
+is surcharged below its rim, and what it held when it reaches the rim. The
+volume itself keeps the SWMM 5 convention, so flooding, ponding, a coupled
+node's pond, the node-bed exchange and every head and flow are unchanged bit
+for bit. The routing continuity table, the node's reported volume and the
+pollutant, reaction-species, age and temperature mixes hold the water: the
+same 1D run reads 0.73 % at 06:30, 0.04 % at 08:30 and -0.25 % at 12:30, and
+on the 2D-coupled Bellinge model the 1D continuity error over the storm
+falls from 2.90 % to 0.20 %. Water held where a conduit's crown lies below the
+node's crown is not booked: the larger conduits at that node still store
+water below their own crowns there. An engine checkpoint carries the held
+water; a hot start file written from records (SWMM 5 or native format) does
+not, and a run restarted from one starts with none.
+
+**Regulator laws under semi-implicit continuity.** Equation 3-45 can
+only converge where each link's flow is a continuous function of the
+heads whose slope the flow derivatives report. Three of the SWMM 5
+regulator laws of @ref hydraulics_ref_ch6_pumps_regulators "Chapter 6"
+break this, and a node they join then fails to converge step after
+step. Under `SEMI_IMPLICIT`, which has no SWMM 5 counterpart, OpenSWMM
+changes them as follows; under `EXPLICIT` they are exactly as in SWMM 5.
+\f$\delta\f$ is 0.05 ft.
+
+| SWMM 5 law | Why the iteration fails | Under `SEMI_IMPLICIT` |
+|---|---|---|
+| Villemonte factor (Equations 6-13 and 6-26) on submerged orifices and weirs | Its slope is unbounded as \f$H_{2} \to H_{1}\f$, while \f$dQ/dH\f$ (Equation 6-17, Table 6-4) is taken before the factor: the head update overshoots and the flow reverses from one trial to the next | The factor is evaluated at a head difference of at least \f$\delta\f$; below \f$\delta\f$ the flow runs linearly to zero, and \f$dQ/dH\f$ is the slope of that line. Above \f$\delta\f$ \f$dQ/dH\f$ is the larger of the SWMM 5 value times the factor and the flow's sensitivity to the downstream head. A full side orifice or a surcharged weir driven by the head difference (Equations 6-5 and 6-30) gets the same linear segment below \f$\delta\f$ |
+| Bottom orifice in its weir regime with \f$H_{2}\f$ above the opening | Its head is already the head difference \f$H_{1} - H_{2}\f$ (Equation 6-6), and the factor of Equation 6-13 is applied as well, so submergence is counted twice; at \f$H^{*}\f$ the flow jumps by \f$1/f_{S}\f$, and an inflow inside the jump has no steady state | The factor is not applied, so the weir and orifice formulas meet at \f$H^{*}\f$ (Equation 6-10) |
+| Outlet rating at small heads | A rating that starts at a nonzero flow (a flow regulator), or a power below one, switches an outlet on a nearly empty node between its rated flow and none, and its \f$dQ/dH\f$ is 0 | Below an effective head of \f$\delta\f$ the flow runs linearly from zero to the rating's value at \f$\delta\f$, and \f$dQ/dH\f$ is the slope of that line |
+
+![Figure 3-11](figures/png/hydraulics_ch3_si_regulator_laws.png)
+
+*Figure 3-11 The three regulator laws that semi-implicit node continuity changes: the
+flow (top) and the dQ/dH handed to the node head update (bottom) under EXPLICIT and
+SEMI_IMPLICIT, for a submerged transverse weir, a bottom orifice with tailwater above
+its opening, and outlets rated from a nonzero flow or with a power below one*
+
+Apart from the bottom orifice, the flow laws are those of SWMM 5
+wherever the head difference across a submerged regulator, or an
+outlet's head, is at least \f$\delta\f$; there only the flow derivatives
+differ. Stepped (Type 2) pump curves and the conduit end surface areas
+of Section 3.3.2 are unchanged.
 
 **Implementation.** The unified branch is implemented in
 `setNodeDepth` of @ref openswmm::dynwave::DWSolver "DWSolver"
@@ -1646,8 +1710,9 @@ estimate entering iteration *k*. The iteration residual is
 
 and convergence is declared when its magnitude falls within the head
 tolerance. Rather than simply accepting \f$G\left( H_{k} \right)\f$ as the
-next iterate, Anderson acceleration of depth two (equivalently,
-Aitken's secant update) blends the two most recent operator outputs so
+next iterate, two-point Anderson acceleration with one stored iterate
+(equivalently, Aitken's secant update) blends the two most recent
+operator outputs so
 as to cancel the residual predicted by a linear model of the
 iteration. The mixing coefficient is
 
@@ -1671,9 +1736,14 @@ has no history to mix). When a mixed head is accepted it is committed
 through the same routine as an ordinary update, so the node's volume,
 overflow and rate of depth change — quantities that feed flooding
 totals, the mass balance and the variable time step — always describe
-the head actually accepted. In practice the acceleration reduces trial
-counts by roughly 25 to 50 percent per routing step on networks that
-otherwise iterate to the trial limit.
+the head actually accepted. Whether the acceleration saves trials
+depends on why a network is slow to converge. It shortens a slow, smooth
+approach to the solution; it cannot converge a node that alternates
+between two branches of a non-smooth update, such as a weir or orifice
+between two nodes at nearly equal heads or a flow regulator draining a
+nearly empty storage unit. Where those nodes are what exhaust the trial
+allotment, the acceleration can raise the trial count. Compare the
+report's Routing Time Step Summary with the option on and off.
 
 The acceleration is justified only where the operator \f$G\f$ is smooth —
 where small head changes produce proportionally small changes in the
@@ -1697,7 +1767,8 @@ pair well.
 
 | Condition | Applies when | Reason |
 |---|---|---|
-| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT` | The head update switches from Equation 3-15 to Equation 3-28 at the crown. |
+| Surcharged node | `SURCHARGE_METHOD EXTRAN` with `NODE_CONTINUITY EXPLICIT`; the head entering either of the two blended iterations is above the crown | The head update switches from Equation 3-15 to Equation 3-28 at the crown, and a blend must not combine updates from the two branches. |
+| Node at its flood limit | The plain iterate is at or above the depth where the node floods (full depth plus surcharge depth, or full depth where it can pond) | Overflow and ponded volume are booked only at or above that depth; a blend landing below it would discard the water the plain iterate sent to flooding. |
 | Active dynamic slot | `SURCHARGE_METHOD DYNAMIC_SLOT`; node touches a conduit with *A*<sub>s</sub> > 0 | The slot geometry of Section 3.3.9 is rewritten each iteration, so the operator differs between iterates. |
 | Near the static slot cutoff | `SURCHARGE_METHOD SLOT`; node touches a closed conduit with \f$0.98 \leq \overline{Y}/Y_{full} \leq 1.02\f$ | The slot width of Equation 3-30 engages abruptly at the crown cutoff. |
 | TPA latch transition | `SURCHARGE_METHOD TPA`; node touches a conduit whose pressurized latch changed this routing step | A latch transition is a discrete operator switch (Section 3.3.11). Steadily latched or steadily free conduits remain eligible. |
@@ -1714,7 +1785,7 @@ the underlying flow balance is still unsatisfied; with acceleration
 disabled the two tests coincide and the criterion reduces exactly to
 that of Section 3.2.
 
-Figure 3-11 summarizes one accelerated iteration.
+Figure 3-12 summarizes one accelerated iteration.
 
 <!-- workflow: anderson_iteration -->
 <pre class="mermaid">
@@ -1739,15 +1810,18 @@ flowchart TD
 <span data-node="K">@ref hydraulics_ref_ch3_anderson "3.6 Anderson acceleration: convergence"</span>
 </div>
 
-*Figure 3-11 Workflow of one Anderson-accelerated iteration of the
+*Figure 3-12 Workflow of one Anderson-accelerated iteration of the
 successive-approximation loop (rendered diagram)*
 
 **Implementation.** The mixing update, the residual gate and the
 two-condition convergence test are implemented in
 `updateNodeDepthsTeam` of @ref openswmm::dynwave::DWSolver "DWSolver"
 (`src/engine/hydraulics/DynamicWave.cpp`), with the exclusion flags of
-Table 3-2 computed once per iteration in `computeAASkipFlags` and the
-canonical state commit in `commitNodeDepthState`. The option is
+Table 3-2 computed once per iteration in `computeAASkipFlags`, except
+the two that depend on the current plain iterate (its surcharge branch
+and the flood limit, `floodLimitDepth`), which `updateNodeDepthsTeam`
+tests after each node's update, and the canonical state commit in
+`commitNodeDepthState`. The option is
 declared in @ref openswmm::SimulationOptions "SimulationOptions"
 (`src/engine/core/SimulationOptions.hpp`).
 

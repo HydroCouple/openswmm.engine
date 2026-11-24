@@ -38,6 +38,7 @@
 #include "AquiferLinkExchange.hpp" // G-X4
 #include "Divider.hpp"
 #include "ForceMain.hpp"
+#include "HydClosureKernels.hpp"
 #include "Node.hpp"
 #include "Link.hpp"
 #include "TopoSort.hpp"
@@ -446,6 +447,7 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
     switch (model_) {
     case RouteModel::KINWAVE: {
         kw_solver_.init(n_links, groups_);
+        kw_solver_.seedInitialState(ctx);
         // Build topological link order for upstream → downstream processing
         std::vector<int> sorted;
         const std::vector<int> divert = buildDivertLinks(ctx);
@@ -510,7 +512,12 @@ void Router::init(SimulationContext& ctx, RouteModel model) {
         break;
     }
     case RouteModel::FV: {
-        initFv(ctx);
+        try {
+            initFv(ctx);
+        } catch (const std::exception& error) {
+            fv_solver_.reset();
+            fv_errors_.push_back(std::string("FV initialization failed: ") + error.what());
+        }
         break;
     }
     case RouteModel::STEADY: {
@@ -1246,11 +1253,15 @@ void Router::refreshFvNodePonding(SimulationContext& ctx) {
     if (model_ != RouteModel::FV || fv_mesh_.n_nodes() == 0)
         return;
     fv::refreshNodePonding(ctx, fv_mesh_);
-    // The built-in solvers read node_can_pond / node_ponded_area through their
-    // mesh pointer at use time. A plugin backend received the mesh once, at
-    // initialize, and may hold a device copy: say so rather than let coupled
-    // junctions silently clamp at the rim there.
-    if (fv_backend_.rfind("cpu", 0) != 0) {
+    // The built-in solver reads node_can_pond / node_ponded_area through its
+    // mesh pointer at use time; a device marcher attached to it holds a copy,
+    // which is refreshed here. Any other backend received the mesh once, at
+    // initialize: say so rather than let coupled junctions silently clamp at
+    // the rim there.
+    auto* fv_native = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (fv_native)
+        fv_native->refreshDeviceMesh();
+    if (!fv_native && fv_backend_.rfind("cpu", 0) != 0) {
         bool any_coupled = false;
         for (std::size_t i = 0; i < ctx.coupled_node.size() && !any_coupled; ++i)
             any_coupled = ctx.coupled_node[i] != 0;
@@ -1550,7 +1561,7 @@ void Router::initFv(SimulationContext& ctx) {
         fv_state_.node_head[un] = ctx.nodes.invert_elev[un] + ctx.nodes.depth[un];
     }
 
-    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc);
+    fv_solver_ = fv::makeNetworkSolver(fv_opts_, &fv_backend_, nc, ctx.options.num_threads);
     if (std::any_of(ctx.nodes.storage_area.begin(), ctx.nodes.storage_area.end(),
                     [](double area) { return area > 0.0; }) &&
         !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
@@ -1558,10 +1569,26 @@ void Router::initFv(SimulationContext& ctx) {
             "Junction StorageArea requires the CPU finite-volume backend; select FV_BACKEND CPU");
     }
 
+    // A device backend integrates only what its marcher covers. Outside that
+    // scope the request is dropped here, before it can change anything else.
+    auto* fv_native = dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get());
+    if (fv_native && fv_native->hasDeviceMarcher()) {
+        std::string why;
+        if (!fv::ExplicitFvSolver::deviceSupports(fv_opts_, fv_state_.n_species, &why)) {
+            if (fv_backend_.rfind("metal", 0) == 0)
+                throw std::runtime_error("Metal FV network does not support " + why);
+            fv_native->attachDeviceMarcher(nullptr);
+            fv_warnings_.push_back(format_warning(
+                WARN_FV_OPTION_INERT, "FV backend '" + fv_backend_ + "' not used: " + why +
+                                          " is outside its scope; the CPU solver runs instead"));
+            fv_backend_ = "cpu (explicit finite volume)";
+        }
+    }
+
     // The per-substep refresh is a callback into HydStructures, which a device
     // backend cannot reach. Say so rather than letting the option go quiet.
     if (fv_opts_.structure_coupling == fv::StructureCoupling::SUBSTEP &&
-        !dynamic_cast<fv::ExplicitFvSolver*>(fv_solver_.get())) {
+        (!fv_native || fv_native->hasDeviceMarcher())) {
         fv_opts_.structure_coupling = fv::StructureCoupling::ROUTING_STEP;
         fv_warnings_.push_back(format_warning(
             WARN_FV_OPTION_INERT, "FV_STRUCTURE_COUPLING SUBSTEP on the '" + fv_backend_ +
@@ -2081,9 +2108,7 @@ void Router::publishFv(SimulationContext& ctx, double dt) {
         const double hyd_depth = (fv::kernels::widthOfDepth(g, ctx.links.depth[uj]) > 0.0)
                                      ? a_conv / fv::kernels::widthOfDepth(g, ctx.links.depth[uj])
                                      : 0.0;
-        ctx.links.froude[uj] =
-            (hyd_depth > 0.0) ? std::fabs(v) * constants::INV_SQRT_GRAVITY / std::sqrt(hyd_depth)
-                              : 0.0;
+        ctx.links.froude[uj] = (hyd_depth > 0.0) ? hydkernels::froudeNumber(v, hyd_depth) : 0.0;
 
         // Flow class and the end-full flags. Neither was ever written under FV,
         // so the Flow Classification Summary read 100 % dry on every model and

@@ -315,8 +315,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.yw_max = d / 2.0;
         xs.a_full = PI / 4.0 * d * d;
         xs.r_full = d / 4.0;
-        xs.s_full = xs.a_full * std::pow(xs.r_full, 0.63); // Hazen-Williams
-        xs.s_max = 1.06949 * xs.s_full;
+        xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0); // Manning, as CIRCULAR
+        xs.s_max = 1.08 * xs.s_full;
         xs.r_bot = p[1]; // C-factor / roughness stored in rBot
         return 0;
     }
@@ -549,11 +549,11 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
 
     case XSectShape::HORIZ_ELLIPSE: {
         double code = p[2];
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && code == 0.0) // SWMM 5.0 format
             code = p[0];
         if (code > 0.0) { // standard ellipse pipe
             int idx = static_cast<int>(std::floor(code)) - 1;
-            if (idx < 0 || idx >= xsect_tables::NumCodesEllipse)
+            if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesEllipse)
                 return -1;
             xs.y_full = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
             xs.w_max = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
@@ -564,8 +564,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
                 return -1;
             xs.y_full = p[0] / ucf;
             xs.w_max = p[1] / ucf;
-            xs.a_full = 1.2692 * xs.y_full * xs.y_full;
-            xs.r_full = 0.3061 * xs.y_full;
+            xs.a_full = 0.8117 * xs.y_full * xs.w_max;
+            xs.r_full = 0.2448 * std::sqrt(xs.y_full * xs.w_max);
         }
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
         xs.s_max = xs.s_full;
@@ -574,11 +574,11 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
     }
     case XSectShape::VERT_ELLIPSE: {
         double code = p[2];
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && code == 0.0) // SWMM 5.0 format
             code = p[0];
         if (code > 0.0) { // standard ellipse pipe
             int idx = static_cast<int>(std::floor(code)) - 1;
-            if (idx < 0 || idx >= xsect_tables::NumCodesEllipse)
+            if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesEllipse)
                 return -1;
             xs.y_full = xsect_tables::MajorAxis_Ellipse[idx] / 12.0;
             xs.w_max = xsect_tables::MinorAxis_Ellipse[idx] / 12.0;
@@ -589,8 +589,8 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
                 return -1;
             xs.y_full = p[0] / ucf;
             xs.w_max = p[1] / ucf;
-            xs.a_full = 1.2692 * xs.w_max * xs.w_max;
-            xs.r_full = 0.3061 * xs.w_max;
+            xs.a_full = 0.8117 * xs.y_full * xs.w_max;
+            xs.r_full = 0.2448 * std::sqrt(xs.y_full * xs.w_max);
         }
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
         xs.s_max = xs.s_full;
@@ -599,11 +599,11 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
     }
     case XSectShape::ARCH: {
         double code = p[2];
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && code == 0.0) // SWMM 5.0 format
             code = p[0];
         if (code > 0.0) { // standard arch pipe
             int idx = static_cast<int>(std::floor(code)) - 1;
-            if (idx < 0 || idx >= xsect_tables::NumCodesArch)
+            if (idx < 0 || idx + 1 != code || idx >= xsect_tables::NumCodesArch)
                 return -1;
             xs.y_full = xsect_tables::Yfull_Arch[idx] / 12.0; // inches
             xs.w_max = xsect_tables::Wmax_Arch[idx] / 12.0;

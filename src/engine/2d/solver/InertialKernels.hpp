@@ -56,6 +56,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../../core/Constants.hpp"
 #include "../data/MeshData.hpp"
 #include "../data/SolverOptions2D.hpp"
 #include "../mesh/VfrClosure.hpp"
@@ -74,7 +75,9 @@
 
 namespace openswmm::twoD::inertial {
 
-inline constexpr double kGravity = 9.80665; ///< matches the existing kernels
+/// The 2D solvers read constants::GRAVITY_SI under this name (one value,
+/// defined once in Constants.hpp).
+inline constexpr double kGravity = constants::GRAVITY_SI;
 
 /// Free-surface difference below which a face slope is numerical zero (m).
 /// Without it, the local-inertial q integrates even 1-ulp closure round-trip

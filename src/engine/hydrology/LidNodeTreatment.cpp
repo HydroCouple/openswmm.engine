@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "LidNode.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -319,7 +320,8 @@ void prepareQuality(SimulationContext& ctx, double dt) {
                 });
                 // Layer decay supplements the pollutant's background decay.
                 const double rate =
-                    ctx.pollutants.k_decay[p] + (rule != rules.end() ? rule->decay / 86400.0 : 0.0);
+                    ctx.pollutants.k_decay[p] +
+                    (rule != rules.end() ? rule->decay / constants::SEC_PER_DAY : 0.0);
                 auto& mass = state.quality_mass[i * np + p];
                 const double after = mass * std::exp(-rate * dt);
                 ctx.mass_balance.qual_routing_reacted[p] += mass - after;
@@ -344,7 +346,8 @@ void prepareQuality(SimulationContext& ctx, double dt) {
             }
         }
         for (int p = 0; p < np; ++p) {
-            const double after = mobile_mass[p] * std::exp(-mobile_rates[p] * dt / 86400.0);
+            const double after =
+                mobile_mass[p] * std::exp(-mobile_rates[p] * dt / constants::SEC_PER_DAY);
             ctx.mass_balance.qual_routing_reacted[p] += mobile_mass[p] - after;
             mobile_mass[p] = after;
             if (mobile_volume > (state.richards ? 1.e-12 : 0.0))

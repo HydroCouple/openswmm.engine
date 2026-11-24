@@ -196,7 +196,7 @@ public:
     /**
      * @brief Serialize and publish an accepted internal hydraulic checkpoint file.
      *
-     * Writes version 5 framed state/model/checksum bytes with a 64-MiB limit. Existing targets must
+     * Writes version 7 framed state/model/checksum bytes with a 64-MiB limit. Existing targets must
      * have hydraulic magic before replacement; stages bytes then renames to publish. No fsync
      * durability guarantee or Windows UTF-8/long-path adaptation is supplied. This component file does
      * not replace paired runoff/control/2D/output checkpoints.
@@ -213,8 +213,10 @@ public:
      * @brief Validate a stored hydraulic checkpoint privately, then install its selected state.
      *
      * Reads a bounded complete file, validates framing/version/model/checksum and native invariants
-     * before no-throw installation. Accepts supported versions 3..5 subject to missing
-     * thermal/ground-contact-state restrictions. Validation/read failure preserves live hydraulic
+     * before no-throw installation. Accepts supported versions 3..7 subject to missing
+     * thermal/ground-contact-state restrictions; before version 6 the gross 1D<->2D exchange queues
+     * are rebuilt from the net coupling queue, before version 7 junctions hold no SEMI_IMPLICIT
+     * surcharge water. Validation/read failure preserves live hydraulic
      * state. Restore may recover an unaccepted boundary; no current-ready requirement is imposed.
      * External paired session state is the caller responsibility.
      *
@@ -461,7 +463,7 @@ private:
      *
      * @param[in] c Same attached accepted context with current_time equal to checkpoint_time and
      *     unchanged serialized model.
-     * @param[out] result Receives complete version-5 checkpoint bytes only after serialization/size
+     * @param[out] result Receives complete version-7 checkpoint bytes only after serialization/size
      *     checks succeed.
      * @return Empty on success; otherwise the caught std::exception message and prior result is
      *     preserved.
@@ -539,12 +541,16 @@ private:
     // Exact native node-column codec, also used by the distinct split surface
     // context which does not own or initialize a second hydraulic solver.
     static void checkpointNodeColumns(detail::CompletedSourceArchive&, NodeData&,
-                                      bool validate = false);
+                                      bool validate = false, bool gross_coupling = true,
+                                      bool held = true);
     SimulationContext* checkpoint_context_ = nullptr; // non-owning, stable lifetime
     bool checkpoint_owned_session_ = false;           // engine owns structure/control memory
     bool checkpoint_aquifer_session_ =
         false; // paired engine/surface recovery owns node-bed receipts
     std::string checkpoint_model_;
+    /// A [RESTART] CONTINUE whose engine-level continuation model matched: the saved hydraulic
+    /// model may differ from this one in its end date only (SWMMEngine::loadCheckpointBytes).
+    bool accept_continuation_model_ = false;
     double checkpoint_time_ = 0.0, checkpoint_step_end_ = 0.0;
     bool checkpoint_ready_ = false, checkpoint_prepared_ = false, checkpoint_step_finished_ = false;
     /**
@@ -556,10 +562,12 @@ private:
      *
      * @param[in] ctx Initialized matching context with coherent geometry/options/subtype/LID material
      *     arrays.
+     * @param[in] continuation Leave out the end date and the total duration, which a run continued
+     *     from a [RESTART] record may move on.
      * @return Owned binary model-identity bytes used for exact equality, not a human-readable model
      *     name.
      */
-    std::string checkpointModel(const SimulationContext& ctx) const;
+    std::string checkpointModel(const SimulationContext& ctx, bool continuation = false) const;
     /**
      * @brief Reject hydraulic features outside the currently owned checkpoint qualification.
      *

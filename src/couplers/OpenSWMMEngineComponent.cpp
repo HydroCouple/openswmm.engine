@@ -12,6 +12,7 @@
  * @license   Apache-2.0
  */
 
+#include "../engine/core/Constants.hpp"
 #include "ComponentBase.hpp"
 #include "WaterPhaseLink.hpp"
 #include "MaterialPhaseLink.hpp"
@@ -915,7 +916,7 @@ public:
      * advancement or allocation. Host serializes mutable metadata queries and owner lifetime.
      */
     HC::Temporal::IDateTime* currentDateTime() const override {
-        clock_.day = epoch_ + time_ / 86400.;
+        clock_.day = epoch_ + time_ / constants::SEC_PER_DAY;
         return &clock_;
     }
     /**
@@ -926,7 +927,7 @@ public:
      */
     HC::Temporal::ITimeSpan* simulationPeriod() const override {
         period_.day = epoch_;
-        period_.span = duration_ / 86400.;
+        period_.span = duration_ / constants::SEC_PER_DAY;
         return &period_;
     }
     /**
@@ -938,10 +939,10 @@ public:
     double nextDateTimeJulianDay() const override {
         if (status() != CS::Updated || (split_ && split_->surface) ||
             (material_ && material_->surface))
-            return epoch_ + time_ / 86400.;
+            return epoch_ + time_ / constants::SEC_PER_DAY;
         return epoch_ + (outfalls_.empty() ? std::min(duration_, time_ + routingStep_)
                                            : times_.at(sequence_)) /
-                            86400.;
+                            constants::SEC_PER_DAY;
     }
 
 private:
@@ -1206,7 +1207,8 @@ private:
                                   std::string("interval_end_s")})
             fields_[field] =
                 add(field, HC::DataKind::Float64, field == "epoch_julian_day" ? "day" : "s", 0, 0,
-                    1, HC::ValueKind::Intensive, field == "epoch_julian_day" ? 86400 : 1,
+                    1, HC::ValueKind::Intensive,
+                    field == "epoch_julian_day" ? constants::SEC_PER_DAY_INT : 1,
                     qudtQuantityKind("Time"));
         for (size_t i = 0; i < species_.size() + 2; ++i)
             for (const auto& prefix : {"", "exported.", "unreceived."}) {
@@ -1295,7 +1297,7 @@ void OpenSWMMEngineComponent::discover(SWMM_Engine engine) {
     check(engine, swmm_get_start_time(engine, &start));
     check(engine, swmm_get_end_time(engine, &end));
     epoch_ = start + 2415018.5;
-    duration_ = std::round((end - start) * 86400000.) / 1000.;
+    duration_ = std::round((end - start) * constants::MSEC_PER_DAY) / 1000.;
     check(engine, swmm_get_routing_step(engine, &routingStep_));
     if (!std::isfinite(duration_) || duration_ <= 0)
         throw std::invalid_argument("Model must have a positive finite duration");

@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "core/ThreadInfo.hpp"
 #include <exception>
@@ -131,7 +132,7 @@ std::string MeshSnow::initialize(SimulationContext& ctx,
             const int e = i * 3 + 2;
             dd.dhmin[e] = p[0] * ucf::Ucf[ucf::TEMPERATURE][units] / ucf::Ucf[ucf::RAINFALL][units];
             dd.dhmax[e] = p[1] * ucf::Ucf[ucf::TEMPERATURE][units] / ucf::Ucf[ucf::RAINFALL][units];
-            dd.tbase[e] = units == 1 ? p[2] * 1.8 + 32 : p[2];
+            dd.tbase[e] = units == 1 ? p[2] * constants::F_PER_C + constants::F_AT_0C : p[2];
             dd.ati[e] = dd.tbase[e];
             dd.fwfrac[e] = p[3];
             dd.wsnow[e] = p[4] * factor / .3048;
@@ -346,24 +347,26 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
             (std::floor((start + 1e-7) / configuration.step_) + 1) * configuration.step_;
         double horizon = std::min(boundary - start, ctx.options.totalDurationMs() / 1000. - start);
         if (!ctx.snowpacks.meteorology.empty()) {
-            const double hour =
-                (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + start;
+            const double hour = (ctx.options.start_date - std::floor(ctx.options.start_date)) *
+                                    constants::SEC_PER_DAY +
+                                start;
             horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
         }
         if (snowTransientForcing(ctx))
             horizon = std::min(horizon, span);
         // Only consume an existing single UEB prediction. Preparing weather
         // changes shared table cursors/radiation; contact and DD stay scalar.
-        const bool prepared =
-            start < end - 1e-9 && !(start + span < end - 1e-9) && span <= horizon &&
-            std::all_of(
-                configuration.active_cells_.begin(), configuration.active_cells_.end(), [&](int i) {
-                    return configuration.kind_[i] == SnowKind::Ueb &&
-                           !configuration.groundContactEnabled(i) && held_[i].pending() &&
-                           span <= held_[i].duration - held_[i].elapsed && std::isfinite(rain[i]) &&
-                           rain[i] >= 0 && std::isfinite(catch_factor[i]) && catch_factor[i] >= 0 &&
-                           precipitation_[i] == rain[i] && catch_[i] == catch_factor[i];
-                });
+        const auto heldForThisSpan = [&](int i) {
+            return configuration.kind_[i] == SnowKind::Ueb &&
+                   !configuration.groundContactEnabled(i) && held_[i].pending() &&
+                   span <= held_[i].duration - held_[i].elapsed && std::isfinite(rain[i]) &&
+                   rain[i] >= 0 && std::isfinite(catch_factor[i]) && catch_factor[i] >= 0 &&
+                   precipitation_[i] == rain[i] && catch_[i] == catch_factor[i];
+        };
+        const bool prepared = start < end - 1e-9 && !(start + span < end - 1e-9) &&
+                              span <= horizon &&
+                              std::all_of(configuration.active_cells_.begin(),
+                                          configuration.active_cells_.end(), heldForThisSpan);
         if (prepared) {
             auto consumeCell = [&](int i) -> std::string {
                 auto& held = held_[i];
@@ -472,14 +475,15 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
             // a previous segment changed the covered area.
             if (ground_contact && held.pending())
                 ueb::closeHeld(held);
-            const double date = ctx.options.start_date + at / 86400.;
+            const double date = ctx.options.start_date + at / constants::SEC_PER_DAY;
             double prescribed_qg = site_[i].ground_heat;
             const double boundary =
                 (std::floor((at + 1e-7) / configuration.step_) + 1) * configuration.step_;
             double horizon = std::min(boundary - at, ctx.options.totalDurationMs() / 1000. - at);
             if (!ctx.snowpacks.meteorology.empty()) {
-                const double hour =
-                    (ctx.options.start_date - std::floor(ctx.options.start_date)) * 86400. + at;
+                const double hour = (ctx.options.start_date - std::floor(ctx.options.start_date)) *
+                                        constants::SEC_PER_DAY +
+                                    at;
                 horizon = std::min(horizon, (std::floor((hour + 1e-5) / 3600.) + 1) * 3600. - hour);
             }
             if (snowTransientForcing(ctx))
@@ -536,7 +540,10 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
                 if (auto error = climate::resolveRadiation(ctx, date, dt, weather); !error.empty())
                     return error;
                 const double fraction =
-                    weather.temperature <= (ctx.climate_state.snow_divt - 32) * 5 / 9 ? 1 : 0;
+                    weather.temperature <=
+                            (ctx.climate_state.snow_divt - constants::F_AT_0C) * 5 / 9
+                        ? 1
+                        : 0;
                 SnowInputs forcing;
                 forcing.dt_s = dt;
                 forcing.rain_m = (1 - fraction) * rain[i] * dt;
@@ -544,7 +551,7 @@ std::string MeshSnow::advanceInPlace(const MeshSnow& configuration, SimulationCo
                 forcing.Ta_C = weather.temperature;
                 forcing.wind_ms = weather.wind;
                 forcing.gamma = ctx.climate_state.gamma;
-                const double temp = weather.temperature * 1.8 + 32;
+                const double temp = weather.temperature * constants::F_PER_C + constants::F_AT_0C;
                 forcing.ea = 8.1175e6 * std::exp(-7701.544 / (temp + 405.0265));
                 const int day = datetime::dayOfYear(date);
                 if (day != melt_day) {

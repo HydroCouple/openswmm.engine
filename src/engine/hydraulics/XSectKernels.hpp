@@ -61,6 +61,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../core/Constants.hpp"
 #include "XSectLookup.hpp"
 #include "../data/LinkData.hpp"
 
@@ -73,12 +74,13 @@
 
 namespace openswmm::xsect {
 
-// Constants matching legacy consts.h / xsect.c exactly (for bit-faithful
-// parity). They moved here with the bodies that use them; setParams() in
-// XSection.cpp reads the same definitions rather than a second copy.
-inline constexpr double TINY = 1.0e-6;
-inline constexpr double PI = 3.141592654;
-inline constexpr double GRAVITY = 32.2;
+// The legacy-faithful constants (consts.h / xsect.c values) come from
+// Constants.hpp; these using-declarations keep them addressable as
+// xsect::TINY, xsect::PI and xsect::GRAVITY for the kernels and for
+// setParams() in XSection.cpp.
+using constants::TINY;
+using constants::PI;
+using constants::GRAVITY;
 
 inline constexpr double RECT_ALFMAX = 0.97;
 inline constexpr double RECT_TRIANG_ALFMAX = 0.98;
@@ -888,7 +890,14 @@ struct XsectEval {
                                               int n_items) const {
         double alpha = a / xs.a_full;
         double delta = 1.0 / static_cast<double>(n_items - 1);
-        int i = static_cast<int>(alpha / delta);
+        // alpha outside 0-1, or NaN, cannot be converted to a table index
+        int i;
+        if (!(alpha > 0.0))
+            i = 0;
+        else if (alpha > 1.0)
+            i = n_items - 2;
+        else
+            i = static_cast<int>(alpha / delta);
         if (i >= n_items - 1)
             i = n_items - 2;
         double dSdA = (table[i + 1] - table[i]) / delta;
@@ -1469,7 +1478,7 @@ struct XsectEval {
         if (y > xs.y_bot)
             return rect_round_getRofA(xs, rect_round_getAofY(xs, y));
         double theta1 = 2.0 * std::acos(1.0 - y / xs.r_bot);
-        return 0.5 * xs.r_bot * (1.0 - std::sin(theta1)) / theta1;
+        return 0.5 * xs.r_bot * (1.0 - std::sin(theta1) / theta1);
     }
 
     /**
@@ -2764,7 +2773,7 @@ struct XsectEval {
 
             // Initial estimate from equivalent circular conduit.
             double y0 = 1.01 * std::pow(q2g / xs.y_full, 0.25);
-            if (y0 >= xs.y_full)
+            if (!(y0 < xs.y_full)) // also NaN
                 y0 = 0.97 * xs.y_full;
 
             // Ratio of conduit area to equivalent circular area.

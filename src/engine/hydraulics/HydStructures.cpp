@@ -75,6 +75,51 @@ static inline double tailwaterHead(const SimulationContext& ctx, std::size_t un1
     return ctx.nodes.depth[un2] + ctx.nodes.invert_elev[un2];
 }
 
+// Semi-implicit structure laws (6.0 only). Three legacy laws give the dynamic-wave Picard
+// iteration no fixed point or an unbounded slope: Villemonte's submergence factor has an
+// infinite slope at equal heads, and the dQ/dH handed to the node update ignores it; a bottom
+// orifice whose head is already the head difference gets the factor a second time in its weir
+// regime, so its flow jumps by 1/F where the weir and orifice regimes meet; and a rating that
+// starts at a nonzero flow switches an outlet between full flow and none. Under NODE_CONTINUITY
+// SEMI_IMPLICIT (no legacy counterpart) the submerged laws run linearly to zero below a head
+// difference of SI_SMOOTH_HEAD, the dQ/dH includes the factor's slope, the bottom orifice is
+// corrected once, and outlets ramp linearly below a head of SI_SMOOTH_HEAD. EXPLICIT keeps the
+// legacy laws bit for bit.
+constexpr double SI_SMOOTH_HEAD = 0.05; // ft
+
+/**
+ * @brief Whether the semi-implicit structure laws apply.
+ * @param[in] ctx Borrowed options.
+ * @return true under DYNWAVE routing with NODE_CONTINUITY SEMI_IMPLICIT.
+ */
+static inline bool siStructureLaws(const SimulationContext& ctx) {
+    return ctx.options.routing_model == RoutingModel::DYNWAVE &&
+           ctx.options.node_continuity == NodeContinuity::SEMI_IMPLICIT;
+}
+
+/**
+ * @brief Villemonte submergence factor (1 - r^p)^0.385.
+ * @param[in] r Ratio of downstream to upstream head over the crest, 0..1.
+ * @param[in] p Weir-type power.
+ * @return The factor.
+ */
+static inline double villemonte(double r, double p) {
+    return std::pow(1.0 - std::pow(r, p), 0.385);
+}
+
+/**
+ * @brief Magnitude of the factor's derivative with respect to the downstream head.
+ * @param[in] r Ratio of downstream to upstream head over the crest.
+ * @param[in] p Weir-type power.
+ * @param[in] H1 Upstream head over the crest (ft).
+ * @return |dF/dH2| (1/ft); 0 outside 0 < r < 1.
+ */
+static inline double villemonteSlope(double r, double p, double H1) {
+    if (r <= 0.0 || r >= 1.0 || H1 <= 0.0)
+        return 0.0;
+    return 0.385 * std::pow(1.0 - std::pow(r, p), -0.615) * p * std::pow(r, p - 1.0) / H1;
+}
+
 // PARITY link.c:646-673 link_setFlapGate. Both halves, in legacy's order.
 bool flapGateBlocks(const SimulationContext& ctx, int j, int n1, int n2, double q) {
     const auto uj = static_cast<size_t>(j);
@@ -726,12 +771,14 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx, double* node_n
         double hcrown = 0.0;
 
         double head, f;
-        if (!is_side) { // BOTTOM orifice
+        bool head_is_difference = false; // head = h1 - h2 (the tailwater controls)
+        if (!is_side) {                  // BOTTOM orifice
             if (h1 < hcrest)
                 head = 0.0;
-            else if (h2 > hcrest)
+            else if (h2 > hcrest) {
                 head = h1 - h2;
-            else
+                head_is_difference = true;
+            } else
                 head = h1 - hcrest;
             f = std::min(head / hCrit, 1.0);
         } else { // SIDE orifice
@@ -745,8 +792,10 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx, double* node_n
                 head = h1 - hcrest;
             else if (h2 < hmidpt)
                 head = h1 - hmidpt;
-            else
+            else {
                 head = h1 - h2;
+                head_is_difference = true;
+            }
         }
 
         // --- Check if flow possible ---
@@ -843,9 +892,34 @@ void StructureSolver::computeOrificeFlowK(SimulationContext& ctx, double* node_n
         // pow(ratio, 1.5) (ratio ≤ 1 since h1 ≥ h2 after the direction
         // swap; ratio == 1 must zero the flow, which the previous
         // `ratio < 1` guard skipped).
-        if (f < 1.0 && h2 > hcrest) {
-            double ratio = (h2 - hcrest) / (h1 - hcrest);
-            q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+        if (!siStructureLaws(ctx)) {
+            if (f < 1.0 && h2 > hcrest) {
+                double ratio = (h2 - hcrest) / (h1 - hcrest);
+                q *= std::pow(1.0 - std::pow(ratio, 1.5), 0.385);
+            }
+        } else if (f < 1.0 && h2 > hcrest && !(head_is_difference && !is_side)) {
+            // Semi-implicit laws (see SI_SMOOTH_HEAD). A bottom orifice whose head is already
+            // h1 - h2 skips this block: legacy corrects it for submergence twice. Otherwise the
+            // factor is taken at a head difference of at least d, dQ/dH includes its slope, and
+            // below d the flow runs linearly to zero.
+            const double H1 = h1 - hcrest;
+            const double dh_now = h1 - h2;
+            const double d = std::min(SI_SMOOTH_HEAD, H1);
+            const double ratio = (dh_now >= d) ? (h2 - hcrest) / H1 : (H1 - d) / H1;
+            const double F = villemonte(ratio, 1.5);
+            double dq = std::max(dqdh * F, q * villemonteSlope(ratio, 1.5, H1));
+            q *= F;
+            if (dh_now < d && d > 0.0) {
+                dq = q / d;
+                q *= dh_now / d;
+            }
+            dqdh = dq;
+        } else if (head_is_difference && f >= 1.0 && head > 0.0 && head < SI_SMOOTH_HEAD) {
+            // Semi-implicit laws: a full orifice driven by the head difference, q ~ sqrt(dh),
+            // runs linearly to zero below SI_SMOOTH_HEAD.
+            const double q_d = cOrif * std::sqrt(SI_SMOOTH_HEAD);
+            q = q_d * head / SI_SMOOTH_HEAD;
+            dqdh = q_d / SI_SMOOTH_HEAD;
         }
 
         q = std::max(q, 0.0);
@@ -1025,7 +1099,6 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
         // std::pow with the legacy literal exponents (1.5 / 0.83 / 1.67 /
         // 2.5; NOT x·sqrt(x) closed forms) — then divides the CMS result by
         // M3perFT3 for SI. Replicated op-for-op for bit parity.
-        constexpr double M3perFT3 = 0.028317; // legacy consts.h
         const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
         const double ucfL = ucf::Ucf[ucf::LENGTH][us];
         auto weirFlow = [&](double head_ft, double dir_f, double& q1_out, double& q2_out) {
@@ -1079,8 +1152,8 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
             }
             }
             if (us == 1) { // SI: CMS → CFS (legacy link.c:2404-2408)
-                q1_out /= M3perFT3;
-                q2_out /= M3perFT3;
+                q1_out /= ucf::FT3_TO_M3;
+                q2_out /= ucf::FT3_TO_M3;
             }
         };
 
@@ -1180,6 +1253,15 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
             // Surcharged weir dqdh uses the ORIFICE head (legacy
             // weir_getOrificeFlow sets dqdh = q / (2·head)).
             links.dqdh[uj] = (h_orif > 0.0) ? q / (2.0 * h_orif) : 0.0;
+
+            // Semi-implicit laws (see SI_SMOOTH_HEAD): driven by the head difference,
+            // q ~ sqrt(dh) runs linearly to zero below SI_SMOOTH_HEAD.
+            if (siStructureLaws(ctx) && hgl2 >= y_mid && h_orif > 0.0 && h_orif < SI_SMOOTH_HEAD &&
+                !flap) {
+                const double q_d = c_surcharge * std::sqrt(SI_SMOOTH_HEAD);
+                q = q_d * h_orif / SI_SMOOTH_HEAD;
+                links.dqdh[uj] = q_d / SI_SMOOTH_HEAD;
+            }
         } else {
             // canSurcharge == NO with head above crown: legacy link.c:2303
             // limits the head to the height of the weir opening.
@@ -1243,9 +1325,34 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
                 static const double weirPower[4] = {1.5, 5.0 / 3.0, 2.5, 1.5};
                 double ratio = (hgl2 - hcrest) / (hgl1 - hcrest);
                 double wp = (wt >= 0 && wt < 4) ? weirPower[wt] : 1.5;
-                q1 *= std::pow(1.0 - std::pow(ratio, wp), 0.385);
-                if (q2 > 0.0)
-                    q2 *= std::pow(1.0 - std::pow(ratio, 2.5), 0.385);
+                if (!siStructureLaws(ctx)) {
+                    q1 *= std::pow(1.0 - std::pow(ratio, wp), 0.385);
+                    if (q2 > 0.0)
+                        q2 *= std::pow(1.0 - std::pow(ratio, 2.5), 0.385);
+                } else {
+                    // Semi-implicit laws (see SI_SMOOTH_HEAD and the orifice): factor at a
+                    // head difference of at least d, dQ/dH with its slope, linear below d.
+                    const double H1 = hgl1 - hcrest;
+                    const double dh_now = hgl1 - hgl2;
+                    const double d = std::min(SI_SMOOTH_HEAD, H1);
+                    if (dh_now < d)
+                        ratio = (H1 - d) / H1;
+                    const double F1 = villemonte(ratio, wp);
+                    const double F2 = villemonte(ratio, 2.5);
+                    double dq =
+                        std::max(links.dqdh[uj] * F1,
+                                 q1 * villemonteSlope(ratio, wp, H1) +
+                                     (q2 > 0.0 ? q2 * villemonteSlope(ratio, 2.5, H1) : 0.0));
+                    q1 *= F1;
+                    if (q2 > 0.0)
+                        q2 *= F2;
+                    if (dh_now < d && d > 0.0) {
+                        dq = (q1 + q2) / d;
+                        q1 *= dh_now / d;
+                        q2 *= dh_now / d;
+                    }
+                    links.dqdh[uj] = dq;
+                }
             }
 
             q = q1 + q2;
@@ -1391,6 +1498,22 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
                 q = outlets_.q_coeff[uk] * std::pow(lookup_val, outlets_.q_expon[uk]) / ucf_flow;
         }
 
+        // Semi-implicit laws (see SI_SMOOTH_HEAD): below a head of SI_SMOOTH_HEAD the rating
+        // runs linearly to zero, so a rating that starts at a nonzero flow (a flow regulator)
+        // or a power below one cannot switch the outlet between full flow and none.
+        double dq_out = 0.0;
+        if (siStructureLaws(ctx) && head < SI_SMOOTH_HEAD) {
+            const double ld = SI_SMOOTH_HEAD * ucf_len;
+            double q_d = 0.0;
+            if (ci >= 0 && static_cast<size_t>(ci) < ctx.tables.tables.size())
+                q_d =
+                    table_lookup_cursor(ctx.tables.tables[static_cast<size_t>(ci)], ld) / ucf_flow;
+            else
+                q_d = outlets_.q_coeff[uk] * std::pow(ld, outlets_.q_expon[uk]) / ucf_flow;
+            q = q_d * head / SI_SMOOTH_HEAD;
+            dq_out = std::max(q_d, 0.0) * links.setting[uj] / SI_SMOOTH_HEAD;
+        }
+
         // Legacy outlet_getInflow line 2669 applies the setting multiplier:
         //   return dir * Link[j].setting * outlet_getFlow(k, head)
         // The refactored code previously overwrote links.setting[uj] with a
@@ -1408,8 +1531,9 @@ void StructureSolver::computeOutletFlowK(SimulationContext& ctx, int k) {
         // outlet_getInflow (src/legacy/engine/link.c:2611-2670) never sets it.
         // The q/(2*head) form previously used here is the ORIFICE formula
         // (link.c:1974) and inflated sumdqdh at nodes adjacent to outlets,
-        // diverging the EXTRAN surcharge depth update.
-        links.dqdh[uj] = 0.0;
+        // diverging the EXTRAN surcharge depth update. The semi-implicit ramp below
+        // SI_SMOOTH_HEAD has a slope, and hands it on.
+        links.dqdh[uj] = dq_out;
     }
 }
 

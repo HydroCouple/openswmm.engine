@@ -37,14 +37,14 @@
  * For **Gardner**, Qu & Duffy's eq. 22 is used verbatim:
  *
  * ```
- * q₀ = Ks · [ 1 − e^(−αL) − α·u ] / [ αL · (1 − e^(−αL)) ] ,   L = z_s − h_g
+ * q₀ = Ks · [ α·u − (1 − e^(−αL)) ] / [ αL · (1 − e^(−αL)) ] ,   L = z_s − h_g
  * u = (hᵤ − θ_r L)/(θ_s − θ_r)   (saturation-scale storage; hᵤ is metres of water)
  * ```
  *
  * That expression is algebraically identical to
  *
  * ```
- * q₀ = C(L) · [ u*(L) − u ] ,
+ * q₀ = C(L) · [ u − u*(L) ] ,
  *      u*(L)  = (1 − e^(−αL)) / α          <- exactly eq. 39, the enslaved form
  *      C(L)   = Ks / ( L · (1 − e^(−αL)) )
  * ```
@@ -52,8 +52,11 @@
  * — a relaxation of the column's stored water toward its hydrostatic
  * equilibrium, at a conductivity-set rate. The equivalence is a genuine
  * identity, not an approximation, and it is worth stating because it makes
- * the sign convention obvious (`hᵤ < hᵤ*` ⇒ `q₀ > 0`, downward recharge;
- * `hᵤ > hᵤ*` ⇒ capillary rise) and because it is the form that generalises.
+ * the sign convention obvious (`hᵤ > hᵤ*` ⇒ `q₀ > 0`, gravity drainage to the
+ * table; `hᵤ < hᵤ*` ⇒ capillary rise) and because it is the form that
+ * generalises. Until 2026-11-18 the code carried the opposite sign, which drove
+ * the column away from equilibrium (a wet column drew water up from the table);
+ * see plans/workplans/CLOSED_FORM_RECHARGE_SIGN_PROGRAM_2026-11-18.md.
  *
  * **The other three laws use that generalised form**, with `u*(L)` the
  * saturation integral `∫₀ᴸ Se(ψ) dψ` of *that* law (closed form
@@ -226,7 +229,8 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept;
  * @return Signed water flux m/s. For L below kRechargeLengthFloor, only the
  * rate coefficient uses the floor; residual water and equilibrium use L.
  * Zero for a collapsed column. At/above the floor this is bit-identical to
- * rechargeQ0(), whose legacy geometry remains available to SHARED/backends.
+ * rechargeQ0(). Both clocks use this law; only recharge extension backends still
+ * evaluate rechargeQ0() itself, and only at or above the floor.
  */
 double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept;
 

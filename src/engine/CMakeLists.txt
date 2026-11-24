@@ -44,6 +44,9 @@ file(GLOB_RECURSE OPENSWMM_ENGINE_SOURCES CONFIGURE_DEPENDS
     io/*.cpp
 )
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "input/geopackage/.*")
+# The Kokkos substep marcher of the 1D FV solver belongs to the GPU plugin
+# (2d/gpu/CMakeLists.txt), never to the engine library.
+list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "hydraulics/fv/gpu/.*")
 # io/hdf5 is gated on OPENSWMM_WITH_HDF5 and re-added below when it is on.
 list(FILTER OPENSWMM_ENGINE_SOURCES EXCLUDE REGEX "io/hdf5/.*")
 # The checkpoint VFD is compiled with the optional mesh HDF5 writer below.
@@ -204,6 +207,11 @@ if(APPLE)
     list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
     include(${PROJECT_SOURCE_DIR}/cmake/FindOpenMP.cmake)
 elseif(NOT EMSCRIPTEN)
+    find_package(OpenMP)
+elseif(CMAKE_CXX_FLAGS MATCHES "-fopenmp")
+    # Emscripten 6.0.9+ ships an OpenMP runtime over WebAssembly threads; a WASM
+    # package opts in by compiling with -fopenmp -pthread, and only then do the
+    # parallel solver loops make sense there.
     find_package(OpenMP)
 endif()
 
@@ -586,6 +594,10 @@ if(OPENSWMM_BUILD_2D)
     # fallback). Lives in the core — it owns the CPU↔plugin decision — but
     # pulls in no Kokkos/GPU dependency itself.
     list(APPEND OPENSWMM_2D_SOURCES 2d/solver/SurfaceSolverFactory.cpp)
+    if(OPENSWMM_ENABLE_METAL_FACES)
+        set_property(SOURCE 2d/solver/SurfaceSolverFactory.cpp APPEND PROPERTY
+            COMPILE_DEFINITIONS OPENSWMM_ENABLE_METAL_FACES)
+    endif()
 
     # Default2DOutputPlugin writes the [2D_OPTIONS] OUTPUT_FILE results as
     # CF-1.11/UGRID-1.0 HDF5. It is the 2D module's only HDF5 user, so

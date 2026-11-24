@@ -34,6 +34,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_climate.h"
 #include "../hydrology/Climate.hpp"
@@ -662,7 +663,7 @@ SWMM_ENGINE_API int swmm_climate_preview_evaporation_with_config(
             if (temp_table && !temp_table->x.empty()) {
                 temperature = lookup_table(*temp_table, date);
                 if (unit_system == 1)
-                    temperature = (9.0 / 5.0) * temperature + 32.0;
+                    temperature = (9.0 / 5.0) * temperature + openswmm::constants::F_AT_0C;
                 temperature += adjust_temp[month] * (unit_system == 1 ? 9.0 / 5.0 : 1.0);
                 available = true;
                 held = date < temp_table->x.front() || date > temp_table->x.back();

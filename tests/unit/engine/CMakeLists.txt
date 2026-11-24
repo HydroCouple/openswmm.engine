@@ -97,8 +97,19 @@ set_tests_properties(test_engine_abi_features PROPERTIES LABELS "unit;abi")
 add_gtest_unit(test_engine_outfalls
     test_outfall_export_receipts.cpp
     test_outfall_stage_data.cpp
+    test_outfall_nonconduit_depth.cpp
 )
+target_compile_definitions(test_engine_outfalls PRIVATE
+    OUTFALL_DEPTH_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/outfall_nonconduit_depth_out")
 add_gtest_unit(test_engine_component_metadata test_component_metadata.cpp)
+# NODE_CONTINUITY SEMI_IMPLICIT changes the iteration path, not the converged answer.
+add_gtest_unit(test_engine_semi_implicit_continuity test_semi_implicit_continuity.cpp)
+target_compile_definitions(test_engine_semi_implicit_continuity PRIVATE
+    SEMI_IMPLICIT_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/semi_implicit_continuity_out")
+# NODE_CONTINUITY SEMI_IMPLICIT structure laws: fixed points and slopes; EXPLICIT stays legacy.
+add_gtest_unit(test_engine_si_structure_laws test_si_structure_laws.cpp)
+target_compile_definitions(test_engine_si_structure_laws PRIVATE
+    SI_STRUCTURE_LAWS_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/si_structure_laws_out")
 # NOTE: Files are created as stubs initially. Implement when the corresponding
 #       engine component is written (see MASTER_IMPLEMENTATION_PLAN.md phases).
 
@@ -114,6 +125,7 @@ add_gtest_unit(test_engine_parser_core
     test_ignore_flags.cpp
 )
 add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
+add_gtest_unit(test_engine_binary_model_refused test_binary_model_refused.cpp)
 add_gtest_unit(test_engine_options
     test_options_parser.cpp
     test_report_options_api.cpp
@@ -278,6 +290,8 @@ add_gtest_unit(test_engine_climate
 # ANSI code page, so every engine open goes through core/FileIO.hpp.
 add_gtest_unit(test_engine_utf8_paths        test_utf8_paths.cpp)
 add_gtest_unit(test_engine_hotstart          test_hotstart.cpp)
+add_gtest_unit(test_engine_hotstart_save_failures test_hotstart_save_failures.cpp)
+add_gtest_unit(test_engine_restart_records test_restart_records.cpp)
 add_gtest_unit(test_engine_simd_math         test_simd_math.cpp)
 add_gtest_unit(test_engine_mathexpr          test_mathexpr.cpp)
 add_gtest_unit(test_engine_user_flags
@@ -303,6 +317,18 @@ add_gtest_unit(test_engine_xsect
 add_gtest_unit(test_engine_transect_table_stability test_transect_table_stability.cpp)
 # STREET cross-section programmatic builder API (set/get xsect + get_params).
 # Standalone cross-section geometry API + SWMM_XSectShape enum parity guard.
+# Table lookups with an out-of-range or NaN ratio survive (code review CRASH-07, #174).
+add_gtest_unit(test_engine_xsect_lookup_out_of_range test_xsect_lookup_out_of_range.cpp)
+# Invalid cross-section geometry is reported against its conduit (code review IO-13, #175).
+add_gtest_unit(test_engine_xsect_error_names_link test_xsect_error_names_link.cpp)
+# Ellipse/arch size code in Geom3 vs. a zero Geom2, fractional codes (code review IO-12, #172).
+add_gtest_unit(test_engine_xsect_size_code_overrides test_xsect_size_code_overrides.cpp)
+# Custom elliptical pipes take the area of their own axes (code review CON-17, #170).
+add_gtest_unit(test_engine_xsect_custom_ellipse test_xsect_custom_ellipse.cpp)
+# Standard ARCH size code 31 full hydraulic radius (code review NUM-20, #167).
+add_gtest_unit(test_engine_xsect_arch_size_codes test_xsect_arch_size_codes.cpp)
+# FORCE_MAIN full flow under Manning (code review NUM-07, #166).
+add_gtest_unit(test_engine_xsect_force_main_full_flow test_xsect_force_main_full_flow.cpp)
 # Portable cross-section kernels (plan §5.1): the public accessors route through
 # the moved bodies, and an evaluator over INDEPENDENT copies of the geometry
 # tables reproduces the host one at ULP zero — the device-rebinding claim,
@@ -329,6 +355,9 @@ add_gtest_unit(test_engine_inlet_capture test_inlet_capture.cpp)
 # Inlet designs, inlet usage rows and [INLET_JUNCTIONS] IO / validation / edits
 # (plans/INLET_JUNCTION_IMPLEMENTATION_PLAN_2026-09-05.md).
 add_gtest_unit(test_engine_inlet_junction_io test_inlet_junction_io.cpp)
+# IGNORE_ROUTING skips the routing-layout checks, as legacy does (benchmarks
+# 3525-nodes: KINWAVE adverse conduits with routing ignored).
+add_gtest_unit(test_engine_ignore_routing_layout test_ignore_routing_layout.cpp)
 # Species/age loads carried by a lateral at a virtual junction, every routing
 # x quality-solver pair (plans/VJ_LATERAL_INFLOW_PLAN_2026-09-04.md E4).
 add_gtest_unit(test_engine_fv_node_head_consistency test_fv_node_head_consistency.cpp)
@@ -585,7 +614,21 @@ add_gtest_unit(test_engine_controls
     test_control_rule_runtime_add.cpp
     test_controls_legacy_parity.cpp
 )
+# Both [TRANSECTS] X1 line layouts, 10 items (GUI) and 11 (manual) (code review IO-29, #173).
+add_gtest_unit(test_engine_transect_x1_layouts test_transect_x1_layouts.cpp)
+# Transect right end wall in the wetted perimeter (code review NUM-24, #169).
+add_gtest_unit(test_engine_transect_right_wall test_transect_right_wall.cpp)
+# Transect bank stations in SI with a width factor (code review NUM-23, #168).
+add_gtest_unit(test_engine_transect_si_width_factor test_transect_si_width_factor.cpp)
 add_gtest_unit(test_engine_gap_fixes       test_gap_fixes.cpp)
+# The legacy-faithful constants equal consts.h / swmm5.c bit for bit. consts.h's
+# macros (PI, TINY, MISSING, TRUE, ...) collide with the C++ names, so a C shim
+# exposes them as doubles instead of the test including the header.
+add_gtest_unit(test_engine_constants_legacy_parity
+    test_constants_legacy_parity.cpp
+    legacy_consts_values.c)
+target_include_directories(test_engine_constants_legacy_parity
+    PRIVATE ${PROJECT_SOURCE_DIR}/src/legacy/engine)
 add_gtest_unit(test_engine_storage
     test_storage_shapes.cpp
     test_pump_ideal_curve.cpp
@@ -1069,6 +1112,85 @@ if(OPENSWMM_BUILD_2D AND TARGET openswmm_gpu_omp)
     endforeach()
 endif()
 
+# Compute-backend queries (swmm_backend_info, swmm_fv_device_supported): what a
+# client asks before offering a backend. With the OpenMP plugin built here the
+# test also requires that plugin to be found for both solvers.
+add_gtest_unit(test_engine_backend_info test_backend_info.cpp)
+if(OPENSWMM_BUILD_GPU_PLUGIN AND OPENSWMM_GPU_BACKEND STREQUAL "omp" AND TARGET openswmm_gpu_omp)
+    target_compile_definitions(test_engine_backend_info PRIVATE OPENSWMM_TEST_HAVE_OMP_PLUGIN)
+    add_dependencies(test_engine_backend_info openswmm_gpu_omp)
+    # MSVC tests link the engine statically, so it looks beside the test
+    # executable, and the plugin is built elsewhere.
+    if(WIN32)
+        set_tests_properties(test_engine_backend_info PROPERTIES
+            ENVIRONMENT "OPENSWMM_GPU_PLUGIN_PATH=$<TARGET_FILE_DIR:openswmm_gpu_omp>")
+    endif()
+endif()
+
+# 1D finite volume device backend (hydraulics/fv/gpu): the plugin's substep
+# loop must reproduce the CPU solver bit for bit on the configuration it
+# integrates, at one thread and at several, and must name what it does not
+# integrate and leave it to the CPU solver.
+if(OPENSWMM_BUILD_GPU_PLUGIN AND OPENSWMM_GPU_BACKEND STREQUAL "omp" AND TARGET openswmm
+        AND TARGET openswmm_gpu_omp)
+    set(_fv_device_corpus "${PROJECT_SOURCE_DIR}/tests/parity/corpus/decks")
+    set(_fv_device_slot "${PROJECT_SOURCE_DIR}/tests/parity/slot_program/decks")
+    set(_fv_device_own "${PROJECT_SOURCE_DIR}/tests/gpu/data/fv_device")
+    set(_fv_device_agree_pass "${_fv_device_corpus}/agree_pass.inp")
+    set(_fv_device_steep_pass "${_fv_device_corpus}/steep_pass.inp")
+    set(_fv_device_slot_capped "${_fv_device_corpus}/slot_capped.inp")
+    set(_fv_device_agree_vj "${_fv_device_corpus}/agree_vj.inp")
+    set(_fv_device_storage_bucket "${_fv_device_corpus}/storage_bucket_fv.inp")
+    set(_fv_device_vj_invert_collision "${_fv_device_corpus}/vj_fv_invert_collision.inp")
+    set(_fv_device_surcharged_tee "${_fv_device_slot}/surcharged_tee.inp")
+    set(_fv_device_transmission_main "${_fv_device_slot}/transmission_main.inp")
+    set(_fv_device_valve_closure "${_fv_device_slot}/valve_closure.inp")
+    # A junction ponding onto a 2D mesh, and a street inlet with a surcharged
+    # sewer: the node paths the pipe-only decks above do not reach.
+    set(_fv_device_coupled_chamber "${_fv_device_own}/coupled_chamber.inp")
+    set(_fv_device_street_pond "${_fv_device_own}/street_pond_surcharge.inp")
+    foreach(_case agree_pass steep_pass slot_capped agree_vj storage_bucket
+            vj_invert_collision surcharged_tee transmission_main valve_closure coupled_chamber
+            street_pond)
+        add_test(NAME test_engine_fv_device_${_case}_t1
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_fv_device_${_case}}
+                --threads 1
+                --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_${_case}_t1)
+        set_tests_properties(test_engine_fv_device_${_case}_t1 PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 400)
+    endforeach()
+    # Several threads: the kernels write only the element they are called
+    # with, so the result may not depend on the thread count. Short decks only;
+    # a small mesh pays a team wake-up in every kernel of every substep.
+    foreach(_case agree_vj vj_invert_collision surcharged_tee)
+        add_test(NAME test_engine_fv_device_${_case}_t4
+            COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+                --engine $<TARGET_FILE:openswmm>
+                --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+                --input ${_fv_device_${_case}}
+                --threads 4
+                --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_${_case}_t4)
+        set_tests_properties(test_engine_fv_device_${_case}_t4 PROPERTIES
+            LABELS "unit;gpu;parity" TIMEOUT 600 RUN_SERIAL TRUE)
+    endforeach()
+    add_test(NAME test_engine_fv_device_refuses_order2
+        COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/tests/gpu/check_fv_device_identity.py
+            --engine $<TARGET_FILE:openswmm>
+            --plugin-dir $<TARGET_FILE_DIR:openswmm_gpu_omp>
+            --input ${_fv_device_agree_pass}
+            --option FV_ORDER=2
+            --expect-refusal "FV_ORDER 2 is outside its scope"
+            --output ${CMAKE_CURRENT_BINARY_DIR}/fv_device_refuses_order2)
+    set_tests_properties(test_engine_fv_device_refuses_order2 PROPERTIES
+        LABELS "unit;gpu;parity" TIMEOUT 400)
+endif()
+
 # InpWriter [2D_*] emission — end-to-end through the public C API (open a
 # 2D .inp → swmm_model_write → reopen → compare via swmm_2d_* accessors,
 # plus the GeoPackage write→reopen end-to-end). Needs the full 2D module.
@@ -1419,6 +1541,10 @@ add_test(NAME test_engine_perf_timers_disabled
         $<TARGET_FILE:test_engine_perf_timers>
         --gtest_filter=PerfCounters.DisabledProfilingDoesNotAccumulate:ProcessPerf.DisabledProfilingDoesNotAccumulate)
 set_tests_properties(test_engine_perf_timers_disabled PROPERTIES LABELS "unit")
+add_gtest_unit(test_engine_fv_tpa_closure test_fv_tpa_closure.cpp)
+add_gtest_unit(test_engine_dw_tpa test_dw_tpa.cpp)
+# Preissmann slot area monotonic in head under SURCHARGE_METHOD SLOT (code review CON-18, #171).
+add_gtest_unit(test_engine_dw_slot_area_monotonic test_dw_slot_area_monotonic.cpp)
 # Analytic scheme gates: exact lake-at-rest over a slope break AND while
 # pressurized, Ritter (dry) and Stoker (wet) dam break vs. the closed-form
 # solutions incl. shock SPEED, and mass conservation to machine precision over
@@ -1709,6 +1835,34 @@ if(OPENSWMM_WITH_GEOPACKAGE)
     )
     set_tests_properties(test_engine_geopackage_external_content_writer
         PROPERTIES LABELS "unit")
+
+    # Project saves and runs through the public C API, with no parent row planted.
+    add_executable(test_engine_geopackage_run_lifecycle test_geopackage_run_lifecycle.cpp)
+    target_link_libraries(test_engine_geopackage_run_lifecycle
+        PRIVATE
+            GTest::gtest GTest::gtest_main
+            $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+            openswmm_geopackage
+    )
+    target_include_directories(test_engine_geopackage_run_lifecycle
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src/engine
+    )
+    set_target_properties(test_engine_geopackage_run_lifecycle
+        PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+            INSTALL_RPATH "${LIB_ROOT}"
+    )
+    openswmm_stage_test_runtime_deps(test_engine_geopackage_run_lifecycle)
+    add_test(
+        NAME    test_engine_geopackage_run_lifecycle
+        COMMAND $<TARGET_FILE:test_engine_geopackage_run_lifecycle>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+    )
+    set_tests_properties(test_engine_geopackage_run_lifecycle PROPERTIES LABELS "unit")
 
     # Slice IO-8 — Part D content → ctx slot hydration + scratch materialise.
     add_executable(test_engine_geopackage_external_content_reader
@@ -2116,6 +2270,16 @@ if(OPENSWMM_BUILD_2D)
 endif()
 
 # OpenSWMM issue #2 / USEPA #216 and #234: conduit loss conservation.
+# A kinematic-wave conduit with an initial flow starts carrying it, as in
+# legacy (benchmarks 193-h-h-si-units-elements).
+add_gtest_unit(test_engine_kw_initial_flow test_kw_initial_flow.cpp)
+# A pollutant name in a treatment expression reads the concentration the
+# expression's type calls for (Reference Manual Vol. III 5.4.2), in both
+# engines (benchmarks 193-h-h-si-units-elements).
+add_gtest_unit(test_engine_treatment_expression_type test_treatment_expression_type.cpp)
+# A LID unit that starts with water makes the first runoff step a wet one,
+# as in legacy (benchmarks greenroofs).
+add_gtest_unit(test_engine_lid_initial_wet_step test_lid_initial_wet_step.cpp)
 add_gtest_unit(test_engine_conduit_losses test_conduit_losses.cpp)
 target_compile_definitions(test_engine_conduit_losses PRIVATE
     ISSUE2_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/manual/issue2_seepage")

@@ -42,8 +42,11 @@
 #include "AcceptedWaterVolumes.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <vector>
 
+#include "FvDeviceMarcher.hpp"
 #include "FvKernels.hpp"
 #include "FvOptions.hpp"
 #include "INetworkSolver.hpp"
@@ -392,6 +395,49 @@ public:
      * @return One means no separated tiering; otherwise the last assigned macro-cycle tier count.
      */
     int lts_tiers() const noexcept { return lts_tiers_; }
+
+    /**
+     * @brief Whether a device marcher can integrate a model with these options.
+     *
+     * The marcher covers the solver's global-step path only: first order, forward Euler, slot
+     * closure, no species, no unsteady friction, no implicit pressurized pass, census every
+     * substep, no node feedback bound.
+     *
+     * @param[in] opts Solver options as they will be passed to initialize.
+     * @param[in] n_species Advected species count of the state.
+     * @param[out] why Optional; receives the first unsupported item when the result is false.
+     * @return True when every option is inside the marcher's scope.
+     */
+    static bool deviceSupports(const FvOptions& opts, int n_species, std::string* why = nullptr);
+
+    /**
+     * @brief Hand the substep loop of each advance to a device marcher, or take it back.
+     *
+     * Call before initialize. With a marcher attached the solver steps globally (no local time
+     * stepping), holds structure and boundary forcing over the routing step, and applies the
+     * pass-through residual with the snapshot rule the marcher uses, so a step the marcher cannot
+     * take falls back to the CPU loop under the same rules.
+     *
+     * @param[in] marcher Shared marcher whose deleter releases it through its plugin; null detaches.
+     */
+    void attachDeviceMarcher(std::shared_ptr<IFvDeviceMarcher> marcher) {
+        marcher_ = std::move(marcher);
+    }
+
+    /// Copy the mesh to the device again after the caller edited it in place
+    /// (the 2D router assigns coupled junctions their ponding footprint after
+    /// initialize). No effect without a bound marcher.
+    void refreshDeviceMesh() {
+        if (marcher_ && device_bound_)
+            bindDevice();
+    }
+
+    /// True while a device marcher is attached.
+    bool hasDeviceMarcher() const noexcept { return marcher_ != nullptr; }
+
+    /// Advances integrated on the device so far, and advances the CPU loop took instead.
+    long deviceAdvances() const noexcept { return device_advances_; }
+    long deviceFallbacks() const noexcept { return device_fallbacks_; }
 
     /**
      * @brief Borrow the run tier-occupancy histogram.
@@ -1498,6 +1544,31 @@ private:
     /// Accept a substep when the post-step stable step is at least this
     /// fraction of the step actually taken.
     static constexpr double kStepAcceptRatio = 0.5;
+
+    /// Relative margin on the acceptance comparison, so a census that lands
+    /// EXACTLY on the threshold is rejected deterministically instead of by
+    /// last-bit rounding. That is the one case the test most needs to catch:
+    /// a step far past CFL saturates the positivity limiter, which clamps the
+    /// outflow to vol/dt and so caps the Courant number at exactly one, and
+    /// the post-step census then returns cfl*dt — a pure function of the step
+    /// taken, carrying no information about whether it was admissible. With
+    /// the default cfl equal to kStepAcceptRatio the comparison is the exact
+    /// tie 0.5*dt >= 0.5*dt. Measured on the R2 pressurized head-loss fixture
+    /// (PR #180, 2026-11-23): substeps to steady flow were 204 at c = 700..1000
+    /// but 3764 at 500 and 8528..11842 at 1100..1500 — the oversized accepted
+    /// first step injected a spurious water hammer that the following
+    /// substeps then resolved. Rejecting the tie flattens the sweep to
+    /// 204..208, strictly less work. See
+    /// PressCensus.substepCountDoesNotTurnOnTheAcceptanceTie.
+    static constexpr double kStepAcceptEps = 1.0e-9;
+
+    /// The acceptance test every post-step census uses: the stable step the
+    /// reached state allows must exceed kStepAcceptRatio of the step taken by
+    /// the margin above. `dt_taken` is the step the censused cells advanced
+    /// by (a tier-k cell's is 2^k times the base step).
+    static constexpr bool stepAdmissible(double dt_post, double dt_taken) noexcept {
+        return dt_post >= kStepAcceptRatio * dt_taken * (1.0 + kStepAcceptEps);
+    }
     static constexpr int kMaxStepRetries = 8;
 
     /// Substep floor — a loop guard only, far below any stable step this
@@ -1657,6 +1728,33 @@ private:
     /// Substeps remaining before the next full Courant census. Reloaded from
     /// FV_CFL_CENSUS_INTERVAL; zero forces a census on the next substep.
     int census_count_ = 0;
+
+    // ---- device marcher (FvDeviceMarcher.hpp) --------------------------------
+    /// Copy the static network to the device and build the derived index
+    /// arrays the kernels need. Called from initialize().
+    void bindDevice();
+    /// Integrate [t_current, t_target] on the device. Returns false, leaving
+    /// every array untouched, when this advance is outside the marcher's scope.
+    bool advanceOnDevice(double t_current, double t_target, const FvStepForcing& forcing,
+                         double& t_reached, long& steps);
+
+    std::shared_ptr<IFvDeviceMarcher> marcher_;
+    bool device_bound_ = false;
+    bool device_note_printed_ = false;
+    long device_advances_ = 0;
+    long device_fallbacks_ = 0;
+    substep::Arrays dev_host_{}; ///< mesh half, pointing at host vectors
+    std::vector<int> dev_face_npos_, dev_node_face_sorted_, dev_node_struct_ptr_,
+        dev_node_struct_idx_, dev_node_vj_face_;
+    std::vector<double> dev_struct_q_, dev_struct_q_cap_, dev_fixed_nan_, dev_node_qdummy_;
+
+    /// Pass-through residual rule: test incident-cell pressurization on the
+    /// cell state the node update started from, not on cells an earlier node
+    /// of the same loop already wrote. On whenever a marcher is attached, or
+    /// with OPENSWMM_FV_SETTLE_SNAPSHOT=1.
+    bool settle_snapshot_ = false;
+    bool settle_snapshot_live_ = false;
+    std::vector<std::uint8_t> settle_press_;
 };
 
 } // namespace openswmm::fv

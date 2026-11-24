@@ -363,10 +363,9 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // collapsed to 1.0 for SI projects, leaving every coupled head/depth off
     // by 3.28× and every exchanged flow/volume off by 35× — corrupting the
     // coupled mass balance. They describe the 1D side, which is always feet.)
-    constexpr double ft_to_m = 0.3048;
-    options_.len_1d_to_2d = ft_to_m;
-    options_.len_2d_to_1d = 1.0 / ft_to_m;
-    options_.vol_1d_to_2d = ft_to_m * ft_to_m * ft_to_m;
+    options_.len_1d_to_2d = ucf::FT_TO_M;
+    options_.len_2d_to_1d = 1.0 / ucf::FT_TO_M;
+    options_.vol_1d_to_2d = ucf::FT_TO_M * ucf::FT_TO_M * ucf::FT_TO_M;
     options_.flow_1d_to_2d = options_.vol_1d_to_2d;
     options_.flow_2d_to_1d = 1.0 / options_.vol_1d_to_2d;
 
@@ -374,7 +373,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // (feet for US, metres for SI), so its scaling to the SI solver IS driven
     // by FLOW_UNITS: US → ft→m (0.3048); SI → already metres (no-op).
     const int us = ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
-    const double mesh_to_si = (us == 0) ? ft_to_m : 1.0;
+    const double mesh_to_si = (us == 0) ? ucf::FT_TO_M : 1.0;
 
     // CONSTANT SPECIFIED_STAGE heads live in the mesh sections and share the
     // mesh's vertical datum, so they convert with the same factor and under
@@ -400,16 +399,8 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     // STAGE (x-axis) shares the mesh vertical datum and converts with
     // bc_stage_scale_ at lookup time.
     {
-        static constexpr double kFlowToCms[6] = {
-            0.028316846592, // CFS
-            6.30901964e-05, // GPM
-            0.043812636574, // MGD
-            1.0,            // CMS
-            0.001,          // LPS
-            0.011574074074  // MLD
-        };
         const int fu = static_cast<int>(ctx.options.flow_units);
-        bc_flow_scale_ = (fu >= 0 && fu < 6) ? kFlowToCms[fu] : 1.0;
+        bc_flow_scale_ = (fu >= 0 && fu < 6) ? ucf::FLOW_TO_M3S_EXACT[fu] : 1.0;
     }
 
     // Record the factor that applies to this mesh — metres per model-CRS
@@ -824,6 +815,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
     std::vector<double> a_pipe_max_m2(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
     for (int l = 0; l < ctx.n_links(); ++l) {
         const auto ul = static_cast<std::size_t>(l);
+        // Conduits only: a weir's or an orifice's opening says nothing about the inlet the
+        // surface drains through (an overflow chamber's 2 m2 weir gave its manhole a 2 m2 orifice).
+        if (ctx.links.type[ul] != LinkType::CONDUIT)
+            continue;
         for (const int n : {ctx.links.node1[ul], ctx.links.node2[ul]}) {
             if (n < 0)
                 continue;
@@ -1023,12 +1018,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
                                                 start.end());
                 return;
             }
-            constexpr double kPi = 3.14159265358979323846;
             const double cx = cp.vertex_idx >= 0 ? mesh_.vx[cp.vertex_idx] : mesh_.tri_cx[cell];
             const double cy = cp.vertex_idx >= 0 ? mesh_.vy[cp.vertex_idx] : mesh_.tri_cy[cell];
             const double d_struct = cp.law == static_cast<int8_t>(CouplingLaw2D::WEIR_ORIFICE)
-                                        ? cp.geo.l_weir / kPi
-                                        : 2.0 * std::sqrt(cp.area / kPi);
+                                        ? cp.geo.l_weir / constants::PI_EXACT
+                                        : 2.0 * std::sqrt(cp.area / constants::PI_EXACT);
             const double r = std::max(d_struct, std::sqrt(mesh_.tri_area[cell]));
             constexpr std::size_t kMaxCells = 256;
             std::vector<int> queue = start, marked = start;
@@ -1235,6 +1229,10 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         (void)nt;
         ctx.nodes.coupling_tuple_age = (tr.age_row >= 0);
         ctx.nodes.coupling_tuple_temp = (tr.temp_row >= 0);
+        // See the coupling exchange booking; set again on every window it queues.
+        ctx.nodes.coupling_gross = tr.n_species > 0 && !live_passive_exchange_ &&
+                                   !peer_passive_exchange_ &&
+                                   ctx.options.routing_model != RoutingModel::FV;
         if (tr.active()) {
             // S4: the temperature row starts at the INITIAL_STATE source
             // temperature (H1's convention for water in the network at t=0),
@@ -1877,7 +1875,7 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         (ctx.snowpacks.mesh_config.assigned() ||
          ctx.snowpacks.mesh_config.mode == surface::MeshSnowConfig::Mode::Yes)) {
         std::vector<surface::MeshSnowGeometry> geometry(mesh_.n_cells());
-        constexpr double degrees = 180. / 3.14159265358979323846;
+        constexpr double degrees = 180. / constants::PI_EXACT;
         for (int i = 0; i < mesh_.n_cells(); ++i) {
             auto& g = geometry[i];
             g.area = mesh_.tri_area[i];
@@ -2474,8 +2472,8 @@ void SurfaceRouter2D::advanceFrozenGround(const SimulationContext& ctx, double d
         // Each cell's own air temperature, as the mesh heat exchange reads it.
         const double air =
             (ctx.forcing.elementAirTempF(HeatElement::cell2d(cell), ctx.climate_state.temperature) -
-             32.0) /
-            1.8;
+             constants::F_AT_0C) /
+            constants::F_PER_C;
         // Snow on the cell insulates the covered share of the ground.
         double cover = 0.0, swe = 0.0;
         if (state_.snow.owns(cell) && i < snow.size()) {
@@ -2609,13 +2607,15 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         gage_changed = rates[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ || state_.forcing_dirty || gage_changed) {
         state_.forcing_dirty = false;
+        state_.forcing_step_sync = false;
         updateRainfall(ctx);
         // E2 [2D_OPTIONS] EVAPORATION: YES (default) = forcing only, the
         // pre-E2 sink; CLIMATE = unforced cells take the project
         // [EVAPORATION] rate (climate_state.evap_rate is internal ft/s);
         // NO = the sink stays zero and forcing is ignored.
-        const double evap_base =
-            (options_.evaporation == 2) ? std::max(0.0, ctx.climate_state.evap_rate) * 0.3048 : 0.0;
+        const double evap_base = (options_.evaporation == 2)
+                                     ? std::max(0.0, ctx.climate_state.evap_rate) * ucf::FT_TO_M
+                                     : 0.0;
         std::fill(state_.evap_rate.begin(), state_.evap_rate.end(), evap_base);
         const bool evap_on = options_.evaporation != 0;
         for (std::size_t i = 0; i < state_.depth.size(); ++i) {
@@ -2937,12 +2937,27 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             const auto& tr = state_.transport;
             const auto ns = static_cast<std::size_t>(tr.n_species);
             auto& q = ctx.nodes.coupling_qual_queue;
+            // Under the legacy-style 1D mix the node receives the GROSS drain mass with the
+            // gross drain water that carried it, and the gross spill leaves as its own volume
+            // (NodeData::coupling_drain_queue). The FV transport mixes its own water graph and
+            // keeps the paired net delivery below; the passive exchanges queue nothing here.
+            const bool gross = !live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 &&
+                               ctx.options.routing_model != RoutingModel::FV;
+            ctx.nodes.coupling_gross = gross;
             if (!live_passive_exchange_ && !peer_passive_exchange_ && ns > 0 &&
                 !tr.exch_mass.empty()) {
                 for (std::size_t k = 0; k < n; ++k) {
                     const auto ni = static_cast<std::size_t>(node_coupling_points_[k].node_idx);
                     if ((ni + 1) * ns > q.size() || (k + 1) * ns > tr.exch_mass.size())
                         continue;
+                    if (gross && ni < ctx.nodes.coupling_drain_queue.size()) {
+                        const double spill = k < tr.exch_spill.size() ? tr.exch_spill[k] : 0.0;
+                        // Gross water whose difference is the point's net exchange.
+                        const double drain = std::max(0.0, exch[k] + spill);
+                        ctx.nodes.coupling_drain_queue[ni] += drain * options_.flow_2d_to_1d;
+                        ctx.nodes.coupling_spill_queue[ni] +=
+                            (drain - exch[k]) * options_.flow_2d_to_1d;
+                    }
                     // The exchange flip-flops across the rim within one
                     // window, and the VOLUME side nets (exch_ = ∫Q dt,
                     // signed) while exch_mass holds the drain GROSS. Handing
@@ -2973,7 +2988,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
                         mq.assign(static_cast<std::size_t>(ctx.n_nodes()) * nsp_all, 0.0);
                     for (std::size_t sp = 0; sp < ns; ++sp) {
                         double inc = tr.exch_mass[k * ns + sp];
-                        if (paired > 0.0 && (ni + 1) * ns <= node_row_conc_.size())
+                        if (!gross && paired > 0.0 && (ni + 1) * ns <= node_row_conc_.size())
                             inc -= paired * node_row_conc_[ni * ns + sp];
                         double* row = nullptr;
                         if (sp < npol) {
@@ -3047,6 +3062,11 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
                 continue;
             if (ni < ctx.nodes.coupling_volume.size())
                 ctx.nodes.coupling_volume[ni] += nv[ni] * options_.flow_2d_to_1d;
+            // Bed inflow carries the aquifer mass queued below; the recharge direction is
+            // booked as exfiltration there, not as a spill.
+            if (ctx.nodes.coupling_gross && nv[ni] > 0.0 &&
+                ni < ctx.nodes.coupling_drain_queue.size())
+                ctx.nodes.coupling_drain_queue[ni] += nv[ni] * options_.flow_2d_to_1d;
         }
         // T7.4: the tuple rides the same channel as the volume. Aquifer →
         // node mass goes into the node's coupling QUEUES, which
@@ -4081,7 +4101,12 @@ void SurfaceRouter2D::advancePostRouting(SimulationContext& ctx, double routing_
     }
     const double sync = couplingSyncSpan(ctx, options_);
     const bool lid_heat_sync = ctx.options.heat_transport && subsurface_.lidReceiptsEnabled();
-    if (lid_heat_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
+    // A prescription written through the forcing API during this routing
+    // step ends the batch here, so it applies over exactly this step (the
+    // per-step semantics the API documents) rather than from the next
+    // batch, which can begin one or more routing steps later when the
+    // variable routing step runs shorter than the sync span.
+    if (lid_heat_sync || state_.forcing_step_sync || pending_dt_ + 0.5 * routing_dt >= sync) {
         const double span = pending_dt_;
         pending_dt_ = 0.0;
         coAdvanceStep(ctx, span, t);
@@ -5224,18 +5249,21 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
             // read — not a re-derivation at the accepted end-of-step depth.
             // Consumed and zeroed here, so this must run exactly once per
             // routing step.
+            // A cell that applied nothing adds only zeros below: skip its writes.
             const double applied = state_.infil_applied[ui];
-            state_.infil_applied[ui] = 0.0;
-            infil_vol += applied * area;
-            if (track_cum)
-                infil_cum_applied_[ui] += applied;
-            // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
-            // here, from the same applied depth, so the recharge and the
-            // 2D ledger can never disagree.
-            if (route_aq && cell_subcatch_[ui] >= 0) {
-                const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
-                if (us < subcatch_recharge_.size()) {
-                    subcatch_recharge_[us] += applied * area;
+            if (applied != 0.0) {
+                state_.infil_applied[ui] = 0.0;
+                infil_vol += applied * area;
+                if (track_cum)
+                    infil_cum_applied_[ui] += applied;
+                // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
+                // here, from the same applied depth, so the recharge and the
+                // 2D ledger can never disagree.
+                if (route_aq && cell_subcatch_[ui] >= 0) {
+                    const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
+                    if (us < subcatch_recharge_.size()) {
+                        subcatch_recharge_[us] += applied * area;
+                    }
                 }
             }
         }

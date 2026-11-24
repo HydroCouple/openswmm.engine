@@ -26,6 +26,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "openswmm_api_common.hpp"
 #include "NamedObjectOverrides.hpp"
 #include "StringCase.hpp"
@@ -1124,7 +1125,7 @@ SWMM_ENGINE_API int swmm_subcatch_set_snow_state(SWMM_Engine engine, int idx, in
     if (ati > -999.0) {
         double t = ati;
         if (unit_sys == 1)
-            t = t * 9.0 / 5.0 + 32.0;
+            t = t * 9.0 / 5.0 + openswmm::constants::F_AT_0C;
         soa.ati[pk] = t;
     }
     if (coldc >= 0.0)

@@ -284,7 +284,7 @@ generalisation rather than a published result.
 | Sediment transport | — | \status{Planned} | @ref quality_ref_ch11_planned | — |
 | LID as storage nodes | — | \status{Planned} | @ref hydrology_ref_ch10_planned | — |
 | Chebyshev cross-sections | — | \status{Planned} | @ref hydraulics_ref_ch10_planned | — |
-| 1D GPU backend | `FV_BACKEND` | \status{Planned} | @ref hydraulics_ref_ch10_planned | — |
+| 1D GPU backend | `FV_BACKEND` | \status{Experimental} | @ref hydraulics_ref_ch8_device_backend | First order, global stepping, structures held over the routing step |
 | 2D Metal backend | `BACKEND` | \status{Planned} | @ref hydraulics_ref_ch10_planned | — |
 
 *Table 1-1 Every formulation, the keys that select it, and where it is documented*

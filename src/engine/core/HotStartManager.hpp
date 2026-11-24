@@ -384,8 +384,10 @@ public:
      * @returns Heap-allocated `HotStartFile*` on success (caller owns), or
      *          nullptr on I/O error (error description in `last_io_error`).
      * @note Caller deletes the returned object. Source context must be coherent at an accepted boundary; this helper does not enforce the engine lifecycle itself. Destination is directly overwritten. Advanced features can require full session checkpoint capture instead; allocation exceptions may propagate.
+     * @param[out] bytes When non-null, receives the encoded file instead of @p path being written.
      */
-    static HotStartFile* save(const SimulationContext& ctx, const std::string& path);
+    static HotStartFile* save(const SimulationContext& ctx, const std::string& path,
+                              std::string* bytes = nullptr);
 
     /**
      * @brief Capture native engine state including optional infiltration and groundwater solvers.
@@ -407,10 +409,10 @@ public:
     /**
      * @brief Capture a native hot start with an optional complete engine-session checkpoint.
      *
-     * Chooses feature-dependent versions through V18; nonempty engine payload promotes at least V15 and
+     * Chooses feature-dependent versions through V19; nonempty engine payload promotes at least V15 and
      * is limited to 512 MiB. Payload must come from the matching initialized model and qualified
      * session snapshot, not arbitrary bytes. Empty payload refuses configurations needing full restart
-     * state. Native file write is direct truncation, without atomic staging. Allocation/other
+     * state. The file is written through a staged temporary file and replaced on commit. Allocation/other
      * exceptions outside capture guards can propagate.
      *
      * @param[in] ctx Borrowed coherent model state at an accepted save boundary; lifecycle
@@ -423,11 +425,10 @@ public:
      * @return Heap-allocated file on success, caller deletes it; NULL on handled refusal/IO failure
      *     with last_io_error().
      */
-    static HotStartFile* save_with_engine_checkpoint(const SimulationContext& ctx,
-                                                     const runoff::RunoffSolver* runoff,
-                                                     const groundwater::GWSolver* gw,
-                                                     const std::string& path,
-                                                     const std::string& engine_checkpoint);
+    static HotStartFile*
+    save_with_engine_checkpoint(const SimulationContext& ctx, const runoff::RunoffSolver* runoff,
+                                const groundwater::GWSolver* gw, const std::string& path,
+                                const std::string& engine_checkpoint, std::string* bytes = nullptr);
 
     // -----------------------------------------------------------------------
     // Open
@@ -473,6 +474,18 @@ public:
      *     false for missing/short/legacy files.
      */
     static bool is_native_file(const std::string& path) noexcept;
+
+    /**
+     * @brief Test whether a hot start may be written to @p path without destroying other data.
+     *
+     * A missing or empty file, or one that starts with the native or a SWMM5 hot start stamp, may
+     * be written. Anything else, such as a GeoPackage, an HDF5 file or a directory, is refused so
+     * it stays byte-identical; last_io_error() then names the path.
+     *
+     * @param[in] path Borrowed UTF-8 destination path.
+     * @return True when a hot start writer may create or replace the file.
+     */
+    static bool may_write_hotstart(const std::string& path) noexcept;
 
     // -----------------------------------------------------------------------
     // Apply
@@ -637,6 +650,23 @@ public:
     /** @brief Description of the most recent I/O error (empty = none). */
     static const std::string& last_io_error() noexcept;
 
+    /**
+     * @brief Encode a native hot start exactly as write_file() would write it, checksum included.
+     * @param[in] hs Coherent representation, as for write_file().
+     * @param[out] bytes Receives the file's bytes.
+     * @return False for a guarded encoding failure.
+     */
+    static bool encode(const HotStartFile& hs, std::string& bytes);
+
+    /**
+     * @brief Check and parse native hot start bytes, as read_file() does with a file's content.
+     * @param[out] hs Representation to fill.
+     * @param[in] bytes Borrowed bytes, checksum included.
+     * @param[in] label Name used in messages and stored as hs.path, such as a record's identity.
+     * @return False with last_io_error() set for a corrupt, truncated or unsupported input.
+     */
+    static bool decode(HotStartFile& hs, const std::string& bytes, const std::string& label);
+
 private:
     // -----------------------------------------------------------------------
     // Binary I/O helpers
@@ -646,13 +676,13 @@ private:
      * @brief Serialize a native hot-start representation with a trailing IEEE CRC32.
      *
      * Builds the full body in memory, then writes it and its checksum. Numeric POD encoding uses native
-     * machine representation; no byte-order conversion despite the intended little-endian format. Does
-     * not create directories, atomically stage, fsync or validate opaque state semantics; allocation
-     * exceptions can propagate.
+     * machine representation; no byte-order conversion despite the intended little-endian format.
+     * Writes through io::AtomicOutputFile, so the destination is replaced only on commit. Does not
+     * create directories or validate opaque state semantics; allocation exceptions can propagate.
      *
      * @param[in] hs Coherent header/version and record arrays; caller ensures all count/length
      *     narrowing and represented feature state are valid.
-     * @param[in] path UTF-8 destination opened directly with binary truncation.
+     * @param[in] path UTF-8 destination, replaced only when the staged write commits.
      * @return True for successful stream write, false for guarded encoding/IO failure; some low-level
      *     false paths do not replace last_io_error().
      */
@@ -660,7 +690,7 @@ private:
     /**
      * @brief Read and check a native hot-start file into an existing representation.
      *
-     * Reads entire file into memory, supports versions 1..18 and native numeric representation. String
+     * Reads entire file into memory, supports versions 1..19 and native numeric representation. String
      * lengths are bounded at 4096 bytes including stored NUL; embedded engine payload bounded at 512
      * MiB. Checks serialized shape bounds where implemented, without proving model compatibility or
      * opaque payload semantics. Allocation exceptions can propagate.

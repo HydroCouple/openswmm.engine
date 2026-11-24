@@ -661,3 +661,146 @@ class SaveSchedule(MutableSequence):
             return f"<SaveSchedule n={len(self)}>"
         except Exception:
             return "<SaveSchedule (engine closed)>"
+
+
+# =============================================================================
+# Restart records in GeoPackage and HDF5 files — solver.restart
+# =============================================================================
+
+_RESTART_BACKENDS = ("NONE", "HOTSTART", "GEOPACKAGE", "HDF5", "OTHER")
+
+
+def probe_restart_file(path) -> str:
+    """What *path* holds, judged from its first bytes, without changing it.
+
+    One of ``"NONE"`` (missing or empty), ``"HOTSTART"``, ``"GEOPACKAGE"``,
+    ``"HDF5"`` or ``"OTHER"``.
+    """
+    cdef bytes b = os.fspath(path).encode("utf-8")
+    cdef int backend = 0
+    _check(swmm_restart_probe(b, &backend))
+    return _RESTART_BACKENDS[backend]
+
+
+def inspect_restart_file(path) -> dict:
+    """Runs and restart records of a GeoPackage or HDF5 file, read-only.
+
+    Returns the decoded JSON of ``swmm_restart_inspect_json``: ``path``,
+    ``backend`` and ``runs``; each run has ``run_id``, provenance fields and
+    ``records``; each record has ``record_id``, ``model_datetime`` (decimal
+    days), ``elapsed_seconds``, ``continuation``, ``status`` and more. Only
+    records whose ``status`` is ``"complete"`` can be restored.
+
+    Raises :class:`OSError` with the engine's reason for a missing file or one
+    that is not a GeoPackage or HDF5 file.
+    """
+    import json
+    cdef bytes b = os.fspath(path).encode("utf-8")
+    cdef const char* c_path = b
+    cdef size_t need = 0
+    cdef int rc
+    with nogil:
+        rc = swmm_restart_inspect_json(c_path, NULL, 0, &need)
+    if rc != 0:
+        raise OSError(swmm_restart_last_error().decode("utf-8", "replace"))
+    cdef bytearray buf = bytearray(need)
+    cdef char* out = buf
+    with nogil:
+        rc = swmm_restart_inspect_json(c_path, out, need, &need)
+    if rc != 0:
+        raise OSError(swmm_restart_last_error().decode("utf-8", "replace"))
+    return json.loads(bytes(buf[:need - 1]).decode("utf-8"))
+
+
+class RestartSettings:
+    """``solver.restart`` — the model's ``[RESTART]`` section.
+
+    .. code-block:: python
+
+        r = solver.restart
+        r.source_file = "previous.gpkg"
+        r.source_run = "run_20261119T120000Z_3fa9c2d1"
+        r.source_record = "rec_000002"        # or "LATEST"
+        r.mode = "INITIAL_CONDITIONS"          # or "CONTINUE"
+        r.record_file = "states.h5"
+        r.record_format = "HDF5"               # or "GEOPACKAGE"
+        r.record_at = ["END", datetime(2020, 1, 1, 0, 30)]
+        r.record_every = 900.0                 # seconds; 0 for none
+        r.record_continuation = False
+
+    Whether the settings agree is checked when the run initializes.
+    """
+
+    def __init__(self, solver):
+        self._solver = solver
+
+    def _get(self, key: str) -> str:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes k = key.encode("utf-8")
+        return _read_engine_key_string(h, k, swmm_restart_get)
+
+    def _set(self, key: str, value: str) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef bytes k = key.encode("utf-8")
+        cdef bytes v = str(value).encode("utf-8")
+        _check(swmm_restart_set(h, k, v))
+
+    source_file = property(lambda self: self._get("SOURCE_FILE"),
+                           lambda self, v: self._set("SOURCE_FILE", os.fspath(v)),
+                           doc="Restart file to start from; empty turns restoring off.")
+    source_run = property(lambda self: self._get("SOURCE_RUN"),
+                          lambda self, v: self._set("SOURCE_RUN", v),
+                          doc="Run in the source file; empty selects its only run.")
+    source_record = property(lambda self: self._get("SOURCE_RECORD"),
+                             lambda self, v: self._set("SOURCE_RECORD", v),
+                             doc="Record ID, or ``\"LATEST\"``.")
+    mode = property(lambda self: self._get("MODE"),
+                    lambda self, v: self._set("MODE", v),
+                    doc="``\"INITIAL_CONDITIONS\"`` or ``\"CONTINUE\"``.")
+    record_file = property(lambda self: self._get("RECORD_FILE"),
+                           lambda self, v: self._set("RECORD_FILE", os.fspath(v)),
+                           doc="File this run records its states into; empty turns recording off.")
+    record_format = property(lambda self: self._get("RECORD_FORMAT"),
+                             lambda self, v: self._set("RECORD_FORMAT", v),
+                             doc="``\"GEOPACKAGE\"``, ``\"HDF5\"`` or empty; never inferred.")
+    record_every = property(lambda self: float(self._get("RECORD_EVERY")),
+                            lambda self, v: self._set("RECORD_EVERY", repr(float(v))),
+                            doc="Interval between records in seconds; 0 for none.")
+    record_continuation = property(lambda self: self._get("RECORD_CONTINUATION") == "YES",
+                                   lambda self, v: self._set("RECORD_CONTINUATION",
+                                                             "YES" if v else "NO"),
+                                   doc="Records carry the engine checkpoint so they can CONTINUE.")
+
+    @property
+    def uses_checkpoint(self) -> bool:
+        """True when the initialized run restores or records an engine checkpoint.
+
+        Such a run that saves binary results needs a new output file.
+        """
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int uses = 0
+        _check(swmm_restart_uses_checkpoint(h, &uses))
+        return uses != 0
+
+    @property
+    def record_at(self) -> list:
+        """Requested record times: ``"END"`` or a :class:`datetime` each."""
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        cdef int n = 0
+        cdef double when = 0.0
+        _check(swmm_restart_record_at_count(h, &n))
+        out = []
+        for i in range(n):
+            _check(swmm_restart_record_at_get(h, i, &when))
+            out.append("END" if when == 0.0 else oadate_to_datetime(when))
+        return out
+
+    @record_at.setter
+    def record_at(self, values) -> None:
+        cdef SWMM_Engine h = <SWMM_Engine><size_t>self._solver.handle
+        _check(swmm_restart_record_at_clear(h))
+        for v in values:
+            if isinstance(v, str) and v.upper() == "END":
+                _check(swmm_restart_record_at_add(h, 0.0))
+            else:
+                _check(swmm_restart_record_at_add(h, datetime_to_oadate(v)))

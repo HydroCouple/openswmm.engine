@@ -31,6 +31,8 @@ CHECKPOINT_FEATURES = {
     "file_profile": 1 << 6,
     "bundle_export": 1 << 7,
     "session_builder": 1 << 8,
+    "continue_extended_forcing": 1 << 9,
+    "runtime_forcing": 1 << 10,
 }
 
 

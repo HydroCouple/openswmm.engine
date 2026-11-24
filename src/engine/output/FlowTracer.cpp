@@ -9,6 +9,8 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
+#include "../core/UnitConversion.hpp"
 #include "FlowTracer.hpp"
 #include "OutputReader.hpp"
 #include <algorithm>
@@ -421,10 +423,8 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
         error = "No valid reporting periods or units";
         return SWMM_TRACE_INVALID;
     }
-    constexpr double flowFactors[] = {0.028316846592, 0.0000630901964,     0.04381263638888889, 1,
-                                      0.001,          0.011574074074074073};
-    double fq = flowFactors[info.source_flow_units], fl = info.source_flow_units < 3 ? 0.3048 : 1,
-           fvol = fl * fl * fl;
+    double fq = ucf::FLOW_TO_M3S_EXACT[info.source_flow_units],
+           fl = info.source_flow_units < 3 ? ucf::FT_TO_M : 1, fvol = fl * fl * fl;
     na.assign(nodes.size(), {});
     la.assign(links.size(), {});
     struct Sample {
@@ -485,7 +485,7 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
                 la[i].first_volume_m3 = cur.lv[lm[i]] * fvol;
         }
         if (t || info.periods == 1) {
-            double dt = t ? (date - last) * 86400 : 1;
+            double dt = t ? (date - last) * constants::SEC_PER_DAY_INT : 1;
             if (!(dt > 0)) {
                 error = "Reporting timestamps must increase";
                 return SWMM_TRACE_INVALID;
@@ -517,7 +517,7 @@ int FlowTracer::prepare(const char* path, const char* cache, const char* digest,
         last = date;
         std::swap(prev, cur);
     }
-    info.duration_s = (info.last_report_date - info.first_report_date) * 86400;
+    info.duration_s = (info.last_report_date - info.first_report_date) * constants::SEC_PER_DAY_INT;
     double duration = info.periods == 1 ? 1 : info.duration_s;
     for (size_t i = 0; i < nodes.size(); ++i) {
         auto& a = na[i];

@@ -257,6 +257,48 @@ struct FilesSpec {
     }
 };
 
+/**
+ * @brief How a restart record seeds a run (`[RESTART] MODE`).
+ */
+enum class RestartMode {
+    INITIAL_CONDITIONS = 0, ///< Object state at the target's own start date; new run ledgers.
+    CONTINUE = 1            ///< The saved engine checkpoint: clocks, histories and ledgers.
+};
+
+/**
+ * @brief Container a run records its restart states into (`[RESTART] RECORD_FORMAT`).
+ *
+ * Chosen explicitly, never from a file suffix.
+ */
+enum class RestartFormat { NONE = 0, GEOPACKAGE = 1, HDF5 = 2 };
+
+/**
+ * @brief The `[RESTART]` section: which saved state starts the run, and where this run records
+ *        its own states.
+ *
+ * A restart record holds the bytes of a native hot start file captured at an accepted step. Paths
+ * resolve against the input file like `[FILES]` paths.
+ */
+struct RestartSpec {
+    FilePathPair source_file;  ///< SOURCE_FILE; empty turns restoring off.
+    std::string source_run;    ///< SOURCE_RUN; empty selects the file's only run.
+    std::string source_record; ///< SOURCE_RECORD: a record ID, or LATEST resolved at start.
+    RestartMode mode = RestartMode::INITIAL_CONDITIONS; ///< MODE.
+    FilePathPair record_file;                           ///< RECORD_FILE; empty turns recording off.
+    RestartFormat record_format = RestartFormat::NONE;  ///< RECORD_FORMAT.
+    std::vector<double> record_at;    ///< RECORD_AT rows as decimal days; 0.0 is END.
+    double record_every = 0.0;        ///< RECORD_EVERY interval in seconds; 0 is none.
+    bool record_continuation = false; ///< RECORD_CONTINUATION: embed the engine checkpoint.
+
+    /** @brief True when the section has any setting, so writers emit it. */
+    [[nodiscard]] bool has_any() const noexcept {
+        return !source_file.empty() || !source_run.empty() || !source_record.empty() ||
+               mode != RestartMode::INITIAL_CONDITIONS || !record_file.empty() ||
+               record_format != RestartFormat::NONE || !record_at.empty() || record_every > 0.0 ||
+               record_continuation;
+    }
+};
+
 // ============================================================================
 // Engine state enumeration
 // ============================================================================
@@ -983,6 +1025,23 @@ struct SimulationContext {
      *          a routing run with a separately-saved runoff file).
      */
     FilesSpec files;
+
+    /** @brief Restart source and recording parsed from [RESTART]. */
+    RestartSpec restart;
+
+    /**
+     * @brief The restart record this run started from, filled when initialize() restores one.
+     *
+     * Empty strings when the run did not start from a record. Writers store it as the run's
+     * provenance.
+     */
+    struct RestartReceipt {
+        std::string source;         ///< File the record was read from.
+        std::string run_id;         ///< Run that wrote the record.
+        std::string record_id;      ///< The record restored.
+        std::string mode;           ///< INITIAL_CONDITIONS or CONTINUE.
+        bool binary_output = false; ///< The restored checkpoint carries binary results.
+    } restart_receipt;
 
     /**
      * @brief Solver-neutral accessors for reading and writing solver-internal
@@ -1860,6 +1919,7 @@ struct SimulationContext {
         double slot_peak_share = 0.0;
         double slot_time_above_s = 0.0;
 
+        std::string fv_backend;       ///< what ran the substeps, e.g. "cuda (RTX 2000 Ada)"
         long fv_nsteps = -1;          ///< explicit substeps over the run
         long fv_nflux = 0;            ///< face flux evaluations
         double fv_avg_h = 0.0;        ///< mean substep (s)
@@ -2053,6 +2113,14 @@ struct SimulationContext {
      * @see Legacy: InpFile in globals.h
      */
     std::string inp_file_path;
+
+    /**
+     * @brief Identifier of this execution, set by SWMMEngine::open() (see newRunId()).
+     *
+     * Result, report and restart writers key what they store by it, so two runs into one file
+     * never share rows. Empty for a context that was not opened by an engine.
+     */
+    std::string run_id;
 
     // =========================================================================
     // Context-level operations

@@ -11,6 +11,11 @@
 
 #pragma once
 namespace openswmm::surface::ueb_reference {
+
+/// Gravitational acceleration (m/s²) as Tarboton's UEB code defines it. The
+/// reference port and the native UEB forcing must agree on this value, so it
+/// is defined once here; it is the model's constant, not constants::GRAVITY_SI.
+inline constexpr double kGravity = 9.81;
 /** @brief Run one equilibrium-temperature UEB reference interval with padded arrays.
  * @param dt Positive duration hours, already bounded/qualified by the point adapter.
  * @param input Borrowed meteorology buffer pointing at logical input[8]: seven values

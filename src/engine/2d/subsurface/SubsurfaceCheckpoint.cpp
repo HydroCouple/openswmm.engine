@@ -177,6 +177,10 @@ void SubsurfaceSolver::checkpoint(detail::CompletedSourceArchive& a, bool model,
         a(o.soil_char, o.closure, o.m_layers, o.capillary_diff, o.c_gw, o.c_col,
           o.force_closed_form, o.per_subcatch, o.dunne, o.gw_et, o.wilting_suction,
           o.wilting_suction_set, o.node_auto, o.link_seepage, o.authored);
+        if (!o.face_cap_ratio) { // absent for the RATIO default, so older checkpoints restore
+            std::string profile = "sequential face caps v1";
+            a(profile);
+        }
         a(source_owned_, source_species_, cell_beds_, cell_sources_, cell_nface_,
           subcatch_outlet_node_, cell_subcatch_);
         a.sequence(node_beds_, [&](auto& b) {

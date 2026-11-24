@@ -706,6 +706,60 @@ SWMM_ENGINE_API int swmm_get_effective_threads(SWMM_Engine engine, int threads_o
                                                int* global_threads, int* dw_threads,
                                                int* twod_threads);
 
+/** @brief Which solver a compute-backend query is about. */
+typedef enum SWMM_BackendSolver {
+    SWMM_BACKEND_SOLVER_FV_NETWORK =
+        0, /**< 1D finite volume network solver ([OPTIONS] FV_BACKEND) */
+    SWMM_BACKEND_SOLVER_2D_SURFACE = 1 /**< 2D surface solver ([2D_OPTIONS] BACKEND)              */
+} SWMM_BackendSolver;
+
+/** @brief Whether a compute backend can be used on this machine, and on what device. */
+typedef struct SWMM_BackendInfo {
+    int usable;                          /**< 1 when a run can use the backend, else 0        */
+    char device_name[128];               /**< device the backend would run on; empty if none  */
+    unsigned long long device_mem_bytes; /**< device memory; 0 when unknown or a host backend */
+    char reason[256];                    /**< why the backend is not usable; empty if usable  */
+} SWMM_BackendInfo;
+
+/** This engine understands METAL as an explicit 1D or 2D face backend.
+ * Query swmm_backend_info separately for runtime availability. */
+#define OPENSWMM_HAS_METAL_FACE_SELECTION 1
+
+/**
+ * @brief Ask whether a compute backend is installed and usable, without an engine.
+ *
+ * Looks for the backend's plugin beside the engine library (and on OPENSWMM_GPU_PLUGIN_PATH),
+ * checks that it was built for this engine and provides the solver asked about, and asks it for
+ * a device. METAL starts a short-lived worker to identify the actual GPU. A plugin found here stays
+ * loaded for the life of the process. "CPU" and "AUTO" are always usable. A model that asks for
+ * METAL explicitly requires that worker and fails if it cannot run.
+ *
+ * @param[in] solver A SWMM_BackendSolver value.
+ * @param[in] backend Non-null backend name as written in the input file: CPU, AUTO, OMP, CUDA,
+ *     HIP, SYCL or METAL, in any case.
+ * @param[out] out Non-null caller-owned destination; every field is filled on SWMM_OK.
+ * @return SWMM_OK, or SWMM_ERR_BADPARAM for a null argument or an unknown solver.
+ */
+SWMM_ENGINE_API int swmm_backend_info(int solver, const char* backend, SWMM_BackendInfo* out);
+
+/**
+ * @brief Ask whether the model's options are ones the 1D finite volume device backend integrates.
+ *
+ * The device backend covers the solver's global-step path: first order, forward Euler, the slot
+ * closure, no advected or legacy-routed quality, no unsteady friction, no implicit pressurized
+ * pass. A model outside that scope still runs with a device backend selected; the CPU solver
+ * integrates it and the report says so. This query reads the model's current options and does not
+ * depend on which backend is selected or installed.
+ *
+ * @param[in] engine Non-null live engine handle with a model open.
+ * @param[out] supported Non-null; receives 1 when the options are in scope, else 0.
+ * @param[out] why Optional buffer for the first item out of scope; empty when supported.
+ * @param[in] buflen Size of `why` in bytes; ignored when `why` is null.
+ * @return SWMM_OK, SWMM_ERR_BADHANDLE for a null engine, or SWMM_ERR_BADPARAM for null supported.
+ */
+SWMM_ENGINE_API int swmm_fv_device_supported(SWMM_Engine engine, int* supported, char* why,
+                                             int buflen);
+
 /* =========================================================================
  * Transport matrix (E2, 2026-09-07) — which species classes run in which
  * domain, and why not. Engine-computed from the open model's options

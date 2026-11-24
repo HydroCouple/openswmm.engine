@@ -76,6 +76,7 @@
 
 #ifndef OPENSWMM_QUALITY_LARD_RWPT_DISPERSION_HPP
 #define OPENSWMM_QUALITY_LARD_RWPT_DISPERSION_HPP
+#include "../../core/Constants.hpp"
 #include "../../core/CompletedSourceArchive.hpp"
 
 #include <algorithm>
@@ -333,7 +334,7 @@ public:
         // Friction: Manning S_f at the link's own n → u*. Regime by Re.
         const double sf = (n_manning * ubar) * (n_manning * ubar) /
                           (2.208 * std::pow(std::max(rh, 1.0e-3), 4.0 / 3.0));
-        const double ustar = std::sqrt(32.174 * std::max(rh, 1.0e-3) * sf);
+        const double ustar = std::sqrt(constants::GRAVITY * std::max(rh, 1.0e-3) * sf);
         const bool turbulent = (ubar * 4.0 * rh / kNuWater) >= kReTurb;
 
         // Segment boundaries in volume coordinates, front → back.

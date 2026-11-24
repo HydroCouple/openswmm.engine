@@ -15,6 +15,7 @@
 #include "GeoPackageSchema.hpp"
 #include "GpkgUtils.hpp"
 #include "GpkgGeometry.hpp"
+#include <version.h>
 
 #include "core/NodeCoupling2D.hpp"
 #include "core/SimulationContext.hpp"
@@ -40,6 +41,7 @@
 #ifdef OPENSWMM_HAS_2D
 #include "2d/subsurface/SubsurfaceSections.hpp"
 #include "2d/gw/GwTransportData.hpp"
+#include "core/FvOptionRows.hpp"
 #include "core/InpWriter.hpp"
 #include "transport/components/ReactionModule/ReactionsWriter.hpp"
 #endif
@@ -394,6 +396,12 @@ static void write_options(sqlite3* db, const SimulationContext& ctx, const std::
     insert("UNSTEADY_FRICTION", std::to_string(opts.unsteady_friction)); // issue #156
     insert_d("UF_K3", opts.uf_k3);
     insert("FV_PRESSURE_CLOSURE", std::to_string(opts.fv.pressure_closure)); // issue #156
+    // Every other finite volume option, as the tokens the [OPTIONS] parser
+    // reads (the reader hands them to it). The pressure closure keeps the
+    // numeric row above, which files already in use carry.
+    for (const auto& [key, value] : fvOptionRows(opts))
+        if (key != "FV_PRESSURE_CLOSURE")
+            insert(key, value);
     insert("REPORT_SIGNED_HEADS", std::to_string(opts.report_signed_heads)); // issue #156
     insert_d("TPA_CELERITY", opts.tpa_celerity);                             // issue #156
     if (opts.surcharge_method == 2) {
@@ -2741,6 +2749,9 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
         case twoD::Backend2D::SYCL:
             backend = "SYCL";
             break;
+        case twoD::Backend2D::METAL:
+            backend = "METAL";
+            break;
         case twoD::Backend2D::AUTO:
             break;
         }
@@ -3211,6 +3222,7 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
                               "inlet_usage",
                               "raingage_data",
                               "climate_data",
+                              "hotstart_slots",
                               "routing_interface_node",
                               "routing_interface_subcatch",
                               "routing_interface_gage",
@@ -3227,6 +3239,19 @@ void write_model(sqlite3* db, const SimulationContext& ctx, const std::string& s
         auto remove = prepare(db, std::string("DELETE FROM ") + table + " WHERE simulation_id=?");
         bind_text(remove.get(), 1, simulation_id);
         checked_model_step(db, remove.get());
+    }
+    // Hot start slots and climate rows reference their simulations row, so it
+    // must exist inside this transaction. A saved project model is marked
+    // 'model' and is not listed as a run; a run's writer marks its own row.
+    {
+        auto parent = prepare(db, "INSERT INTO simulations "
+                                  "(simulation_id, name, created_at, engine_version, status) "
+                                  "VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%SZ','now'), ?, 'model') "
+                                  "ON CONFLICT(simulation_id) DO NOTHING");
+        bind_text(parent.get(), 1, simulation_id);
+        bind_text(parent.get(), 2, simulation_id);
+        bind_text(parent.get(), 3, OPENSWMM_VERSION_FULL);
+        checked_model_step(db, parent.get());
     }
 
     // Register CRS and feature tables

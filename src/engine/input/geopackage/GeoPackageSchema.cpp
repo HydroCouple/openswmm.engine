@@ -857,7 +857,12 @@ CREATE TABLE IF NOT EXISTS simulations (
     elapsed_wall_time          REAL,
     continuity_error_runoff    REAL,
     continuity_error_flow      REAL,
-    continuity_error_quality   REAL
+    continuity_error_quality   REAL,
+    finished_at                TEXT,  -- UTC wall clock when the run completed
+    parent_run_id              TEXT,  -- run whose saved state this run started from
+    parent_record_id           TEXT,  -- restart record of parent_run_id that was restored
+    restart_mode               TEXT,  -- INITIAL_CONDITIONS or CONTINUE
+    restart_source             TEXT   -- file the restart record was read from
 );
 
 -- Variable catalog
@@ -880,8 +885,6 @@ CREATE TABLE IF NOT EXISTS result_timeseries (
     elapsed_time   REAL NOT NULL,
     value          REAL NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_result_ts_obj
-    ON result_timeseries(simulation_id, object_type, object_id, variable_id, elapsed_time);
 
 -- Summary statistics (per-object, written once at end)
 CREATE TABLE IF NOT EXISTS result_summary (
@@ -1480,6 +1483,21 @@ void create_schema(sqlite3* db) {
     add_missing("hotstart_slots", "runoff_section", "BLOB");
     add_missing("hotstart_slots", "tail_section", "BLOB");
     add_missing("hotstart_node_state", "hrt", "REAL");
+    // Run provenance (absent before run IDs were unique per execution).
+    for (const char* column :
+         {"finished_at", "parent_run_id", "parent_record_id", "restart_mode", "restart_source"})
+        add_missing("simulations", column, "TEXT");
+    // A result key is unique within a run. A file written before run IDs were
+    // unique has the plain index and may hold duplicated keys; it keeps it.
+    bool plain_result_index = false;
+    {
+        auto index = prepare(db, "SELECT 1 FROM sqlite_master WHERE type='index' AND "
+                                 "name='idx_result_ts_obj'");
+        plain_result_index = sqlite3_step(index.get()) == SQLITE_ROW;
+    }
+    if (!plain_result_index)
+        exec(db, "CREATE UNIQUE INDEX IF NOT EXISTS ux_result_ts_key ON result_timeseries("
+                 "simulation_id, object_type, object_id, variable_id, elapsed_time)");
     add_missing("input_timeseries", "is_relative", "INTEGER");
     add_missing("input_timeseries", "rel_anchor", "REAL");
     exec(db, MESH_2D_DDL);

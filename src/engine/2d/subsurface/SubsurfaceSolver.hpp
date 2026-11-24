@@ -1355,6 +1355,8 @@ public:
     void checkpoint(detail::CompletedSourceArchive&, bool model); // internal accepted-boundary IO
     /// Cell sweeps fired concurrently so far (diagnostic; never saved).
     long parallelCellSweeps() const noexcept { return parallel_cell_sweeps_; }
+    /// Diagnostic count of GW_FACE_CAP RATIO face passes run on more than one thread.
+    long parallelRatioFacePasses() const noexcept { return parallel_ratio_face_passes_; }
     /// True when this build can fire a cell sweep concurrently (compiled with OpenMP).
     static bool parallelCellSweepAvailable() noexcept;
     bool independentClock() const noexcept { return active() && options_.independent_clock; }
@@ -1520,6 +1522,23 @@ private:
     double clock_cutoff_ = -1.0;
     void refreshCellBound(int cell, const MeshData&, const InertialEdges&);
     void fireGwFaceList(std::span<const int>, double dt, std::span<const double> elapsed);
+    /**
+     * @brief GW_FACE_CAP RATIO face pass (F-5): every face of a donor is scaled by one ratio.
+     * @param[in] list,shared_dt,elapsed As fireGwFaceList.
+     * @param[in,out] face_yield Per-cell yield cache (NaN = unset), filled for touched cells.
+     * @param[in] concentration,gradient,stencil,coefficient fireGwFaceList's dispersion caches.
+     * @note Every profile. Each donor's unreserved water and available (or layered-porewater
+     * mobile) mass are taken before any booking; faces are sized by the order-independent
+     * per-face share, then all of a donor's faces are scaled by min(1, available / total
+     * demand). The result does not depend on face order or thread count. The bulk profile runs
+     * the per-face passes on THREADS workers; porous heat, layered transport and LID bed receipts
+     * run them on one thread (heat faces and porewater presets are booked in list order).
+     */
+    template <class Concentration, class Gradient, class Stencil, class Coefficient>
+    void fireGwFaceListByRatio(std::span<const int> list, double shared_dt,
+                               std::span<const double> elapsed, std::vector<double>& face_yield,
+                               const Concentration& concentration, const Gradient& gradient,
+                               const Stencil& stencil, const Coefficient& coefficient);
     void bookClockAmount(int cell, GwSlot slot, std::vector<double>& field, std::size_t index,
                          double amount) {
         if (clock_state_ && amount != 0 &&
@@ -1541,7 +1560,7 @@ private:
     /**
      * @brief Test whether a cell passes surface intake straight to its table.
      * @param[in] cell Zero-based mesh cell.
-     * @return True for a covered CLOSED_FORM cell on the independent clock whose unsaturated
+     * @return True for a covered CLOSED_FORM cell (either clock) whose unsaturated
      * column is thinner than soil::kRechargeLengthFloor. Its own column law (A5) leaves a
      * saturated sub-millimetre column with no drainage and no storage room, so the firing
      * passes intake to the table instead (fireCell) and intake admission counts the table's
@@ -1559,6 +1578,7 @@ private:
     double intakeHeadroom(int cell, double deficit) const;
     friend class CommonSourceStage;
     friend class ExplicitInertialSolver;
+    friend struct SubsurfaceFaceOrderProbe; ///< test-only: reorders a tier's face list
     friend RichardsBedAcceptance acceptRichardsBedsAtFiring(SubsurfaceSolver&, SurfaceStateData&,
                                                             double, double,
                                                             const std::vector<RichardsBedOwner>&);
@@ -1897,6 +1917,8 @@ private:
         double in, out, room_in, room_out;
     };
     std::vector<ClockBudget> clockBudgets(int cell, double through) const;
+    /// clockBudgets into a caller-owned buffer (replaced), for loops over every cell.
+    void clockBudgets(int cell, double through, std::vector<ClockBudget>& result) const;
     double clockAmount(int cell, GwSlot field, const std::vector<double>& values, std::size_t index,
                        double through) const;
     double clockAccuracyLimit(int cell) const;
@@ -2091,8 +2113,21 @@ private:
     struct LedgerJournal {
         std::vector<std::pair<double*, double>> adds;
         std::vector<int> pending_surface;
-        std::vector<int> fired; ///< cells to report to clock telemetry
+        struct Fired {
+            int cell;
+            double time, dt; ///< this firing's own interval (source cells split at knots)
+        };
+        std::vector<Fired> fired; ///< firings to report to clock telemetry
+        /// Where each list position's entries start, so journals replay in list order.
+        struct Mark {
+            int position;
+            std::size_t adds, pending, fired;
+        };
+        std::vector<Mark> marks;
         long node_refunds = 0;
+        void mark(int position) {
+            marks.push_back({position, adds.size(), pending_surface.size(), fired.size()});
+        }
     };
     static inline thread_local LedgerJournal* journal_ = nullptr;
     /// Add to a run-wide accumulator, or record the addition in the active journal.
@@ -2111,8 +2146,13 @@ private:
     /// Fire `cells` concurrently when the bulk profile makes that equivalent to
     /// the serial loop; returns false (having done nothing) otherwise.
     bool fireGwCellsParallel(const std::vector<int>& cells, double dt, SurfaceStateData& surf,
-                             double time, GwFiringOrigin origin, double intake_through);
-    long parallel_cell_sweeps_ = 0; ///< diagnostic count of sweeps fired in parallel
+                             double time, double accepted_end, GwFiringOrigin origin,
+                             double intake_through);
+    /// One cell of fireGwCellList: its exact horizon, then source/boundary knots.
+    void fireListedCell(int cell, double dt, SurfaceStateData& surf, double time,
+                        double accepted_end, GwFiringOrigin origin, double intake_through);
+    long parallel_cell_sweeps_ = 0;       ///< diagnostic count of sweeps fired in parallel
+    long parallel_ratio_face_passes_ = 0; ///< RATIO face passes run on more than one thread
     // Per-thread journals; transient within one sweep, never copied or saved.
     struct JournalScratch {
         std::vector<LedgerJournal> journals;

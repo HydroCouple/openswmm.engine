@@ -192,3 +192,33 @@ class SaveSchedule(MutableSequence[SaveScheduleEntry]):
     def legacy_omits(self) -> tuple[str, ...]:
         """Model state a legacy SWMM5 file has no place for and NATIVE keeps."""
         ...
+
+
+def probe_restart_file(path: _PathLike) -> str:
+    """``"NONE"``, ``"HOTSTART"``, ``"GEOPACKAGE"``, ``"HDF5"`` or ``"OTHER"``."""
+    ...
+
+
+def inspect_restart_file(path: _PathLike) -> dict[str, Any]:
+    """Runs and restart records of a GeoPackage or HDF5 file, read-only."""
+    ...
+
+
+class RestartSettings:
+    """``solver.restart`` — the model's ``[RESTART]`` section."""
+
+    def __init__(self, solver: Solver) -> None: ...
+    source_file: str
+    source_run: str
+    source_record: str
+    mode: str
+    record_file: str
+    record_format: str
+    record_every: float
+    record_continuation: bool
+    @property
+    def uses_checkpoint(self) -> bool: ...
+    @property
+    def record_at(self) -> List[Union[str, datetime]]: ...
+    @record_at.setter
+    def record_at(self, values: List[Union[str, datetime]]) -> None: ...

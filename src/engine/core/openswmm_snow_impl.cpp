@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_snow.h"
 #include "../../../include/openswmm/engine/openswmm_snow2d.h"
@@ -491,7 +492,9 @@ SWMM_ENGINE_API int swmm_climate_preview_meteorology(SWMM_Engine engine, const c
     if (error.empty() && ctx.options.end_date > ctx.options.start_date) {
         std::array<double, 5> values;
         error = met.average(ctx.options.start_date,
-                            (ctx.options.end_date - ctx.options.start_date) * 86400., values);
+                            (ctx.options.end_date - ctx.options.start_date) *
+                                openswmm::constants::SEC_PER_DAY,
+                            values);
     }
     if (!error.empty()) {
         const auto n = std::min(error.size(), static_cast<std::size_t>(capacity - 1));
@@ -588,9 +591,10 @@ swmm_snow_apply_configuration_with_cloud(SWMM_Engine engine, const char* tempera
             return fail(error);
         if (ctx.options.end_date > ctx.options.start_date) {
             std::array<double, 5> values;
-            if (const auto error =
-                    met.average(ctx.options.start_date,
-                                (ctx.options.end_date - ctx.options.start_date) * 86400., values);
+            if (const auto error = met.average(ctx.options.start_date,
+                                               (ctx.options.end_date - ctx.options.start_date) *
+                                                   openswmm::constants::SEC_PER_DAY,
+                                               values);
                 !error.empty())
                 return fail(error);
         }

@@ -745,7 +745,7 @@ private:
     std::vector<double> h2_;    ///< Head at downstream node (possibly modified)
     std::vector<double> fasnh_; ///< Fraction between normal & critical depth
 
-    // Anderson acceleration state (per-node, depth-2 mixing)
+    // Anderson acceleration state (per-node two-point mixing, one stored iterate)
     std::vector<double> aa_y_prev_; ///< Node depths at iteration k-1
     std::vector<double> aa_g_prev_; ///< G(y_{k-1}) — computed depths at k-1
     std::vector<double> aa_r_prev_; ///< Residual r_{k-1} = G(y_{k-1}) - y_{k-1}
@@ -1012,7 +1012,9 @@ private:
      * Serial team-single phase. No-op when acceleration is disabled; otherwise clears/rebuilds mask for
      * explicit EXTRAN surcharge, active DPS, static-slot crown band, changed TPA latches,
      * crown-crossing weirs/orifices and every pump endpoint. Reads current xnode/link geometry; writes
-     * aa_skip_ only. LID nodes receive an additional exclusion during updateNodeDepthsTeam.
+     * aa_skip_ only. The surcharge flag read here is the one the previous evaluation set;
+     * updateNodeDepthsTeam adds the current evaluation's surcharge branch, nodes at the flood limit
+     * and LID nodes.
      *
      * @param[in] ctx Matching resolved context and initialized solver maps/geometry/accumulators; no
      *     context values are changed.
@@ -1023,8 +1025,10 @@ private:
      *
      * Collective orphaned omp-for-nowait, atomic integer combine and final barrier. Skips outfalls
      * while leaving their individual convergence flags false. Calls setNodeDepth, optionally accepts
-     * guarded depth-two convex Anderson mixing through the canonical commit, records raw history, and
-     * requires both raw Picard residual and accepted movement <=head_tol. All workers see the completed
+     * a guarded two-point convex Anderson blend through the canonical commit (never at a node whose
+     * plain update took the EXTRAN surcharge branch under EXPLICIT continuity or reached the flood
+     * limit), records raw history, and requires both raw Picard residual and accepted movement
+     * <=head_tol. All workers see the completed
      * tally on return; no floating reduction changes summation order.
      *
      * @param[in,out] ctx Matching initialized native-unit context with fixed validated topology/side
@@ -1077,6 +1081,17 @@ private:
      */
     void commitNodeDepthState(SimulationContext& ctx, int node_idx, double y_new, double dV,
                               double dt);
+    /**
+     * @brief Depth above which a committed node depth books overflow or ponded volume.
+     *
+     * Full depth, raised to an inlet junction's rim depth, plus the surcharge depth unless the node
+     * can pond. Infinite for a sealed virtual junction, which never floods.
+     *
+     * @param[in] ctx Matching initialized context; read only.
+     * @param[in] ui Valid initialized node index with a current execute node tile.
+     * @return Native depth in ft.
+     */
+    double floodLimitDepth(const SimulationContext& ctx, std::size_t ui) const;
     /**
      * @brief Compute one conduit native CFL interval before the caller Courant multiplier.
      *
@@ -1169,6 +1184,37 @@ public:
      */
     void setNodeDepthForTest(SimulationContext& ctx, int node_idx, double dt, int step) {
         setNodeDepth(ctx, node_idx, dt, step);
+    }
+
+    /**
+     * @brief Run one node-update pass (Picard update, Anderson mixing, convergence tally) for a test.
+     *
+     * Same preconditions as setNodeDepthForTest; uses the current aa_skip_ flags and Anderson
+     * history. Runs on the calling thread outside any parallel region.
+     *
+     * @param[in,out] ctx Matching initialized context with prepared flow/surface-area inputs.
+     * @param[in] dt Positive timestep in seconds.
+     * @param[in] step Zero-based Picard iteration; Anderson mixing needs step >= 1.
+     * @return Number of non-outfall nodes left unconverged by the pass.
+     */
+    int updateNodeDepthsForTest(SimulationContext& ctx, double dt, int step) {
+        int unconv = 0;
+        updateNodeDepthsTeam(ctx, dt, step, unconv);
+        return unconv;
+    }
+
+    /**
+     * @brief Seed one node's Anderson history (previous input depth and plain update) for a test.
+     *
+     * @param[in] idx Valid nonnegative initialized node index, unchecked.
+     * @param[in] y_prev Depth that entered the previous evaluation, ft.
+     * @param[in] g_prev Plain update the previous evaluation produced, ft.
+     */
+    void seedAndersonHistoryForTest(int idx, double y_prev, double g_prev) {
+        const auto ui = static_cast<std::size_t>(idx);
+        aa_y_prev_[ui] = y_prev;
+        aa_g_prev_[ui] = g_prev;
+        aa_r_prev_[ui] = g_prev - y_prev;
     }
 
     /// Access per-node AA skip flags (read-only, for testing/diagnostics).

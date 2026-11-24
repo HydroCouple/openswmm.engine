@@ -168,7 +168,7 @@ class NodeFloodingEntry:
     @ivar max_depth: Maximum water depth at this node (project length units).
     @ivar max_overflow_rate: Peak overflow / flooding rate (project flow units).
     @ivar total_flood_volume: Total flooded volume over the simulation.
-    @ivar time_flooded: Total time the node was flooded (hours).
+    @ivar time_flooded: Total time the node was flooded (seconds; the text report prints hours).
     """
 
     node_id: str
@@ -190,7 +190,8 @@ class LinkFlowEntry:
     @ivar max_filling: Maximum depth-to-full-depth ratio (0–1 for non-
         pressurised; > 1 when surcharged).
     @ivar total_volume: Total volume routed through the link.
-    @ivar surcharge_time: Total time the link was surcharged (hours).
+    @ivar surcharge_time: Total time the link was surcharged (seconds; the text report prints
+        hours).
     """
 
     link_id: str

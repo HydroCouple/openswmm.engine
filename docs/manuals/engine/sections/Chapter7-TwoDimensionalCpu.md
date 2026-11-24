@@ -127,6 +127,24 @@ delivered_1d_m3 + pending_1d_m3
     = coupling_2d_to_1d_out_m3 - coupling_1d_to_2d_in_m3
 ```
 
+Figure 7-1 replays these rules for one junction with `[2D_OPTIONS]
+COUPLING_SYNC 20` and 5 s routing steps. When a batch fires, its signed
+volume is booked and moved into `coupling_queue`. `assembleLateralInflows()`
+then drains the queue at the uniform rate `queue / remaining` over the next
+batch span, and flushes what is left on the step where the remaining span no
+longer exceeds the routing step. With the default `COUPLING_SYNC 0` the 2D
+domain co-advances every routing step and the queue empties in the single
+following step.
+
+![Figure 7-1 Staggered 1D/2D delivery](figures/png/eng_ch7_staggered_delivery.png)
+
+*Figure 7-1 Staggered 1D/2D delivery at one coupled junction (synthetic: a
+replay of the engine's booking and drain rules for an illustrative exchange
+rate, COUPLING_SYNC 20 s, 5 s routing steps): (a) the 2D exchange rate over
+each batch and the 1D coupling inflow that delivers it over the next batch
+(m³/s); (b) the ledger out − in, the volume delivered, and the pending
+volume between them (m³)*
+
 Read pending storage before engine teardown. The separate 1D routing and
 2D continuity reports are domain budgets; pending delivery is not included
 in the routing final node/link storage. A combined system budget must
@@ -176,7 +194,7 @@ choice from the reviewed workloads, not a hardware-independent optimum.
 
 ![CPU species gather and source update](figures/png/eng_2d_cpu_pipeline.png)
 
-*Figure 7-1 Face-local species storage, cell-owned gathering and the conditional fused source pass. Both routes preserve the same physical budgets.*
+*Figure 7-2 Face-local species storage, cell-owned gathering and the conditional fused source pass. Both routes preserve the same physical budgets.*
 
 **Restrict additional reconstruction work to where it is needed.** Wet
 interiors use the Green–Gauss path. Only shoreline stencils attempt the

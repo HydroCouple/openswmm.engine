@@ -34,7 +34,10 @@
 
 #include "OutputReader.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
+#include "core/Constants.hpp"
 
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 
@@ -496,6 +499,21 @@ bool OutputReader::get_period_time(int period, double* time) const {
     return readReal8(*time);
 }
 
+double OutputReader::reportStepSeconds() const {
+    // The header stores the step as whole seconds, so a 0.5 s step reads 0
+    // there. The saved period dates carry the true spacing.
+    double t0 = 0.0, t1 = 0.0;
+    if (n_periods_ < 2 || !get_period_time(0, &t0) || !get_period_time(1, &t1))
+        return static_cast<double>(report_step_);
+    // A date resolves to about a microsecond: a spacing within 2 us of a
+    // whole millisecond is that millisecond.
+    long long us = std::llround((t1 - t0) * (constants::SEC_PER_DAY * 1.0e6)); // days -> us
+    const long long ms = std::llround(static_cast<double>(us) / 1000.0);
+    if (std::llabs(us - ms * 1000) <= 2)
+        us = ms * 1000;
+    return static_cast<double>(us) / 1.0e6;
+}
+
 // ============================================================================
 // Internal: Footer, Header, IDs, Variable Codes
 // ============================================================================
@@ -872,7 +890,7 @@ bool OutputReader::get_node_stat_vol_flooded(int node_idx, double* value) const 
     // (`NodeStats[j].volFlooded += Node[j].overflow * tStep` in
     // stats.c:554); we accumulate at report-step resolution because
     // that's the only granularity the .out file preserves.
-    const double dt = static_cast<double>(report_step_);
+    const double dt = reportStepSeconds();
     double total = 0.0;
     for (float v : overflow) {
         if (v > 0.0f)
@@ -907,7 +925,7 @@ bool OutputReader::get_node_stat_time_flooded(int node_idx, double* value) const
         if (v > 0.0f)
             ++count;
     }
-    *value = static_cast<double>(count) * static_cast<double>(report_step_);
+    *value = static_cast<double>(count) * reportStepSeconds();
     return true;
 }
 

@@ -267,8 +267,8 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->wMax = xsect->yFull;
         xsect->aFull = PI / 4.0 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.2500 * xsect->yFull;
-        xsect->sFull = xsect->aFull * pow(xsect->rFull, 0.63);
-        xsect->sMax = 1.06949 * xsect->sFull;
+        xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
+        xsect->sMax = 1.08 * xsect->sFull;
         xsect->ywMax = 0.5 * xsect->yFull;
 
         // --- save C-factor or roughness in rBot position
@@ -572,12 +572,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case HORIZ_ELLIPSE:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. ellipse pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesEllipse)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesEllipse)
                 return FALSE;
             xsect->yFull = MinorAxis_Ellipse[index] / 12.;
             xsect->wMax = MajorAxis_Ellipse[index] / 12.;
@@ -591,8 +591,8 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
             if (p[1] < 0.0)
                 return FALSE;
             xsect->wMax = p[1] / ucf;
-            xsect->aFull = 1.2692 * xsect->yFull * xsect->yFull;
-            xsect->rFull = 0.3061 * xsect->yFull;
+            xsect->aFull = 0.8117 * xsect->yFull * xsect->wMax;
+            xsect->rFull = 0.2448 * sqrt(xsect->yFull * xsect->wMax);
         }
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
         xsect->sMax = xsect->sFull;
@@ -600,12 +600,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case VERT_ELLIPSE:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. ellipse pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesEllipse)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesEllipse)
                 return FALSE;
             xsect->yFull = MajorAxis_Ellipse[index] / 12.;
             xsect->wMax = MinorAxis_Ellipse[index] / 12.;
@@ -619,8 +619,8 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
             // --- length of minor axis
             xsect->yFull = p[0] / ucf;
             xsect->wMax = p[1] / ucf;
-            xsect->aFull = 1.2692 * xsect->wMax * xsect->wMax;
-            xsect->rFull = 0.3061 * xsect->wMax;
+            xsect->aFull = 0.8117 * xsect->yFull * xsect->wMax;
+            xsect->rFull = 0.2448 * sqrt(xsect->yFull * xsect->wMax);
         }
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
         xsect->sMax = xsect->sFull;
@@ -628,12 +628,12 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         break;
 
     case ARCH:
-        if (p[1] == 0.0)
+        if (p[1] == 0.0 && p[2] == 0.0) // SWMM 5.0 format
             p[2] = p[0];
         if (p[2] > 0.0) // std. arch pipe
         {
             index = (int)floor(p[2]) - 1; // size code
-            if (index < 0 || index >= NumCodesArch)
+            if (index < 0 || index + 1 != p[2] || index >= NumCodesArch)
                 return FALSE;
             xsect->yFull = Yfull_Arch[index] / 12.; // Yfull units are inches
             xsect->wMax = Wmax_Arch[index] / 12.;   // Wmax units are inches
@@ -1364,7 +1364,7 @@ double xsect_getYcrit(TXsect* xsect, double q) {
         // --- first estimate yCritical for an equivalent circular conduit
         //     using 1.01 * (q2g / yFull)^(1/4)
         y = 1.01 * pow(q2g / xsect->yFull, 1. / 4.);
-        if (y >= xsect->yFull)
+        if (!(y < xsect->yFull)) // also NaN
             y = 0.97 * xsect->yFull;
 
         // --- then find ratio of conduit area to equiv. circular area
@@ -1509,7 +1509,13 @@ double tabular_getdSdA(TXsect* xsect, double a, double* table, int nItems) {
     double dSdA;
 
     // --- find which segment of table contains alpha
-    i = (int)(alpha / delta);
+    //     (alpha outside 0-1, or NaN, cannot be converted to a table index)
+    if (!(alpha > 0.0))
+        i = 0;
+    else if (alpha > 1.0)
+        i = nItems - 2;
+    else
+        i = (int)(alpha / delta);
     if (i >= nItems - 1)
         i = nItems - 2;
 
@@ -1556,7 +1562,12 @@ double lookup(double x, double* table, int nItems) {
     int i;
 
     // --- find which segment of table contains x
+    //     (x outside 0-1, or NaN, cannot be converted to a table index)
     delta = 1.0 / ((double)nItems - 1);
+    if (!(x > 0.0))
+        return table[0];
+    if (x > 1.0)
+        return table[nItems - 1];
     i = (int)(x / delta);
     if (i >= nItems - 1)
         return table[nItems - 1];
@@ -2303,7 +2314,7 @@ double rect_round_getRofY(TXsect* xsect, double y) {
 
     // --- find hyd. radius of circular section
     theta1 = 2.0 * acos(1.0 - y / xsect->rBot);
-    return 0.5 * xsect->rBot * (1.0 - sin(theta1)) / theta1;
+    return 0.5 * xsect->rBot * (1.0 - sin(theta1) / theta1);
 }
 
 /**

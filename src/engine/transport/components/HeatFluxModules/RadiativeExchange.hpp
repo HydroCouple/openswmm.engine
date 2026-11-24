@@ -82,9 +82,6 @@ namespace openswmm::transport::heat {
 /// Stefan–Boltzmann constant, W/m²/K⁴ (`rhemodel.cpp:46`).
 inline constexpr double kStefanBoltzmann = 5.67e-8;
 
-/// Celsius → Kelvin offset.
-inline constexpr double kKelvinOffset = 273.15;
-
 /// Net absorbed shortwave [W/m²], INTO the water.
 double netShortwave(double incoming_wm2, double albedo, double shade_factor) noexcept;
 

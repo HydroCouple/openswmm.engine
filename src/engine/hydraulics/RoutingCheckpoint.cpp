@@ -329,6 +329,16 @@ void lidState(Archive& a, LidNodeState& s, bool mesh, bool thermal, bool thermal
     X(stat_non_converged_count)                                                                    \
     X(stat_time_courant_critical)                                                                  \
     X(stat_total_load)
+/// Version 6: the gross 1D<->2D exchange water (NodeData::coupling_drain_queue and siblings),
+/// archived after NODE_STATE so earlier versions keep their layout.
+#define GROSS_COUPLING_STATE(X)                                                                    \
+    X(coupling_drain_queue)                                                                        \
+    X(coupling_spill_queue)                                                                        \
+    X(coupling_drain_inflow)                                                                       \
+    X(coupling_spill_outflow)
+/// Version 7: the surcharge water a SEMI_IMPLICIT junction holds (NodeData::held_volume), after
+/// the gross block.
+#define HELD_STATE(X) X(held_volume)
 #define LINK_STATE(X)                                                                              \
     X(setting)                                                                                     \
     X(target_setting)                                                                              \
@@ -509,11 +519,12 @@ struct Router::RestartState {
      * @param[in] thermal_lid_contact_receipts Producer-compatible flag selecting LID ground energy
      *     receipt payload.
      */
-    void archive(Archive& a, bool thermal_lid_state, bool thermal_lid_contact_receipts) {
+    void archive(Archive& a, bool thermal_lid_state, bool thermal_lid_contact_receipts,
+                 bool gross_coupling = true, bool held = true) {
         a.fixed(exports.water_m3, exports.reverse_m3, exports.heat_j, exports.pollutant_amounts);
         a(time, date, elapsed, old_elapsed, next_report, evap, infil_factor, recovery_factor,
           link_steps, link_step_span);
-        Router::checkpointNodeColumns(a, nodes);
+        Router::checkpointNodeColumns(a, nodes, false, gross_coupling, held);
 #define FIELD(v) a.fixed(links.v);
         LINK_STATE(FIELD)
 #undef FIELD
@@ -606,6 +617,8 @@ struct Router::RestartState {
         }
 #define FINITE(v) finite(nodes.v);
         NODE_STATE(FINITE)
+        GROSS_COUPLING_STATE(FINITE)
+        HELD_STATE(FINITE)
 #undef FINITE
 #define FINITE(v) finite(links.v);
         LINK_STATE(FINITE)
@@ -874,6 +887,8 @@ struct Router::RestartState {
     static_assert(std::is_nothrow_move_assignable_v<decltype(nodes.v)>);                           \
     c.nodes.v = std::move(nodes.v);
         NODE_STATE(MOVE)
+        GROSS_COUPLING_STATE(MOVE)
+        HELD_STATE(MOVE)
 #undef MOVE
 #define MOVE(v)                                                                                    \
     static_assert(std::is_nothrow_move_assignable_v<decltype(links.v)>);                           \
@@ -924,12 +939,33 @@ void Router::copyCheckpointContext(const std::shared_ptr<RestartState>& s, Simul
     c.climate_state.evap_rate = s->evap;
 }
 void Router::checkpointNodeColumns(detail::CompletedSourceArchive& a, NodeData& nodes,
-                                   bool validate) {
+                                   bool validate, bool gross_coupling, bool held) {
 #define FIELD(v)                                                                                   \
     a.fixed(nodes.v);                                                                              \
     if (validate)                                                                                  \
         finite(nodes.v);
     NODE_STATE(FIELD)
+    if (gross_coupling) {
+        GROSS_COUPLING_STATE(FIELD)
+    } else if (a.reading()) {
+        // Written before the gross queues existed: its mass queue was paired against the net
+        // water, so the net queue is the water that carries it.
+        const auto n = nodes.coupling_queue.size();
+        nodes.coupling_drain_queue.assign(n, 0.0);
+        nodes.coupling_spill_queue.assign(n, 0.0);
+        nodes.coupling_drain_inflow.assign(n, 0.0);
+        nodes.coupling_spill_outflow.assign(n, 0.0);
+        for (std::size_t i = 0; i < n; ++i) {
+            nodes.coupling_drain_queue[i] = std::max(0.0, nodes.coupling_queue[i]);
+            nodes.coupling_spill_queue[i] = std::max(0.0, -nodes.coupling_queue[i]);
+        }
+    }
+    if (held) {
+        HELD_STATE(FIELD)
+    } else if (a.reading()) {
+        // Written before junctions held SEMI_IMPLICIT surcharge water: none was booked.
+        nodes.held_volume.assign(nodes.volume.size(), 0.0);
+    }
 #undef FIELD
 }
 
@@ -1048,9 +1084,13 @@ void Router::checkCheckpointProfile(const SimulationContext& c) const {
             require(state.cells.empty(), "Hydraulic checkpoint has unassigned LID cells.");
     }
 }
-std::string Router::checkpointModel(const SimulationContext& c) const {
+std::string Router::checkpointModel(const SimulationContext& c, bool continuation) const {
     Archive a;
     auto o = c.options;
+    if (continuation) {
+        o.end_date = 0.0;
+        o.total_duration_ms = 0.0;
+    }
     a(o.start_date, o.end_date, o.total_duration_ms, o.report_start, o.routing_step,
       o.min_routing_step, o.report_step, o.variable_step, o.lengthening_step, o.flow_units,
       o.routing_model, o.surcharge_method, o.node_continuity, o.anderson_accel, o.head_tol,
@@ -1195,7 +1235,7 @@ std::string Router::checkpointBytes(const SimulationContext& c, std::string& res
         auto bytes = payload.bytes(), model = checkpoint_model_;
         auto crc = checksum(bytes);
         std::string magic = magicName;
-        uint32_t version = 5;
+        uint32_t version = 7;
         Archive out;
         out(magic, version, model, crc, bytes);
         require(out.bytes().size() <= maxBytes, "Hydraulic checkpoint exceeds its size limit.");
@@ -1232,11 +1272,11 @@ Router::prepareCheckpointBytes(const SimulationContext& c, std::string bytes,
     uint32_t version = 0, crc = 0;
     in(magic, version, model, crc, payload);
     in.finish();
-    require(magic == magicName && (version == 3 || version == 4 || version == 5) &&
-                model == checkpoint_model_ && crc == checksum(payload),
+    require(magic == magicName && version >= 3 && version <= 7 &&
+                (model == checkpoint_model_ || accept_continuation_model_) &&
+                crc == checksum(payload),
             "Hydraulic checkpoint format/model/checksum differs.");
-    require(version == 3 || version == 4 || version == 5,
-            "Hydraulic checkpoint version is unsupported.");
+    require(version >= 3 && version <= 7, "Hydraulic checkpoint version is unsupported.");
     if (version == 3)
         for (const auto& lid : c.node_subtypes.storages.lid_state)
             require(lid.thermal_energy.empty(),
@@ -1247,7 +1287,7 @@ Router::prepareCheckpointBytes(const SimulationContext& c, std::string bytes,
                     "Legacy hydraulic checkpoint cannot restore LID ground-contact receipts.");
     auto s = std::make_shared<RestartState>(*this, c);
     Archive state(std::move(payload));
-    s->archive(state, version >= 4, version >= 5);
+    s->archive(state, version >= 4, version >= 5, version >= 6, version >= 7);
     state.finish();
     s->validate(*this, c);
     if (boundary)
@@ -1290,6 +1330,9 @@ void Router::validateSessionStorage(const std::shared_ptr<RestartState>& s,
                           ? nodes.volume[n]
                           : nodes.rpt_full_volume[n] * (nodes.depth[n] / nodes.full_depth[n]);
         }
+        // Plus the surcharge water a SEMI_IMPLICIT junction holds (SWMMEngine::reportedNodeVolume).
+        if (n < s->nodes.held_volume.size())
+            volume += s->nodes.held_volume[n];
     }
     for (double v : s->links.volume)
         volume += v;

@@ -168,6 +168,135 @@ Hot start files are named in the [FILES] section — see @ref engine_manual_sect
 
 OpenSWMM writes two hot start formats. The EPA SWMM 5 format is the default and holds everything listed above, and OpenSWMM applies all of it when it reads one. The native OpenSWMM format, selected with the NATIVE keyword on a SAVE HOTSTART line (and used automatically when storage nodes carry LID units), holds the node depths and link flows and depths, the runoff, ponded depth, infiltration, groundwater and snowpack state of each subcatchment, the pollutant and reaction species buildup, ponded mass, runoff quality and last sweep of each subcatchment, water age, the concentrations of pollutants and of reaction species, the state of LID units in storage nodes, and the 2D aquifer with the species it carries and the 2D surface state saved with it. It does not hold link control settings, node lateral inflows or storage residence times, which the EPA SWMM 5 format does. A native file written before this subcatchment state was added still loads; its subcatchments start from their initial surface state, with a warning. A USE HOTSTART line reads either format. EPA SWMM 5 cannot read a native file.
 
+## Restart Records in GeoPackage and HDF5 Files {#engine_manual_ch3_restart_records}
+
+A run can keep its restart states inside a GeoPackage or an HDF5 file instead of separate Hot Start files, and a later run can start from any of them. Both are set in the [RESTART] section — see @ref engine_manual_sect_RESTART. A restart record holds the bytes of a native Hot Start file taken at an accepted time step, together with:
+- the ID of the run that wrote it, unique for every execution, and the record's own ID;
+- the model date and elapsed time of the step taken, and the date that was requested;
+- whether it carries the engine checkpoint, which lets a later run continue the original simulation, and whether that checkpoint carries the binary output written so far;
+- its size and SHA-256 digest, checked before it is restored;
+- the engine version and the kind of machine that wrote it.
+
+Figure 3-1 follows a record from the run that writes it to a run that
+starts from it in either mode.
+
+<!-- workflow: restart_lineage -->
+<pre class="mermaid">
+flowchart TD
+    A[Run with RECORD_FILE and RECORD_FORMAT] --> B[Records at each RECORD_EVERY interval and each RECORD_AT time, or one record at the end]
+    B --> C{RECORD_CONTINUATION YES}
+    C -- no --> D[Record holds the native Hot Start state]
+    C -- yes --> E[Record also holds the engine checkpoint, and the binary output written so far]
+    D --> F[Record kept under the run ID, complete once its status is written last]
+    E --> F
+    F --> G[Later run names SOURCE_FILE, SOURCE_RUN and a record ID or LATEST]
+    G --> H{MODE}
+    H -- INITIAL_CONDITIONS --> I{Model has heat, frozen ground or an independent groundwater clock}
+    I -- no --> J[Saved node, link and subcatchment state at the model's own start date, with new mass balances]
+    I -- yes --> R[Run refused, naming the reason]
+    H -- CONTINUE --> K{Record has the checkpoint, same engine version, later end date, model otherwise unchanged}
+    K -- no --> R
+    K -- yes --> L[Resumes the saved clocks, numerical history and mass balances, and the binary output when the record carries it]
+    J --> M[New run names the source file, run, record and mode as its parent]
+    L --> M
+</pre>
+<div class="workflow-links" data-workflow="restart_lineage">
+<span data-node="A">@ref engine_manual_sect_RESTART "[RESTART] RECORD_FILE and RECORD_FORMAT"</span>
+<span data-node="C">@ref engine_manual_sect_RESTART "[RESTART] RECORD_CONTINUATION"</span>
+<span data-node="G">@ref engine_manual_sect_RESTART "[RESTART] SOURCE_FILE, SOURCE_RUN and SOURCE_RECORD"</span>
+<span data-node="H">@ref engine_manual_sect_RESTART "[RESTART] MODE"</span>
+</div>
+
+*Figure 3-1 Lineage of a restart record: the run that writes it, and a
+later run that starts from it as initial conditions or continues the
+original simulation (rendered diagram)*
+
+In a GeoPackage, records are kept in the restart_records and restart_record_chunks tables, under the simulations row of their run. That row also keeps the model that was run, the engine version, when the run started and finished, and, for a run that started from a record, the source file, run, record and mode. A GeoPackage can hold model, results, report and restart records together, and several runs; each execution adds a new run and never changes the rows of an earlier one.
+
+In an HDF5 file, records are kept under the `/restart` group: `/restart/runs/<run ID>` holds the run's attributes and its model as input text, and `/restart/runs/<run ID>/records/<record ID>` holds each record as a byte dataset with its attributes. A record's status attribute is written last.
+
+Figure 3-2 sets the two layouts side by side. The GeoPackage tables and
+the HDF5 attributes carry the same fields; a GeoPackage splits a record's
+bytes into chunks of at most 4 MiB, and an HDF5 file keeps them in one
+dataset.
+
+<!-- workflow: restart_storage -->
+<pre class="mermaid">
+erDiagram
+    simulations ||--o{ restart_records : "records of the run"
+    restart_records ||--|{ restart_record_chunks : "bytes in order"
+    hdf5_run_group ||--o{ hdf5_record_dataset : "records group"
+    simulations {
+        TEXT simulation_id PK "run ID"
+        TEXT engine_version
+        TEXT created_at
+        TEXT finished_at
+        TEXT status
+        TEXT parent_run_id "source run"
+        TEXT parent_record_id "source record"
+        TEXT restart_mode "INITIAL_CONDITIONS or CONTINUE"
+        TEXT restart_source "source file"
+    }
+    restart_records {
+        TEXT simulation_id PK, FK
+        TEXT record_id PK "rec_000001, rec_000002 and on"
+        INTEGER ordinal
+        TEXT created_at
+        REAL model_datetime "step taken, decimal days"
+        REAL elapsed_seconds
+        REAL requested_datetime "0 for END"
+        INTEGER hsf_version
+        INTEGER continuation "engine checkpoint"
+        INTEGER binary_output "binary output so far"
+        INTEGER byte_count
+        INTEGER chunk_count
+        TEXT sha256
+        TEXT platform
+        TEXT engine_version
+        TEXT status "complete once restorable"
+    }
+    restart_record_chunks {
+        TEXT simulation_id PK, FK
+        TEXT record_id PK, FK
+        INTEGER chunk_index PK
+        BLOB bytes "at most 4 MiB"
+    }
+    hdf5_run_group {
+        group run_ID "under /restart/runs"
+        attribute created_at
+        attribute engine_version
+        attribute status "running, then completed"
+        attribute finished_at
+        attribute parent_run_id
+        attribute parent_record_id
+        attribute restart_mode
+        attribute restart_source
+        dataset model_input "model input text"
+    }
+    hdf5_record_dataset {
+        uint8 record_ID "under records, the Hot Start bytes"
+        attribute ordinal
+        attribute created_at
+        attribute model_datetime
+        attribute elapsed_seconds
+        attribute requested_datetime
+        attribute hsf_version
+        attribute continuation
+        attribute binary_output
+        attribute sha256
+        attribute platform
+        attribute engine_version
+        attribute status "written last, complete"
+    }
+</pre>
+
+*Figure 3-2 Where a restart record is kept: the GeoPackage tables
+simulations, restart_records and restart_record_chunks, and the HDF5
+groups /restart/runs/run ID and /restart/runs/run ID/records/record ID
+with their attributes (rendered diagram)*
+
+The swmm_restart_inspect_json() function and the Python inspect_restart_file() function list the runs and records of a file without changing it.
+
 ## RDII Files
 
 The RDII interface file contains a time series of rainfall-dependent infiltration and inflow flows for a specified set of drainage system nodes. This file can be generated from a previous SWMM run when Unit Hydrographs and nodal RDII inflow data have been defined for the project, or it can be created outside of SWMM using some other source of RDII data (e.g., through measurements or output from a different computer program). RDII files generated by SWMM are saved in a binary format. RDII files created outside of SWMM are text files with the same format used for routing interface files discussed below, where Flow is the only variable contained in the file.

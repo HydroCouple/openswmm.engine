@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/DateTime.hpp"
@@ -311,8 +312,7 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
     // are evaluated at the END of the step. routing-outfall-tidal read the
     // calendar hour of the step's START, rounded to whole seconds.
     const double new_routing_ms = ctx.elapsed_ms + 1000.0 * dt_routing;
-    constexpr double kMsecPerDay = 86400000.0; // legacy MSECperDAY
-    const double elapsed_days = new_routing_ms / kMsecPerDay;
+    const double elapsed_days = new_routing_ms / constants::MSEC_PER_DAY;
 
     // Legacy: iterates over LINKS and calls link_setOutfallDepth(j) for each.
     // Each link finds if either end is an outfall and computes yNorm + yCrit.
@@ -356,7 +356,9 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         // Normal and critical depths for the current flow — conduits only
         // (legacy: yNorm = yCrit = 0 for any other link type).
         double yNorm = 0.0, yCrit = 0.0;
-        if (ctx.links.type[static_cast<std::size_t>(link_idx)] == LinkType::CONDUIT) {
+        const bool is_conduit =
+            ctx.links.type[static_cast<std::size_t>(link_idx)] == LinkType::CONDUIT;
+        if (is_conduit) {
             auto uk = static_cast<std::size_t>(link_idx);
             const auto& CD = ctx.link_subtypes.conduits;
             const int cr = ctx.link_subtypes.conduit_row(link_idx);
@@ -370,14 +372,20 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         }
 
         switch (ost.bc_type) {
+        // A weir, orifice, outlet or pump leaves a FREE or NORMAL outfall dry:
+        // their offset is the crest height above the UPSTREAM node invert, so
+        // adding it to the outfall invert would stand water at the outfall
+        // that is not there and, with an outfall invert above the upstream
+        // invert, drive the link backwards (legacy link_setOutfallDepth; EPA
+        // SWMM 5.2.4 behavior).
         case OutfallType::FREE:
             // Legacy: depth = z + MIN(yNorm, yCrit)
-            depth = z + std::min(yNorm, yCrit);
+            depth = is_conduit ? z + std::min(yNorm, yCrit) : 0.0;
             break;
 
         case OutfallType::NORMAL:
             // Legacy: depth = z + yNorm
-            depth = z + yNorm;
+            depth = is_conduit ? z + yNorm : 0.0;
             break;
 
         case OutfallType::FIXED: {

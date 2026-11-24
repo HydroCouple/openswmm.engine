@@ -30,6 +30,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "DefaultReportPlugin.hpp"
 #include "core/FileIO.hpp" // issue #7: UTF-8 paths on Windows
 
@@ -165,8 +166,8 @@ static void elapsedToParts(double date, double report_start, int& days, int& hrs
     if (x <= 0.0)
         return;
     days = static_cast<int>(x);
-    int secs = static_cast<int>(std::floor((x - std::floor(x)) * 86400.0 + 0.5));
-    if (secs >= 86400)
+    int secs = static_cast<int>(std::floor((x - std::floor(x)) * constants::SEC_PER_DAY + 0.5));
+    if (secs >= constants::SEC_PER_DAY_INT)
         secs = 86399;
     const int total_mins = secs / 60;
     hrs = total_mins / 60;
@@ -448,7 +449,7 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
                 std::fprintf(f, "\n  %-20s %5s%10.2f%10.2f%10.2f",
                              ctx.pollutant_names.name_of(i).c_str(),
                              (u >= 0 && u <= 2) ? kQualUnits[u] : "MG/L", P.c_rain[ui], P.c_gw[ui],
-                             P.k_decay[ui] * 86400.0);
+                             P.k_decay[ui] * constants::SEC_PER_DAY);
                 if (P.co_pollut[ui] >= 0)
                     std::fprintf(f, "    %-s  (%.2f)",
                                  ctx.pollutant_names.name_of(P.co_pollut[ui]).c_str(),
@@ -937,13 +938,13 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
     std::fprintf(f, "\n  Antecedent Dry Days ...... %.1f", opt.dry_days);
 
     // Legacy formats these through datetime_encodeTime, which wraps at 24 h.
-    secsToHMS(static_cast<int>(opt.report_step) % 86400, buf, sizeof(buf));
+    secsToHMS(static_cast<int>(opt.report_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
     std::fprintf(f, "\n  Report Time Step ......... %s", buf);
 
     if (ctx.n_subcatches() > 0) {
-        secsToHMS(static_cast<int>(opt.wet_step) % 86400, buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.wet_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
         std::fprintf(f, "\n  Wet Time Step ............ %s", buf);
-        secsToHMS(static_cast<int>(opt.dry_step) % 86400, buf, sizeof(buf));
+        secsToHMS(static_cast<int>(opt.dry_step) % constants::SEC_PER_DAY_INT, buf, sizeof(buf));
         std::fprintf(f, "\n  Dry Time Step ............ %s", buf);
     }
 
@@ -1011,16 +1012,14 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     const double len_ucf = du.length;      // ft  → ft | m  (depth/HGL/velocity)
     const double svol_ucf = du.volume;     // ft³ → ft³ | m³ (storage volume)
     const char* len_word = du.length_word; // Feet | Meters
-    // legacy statsrpt.c's own factor for every summary-table volume
-    // (7.48 gal/ft3, 28.317 L/ft3 — not the massbal/continuity constants).
-    const double Vcf = si_report ? 28.317 / 1.0e6 : 7.48 / 1.0e6;
-    const char* vol_word = du.mvol_word; // 10^6 gal | 10^6 ltr
+    const double Vcf = mvol_vcf;           // legacy statsrpt.c Vcf: 7.48 | 28.317 per 1e6 ft³
+    const char* vol_word = du.mvol_word;   // 10^6 gal | 10^6 ltr
     // legacy report.c continuity factors: UCF(LENGTH) * UCF(LANDAREA) for
     // acre-feet / hectare-m, and MGDperCFS (MLDperCFS) / SECperDAY for the
     // 10^6 gal (ltr) column.
     const int cont_us = si_report ? 1 : 0;
     const double cont_vcf1 = ucf::Ucf[ucf::LENGTH][cont_us] * ucf::Ucf[ucf::LANDAREA][cont_us];
-    const double cont_vcf2 = si_report ? 2.4466 / 86400.0 : 0.64632 / 86400.0;
+    const double cont_vcf2 = (si_report ? ucf::Qcf[5] : ucf::Qcf[2]) / constants::SEC_PER_DAY;
     const double cont_mass = ucf::Ucf[ucf::MASS][cont_us]; // mg -> lb | kg
     const char* load_word = si_report ? "kg" : "lbs";
     // A count pollutant's loads print as LOG10 under "LogN" (legacy statsrpt.c).
@@ -1260,7 +1259,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         std::fprintf(f, "\n  Reaction Booster Injection (declared species mass units)\n");
         for (int species = 0; species < ctx.reactions.n_species(); ++species)
             std::fprintf(f, "  %-24s %.10g %s\n", ctx.reactions.species_name[species].c_str(),
-                         ctx.reactions.booster_mass[species] * 28.317,
+                         ctx.reactions.booster_mass[species] * ucf::FT3_TO_L,
                          ctx.reactions.species_units[species].c_str());
         std::fprintf(f, "\n");
     }
@@ -1664,7 +1663,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             // 2D ledger volumes are SI m³; the 1D balance is internal ft³
             // regardless of flow units (legacy parity; land_vcf/mvol_vcf
             // convert ft³ → report units), so convert the exchange to ft³.
-            const double m3_to_1d = 1.0 / 0.028316846592;
+            const double m3_to_1d = 1.0 / ucf::FT3_TO_M3_EXACT;
             const double spill_1d = mb2.coupling_1d_to_2d_in * m3_to_1d;
             const double drain_1d = mb2.coupling_2d_to_1d_out * m3_to_1d;
 
@@ -1700,7 +1699,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     if (ctx.n_nodes() > 0 && !opt.ignore_routing && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         const int np = ctx.n_pollutants();
         const auto& mb = ctx.mass_balance;
-        static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, int p) {
             return (static_cast<std::size_t>(p) < v.size()) ? v[static_cast<std::size_t>(p)] : 0.0;
         };
@@ -1733,10 +1731,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 const double x = raw[static_cast<std::size_t>(k)];
                 double y;
                 if (mu == MassUnits::COUNTS_PER_L) {
-                    const double z = LperFT3 * x;
+                    const double z = ucf::FT3_TO_L * x;
                     y = z > 0.0 ? std::log10(z) : z;
                 } else {
-                    double cf = LperFT3 * cont_mass;
+                    double cf = ucf::FT3_TO_L * cont_mass;
                     if (mu == MassUnits::UG_PER_L)
                         cf /= 1000.0;
                     y = x * cf;
@@ -1799,7 +1797,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (std::size_t s = 0; s < uns; ++s)
             if (!rx.species_is_wall[s])
                 bulk.push_back(s);
-        static constexpr double LperFT3 = 28.317;
         auto at = [](const std::vector<double>& v, std::size_t s) {
             return s < v.size() ? v[s] : 0.0;
         };
@@ -1813,8 +1810,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
         for (std::size_t s = 0; s < uns; ++s) {
             double fin = at(led.final_dry, s);
             for (int j = 0; j < ctx.n_nodes(); ++j)
+                // Node water includes a SEMI_IMPLICIT junction's held surcharge water.
                 fin += at(rx.msx_node_conc, static_cast<std::size_t>(j) * uns + s) *
-                           ctx.nodes.volume[static_cast<std::size_t>(j)] +
+                           (ctx.nodes.volume[static_cast<std::size_t>(j)] +
+                            ctx.nodes.held_volume[static_cast<std::size_t>(j)]) +
                        msxlid::heldMass(ctx, j, int(s));
             for (int j = 0; j < ctx.n_links(); ++j)
                 fin += at(rx.msx_link_conc, static_cast<std::size_t>(j) * uns + s) *
@@ -1834,7 +1833,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             std::string u = s < rx.species_units.size() ? rx.species_units[s] : std::string();
             for (auto& ch : u)
                 ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
-            double cf = LperFT3;
+            double cf = ucf::FT3_TO_L;
             if (u.rfind("MG", 0) == 0) {
                 cf *= cont_mass;
                 unit_word[s] = load_word;
@@ -2088,6 +2087,8 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             auto srow = [&](const char* label, long v) {
                 std::fprintf(f, "\n  %s%14ld", label, v);
             };
+            if (!rs.fv_backend.empty())
+                std::fprintf(f, "\n  Backend ..................  %s", rs.fv_backend.c_str());
             srow("Explicit Substeps ........", rs.fv_nsteps);
             srow("Face Flux Evaluations ....", rs.fv_nflux);
             std::fprintf(f, "\n  Avg Substep (s) ..........%14.6f", rs.fv_avg_h);
@@ -2665,9 +2666,10 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
                 header = true;
             }
             const auto uj = static_cast<std::size_t>(j);
-            const double reverse_ft3 = uj < ctx.outfall_exports.reverse_m3.size()
-                                           ? ctx.outfall_exports.reverse_m3[uj] / 0.028316846592
-                                           : 0.0;
+            const double reverse_ft3 =
+                uj < ctx.outfall_exports.reverse_m3.size()
+                    ? ctx.outfall_exports.reverse_m3[uj] / ucf::FT3_TO_M3_EXACT
+                    : 0.0;
             std::fprintf(f, "\n  %-20s %10.2f   %10.2f", ctx.node_names.name_of(j).c_str(),
                          engaged / 3600.0, submerged / 3600.0);
             if (max_stage > -1.0e29)
@@ -3335,7 +3337,7 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             WRITE(f, "");
             WRITE(f, "No inlet statistics available.");
         } else {
-            static constexpr double FT3_TO_KGAL = 7.48052 / 1000.0;
+            static constexpr double FT3_TO_KGAL = ucf::FT3_TO_GAL / 1000.0;
             std::fprintf(
                 f,
                 "\n\n  ------------------------------------------------------------------------------------------------------------------------------------------"
@@ -3431,7 +3433,6 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
     if (route_rpt && ctx.n_pollutants() > 0 && !opt.ignore_quality) {
         int nl = ctx.n_links();
         int np = ctx.n_pollutants();
-        static constexpr double LT_PER_FT3 = 28.317;
         // Per-pollutant unit and conversion
         std::vector<double> mass_cf(static_cast<std::size_t>(np));
         std::vector<const char*> unit_str(static_cast<std::size_t>(np));
@@ -3440,9 +3441,9 @@ void DefaultReportPlugin::write_results(std::FILE* f, const SimulationContext& c
             MassUnits mu =
                 (up < ctx.pollutants.units.size()) ? ctx.pollutants.units[up] : MassUnits::MG_PER_L;
             unit_str[up] = (mu == MassUnits::COUNTS_PER_L) ? "LogN" : load_word;
-            mass_cf[up] = LT_PER_FT3 * ((mu == MassUnits::MG_PER_L)   ? cont_mass
-                                        : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
-                                                                      : 1.0);
+            mass_cf[up] = ucf::FT3_TO_L * ((mu == MassUnits::MG_PER_L)   ? cont_mass
+                                           : (mu == MassUnits::UG_PER_L) ? cont_mass / 1000.0
+                                                                         : 1.0);
         }
 
         WRITE(f, "***************************");
@@ -3540,8 +3541,8 @@ void DefaultReportPlugin::write_timing(std::FILE* f, const SimulationContext& ct
         } else {
             // Legacy rolls whole days into a "d." prefix ahead of hh:mm:ss.
             long es = static_cast<long>(elapsed_secs);
-            long days = es / 86400L;
-            long rem = es % 86400L;
+            long days = es / constants::SEC_PER_DAY_INT;
+            long rem = es % constants::SEC_PER_DAY_INT;
             if (days > 0)
                 std::fprintf(f, "%ld.", days);
             std::fprintf(f, "%02ld:%02ld:%02ld", rem / 3600L, (rem % 3600L) / 60L, rem % 60L);

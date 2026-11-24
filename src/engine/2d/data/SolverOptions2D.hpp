@@ -174,7 +174,8 @@ enum class Backend2D : int8_t {
     OMP = 2,  ///< Kokkos OpenMP host plugin.
     CUDA = 3, ///< Kokkos CUDA device plugin (NVIDIA).
     HIP = 4,  ///< Kokkos HIP device plugin (AMD).
-    SYCL = 5  ///< Kokkos SYCL device plugin (Intel).
+    SYCL = 5,
+    METAL = 6 ///< Apple GPU face flux through Kokkos SYCL.
 };
 
 /**
@@ -349,7 +350,8 @@ struct SolverOptions2D {
     double coupling_rim_band = -1.0;
     /// [2D_OPTIONS] COUPLING_EQUALIZE YES|NO — cap each junction exchange so
     /// one coupling window cannot carry the 1D and 2D heads past each other.
-    /// -1 = per law (on under WEIR_ORIFICE, off under ORIFICE).
+    /// -1 = DEFAULT, on for every junction coupling (it was on only under WEIR_ORIFICE: an
+    /// ORIFICE point at a rim-full junction then reversed nearly every window).
     int8_t coupling_equalize = -1;
     bool report_2d = true; ///< Write 2D results to output
 

@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace openswmm::twoD::soil {
 
@@ -152,13 +153,19 @@ double suctionAtSaturation(const Params& p, double Se) noexcept {
     case SoilChar::GARDNER:
         return -std::log(se) / std::max(p.alpha, kPsiEps);
     case SoilChar::RUSSO: {
-        // (1 + a)·e^(−a) = se^((2+L)/2) has no elementary inverse;
-        // three Newton steps from the Gardner guess converge to
-        // machine precision over the whole range (the function is
-        // smooth and monotone in a).
+        // (1 + a)·e^(−a) = t = se^((2+L)/2) has no elementary inverse.
+        // Newton starts from the larger of two lower bounds of the root:
+        // √(2(1 − t)), from 1 − t ≤ a²/2 (the double root at a = 0 near
+        // saturation), and ℓ + ln(1 + ℓ) with ℓ = −ln t ≤ a (dry). The
+        // logarithm alone, used before 2026-11-19, sent the first step to
+        // a ≈ 1 near saturation and six steps then left ψ wrong by 69 % at
+        // 1 cm. From these bounds Newton reaches its roundoff floor in at
+        // most five steps.
         const double target = std::pow(se, (2.0 + p.vg_L) * 0.5);
-        double a = std::max(-std::log(std::max(target, kSeMin)), 0.0);
-        for (int it = 0; it < 6; ++it) {
+        const double ell = -std::log(std::max(target, 1.0e-300));
+        double a =
+            std::max({std::sqrt(2.0 * std::max(1.0 - target, 0.0)), ell + std::log1p(ell), 0.0});
+        for (int it = 0; it < 30; ++it) {
             const double f = (1.0 + a) * std::exp(-a) - target;
             const double df = -a * std::exp(-a); // d/da
             if (std::fabs(df) < 1.0e-300)
@@ -167,7 +174,9 @@ double suctionAtSaturation(const Params& p, double Se) noexcept {
             a -= step;
             if (a < 0.0)
                 a = 0.0;
-            if (std::fabs(step) < 1.0e-13)
+            // Converged to relative precision, or to the smallest step roundoff in f resolves.
+            if (std::fabs(step) <=
+                1.0e-14 * a + 4.0 * std::numeric_limits<double>::epsilon() / std::fabs(df))
                 break;
         }
         return 2.0 * a / std::max(p.alpha, kPsiEps);
@@ -271,20 +280,20 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept {
     const double hu_se = (hu - p.theta_r * Lc) / span;
 
     if (p.law == SoilChar::GARDNER) {
-        // Eq. 22, verbatim. Written in the published form (not the factored
-        // one) so a reader can compare it to the paper line for line; the
-        // header records that the two are the same expression.
+        // Eq. 22's form, with the drainage sign: a column holding more than
+        // hydrostatic storage drains down (+), a drier one draws water up.
+        // The header records the factored identity.
         const double e = std::exp(-p.alpha * Lc);
         const double den = p.alpha * Lc * (1.0 - e);
         if (!(std::fabs(den) > 1.0e-300))
             return 0.0;
-        const double q = p.Ks * (1.0 - e - p.alpha * hu_se) / den;
+        const double q = p.Ks * (p.alpha * hu_se - (1.0 - e)) / den;
         return std::isfinite(q) ? q : 0.0;
     }
 
     // The generalised relaxation form (see the header's @warning — the rate
     // below is ours, the equilibrium is the law's):
-    //     q₀ = C(L)·[hᵤ*(L) − hᵤ],   C(L) = K̄ / (L · hᵤ*(L)/L)  →  K̄/hᵤ*
+    //     q₀ = C(L)·[hᵤ − hᵤ*(L)],   C(L) = K̄ / (L · hᵤ*(L)/L)  →  K̄/hᵤ*
     // where K̄ is the conductivity at the column's mean suction. Reducing to
     // Gardner: K̄ → Ks·e^(−αL/2) and hᵤ* → (1−e^(−αL))/α gives the same order
     // and the same limits, which is the consistency this rests on.
@@ -295,7 +304,7 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept {
         return 0.0;
     const double Kbar = conductivity(p, 0.5 * Lc);
     const double C = Kbar / hu_eq_se;
-    const double q = C * (hu_eq_se - hu_se);
+    const double q = C * (hu_se - hu_eq_se);
     return std::isfinite(q) ? q : 0.0;
 }
 
@@ -312,7 +321,7 @@ double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept {
     const double rate = p.law == SoilChar::GARDNER
                             ? p.Ks / (kLMin * -std::expm1(-p.alpha * kLMin))
                             : conductivity(p, .5 * kLMin) / saturationIntegral(p, kLMin);
-    const double disequilibrium = (p.theta_r * L + span * equilibrium - hu) / span;
+    const double disequilibrium = (hu - p.theta_r * L - span * equilibrium) / span;
     const double q = rate * disequilibrium;
     return std::isfinite(q) ? q : 0.;
 }

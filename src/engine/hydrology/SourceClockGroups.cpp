@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "SourceClockGroups.hpp"
 #include "Gage.hpp"
 #include "../core/SimulationContext.hpp"
@@ -237,7 +238,7 @@ std::string SourceClockGroups::initialize(const SimulationContext& ctx,
             return "Invalid source rain recording interval or series.";
         double previous = 0.0;
         for (std::size_t k = 0; k < table->x.size(); ++k) {
-            const double t = (table->x[k] - result.start_date_) * 86400.0;
+            const double t = (table->x[k] - result.start_date_) * constants::SEC_PER_DAY;
             const double r = gage::convertGageValue(
                 table->y[k], ctx.gages.rain_type[gi], series.period, previous,
                 gage::gageUnitsFactor(ctx, gi), ctx.gages.scale_factor[gi]);
@@ -256,7 +257,7 @@ std::string SourceClockGroups::initialize(const SimulationContext& ctx,
         if (table.x.empty() || table.x.size() != table.y.size())
             return "Invalid source PET series.";
         for (std::size_t k = 0; k < table.x.size(); ++k) {
-            const double t = (table.x[k] - result.start_date_) * 86400.0;
+            const double t = (table.x[k] - result.start_date_) * constants::SEC_PER_DAY;
             if (!std::isfinite(t) ||
                 (!result.evap_times_.empty() && t <= result.evap_times_.back()) ||
                 !nonnegative(table.y[k]))
@@ -292,7 +293,7 @@ std::string SourceClockGroups::stage(int group, double end, double completed_thr
         const double month_end =
             (datetime::encodeDate(mon == 12 ? year + 1 : year, mon == 12 ? 1 : mon + 1, 1) -
              start_date_) *
-            86400.0;
+            constants::SEC_PER_DAY;
         SourceForcingInterval f;
         f.start = t;
         f.end = std::min(end, month_end);

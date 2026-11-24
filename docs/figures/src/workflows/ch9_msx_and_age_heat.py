@@ -6,8 +6,7 @@ Three figures from the same five-conduit line:
 
 * what the computed water temperature does to the reaction system's rate,
   through the Arrhenius correction its expression carries — the species
-  concentrations themselves are not written to the output file in this
-  release, because [REACTION_REPORT] is a planned section;
+  concentrations themselves are plotted by ch9_reaction_species.py;
 * water age along the line, against the source ages the component
   declares;
 * the water temperature against the air temperature driving it.

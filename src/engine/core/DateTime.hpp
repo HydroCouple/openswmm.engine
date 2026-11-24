@@ -50,6 +50,8 @@
 
 #include <cmath>
 
+#include "Constants.hpp"
+
 namespace openswmm {
 namespace datetime {
 
@@ -57,9 +59,9 @@ namespace datetime {
 // Constants — matching legacy datetime.c exactly
 // ============================================================================
 
-static constexpr int DateDelta = 693594;          ///< Gregorian ordinal of 1899-12-30
-static constexpr double SecsPerDay = 86400.0;     ///< Seconds per day
-static constexpr double OneSecond = 1.1574074e-5; ///< 1 second as fractional days
+static constexpr int DateDelta = constants::DATE_DELTA;      ///< Gregorian ordinal of 1899-12-30
+static constexpr double SecsPerDay = constants::SEC_PER_DAY; ///< Seconds per day
+static constexpr double OneSecond = 1.1574074e-5;            ///< 1 second as fractional days
 
 // ============================================================================
 // Date/time type — same as legacy DateTime (double)
@@ -210,7 +212,7 @@ inline void decodeDate(DateTime date, int& year, int& month, int& day) {
 inline void decodeTime(DateTime time, int& h, int& m, int& s) {
     double fracDay = (time - std::floor(time)) * SecsPerDay;
     int secs = static_cast<int>(std::floor(fracDay + 0.5));
-    if (secs >= 86400)
+    if (secs >= constants::SEC_PER_DAY_INT)
         secs = 86399;
     divMod(secs, 60, &m, &s); // mins, secs
     int mins = m;

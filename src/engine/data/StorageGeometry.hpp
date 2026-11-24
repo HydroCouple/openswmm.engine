@@ -45,18 +45,13 @@
 #define OPENSWMM_ENGINE_DATA_STORAGEGEOMETRY_HPP
 
 #include "NodeData.hpp"
+#include "../core/Constants.hpp"
 
 #include <cmath>
 #include <string>
 #include <string_view>
 
 namespace openswmm {
-
-/** @brief π to the precision legacy uses (src/legacy/engine/consts.h:
- *  `#define PI 3.141592654`, the same truncated literal as constants::PI).
- *  Full double π differs by 1.3e-10 relative, enough to move a storage
- *  unit's depth off legacy's bits from the first routing step. */
-inline constexpr double kStoragePi = 3.141592654;
 
 /**
  * @brief True when @p s is one of the four geometric shapes (i.e. its a/b/c are
@@ -132,15 +127,15 @@ inline bool storage_shape_coeffs(StorageShape s, double p1, double p2, double p3
     case StorageShape::CYLINDRICAL:
         a = 0.0;
         b = 0.0;
-        c = kStoragePi * A * B;
+        c = constants::PI * A * B;
         return true;
     case StorageShape::CONICAL:
-        a = 2.0 * kStoragePi * B * Z;
-        b = kStoragePi * B / A * Z * Z;
-        c = kStoragePi * A * B;
+        a = 2.0 * constants::PI * B * Z;
+        b = constants::PI * B / A * Z * Z;
+        c = constants::PI * A * B;
         return true;
     case StorageShape::PARABOLOID:
-        a = kStoragePi * A * B / Z; // Z != 0 guaranteed by params_valid
+        a = constants::PI * A * B / Z; // Z != 0 guaranteed by params_valid
         b = 0.0;
         c = 0.0;
         return true;

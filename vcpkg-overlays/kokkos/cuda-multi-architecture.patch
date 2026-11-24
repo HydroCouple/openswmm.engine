@@ -1,0 +1,16 @@
+diff --git a/cmake/kokkos_arch.cmake b/cmake/kokkos_arch.cmake
+--- a/cmake/kokkos_arch.cmake
++++ b/cmake/kokkos_arch.cmake
+@@ -943,6 +943,12 @@
+     else()
+       if(KOKKOS_ENABLE_CUDA)
+         string(REPLACE "sm_" "" CMAKE_ARCH ${FLAG})
++        # OpenSWMM: build device code for several architectures at once (a
++        # comma-separated list such as 75,80,89,120). Only CMake's CUDA
++        # language can do this; Kokkos_ARCH_* names the lowest one.
++        if(KOKKOS_ENABLE_COMPILE_AS_CMAKE_LANGUAGE AND OPENSWMM_KOKKOS_CUDA_ARCHITECTURES)
++          string(REPLACE "," ";" CMAKE_ARCH "${OPENSWMM_KOKKOS_CUDA_ARCHITECTURES}")
++        endif()
+         set(KOKKOS_CUDA_ARCHITECTURES ${CMAKE_ARCH})
+         set(KOKKOS_CUDA_ARCHITECTURES ${CMAKE_ARCH} PARENT_SCOPE)
+       endif()

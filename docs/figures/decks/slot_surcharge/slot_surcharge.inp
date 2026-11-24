@@ -1,0 +1,99 @@
+[TITLE]
+Preissmann slot regression model (issue #144)
+Three 1-ft circular pipes forced far past capacity so the SLOT surcharge
+method is active for most of the run, with 30-ft junctions that hold the
+water in the slot instead of flooding it away.  This is the only model in
+the suite that runs SURCHARGE_METHOD SLOT, so it is the sole coverage of
+the conveyance-area momentum path (dwflow.c::getConveyArea and
+DynamicWave.cpp::conveyArea).
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+SURCHARGE_METHOD     SLOT
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+ALLOW_PONDING        NO
+SKIP_STEADY_STATE    NO
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             04:00:00
+SWEEP_START          01/01
+SWEEP_END            12/31
+DRY_DAYS             0
+REPORT_STEP          00:01:00
+WET_STEP             00:01:00
+DRY_STEP             00:01:00
+ROUTING_STEP         0:00:05
+INERTIAL_DAMPING     PARTIAL
+NORMAL_FLOW_LIMITED  BOTH
+FORCE_MAIN_EQUATION  H-W
+VARIABLE_STEP        0.75
+LENGTHENING_STEP     0
+MIN_SURFAREA         12.557
+MAX_TRIALS           8
+HEAD_TOLERANCE       0.005
+SYS_FLOW_TOL         5
+LAT_FLOW_TOL         5
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1       100    30        0          0         0
+J2       99.5   30        0          0         0
+J3       99.0   30        0          0         0
+
+[OUTFALLS]
+;;Name  Elev   Type   Stage  Gated
+OUT      98.0   FREE          NO
+
+[CONDUITS]
+;;Name  From  To    Length  Roughness  InOff  OutOff  InitFlow  MaxFlow
+C1       J1    J2    400     0.015      0      0       0         0
+C2       J2    J3    400     0.015      0      0       0         0
+C3       J3    OUT   400     0.015      0      0       0         0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.0    0      0      0      1
+C2       CIRCULAR  1.0    0      0      0      1
+C3       CIRCULAR  1.0    0      0      0      1
+
+[INFLOWS]
+;;Node  Constituent  TimeSeries  Type  Mfactor  Sfactor  Baseline
+J1       FLOW         SURGE       FLOW  1.0      1.0
+
+[TIMESERIES]
+;;Name  Date        Time   Value
+SURGE               0:00   0.0
+SURGE               0:10   12.0
+SURGE               2:30   12.0
+SURGE               3:00   0.0
+SURGE               4:00   0.0
+
+[REPORT]
+INPUT      NO
+CONTROLS   NO
+SUBCATCHMENTS ALL
+NODES ALL
+LINKS ALL
+
+[TAGS]
+
+[MAP]
+DIMENSIONS 0.000 0.000 1000.000 1000.000
+Units      None
+
+[COORDINATES]
+;;Node  X       Y
+J1       100     500
+J2       400     500
+J3       700     500
+OUT      1000    500

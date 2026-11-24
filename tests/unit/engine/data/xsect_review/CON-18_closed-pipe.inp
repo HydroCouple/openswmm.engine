@@ -1,0 +1,43 @@
+[TITLE]
+CON-18: a full 3 ft pipe between two 20 ft2 storage units is filled by a constant 0.035 cfs (SURCHARGE_METHOD SLOT); the 15 ft weir to O1 never overflows, so all inflow is stored
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+SURCHARGE_METHOD     SLOT
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             06:00:00
+REPORT_STEP          00:05:00
+ROUTING_STEP         5
+VARIABLE_STEP        0
+
+[STORAGE]
+;;Name Elev MaxD InitD Shape      A1 A2 A0 SurDepth Fevap
+J1     0    20   3     FUNCTIONAL 0  0  20 0        0
+J2     0    20   3     FUNCTIONAL 0  0  20 0        0
+
+[OUTFALLS]
+O1     0    FREE
+
+[WEIRS]
+;;Name From To Type CrestHt Cd
+W1     J2   O1 TRANSVERSE 15 3.33
+
+[CONDUITS]
+;;Name From To Length N     InOffset OutOffset InitFlow
+C1     J1   J2 1000   0.013 0        0         0
+
+[XSECTIONS]
+C1     CIRCULAR 3 0 0 0 1
+W1     RECT_OPEN 1 1 0 0
+
+[INFLOWS]
+J1  FLOW  ""  FLOW 1.0 1.0 0.035
+
+[REPORT]
+LINKS ALL
+NODES ALL

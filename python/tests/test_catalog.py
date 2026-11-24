@@ -44,6 +44,47 @@ class CatalogSourceContract(unittest.TestCase):
         self.assertEqual(gen.main(["--check"]), 0,
                          "catalog.json is stale or incomplete; run python/scripts/gen_catalog.py")
 
+    def test_every_method_has_an_effect_and_no_mutator_is_read(self):
+        spec = importlib.util.spec_from_file_location("gen_catalog", _GENERATOR)
+        gen = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = gen
+        spec.loader.exec_module(gen)
+        catalog = json.loads(_CATALOG.read_text(encoding="utf-8"))
+        self.assertEqual(gen.effect_problems(catalog, {}), [])
+        members = {m["path"]: m for m in catalog["members"]}
+        expected = {
+            "aquifers.get_id": "read",
+            "options.get_item": "read",
+            "mass_balance.routing_total": "read",
+            "options.set_item": "write",
+            "forcing.node_lat_inflow": "write",
+            "builder.add_node": "structural",
+            "builder.write": "file",
+            "output.node_series": "file",
+        }
+        for path, effect in expected.items():
+            with self.subTest(path=path):
+                self.assertEqual(members[path]["effect"], effect)
+        mutator = re.compile(r"^(set|add|delete|remove|clear|apply|write|save|open|close|reset"
+                             r"|restore|insert|append|rename|replace|pop|convert|split|fuse)(_|$)")
+        read = [m["path"] for m in catalog["members"]
+                if m.get("effect") == "read" and mutator.match(m["name"])]
+        self.assertEqual(read, [], "methods named as mutators but catalogued as read")
+        self.assertTrue(all("effect" not in m for m in catalog["members"] if m["form"] == "property"))
+
+    def test_a_missing_effect_and_a_stray_override_are_reported(self):
+        spec = importlib.util.spec_from_file_location("gen_catalog", _GENERATOR)
+        gen = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = gen
+        spec.loader.exec_module(gen)
+        catalog = json.loads(_CATALOG.read_text(encoding="utf-8"))
+        method = next(m for m in catalog["members"] if m["form"] == "method")
+        del method["effect"]
+        problems = gen.effect_problems(catalog, {"no.such_method": "read", "options.get_item": "safe"})
+        self.assertTrue(any(method["path"] + " has no effect" in p for p in problems), problems)
+        self.assertTrue(any("'no.such_method' names no method" in p for p in problems), problems)
+        self.assertTrue(any("'safe' is not one of" in p for p in problems), problems)
+
     def test_every_element_target_names_its_collection(self):
         targets = json.loads(_CATALOG.read_text(encoding="utf-8"))["targets"]
         for name, entry in targets.items():

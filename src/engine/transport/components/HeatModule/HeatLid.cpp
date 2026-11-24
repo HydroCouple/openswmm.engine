@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/UnitConversion.hpp"
 #include "HeatLid.hpp"
 
 #include <cmath>
@@ -43,7 +44,6 @@ namespace {
 
 constexpr int kTemp = static_cast<int>(LidSpecies::TEMPERATURE);
 constexpr double kTinyVol = 1.0e-12; ///< ft of water per unit area
-constexpr double kFtToM = 0.3048;
 
 /**
  * @brief What a layer holding no water reports (plan D-H5c) — the same policy the watershed
@@ -81,10 +81,10 @@ double dryTemperature(const SimulationContext& ctx, double held, double t_air_c)
  * validation, allocation or geometry mutation; output must not alias inputs.
  */
 void layerThickness(const lid::LIDGroupSoA& g, std::size_t ui, double (&d)[kNL]) {
-    d[kSurf] = g.surf_store[ui] * kFtToM;
-    d[kPave] = g.pave_thick[ui] * kFtToM;
-    d[kSoil] = g.soil_thick[ui] * kFtToM;
-    d[kStor] = g.stor_thick[ui] * kFtToM;
+    d[kSurf] = g.surf_store[ui] * ucf::FT_TO_M;
+    d[kPave] = g.pave_thick[ui] * ucf::FT_TO_M;
+    d[kSoil] = g.soil_thick[ui] * ucf::FT_TO_M;
+    d[kStor] = g.stor_thick[ui] * ucf::FT_TO_M;
 }
 
 /**
@@ -197,7 +197,7 @@ double lidLayerHeatCapacity(const SimulationContext& ctx, const lid::LIDGroupSoA
     layerThickness(g, unit, thick);
     if (!(thick[layer] > 0.0))
         return 0.0;
-    return heatCapacity(ctx.heat_config.conduction, layer, v[layer] * kFtToM, thick[layer],
+    return heatCapacity(ctx.heat_config.conduction, layer, v[layer] * ucf::FT_TO_M, thick[layer],
                         ctx.options.water_density, ctx.options.water_specific_heat) *
            thick[layer];
 }
@@ -446,7 +446,7 @@ void routeLidLayerTemperature(SimulationContext& ctx, const lid::LIDSolver& solv
                 double cap[kNL], cond[kNL];
                 for (int i = 0; i < n; ++i) {
                     const int k = idx[i];
-                    const double water_m = v_new[k] * kFtToM;
+                    const double water_m = v_new[k] * ucf::FT_TO_M;
                     cap[i] = heatCapacity(cc, k, water_m, thick[k], rho_w, cp_w) * thick[k];
                     cond[i] = conductivity(cc, k, water_m, thick[k]);
                 }

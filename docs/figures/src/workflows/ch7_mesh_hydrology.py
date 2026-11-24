@@ -2,13 +2,26 @@
 mesh-hydrology chapter).
 
 Two gages of different intensity stand west and east of a 20 x 20 m
-patch, so every cell takes its own interpolated rainfall; three soil tags
-give the cells three infiltration methods. The figure is the two fields
-the run produces, read from the 2D results file: what fell on each cell,
-and what went into the ground.
+patch, so every cell takes its own rainfall. With two gages there is no
+triangle of gages to interpolate inside, so the engine weights them by
+inverse distance (power 2) in every cell and says so in the report
+(src/engine/2d/mesh/RainfallInterpolator.hpp:57-58;
+src/engine/2d/SurfaceRouter2D.cpp:509-514). A two-layer aquifer lies
+beneath every cell, so every cell is aquifer-owned: the tag rows of
+`[2D_INFILTRATION_DEFAULTS]` are skipped (src/engine/2d/infil/Infil2D.cpp:306-320)
+and the aquifer publishes each cell's receiving capacity. The intake applies
+in full only above DRY_DEPTH and ramps off below it
+(src/engine/2d/solver/SurfaceFluxCalculator.hpp:133-140), and the drain
+vertex exchanges with its lowest-bed incident cell
+(src/engine/2d/SurfaceRouter2D.cpp:993-999).
 
-Simulated tier: one run of docs/figures/decks/mesh_hydrology, cached
-under docs/figures/cache. Needs h5py as well as the openswmm package.
+The figure is the two fields the run produces, read from the 2D results
+file: what fell on each cell, and what went into the ground. The build
+refuses a run whose report does not confirm the inverse-distance weights
+and the aquifer ownership the annotations state.
+
+Simulated tier: one run of docs/figures/decks/mesh_hydrology as committed,
+cached under docs/figures/cache. Needs h5py as well as the openswmm package.
 """
 from __future__ import annotations
 
@@ -19,27 +32,27 @@ import numpy as np
 REQUIRES = ("openswmm", "h5py")
 
 DECK = "mesh_hydrology/mesh_hydrology.inp"
-METHOD_OF_TAG = {"LAWN": "HORTON", "PAVED": "CONSTANT", "WOODS": "GREEN_AMPT"}
 
 
-def _tags(deck_text):
-    m = re.search(r"^\[2D_TRIANGLES\]\s*$(.*?)(?=^\[|\Z)", deck_text, re.M | re.S)
-    out = []
-    for ln in m.group(1).splitlines():
-        s = ln.split(";")[0].split()
-        if len(s) >= 6:
-            out.append(s[5])
-    return out
+def _section(text, name):
+    m = re.search(r"^\[" + name + r"\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if not m:
+        return []
+    return [ln.split(";")[0].split() for ln in m.group(1).splitlines() if ln.split(";")[0].strip()]
 
 
 def _gages(deck_text):
-    m = re.search(r"^\[SYMBOLS\]\s*$(.*?)(?=^\[|\Z)", deck_text, re.M | re.S)
-    out = []
-    for ln in m.group(1).splitlines():
-        s = ln.split(";")[0].split()
-        if len(s) >= 3:
-            out.append((s[0], float(s[1]), float(s[2])))
-    return out
+    return [(s[0], float(s[1]), float(s[2])) for s in _section(deck_text, "SYMBOLS") if len(s) >= 3]
+
+
+def _drain_cell(h5, deck_text):
+    """The drain vertex, its node, and the lowest-bed cell around it (the exchange cell)."""
+    vertex, node = _section(deck_text, "2D_VERTEX_NODE_MAP")[0][:2]
+    vertex = int(vertex)
+    tri = np.asarray(h5["Mesh2_face_nodes"])
+    z = np.asarray(h5["Mesh2_face_z"])
+    around = [i for i, t in enumerate(tri) if vertex in t]
+    return vertex, node, min(around, key=lambda i: z[i])
 
 
 def _draw(style, h5, deck_text):
@@ -53,7 +66,7 @@ def _draw(style, h5, deck_text):
     rain = np.asarray(h5["Mesh2_face_rainfall"])[10] * 1000.0 * 3600.0     # mm/hr while it rains
     infil = np.asarray(h5["Mesh2_face_infil_cum"])[-1] * 1000.0           # mm over the storm
     depth = np.asarray(h5["Mesh2_face_max_depth"]) * 1000.0               # mm
-    tags = _tags(deck_text)
+    vertex, node, drain = _drain_cell(h5, deck_text)
     fig, (a0, a1) = plt.subplots(1, 2, figsize=(9.4, 4.5))
     fig.patch.set_facecolor(style.SURFACE)
     for ax, vals, cmap, title, fmt in (
@@ -68,7 +81,7 @@ def _draw(style, h5, deck_text):
         for i, (px, py, v) in enumerate(zip(cx, cy, vals)):
             ax.text(px, py + 0.7, fmt.format(v), fontsize=7.4, ha="center", va="center", color=style.INK)
         ax.set_xlim(-9.0, 29.0)
-        ax.set_ylim(-4.0, 24.0)
+        ax.set_ylim(-4.0, 26.5)
         ax.set_aspect("equal", adjustable="box")
         ax.axis("off")
         ax.set_title(title, fontsize=9, loc="left")
@@ -78,20 +91,23 @@ def _draw(style, h5, deck_text):
         a0.text(gx, gy - 1.8, name, fontsize=7.4, ha="center", color=style.INK)
     a0.text(0.0, -2.6, "mm/hr in each cell while it rains; the gages read 20 and 5 mm/hr",
             fontsize=7.2, color=style.MUTED)
-    a0.text(0.0, 22.3, "Laplace natural-neighbour weights: every cell takes its own value,\n"
-            "and no cell leaves the range of the gage readings.", fontsize=7.2, color=style.MUTED,
-            linespacing=1.45)
-    # the tags and their methods, on panel (b)
-    for i, (px, py) in enumerate(zip(cx, cy)):
-        a1.text(px, py - 1.0, f"{tags[i]}\n{METHOD_OF_TAG[tags[i]]}", fontsize=6.2, ha="center", va="center",
-                color=style.MUTED, linespacing=1.3)
+    a0.text(0.0, 26.2, "Two gages: inverse-distance weights in every cell.\n"
+            "Each cell takes its own value, and none leaves the\n"
+            "range of the gage readings.",
+            fontsize=7.2, color=style.MUTED, linespacing=1.45, va="top")
+    # the drain, on panel (b)
+    a1.plot(x[vertex], y[vertex], marker="o", ms=7, mfc=style.SURFACE, mec=style.INK, mew=1.2, zorder=5)
+    a1.text(x[vertex] + 0.5, y[vertex] - 0.4, f"drain to {node}", fontsize=7.2, color=style.INK,
+            ha="left", va="top", zorder=5)
+    a1.text(cx[drain], cy[drain] - 1.0, f"cell {drain}", fontsize=7.0, ha="center", va="center",
+            color=style.MUTED)
     a1.text(0.0, -2.6, "mm infiltrated over the storm, per cell", fontsize=7.2, color=style.MUTED)
-    dry = int(np.argmin(depth))
-    a1.text(0.0, 22.3, f"Three tags, three methods. Cell {dry} infiltrated {infil[dry]:.2f} mm: it never\n"
-            f"held more than {depth[dry]:.2f} mm of water, and the sink is ramped off below DRY_DEPTH.",
-            fontsize=7.2, color=style.MUTED, linespacing=1.45)
+    a1.text(0.0, 26.2, "The aquifer owns every cell, and each takes in the water\n"
+            f"that reaches it. Cell {drain}, where the drain draws, never held\n"
+            f"more than {depth[drain]:.4f} mm; the intake ramps off below DRY_DEPTH.",
+            fontsize=7.2, color=style.MUTED, linespacing=1.45, va="top")
     fig.tight_layout()
-    return fig
+    return fig, dict(drain=drain, rain=rain, infil=infil, depth=depth)
 
 
 def build(sink):
@@ -99,10 +115,15 @@ def build(sink):
     import style
     deck_text = (sink.fig_dir / "decks" / DECK).read_text()
     run = sink.run(DECK, None, "base")
+    rpt = run.rpt.read_text(errors="replace")
+    n_cells = len(_section(deck_text, "2D_TRIANGLES"))
+    for claim in (f"inverse-distance fallback used for {n_cells} cells",
+                  f"2D infiltration default '*': 0 applied, {n_cells} skipped (aquifer-owned)"):
+        if claim not in rpt:
+            raise RuntimeError(f"the annotations say so, but the report lacks: {claim!r}")
     with h5py.File(run.h5, "r") as h5:
-        fig = _draw(style, h5, deck_text)
-        rain = np.asarray(h5["Mesh2_face_rainfall"])[10] * 1000.0 * 3600.0
-        infil = np.asarray(h5["Mesh2_face_infil_cum"])[-1] * 1000.0
-    print(f"    rainfall per cell {rain.min():.1f} to {rain.max():.1f} mm/hr; "
-          f"infiltration {infil.min():.2f} to {infil.max():.2f} mm")
+        fig, k = _draw(style, h5, deck_text)
+    print(f"    rainfall per cell {k['rain'].min():.1f} to {k['rain'].max():.1f} mm/hr; "
+          f"infiltration {k['infil'].min():.2f} to {k['infil'].max():.2f} mm; "
+          f"drain cell {k['drain']} held at most {k['depth'][k['drain']]:.4f} mm")
     sink.save(fig, "workflow_ch7_rain_and_infiltration")

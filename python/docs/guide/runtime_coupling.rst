@@ -162,6 +162,39 @@ Boundary ``kind`` is 0 clear, 1 head, 2 total outward flow. Forcing ``cell=-1``
 is uniform; rates are m/s. ``mode`` is ``replace``, ``add`` (rain/evap), or
 ``clear``. A clear restores the underlying native input.
 
+The diagram below follows one prescription through its life: the frame
+that installs it, the exchange that applies it, the receipts it leaves, and
+the expiry or clear that hands the cell back to its authored input.
+
+.. mermaid::
+   :alt: Life of a runtime coupling prescription
+   :caption: A provider's frame, the exchange that applies it at each firing of
+      the owning cell, the cumulative receipts, and expiry or clear. Cell
+      sources and every receipt are positive into the target domain; boundary
+      flow is positive outward.
+
+   sequenceDiagram
+       participant P as Provider view
+       participant S as Solver
+       participant C as Owning mesh cell
+       P->>S: apply_frame(CouplingFrame)
+       Note over P,C: One validated batch. A refusal changes no prescription and not the clock.
+       P->>S: advance_to(t)
+       loop Each accepted firing of the owning cell, at its own tier step
+           S->>C: source water, heat and species over the firing interval
+           C-->>S: requested, applied and rejected amounts
+       end
+       S-->>P: returns at t, surface and groundwater work settled
+       P->>S: source_receipts or boundary_receipt
+       S-->>P: cumulative receipts, positive into the target domain
+       Note over P,C: Cell source flow is positive into the domain. Boundary flow is positive outward, so a negative value imports water.
+       alt until_seconds reached
+           S->>S: expire the prescription, keep its receipt
+       else clear_source or clear_boundary
+           P->>S: clear, receipt kept
+       end
+       Note over P,C: The authored input resumes, such as a well, a boundary time series or native forcing.
+
 .. code-block:: python
 
     from openswmm.engine import (

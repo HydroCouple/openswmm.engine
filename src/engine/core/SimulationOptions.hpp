@@ -42,6 +42,7 @@
 #ifndef OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 #define OPENSWMM_ENGINE_SIMULATION_OPTIONS_HPP
 
+#include "Constants.hpp"
 #include "FilePathPair.hpp"
 #include <string>
 #include <vector>
@@ -134,7 +135,15 @@ enum class RunoffModel : int {
  *  - SEMI_IMPLICIT: Unified formulation that integrates sumdqdh into the
  *    depth update so that head changes affect inflow/outflow rates within
  *    the same timestep. Merges surcharged and non-surcharged states into
- *    a single equation: dy = dV / (surfArea + sumdqdh * dt).
+ *    a single equation, linearized about the latest iterate y_last:
+ *    y_new = y_last + (surfArea * (y_old - y_last) + dV) /
+ *    (surfArea + 0.5 * dt * sumdqdh). Below the crown it converges to the
+ *    same depths as EXPLICIT. It also changes three regulator laws that
+ *    keep the iteration from converging (HydStructures.cpp,
+ *    SI_SMOOTH_HEAD): submerged orifices and weirs run linearly below a
+ *    0.05 ft head difference and report the submergence factor's slope,
+ *    a bottom orifice under tailwater is corrected for submergence once,
+ *    and outlets ramp linearly below a 0.05 ft head.
  *
  * Specified in [OPTIONS] as:
  * @code
@@ -510,9 +519,11 @@ struct SimulationOptions {
     int virtual_junction_momentum = 0;
 
     /** @brief Enable Anderson acceleration for Picard iteration convergence.
-     *  @details When true, uses depth-2 Anderson mixing to accelerate node
-     *           depth convergence, typically reducing iteration count by 25-50%.
-     *           Falls back to standard Picard for nodes that violate physical bounds.
+     *  @details When true, blends each node's two most recent Picard updates
+     *           (two-point Anderson / Aitken mixing, one stored iterate) to
+     *           accelerate smooth node depth convergence. Falls back to standard
+     *           Picard for nodes where the update is non-smooth (hydraulics
+     *           manual Table 3-2), at the flood limit, or would turn negative.
      *  @code
      *  ANDERSON_ACCEL  YES   ;; enable Anderson acceleration
      *  ANDERSON_ACCEL  NO    ;; standard Picard iteration (default)
@@ -835,11 +846,15 @@ struct SimulationOptions {
      *  @details Returns the legacy-exact value stored by the INP options
      *  handler when available; otherwise falls back to flooring the combined
      *  serial difference to whole seconds (mirroring legacy swmm5.c:3198-3200
-     *  as closely as the combined representation allows). */
+     *  as closely as the combined representation allows). The difference is
+     *  rounded to the millisecond first: a date set through the API as the
+     *  day's serial plus the time's fraction of a day can lie a rounding below
+     *  its whole second, and flooring that ended the run a second early. */
     double totalDurationMs() const {
         if (total_duration_ms >= 0.0)
             return total_duration_ms;
-        return std::floor((end_date - start_date) * 86400.0) * 1000.0;
+        return std::floor(std::round((end_date - start_date) * constants::MSEC_PER_DAY) / 1000.0) *
+               1000.0;
     }
 };
 

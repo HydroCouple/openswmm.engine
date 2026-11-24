@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../../core/UnitConversion.hpp"
 #include "ArdConfig.hpp"
 
 #include <algorithm>
@@ -524,7 +525,7 @@ void resolveArdTransportRows(SimulationContext& ctx, std::vector<std::string>& e
         // VALUE rates arrive in species mass units per second; internal MSX
         // store mass is conc(mass/L)·ft³, so divide by L/ft³ once here.
         // TIMESERIES values get the same conversion at evaluation time.
-        cfg.src_value.push_back(row.value / kLitersPerFt3);
+        cfg.src_value.push_back(row.value / ucf::FT3_TO_L_EXACT);
         cfg.src_ts.push_back(row.is_ts ? ts : -1);
     }
 

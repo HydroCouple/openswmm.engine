@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Transect.hpp"
 #include "../data/InfraData.hpp"
 #include <cmath>
@@ -34,8 +35,6 @@
 
 namespace openswmm {
 namespace transect {
-
-static constexpr double PHI = 1.486;
 
 // Faithful 1:1 port of legacy transect.c (transect_validate + createTables +
 // getGeometry + getSliceGeom + getFlow). AREA and WIDTH are the same geometric
@@ -113,9 +112,13 @@ void buildTables(TransectData& td, bool add_end_walls) {
         Nsta = N - 1;
     }
 
+    // A transect's right end wall belongs to its last sub-section, as the left
+    // end wall belongs to the first; a street keeps its last slice separate.
+    const int lastSlice = add_end_walls ? Nsta : Nsta - 1;
+
     auto getFlow = [&](int k, double a, double wp, bool findFlow) -> double {
         if (!findFlow) {
-            if (k == Nsta - 1) {
+            if (k == lastSlice) {
                 findFlow = true;
             } else if (X[static_cast<size_t>(k)] == xLeftBank) {
                 if (nLeft != nChannel && X[static_cast<size_t>(k)] != X[static_cast<size_t>(k - 1)])
@@ -132,7 +135,7 @@ void buildTables(TransectData& td, bool add_end_walls) {
                 n = nLeft;
             if (X[static_cast<size_t>(k)] > xRightBank)
                 n = nRight;
-            return PHI / n * a * std::pow(a / wp, 2.0 / 3.0);
+            return constants::PHI / n * a * std::pow(a / wp, 2.0 / 3.0);
         }
         return 0.0;
     };
@@ -197,7 +200,7 @@ void buildTables(TransectData& td, bool add_end_walls) {
         if (areaT == 0.0)
             td.hrad_tbl[idx] = td.hrad_tbl[idx - 1];
         else
-            td.hrad_tbl[idx] = std::pow(qSum * nChannel / PHI / areaT, 1.5);
+            td.hrad_tbl[idx] = std::pow(qSum * nChannel / constants::PHI / areaT, 1.5);
     }
 
     // PARITY: legacy setMaxSectionFactor (transect.c:596-618) — the physical
@@ -537,7 +540,8 @@ bool buildFromStore(const TransectStore& ts, int index, double ucf_length, Trans
     // transform the raw [TRANSECTS] GR data BEFORE building the tables:
     //   Station = x * Xfactor / UCF(LENGTH)          (mult, then divide)
     //   Elev    = (y + Yfactor) / UCF(LENGTH),  Yfactor = x9 / UCF
-    //   Xbank   = (xbank / UCF) * Xfactor            (divide, then mult)
+    //   Xbank   = xbank * Xfactor / UCF(LENGTH)      (as the stations, so
+    //             getFlow's exact Station == Xbank test finds the banks)
     // The elevation OFFSET (x9, e.g. 799/798 in extran8a) is the load-
     // bearing part: legacy builds every slice area/width/hrad at the
     // real bed elevation (~800 ft), so `y - yhi` rounds at that
@@ -553,8 +557,8 @@ bool buildFromStore(const TransectStore& ts, int index, double ucf_length, Trans
         s = s * xFactor / ucf_length;
     for (auto& e : td.elevations)
         e = (e + yFactor) / ucf_length;
-    td.x_left_bank = (ts.x_left_bank[ut] / ucf_length) * xFactor;
-    td.x_right_bank = (ts.x_right_bank[ut] / ucf_length) * xFactor;
+    td.x_left_bank = ts.x_left_bank[ut] * xFactor / ucf_length;
+    td.x_right_bank = ts.x_right_bank[ut] * xFactor / ucf_length;
     buildTables(td);
     return true;
 }

@@ -203,11 +203,12 @@ mismatch above is structural. \status{Planned}
 ## 10.4 The non-Gardner recharge closures and the benchmarks that would promote them
 
 Chapter 9 §9.3 states the caveat and §9.11 carries it. Of the four soil laws,
-Gardner's quasi-steady recharge across the water table is Qu and Duffy's
-equation 22 verbatim, (9-3), and is verified against it. Russo, Brooks–Corey
-and van Genuchten use the engine's generalisation (9-5),
+Gardner's quasi-steady recharge across the water table has the form of Qu and
+Duffy's equation 22, (9-3), with the gravity-drainage sign (corrected
+2026-11-18; see §9.3). Russo, Brooks–Corey and van Genuchten use the engine's
+generalisation (9-5),
 
-\f[ q_0 = \frac{\bar K}{\sigma(L)}\,\bigl[\sigma(L) - \tilde h_u\bigr], \qquad \bar K = K\!\left(\psi = \tfrac12 L\right) \f]
+\f[ q_0 = \frac{\bar K}{\sigma(L)}\,\bigl[\tilde h_u - \sigma(L)\bigr], \qquad \bar K = K\!\left(\psi = \tfrac12 L\right) \f]
 
 whose equilibrium (\f$q_0 = 0\f$ at hydrostatic storage) and sign are the
 law's own and whose *rate* — the conductivity at the column's mean suction

@@ -46,6 +46,8 @@
 
 #include <cmath>
 
+#include "../core/Constants.hpp"
+
 // Same convention as InertialKernels.hpp:45 / FvKernels.hpp: host builds get
 // plain `inline`; a device build defines this to KOKKOS_INLINE_FUNCTION before
 // including the header.
@@ -59,13 +61,19 @@ namespace openswmm::hydkernels {
 // Force-main friction
 // ===========================================================================
 
-/// Kinematic viscosity of water, ft²/s. Spelled here rather than included so
-/// the header stays dependency-free for the plugin build; it must equal
-/// constants::VISCOS, and a static_assert in ForceMain.cpp holds it to that.
-inline constexpr double kViscosity = 1.1e-5;
-
-/// Gravity in internal units, matching constants::GRAVITY.
-inline constexpr double kGravity = 32.2;
+/**
+ * @brief Froude number of a conduit flow, in legacy link_getFroude's form.
+ *
+ * @param[in] velocity  Flow velocity (ft/s); the sign is dropped.
+ * @param[in] hyd_depth Hydraulic depth A/W (ft), caller-guaranteed > 0.
+ * @return |v| / sqrt(GRAVITY * hyd_depth), evaluated in exactly that order:
+ *         the dynamic wave classifier sits on knife-edges at Fr = 0.5 and 1,
+ *         and a precomputed sqrt(g) times sqrt(y) reorders the rounding.
+ */
+inline double froudeNumber(double velocity, double hyd_depth) {
+    const double v_abs = (velocity < 0.0) ? -velocity : velocity;
+    return v_abs / std::sqrt(constants::GRAVITY * hyd_depth);
+}
 
 /**
  * @brief Compute Hazen-Williams friction slope from velocity and hydraulic radius.
@@ -102,7 +110,7 @@ OPENSWMM_KERNEL_FN double fricSlopeDW(double velocity, double hyd_rad, double ro
     const double v_abs = (velocity < 0.0) ? -velocity : velocity;
     const double diameter = 4.0 * hyd_rad;
 
-    const double re = v_abs * diameter / kViscosity;
+    const double re = v_abs * diameter / constants::VISCOS;
     if (re <= 0.0)
         return 0.0;
 
@@ -117,7 +125,7 @@ OPENSWMM_KERNEL_FN double fricSlopeDW(double velocity, double hyd_rad, double ro
         const double logarg = std::log10(arg);
         f = 0.25 / (logarg * logarg);
     }
-    return f * v_abs * v_abs / (2.0 * kGravity * diameter);
+    return f * v_abs * v_abs / (2.0 * constants::GRAVITY * diameter);
 }
 
 // ===========================================================================

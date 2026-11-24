@@ -24,6 +24,8 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
+#include "../core/UnitConversion.hpp"
 #include "FrozenGround.hpp"
 
 #include "../core/SimulationContext.hpp"
@@ -32,10 +34,6 @@
 #include <algorithm>
 
 namespace openswmm::frost {
-
-namespace {
-constexpr double kFootInMeters = 0.3048;
-}
 
 std::string validate(const Slab& s) {
     const auto positive = [](double v) { return std::isfinite(v) && v > 0.0; };
@@ -114,7 +112,7 @@ void advanceSubcatchments(SimulationContext& ctx, const runoff::RunoffSoA& soa, 
     auto& f = ctx.frozen_ground;
     if (!f.enabled() || dt <= 0.0)
         return;
-    const double air = (ctx.climate_state.temperature - 32.0) / 1.8;
+    const double air = (ctx.climate_state.temperature - constants::F_AT_0C) / constants::F_PER_C;
     const auto& heat = ctx.heat_state;
     const bool heat_on = ctx.options.heat_transport;
     const std::size_t n = f.enthalpy.size();
@@ -127,7 +125,7 @@ void advanceSubcatchments(SimulationContext& ctx, const runoff::RunoffSoA& soa, 
             continue;
         const double cover = i < snow_cover.size() ? std::clamp(snow_cover[i], 0.0, 1.0) : 0.0;
         const double swe =
-            i < snow_water.size() ? std::max(snow_water[i], 0.0) * kFootInMeters : 0.0;
+            i < snow_water.size() ? std::max(snow_water[i], 0.0) * ucf::FT_TO_M : 0.0;
         // The open surface is at the ponded water's temperature when heat transport tracks it,
         // and at the air temperature otherwise.
         const std::size_t perv = i * 3 + 2;
@@ -136,7 +134,7 @@ void advanceSubcatchments(SimulationContext& ctx, const runoff::RunoffSoA& soa, 
             heat_on && ponded && perv < heat.subarea_temp.size() ? heat.subarea_temp[perv] : air;
         // Water that infiltrated this step, m/s over the pervious area. Melt reaches the ground
         // at 0 C; rain and ponded water cannot be colder than that.
-        const double rate = soa.infil_vol[i] / (pervious_ft2 * dt) * kFootInMeters;
+        const double rate = soa.infil_vol[i] / (pervious_ft2 * dt) * ucf::FT_TO_M;
         const Contact contacts[4] = {
             {(1.0 - cover) * halfSlabConductance(s), open_temp},
             {cover * snowContactConductance(s, swe), std::min(air, 0.0)},

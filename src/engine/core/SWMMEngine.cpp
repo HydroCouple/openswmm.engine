@@ -26,7 +26,10 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "SWMMEngine.hpp"
+#include "RunId.hpp"
+#include <version.h>
 #include "../quality/PeerPassiveStorageExchange.hpp"
 #include "../transport/InitialQualitySeeds.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
@@ -271,6 +274,7 @@ SWMMEngine::attachLiveChangingVolumeExchange(quality::PassiveStorageWaterArithme
             quality::PassiveStorageArithmetic::RETAIN_EXACT_HALVES, preflight_history,
             quality::PassiveStorageLaw::CHANGING_VOLUME, water);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -295,6 +299,7 @@ std::string SWMMEngine::attachLiveChangingVolumeSlicedExchange(std::size_t capac
             quality::PassiveStorageLaw::CHANGING_VOLUME,
             quality::PassiveStorageWaterArithmetic::RETAIN_AGGREGATES);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -316,6 +321,7 @@ std::string SWMMEngine::attachLivePassiveExchange(quality::PassiveStorageArithme
             ctx_, surface_router_.state_, surface_router_.node_coupling_points_,
             surface_router_.options_.flow_2d_to_1d, capacity, arithmetic, preflight_history);
         surface_router_.live_passive_exchange_ = owner.get();
+        ctx_.nodes.coupling_gross = false; // the passive exchange owns the coupling mass
         live_passive_exchange_ = std::move(owner);
         return {};
     } catch (const std::exception& error) {
@@ -350,6 +356,7 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
     live_passive_exchange_.reset();
 #endif
     ctx_.reset();
+    ctx_.run_id = newRunId();
     metadata_only_ = metadata_only;
 #ifdef OPENSWMM_HAS_2D
     // Router-owned mesh/options/rows outlive ctx_.reset(). Replace the whole
@@ -1548,7 +1555,12 @@ int SWMMEngine::initialize() noexcept {
     // convention (NodeData::rpt_full_volume), so seed its initial volume the
     // way legacy node_initState does: fullVolume * (initDepth / fullDepth) —
     // 0 for a plain junction, the wet-well share for a Type-1 pump inlet.
-    if (ctx_.options.routing_model == RoutingModel::DYNWAVE) {
+    // Kinematic wave and steady flow start the same way in legacy; the
+    // MIN_SURFAREA volume a junction's InitDepth otherwise became changed its
+    // outlet conduit's flow from the first step (benchmarks
+    // 193-h-h-si-units-elements). FV keeps full_volume as its node area and
+    // has no legacy start to follow.
+    if (ctx_.options.routing_model != RoutingModel::FV) {
         for (int i = 0; i < ctx_.n_nodes(); ++i) {
             auto ui = static_cast<std::size_t>(i);
             if (ctx_.nodes.type[ui] == NodeType::STORAGE)
@@ -1640,6 +1652,15 @@ int SWMMEngine::initialize() noexcept {
         }
     }
 
+    // Legacy flowrout_init runs initNodeDepths (with the outfall depths) and
+    // initLinkDepths for dynamic wave only; kinematic-wave and steady models
+    // start with dry junctions and empty flowless conduits. Run for them, the
+    // junction depth fed the first kinematic-wave step a volume drain legacy
+    // does not have (benchmarks 193-h-h-si-units-elements). FV keeps the
+    // DW-class start.
+    const bool dw_class_init = ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+                               ctx_.options.routing_model == RoutingModel::FV;
+
     // initNodeDepths (legacy flowrout.c): seed each non-storage / non-outfall
     // junction's initial depth from the AVERAGE of its connecting links' flow
     // depths (y = link.depth + offset1), so a node on a q0 conduit inherits that
@@ -1651,7 +1672,7 @@ int SWMMEngine::initialize() noexcept {
     // boundary depths are preserved (set below). Must run AFTER the q0 loop
     // (which sets link depths) and BEFORE the q0=0 backwater fill (which reads
     // node depths).
-    {
+    if (dw_class_init) {
         const int us = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
         const int nn = ctx_.n_nodes();
         std::vector<double> acc(static_cast<std::size_t>(nn), 0.0);
@@ -1719,34 +1740,38 @@ int SWMMEngine::initialize() noexcept {
     // (routing-outfall-tidal, routing-outfall-timeseries). Legacy calls it
     // per LINK, so only an outfall some link names in that per-link choice
     // of end gets a depth (buildOutfallLinkMap); the others stay at 0.
-    outfall::buildOutfallLinkMap(ctx_);
-    outfall::setAllOutfallDepths(ctx_, 0.0);
-    for (int j = 0; j < ctx_.n_links(); ++j) {
-        auto uj = static_cast<std::size_t>(j);
-        if (ctx_.links.type[uj] != LinkType::CONDUIT)
-            continue;
-        if (ctx_.links.q0[uj] != 0.0)
-            continue; // q0 conduits already at normal depth
-        double yfull = ctx_.links.xsect_y_full[uj];
-        int n1 = ctx_.links.node1[uj];
-        int n2 = ctx_.links.node2[uj];
-        if (n1 < 0 || n2 < 0)
-            continue;
-        double y1 = std::clamp(
-            ctx_.nodes.depth[static_cast<std::size_t>(n1)] - ctx_.links.offset1[uj], 0.0, yfull);
-        double y2 = std::clamp(
-            ctx_.nodes.depth[static_cast<std::size_t>(n2)] - ctx_.links.offset2[uj], 0.0, yfull);
-        double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
-        ctx_.links.depth[uj] = y;
-        ctx_.links.old_depth[uj] = y;
-        XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
-        const int cr = ctx_.link_subtypes.conduit_row(j);
-        const auto& CD = ctx_.link_subtypes.conduits;
-        int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
-        double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
-        double vol = xsect::getAofY(xs, y) * len * barrels;
-        ctx_.links.volume[uj] = vol;
-        ctx_.links.old_volume[uj] = vol;
+    if (dw_class_init) {
+        outfall::buildOutfallLinkMap(ctx_);
+        outfall::setAllOutfallDepths(ctx_, 0.0);
+        for (int j = 0; j < ctx_.n_links(); ++j) {
+            auto uj = static_cast<std::size_t>(j);
+            if (ctx_.links.type[uj] != LinkType::CONDUIT)
+                continue;
+            if (ctx_.links.q0[uj] != 0.0)
+                continue; // q0 conduits already at normal depth
+            double yfull = ctx_.links.xsect_y_full[uj];
+            int n1 = ctx_.links.node1[uj];
+            int n2 = ctx_.links.node2[uj];
+            if (n1 < 0 || n2 < 0)
+                continue;
+            double y1 =
+                std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n1)] - ctx_.links.offset1[uj],
+                           0.0, yfull);
+            double y2 =
+                std::clamp(ctx_.nodes.depth[static_cast<std::size_t>(n2)] - ctx_.links.offset2[uj],
+                           0.0, yfull);
+            double y = std::max(0.5 * (y1 + y2), constants::FUDGE);
+            ctx_.links.depth[uj] = y;
+            ctx_.links.old_depth[uj] = y;
+            XSectParams xs = link::buildXSectParams(ctx_.links, uj, &ctx_.transect_tables);
+            const int cr = ctx_.link_subtypes.conduit_row(j);
+            const auto& CD = ctx_.link_subtypes.conduits;
+            int barrels = std::max((cr >= 0) ? CD.barrels[static_cast<std::size_t>(cr)] : 1, 1);
+            double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
+            double vol = xsect::getAofY(xs, y) * len * barrels;
+            ctx_.links.volume[uj] = vol;
+            ctx_.links.old_volume[uj] = vol;
+        }
     }
 
     // ── USE HOTSTART: load saved routing state from a hot-start file ──
@@ -1766,15 +1791,29 @@ int SWMMEngine::initialize() noexcept {
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
-    const bool hs_native =
-        !ctx_.files.hotstart_use_path.empty() && HotStartManager::is_native_file(hs_path);
+    // [RESTART] SOURCE_FILE: a record holds native hot start bytes, so it takes
+    // the native USE HOTSTART path below with the decoded file.
+    if (const auto error = validateRestartSpec(); !error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, error.c_str());
+        return CFFI_ERR_HOTSTART;
+    }
+    std::unique_ptr<HotStartFile> restart_hs;
+    if (!ctx_.restart.source_file.empty()) {
+        if (const auto error = restoreRestartSource(restart_hs); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART, error.c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+    }
+    const bool hs_native = restart_hs || (!ctx_.files.hotstart_use_path.empty() &&
+                                          HotStartManager::is_native_file(hs_path));
     std::unique_ptr<HotStartFile> deferred_hotstart;
     bool full_engine_restore = false;
     hotstart_deferred_ = false;
-    if (!ctx_.files.hotstart_use_path.empty()) {
+    if (restart_hs || !ctx_.files.hotstart_use_path.empty()) {
         int rc = 0;
         if (hs_native) {
-            std::unique_ptr<HotStartFile> hs(HotStartManager::open(hs_path));
+            std::unique_ptr<HotStartFile> hs(restart_hs ? restart_hs.release()
+                                                        : HotStartManager::open(hs_path));
             if (!hs) {
                 rc = 1;
             } else if (!hs->engine_checkpoint.empty()) {
@@ -1941,7 +1980,11 @@ int SWMMEngine::initialize() noexcept {
             std::string why = HotStartManager::last_io_error();
             if (why.empty() && !deferred_hotstart->warnings.empty())
                 why = deferred_hotstart->warnings.front();
-            set_error(CFFI_ERR_HOTSTART, ("USE HOTSTART: " + why).c_str());
+            const std::string from =
+                ctx_.restart_receipt.record_id.empty()
+                    ? std::string("USE HOTSTART: ")
+                    : "[RESTART] record " + ctx_.restart_receipt.record_id + ": ";
+            set_error(CFFI_ERR_HOTSTART, (from + why).c_str());
             return CFFI_ERR_HOTSTART;
         }
         reopenMassBalance();
@@ -2049,6 +2092,36 @@ int SWMMEngine::start(int save_results) noexcept {
         set_error(SWMM_ERR_LIFECYCLE,
                   "Split network requires matching geometry and a phase callback before start");
         return SWMM_ERR_LIFECYCLE;
+    }
+    // A continued run writes binary results exactly when its record carries them. A run
+    // without an output file writes none, whatever start() was asked.
+    const bool binary_results = save_results_ != 0 && !out_path_.empty();
+    if (ctx_.restart_receipt.mode == "CONTINUE" &&
+        ctx_.restart_receipt.binary_output != binary_results) {
+        set_error(CFFI_ERR_HOTSTART,
+                  ctx_.restart_receipt.binary_output
+                      ? ("[RESTART] record " + ctx_.restart_receipt.record_id +
+                         " carries the binary results written so far; continue it in a run that "
+                         "saves binary results (an .out file)")
+                            .c_str()
+                      : ("[RESTART] record " + ctx_.restart_receipt.record_id +
+                         " was recorded without binary results; continue it in a run that saves "
+                         "none (no .out file)")
+                            .c_str());
+        return CFFI_ERR_HOTSTART;
+    }
+    // [RESTART] continuation with binary results: as in a managed session, the
+    // engine checkpoint then carries the output written so far, so a continued
+    // run writes the same binary file as an uninterrupted one. Prepared before
+    // the writers open, with a new output destination.
+    if (binary_results && !checkpoint_output_ && restartNeedsCheckpoint()) {
+        if (const auto error = prepareOutputCheckpointing(); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART,
+                      ("[RESTART] continuing with binary results: " + error +
+                       (out_path_.empty() ? std::string{} : " Output file: '" + out_path_ + "'."))
+                          .c_str());
+            return CFFI_ERR_HOTSTART;
+        }
     }
 
     // Short runs still need one reporting period (legacy project_validate).
@@ -2268,6 +2341,7 @@ int SWMMEngine::start(int save_results) noexcept {
 
     // No dated SAVE HOTSTART row has been written in this run yet.
     hotstart_save_done_.assign(ctx_.files.hotstart_saves.size(), 0);
+    end_checkpoint_saves_done_ = false;
 
     ctx_.state = EngineState::RUNNING;
     if (process_component_host_) {
@@ -2282,8 +2356,14 @@ int SWMMEngine::start(int save_results) noexcept {
 #ifdef OPENSWMM_HAS_2D
     date_native_snapshot |= surface_router_.subsurface().independentClock();
 #endif
+    // A record that can CONTINUE carries the engine checkpoint, so recording
+    // one needs checkpointing on, as a native SAVE HOTSTART of heat does.
+    const bool restart_checkpoints = !ctx_.restart.record_file.empty() &&
+                                     (ctx_.restart.record_continuation || date_native_snapshot);
     const bool wants_native_hotstart = !pending_hotstart_checkpoint_.empty() ||
+                                       restart_checkpoints ||
                                        (date_native_snapshot && !ctx_.files.hotstart_saves.empty());
+
     if (wants_native_hotstart) {
         hotstart_checkpoint_error_ = prepareNativeHotstartCheckpointing();
         if (!hotstart_checkpoint_error_.empty()) {
@@ -2306,9 +2386,23 @@ int SWMMEngine::start(int save_results) noexcept {
                 hotstart_save_done_[k] =
                     entry.datetime != 0.0 &&
                     ctx_.elapsed_ms + 1.0 >=
-                        (entry.datetime - ctx_.options.start_date) * 86400000.0;
+                        (entry.datetime - ctx_.options.start_date) * constants::MSEC_PER_DAY;
+            }
+            // Continuing needs time left to run after the restored step.
+            const double total_ms =
+                (ctx_.options.end_date - ctx_.options.start_date) * constants::MSEC_PER_DAY;
+            if (!ctx_.restart_receipt.run_id.empty() && ctx_.elapsed_ms + 1.0 >= total_ms) {
+                set_error(CFFI_ERR_HOTSTART,
+                          ("[RESTART] the run ends at or before restored record " +
+                           ctx_.restart_receipt.record_id + "; set an end date after it")
+                              .c_str());
+                return CFFI_ERR_HOTSTART;
             }
         }
+    }
+    if (const auto error = beginRestartRecording(); !error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, error.c_str());
+        return CFFI_ERR_HOTSTART;
     }
     return SWMM_OK;
 }
@@ -2494,6 +2588,13 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
     if (hydraulics::TimestepController::simulation_complete(ctx_)) {
         if (elapsed_time)
             *elapsed_time = 0.0;
+        // End-of-run saves that need the engine checkpoint are written while
+        // the engine still runs: the checkpoint can be taken only from a
+        // running engine, and end() follows this ENDED step.
+        if (const auto error = writeEndOfRunCheckpointSaves(); !error.empty()) {
+            set_error(CFFI_ERR_HOTSTART, error.c_str());
+            return CFFI_ERR_HOTSTART;
+        }
         ctx_.state = EngineState::ENDED;
         return SWMM_OK;
     }
@@ -2597,6 +2698,10 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
             }
         }
 
+        // A continuation record ends a step at its time, as a run that ends there does.
+        if (const double record_ms = nextContinuationRecordMs();
+            ctx_.elapsed_ms + 1000.0 * dt_next > record_ms)
+            dt_next = std::max((record_ms - ctx_.elapsed_ms) / 1000.0, 0.001);
         const auto bound_runtime_step = [&]() {
             const double now = runtimeCouplingTime();
             if (process_component_host_)
@@ -2909,8 +3014,15 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
         // Dated SAVE HOTSTART rows: legacy swmm_step calls hotstart_save()
         // after routing and saveResults. With engine checkpointing on (coupled
         // heat) the save needs the accepted step boundary, so it waits for it.
-        if (!checkpoint_enabled_)
-            writeDueHotstartSaves();
+        if (!checkpoint_enabled_) {
+            auto error = writeDueHotstartSaves();
+            if (error.empty())
+                error = recordDueRestarts();
+            if (!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART, error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
+        }
 
         // Keep a one-step API prescription through the output snapshot, then
         // expire it before callbacks can prescribe the following routing step.
@@ -2960,10 +3072,16 @@ int SWMMEngine::step(double* elapsed_time) noexcept {
                     throw std::runtime_error(error);
             }
 #endif
-            writeDueHotstartSaves();
+            auto error = writeDueHotstartSaves();
+            if (error.empty())
+                error = recordDueRestarts();
+            if (!error.empty()) {
+                set_error(CFFI_ERR_HOTSTART, error.c_str());
+                return CFFI_ERR_HOTSTART;
+            }
         }
         if (elapsed_time)
-            *elapsed_time = ctx_.current_time / hydraulics::TimestepController::SEC_PER_DAY;
+            *elapsed_time = ctx_.current_time / constants::SEC_PER_DAY;
         acceptMaterialBoundary();
         if (!deferred_split_acceptance)
             tracePhase(SWMM_PHASE_STEP_ACCEPTED, phase_start, dt_next);
@@ -3196,7 +3314,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             // adjustment is added.
             if (unit_sys == 1)
                 ctx_.climate_state.temperature_src =
-                    (9. / 5.) * ctx_.climate_state.temperature_src + 32.0;
+                    (9. / 5.) * ctx_.climate_state.temperature_src + constants::F_AT_0C;
             ctx_.climate_state.temperature_src += ctx_.climate_state.adjust_temp[mon];
         } else if (ctx_.options.temp_source == 2 && climate_file_.isOpen()) {
             // Temperature from climate file (Gap #9: sub-daily sinusoidal interp)
@@ -3338,8 +3456,9 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             if (ctx_.options.humidity_var == 1) {
                 // Dew point: SI decks author degC, US decks degF; the air
                 // temperature is held in degF internally.
-                const double td_c = (unit_sys == 1) ? h : (h - 32.0) * 5.0 / 9.0;
-                const double ta_c = (ctx_.climate_state.temperature - 32.0) * 5.0 / 9.0;
+                const double td_c = (unit_sys == 1) ? h : (h - constants::F_AT_0C) * 5.0 / 9.0;
+                const double ta_c =
+                    (ctx_.climate_state.temperature - constants::F_AT_0C) * 5.0 / 9.0;
                 using openswmm::transport::heat::saturationVapourPressure;
                 h = 100.0 * saturationVapourPressure(td_c) / saturationVapourPressure(ta_c);
             }
@@ -3353,7 +3472,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             const auto error = ctx_.snowpacks.meteorology.average(abs_time, 1, met);
             if (!error.empty())
                 throw std::runtime_error(error);
-            ctx_.climate_state.temperature = ctx_.forcing.effective_temperature(met[0] * 1.8 + 32);
+            ctx_.climate_state.temperature = ctx_.forcing.effective_temperature(
+                met[0] * constants::F_PER_C + constants::F_AT_0C);
             ctx_.climate_state.wind_speed = ctx_.forcing.effective_wind(met[2] / .44704);
             ctx_.climate_state.humidity = met[1];
             const double ta = ctx_.climate_state.temperature;
@@ -3443,6 +3563,12 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         }
         if (new_runoff_ms_ > total_ms)
             new_runoff_ms_ = total_ms;
+        // A continuation record ends a runoff step at its time too, as the end does.
+        if (const double record_ms = nextContinuationRecordMs(); new_runoff_ms_ > record_ms) {
+            dt_runoff = (record_ms - old_runoff_ms_) / 1000.0;
+            new_runoff_time_ = record_ms / 1000.0;
+            new_runoff_ms_ = record_ms;
+        }
 
         // Legacy runoff.c:241: book the resolved rates once, after the
         // actual runoff duration is known. USE RUNOFF returns before this
@@ -3532,7 +3658,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                 ctx_, dt_runoff, ctx_.climate_state.temperature, ctx_.climate_state.wind_speed,
                 snow_rain_.data(), snow_snow_.data(), ctx_.climate_state.gamma,
                 ctx_.climate_state.ea);
-            const double snow_date = ctx_.options.start_date + old_runoff_time_ / 86400.;
+            const double snow_date =
+                ctx_.options.start_date + old_runoff_time_ / constants::SEC_PER_DAY;
             if (const auto error = surface::ueb::advanceSubcatchments(
                     ctx_, snow_.state(), snow_date, old_runoff_time_, dt_runoff, snow_rain_.data(),
                     snow_snow_.data());
@@ -4199,7 +4326,7 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                                 static_cast<std::size_t>(p);
                                 if (ri < ctx_.subcatches.lid_drain_runon_qual.size())
                                     ctx_.subcatches.lid_drain_runon_qual[ri] +=
-                                        (drain_cfs * c_src * 28.317) * (1.0 - rmvl);
+                                        (drain_cfs * c_src * ucf::FT3_TO_L) * (1.0 - rmvl);
                                 if (!g.to_perv[uu]) {
                                     const double mass_ucf_d = ucf::UCF(ucf::MASS, ctx_.options);
                                     double mcf_d = mass_ucf_d;
@@ -4217,7 +4344,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                             break;
                                         }
                                     }
-                                    const double w = drain_cfs * c_src * dt_runoff * 28.317 * mcf_d;
+                                    const double w =
+                                        drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * mcf_d;
                                     if (w > 0.0) {
                                         ctx_.mass_balance
                                             .qual_bmp_removal[static_cast<std::size_t>(p)] +=
@@ -4319,7 +4447,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
                                     }
                                     // c_src is mg/L, so LperFT3 brings
                                     // cfs·mg/L·s to concentration mass.
-                                    const double w = drain_cfs * c_src * dt_runoff * 28.317 * mcf_d;
+                                    const double w =
+                                        drain_cfs * c_src * dt_runoff * ucf::FT3_TO_L * mcf_d;
                                     if (w > 0.0) {
                                         if (upd < ctx_.mass_balance.qual_bmp_removal.size())
                                             ctx_.mass_balance.qual_bmp_removal[upd] += rmvl * w;
@@ -5261,7 +5390,7 @@ void SWMMEngine::stepGroundwater(double dt_runoff) noexcept {
         surface_router_.drainSubcatchRecharge(gw_2d_recharge_vol_);
         if (!gw_2d_recharge_vol_.empty()) {
             gw_infil_with_2d_.assign(gw_infil_rate_.begin(), gw_infil_rate_.end());
-            constexpr double kM3ToFt3 = 1.0 / (0.3048 * 0.3048 * 0.3048);
+            constexpr double kM3ToFt3 = 1.0 / (ucf::FT_TO_M * ucf::FT_TO_M * ucf::FT_TO_M);
             for (int i = 0; i < ns && i < static_cast<int>(gw_2d_recharge_vol_.size()); ++i) {
                 const auto ui = static_cast<std::size_t>(i);
                 const double vol_m3 = gw_2d_recharge_vol_[ui];
@@ -6666,7 +6795,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 if (q_in > 0.0 && q_out > 0.0) {
                     ctx_.mass_balance.routing_external += q_out * dt_routing;
                     ctx_.mass_balance.step_ext_inflow += q_out;
-                    ctx_.outfall_exports.reverse_m3[uj] += q_out * dt_routing * 0.028316846592;
+                    ctx_.outfall_exports.reverse_m3[uj] +=
+                        q_out * dt_routing * ucf::FT3_TO_M3_EXACT;
                 }
                 if (q_out > 0.0 && q_in <= 0.0) {
                     q_sys = -q_out;
@@ -6686,9 +6816,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // Publish the SAME committed discharge as continuity, before
                 // report-window filtering. This is accounting only: no source
                 // or hydraulic state is changed by an external consumer.
-                constexpr double cubicMetresPerCubicFoot = 0.028316846592;
                 auto& exports = ctx_.outfall_exports;
-                const double volume = q_sys * dt_routing * cubicMetresPerCubicFoot;
+                const double volume = q_sys * dt_routing * ucf::FT3_TO_M3_EXACT;
                 exports.water_m3[uj] += volume;
                 if (ctx_.options.heat_transport && uj < ctx_.heat_state.node_temp.size())
                     exports.heat_j[uj] += volume * ctx_.heat_state.node_temp[uj] *
@@ -6717,7 +6846,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                 // here (after the step_ext_inflow consumption at the top of
                 // this function) for the per-step snapshot only.
                 ctx_.mass_balance.routing_external += -q_sys * dt_routing;
-                ctx_.outfall_exports.reverse_m3[uj] += -q_sys * dt_routing * 0.028316846592;
+                ctx_.outfall_exports.reverse_m3[uj] += -q_sys * dt_routing * ucf::FT3_TO_M3_EXACT;
                 ctx_.mass_balance.step_ext_inflow += -q_sys;
             }
             // Legacy node_getSystemOutflow zeroes an outfall's overflow and
@@ -6794,7 +6923,13 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         // Its water has already been booked by the inflow assembly. The 1D ->
         // 2D spill never entered the quality denominator, so it leaves in
         // full; the rest of the lateral flow keeps legacy's net rule.
-        const double spill = std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
+        // With the gross queues the drain water joined the denominator in full, so the whole
+        // 2D spill leaves here; the aquifer bed's recharge is booked as exfiltration by the 2D
+        // router, not as a spill.
+        const double spill =
+            ctx_.nodes.coupling_gross && uj < ctx_.nodes.coupling_spill_outflow.size()
+                ? ctx_.nodes.coupling_spill_outflow[uj]
+                : std::max(0.0, -ctx_.nodes.coupling_inflow[uj]);
         const double lat_withdrawal =
             spill + std::max(0.0, -(ctx_.nodes.lat_flow[uj] - ctx_.nodes.coupling_inflow[uj]));
         if (lat_withdrawal > 0.0 && !quality_.fvTransportAccepted()) {
@@ -7037,6 +7172,8 @@ void SWMMEngine::computeFinalStorage() noexcept {
                 double volume = ctx_.nodes.volume[j];
                 if (const double base = router_.fvPondBase(j); base > 0.0 && volume >= base)
                     volume -= base;
+                // Plus the surcharge water a SEMI_IMPLICIT junction holds, which its mix holds.
+                volume += ctx_.nodes.held_volume[j];
                 if (idx < ctx_.nodes.conc.size())
                     m += ctx_.nodes.conc[idx] * volume + lidnode::heldMass(ctx_, j, p);
             }
@@ -8000,9 +8137,11 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
                                   f_rt * (ctx_.nodes.head[ui] - ctx_.nodes.invert_elev[ui])
                             : ctx_.nodes.invert_elev[ui] + y;
                     snap.nodes.volume[ui] =
-                        f1_rt * reportedNodeVolume(i, ctx_.nodes.old_depth[ui],
-                                                   ctx_.nodes.old_volume[ui]) +
-                        f_rt * reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]);
+                        f1_rt * (reportedNodeVolume(i, ctx_.nodes.old_depth[ui],
+                                                    ctx_.nodes.old_volume[ui]) +
+                                 ctx_.nodes.old_held_volume[ui]) +
+                        f_rt * (reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]) +
+                                ctx_.nodes.held_volume[ui]);
                     snap.nodes.lateral_inflow[ui] =
                         f1_rt * ctx_.nodes.old_lat_flow[ui] + f_rt * ctx_.nodes.lat_flow[ui];
                     snap.nodes.total_inflow[ui] =
@@ -9622,8 +9761,8 @@ void SWMMEngine::fillSurfaceSnapshot(SimulationSnapshot& snap) const noexcept {
                     snap.thermal2d_lid_layer_authored_index.push_back(cell.layer);
                     snap.thermal2d_lid_layer_node_id.push_back(
                         ctx_.node_names.name_of(binding.node));
-                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * 0.3048);
-                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * 0.3048);
+                    snap.thermal2d_lid_layer_top_m.push_back(cell.top * ucf::FT_TO_M);
+                    snap.thermal2d_lid_layer_bottom_m.push_back(cell.bottom * ucf::FT_TO_M);
                     snap.thermal2d_lid_layer_area_m2.push_back(graph.physical_area_m2[physical]);
                     snap.thermal2d_lid_layer_temperature.push_back(
                         capacity > 0.0 ? energy / capacity : missing);
@@ -9807,17 +9946,13 @@ int SWMMEngine::end() noexcept {
             return SWMM_ERR_PLUGIN;
         }
     }
-    // Native thermal hotstarts use the last accepted full engine checkpoint.
-    // Capture before teardown's partial 2D flush so clocks, water and energy
-    // describe the same accepted boundary.
-    if (ctx_.state == EngineState::RUNNING && ctx_.options.heat_transport) {
-        // Save full checkpoints before detaching source histories or finalizing
-        // the surface router. This is the last accepted coupled state.
-        for (const auto& entry : ctx_.files.hotstart_saves) {
-            if (entry.datetime == 0.0)
-                writeHotstartSave(entry);
-        }
-    }
+    // A SAVE HOTSTART row that cannot be written fails the run once teardown is done.
+    std::string hotstart_error;
+    // A run ended before the step that finds it complete writes its
+    // checkpoint-based end-of-run saves here, before teardown's partial 2D
+    // flush, so clocks, water and energy describe the same accepted boundary.
+    if (ctx_.state == EngineState::RUNNING)
+        hotstart_error = writeEndOfRunCheckpointSaves();
 
 #ifdef OPENSWMM_HAS_2D
     // Histories close at the last accepted engine checkpoint. Teardown may
@@ -9864,6 +9999,7 @@ int SWMMEngine::end() noexcept {
     if (const auto* fv = router_.fvSolver(); fv != nullptr && fv->run_stats().nsteps > 0) {
         const auto s = fv->run_stats();
         auto& rs = ctx_.routing_stats;
+        rs.fv_backend = router_.fvBackend();
         rs.fv_nsteps = s.nsteps;
         rs.fv_nflux = s.nflux;
         rs.fv_avg_h = s.avg_h;
@@ -10002,8 +10138,9 @@ int SWMMEngine::end() noexcept {
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0) {
-            if (!ctx_.options.heat_transport)
-                writeHotstartSave(entry);
+            // Rows that need the engine checkpoint were written before teardown.
+            if (!endOfRunNeedsCheckpoint() && hotstart_error.empty())
+                hotstart_error = writeHotstartSave(entry);
         } else if (k >= hotstart_save_done_.size() || !hotstart_save_done_[k]) {
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
             datetime::decodeDate(entry.datetime, y, mo, d);
@@ -10028,6 +10165,15 @@ int SWMMEngine::end() noexcept {
                   plugin_io_error(plugins_, "Cannot finish writing results").c_str());
         return SWMM_ERR_PLUGIN;
     }
+    if (restart_store_) {
+        if (hotstart_error.empty())
+            hotstart_error = restart_store_->finishRun(ctx_.run_id);
+        restart_store_.reset();
+    }
+    if (!hotstart_error.empty()) {
+        set_error(CFFI_ERR_HOTSTART, hotstart_error.c_str());
+        return CFFI_ERR_HOTSTART;
+    }
     if (split_ && split_->material)
         split_->material_finalized = true;
     return SWMM_OK;
@@ -10041,26 +10187,30 @@ int SWMMEngine::end() noexcept {
 // legacy .hsf, or native when node LIDs need it. Either round-trips through
 // USE HOTSTART, which reads the file's stamp.
 
-void SWMMEngine::writeDueHotstartSaves() {
+std::string SWMMEngine::writeDueHotstartSaves() {
     // Each dated row is written once, from the state at the end of the first
     // step that reaches its time, the same test legacy hotstart_save() makes.
     for (std::size_t k = 0; k < ctx_.files.hotstart_saves.size(); ++k) {
         const auto& entry = ctx_.files.hotstart_saves[k];
         if (entry.datetime == 0.0 || k >= hotstart_save_done_.size() || hotstart_save_done_[k])
             continue;
-        const double due_ms = (entry.datetime - ctx_.options.start_date) * 86400000.0;
+        const double due_ms = (entry.datetime - ctx_.options.start_date) * constants::MSEC_PER_DAY;
         if (ctx_.elapsed_ms + 1.0 < due_ms)
             continue;
+        if (auto error = writeHotstartSave(entry); !error.empty())
+            return error;
         hotstart_save_done_[k] = 1;
-        writeHotstartSave(entry);
     }
+    return {};
 }
 
-void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
+std::string SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
     const std::string& sp =
         !entry.path.absolute.empty() ? entry.path.absolute : entry.path.original;
     if (sp.empty())
-        return;
+        return {};
+    if (!HotStartManager::may_write_hotstart(sp))
+        return "SAVE HOTSTART: " + HotStartManager::last_io_error();
     const bool lid_restart =
         std::any_of(ctx_.node_subtypes.storages.lid.begin(), ctx_.node_subtypes.storages.lid.end(),
                     [](const auto& c) { return c.control >= 0; });
@@ -10081,10 +10231,8 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
         if (full_continuation && checkpoint_enabled_) {
             std::string snapshot;
             const std::string error = checkpointBytes(snapshot, false);
-            if (!error.empty()) {
-                ctx_.warnings.push_back("SAVE HOTSTART: incomplete native continuation: " + error);
-                return;
-            }
+            if (!error.empty())
+                return "SAVE HOTSTART: '" + sp + "': incomplete native continuation: " + error;
             hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, sp,
                                                                   snapshot));
         } else {
@@ -10098,9 +10246,303 @@ void SWMMEngine::writeHotstartSave(const HotstartSaveEntry& entry) {
         const auto runoff = legacyRunoffSection();
         rc = HotStartManager::save_legacy_routing(sp, ctx_, &runoff);
     }
-    if (rc != 0) {
-        ctx_.warnings.push_back("SAVE HOTSTART: " + HotStartManager::last_io_error());
+    if (rc != 0)
+        return "SAVE HOTSTART: '" + sp + "' was not written: " + HotStartManager::last_io_error();
+    return {};
+}
+
+bool SWMMEngine::endOfRunNeedsCheckpoint() const {
+    bool full_continuation = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    return full_continuation && checkpoint_enabled_;
+}
+
+std::string SWMMEngine::writeEndOfRunCheckpointSaves() {
+    if (end_checkpoint_saves_done_)
+        return {};
+    end_checkpoint_saves_done_ = true;
+    if (restart_store_ && restart_end_) {
+        restart_end_ = false;
+        if (auto error = recordRestart(0.0); !error.empty())
+            return error;
     }
+    if (endOfRunNeedsCheckpoint())
+        for (const auto& entry : ctx_.files.hotstart_saves)
+            if (entry.datetime == 0.0)
+                if (auto error = writeHotstartSave(entry); !error.empty())
+                    return error;
+    return {};
+}
+
+// ============================================================================
+// [RESTART] — restore from, and record into, GeoPackage and HDF5 files
+// ============================================================================
+
+namespace {
+
+std::string pathOf(const FilePathPair& p) {
+    return !p.absolute.empty() ? p.absolute : p.original;
+}
+
+/** True when two paths name the same file, compared after resolving them. */
+bool samePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty())
+        return false;
+    std::error_code ec;
+    const auto x = std::filesystem::weakly_canonical(io::utf8_path(a), ec);
+    const auto y = std::filesystem::weakly_canonical(io::utf8_path(b), ec);
+    return x == y;
+}
+
+std::string restartModeName(RestartMode m) {
+    return m == RestartMode::CONTINUE ? "CONTINUE" : "INITIAL_CONDITIONS";
+}
+
+} // namespace
+
+bool SWMMEngine::restartNeedsCheckpoint() const {
+    if (ctx_.restart_receipt.mode == "CONTINUE")
+        return true;
+    if (ctx_.restart.record_file.empty())
+        return false;
+    bool full_continuation = ctx_.options.heat_transport || !ctx_.frozen_ground.rows.empty();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    return ctx_.restart.record_continuation || full_continuation;
+}
+
+std::string SWMMEngine::validateRestartSpec() const {
+    const auto& r = ctx_.restart;
+    const std::string source = pathOf(r.source_file);
+    const std::string record = pathOf(r.record_file);
+    if (!source.empty() && !ctx_.files.hotstart_use_path.empty())
+        return "[RESTART] SOURCE_FILE and [FILES] USE HOTSTART cannot both start the run";
+    if (!source.empty() && r.source_record.empty())
+        return "[RESTART] SOURCE_RECORD is required with SOURCE_FILE: a record ID or LATEST";
+    if (record.empty()) {
+        if (r.record_format != RestartFormat::NONE || !r.record_at.empty() ||
+            r.record_every > 0.0 || r.record_continuation)
+            return "[RESTART] RECORD_FILE is required to record restart states";
+        return {};
+    }
+    if (r.record_format == RestartFormat::NONE)
+        return "[RESTART] RECORD_FORMAT is required with RECORD_FILE: GEOPACKAGE or HDF5";
+    if (samePath(record, source))
+        return "[RESTART] RECORD_FILE and SOURCE_FILE must be different files";
+    for (const std::string& other : {ctx_.inp_file_path, rpt_path_, out_path_})
+        if (samePath(record, other))
+            return "[RESTART] RECORD_FILE '" + record +
+                   "' is also the run's input, report or output file";
+#ifdef OPENSWMM_HAS_2D
+    if (samePath(record, surface_router_.options().output_file))
+        return "[RESTART] RECORD_FILE '" + record + "' is also the 2D output file";
+#endif
+    for (const double at : r.record_at)
+        if (at > 0.0 && (at < ctx_.options.start_date || at > ctx_.options.end_date))
+            return "[RESTART] a RECORD_AT time is outside the simulation period";
+    return {};
+}
+
+std::string SWMMEngine::restoreRestartSource(std::unique_ptr<HotStartFile>& hs) {
+    const auto& r = ctx_.restart;
+    const std::string path = pathOf(r.source_file);
+    const auto kind = restart::probe(path);
+    if (kind == restart::Backend::NONE)
+        return "[RESTART] SOURCE_FILE '" + path + "' does not exist or is empty";
+    if (kind != restart::Backend::GEOPACKAGE && kind != restart::Backend::HDF5)
+        return "[RESTART] SOURCE_FILE '" + path +
+               "' is not a GeoPackage or HDF5 file; a hot start file goes in [FILES] USE HOTSTART";
+    std::string error;
+    auto store = restart::openStore(path, kind, false, error);
+    if (!store)
+        return "[RESTART] " + error;
+    restart::Catalog catalog;
+    if (error = store->catalog(catalog); !error.empty())
+        return "[RESTART] " + error;
+    if (catalog.runs.empty())
+        return "[RESTART] '" + path + "' holds no restart records";
+
+    const std::pair<restart::RunInfo, std::vector<restart::RecordInfo>>* run = nullptr;
+    if (r.source_run.empty()) {
+        if (catalog.runs.size() != 1)
+            return "[RESTART] '" + path + "' holds " + std::to_string(catalog.runs.size()) +
+                   " runs; choose one with SOURCE_RUN";
+        run = &catalog.runs.front();
+    } else {
+        for (const auto& candidate : catalog.runs)
+            if (candidate.first.run_id == r.source_run)
+                run = &candidate;
+        if (!run)
+            return "[RESTART] '" + path + "' has no run " + r.source_run;
+    }
+    const restart::RecordInfo* rec = nullptr;
+    if (r.source_record == "LATEST") {
+        for (const auto& candidate : run->second)
+            if (candidate.status == "complete")
+                rec = &candidate;
+        if (!rec)
+            return "[RESTART] run " + run->first.run_id + " has no complete record";
+    } else {
+        for (const auto& candidate : run->second)
+            if (candidate.record_id == r.source_record)
+                rec = &candidate;
+        if (!rec)
+            return "[RESTART] run " + run->first.run_id + " has no record " + r.source_record;
+        if (rec->status != "complete")
+            return "[RESTART] record " + rec->record_id + " is not complete";
+    }
+    if (rec->platform != restart::platformTag())
+        return "[RESTART] record " + rec->record_id + " was written on " + rec->platform +
+               "; this engine runs on " + restart::platformTag();
+
+    bool needs_checkpoint = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    needs_checkpoint |= surface_router_.subsurface().independentClock();
+#endif
+    if (r.mode == RestartMode::CONTINUE) {
+        if (!rec->continuation)
+            return "[RESTART] record " + rec->record_id +
+                   " carries no engine checkpoint, so it cannot CONTINUE; it was recorded "
+                   "without RECORD_CONTINUATION YES";
+        if (rec->engine_version != OPENSWMM_VERSION_FULL)
+            return "[RESTART] record " + rec->record_id + " was written by engine " +
+                   rec->engine_version + "; continuing needs the same engine (" +
+                   OPENSWMM_VERSION_FULL + ")";
+    } else if (needs_checkpoint) {
+        return "[RESTART] INITIAL_CONDITIONS cannot carry heat, frozen ground or an independent "
+               "groundwater clock; use MODE CONTINUE with a continuation record";
+    }
+
+    std::string bytes;
+    if (error = store->read(run->first.run_id, rec->record_id, bytes); !error.empty())
+        return "[RESTART] " + error;
+    hs = std::make_unique<HotStartFile>();
+    const std::string label = path + " " + run->first.run_id + " " + rec->record_id;
+    if (!HotStartManager::decode(*hs, bytes, label))
+        return "[RESTART] " + HotStartManager::last_io_error();
+    // Initial conditions take the object state only; the target keeps its clock.
+    if (r.mode == RestartMode::INITIAL_CONDITIONS)
+        hs->engine_checkpoint.clear();
+    else if (hs->engine_checkpoint.empty())
+        return "[RESTART] record " + rec->record_id + " carries no engine checkpoint";
+
+    ctx_.restart_receipt = {path, run->first.run_id, rec->record_id, restartModeName(r.mode),
+                            rec->binary_output};
+    return {};
+}
+
+std::string SWMMEngine::beginRestartRecording() {
+    restart_store_.reset();
+    restart_due_.clear();
+    restart_next_ = 0;
+    restart_ordinal_ = 0;
+    restart_end_ = false;
+    const auto& r = ctx_.restart;
+    const std::string path = pathOf(r.record_file);
+    if (path.empty())
+        return {};
+    const auto backend = r.record_format == RestartFormat::HDF5 ? restart::Backend::HDF5
+                                                                : restart::Backend::GEOPACKAGE;
+    // The format is chosen, never inferred; an existing file must already be one.
+    const auto kind = restart::probe(path);
+    if (kind != restart::Backend::NONE && kind != backend)
+        return "[RESTART] RECORD_FILE '" + path + "' exists and is not a " +
+               restart::backendName(backend) + " file; it was left unchanged";
+    std::string error;
+    auto store = restart::openStore(path, backend, true, error);
+    if (!store)
+        return "[RESTART] " + error;
+    restart::RunInfo run;
+    run.run_id = ctx_.run_id;
+    run.created_at = restart::utcNow();
+    run.engine_version = OPENSWMM_VERSION_FULL;
+    run.parent_run_id = ctx_.restart_receipt.run_id;
+    run.parent_record_id = ctx_.restart_receipt.record_id;
+    run.restart_mode = ctx_.restart_receipt.mode;
+    run.restart_source = ctx_.restart_receipt.source;
+    if (error = store->beginRun(ctx_, run); !error.empty())
+        return "[RESTART] " + error;
+
+    const double total_ms =
+        (ctx_.options.end_date - ctx_.options.start_date) * constants::MSEC_PER_DAY;
+    for (const double at : r.record_at) {
+        if (at <= 0.0)
+            restart_end_ = true;
+        else
+            restart_due_.emplace_back((at - ctx_.options.start_date) * constants::MSEC_PER_DAY, at);
+    }
+    if (r.record_every > 0.0)
+        for (int k = 1; k * r.record_every * 1000.0 < total_ms - 1.0; ++k)
+            restart_due_.emplace_back(k * r.record_every * 1000.0,
+                                      ctx_.options.start_date +
+                                          k * r.record_every / constants::SEC_PER_DAY);
+    if (r.record_at.empty() && r.record_every <= 0.0)
+        restart_end_ = true;
+    std::sort(restart_due_.begin(), restart_due_.end());
+    // A continued run starts later; times already passed were the source run's.
+    while (restart_next_ < restart_due_.size() &&
+           restart_due_[restart_next_].first <= ctx_.elapsed_ms + 1.0)
+        ++restart_next_;
+    restart_store_ = std::move(store);
+    return {};
+}
+
+std::string SWMMEngine::recordRestart(double requested) {
+    bool full_continuation = ctx_.options.heat_transport || ctx_.frozen_ground.enabled();
+#ifdef OPENSWMM_HAS_2D
+    full_continuation |= surface_router_.subsurface().independentClock();
+#endif
+    std::string bytes;
+    std::unique_ptr<HotStartFile> hs;
+    if ((ctx_.restart.record_continuation || full_continuation) && checkpoint_enabled_) {
+        std::string snapshot;
+        // With binary results the checkpoint carries the output written so far.
+        if (const auto error = checkpointBytes(snapshot); !error.empty())
+            return "[RESTART] cannot capture a continuation record: " + error;
+        try {
+            snapshot = wrapContinuationRecord(std::move(snapshot),
+                                              ctx_.options.start_date +
+                                                  ctx_.elapsed_ms / constants::MSEC_PER_DAY);
+        } catch (const std::exception& e) {
+            return std::string("[RESTART] cannot capture a continuation record: ") + e.what();
+        }
+        hs.reset(HotStartManager::save_with_engine_checkpoint(ctx_, &runoff_, &groundwater_, {},
+                                                              snapshot, &bytes));
+    } else {
+        hs.reset(HotStartManager::save(ctx_, {}, &bytes));
+    }
+    if (!hs)
+        return "[RESTART] cannot capture a restart state: " + HotStartManager::last_io_error();
+    restart::RecordInfo record;
+    record.ordinal = ++restart_ordinal_;
+    char id[24];
+    std::snprintf(id, sizeof id, "rec_%06d", record.ordinal);
+    record.record_id = id;
+    record.created_at = restart::utcNow();
+    record.model_datetime = ctx_.options.start_date + ctx_.elapsed_ms / constants::MSEC_PER_DAY;
+    record.elapsed_seconds = ctx_.elapsed_ms / 1000.0;
+    record.requested_datetime = requested;
+    record.hsf_version = static_cast<int>(hs->header.version);
+    record.continuation = !hs->engine_checkpoint.empty();
+    record.binary_output = record.continuation && checkpoint_output_;
+    record.platform = restart::platformTag();
+    record.engine_version = OPENSWMM_VERSION_FULL;
+    if (const auto error = restart_store_->append(ctx_.run_id, record, bytes); !error.empty())
+        return "[RESTART] " + error;
+    return {};
+}
+
+std::string SWMMEngine::recordDueRestarts() {
+    while (restart_store_ && restart_next_ < restart_due_.size() &&
+           ctx_.elapsed_ms + 1.0 >= restart_due_[restart_next_].first) {
+        if (auto error = recordRestart(restart_due_[restart_next_].second); !error.empty())
+            return error;
+        ++restart_next_;
+    }
+    return {};
 }
 
 // ============================================================================
@@ -10677,7 +11119,8 @@ void SWMMEngine::validate_project() noexcept {
                 double dx_min = tx[1] - tx[0];
                 for (std::size_t k = 2; k < tx.size(); ++k)
                     dx_min = std::min(dx_min, tx[k] - tx[k - 1]);
-                const int ts_interval = static_cast<int>(std::floor(dx_min * 86400.0 + 0.5));
+                const int ts_interval =
+                    static_cast<int>(std::floor(dx_min * constants::SEC_PER_DAY + 0.5));
                 if (ts_interval > 0 && ctx_.gages.interval_sec[ug] > ts_interval)
                     ctx_.errors.push_back(
                         format_error(ERR_RAIN_GAGE_INTERVAL, ctx_.gage_names.name_of(g)));
@@ -10832,8 +11275,7 @@ void SWMMEngine::push_report_warning(const std::string& message, int code) noexc
 void SWMMEngine::emit_progress() noexcept {
     if (!callbacks_.on_progress)
         return;
-    const double total = (ctx_.options.end_date - ctx_.options.start_date) *
-                         hydraulics::TimestepController::SEC_PER_DAY;
+    const double total = (ctx_.options.end_date - ctx_.options.start_date) * constants::SEC_PER_DAY;
     const double frac = (total > 0.0) ? (ctx_.current_time / total) : 0.0;
     callbacks_.on_progress(static_cast<void*>(this), frac, ctx_.current_date,
                            callbacks_.progress_ud);
@@ -10949,7 +11391,13 @@ void SWMMEngine::initHydraulics() noexcept {
 
     // Gap #83: Outfall connectivity + no-outlets validation
     // Gap #84: Conduit adverse slope (non-DW) + regulator from non-storage
-    {
+    //
+    // Legacy runs all of these, and the routing-loop check below, only from
+    // routing_open (flowrout_init and toposort_sortLinks), which swmm_start
+    // calls only when DoRouting (swmm5.c:743, 760). With IGNORE_ROUTING YES
+    // none of them runs: 3525-nodes, a KINWAVE deck with adverse conduits,
+    // runs in legacy and failed here with ERROR 115.
+    if (!ctx_.options.ignore_routing) {
         int n_nl = ctx_.n_nodes();
         int n_ll = ctx_.n_links();
         std::vector<int> n_in(static_cast<std::size_t>(n_nl), 0);
@@ -11085,7 +11533,7 @@ void SWMMEngine::initHydraulics() noexcept {
     }
 
     // Gap #44: detect routing loop — matching legacy ERR_LOOP in toposort.c
-    if (router_.hasCycle()) {
+    if (!ctx_.options.ignore_routing && router_.hasCycle()) {
         set_error(SWMM_ERR_PARSE, "Routing loop detected: network contains a cycle that cannot "
                                   "be topologically sorted (KW/STEADY routing only).");
     }
@@ -11698,7 +12146,7 @@ void SWMMEngine::initHydrology() noexcept {
         ctx_.climate_state.elev = ctx_.options.snow_elev / ucf::UCF(ucf::LENGTH, ctx_.options);
         ctx_.climate_state.snow_divt =
             (ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units)) == 1)
-                ? 9. / 5. * ctx_.options.snow_divt + 32.0
+                ? 9. / 5. * ctx_.options.snow_divt + constants::F_AT_0C
                 : ctx_.options.snow_divt;
 
         // Transfer longitude/solar-time correction. The [TEMPERATURE] SNOWMELT
@@ -12684,8 +13132,9 @@ void SWMMEngine::assembleRunon() noexcept {
                                static_cast<std::size_t>(p);
                     if (src < ctx_.subcatches.conc_old.size() &&
                         dst < ctx_.subcatches.runon_qual_rate.size())
-                        ctx_.subcatches.runon_qual_rate[dst] +=
-                            ctx_.subcatches.runoff[ui] * ctx_.subcatches.conc_old[src] * 28.317;
+                        ctx_.subcatches.runon_qual_rate[dst] += ctx_.subcatches.runoff[ui] *
+                                                                ctx_.subcatches.conc_old[src] *
+                                                                ucf::FT3_TO_L;
                 }
             }
             // Multispecies Phase 2: the reaction species ride the same water.
@@ -12832,6 +13281,14 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
                     ctx_.nodes.coupling_qual_inflow[idx] =
                         drain_queue(ctx_.nodes.coupling_qual_queue[idx]);
                 }
+            }
+            // The gross water that carried the mass, and the gross spill (see
+            // NodeData::coupling_drain_queue), same rule.
+            if (uj < ctx_.nodes.coupling_drain_queue.size()) {
+                ctx_.nodes.coupling_drain_inflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_drain_queue[uj]);
+                ctx_.nodes.coupling_spill_outflow[uj] =
+                    drain_queue(ctx_.nodes.coupling_spill_queue[uj]);
             }
             // S4: the age-volume and temperature-volume halves, same rule.
             if (uj < ctx_.nodes.coupling_age_vol_queue.size())
@@ -13046,7 +13503,9 @@ bool SWMMEngine::isInSteadyState(int action_count) const {
 
 double SWMMEngine::reportedNodeVolume(int i) const noexcept {
     auto ui = static_cast<std::size_t>(i);
-    return reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]);
+    // Plus the surcharge water a SEMI_IMPLICIT junction holds beside its legacy volume.
+    return reportedNodeVolume(i, ctx_.nodes.depth[ui], ctx_.nodes.volume[ui]) +
+           ctx_.nodes.held_volume[ui];
 }
 
 double SWMMEngine::reportedNodeVolume(int i, double depth, double volume) const noexcept {

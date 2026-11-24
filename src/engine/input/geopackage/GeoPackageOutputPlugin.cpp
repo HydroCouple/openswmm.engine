@@ -10,6 +10,7 @@
 
 #include "GeoPackageOutputPlugin.hpp"
 #include "GeoPackageSchema.hpp"
+#include "core/RunId.hpp"
 #include "GeoPackageWriter.hpp"
 
 #include "core/SimulationContext.hpp"
@@ -141,7 +142,7 @@ int GeoPackageOutputPlugin::initialize(const std::vector<std::string>& init_args
         return -1;
     }
     db_path_ = init_args[0];
-    simulation_id_ = init_args.size() > 1 ? init_args[1] : "run_1";
+    simulation_id_ = init_args.size() > 1 ? init_args[1] : "";
     state_ = PluginState::INITIALIZED;
     return 0;
 }
@@ -153,6 +154,9 @@ int GeoPackageOutputPlugin::validate(const SimulationContext& /*ctx*/) {
 
 int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
     try {
+        // Every execution is its own run unless the caller named one.
+        if (simulation_id_.empty())
+            simulation_id_ = ctx.run_id.empty() ? newRunId() : ctx.run_id;
         db_ = open_database(db_path_);
         create_schema(db_.get());
 
@@ -165,15 +169,31 @@ int GeoPackageOutputPlugin::prepare(const SimulationContext& ctx) {
         std::ostringstream ts;
         ts << std::put_time(std::gmtime(&now_t), "%Y-%m-%dT%H:%M:%SZ");
 
-        auto stmt =
-            gpkg::prepare(db_.get(), "INSERT OR REPLACE INTO simulations "
-                                     "(simulation_id, name, created_at, engine_version, status) "
-                                     "VALUES (?, ?, ?, ?, 'running')");
+        // write_model() created the row. Update it in place: replacing it would
+        // delete it first and cascade its hot start slots and climate rows away.
+        auto stmt = gpkg::prepare(
+            db_.get(), "INSERT INTO simulations "
+                       "(simulation_id, name, created_at, engine_version, status) "
+                       "VALUES (?, ?, ?, ?, 'running') ON CONFLICT(simulation_id) DO UPDATE SET "
+                       "created_at=excluded.created_at, engine_version=excluded.engine_version, "
+                       "status='running'");
         bind_text(stmt.get(), 1, simulation_id_);
         bind_text(stmt.get(), 2, simulation_id_);
         bind_text(stmt.get(), 3, ts.str());
         bind_text(stmt.get(), 4, OPENSWMM_VERSION_FULL);
-        sqlite3_step(stmt.get());
+        checked_model_step(db_.get(), stmt.get());
+        // A run started from a restart record names it as its parent.
+        if (!ctx.restart_receipt.run_id.empty()) {
+            auto parent = gpkg::prepare(
+                db_.get(), "UPDATE simulations SET parent_run_id = ?, parent_record_id = ?, "
+                           "restart_mode = ?, restart_source = ? WHERE simulation_id = ?");
+            bind_text(parent.get(), 1, ctx.restart_receipt.run_id);
+            bind_text(parent.get(), 2, ctx.restart_receipt.record_id);
+            bind_text(parent.get(), 3, ctx.restart_receipt.mode);
+            bind_text(parent.get(), 4, ctx.restart_receipt.source);
+            bind_text(parent.get(), 5, simulation_id_);
+            checked_model_step(db_.get(), parent.get());
+        }
 
         populate_default_variables(db_.get());
 
@@ -473,9 +493,11 @@ int GeoPackageOutputPlugin::finalize(const SimulationContext& /*ctx*/) {
 
         // Update simulation status
         auto stmt = gpkg::prepare(
-            db_.get(), "UPDATE simulations SET status = 'completed' WHERE simulation_id = ?");
+            db_.get(),
+            "UPDATE simulations SET status = 'completed', "
+            "finished_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE simulation_id = ?");
         bind_text(stmt.get(), 1, simulation_id_);
-        sqlite3_step(stmt.get());
+        checked_model_step(db_.get(), stmt.get());
 
         insert_stmt_.reset();
         db_.reset();
@@ -499,7 +521,7 @@ void GeoPackageOutputPlugin::flush_buffer() {
         bind_int(insert_stmt_.get(), 4, row.variable_id);
         bind_double(insert_stmt_.get(), 5, row.elapsed_time);
         bind_double(insert_stmt_.get(), 6, row.value);
-        sqlite3_step(insert_stmt_.get());
+        checked_model_step(db_.get(), insert_stmt_.get());
     }
     txn.commit();
     buffer_.clear();

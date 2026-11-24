@@ -60,7 +60,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -69,6 +71,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <openswmm/engine/openswmm_2d.h>
@@ -194,12 +197,13 @@ struct Case {
  * @param[in] physical_shaft Use a real circular-area manhole storage and matching minimum area when
  *     true; otherwise ordinary junction.
  * @param[in] routing_step Positive fixed routing interval in seconds.
- * @return Owned five-minute CMS/DYNWAVE deck with graded triangular flume, center vertex MH map,
+ * @param[in] end_s Simulated duration in whole seconds, below 24 h.
+ * @return Owned CMS/DYNWAVE deck (five minutes by default) with graded triangular flume, center vertex MH map,
  *     downstream normal flow and optional upstream flow boundary.
  */
 std::string deck(const Case& c, const std::map<std::string, double>& rig, const std::string& law,
                  double h0, const std::string& extra2d, bool physical_shaft = false,
-                 double routing_step = 0.5) {
+                 double routing_step = 0.5, int end_s = 300) {
     const double L = rig.at("flume_length_m"), W = rig.at("flume_width_m");
     const double slope = rig.at("flume_slope"), n = rig.at("flume_manning_n");
     const double zc = rig.at("z_crest_m"), xm = 0.5 * L, ym = 0.5 * W;
@@ -212,8 +216,10 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
     std::ostringstream m;
     m.precision(10);
     m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
-         "END_DATE 01/01/2026\nEND_TIME 00:05:00\nREPORT_STEP 00:01:00\nROUTING_STEP "
-      << routing_step << "\n\n";
+         "END_DATE 01/01/2026\nEND_TIME "
+      << std::setfill('0') << std::setw(2) << end_s / 3600 << ":" << std::setw(2) << end_s / 60 % 60
+      << ":" << std::setw(2) << end_s % 60 << std::setfill(' ')
+      << "\nREPORT_STEP 00:01:00\nROUTING_STEP " << routing_step << "\n\n";
     if (physical_shaft) {
         const double d = rig.at("manhole_diameter_m"), a = 3.14159265358979323846 * d * d / 4.0;
         // A laboratory shaft has real storage below the rim. The default
@@ -291,6 +297,11 @@ struct Result {
     double sample_x_m = 0, sample_y_m = 0;
     double duration_s = 0;
     int cells = 0;
+    // Runs longer than 300 s only: the exchange from 300 s to the end.
+    double q_long_lps = 0;                             ///< mean rate over the whole span
+    double q_minute_min_lps = 0, q_minute_max_lps = 0; ///< extremes of its one-minute rates
+    int long_windows = 0;                              ///< one-minute rates in the span
+    bool steady = false; ///< the one-minute rates stay within 2 % of the mean
 };
 
 /**
@@ -313,20 +324,22 @@ struct Result {
  * @param[in] extra2d Raw2D option overrides forwarded unchanged.
  * @param[in] physical_shaft Enable physical manhole storage geometry in deck.
  * @param[in] routing_step Positive fixed routing interval in seconds; default solver tolerances.
+ * @param[in] end_s Simulated duration in whole seconds. The 180-240 s and 240-300 s windows keep
+ *     their meaning; a longer run also fills the long-span fields of Result.
  * @return Owned result with exchange L/s, native continuity converted to percent, sampled mean
  *     surface depth/node head metres, probe coordinates, duration seconds, cell count and validity
  *     flag.
  */
 Result run(const Case& c, const std::map<std::string, double>& rig, const std::string& law,
            const std::string& tag, double h0 = 0.0, const std::string& extra2d = {},
-           bool physical_shaft = false, double routing_step = 0.5) {
+           bool physical_shaft = false, double routing_step = 0.5, int end_s = 300) {
     Result r;
     fs::create_directories(kOut);
     const fs::path inp = kOut / (tag + ".inp"), rpt = kOut / (tag + ".rpt");
     {
         std::ofstream f(inp);
         f << deck(c, rig, law, h0 > 0 ? h0 : rig.at("mesh_size_boundary_m"), extra2d,
-                  physical_shaft, routing_step);
+                  physical_shaft, routing_step, end_s);
     }
     SWMM_Engine e = swmm_engine_create();
     if (swmm_engine_open(e, inp.string().c_str(), rpt.string().c_str(), "", nullptr) != SWMM_OK ||
@@ -365,6 +378,9 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     };
     double elapsed = 0, t0 = -1, v0 = 0, t1 = 0, v1 = 0;
     double tp = -1, vp = 0, hs_time = 0, hp_time = 0, sample_time = 0;
+    double t300 = -1, v300 = 0;                     // end of the 240-300 s window
+    std::vector<std::pair<double, double>> minutes; // (time, exchanged volume) each minute after
+    double next_minute = 300.0;
     int status = SWMM_OK;
     while ((status = swmm_engine_step(e, &elapsed)) == SWMM_OK && elapsed > 0.0) {
         const double t = elapsed * 86400.0;
@@ -376,7 +392,15 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
             t0 = t;
             v0 = net();
         } // last minute = steady window
-        if (t0 >= 0 && t1 >= t0 && probe >= 0) {
+        if (end_s > 300 && t >= next_minute) {
+            minutes.emplace_back(t, net());
+            if (t300 < 0) {
+                t300 = t;
+                v300 = minutes.back().second;
+            }
+            next_minute += 60.0;
+        }
+        if (t0 >= 0 && (t300 < 0 || t <= t300) && t1 >= t0 && probe >= 0) {
             double hs = 0, hp = 0;
             swmm_2d_get_depth(e, probe, &hs);
             swmm_node_get_head(e, manhole, &hp);
@@ -387,6 +411,11 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
         t1 = t;
     }
     v1 = net();
+    const double t_end = t1;
+    if (t300 >= 0) { // the reported windows stay 180-240 s and 240-300 s
+        t1 = t300;
+        v1 = v300;
+    }
     const int end_status = swmm_engine_end(e);
     double cont = 0;
     swmm_get_routing_continuity_error(e, &cont);
@@ -394,7 +423,7 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     swmm_engine_close(e);
     swmm_engine_destroy(e);
     // A late step failure used to be indistinguishable from normal EOF.
-    if (status != SWMM_OK || end_status != SWMM_OK || t1 < 299.0 || tp < 0 || !(t0 > tp) ||
+    if (status != SWMM_OK || end_status != SWMM_OK || t_end < end_s - 1.0 || tp < 0 || !(t0 > tp) ||
         !(t1 > t0) || !(sample_time > 0))
         return r;
     r.q_num_lps = 1000.0 * (v1 - v0) / (t1 - t0);
@@ -402,7 +431,21 @@ Result run(const Case& c, const std::map<std::string, double>& rig, const std::s
     r.q_previous_lps = 1000.0 * (v0 - vp) / (t0 - tp);
     r.surface_depth_m = hs_time / sample_time;
     r.node_head_m = hp_time / sample_time;
-    r.duration_s = t1;
+    r.duration_s = t_end;
+    if (minutes.size() >= 2) {
+        r.long_windows = static_cast<int>(minutes.size()) - 1;
+        r.q_long_lps = 1000.0 * (minutes.back().second - minutes.front().second) /
+                       (minutes.back().first - minutes.front().first);
+        r.q_minute_min_lps = std::numeric_limits<double>::max();
+        r.q_minute_max_lps = std::numeric_limits<double>::lowest();
+        for (std::size_t i = 1; i < minutes.size(); ++i) {
+            const double q = 1000.0 * (minutes[i].second - minutes[i - 1].second) /
+                             (minutes[i].first - minutes[i - 1].first);
+            r.q_minute_min_lps = std::min(r.q_minute_min_lps, q);
+            r.q_minute_max_lps = std::max(r.q_minute_max_lps, q);
+        }
+        r.steady = r.q_minute_max_lps - r.q_minute_min_lps <= 0.02 * std::fabs(r.q_long_lps);
+    }
     r.ok = std::isfinite(r.q_num_lps) && std::isfinite(r.continuity_pct) &&
            std::isfinite(r.surface_depth_m) && std::isfinite(r.node_head_m);
     return r;
@@ -500,6 +543,14 @@ TEST(RubinatoModel, EqualisationDoesNotChokeAFineMesh) {
 // separates the previous junction/MIN_SURFAREA surrogate from a shaft with
 // the laboratory's actual area and booked below-rim storage. Absolute fit,
 // head residuals and continuity remain report-only, including poor results.
+//
+// Each row runs 900 s. q_num_lps and q_previous_lps keep their 240-300 s and
+// 180-240 s windows; the last five columns describe 300-900 s: the mean rate,
+// the smallest and largest one-minute rate, how many there were, and whether
+// they stay within 2 % of the mean. Some rows never settle at this time step
+// (the exchange of S4_6 falls to a quarter for minutes at a time), so a single
+// late window is not a steady rate for them and its value follows the 2D step
+// sequence.
 TEST(RubinatoModel, PhysicalShaftSensitivity) {
     const auto rig = read_yaml(kRef / "rig_geometry.yaml");
     const auto rows = read_csv(kRef / "table2_steady_exchange.csv");
@@ -508,8 +559,10 @@ TEST(RubinatoModel, PhysicalShaftSensitivity) {
     std::ofstream csv(kOut / "shaft_vs_table2.csv");
     csv << std::setprecision(12)
         << "case,scenario,law,q_e_lps,q_num_lps,ratio,h_s_m,h_p_m,q1_lps,q3_lps,continuity_pct,"
-           "q_previous_lps,surface_depth_m,node_head_m,sample_x_m,sample_y_m,duration_s,cells\n";
+           "q_previous_lps,surface_depth_m,node_head_m,sample_x_m,sample_y_m,duration_s,cells,"
+           "q_long_lps,q_minute_min_lps,q_minute_max_lps,long_windows,steady\n";
     std::map<std::string, int> seen;
+    int unsteady = 0;
     for (const auto& row : rows) {
         Case c;
         c.scenario = row.at("scenario");
@@ -523,17 +576,27 @@ TEST(RubinatoModel, PhysicalShaftSensitivity) {
                    ? 0
                    : std::fabs(0.1 * c.q_e / std::atof(row.at("surcharge_pct").c_str()));
         const std::string tag = c.scenario + "_" + std::to_string(++seen[c.scenario]) + "_SHAFT";
-        const Result r = run(c, rig, "WEIR_ORIFICE", tag, 0, {}, true);
+        const Result r = run(c, rig, "WEIR_ORIFICE", tag, 0, {}, true, 0.5, 900);
         ASSERT_TRUE(r.ok) << tag;
+        ASSERT_GE(r.long_windows, 9) << tag << ": the 300-900 s span was not covered";
         csv << tag << "," << c.scenario << ",WEIR_ORIFICE," << c.q_e << "," << r.q_num_lps << ","
             << std::fabs(r.q_num_lps) / c.q_e << "," << c.h_s << "," << c.h_p << "," << 1000 * c.q1
             << "," << 1000 * c.q3 << "," << r.continuity_pct << "," << r.q_previous_lps << ","
             << r.surface_depth_m << "," << r.node_head_m << "," << r.sample_x_m << ","
-            << r.sample_y_m << "," << r.duration_s << "," << r.cells << "\n";
+            << r.sample_y_m << "," << r.duration_s << "," << r.cells << "," << r.q_long_lps << ","
+            << r.q_minute_min_lps << "," << r.q_minute_max_lps << "," << r.long_windows << ","
+            << (r.steady ? "YES" : "NO") << "\n";
         EXPECT_EQ(r.q_num_lps > 0, c.scenario == "S3" || c.scenario == "S4") << tag;
+        EXPECT_EQ(r.q_long_lps > 0, c.scenario == "S3" || c.scenario == "S4") << tag;
         // Experimental fit is report-only for the physical-shaft sensitivity.
         EXPECT_GT(std::fabs(r.q_num_lps), 0.0) << tag;
+        if (!r.steady) {
+            ++unsteady;
+            std::printf("%s not steady over 300-900 s: mean %.3f, one-minute %.3f to %.3f l/s\n",
+                        tag.c_str(), r.q_long_lps, r.q_minute_min_lps, r.q_minute_max_lps);
+        }
     }
+    std::printf("%d of 36 shaft rows not steady over 300-900 s\n", unsteady);
 }
 
 // Guard temporal consistency independently of experimental goodness of fit.

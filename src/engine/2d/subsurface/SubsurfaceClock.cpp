@@ -158,38 +158,57 @@ struct SubsurfaceSolver::IndependentOwner final : GwClock::Owner {
                         std::min(gw.clockAccuracyLimit(cell), state.receipt_limit[cell]));
     }
     void early(double end, std::vector<int>& due) override {
-        if (std::floor(end / gw.options_.base_step) <=
-            std::floor(state.schedule->time() / gw.options_.base_step))
+        // A budget wake is an accuracy firing, so each cell is checked at its own
+        // accuracy floor: under GW_BASE_STEP AUTO the node-bed cells at the base
+        // step and the rest at 1 s. Checking every cell at every base-step check
+        // was a third of an independent-clock run's wall time on Bellinge.
+        const auto& groups = state.schedule->cellsByFloorRung();
+        const double previous = state.schedule->time();
+        const auto crossed = [&](std::size_t rung) {
+            const double period = state.schedule->period(int(rung));
+            return std::floor(end / period) > std::floor(previous / period);
+        };
+        if (groups.empty() || !crossed(0))
             return;
-        std::vector<unsigned char> scheduled(state.cells.size(), 0);
+        static thread_local std::vector<unsigned char> scheduled;
+        static thread_local std::vector<ClockBudget> budgets;
+        scheduled.assign(state.cells.size(), 0);
         for (int id : due)
             scheduled[id] = 1;
-        for (int cell : state.cells) {
-            if (scheduled[state.dense[cell]] || state.schedule->completed(state.dense[cell]) == end)
+        for (std::size_t rung = 0; rung < groups.size(); ++rung) {
+            if (groups[rung].empty() || !crossed(rung))
                 continue;
-            bool trigger = false;
-            double excess_in = 0, excess_out = 0, ratio = 0;
-            for (const auto& b : gw.clockBudgets(cell, end)) {
-                trigger |= (b.in > 0 && b.in >= b.room_in) || (b.out > 0 && b.out >= b.room_out);
-                excess_in = std::max(excess_in, std::max(0., b.in - b.room_in));
-                excess_out = std::max(excess_out, std::max(0., b.out - b.room_out));
-                for (auto [v, room] : {std::pair{b.in, b.room_in}, std::pair{b.out, b.room_out}})
-                    if (v > room)
-                        ratio = std::max(ratio, room > 0 ? (v - room) / room : 1e30);
+            for (int id : groups[rung]) {
+                const int cell = state.cells[id];
+                if (scheduled[id] || state.schedule->completed(id) == end)
+                    continue;
+                bool trigger = false;
+                double excess_in = 0, excess_out = 0, ratio = 0;
+                gw.clockBudgets(cell, end, budgets);
+                for (const auto& b : budgets) {
+                    trigger |=
+                        (b.in > 0 && b.in >= b.room_in) || (b.out > 0 && b.out >= b.room_out);
+                    excess_in = std::max(excess_in, std::max(0., b.in - b.room_in));
+                    excess_out = std::max(excess_out, std::max(0., b.out - b.room_out));
+                    for (auto [v, room] :
+                         {std::pair{b.in, b.room_in}, std::pair{b.out, b.room_out}})
+                        if (v > room)
+                            ratio = std::max(ratio, room > 0 ? (v - room) / room : 1e30);
+                }
+                if (!trigger)
+                    continue;
+                due.push_back(state.dense[cell]); // GwClock sorts/deduplicates in O(N log N)
+                state.budget_active[cell] = 1;
+                const auto k = gw.state_.closure[cell];
+                state.excess_in[k] = std::max(state.excess_in[k], excess_in);
+                state.excess_out[k] = std::max(state.excess_out[k], excess_out);
+                const int bin = ratio == 0     ? 0
+                                : ratio <= .25 ? 1
+                                : ratio <= .5  ? 2
+                                : ratio <= 1   ? 3
+                                               : 4;
+                ++state.budget_exceedance[k][bin];
             }
-            if (!trigger)
-                continue;
-            due.push_back(state.dense[cell]); // GwClock sorts/deduplicates in O(N log N)
-            state.budget_active[cell] = 1;
-            const auto k = gw.state_.closure[cell];
-            state.excess_in[k] = std::max(state.excess_in[k], excess_in);
-            state.excess_out[k] = std::max(state.excess_out[k], excess_out);
-            const int bin = ratio == 0     ? 0
-                            : ratio <= .25 ? 1
-                            : ratio <= .5  ? 2
-                            : ratio <= 1   ? 3
-                                           : 4;
-            ++state.budget_exceedance[k][bin];
         }
     }
 };
@@ -319,13 +338,19 @@ double SubsurfaceSolver::clockAmount(int cell, GwSlot field, const std::vector<d
 
 std::vector<SubsurfaceSolver::ClockBudget> SubsurfaceSolver::clockBudgets(int i,
                                                                           double through) const {
+    std::vector<ClockBudget> result;
+    clockBudgets(i, through, result);
+    return result;
+}
+
+void SubsurfaceSolver::clockBudgets(int i, double through, std::vector<ClockBudget>& result) const {
+    result.clear();
     auto [in, out] = pendingClockWater(i, through);
     const double yield = specificYieldOf(i), A = state_.area[i];
     const double head = options_.head_tolerance * yield * A * std::max(.01, state_.hg[i]);
     const auto budget = [&](double room) {
         return options_.budget_fraction * std::min(head, std::max(0., room));
     };
-    std::vector<ClockBudget> result;
     const bool sigma = state_.closure[i] == static_cast<int>(GwClosure::SIGMA);
     if (sigma) {
         double intake = clockAmount(i, GwSlot::surface, state_.xacc_from_surface, i, through);
@@ -361,7 +386,6 @@ std::vector<SubsurfaceSolver::ClockBudget> SubsurfaceSolver::clockBudgets(int i,
         {std::max(0., in), std::max(0., out),
          budget(sigma ? yield * A * (state_.zs[i] - state_.hg[i]) : infiltrationStorageDeficit(i)),
          budget(unreservedDrainableWater(i, yield))});
-    return result;
 }
 
 double SubsurfaceSolver::clockAccuracyLimit(int i) const {
@@ -379,21 +403,17 @@ double SubsurfaceSolver::clockAccuracyLimit(int i) const {
     const auto p = paramsOf(i);
     const auto closure = static_cast<GwClosure>(state_.closure[i]);
     const double length = std::max(0., zs - state_.hg[i]);
-    double bottom = state_.theta_r[i];
-    const double yield = specificYield(i, p, state_.theta_s[i], length, closure, &bottom);
+    const double yield = specificYield(i, p, state_.theta_s[i], length, closure, nullptr);
     double recharge = 0;
     if (length > 0 && closure == GwClosure::SIGMA)
-        recharge = soil::conductivity(
-            p, soil::suctionAtSaturation(
-                   p, std::clamp((bottom - state_.theta_r[i]) /
-                                     std::max(state_.theta_s[i] - state_.theta_r[i], 1e-12),
-                                 1e-6, 1.)));
+        recharge = sigma::tableFlux(p, &state_.theta_sigma[i], state_.m_layers, state_.n_cells,
+                                    length, options_.capillary_diff);
     else if (length > 0 && closure == GwClosure::CLOSED_FORM)
         recharge = rawRecharge(i, p, length);
     if (recharge > 0)
         recharge = std::min(recharge, std::max(0., state_.hu[i] - state_.theta_r[i] * length) /
                                           options_.base_step);
-    else if (!et_caprise_)
+    else if (!et_caprise_ && !(closure == GwClosure::SIGMA && options_.capillary_diff))
         recharge = 0;
     add(recharge * A);
     if (!state_.eacc_L.empty())

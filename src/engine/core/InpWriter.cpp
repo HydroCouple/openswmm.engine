@@ -62,6 +62,7 @@
 #include "SimulationContext.hpp"
 #include "../data/StorageGeometry.hpp"
 #include "DateTime.hpp"
+#include "FvOptionRows.hpp"
 #include "UnitConversion.hpp"
 #include "../input/PostParseResolver.hpp"
 #include "../input/Tokenizer.hpp"
@@ -178,7 +179,7 @@ template <std::size_t N>
 static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed = false) {
     const double nearest = std::round(seconds);
     const double ulp = std::abs(std::nextafter(day, std::numeric_limits<double>::infinity()) - day);
-    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * 86400.0))
+    if (std::abs(seconds - nearest) <= std::max(1e-12, 0.51 * ulp * constants::SEC_PER_DAY))
         seconds = nearest;
     const auto h = static_cast<long long>(std::floor(seconds / 3600.0));
     const int m = static_cast<int>(std::floor((seconds - h * 3600.0) / 60.0));
@@ -193,7 +194,7 @@ static void fmt_elapsed(char (&buf)[N], double seconds, double day, bool elapsed
 }
 
 template <std::size_t N> static void fmt_time(char (&buf)[N], double oadate) {
-    fmt_elapsed(buf, (oadate - std::floor(oadate)) * 86400.0, oadate);
+    fmt_elapsed(buf, (oadate - std::floor(oadate)) * constants::SEC_PER_DAY, oadate);
 }
 
 // Format a timestep (seconds).  Whole-second values use H:MM:SS (matching
@@ -1240,9 +1241,9 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
             f, "%-22s %s\n", "COUPLING_COEFFS",
             nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs).c_str());
     {
-        static const char* sBackend2D[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
+        static const char* sBackend2D[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL", "METAL"};
         const int bi = static_cast<int>(o.backend);
-        std::fprintf(f, "%-22s %s\n", "BACKEND", (bi >= 0 && bi <= 5) ? sBackend2D[bi] : "AUTO");
+        std::fprintf(f, "%-22s %s\n", "BACKEND", (bi >= 0 && bi <= 6) ? sBackend2D[bi] : "AUTO");
     }
     if (!o.output_file.empty()) {
         const std::string of_tok =
@@ -2208,43 +2209,10 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         // Preserve finite-volume settings in native files even while another
         // routing method is selected; the keys remain inert until FV is active.
         if (!swmm5) {
-            static const char* sRiemann[] = {"HLL", "HLLC"};
-            static const char* sLimiter[] = {"MINMOD", "VANLEER", "SUPERBEE"};
-            static const char* sScalar[] = {"UPWIND", "MUSCL", "QUICKEST_ULTIMATE"};
-            static const char* sTime[] = {"EULER", "RK2"};
-            static const char* sBackend[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL"};
-            const auto& fvo = o.fv;
-            std::fprintf(f, "%-20s %.17g\n", "FV_CELL_LENGTH", fvo.cell_length);
-            std::fprintf(f, "%-20s %d\n", "FV_MIN_CELLS", fvo.min_cells);
-            std::fprintf(f, "%-20s %.17g\n", "FV_CFL", fvo.cfl);
-            std::fprintf(f, "%-20s %s\n", "FV_RIEMANN", sRiemann[static_cast<int>(fvo.riemann)]);
-            std::fprintf(f, "%-20s %d\n", "FV_ORDER", fvo.order);
-            std::fprintf(f, "%-20s %s\n", "FV_LIMITER", sLimiter[static_cast<int>(fvo.limiter)]);
-            std::fprintf(f, "%-20s %s\n", "FV_SCALAR_SCHEME",
-                         sScalar[static_cast<int>(fvo.scalar_scheme)]);
-            std::fprintf(f, "%-20s %s\n", "FV_TIME_INTEGRATION",
-                         sTime[static_cast<int>(fvo.time_integration)]);
-            std::fprintf(f, "%-20s %.17g\n", "FV_SLOT_CELERITY",
-                         fv::slotCelerityProject(fvo.slot_celerity, ucf::UCF(ucf::LENGTH, o)));
-            if (fvo.pressurized_implicit)
-                std::fprintf(f, "%-20s %s\n", "FV_PRESSURIZED_IMPLICIT", "YES");
-            if (fvo.node_feedback_dt) // non-default only
-                std::fprintf(f, "%-20s %s\n", "FV_NODE_FEEDBACK_DT", "YES");
-            if (fvo.pressure_closure == 1) // issue #156: non-default only
-                std::fprintf(f, "%-20s %s\n", "FV_PRESSURE_CLOSURE", "TPA");
-            if (fvo.dispersion > 0.0)
-                std::fprintf(f, "%-20s %.17g\n", "FV_DISPERSION", fvo.dispersion);
-            if (fvo.structure_coupling != fv::StructureCoupling::SUBSTEP)
-                std::fprintf(f, "%-20s %s\n", "FV_STRUCTURE_COUPLING", "ROUTING_STEP");
-            if (!fvo.compaction)
-                std::fprintf(f, "%-20s %s\n", "FV_COMPACTION", "NO");
-            std::fprintf(f, "%-20s %s\n", "FV_BACKEND", sBackend[static_cast<int>(fvo.backend)]);
-            std::fprintf(f, "%-20s %ld\n", "FV_MIN_PARALLEL_CELLS", fvo.min_parallel_cells);
-            if (!fvo.lts)
-                std::fprintf(f, "%-20s %s\n", "FV_LTS", "NO");
-            std::fprintf(f, "%-20s %d\n", "FV_LTS_MAX_TIERS", fvo.lts_max_tiers);
-            if (fvo.cfl_census_interval != 1)
-                std::fprintf(f, "%-20s %d\n", "FV_CFL_CENSUS_INTERVAL", fvo.cfl_census_interval);
+            // One list for this file and the GeoPackage options table
+            // (FvOptionRows.hpp), so neither format can drop a key.
+            for (const auto& [key, value] : fvOptionRows(o))
+                std::fprintf(f, "%-20s %s\n", key.c_str(), value.c_str());
         }
         // The spatial frame is the only CRS store a GeoPackage open fills, so
         // fall back to it — otherwise a .gpkg model saved as .inp loses its CRS.
@@ -4638,7 +4606,7 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                         // 24:00 and not the truncated-then-rounded "23:60".
                         const double xv = tb.x[k] - tb.rel_anchor;
                         char elapsed[64];
-                        fmt_elapsed(elapsed, xv * 86400.0, tb.x[k], true);
+                        fmt_elapsed(elapsed, xv * constants::SEC_PER_DAY, tb.x[k], true);
                         std::fprintf(f, "%-16s %s %.17g\n", tN(ctx, t), elapsed, tb.y[k]);
                     } else {
                         fmt_date(dateBuf, tb.x[k]);
@@ -5047,6 +5015,51 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
                 std::fprintf(f, "%-13s %-10s \"%s\"%s\n", "SAVE", "HOTSTART", tok.c_str(), fmt);
             }
         }
+    }
+
+    // [RESTART] — saved state to start from, and where this run records its
+    // own. SWMM 5 has no counterpart, so a 5.x export leaves it out.
+    if (swmm5 && ctx.restart.has_any())
+        note("[RESTART] omitted (SWMM 5.x profile)");
+    if (!swmm5 && ctx.restart.has_any()) {
+        const auto& r = ctx.restart;
+        sec(f, "RESTART");
+        std::fprintf(f, ";;%-19s %s\n", "Key", "Value");
+        if (!r.source_file.empty())
+            std::fprintf(
+                f, "%-21s \"%s\"\n", "SOURCE_FILE",
+                emit_path_token(r.source_file, dst_dir, force_abs_paths, warnings).c_str());
+        if (!r.source_run.empty())
+            std::fprintf(f, "%-21s %s\n", "SOURCE_RUN", r.source_run.c_str());
+        if (!r.source_record.empty())
+            std::fprintf(f, "%-21s %s\n", "SOURCE_RECORD", r.source_record.c_str());
+        if (!r.source_file.empty() || r.mode != RestartMode::INITIAL_CONDITIONS)
+            std::fprintf(f, "%-21s %s\n", "MODE",
+                         r.mode == RestartMode::CONTINUE ? "CONTINUE" : "INITIAL_CONDITIONS");
+        if (!r.record_file.empty())
+            std::fprintf(
+                f, "%-21s \"%s\"\n", "RECORD_FILE",
+                emit_path_token(r.record_file, dst_dir, force_abs_paths, warnings).c_str());
+        if (r.record_format != RestartFormat::NONE)
+            std::fprintf(f, "%-21s %s\n", "RECORD_FORMAT",
+                         r.record_format == RestartFormat::HDF5 ? "HDF5" : "GEOPACKAGE");
+        for (const double at : r.record_at) {
+            if (at <= 0.0) {
+                std::fprintf(f, "%-21s END\n", "RECORD_AT");
+                continue;
+            }
+            char date_buf[16], time_buf[16];
+            fmt_date(date_buf, at);
+            fmt_time(time_buf, at);
+            std::fprintf(f, "%-21s %s %s\n", "RECORD_AT", date_buf, time_buf);
+        }
+        if (r.record_every > 0.0) {
+            const long total = std::lround(r.record_every);
+            std::fprintf(f, "%-21s %02ld:%02ld:%02ld\n", "RECORD_EVERY", total / 3600,
+                         (total / 60) % 60, total % 60);
+        }
+        if (r.record_continuation)
+            std::fprintf(f, "%-21s YES\n", "RECORD_CONTINUATION");
     }
 
     // [PLUGINS]

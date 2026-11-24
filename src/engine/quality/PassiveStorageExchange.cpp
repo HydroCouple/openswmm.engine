@@ -247,12 +247,27 @@ void PassiveStorageExchange::validatePool(const SimulationContext& ctx, int node
                     n.outflow.at(i) == std::max(0.0, -n.coupling_inflow.at(i)) &&
                     std::isfinite(n.coupling_queue.at(i)),
                 "inconsistent closed native water state");
-    for (const auto* values :
-         {&n.user_lat_flow, &n.ext_inflow, &n.dwf_inflow, &n.rdii_inflow, &n.iface_inflow,
-          &n.runoff_inflow, &n.gw_inflow, &n.lid_drain_inflow, &n.coupling_volume,
-          &n.coupling_qual_queue, &n.coupling_qual_inflow, &n.ext_qual_mass, &n.dwf_qual_mass,
-          &n.iface_qual_mass, &n.user_conc_mass_flux, &n.lid_drain_qual_load,
-          &n.lid_drain_qual_load_old})
+    for (const auto* values : {&n.user_lat_flow,
+                               &n.ext_inflow,
+                               &n.dwf_inflow,
+                               &n.rdii_inflow,
+                               &n.iface_inflow,
+                               &n.runoff_inflow,
+                               &n.gw_inflow,
+                               &n.lid_drain_inflow,
+                               &n.coupling_volume,
+                               &n.coupling_qual_queue,
+                               &n.coupling_qual_inflow,
+                               &n.coupling_drain_queue,
+                               &n.coupling_spill_queue,
+                               &n.coupling_drain_inflow,
+                               &n.coupling_spill_outflow,
+                               &n.ext_qual_mass,
+                               &n.dwf_qual_mass,
+                               &n.iface_qual_mass,
+                               &n.user_conc_mass_flux,
+                               &n.lid_drain_qual_load,
+                               &n.lid_drain_qual_load_old})
         require(zeroAt(*values, i), "ordinary or legacy coupling mobilization is unsupported");
     require((n.aquifer2d_bed.empty() || (i < n.aquifer2d_bed.size() && !n.aquifer2d_bed[i])) &&
                 noneAt(ctx.forcing.node_lat_inflow_mode, i) &&

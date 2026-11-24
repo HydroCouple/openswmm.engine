@@ -1,0 +1,17 @@
+{#- Landing hero for the root page. hc_hero = {kicker, title, lede, actions: [{label, url, style}]};
+    a url without "://" is a document name resolved with pathto(). -#}
+<section class="hc-hero" aria-label="{{ hc_project_label }}">
+  <div class="hc-hero__inner bd-page-width">
+    {%- if hc_hero.kicker %}<p class="hc-hero__kicker">{{ hc_hero.kicker }}</p>{% endif %}
+    <p class="hc-hero__title">{{ hc_hero.title or docstitle }}</p>
+    {%- if hc_hero.lede %}<p class="hc-hero__lede">{{ hc_hero.lede }}</p>{% endif %}
+    {%- if hc_hero.actions %}
+    <div class="hc-hero__actions">
+      {%- for action in hc_hero.actions %}
+      <a class="hc-btn hc-btn--{{ action.style or 'ghost' }}" href="{% if '://' in action.url %}{{ action.url }}{% else %}{{ pathto(action.url) }}{% endif %}">{{ action.label }}</a>
+      {%- endfor %}
+    </div>
+    {%- endif %}
+  </div>
+  <svg class="hc-hero__wave" viewBox="0 0 1440 70" preserveAspectRatio="none" aria-hidden="true" focusable="false"><path d="M0,40 C240,70 480,8 720,30 C960,52 1200,20 1440,44 L1440,70 L0,70 Z"/></svg>
+</section>

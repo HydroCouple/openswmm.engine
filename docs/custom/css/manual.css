@@ -13,7 +13,7 @@
   font-weight: 600;
   line-height: 1.7;
   letter-spacing: 0.01em;
-  color: #ffffff;
+  color: #071522;
   white-space: nowrap;
   vertical-align: baseline;
 }
@@ -21,11 +21,6 @@
 .status-badge[data-status="Experimental"] { background: #eda100; }
 .status-badge[data-status="Planned"]      { background: #898781; }
 .status-badge[data-status="Retired"]      { background: #e87ba4; text-decoration: line-through; }
-
-html.dark-mode .status-badge[data-status="Implemented"]  { background: #148a5f; }
-html.dark-mode .status-badge[data-status="Experimental"] { background: #b97e00; }
-html.dark-mode .status-badge[data-status="Planned"]      { background: #6a6863; }
-html.dark-mode .status-badge[data-status="Retired"]      { background: #b85c7f; }
 
 /* A table whose header names a Status column reads better with the badge
  * centred and the column kept narrow. */

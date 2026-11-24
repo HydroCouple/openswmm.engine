@@ -59,7 +59,9 @@ Figure 1-7 The hydraulics of this manual: the 1D network, the 2D surface and the
 
 Figure 2-1 Node-link representation of a sewer system
 
-Figure 2-2 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)
+Figure 2-2 A layered LID on a storage node (synthetic, from the engine's cell, port and Richards rules and the Engine Manual's example stack): (a) layers, runtime cells, retained and mobile water below the mobile table h, three links and where reverse inflow goes; (b) Richards cells and face laws; (c) retention and (d) conductivity curves (in/hr) of the illustrative materials
+
+Figure 2-3 Comparison of dynamic wave and kinematic wave solutions (from Miller, 1984)
 
 Figure 3-1 Node-link representation of a conveyance network in SWMM (from Roesner et al, 1992).
 
@@ -75,13 +77,15 @@ Figure 3-6 Outflow hydrographs for example conduit -I
 
 Figure 3-7 Outflow hydrographs for example conduit – II
 
-Figure 3-8 Conceptual representation of the dynamic Preissmann slot
+Figure 3-8 The four surcharge treatments on one overloaded pipe chain: the hydraulic grade line while the chain fills and drains under EXTRAN, SLOT, DYNAMIC_SLOT and TPA, the head at the node where the methods differ most, and the provisional Preissmann number of the dynamic slot after a pipe first pressurizes
 
 Figure 3-9 State transitions of the dynamic Preissmann slot at a conduit end (rendered diagram; states and transitions as implemented in `updateDPSState`)
 
 Figure 3-10 Virtual junction representation of a conduit grade break
 
-Figure 3-11 Workflow of one Anderson-accelerated iteration of the successive-approximation loop (rendered diagram)
+Figure 3-11 The three regulator laws that semi-implicit node continuity changes: the flow (top) and the dQ/dH handed to the node head update (bottom) under EXPLICIT and SEMI_IMPLICIT, for a submerged transverse weir, a bottom orifice with tailwater above its opening, and outlets rated from a nonzero flow or with a power below one
+
+Figure 3-12 Workflow of one Anderson-accelerated iteration of the successive-approximation loop (rendered diagram)
 
 Figure 4-1 Section factor versus area for a circular shape
 
@@ -169,19 +173,27 @@ Figure 8-8 Node ghost-state construction at a coupling face
 
 Figure 9-1 The one-dimensional network and the two-dimensional surface: exchange pathways
 
-Figure 9-2 One 1D–2D co-advance batch and the explicit marcher's substep loop within it (rendered diagram)
+Figure 9-2 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance
 
-Figure 9-3 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate (placeholder — to be replaced by a final drawing)
+Figure 9-3 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild
 
-Figure 9-4 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance
+Figure 9-4 One 1D–2D co-advance batch and the explicit marcher's substep loop within it (rendered diagram)
 
-Figure 9-5 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild
+Figure 9-5 Wetting cases of a planar-bed triangular cell and the wetted-edge face gate
 
-Figure 9-6 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows
+Figure 9-6 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.
 
-Figure 9-7 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.
+Figure 9-7 The WEIR_ORIFICE exchange law of the default 1.2 m manhole: (a) free drainage against the surface depth over the crest, (b) drainage and spill against the head difference with the surface held 0.30 m over the crest, DEFAULT against RUBINATO2017, and (c) the regularized root. Discharge in m³/s, heads in m; synthetic, the engine's law evaluated directly.
 
-Figure 9-8 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.
+Figure 9-8 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows
+
+Figure 9-9 The output cell velocity of the local-inertial and diffusive-wave closures: edge-normal velocities Q/A and the area-weighted least-squares vector on (a) a triangle and (b) a quadrilateral with one shallow edge, and (c) the rank-deficient case reported as NaN. Velocities in m/s, depths in m; synthetic edge data fitted with the engine's algorithm.
+
+Figure 9-10 Whole-run statistics of the coupled worked example, read from its results file: (a) the maximum depth (m), (b) the time of the maximum depth and (c) the time of the maximum speed, in hours from the start of the run (minutes below one hour). Simulated: coupled_1d2d/2d_complete_example.inp, six hours.
+
+Figure 9-11 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.
+
+Figure 9-12 How a run chooses the compute backend of the 1D finite-volume solver and of the 2D marcher, and where each falls back to the CPU (rendered diagram)
 
 <!-- END GENERATED -->
 
@@ -455,6 +467,12 @@ MIN_SURFAREA supplies numerical stability under the compatibility path and must 
 For dynamic wave, a chamber balances its change in physical volume plus its share of the actual change in adjacent conduit volume against the time-integrated net inflow. The conduit top-width tangent is used to converge head, and does not create extra inventory at the crown cutoff. This volume residual is used for positive chambers under both EXPLICIT and SEMI_IMPLICIT node-continuity settings. Zero-area junctions retain their existing algorithms.
 
 For example, a junction with `MaxDepth = 10` and `StorageArea = 100` holds 400 ft³ at 4 ft depth in a US-unit model. An equivalent constant-area storage unit uses `FUNCTIONAL 0 0 100`. Both geometries have the same below-rim capacity; the ordinary junction retains its junction identity. Above-rim ponding, if enabled, uses the separately specified ponded area.
+
+The figure below draws the chamber, plots this example's volume against depth, and shows how a connected conduit's water is shared between its two ends, as the last paragraph of this section describes.
+
+![Physical junction chamber storage: section, volume against depth, and the conduit inventory shares](figures/png/hydraulics_junction_chamber_storage.png)
+
+*Physical junction chamber storage (synthetic, from the engine's volume and sharing rules; section areas from the engine's circular geometry): (a) a junction with StorageArea A, holding A·y below the rim; (b) chamber volume against depth for MaxDepth 10 ft and A = 100 ft², with and without ponding over an illustrative A_ponded = 500 ft²; (c) a 2 ft circular conduit, 200 ft long, whose far end stands 1 ft deep, split between its ends in proportion to their section areas: a dry chamber end takes no share.*
 
 See [OpenSWMM issue #10](https://github.com/HydroCouple/openswmm.engine/issues/10) and [USEPA issue #200](https://github.com/USEPA/Stormwater-Management-Model/issues/200) for the physical-area proposal.
 

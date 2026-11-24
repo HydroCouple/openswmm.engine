@@ -1,0 +1,57 @@
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         FV
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:30:00
+REPORT_STEP          00:01:00
+ROUTING_STEP         1
+ALLOW_PONDING        YES
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth
+ST_UP   100.0  1.0
+MH1      90.0  1.0  0  0  10
+ST_MID   99.5  1.0
+
+[OUTFALLS]
+;;Name  Elev   Type  Gated
+OUT_ST   99.0  FREE  NO
+OUT_MH   88.0  FREE  NO
+
+[CONDUITS]
+;;Name  From    To      Length  N      Z1  Z2
+C_ST1   ST_UP   ST_MID  50.0    0.016  0   0
+C_ST2   ST_MID  OUT_ST  50.0    0.016  0   0
+C_MH    MH1     OUT_MH  50.0    0.014  0   0
+
+[XSECTIONS]
+;;Link  Shape     G1        G2  G3  G4  Barrels
+C_ST1   STREET    StreetA
+C_ST2   STREET    StreetA
+C_MH    CIRCULAR  0.25       0   0   0   1
+
+[STREETS]
+;;Name  Tcrown  Hcurb  Sx  nRoad  Hdep  Wdep  Sides
+StreetA 20.0    0.5    4   0.016  0     0     1
+
+[INLETS]
+;;Name  Type   Length  Width  GrateType
+Grate1  GRATE  2.0     2.0    P_BAR-50
+
+[INLET_USAGE]
+;;Conduit  Inlet   Node  #Inlets  %Clog  Qmax  aLocal  wLocal  Placement
+C_ST1      Grate1  MH1   1        0      0     0       0       ON_GRADE
+
+[DWF]
+;;Node  Param  Value
+ST_UP   FLOW   2.0
+
+[COORDINATES]
+;;Node  X      Y
+ST_UP     0.0   0.0
+ST_MID   50.0   0.0
+OUT_ST  100.0   0.0
+MH1      50.0 -50.0
+OUT_MH  100.0 -50.0

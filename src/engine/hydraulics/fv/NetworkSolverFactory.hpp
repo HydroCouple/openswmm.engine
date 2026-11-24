@@ -65,7 +65,28 @@ struct FvOptions;
  *     mesh/state/options.
  */
 std::unique_ptr<INetworkSolver> makeNetworkSolver(const FvOptions& opts, std::string* chosen,
-                                                  int n_cells);
+                                                  int n_cells, int requested_threads = 0);
+
+/// Whether a compute backend can be used on this machine, and on what.
+struct BackendProbe {
+    bool usable = false;
+    std::string device_name;                 ///< e.g. the GPU model, or "CPU"
+    unsigned long long device_mem_bytes = 0; ///< 0 when unknown or a host backend
+    std::string reason;                      ///< why not, when not usable
+};
+
+/**
+ * @brief Ask whether a backend's plugin is installed, matches this engine and has a device.
+ *
+ * Loads the plugin module (it stays loaded) and calls its probe; no solver is created and no
+ * parallel runtime is started. "cpu" and "auto" are always usable.
+ *
+ * @param[in] backend "cpu", "auto", "omp", "cuda", "hip" or "sycl", in any case.
+ * @param[in] surface True for the 2D surface solver, false for the 1D network solver. The two
+ *     are served by the same plugin module but by different factories.
+ * @return The probe result; `reason` is empty when usable.
+ */
+BackendProbe probeBackend(const std::string& backend, bool surface);
 
 } // namespace openswmm::fv
 

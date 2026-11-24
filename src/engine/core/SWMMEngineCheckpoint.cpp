@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "SWMMEngine.hpp"
 #include "HotStartManager.hpp"
 #include "../hydrology/surface/NativeSnow.hpp"
@@ -21,6 +22,7 @@
 #include "SplitExecution.hpp"
 #include "../quality/PeerPassiveStorageExchange.hpp"
 #include "DateTime.hpp"
+#include "../hydrology/Gage.hpp"
 #include "FileIO.hpp"
 #include "../io/CheckpointFile.hpp"
 #include "../io/CheckpointDirectory.hpp"
@@ -55,6 +57,9 @@ namespace {
 using Archive = detail::CompletedSourceArchive;
 constexpr uint64_t maxBytes = 64 * 1024 * 1024;
 constexpr const char* magicName = "OpenSWMM accepted water-only engine session";
+/// A [RESTART] continuation record: the continuation model at the record's time around the
+/// engine checkpoint (SWMMEngine::wrapContinuationRecord).
+constexpr const char* continuationMagic = "OpenSWMM continuation record v1";
 constexpr const char* fileMagic = "OpenSWMM file-backed water engine session";
 constexpr const char* streamMagic = "OpenSWMM engine session with source stream";
 /**
@@ -674,7 +679,7 @@ CheckpointInspection::Reports inspectReports(std::string bytes, bool mesh,
                 grid * step_ms == next_report_ms,
             "Invalid inspected report grid.");
     const auto completed = static_cast<int>(grid) - 1;
-    const double ratio = mesh && cadence > 0 ? cadence * 86400 / step : 1;
+    const double ratio = mesh && cadence > 0 ? cadence * constants::SEC_PER_DAY_INT / step : 1;
     require(std::isfinite(ratio) && ratio >= 1 && ratio <= std::numeric_limits<int>::max(),
             "Invalid inspected report cadence.");
     const auto stride = static_cast<int>(std::round(ratio));
@@ -1140,6 +1145,51 @@ std::string SWMMEngine::saveNativeHotstart(const std::string& path) const {
     return saved ? std::string{} : HotStartManager::last_io_error();
 }
 
+// Runtime forcing channels a checkpoint saves and restores, with climate evaporation: each entry's
+// mode, value and persistence, so a run continued from it applies the persistent forcing and any
+// one-step forcing not yet applied, as the run that saved it would. The other channels are refused
+// by name (checkCheckpointProfile) until their restore is tested.
+#define RESTORED_FORCING(X)                                                                        \
+    X(node_lat_inflow)                                                                             \
+    X(node_head_boundary)                                                                          \
+    X(link_flow)                                                                                   \
+    X(link_setting)                                                                                \
+    X(subcatch_rainfall)                                                                           \
+    X(subcatch_evap)                                                                               \
+    X(gage_rainfall)
+
+namespace {
+constexpr uint32_t forcingVersion =
+    10000; ///< Added to the checkpoint version when it holds forcing.
+
+/** Whether any restored channel holds a forcing. */
+bool restoredForcingActive(const ForcingData& f) {
+    const auto any = [](const std::vector<ForcingMode>& modes) {
+        return std::any_of(modes.begin(), modes.end(),
+                           [](ForcingMode m) { return m != ForcingMode::NONE; });
+    };
+    bool active = f.climate_evap_mode != ForcingMode::NONE;
+#define ACTIVE(c) active = active || any(f.c##_mode);
+    RESTORED_FORCING(ACTIVE)
+#undef ACTIVE
+    return active;
+}
+
+/** Whether a saved channel has the live channel's length, known modes and finite values. */
+template <class Modes, class Values, class Persist>
+bool forcingChannelValid(const Modes& modes, const Values& values, const Persist& persist,
+                         std::size_t n) {
+    if (modes.size() != n || values.size() != n || persist.size() != n)
+        return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        const int m = static_cast<int>(modes[i]), k = static_cast<int>(persist[i]);
+        if (m < 0 || m > 2 || k < 0 || k > 1 || !std::isfinite(values[i]))
+            return false;
+    }
+    return true;
+}
+} // namespace
+
 struct SWMMEngine::RestartState {
     SimulationContext::MassBalance balance;
     SimulationContext::RoutingStepStats stats;
@@ -1173,6 +1223,9 @@ struct SWMMEngine::RestartState {
     bool frost_profile = false;
     std::vector<double> frost_enthalpy, frost_initial, frost_surface, frost_deep, frost_water;
     std::array<double, 6> boundary;
+    // Runtime forcing of the restored channels; carried only when one holds a forcing.
+    bool forcing_profile = false;
+    ForcingData forcing;
     double controls_remaining;
     std::vector<TableCursor> cursors;
     std::vector<controls::ControlEngine::PendingAction> pending;
@@ -1248,6 +1301,9 @@ struct SWMMEngine::RestartState {
             snow_rain = e.snow_rain_;
             snow_snow = e.snow_snow_;
         }
+        forcing_profile = restoredForcingActive(e.ctx_.forcing);
+        if (forcing_profile)
+            forcing = e.ctx_.forcing;
         frost_profile = e.ctx_.frozen_ground.enabled();
         if (frost_profile) {
             const auto& f = e.ctx_.frozen_ground;
@@ -1399,6 +1455,16 @@ struct SWMMEngine::RestartState {
         if (spatial)
             fields(a, source_totals);
 #endif
+        if (forcing_profile) {
+            std::string marker = "engine runtime forcing v1";
+            a(marker);
+            require(marker == "engine runtime forcing v1",
+                    "Unsupported engine runtime forcing record.");
+#define CHANNEL(c) a(forcing.c##_mode, forcing.c##_value, forcing.c##_persist);
+            RESTORED_FORCING(CHANNEL)
+#undef CHANNEL
+            a(forcing.climate_evap_mode, forcing.climate_evap_value, forcing.climate_evap_persist);
+        }
     }
     /**
      * @brief Validate staged engine inventories against a matching initialized model.
@@ -1413,6 +1479,20 @@ struct SWMMEngine::RestartState {
      *     profile configuration.
      */
     void validate(const SWMMEngine& e) const {
+        if (forcing_profile) {
+            const auto& live = e.ctx_.forcing;
+#define SHAPE(c)                                                                                   \
+    require(forcingChannelValid(forcing.c##_mode, forcing.c##_value, forcing.c##_persist,          \
+                                live.c##_mode.size()),                                             \
+            "Engine checkpoint runtime forcing " #c " differs from the model.");
+            RESTORED_FORCING(SHAPE)
+#undef SHAPE
+            const std::array<ForcingMode, 1> mode{forcing.climate_evap_mode};
+            const std::array<double, 1> value{forcing.climate_evap_value};
+            const std::array<ForcingPersist, 1> persist{forcing.climate_evap_persist};
+            require(forcingChannelValid(mode, value, persist, 1),
+                    "Engine checkpoint runtime forcing climate_evap is invalid.");
+        }
         const double time = boundary[0], elapsed = boundary[2],
                      duration = e.ctx_.options.totalDurationMs();
         require(time >= 0 && elapsed >= 0 && elapsed <= duration &&
@@ -1843,6 +1923,19 @@ struct SWMMEngine::RestartState {
         ENGINE(COPY)
         RUNOFF_ENGINE(COPY)
 #undef COPY
+        // The forcing the saved run held, and none when it held none.
+        if (forcing_profile) {
+#define MOVE(c)                                                                                    \
+    e.ctx_.forcing.c##_mode = std::move(forcing.c##_mode);                                         \
+    e.ctx_.forcing.c##_value = std::move(forcing.c##_value);                                       \
+    e.ctx_.forcing.c##_persist = std::move(forcing.c##_persist);
+            RESTORED_FORCING(MOVE)
+#undef MOVE
+            e.ctx_.forcing.climate_evap_mode = forcing.climate_evap_mode;
+            e.ctx_.forcing.climate_evap_value = forcing.climate_evap_value;
+            e.ctx_.forcing.climate_evap_persist = forcing.climate_evap_persist;
+        } else
+            e.ctx_.forcing.clear_all();
         if (snow_context) {
             e.snow_ = std::move(snow);
             e.ctx_.snowpacks.runtime = std::move(snow_context->snowpacks.runtime);
@@ -1958,7 +2051,8 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
             "Engine session checkpoint does not yet support runtime advance/coupling targets.");
     require(
         ctx_.state == EngineState::RUNNING && ctx_.error_code == 0 && do_routing_ &&
-            save_results_ == (checkpoint_output_ ? 1 : 0),
+            checkpoint_output_ ==
+                (save_results_ != 0 && !out_path_.empty()), // binary results written
         "Engine checkpoint requires a running qualified session with its prepared output mode.");
     if (checkpoint_output_)
         require(binary_output_plugin_ && binary_output_plugin_->checkpoint_fresh_ &&
@@ -2061,18 +2155,33 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     for (const auto& t : ctx_.tables.tables)
         require(!t.is_file_based && !t.file_handle,
                 "Engine checkpoint cannot recover file-backed tables.");
+    // Runtime forcing of the RESTORED_FORCING channels and climate evaporation is saved; the
+    // others are refused by name until their restore is tested.
     const auto& f = ctx_.forcing;
-    for (const auto* row :
-         {&f.node_lat_inflow_mode, &f.node_head_boundary_mode, &f.node_quality_mode,
-          &f.node_temperature_mode, &f.node_age_mode, &f.link_flow_mode, &f.link_setting_mode,
-          &f.link_seepage_mode, &f.link_quality_mode, &f.subcatch_rainfall_mode,
-          &f.subcatch_evap_mode, &f.subcatch_snowfall_mode, &f.gage_rainfall_mode})
+    for (const auto& [row, message] :
+         {std::pair{&f.node_temperature_mode,
+                    "Engine checkpoint cannot recover runtime node temperature forcing."},
+          std::pair{&f.node_age_mode, "Engine checkpoint cannot recover runtime node age forcing."},
+          std::pair{&f.node_quality_mode,
+                    "Engine checkpoint cannot recover runtime node quality forcing."},
+          std::pair{&f.link_quality_mode,
+                    "Engine checkpoint cannot recover runtime link quality forcing."},
+          std::pair{&f.link_seepage_mode,
+                    "Engine checkpoint cannot recover runtime link seepage forcing."},
+          std::pair{&f.subcatch_snowfall_mode,
+                    "Engine checkpoint cannot recover runtime subcatchment snowfall forcing."}})
         for (auto mode : *row)
-            require(mode == ForcingMode::NONE, "Engine checkpoint cannot recover runtime forcing.");
+            require(mode == ForcingMode::NONE, message);
     require(f.climate_temperature_mode == ForcingMode::NONE &&
-                f.climate_wind_mode == ForcingMode::NONE &&
-                f.climate_evap_mode == ForcingMode::NONE,
-            "Engine checkpoint cannot recover runtime climate forcing.");
+                f.climate_wind_mode == ForcingMode::NONE,
+            "Engine checkpoint cannot recover runtime climate temperature or wind forcing.");
+    // Per-element air temperature, humidity, wind and shortwave forcing is no more recoverable:
+    // without this a persistent one passed the check and was gone after a restore.
+    for (const auto* channels : {f.elem_air_temp, f.elem_humidity, f.elem_wind, f.elem_shortwave})
+        for (int kind = 0; kind < 2; ++kind)
+            for (auto mode : channels[kind].mode)
+                require(mode == ForcingMode::NONE,
+                        "Engine checkpoint cannot recover runtime element climate forcing.");
     require(ctx_.n_subcatches() == 0 || ctx_.options.ignore_groundwater,
             "Runoff session checkpoint currently requires IGNORE_GROUNDWATER.");
     for (int aquifer : ctx_.subcatches.gw_aquifer)
@@ -2120,11 +2229,29 @@ void SWMMEngine::checkCheckpointProfile(bool attaching_surface) const {
     router_.checkCheckpointProfile(ctx_);
 }
 std::string SWMMEngine::checkpointModel() const {
+    return continuationModel(-1.0, nullptr);
+}
+std::string
+SWMMEngine::continuationModel(double record_time,
+                              std::vector<std::pair<std::string, std::string>>* parts) const {
+    // A negative record time is checkpointModel(): the whole identity, end date and all points.
+    const bool cut = record_time >= 0.0;
     Archive a;
     auto o = ctx_.options;
+    if (cut) {
+        o.end_date = 0.0;
+        o.total_duration_ms = 0.0;
+    }
 #define F(v) field(a, o.v);
     OPTIONS(F)
 #undef F
+    if (parts) {
+        Archive part;
+#define F(v) field(part, o.v);
+        OPTIONS(F)
+#undef F
+        parts->emplace_back("its [OPTIONS]", part.bytes());
+    }
     if (o.heat_transport) {
         auto heat = ctx_.heat_config;
         heatConfig(a, heat);
@@ -2154,8 +2281,56 @@ std::string SWMMEngine::checkpointModel() const {
     a.sequence(patterns, [&](auto& p) { fields(a, p.type, p.factors); });
     auto count = ctx_.n_tables();
     a(count);
-    for (auto t : ctx_.tables.tables)
+    // A series only rain gages read (INTENSITY or VOLUME: each point holds for its own interval)
+    // is not read before a record by its points after it. Any other series is interpolated
+    // towards its first point at or after the record, so that point is kept too.
+    std::vector<char> rain_only(ctx_.tables.tables.size(), 0);
+    if (cut) {
+        const auto& g = ctx_.gages;
+        std::vector<char> cumulative(rain_only.size(), 0);
+        for (std::size_t j = 0; j < g.ts_index.size(); ++j) {
+            const int k = g.ts_index[j];
+            if (k < 0 || k >= static_cast<int>(rain_only.size()) || j >= g.source.size() ||
+                g.source[j] != RainSource::TIMESERIES || j >= g.rain_type.size())
+                continue;
+            if (g.rain_type[j] == 0 || g.rain_type[j] == 1)
+                rain_only[static_cast<std::size_t>(k)] = 1;
+            else
+                cumulative[static_cast<std::size_t>(k)] = 1; // a rate from the next point
+        }
+        for (std::size_t k = 0; k < rain_only.size(); ++k)
+            if (cumulative[k])
+                rain_only[k] = 0;
+        const auto read_elsewhere = [&](const std::string& name) {
+            return name == o.humidity_ts_name || name == ctx_.options.evap_ts_name ||
+                   name == ctx_.options.temp_ts_name ||
+                   std::find(ctx_.ext_inflows.ts_name.begin(), ctx_.ext_inflows.ts_name.end(),
+                             name) != ctx_.ext_inflows.ts_name.end();
+        };
+        for (std::size_t k = 0; k < rain_only.size(); ++k)
+            if (rain_only[k] && read_elsewhere(ctx_.tables.tables[k].id))
+                rain_only[k] = 0;
+    }
+    constexpr double half_ms = 0.5 / constants::MSEC_PER_DAY;
+    for (std::size_t k = 0; k < ctx_.tables.tables.size(); ++k) {
+        auto t = ctx_.tables.tables[k];
+        if (cut && t.type == TableType::TIMESERIES && t.num_cols <= 1) {
+            std::size_t keep = 0;
+            while (keep < t.x.size() && t.x[keep] < record_time - half_ms)
+                ++keep;
+            if (!rain_only[k] && keep < t.x.size())
+                ++keep;
+            t.x.resize(keep);
+            t.y.resize(std::min(keep, t.y.size()));
+        }
         a(t.id, t.type, t.x, t.y, t.n_relative, t.rel_anchor, t.num_cols, t.column_ids);
+        if (parts) {
+            Archive part;
+            part(t.id, t.type, t.x, t.y, t.n_relative, t.rel_anchor, t.num_cols, t.column_ids);
+            parts->emplace_back(
+                (t.type == TableType::TIMESERIES ? "time series " : "curve ") + t.id, part.bytes());
+        }
+    }
     auto cr = controls_.rules_;
     auto named = controls_.named_vars_;
     a.sequence(cr, [&](auto& r) {
@@ -2248,8 +2423,10 @@ std::string SWMMEngine::checkpointModel() const {
     auto lid = lid_.waterTrial();
     runoff.checkpoint(a, true);
     lid.checkpoint(a, true);
-    auto hydraulic = router_.checkpointModel(ctx_);
+    auto hydraulic = router_.checkpointModel(ctx_, cut);
     a(hydraulic);
+    if (parts)
+        parts->emplace_back("its network", hydraulic);
 #ifdef OPENSWMM_HAS_2D
     if (live_passive_exchange_ || surface_router_.paired_water_checkpoint_) {
         std::string profile = surface_router_.paired_water_checkpoint_
@@ -2275,6 +2452,26 @@ std::string SWMMEngine::checkpointModel() const {
 #endif
     require(a.bytes().size() <= maxBytes, "Engine checkpoint model exceeds its size limit.");
     return a.bytes();
+}
+double SWMMEngine::nextContinuationRecordMs() const noexcept {
+    if (!restart_store_ || !ctx_.restart.record_continuation ||
+        restart_next_ >= restart_due_.size())
+        return std::numeric_limits<double>::infinity();
+    // Whole milliseconds, as the end of a run is (its total duration is exact whole-second ms
+    // from the date and time parts; a dated record's combined serials miss by a fraction).
+    return std::round(restart_due_[restart_next_].first);
+}
+std::string SWMMEngine::wrapContinuationRecord(std::string checkpoint, double record_time) const {
+    std::vector<std::pair<std::string, std::string>> parts;
+    auto model = continuationModel(record_time, &parts);
+    std::string magic = continuationMagic;
+    auto count = static_cast<uint32_t>(parts.size());
+    Archive out;
+    out(magic, record_time, model, count);
+    for (auto& [label, bytes] : parts)
+        out(label, bytes);
+    out(checkpoint);
+    return out.bytes();
 }
 void SWMMEngine::checkCheckpointBoundary() const {
     require(checkpoint_enabled_ && checkpoint_ready_,
@@ -2685,7 +2882,7 @@ std::string SWMMEngine::checkpointBytes(std::string& result, bool include_output
         state.archive(payload);
         std::string hydraulic;
         // New report-statistics schema; keep profile/output offsets distinct from old files.
-        uint32_t version = 103;
+        uint32_t version = state.forcing_profile ? 103 + forcingVersion : 103;
         std::string error;
 #ifdef OPENSWMM_HAS_2D
         if (surface_router_.isActive()) {
@@ -3133,11 +3330,49 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
                                             const std::string& binary_file,
                                             const std::string& mesh_file, uint64_t whole_binding,
                                             CheckpointInspection* inspection) {
+    continuation_restore_ = router_.accept_continuation_model_ = false;
     try {
         CheckpointInspection summary;
         require(!step_active_ && !runtime_pipeline_ && exchange_target_ < 0 &&
                     ctx_.current_time == 0,
                 "Engine restore requires an identically initialized fresh session.");
+        {
+            // A continuation record may continue into a model with a later end and the time
+            // series' points after the record; anything else must be the saved model.
+            std::string first;
+            Archive probe(checkpoint);
+            probe(first);
+            if (first == continuationMagic) {
+                Archive in(std::move(checkpoint));
+                std::string magic, saved;
+                double record_time = 0.0;
+                uint32_t count = 0;
+                in(magic, record_time, saved, count);
+                std::vector<std::pair<std::string, std::string>> saved_parts(count);
+                for (auto& [label, bytes] : saved_parts)
+                    in(label, bytes);
+                in(checkpoint);
+                in.finish();
+                std::vector<std::pair<std::string, std::string>> parts;
+                if (continuationModel(record_time, &parts) != saved) {
+                    std::string where = "its network or another part of the model";
+                    for (std::size_t k = 0; k < std::max(parts.size(), saved_parts.size()); ++k)
+                        if (k >= parts.size() || k >= saved_parts.size() ||
+                            parts[k] != saved_parts[k]) {
+                            where = k < parts.size() ? parts[k].first : saved_parts[k].first;
+                            break;
+                        }
+                    const std::string message =
+                        "[RESTART] the record was saved from a model that differs from this one "
+                        "in " +
+                        where +
+                        "; a continued run may change only its end date and the "
+                        "time series after the record";
+                    require(false, message.c_str());
+                }
+                continuation_restore_ = router_.accept_continuation_model_ = true;
+            }
+        }
 #ifdef OPENSWMM_HAS_2D
         require(!engine_source_history_,
                 "Restore the engine checkpoint before attaching its source history.");
@@ -3191,10 +3426,14 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
             expected_version += 100;
         if (ctx_.reactions.configured)
             expected_version += 1000;
-        require(magic == magicName && version == expected_version && model == checkpoint_model_ &&
-                    crc == checksum(bytes),
+        const bool forced = version == expected_version + forcingVersion;
+        if (forced)
+            expected_version += forcingVersion;
+        require(magic == magicName && version == expected_version &&
+                    (model == checkpoint_model_ || continuation_restore_) && crc == checksum(bytes),
                 "Engine checkpoint format/model/checksum differs.");
         RestartState state(*this);
+        state.forcing_profile = forced;
         Archive payload(std::move(bytes));
         state.archive(payload);
         std::string hydraulic;
@@ -3275,8 +3514,41 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
 #endif
         std::shared_ptr<DefaultOutputPlugin::PreparedCheckpoint> prepared_output;
         std::function<void()> publish_output;
+        // The report the saving run wrote at the record's own time read the rain that starts then,
+        // which its series did not hold; the continued model's does (refreshGageLookahead), so the
+        // report gets the rainfall the uninterrupted run wrote. Everything else in it is the same.
+        const auto rewrite_report_rain = [&] {
+            const double last_ms = ctx_.next_report_ms - 1000.0 * ctx_.options.report_step;
+            if (!continuation_restore_ || !checkpoint_output_ || files ||
+                ctx_.n_subcatches() == 0 || std::abs(last_ms - ctx_.elapsed_ms) >= 0.5)
+                return;
+            const double date =
+                datetime::addSeconds(ctx_.options.start_date, (last_ms + 1.0) / 1000.0);
+            if (date < ctx_.options.report_start)
+                return;
+            // As postOutputSnapshot: the gage's report rainfall in its own units, and the
+            // float32 area-weighted system sum over the round-tripped areas.
+            std::vector<double> rain(static_cast<std::size_t>(ctx_.n_subcatches()), 0.0);
+            const double ucf_land = ucf::UCF(ucf::LANDAREA, ctx_.options);
+            float total_area = 0.0f, a_rain = 0.0f;
+            for (int i = 0; i < ctx_.n_subcatches(); ++i) {
+                const auto ui = static_cast<std::size_t>(i);
+                const int g = ctx_.subcatches.gage[ui];
+                rain[ui] =
+                    g >= 0 && g < ctx_.n_gages() ? gage::getReportRainfall(ctx_, g, date) : 0.0;
+                const double area = (ctx_.subcatches.area[ui] / ucf_land) * ucf_land;
+                total_area += static_cast<float>(area);
+                a_rain += static_cast<float>(static_cast<float>(rain[ui]) * area);
+            }
+            if (total_area > 0.0)
+                a_rain /= total_area;
+            require(io_thread_.flush() == 0, "Cannot rewrite the report after failed writes.");
+            binary_output_plugin_->rewriteLastReportRain(rain, a_rain);
+        };
         if (checkpoint_output_) {
             require(io_thread_.flush() == 0, "Cannot restore failed output writes.");
+            // A continued run writes the report at the record's own time itself: it reads the
+            // rain that starts then, which the saving run's series did not hold.
             prepared_output = files ? binary_output_plugin_->prepareFileCheckpoint(
                                           ctx_, state.boundary[4], binary_file)
                                     : binary_output_plugin_->prepareCheckpoint(
@@ -3380,6 +3652,9 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
                 *source_delivery_ = std::move(*bridge);
             }
             state.install(*this);
+            if (continuation_restore_)
+                gage::refreshGageLookahead(ctx_);
+            rewrite_report_rain();
             return {};
         }
 #endif
@@ -3396,6 +3671,9 @@ std::string SWMMEngine::loadCheckpointBytes(std::string checkpoint,
             publish_output();
         router_.installCheckpoint(ctx_, std::move(routing));
         state.install(*this);
+        if (continuation_restore_)
+            gage::refreshGageLookahead(ctx_);
+        rewrite_report_rain();
         return {};
     } catch (const std::exception& e) {
         return e.what();

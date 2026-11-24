@@ -245,6 +245,25 @@ void KWSolver::init(int n_conduits, const XSectGroups& /*groups*/) {
     y2_.assign(un, 0.0);
 }
 
+void KWSolver::seedInitialState(const SimulationContext& ctx) {
+    const auto& links = ctx.links;
+    const auto& CD = ctx.link_subtypes.conduits;
+    for (int j = 0; j < ctx.n_links() && j < n_conduits_; ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        if (links.type[uj] != LinkType::CONDUIT || links.xsect_shape[uj] == XsectShape::DUMMY)
+            continue;
+        const int cr = ctx.link_subtypes.conduit_row(j);
+        if (cr < 0 || links.flow[uj] == 0.0)
+            continue;
+        const double barrels =
+            static_cast<double>(std::max(CD.barrels[static_cast<std::size_t>(cr)], 1));
+        const double a = xsect::getAofY(buildXSP_KW(ctx, uj), links.depth[uj]);
+        q1_[uj] = q2_[uj] = links.flow[uj] / barrels;
+        a1_[uj] = a2_[uj] = a;
+        y1_[uj] = y2_[uj] = links.depth[uj];
+    }
+}
+
 // ============================================================================
 // Per-conduit Newton solve
 // ============================================================================

@@ -10,6 +10,7 @@
  * @license   Apache-2.0
  */
 
+#include "../engine/core/Constants.hpp"
 #include "ComponentBase.hpp"
 #include <hydrocouplecomponentabi.h>
 #include <hydrocouplespatial.h>
@@ -364,8 +365,8 @@ public:
                     throw std::invalid_argument("The receiver must declare physical time");
                 if (std::abs(receiver->simulationPeriod()->julianDay() - epoch_) > 1.e-10)
                     throw std::invalid_argument("SWMM and receiver epochs differ");
-                if (std::abs(receiver->simulationPeriod()->duration() * 86400.0 - times_.back()) >
-                    1.e-6)
+                if (std::abs(receiver->simulationPeriod()->duration() * constants::SEC_PER_DAY -
+                             times_.back()) > 1.e-6)
                     throw std::invalid_argument("SWMM and receiver exchange horizons differ");
                 bool columns = false, ack = false;
                 for (auto* output : input->modelComponent()->outputs()) {
@@ -421,7 +422,7 @@ public:
                 throw std::invalid_argument("Configured epoch does not match SWMM model start");
             double end;
             check(swmm_get_end_time(engine_, &end));
-            if (times_.back() > (end - start) * 86400.0 + 1.e-6)
+            if (times_.back() > (end - start) * constants::SEC_PER_DAY + 1.e-6)
                 throw std::invalid_argument("Exchange horizon exceeds SWMM duration");
             if (swmm_reaction_species_count(engine_) > 0)
                 throw std::invalid_argument(
@@ -627,7 +628,7 @@ public:
      * advancement or allocation. Host serializes mutable metadata queries and owner lifetime.
      */
     HC::Temporal::IDateTime* currentDateTime() const override {
-        clock_.day = epoch_ + time_ / 86400.0;
+        clock_.day = epoch_ + time_ / constants::SEC_PER_DAY;
         return &clock_;
     }
     /**
@@ -639,7 +640,7 @@ public:
      */
     HC::Temporal::ITimeSpan* simulationPeriod() const override {
         period_.day = epoch_;
-        period_.span = times_.empty() ? 0 : times_.back() / 86400.0;
+        period_.span = times_.empty() ? 0 : times_.back() / constants::SEC_PER_DAY;
         return &period_;
     }
     /**
@@ -652,7 +653,7 @@ public:
     double nextDateTimeJulianDay() const override {
         return epoch_ + ((sequence_ < times_.size() && status() == CS::Updated) ? times_[sequence_]
                                                                                 : time_) /
-                            86400.0;
+                            constants::SEC_PER_DAY;
     }
 
 private:

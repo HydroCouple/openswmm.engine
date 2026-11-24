@@ -31,8 +31,17 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          # The PR checkout is the test merge. Manual runs check the last commit.
-          if [[ -z "$BASE" ]]; then
+          # Manual runs check the last commit.
+          TIP=HEAD
+          if [[ "${{ github.event_name }}" == pull_request ]]; then
+            # The checkout is GitHub's test merge into the base branch's CURRENT
+            # tip, while BASE is the base tip recorded when the pull request was
+            # opened. Diffing BASE against the test merge therefore also covers
+            # every line the base branch changed since then (main's work since
+            # October failed the swmm6_rel release PR on main's own files).
+            # The pull request's head, HEAD^2, holds only its own changes.
+            TIP=HEAD^2
+          elif [[ -z "$BASE" ]]; then
             BASE=$(git rev-parse --verify HEAD^ || git hash-object -w -t tree /dev/null)
           elif ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             # An initial branch push or an unreachable prior tip.
@@ -40,7 +49,21 @@ jobs:
           fi
           # Check only the changed lines: most older files predate .clang-format.
           git clang-format-19 --binary clang-format-19 --style=file --diff \
-            --extensions c,cc,cpp,cxx,h,hh,hpp,hxx,inl,ipp "$BASE" HEAD
+            --extensions c,cc,cpp,cxx,h,hh,hpp,hxx,inl,ipp "$BASE" "$TIP"
+
+  constants:
+    name: Constants defined once
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # Every physical constant and unit factor lives in Constants.hpp or
+      # UnitConversion.hpp; a literal copy elsewhere is a second definition.
+      - name: Scan the engine sources for literal copies of its constants
+        run: python3 scripts/lint_constants.py
+      - name: Prove the scan can fail
+        run: python3 scripts/lint_constants_negative.py
 
   linux:
     name: ${{ matrix.check }}

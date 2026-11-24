@@ -64,8 +64,10 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import importlib
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -455,6 +457,22 @@ def find_cli(explicit=None):
     return None
 
 
+def engine_identity(cli: Path) -> dict:
+    """sha256 of the CLI and of the engine libraries beside it or in ../lib.
+
+    The CLI loads the engine from a shared library, so a rebuilt engine changes
+    a digest here even when the CLI's own bytes do not.
+    """
+    cli = cli.resolve()
+    files = {cli}
+    for d in (cli.parent, cli.parent.parent / "lib"):
+        if d.is_dir():
+            files.update(f.resolve() for f in d.iterdir()
+                         if "openswmm" in f.name and f.is_file()
+                         and (f.suffix in {".dylib", ".so", ".dll"} or ".so." in f.name))
+    return {str(f): hashlib.sha256(f.read_bytes()).hexdigest() for f in sorted(files)}
+
+
 def upsert_options(text: str, options: dict) -> str:
     """Rewrite [OPTIONS] keys in an .inp (add the key if absent)."""
     lines = text.splitlines()
@@ -580,8 +598,11 @@ class FigureSink:
         `[TRANSPORT_OPTIONS] TARGET_DX`, say. `text` replaces the deck text
         outright, for a key in some other section of the deck itself, such as
         `[2D_OPTIONS] MOMENTUM_EQUATION`; the generator is then responsible for
-        deriving it from the committed deck rather than inventing a model. All
-        three take part in the cache check.
+        deriving it from the committed deck rather than inventing a model.
+
+        The cache is reused only when `cache.json` records the same engine
+        (engine_identity), deck text (with the options applied) and sidecar
+        bytes. It is written after a run exits 0 with its report and output.
         """
         src = self.fig_dir / "decks" / deck
         if not src.is_file():
@@ -590,31 +611,42 @@ class FigureSink:
         work = self.fig_dir / "cache" / Path(deck).stem / key
         work.mkdir(parents=True, exist_ok=True)
         inp, rpt, out = work / "model.inp", work / "model.rpt", work / "model.out"
+        stamp = work / "cache.json"
         text = src.read_text(errors="replace") if text is None else text
         if options:
             text = upsert_options(text, {k.upper(): v for k, v in options.items()})
-        for sidecar in src.parent.iterdir():
-            if sidecar.is_file() and sidecar != src and not (work / sidecar.name).exists():
-                shutil.copy2(sidecar, work / sidecar.name)
-        stale = False
-        for name, body in (sidecars or {}).items():
-            target = work / name
-            if not target.exists() or target.read_text(errors="replace") != body:
-                target.write_text(body)
-                stale = True
-        if (not stale and inp.exists() and inp.read_text(errors="replace") == text
-                and rpt.exists() and out.exists()):
-            return RunResult(inp, rpt, out, next(work.glob("*.h5"), None), 0.0)
-        inp.write_text(text)
         cli = find_cli(self.cli)
         if cli is None:
             raise RuntimeError("no openswmm CLI: pass --cli, set OPENSWMM_BIN or OPENSWMM_BUILD_DIR")
+        files = {f.name: f.read_bytes() for f in src.parent.iterdir() if f.is_file() and f != src}
+        files.update({name: body.encode() for name, body in (sidecars or {}).items()})
+        for name, body in files.items():
+            target = work / name
+            if not target.is_file() or target.read_bytes() != body:
+                target.write_bytes(body)
+        identity = {"engine": engine_identity(cli),
+                    "deck": hashlib.sha256(text.encode()).hexdigest(),
+                    "sidecars": {n: hashlib.sha256(b).hexdigest() for n, b in sorted(files.items())}}
+        if (stamp.is_file() and rpt.is_file() and out.is_file()
+                and json.loads(stamp.read_text()) == identity):
+            return RunResult(inp, rpt, out, next(work.glob("*.h5"), None), 0.0)
+        # Nothing from an earlier run may stand in for this one's results.
+        stamp.unlink(missing_ok=True)
+        for old in [rpt, out, *work.glob("*.h5")]:
+            if old.name not in files:
+                old.unlink(missing_ok=True)
+        inp.write_text(text)
         t0 = time.time()
         p = subprocess.run([str(cli), inp.name, rpt.name, out.name], cwd=work,
                            capture_output=True, text=True)
         secs = time.time() - t0
         if p.returncode != 0:
             raise RuntimeError(f"{cli.name} failed on {deck} [{key}] (exit {p.returncode}):\n{p.stdout[-800:]}{p.stderr[-800:]}")
+        if not (rpt.is_file() and out.is_file()):
+            raise RuntimeError(f"{cli.name} exited 0 on {deck} [{key}] without writing {rpt.name} and {out.name}")
+        partial = stamp.with_suffix(".json.partial")
+        partial.write_text(json.dumps(identity, indent=1, sort_keys=True) + "\n")
+        partial.replace(stamp)
         return RunResult(inp, rpt, out, next(work.glob("*.h5"), None), secs)
 
 
@@ -823,7 +855,8 @@ def cmd_run_decks(args) -> int:
     for deck in decks:
         work = out / deck.parent.name / deck.stem
         ok, code, secs, rpt_errors, cont, timed_out = run_one_deck(cli, deck, work, args.max_seconds)
-        note = "timeout" if timed_out else ("; ".join(rpt_errors)[:120] if rpt_errors else "ok")
+        process = ["timeout"] if timed_out else ([f"exit {code}"] if code != 0 else [])
+        note = "; ".join(process + rpt_errors)[:120] or "ok"
         lines.append(f"{deck.relative_to(fig) if deck.is_relative_to(fig) else deck}\t{code}\t{secs:.1f}\t{','.join(cont)}\t{note}")
         print(f"{'PASS' if ok else 'FAIL'}  {deck.name}  exit={code}  {secs:.1f}s  {note}")
         failures += 0 if ok else 1

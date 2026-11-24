@@ -468,6 +468,10 @@ private:
     // Report metadata
     double start_date_ = 0.0;
     int report_step_ = 0;
+    /** @brief Report interval in seconds, including a sub-second step.
+     * @return Spacing of the first two saved period dates, to the microsecond; the header's
+     * whole-second value when fewer than two periods are saved. Moves the file cursor. */
+    double reportStepSeconds() const;
 
     // Footer fields
     long id_start_pos_ = 0;

@@ -1027,8 +1027,8 @@ static int parse_impl(const std::string& expr_str, TreatExpr& result,
  * treated0.
  * @param[in] n_pollut Nonnegative readable extent of all provided pollutant arrays; token index
  * outside [0,n_pollut) produces0 without dereference.
- * @param[in] cpollut Optional readable n_pollut current mixed concentration view, preferred over
- * cin for named C rows; null falls back to cin, both null gives0. Arrays borrowed for call only.
+ * @param[in] cpollut Optional readable n_pollut concentrations a pollutant name reads, preferred
+ * over cin; null falls back to cin, both null gives0. Arrays borrowed for call only.
  * @note STEP(0)=0 here (strict>0), unlike scalar-only overload. No recursive treatment
  * resolution; caller computes removal dependencies/loop detection. No physical/clock changes,
  * arrays must remain stable, and external mutation concurrent with evaluation is unsupported.
@@ -1071,14 +1071,12 @@ double evaluate(const TreatExpr& expr, double c, double dt, double hrt, double q
                 stk.push(area);
                 break; // Gap #16
             case TreatVar::C_POLLUT:
-                // legacy getVariableValue (treatmnt.c:344-351): a
-                // pollutant reference reads Cin[p] when THAT
-                // pollutant's treatment here is a removal equation,
-                // and the node's current concentration otherwise.
-                // `cpollut` is that choice already made by the caller,
-                // which is where the per-pollutant treatment types
-                // are known; without it we keep the old Cin-only
-                // reading.
+                // A pollutant name reads the inflow concentration in
+                // a removal expression and the node's concentration
+                // before treatment in a concentration expression
+                // (SWMM 5 Reference Manual Vol. III, section 5.4.2).
+                // `cpollut` is that choice already made by the
+                // caller; without it we keep the Cin-only reading.
                 if (tok.pollut_ref >= 0 && tok.pollut_ref < n_pollut) {
                     if (cpollut)
                         stk.push(cpollut[tok.pollut_ref]);

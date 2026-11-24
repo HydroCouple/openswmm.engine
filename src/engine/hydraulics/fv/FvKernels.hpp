@@ -63,6 +63,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "../../core/Constants.hpp"
 #include "FvOptions.hpp"
 #include "NetworkMeshData.hpp"
 
@@ -76,9 +77,9 @@
 
 namespace openswmm::fv::kernels {
 
-/// Gravity in internal units. Matches constants::GRAVITY — spelled here so the
-/// header stays dependency-free for the plugin build.
-inline constexpr double kGravity = 32.2;
+/// Gravity in internal units: the FV kernels and solvers read constants::GRAVITY
+/// under this name (one value, defined once in Constants.hpp).
+inline constexpr double kGravity = constants::GRAVITY;
 
 /// Depth below which a cell is treated as dry: no velocity, no flux, no
 /// celerity contribution. The threshold is 1e-7 ft; the separate area floor
@@ -242,27 +243,29 @@ OPENSWMM_KERNEL_FN double celerity(double a, double t) noexcept {
 // ===========================================================================
 
 /// One side of a face after hydrostatic reconstruction.
-struct FaceState {
-    double a = 0.0;  ///< reconstructed flow area (ft²)
-    double q = 0.0;  ///< reconstructed discharge (cfs) = a·u
-    double u = 0.0;  ///< velocity (ft/s)
-    double c = 0.0;  ///< celerity (ft/s)
-    double i1 = 0.0; ///< hydrostatic first moment at the reconstructed depth
+template <class Real> struct FaceStateT {
+    Real a = 0.0;  ///< reconstructed flow area (ft²)
+    Real q = 0.0;  ///< reconstructed discharge (cfs) = a·u
+    Real u = 0.0;  ///< velocity (ft/s)
+    Real c = 0.0;  ///< celerity (ft/s)
+    Real i1 = 0.0; ///< hydrostatic first moment at the reconstructed depth
     /// 1: the side stands in the Preissmann slot (or is TPA-flagged) and its
     /// `c` is the acoustic slot celerity; 0: free surface; 2: a vented
     /// junction's own-head ghost, which never takes part in the slot/free
     /// bore bound (see waveSpeeds). Set by the solver.
     uint8_t press = 0;
 };
+using FaceState = FaceStateT<double>;
 
 /// Result of a face flux evaluation.
-struct FaceFlux {
-    double mass = 0.0;  ///< F[0] — volumetric flux (cfs)
-    double mom = 0.0;   ///< F[1] — momentum flux (ft⁴/s²)
-    double sstar = 0.0; ///< contact-wave speed; sign selects the species upwind
-    double sl = 0.0;    ///< left  signal speed (kept for the species flux)
-    double sr = 0.0;    ///< right signal speed
+template <class Real> struct FaceFluxT {
+    Real mass = 0.0;  ///< F[0] — volumetric flux (cfs)
+    Real mom = 0.0;   ///< F[1] — momentum flux (ft⁴/s²)
+    Real sstar = 0.0; ///< contact-wave speed; sign selects the species upwind
+    Real sl = 0.0;    ///< left  signal speed (kept for the species flux)
+    Real sr = 0.0;    ///< right signal speed
 };
+using FaceFlux = FaceFluxT<double>;
 
 /**
  * @brief Estimate left and right signal speeds with dry-front and pressure-bore bounds.
@@ -279,10 +282,11 @@ struct FaceFlux {
  * @param[out] sl Left signal speed in ft/s.
  * @param[out] sr Right signal speed in ft/s.
  */
-OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R, double& sl,
-                                   double& sr) noexcept {
-    const bool wetL = (L.a > kDryArea);
-    const bool wetR = (R.a > kDryArea);
+template <class Real>
+OPENSWMM_KERNEL_FN void waveSpeeds(const FaceStateT<Real>& L, const FaceStateT<Real>& R, Real& sl,
+                                   Real& sr) noexcept {
+    const bool wetL = (L.a > Real(kDryArea));
+    const bool wetR = (R.a > Real(kDryArea));
     if (wetL && wetR) {
         sl = std::min(L.u - L.c, R.u - R.c);
         sr = std::max(L.u + L.c, R.u + R.c);
@@ -306,24 +310,24 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R, doubl
         // where the entrance lock lived.
         if (L.press != R.press && L.press < 2 && R.press < 2) {
             if (L.press) {
-                const double da = L.a - R.a;
-                const double w = (da > 0.0) ? (L.q - R.q) / da : sr;
+                const Real da = L.a - R.a;
+                const Real w = (da > Real(0.0)) ? (L.q - R.q) / da : sr;
                 sr = std::max(R.u + R.c, std::min(sr, w));
             } else {
-                const double da = R.a - L.a;
-                const double w = (da > 0.0) ? (R.q - L.q) / da : sl;
+                const Real da = R.a - L.a;
+                const Real w = (da > Real(0.0)) ? (R.q - L.q) / da : sl;
                 sl = std::min(L.u - L.c, std::max(sl, w));
             }
         }
     } else if (wetR) { // dry left
-        sl = R.u - 2.0 * R.c;
+        sl = R.u - Real(2.0) * R.c;
         sr = R.u + R.c;
     } else if (wetL) { // dry right
         sl = L.u - L.c;
-        sr = L.u + 2.0 * L.c;
+        sr = L.u + Real(2.0) * L.c;
     } else {
-        sl = 0.0;
-        sr = 0.0;
+        sl = Real(0.0);
+        sr = Real(0.0);
     }
 }
 
@@ -336,9 +340,10 @@ OPENSWMM_KERNEL_FN void waveSpeeds(const FaceState& L, const FaceState& R, doubl
  * @param[out] fa Mass/volume flux S.q in ft3/s.
  * @param[out] fq Momentum flux S.q*S.u+32.2*S.i1 in ft4/s2.
  */
-OPENSWMM_KERNEL_FN void physicalFlux(const FaceState& S, double& fa, double& fq) noexcept {
+template <class Real>
+OPENSWMM_KERNEL_FN void physicalFlux(const FaceStateT<Real>& S, Real& fa, Real& fq) noexcept {
     fa = S.q;
-    fq = S.q * S.u + kGravity * S.i1;
+    fq = S.q * S.u + Real(kGravity) * S.i1;
 }
 
 /**
@@ -385,46 +390,48 @@ OPENSWMM_KERNEL_FN double riemannMassFlux(const FaceState& L, const FaceState& R
  * @return Aggregate volumetric flux in ft3/s, momentum flux in ft4/s2 and signal/contact speeds in
  *     ft/s.
  */
-OPENSWMM_KERNEL_FN FaceFlux riemannFlux(const FaceState& L, const FaceState& R) noexcept {
-    FaceFlux out;
-    if (L.a <= kDryArea && R.a <= kDryArea)
+template <class Real>
+OPENSWMM_KERNEL_FN FaceFluxT<Real> riemannFlux(const FaceStateT<Real>& L,
+                                               const FaceStateT<Real>& R) noexcept {
+    FaceFluxT<Real> out;
+    if (L.a <= Real(kDryArea) && R.a <= Real(kDryArea))
         return out;
 
-    double sl = 0.0, sr = 0.0;
+    Real sl = Real(0.0), sr = Real(0.0);
     waveSpeeds(L, R, sl, sr);
     out.sl = sl;
     out.sr = sr;
 
-    double fal = 0.0, fql = 0.0, far = 0.0, fqr = 0.0;
+    Real fal = Real(0.0), fql = Real(0.0), far = Real(0.0), fqr = Real(0.0);
     physicalFlux(L, fal, fql);
     physicalFlux(R, far, fqr);
 
-    if (sl >= 0.0) {
+    if (sl >= Real(0.0)) {
         out.mass = fal;
         out.mom = fql;
         out.sstar = sl;
         return out;
     }
-    if (sr <= 0.0) {
+    if (sr <= Real(0.0)) {
         out.mass = far;
         out.mom = fqr;
         out.sstar = sr;
         return out;
     }
 
-    const double dsr = sr - sl;
+    const Real dsr = sr - sl;
     out.mass = (sr * fal - sl * far + sl * sr * (R.a - L.a)) / dsr;
     out.mom = (sr * fql - sl * fqr + sl * sr * (R.q - L.q)) / dsr;
 
     // Contact speed (plan §3.2). Falls back to the HLL-averaged velocity when
     // the denominator degenerates, which happens only when both sides are
     // vanishing — where the species flux is zero anyway.
-    const double den = R.a * (R.u - sr) - L.a * (L.u - sl);
-    if (std::fabs(den) > 1.0e-14) {
+    const Real den = R.a * (R.u - sr) - L.a * (L.u - sl);
+    if (std::fabs(den) > Real(1.0e-14)) {
         out.sstar = (sl * R.a * (R.u - sr) - sr * L.a * (L.u - sl)) / den;
     } else {
-        const double a_hll = (sr * R.a - sl * L.a - (far - fal)) / dsr;
-        out.sstar = (a_hll > kDryArea) ? out.mass / a_hll : 0.0;
+        const Real a_hll = (sr * R.a - sl * L.a - (far - fal)) / dsr;
+        out.sstar = (a_hll > Real(kDryArea)) ? out.mass / a_hll : Real(0.0);
     }
     return out;
 }

@@ -43,6 +43,8 @@
 
 #include <array>
 
+#include "Constants.hpp"
+
 namespace openswmm {
 
 struct SimulationOptions;
@@ -143,9 +145,38 @@ inline constexpr std::array<double, 6> Qcf_inv = detail::makeQcfInv();
 // Convenience constants — common fixed conversions not unit-system dependent
 // ============================================================================
 
-static constexpr double ACRES_TO_FT2 = 43560.0;   ///< 1 acre = 43560 ft²
-static constexpr double FT3_TO_MGAL = 7.48052e-6; ///< ft³ → million gallons
-static constexpr double SEC_PER_DAY = 86400.0;    ///< seconds per day
+// Seconds per day is constants::SEC_PER_DAY (Constants.hpp); it has no copy here.
+
+static constexpr double ACRES_TO_FT2 = 43560.0; ///< 1 acre = 43560 ft² (Ucf[GWFLOW][US])
+static constexpr double FT3_TO_GAL = 7.48;      ///< ft³ → gal as legacy prints (statsrpt.c Vcf)
+
+// Legacy-faithful fixed factors (consts.h MperFT, LperFT3, M3perFT3, MMperINCH).
+// The 1D engine's mass, concentration and length conversions compute with
+// these truncated literals; test_constants_legacy_parity.cpp pins them.
+static constexpr double FT_TO_M = 0.3048;     ///< ft → m (exact; also Ucf[LENGTH][SI])
+static constexpr double FT3_TO_L = 28.317;    ///< ft³ → L, legacy LperFT3 (loads, conc.)
+static constexpr double FT3_TO_M3 = 0.028317; ///< ft³ → m³, legacy M3perFT3 (table: 0.02832)
+static constexpr double IN_TO_MM = 25.4;      ///< in → mm, legacy MMperINCH
+
+// Exact volume factors (0.3048³) for the solvers that work in SI and have no
+// legacy counterpart: the 2D solver's 1D-2D exchange and the transport
+// components. Never use these where legacy parity applies.
+static constexpr double FT3_TO_M3_EXACT = 0.028316846592; ///< ft³ → m³, exact
+static constexpr double FT3_TO_L_EXACT = 28.316846592;    ///< ft³ → L, exact
+static constexpr double FT2_TO_M2_EXACT = 0.09290304;     ///< ft² → m², exact (0.3048²)
+
+/// Display flow units → m³/s, exact, indexed by FlowUnits (CFS, GPM, MGD, CMS,
+/// LPS, MLD), for the SI-internal consumers (flow tracing, 2D boundary
+/// conditions). Not derived from Qcf: its legacy-truncated entries serve the
+/// 1D engine's parity and would put a 1e-5 error into these.
+static constexpr double FLOW_TO_M3S_EXACT[6] = {
+    FT3_TO_M3_EXACT,     // CFS
+    6.30901964e-05,      // GPM: 3.785411784e-3 m³ / 60 s
+    0.04381263638888889, // MGD: 3785.411784 m³ / 86400 s
+    1.0,                 // CMS
+    0.001,               // LPS
+    0.011574074074074073 // MLD: 1000 m³ / 86400 s
+};
 
 // ============================================================================
 // UCF function — matching legacy UCF()
@@ -247,7 +278,7 @@ struct DisplayUnits {
      * @return tF for unit_system==0, otherwise (tF-32)*5/9 in deg C.
      */
     double temperature(double tF) const {
-        return unit_system == 0 ? tF : (5.0 / 9.0) * (tF - 32.0);
+        return unit_system == 0 ? tF : (5.0 / 9.0) * (tF - constants::F_AT_0C);
     }
 };
 

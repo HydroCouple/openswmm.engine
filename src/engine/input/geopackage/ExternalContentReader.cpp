@@ -478,8 +478,9 @@ void hydrateRoutingInterface(sqlite3* db, SimulationContext& ctx, const std::str
  * @brief Materialize embedded legacy HSF slots or empty pending placeholders and bind file entries.
  *
  * Reads slots by name, probes newer metadata/HRT columns and defaults absent fields through SQLite.
- * Reconstructs populated node/link snapshots in current registry order, skipping unknown state
- * names and zero-filling missing records/concentrations. Raw runoff payload requires matching
+ * Reconstructs populated node/link snapshots in current registry order. A state row naming a node,
+ * link or pollutant the model lacks, or a model node or link without a state row, throws GpkgError
+ * naming it; pollutant concentrations without a row stay zero. Raw runoff payload requires matching
  * catchment count. Copies native legacy ft/cfs/ft3/state conventions and opaque runoff/tail bytes;
  * unknown flow label defaults CFS. Format writer failures throw; pending placeholder open failure
  * is ignored. Exact USE replaces the use path, every other direction appends a save entry with
@@ -617,18 +618,25 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim
                                     "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ns.get(), 1, sim);
                 bind_text(ns.get(), 2, s.name);
+                std::vector<char> seen(static_cast<std::size_t>(n_nodes), 0);
                 while (sqlite3_step(ns.get()) == SQLITE_ROW) {
                     const char* nid =
                         reinterpret_cast<const char*>(sqlite3_column_text(ns.get(), 0));
                     int idx = ctx.node_names.find(nid ? nid : "");
                     if (idx < 0 || idx >= n_nodes)
-                        continue;
+                        throw GpkgError("hotstart slot '" + s.name + "' holds state for node '" +
+                                        (nid ? nid : "") + "', which the model does not have");
+                    seen[static_cast<std::size_t>(idx)] = 1;
                     auto& dst = snap.node_state[static_cast<std::size_t>(idx)];
                     dst.depth = sqlite3_column_double(ns.get(), 1);
                     dst.lateral_inflow = sqlite3_column_double(ns.get(), 2);
                     dst.overflow = sqlite3_column_double(ns.get(), 3);
                     dst.hrt = sqlite3_column_double(ns.get(), 4);
                 }
+                for (int i = 0; i < n_nodes; ++i)
+                    if (!seen[static_cast<std::size_t>(i)])
+                        throw GpkgError("hotstart slot '" + s.name + "' has no state for node '" +
+                                        ctx.node_names.name_of(i) + "'");
             }
             // Node pollutant state.
             if (s.num_pollutants > 0) {
@@ -644,10 +652,10 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim
                         reinterpret_cast<const char*>(sqlite3_column_text(ns.get(), 1));
                     int n_idx = ctx.node_names.find(nid ? nid : "");
                     int p_idx = ctx.pollutant_names.find(pid ? pid : "");
-                    if (n_idx < 0 || n_idx >= n_nodes)
-                        continue;
-                    if (p_idx < 0 || p_idx >= s.num_pollutants)
-                        continue;
+                    if (n_idx < 0 || n_idx >= n_nodes || p_idx < 0 || p_idx >= s.num_pollutants)
+                        throw GpkgError("hotstart slot '" + s.name + "' holds node '" +
+                                        (nid ? nid : "") + "' pollutant '" + (pid ? pid : "") +
+                                        "', which the model does not have");
                     snap.node_state[static_cast<std::size_t>(n_idx)]
                         .concentration[static_cast<std::size_t>(p_idx)] =
                         sqlite3_column_double(ns.get(), 2);
@@ -667,12 +675,15 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim
                                       "WHERE simulation_id=? AND slot_name=?");
                 bind_text(ls.get(), 1, sim);
                 bind_text(ls.get(), 2, s.name);
+                std::vector<char> seen(static_cast<std::size_t>(n_links), 0);
                 while (sqlite3_step(ls.get()) == SQLITE_ROW) {
                     const char* lid =
                         reinterpret_cast<const char*>(sqlite3_column_text(ls.get(), 0));
                     int idx = ctx.link_names.find(lid ? lid : "");
                     if (idx < 0 || idx >= n_links)
-                        continue;
+                        throw GpkgError("hotstart slot '" + s.name + "' holds state for link '" +
+                                        (lid ? lid : "") + "', which the model does not have");
+                    seen[static_cast<std::size_t>(idx)] = 1;
                     auto& dst = snap.link_state[static_cast<std::size_t>(idx)];
                     dst.flow = sqlite3_column_double(ls.get(), 1);
                     dst.depth = sqlite3_column_double(ls.get(), 2);
@@ -682,6 +693,10 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim
                     dst.time_open = sqlite3_column_double(ls.get(), 6);
                     dst.time_closed = sqlite3_column_double(ls.get(), 7);
                 }
+                for (int j = 0; j < n_links; ++j)
+                    if (!seen[static_cast<std::size_t>(j)])
+                        throw GpkgError("hotstart slot '" + s.name + "' has no state for link '" +
+                                        ctx.link_names.name_of(j) + "'");
             }
             // Link pollutant state.
             if (s.num_pollutants > 0) {
@@ -697,10 +712,10 @@ void hydrateHotstart(sqlite3* db, SimulationContext& ctx, const std::string& sim
                         reinterpret_cast<const char*>(sqlite3_column_text(ls.get(), 1));
                     int l_idx = ctx.link_names.find(lid ? lid : "");
                     int p_idx = ctx.pollutant_names.find(pid ? pid : "");
-                    if (l_idx < 0 || l_idx >= n_links)
-                        continue;
-                    if (p_idx < 0 || p_idx >= s.num_pollutants)
-                        continue;
+                    if (l_idx < 0 || l_idx >= n_links || p_idx < 0 || p_idx >= s.num_pollutants)
+                        throw GpkgError("hotstart slot '" + s.name + "' holds link '" +
+                                        (lid ? lid : "") + "' pollutant '" + (pid ? pid : "") +
+                                        "', which the model does not have");
                     snap.link_state[static_cast<std::size_t>(l_idx)]
                         .concentration[static_cast<std::size_t>(p_idx)] =
                         sqlite3_column_double(ls.get(), 2);

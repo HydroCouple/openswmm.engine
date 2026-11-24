@@ -17,7 +17,7 @@ class Spatial:
     @property
     def crs(self) -> str:
         """Coordinate reference system (EPSG token, WKT, or proj string).
-        Reading a model with no CRS raises :class:`CRSError`; assigning sets it."""
+        Reading a model with no CRS gives an empty string; assigning sets it."""
         ...
     @crs.setter
     def crs(self, value: str) -> None: ...

@@ -55,6 +55,7 @@
 #include "SimulationContext.hpp"
 #include "SplitExecution.hpp"
 #include "HotStartManager.hpp"
+#include "restart/RestartStore.hpp"
 #include "../plugins/PluginFactory.hpp"
 #include "../plugins/ProcessComponentHost.hpp"
 #include "../output/IOThread.hpp"
@@ -397,6 +398,9 @@ public:
      *     compatibility.
      */
     bool hotstartCheckpointAttached() const noexcept { return checkpoint_enabled_; }
+    /** @brief True when this run restores or records an engine checkpoint through [RESTART];
+     *  with binary results it then needs a new output file (see prepareOutputCheckpointing()). */
+    bool restartNeedsCheckpoint() const;
 #ifdef OPENSWMM_HAS_2D
     // Separate single-file mesh output qualification; initialize(), prepare,
     // start(0), then attach the common source checkpoint stage.
@@ -1593,6 +1597,61 @@ private:
     std::string checkpoint_model_;
     std::string pending_hotstart_checkpoint_;
     std::string hotstart_checkpoint_error_;
+
+    // End-of-run saves that need the engine checkpoint are written once per run.
+    bool end_checkpoint_saves_done_ = false;
+    /**
+     * @brief True when end-of-run SAVE HOTSTART rows need the engine checkpoint (heat, frozen
+     *        ground or an independent groundwater clock, with checkpointing on).
+     */
+    bool endOfRunNeedsCheckpoint() const;
+    /**
+     * @brief Write the end-of-run saves that need a running engine: the [RESTART] END record and
+     *        checkpoint-based SAVE HOTSTART rows. Runs once per run.
+     * @return Empty on success, otherwise the first failure's reason.
+     */
+    std::string writeEndOfRunCheckpointSaves();
+
+    // [RESTART] recording: the open record file, the requested capture times as
+    // (elapsed ms, requested decimal day), the next one due, and END.
+    std::unique_ptr<restart::Store> restart_store_;
+    std::vector<std::pair<double, double>> restart_due_;
+    std::size_t restart_next_ = 0;
+    int restart_ordinal_ = 0;
+    bool restart_end_ = false;
+
+    /** @brief Check the [RESTART] settings against each other and the run's other files. */
+    std::string validateRestartSpec() const;
+    /** @brief Read and check the [RESTART] source record; fills ctx_.restart_receipt. */
+    std::string restoreRestartSource(std::unique_ptr<HotStartFile>& hs);
+    /** @brief Open the RECORD_FILE, register this run and schedule its records. */
+    std::string beginRestartRecording();
+    /**
+     * @brief Capture the accepted state as one record.
+     * @param[in] requested Decimal day asked for, or 0 for END.
+     */
+    std::string recordRestart(double requested);
+    /** @brief Capture every record whose time the accepted clock has reached. */
+    std::string recordDueRestarts();
+    /**
+     * @brief Elapsed ms of the next continuation record this run takes, or +infinity.
+     *
+     * A run that records RECORD_CONTINUATION YES ends a routing and a runoff step at each record's
+     * time, as a run ending there does, so a run continued from the record into a model with a
+     * later end steps as this one does.
+     */
+    double nextContinuationRecordMs() const noexcept;
+    /**
+     * @brief Put the continuation model at @p record_time around a record's engine checkpoint.
+     *
+     * A run continued from the record may differ from this model in its end date and in the
+     * points of its time series after @p record_time; loadCheckpointBytes() checks the rest.
+     * @param[in] checkpoint The engine checkpoint bytes.
+     * @param[in] record_time Decimal day of the accepted step captured.
+     */
+    std::string wrapContinuationRecord(std::string checkpoint, double record_time) const;
+    /// Set while loadCheckpointBytes() restores a record whose continuation model matched.
+    bool continuation_restore_ = false;
     /**
      * @brief Attach native restart resources at the initial RUNNING boundary.
      *
@@ -1645,6 +1704,18 @@ private:
      *     format.
      */
     std::string checkpointModel() const;
+    /**
+     * @brief The model identity a run continued at @p record_time must share.
+     *
+     * checkpointModel() without the end date and total duration, and with each time series cut
+     * at @p record_time: a series only rain gages read (INTENSITY or VOLUME, each point its own
+     * interval) keeps its points before that time; any other keeps them and its first point at or
+     * after it, which the values before it interpolate towards. Curves are kept whole.
+     * @param[in] record_time Decimal day of the record.
+     * @param[out] parts Named pieces of the identity (options, each table), for refusals.
+     */
+    std::string continuationModel(double record_time,
+                                  std::vector<std::pair<std::string, std::string>>* parts) const;
     /**
      * @brief Validate an accepted attachment, unchanged model and consistent restart inventory.
      *
@@ -1974,7 +2045,8 @@ private:
      * Delegates the explicit-depth/volume overload with current state.
      *
      * @param[in] i Caller-validated node index in aligned state arrays.
-     * @return Reported current volume in internal cubic feet, including retained storage-LID water.
+     * @return Reported current volume in internal cubic feet, including retained storage-LID water
+     *     and the surcharge water a SEMI_IMPLICIT junction holds (NodeData::held_volume).
      */
     double reportedNodeVolume(int i) const noexcept;
 
@@ -2217,22 +2289,26 @@ private:
     /**
      * @brief Write one authored SAVE HOTSTART entry from the current state.
      *
-     * AUTO selects native for assigned node LIDs or heat, otherwise legacy. Converts normal save
-     * refusals into warnings; full-engine checkpoint capture is used for qualified heat/native restart.
-     * Filesystem/allocation exceptions can propagate from this internal helper.
+     * AUTO selects native for assigned node LIDs or heat, otherwise legacy. Full-engine checkpoint
+     * capture is used for qualified heat/native restart. An existing target that is not a hot start
+     * file is refused and left unchanged. Filesystem/allocation exceptions can propagate from this
+     * internal helper.
      *
      * @param[in] entry Borrowed authored format/path/date row; resolved path is preferred, original
      *     token fallback, empty path is a no-op.
+     * @return Empty on success, otherwise the reason naming the file; the caller fails the run.
      */
-    void writeHotstartSave(const HotstartSaveEntry& entry);
+    std::string writeHotstartSave(const HotstartSaveEntry& entry);
 
     /**
-     * @brief Attempt each dated hotstart save once when the accepted clock reaches its date.
+     * @brief Write each dated hotstart save once when the accepted clock reaches its date.
      *
-     * Uses elapsed milliseconds with a one-millisecond due tolerance. Marks a row done BEFORE calling
-     * its save, so a failed save is not retried by later steps. Undated rows are skipped here.
+     * Uses elapsed milliseconds with a one-millisecond due tolerance. A row is marked done only after
+     * its file is written. Undated rows are skipped here.
+     *
+     * @return Empty when every due row was written, otherwise the first failure's reason.
      */
-    void writeDueHotstartSaves();
+    std::string writeDueHotstartSaves();
 
     /**
      * @brief Deep-copy the active 2D surface state into a snapshot.

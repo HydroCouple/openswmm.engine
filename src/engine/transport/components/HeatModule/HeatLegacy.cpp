@@ -182,7 +182,8 @@ void routeLegacyHeat(SimulationContext& ctx, double dt) {
     //         held, which is also what it does with no inflow. ----------
     for (int i = 0; i < nn; ++i) {
         const auto ui = static_cast<std::size_t>(i);
-        const double v_old = ctx.nodes.old_volume[ui];
+        // Including a SEMI_IMPLICIT junction's held surcharge water (NodeData::held_volume).
+        const double v_old = ctx.nodes.old_volume[ui] + ctx.nodes.old_held_volume[ui];
         const double v_in = ctx.nodes.qual_vol_in[ui];
         const double q_in = (dt > 0.0) ? v_in / dt : 0.0;
         const double t_old = sc.node_old[ui];

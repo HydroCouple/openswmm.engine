@@ -44,6 +44,9 @@
 #include "../solver/SurfaceCapabilities.hpp"
 #include "../solver/ISurfaceSolver.hpp"
 #include "GpuPluginSupport.hpp"
+#include "CudaArchitectureMatch.hpp"
+#include "GpuCudaArchitectures.generated.hpp"
+#include <cstdio>
 #include <mutex>
 #include <stdexcept>
 
@@ -91,6 +94,18 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
     if (cudaGetDeviceProperties(&prop, 0) == cudaSuccess) {
         std::strncpy(out->device_name, prop.name, sizeof(out->device_name) - 1);
         out->device_mem_bytes = static_cast<unsigned long long>(prop.totalGlobalMem);
+        constexpr int built[] = {OPENSWMM_GPU_CUDA_ARCHITECTURE_LIST};
+        if (!openswmm::twoD::gpu::cudaDeviceRunsBuiltCode(
+                built, static_cast<int>(sizeof(built) / sizeof(built[0])), prop.major,
+                prop.minor)) {
+            // Kokkos aborts the process on a device with no matching device binary.
+            std::fprintf(stderr,
+                         "[openswmm 2D] CUDA plugin has no device code for %s (compute "
+                         "capability %d.%d; built for %s). The plugin is not used.\n",
+                         prop.name, prop.major, prop.minor, OPENSWMM_GPU_CUDA_ARCHITECTURE_TEXT);
+            out->device_count = 0;
+            return 1;
+        }
     } else {
         std::strncpy(out->device_name, "CUDA device", sizeof(out->device_name) - 1);
     }
@@ -100,4 +115,9 @@ extern "C" OPENSWMM_GPU_ABI int openswmm_gpu_probe(OpenSwmmGpuProbe* out) {
 extern "C" OPENSWMM_GPU_ABI void*
 openswmm_make_gpu_explicit_solver(const OpenSwmmGpuProbe* /*probe*/) {
     return openswmm::twoD::gpu::plugin::make([] { ensureKokkosInitialized(); });
+}
+
+extern "C" OPENSWMM_GPU_ABI void* openswmm_make_gpu_network_marcher(const OpenSwmmGpuProbe* probe) {
+    (void)probe;
+    return openswmm::twoD::gpu::plugin::makeNetworkMarcher([] { ensureKokkosInitialized(); });
 }

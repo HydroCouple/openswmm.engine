@@ -58,6 +58,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
@@ -98,6 +99,11 @@ constexpr double kDarcyMinThickness = 0.01;
 /// saturated to `θ_s` at the table (which is physically where it should be —
 /// the specific yield genuinely vanishes there, and the table stops moving).
 constexpr double kSyFloor = 1.0e-3;
+/// Settlements of one SIGMA firing that may withhold rise for a pending withdrawal (fireCell).
+constexpr int kReservePasses = 8;
+/// Largest table move, in layers, by which an implicit SIGMA trial's balance miss is booked to
+/// the table instead of re-solving the column (fireCell).
+constexpr double kShiftLayers = 1.0e-10;
 /// Availability share a single face may take of its donor cell per step —
 /// the surface solver's `exchange_beta` idiom, applied to Darcy.
 constexpr double kFaceShare = 0.5;
@@ -609,14 +615,14 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
         // drives it.
         const double Ldot = -state_.q0_last[u] / Sy;
         dt_u = sigma::columnDtLimit(p, &state_.theta_sigma[u], state_.m_layers, n, L, Ldot,
-                                    options_.c_col, options_.capillary_diff);
+                                    options_.c_col);
     } else if (cl == GwClosure::CLOSED_FORM) {
         // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
-        // is C = −∂q₀/∂hᵤ. Taken numerically so every soil law is
-        // covered by one expression rather than four differentiations.
+        // is C = ∂q₀/∂hᵤ (dhᵤ/dt = … − q₀). Taken numerically so every soil
+        // law is covered by one expression rather than four differentiations.
         const double hu = state_.hu[u];
         const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
-        const double C = (soil::rechargeQ0(p, L, hu) - soil::rechargeQ0(p, L, hu + d)) / d;
+        const double C = (soil::rechargeQ0(p, L, hu + d) - soil::rechargeQ0(p, L, hu)) / d;
         if (C > kTiny)
             dt_u = options_.c_col / C;
     }
@@ -751,6 +757,326 @@ void SubsurfaceSolver::fireGwFaces(int tier, double dt) {
     if (!tierHasFaces(tier))
         return;
     fireGwFaceList(faces_by_tier_[static_cast<std::size_t>(tier)], dt, {});
+}
+
+template <class Concentration, class Gradient, class Stencil, class Coefficient>
+void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double shared_dt,
+                                             std::span<const double> elapsed,
+                                             std::vector<double>& face_yield,
+                                             const Concentration& concentration,
+                                             const Gradient& gradient, const Stencil& stencil,
+                                             const Coefficient& coefficient) {
+    const InertialEdges& E = *edges_;
+    const int n = state_.n_cells;
+    const auto count = static_cast<std::ptrdiff_t>(list.size());
+    const int ns = tr_.active() ? tr_.n_species : 0;
+    const bool disperse = tr_.active() && tr_.dispersion_on;
+    const bool heat = heat_.active();
+    const auto dt_of = [&](std::ptrdiff_t slot) {
+        return elapsed.empty() ? shared_dt : elapsed[std::size_t(slot)];
+    };
+    // Porous heat, layered transport and LID bed receipts keep one thread: their
+    // per-face bookings (heat faces, porewater presets) are serial by design.
+    const bool bulk = tr_.n_layers == 0 && !heat && !lid_receipts_enabled_ && heat_faces_.empty();
+    int threads = 1;
+#if defined(SWMM_USE_OPENMP)
+    // fireGwFaceList pre-fills the dispersion caches under the same condition,
+    // so the parallel passes below only read them.
+    if (bulk && opts_ && list.size() >= 512)
+        threads = std::max(1, opts_->num_threads);
+#endif
+    (void)threads;
+    static thread_local std::vector<unsigned char> tls_touched, tls_bind, tls_mobile_ok;
+    static thread_local std::vector<int> tls_cells, tls_donor;
+    static thread_local std::vector<double> tls_q, tls_avail_w, tls_demand_w, tls_avail_m,
+        tls_demand_m, tls_mobile, tls_adv, tls_disp, tls_donor_dt;
+    auto& touched = tls_touched;
+    auto& cells = tls_cells;
+    auto& donor = tls_donor;
+    auto& q = tls_q;
+    auto& avail_w = tls_avail_w;
+    auto& demand_w = tls_demand_w;
+    auto& avail_m = tls_avail_m;
+    auto& demand_m = tls_demand_m;
+    auto& mobile = tls_mobile;       // dissolved (or layered-porewater mobile) mass, pass 0
+    auto& mobile_ok = tls_mobile_ok; // 0: invalid layered porewater, skip as the serial pass does
+    auto& adv = tls_adv;
+    auto& disp = tls_disp;
+    auto& bind = tls_bind;
+    auto& donor_dt = tls_donor_dt;
+    touched.assign(std::size_t(n), 0);
+    cells.clear();
+    for (const int e : list)
+        for (const int c : {E.cL[e], E.cR[e]})
+            if (!touched[c]) {
+                touched[c] = 1;
+                cells.push_back(c);
+            }
+    if (avail_w.size() < std::size_t(n)) {
+        avail_w.resize(std::size_t(n));
+        demand_w.resize(std::size_t(n));
+        donor_dt.resize(std::size_t(n));
+    }
+    if (avail_m.size() < std::size_t(n) * std::size_t(ns)) {
+        avail_m.resize(std::size_t(n) * std::size_t(ns));
+        demand_m.resize(std::size_t(n) * std::size_t(ns));
+        mobile.resize(std::size_t(n) * std::size_t(ns));
+        mobile_ok.resize(std::size_t(n) * std::size_t(ns));
+    }
+    q.resize(list.size());
+    donor.resize(list.size());
+    adv.assign(list.size() * std::size_t(ns), std::numeric_limits<double>::quiet_NaN());
+    disp.assign(list.size() * std::size_t(ns), std::numeric_limits<double>::quiet_NaN());
+    bind.assign(list.size() * std::size_t(ns), 0);
+    const auto cm = [ns](int cell, int s) { return std::size_t(cell) * std::size_t(ns) + s; };
+    const auto sm = [ns](std::ptrdiff_t slot, int s) {
+        return std::size_t(slot) * std::size_t(ns) + s;
+    };
+    const auto layered = [&](int cell, int s) {
+        return tr_.n_layers == 0 && heat && s != tr_.temp_row &&
+               heat_.cells[std::size_t(cell)].porewater.active();
+    };
+
+    // Pass 0: each touched donor's yield, unreserved water and mobile/available
+    // mass, all taken before this pass books anything.
+    const auto ncell = static_cast<std::ptrdiff_t>(cells.size());
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t k = 0; k < ncell; ++k) {
+        const int c = cells[std::size_t(k)];
+        if (std::isnan(face_yield[c]))
+            face_yield[c] = specificYieldOf(c);
+        avail_w[c] = unreservedDrainableWater(c, face_yield[c]);
+        demand_w[c] = 0.0;
+        donor_dt[c] = 0.0;
+        for (int s = 0; s < ns; ++s) {
+            const double held = tr_.sat_mass[tr_.idx(s, c)];
+            demand_m[cm(c, s)] = 0.0;
+            mobile_ok[cm(c, s)] = 1;
+            if (layered(c, s)) {
+                const double m = saturatedPorewaterMobileMass(c, s);
+                mobile[cm(c, s)] = m;
+                avail_m[cm(c, s)] = m;
+                mobile_ok[cm(c, s)] = std::isfinite(m) && m >= 0;
+            } else {
+                mobile[cm(c, s)] = held * tr_.dissolvedFraction(s, c, state_.theta_s[c]);
+                avail_m[cm(c, s)] =
+                    tr_.signedRow(s) ? 0.0 : std::max(0., held - pendingSaturatedMassExport(c, s));
+            }
+        }
+    }
+    const auto failPorewater = [&](int c, const char* what) {
+        auto& owner = heat_.cells[std::size_t(c)];
+        owner.failed = 1;
+        try {
+            owner.error = what;
+        } catch (...) {
+        }
+    };
+
+    // Pass A: each face's water under the order-independent per-face share.
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const double dt = dt_of(slot);
+        const auto eu = static_cast<std::size_t>(e);
+        const auto l = static_cast<std::size_t>(E.cL[eu]);
+        const auto r = static_cast<std::size_t>(E.cR[eu]);
+        const double dH = (state_.z_bed[l] + state_.hg[l]) - (state_.z_bed[r] + state_.hg[r]);
+        const std::size_t don = (dH > 0.0) ? l : r;
+        const double T = state_.hg[don];
+        const double K = harmonic(state_.Ks[l], state_.Ks[r]);
+        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH;
+        const double Sy = std::max(face_yield[don], kSyFloor);
+        const int nf = std::max(1, cell_nface_[don]);
+        const double cap =
+            kFaceShare * T * Sy * state_.area[don] / static_cast<double>(nf) / std::max(dt, kTiny);
+        if (std::abs(Q) > cap)
+            Q = (Q > 0.0) ? cap : -cap;
+        q[std::size_t(slot)] = Q;
+        donor[std::size_t(slot)] = int(don);
+    }
+    // One ratio per donor: the water it can give over the water its faces ask.
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int d = donor[std::size_t(slot)];
+        demand_w[d] += std::abs(q[std::size_t(slot)] * dt_of(slot));
+        donor_dt[d] = std::max(donor_dt[d], dt_of(slot));
+    }
+    if (lid_receipts_enabled_)
+        // A LID-owned bed also bounds what its cell may give, over its longest face step.
+        for (const int c : cells) {
+            if (!(demand_w[c] > 0))
+                continue;
+            NodeWaterBudget budget;
+            if (auto error = nodeWaterBudget(c, donor_dt[c], budget); !error.empty())
+                throw std::runtime_error(error);
+            avail_w[c] = std::min(avail_w[c], budget.donor);
+        }
+    const auto ratio_w = [&](int c) {
+        return demand_w[c] > avail_w[c] ? avail_w[c] / demand_w[c] : 1.0;
+    };
+
+    // Pass B: advected mass at the scaled water and dispersive mass under its
+    // order-independent limits (stencil range, share of the donor's mass).
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const double dt = dt_of(slot);
+        const auto eu = static_cast<std::size_t>(e);
+        const auto l = static_cast<std::size_t>(E.cL[eu]);
+        const auto r = static_cast<std::size_t>(E.cR[eu]);
+        const int don = donor[std::size_t(slot)];
+        const double ratio = ratio_w(don);
+        double Q = q[std::size_t(slot)];
+        if (ratio < 1.0)
+            Q *= ratio;
+        q[std::size_t(slot)] = Q;
+        const double vol = Q * dt;
+        if (ns > 0 && vol != 0.0) {
+            const double vd = satVolume(don);
+            if (vd > 0.0)
+                for (int s = 0; s < ns; ++s) {
+                    if (!mobile_ok[cm(don, s)])
+                        continue;
+                    const double mob = mobile[cm(don, s)];
+                    // 0 marks a zero-mobility donor: heat still books its water.
+                    adv[sm(slot, s)] = mob == 0.0 ? 0.0 : std::abs(vol) * (mob / vd);
+                }
+        }
+        if (!disperse)
+            continue;
+        const double Ta = state_.hg[l], Tb = state_.hg[r];
+        const double va = satVolume(static_cast<int>(l));
+        const double vb = satVolume(static_cast<int>(r));
+        if (!(Ta > kTiny && Tb > kTiny && va > 0.0 && vb > 0.0))
+            continue;
+        const double B = E.xi[eu], nx = E.nx[eu], ny = E.ny[eu];
+        const std::array<double, 2> armL{E.mx[eu] - mesh_->tri_cx[l], E.my[eu] - mesh_->tri_cy[l]};
+        const std::array<double, 2> armR{E.mx[eu] - mesh_->tri_cx[r], E.my[eu] - mesh_->tri_cy[r]};
+        const double dl = armL[0] * nx + armL[1] * ny, dr = -armR[0] * nx - armR[1] * ny;
+        const auto headL = gradient(int(l), -1), headR = gradient(int(r), -1);
+        const int nf_r = std::max(1, cell_nface_[r]);
+        const int nf_l = std::max(1, cell_nface_[l]);
+        for (int s = 0; s < ns; ++s) {
+            if (!mobile_ok[cm(int(l), s)] || !mobile_ok[cm(int(r), s)])
+                continue;
+            const double ma = tr_.sat_mass[tr_.idx(s, static_cast<int>(l))];
+            const double mb = tr_.sat_mass[tr_.idx(s, static_cast<int>(r))];
+            const double mobile_a = mobile[cm(int(l), s)], mobile_b = mobile[cm(int(r), s)];
+            const double ca = mobile_a / va;
+            const double cb = mobile_b / vb;
+            const bool porous_temperature = heat && s == tr_.temp_row;
+            double dMd = dt * dispersion::faceFlux(coefficient(l, headL), coefficient(r, headR), nx,
+                                                   ny, dl, dr, armL, armR, gradient(int(l), s),
+                                                   gradient(int(r), s), ca, cb, B);
+            if (porous_temperature) {
+                const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
+                dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+            }
+            if (dMd == 0.0)
+                continue;
+            double low = std::min(ca, cb), high = std::max(ca, cb);
+            for (int cell : {int(l), int(r)}) {
+                const auto range = stencil(cell, s);
+                low = std::min(low, range[0]);
+                high = std::max(high, range[1]);
+            }
+            const double capacityL = va / tr_.dissolvedFraction(s, int(l), state_.theta_s[l]);
+            const double capacityR = vb / tr_.dissolvedFraction(s, int(r), state_.theta_s[r]);
+            double cap =
+                dMd > 0 ? std::min((ca - low) * capacityL / nf_l, (high - cb) * capacityR / nf_r)
+                        : std::min((cb - low) * capacityR / nf_r, (high - ca) * capacityL / nf_l);
+            cap = std::max(0., cap);
+            if (porous_temperature)
+                cap = std::abs((ca - cb) * va * vb / (va + vb) /
+                               static_cast<double>(dMd > 0 ? nf_r : nf_l));
+            if (!tr_.signedRow(s)) {
+                const bool layered_donor = layered(dMd > 0 ? int(l) : int(r), s);
+                const double give = std::abs((dMd > 0.0) ? (layered_donor ? mobile_a : ma)
+                                                         : (layered_donor ? mobile_b : mb)) *
+                                    kFaceShare;
+                cap = std::min(cap, give);
+            }
+            if (std::abs(dMd) > cap) {
+                dMd = (dMd > 0.0) ? cap : -cap;
+                bind[sm(slot, s)] = 1;
+            }
+            disp[sm(slot, s)] = dMd;
+        }
+    }
+    // Invalid layered porewater fails its owner once, as the serial pass does.
+    for (const int c : cells)
+        for (int s = 0; s < ns; ++s)
+            if (!mobile_ok[cm(c, s)])
+                failPorewater(
+                    c, "Invalid reserved-layer porewater donor for an accepted face transfer.");
+    // One ratio per donor and species: the mass it can give over the mass asked.
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const int don = donor[std::size_t(slot)];
+        for (int s = 0; s < ns; ++s) {
+            if (tr_.signedRow(s))
+                continue;
+            if (const double a = adv[sm(slot, s)]; !std::isnan(a))
+                demand_m[cm(don, s)] += a;
+            if (const double d = disp[sm(slot, s)]; !std::isnan(d))
+                demand_m[cm(d > 0 ? E.cL[e] : E.cR[e], s)] += std::abs(d);
+        }
+    }
+    const auto ratio_m = [&](int c, int s) {
+        const double demand = demand_m[cm(c, s)], avail = avail_m[cm(c, s)];
+        return !tr_.signedRow(s) && demand > avail ? avail / demand : 1.0;
+    };
+
+    // Pass C: book into each face's own edge accumulators (and, outside the
+    // bulk profile, the lateral heat faces and porewater presets, in list order).
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+    for (std::ptrdiff_t slot = 0; slot < count; ++slot) {
+        const int e = list[std::size_t(slot)];
+        const auto eu = static_cast<std::size_t>(e);
+        const double dt = dt_of(slot);
+        if (!heat_faces_.empty())
+            fireLateralHeatFace(e, dt);
+        const double vol = q[std::size_t(slot)] * dt;
+        state_.eacc_L[eu] -= vol; // leaves cL
+        state_.eacc_R[eu] += vol; // enters cR
+        const int don = donor[std::size_t(slot)];
+        for (int s = 0; s < ns; ++s) {
+            double dm = adv[sm(slot, s)];
+            if (std::isnan(dm))
+                continue;
+            if (heat && s == tr_.temp_row)
+                bookPresetHeatOut(don, std::abs(vol), dm);
+            if (dm == 0.0 && mobile[cm(don, s)] == 0.0)
+                continue; // zero-mobility donor: water only, as the serial pass
+            if (const double ratio = ratio_m(don, s); ratio < 1.0)
+                dm *= ratio;
+            bookPresetPorewaterOut(don, s, dm);
+            const double sgn = (vol > 0.0) ? 1.0 : -1.0;
+            const auto k = tr_.lateralIndex(s, eu);
+            tr_.sacc_L[k] -= sgn * dm;
+            tr_.sacc_R[k] += sgn * dm;
+        }
+        for (int s = 0; s < ns; ++s) {
+            double dMd = disp[sm(slot, s)];
+            if (std::isnan(dMd))
+                continue;
+            const int giver = dMd > 0 ? E.cL[e] : E.cR[e];
+            if (const double ratio = ratio_m(giver, s); ratio < 1.0) {
+                dMd *= ratio;
+                bind[sm(slot, s)] = 1;
+            }
+            bookPresetPorewaterOut(giver, s, std::abs(dMd));
+            const auto k = tr_.lateralIndex(s, eu);
+            tr_.sacc_L[k] -= dMd;
+            tr_.sacc_R[k] += dMd;
+        }
+    }
+    long binds = 0;
+    for (const unsigned char b : bind)
+        binds += b;
+    tr_.dispersion_limiter_binds += binds;
+    if (threads > 1)
+        ++parallel_ratio_face_passes_;
 }
 
 void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_dt,
@@ -915,6 +1241,18 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
         }
     }
 #endif
+    if (options_.face_cap_ratio) {
+        fireGwFaceListByRatio(list, shared_dt, elapsed, face_yield, concentration, gradient,
+                              stencil, coefficient);
+        // As after the sequential pass: layered porewater views follow the bookings.
+        if (tr_.n_layers > 0 && heat_.active())
+            for (int i = 0; i < state_.n_cells; ++i)
+                if (covers(i))
+                    if (auto error = refreshSigmaPorewater(i); !error.empty())
+                        throw std::runtime_error(error);
+        accumulators_pending_ = true;
+        return;
+    }
     for (std::size_t slot = 0; slot < list.size(); ++slot) {
         const int e = list[slot];
         const double dt = elapsed.empty() ? shared_dt : elapsed[slot];
@@ -1817,8 +2155,8 @@ void SubsurfaceSolver::initTransport(const RowLayoutLite& rows, const GwTranspor
                     // A negative decay means "use the [POLLUTANTS] Kdecay",
                     // which the engine already holds in 1/s; an authored one
                     // is 1/day.
-                    tr_.decay[tr_.idx(s, i)] =
-                        (r.decay >= 0.0) ? r.decay / 86400.0 : pollutantDecay(s, pollut_decay);
+                    tr_.decay[tr_.idx(s, i)] = (r.decay >= 0.0) ? r.decay / constants::SEC_PER_DAY
+                                                                : pollutantDecay(s, pollut_decay);
                 }
             }
         }
@@ -2036,8 +2374,7 @@ double SubsurfaceSolver::infiltrationHeadroom(int cell, double deficit) const no
 
 bool SubsurfaceSolver::passesIntakeToTable(int cell) const noexcept {
     const auto u = static_cast<std::size_t>(cell);
-    return independentClock() && covers(cell) &&
-           state_.closure[u] == int8_t(GwClosure::CLOSED_FORM) &&
+    return active() && covers(cell) && state_.closure[u] == int8_t(GwClosure::CLOSED_FORM) &&
            state_.zs[u] - state_.hg[u] < soil::kRechargeLengthFloor;
 }
 
@@ -2360,6 +2697,8 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     const soil::Params p = paramsOf(i);
     const auto cl = static_cast<GwClosure>(state_.closure[u]);
     const bool sigma_stage = cl == GwClosure::SIGMA && opts_ && opts_->reconstruction_order == 2;
+    // CAPILLARY_DIFF: the column solves its own table face (S2), so q0 below is an estimate.
+    const bool implicit_column = cl == GwClosure::SIGMA && options_.capillary_diff;
 
     const double hg0 = state_.hg[u];
     const double hu_pre = state_.hu[u]; // T7.1: the column store this firing starts from
@@ -2524,14 +2863,14 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     double Sy = specificYield(u, p, ts, L0, cl, &theta_bot);
 
     if (cl == GwClosure::SIGMA && L0 > 0.0) {
-        // The physical Darcy flux across the table is the bottom layer's
-        // gravity drainage. It is passed INTO the sweep as `q0_phys` and
-        // comes back inside `f_bot` together with the handover, which is why
-        // the saturated update above books `q0` and not `f_bot`.
-        q0 = soil::conductivity(
-            p, soil::suctionAtSaturation(p, std::clamp((theta_bot - state_.theta_r[u]) /
-                                                           std::max(ts - state_.theta_r[u], kTiny),
-                                                       1.0e-6, 1.0)));
+        // The physical flux across the table (sigma::tableFlux): the kinematic
+        // column's free drainage, passed INTO the sweep as `q0_phys` and back
+        // inside `f_bot` together with the handover, which is why the
+        // saturated update above books `q0` and not `f_bot`. The capillary
+        // column solves this face itself; there q0 is the Darcy estimate at
+        // the old state, used only by the caps and the table predictor below.
+        q0 = sigma::tableFlux(p, &state_.theta_sigma[u], state_.m_layers, n, L0,
+                              options_.capillary_diff);
     } else if (cl == GwClosure::ENSLAVED) {
         q0 = q_in - q_et;
     } else if (L0 > 0.0) {
@@ -2549,7 +2888,9 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         // the floor does not bind (every deck that was already right).
         theta_bot = ts - Sy;
     }
-    if (cl != GwClosure::ENSLAVED && !et_caprise && q0 < 0.0)
+    // The capillary column and the table are one pressure-continuous system:
+    // its table face runs both ways whatever GW_ET says (see `q0_min` below).
+    if (cl != GwClosure::ENSLAVED && !et_caprise && !implicit_column && q0 < 0.0)
         q0 = 0.0; // GW_ET NONE: no capillary rise
 
     // Availability, the same idiom as every other flux here: a column may not
@@ -2716,9 +3057,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                     A;
     const double requested_source_out = source.out;
     const double combined_out = source.out + boundary_out;
-    // A bounded SIGMA sweep can reduce its proposed recharge. External
-    // withdrawals cannot spend that unaccepted column-to-table transfer.
-    const double saturated_credit = other_sat - (sigma_stage ? std::max(0., q0) * A * dt : 0.);
+    // A bounded SIGMA sweep can reduce its proposed recharge, and the implicit
+    // column solves its own. External withdrawals cannot spend that
+    // unaccepted column-to-table transfer.
+    const double saturated_credit =
+        other_sat - (sigma_stage || implicit_column ? std::max(0., q0) * A * dt : 0.);
     const double accepted_scale =
         combined_out > 0
             ? std::min(1.,
@@ -2871,9 +3214,11 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             state_.qnode_last[u] = (node_vol - refund_node) / dt;
         }
     }
-    book(state_.led_recharge, q0 * A * dt);
-    if (cl != GwClosure::ENSLAVED && q0 < 0.0)
-        book(state_.led_caprise, -q0 * A * dt);
+    if (!implicit_column) {
+        book(state_.led_recharge, q0 * A * dt);
+        if (cl != GwClosure::ENSLAVED && q0 < 0.0)
+            book(state_.led_caprise, -q0 * A * dt);
+    }
     book(state_.led_deep, state_.qdeep_last[u] * A * dt);
     // Independent storage readers include both edge receipts. Gathering an
     // internal packet changes its owner, not the domain's net inflow. Booking
@@ -2910,6 +3255,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             (saturated_exchange + source.in - source.out + boundary_in - boundary_out) / A -
             state_.qdeep_last[u] * dt;
         const double tolerance = 1e-15 * std::max({1.0, zs, std::abs(external)});
+        double reserve_cut = 0.0; // m of rise withheld for pending withdrawals (below)
         const auto evaluate = [&](double h, bool capture = false) {
             sigma_evaluations.evaluate();
             trial = original;
@@ -2922,6 +3268,20 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
             cs.q_in = q_in;
             cs.q_et = q_et;
             cs.q0_phys = q0;
+            if (implicit_column) {
+                // Rise may spend only the table's drainable water left after
+                // every other saturated channel of this firing (node, link,
+                // wells, edges, deep loss: `external`), so a table height
+                // >= 0 settles it. The face runs upward under every GW_ET
+                // mode: a table that rises under a column must be able to wet
+                // it back to rest, and with a one-way face a column saturated
+                // at its foot (a capillary fringe) gives the balance no slope
+                // at all, so the settlement ran to a root a fringe away.
+                const double supply =
+                    Sy * hg0 + external - (runtime_rk2 ? 0.0 : future_lid_up / A) - reserve_cut;
+                cs.q0_min = -std::max(0.0, supply) / dt *
+                            (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
+            }
             cs.handover_theta = ts - Sy;
             if (tr_.n_layers > 0)
                 cs.layer_inflow = &contact_depth;
@@ -2949,63 +3309,185 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
                 throw std::runtime_error("SIGMA table/column water settlement is non-finite.");
             return balance;
         };
-        double lo = 0.0, hi = zs;
-        hg1 = std::clamp(hg1, lo, hi);
-        double residual = evaluate(hg1);
-        if (std::abs(residual) > tolerance) {
-            double lower = evaluate(lo);
-            if (lower > tolerance) {
-                // No saturated water remains to support this withdrawal.
-                // Preserve the existing deep-first refund order, using the
-                // settled column balance rather than a floored predictor.
-                double short_volume = lower * A;
-                const double deep = std::min(short_volume, state_.qdeep_last[u] * A * dt);
-                state_.qdeep_last[u] -= deep / (A * dt);
-                book(state_.led_deep, -deep);
-                external += deep / A;
-                short_volume -= deep;
-                const double node =
-                    std::min(short_volume, std::max(0.0, state_.qnode_last[u] * dt));
-                if (node > 0) {
-                    countNodeRefund();
-                    state_.qnode_last[u] -= node / dt;
-                    book(state_.led_node, -node);
-                    external += node / A;
-                }
-                lower = evaluate(lo);
-                if (lower > tolerance)
-                    throw std::runtime_error(
-                        "SIGMA saturated withdrawals exceed available column/table water.");
-            }
-            const double upper = evaluate(hi);
-            if (upper < -tolerance) {
-                hg1 = hi;
-                dunne_vol = -upper * A;
-            } else if (std::abs(lower) <= tolerance) {
-                hg1 = lo;
-                evaluate(hg1);
-            } else if (std::abs(upper) <= tolerance) {
-                hg1 = hi;
-            } else {
-                // Bounded scalar consistency solve; no forcing or water
-                // histories change in a trial, and no future flux is credit.
-                for (int iteration = 0; iteration < 100; ++iteration) {
-                    hg1 = lo + .5 * (hi - lo);
-                    residual = evaluate(hg1);
-                    if (std::abs(residual) <= tolerance)
+        // A withdrawal dated after this firing (a conduit or LID packet) was
+        // capped against the table's drainable water when it was booked, and
+        // rise is held to the water left after it. Rising water wets the bottom
+        // layer, though, and lowers the yield, so the same table can end up
+        // holding less drainable water than the withdrawal; at its gather the
+        // settlement could not support water the conduit already has. While
+        // the face is still rising, settle again with that shortfall withheld.
+        const double predictor = hg1;
+        for (int reserve_pass = 0;; ++reserve_pass) {
+            hg1 = predictor;
+            double lo = 0.0, hi = zs;
+            hg1 = std::clamp(hg1, lo, hi);
+            const bool receipts = tr_.n_layers > 0 || (heat_.active() && sigma_stage);
+            double residual = evaluate(hg1, implicit_column && receipts);
+            // The implicit column's table face is not the predictor's estimate, so
+            // its trials miss the balance by what the solved face differs from it.
+            // A trial whose miss would move the table by under kShiftLayers of a
+            // layer is kept: the miss goes into the table's storage (the table
+            // moves by it) and the layers are re-derived on that thickness, so water
+            // balances to roundoff and the column was solved on a geometry within
+            // that fraction of a layer. -1: no shift.
+            double solved_height = -1.0;
+            const auto keepShifted = [&](double h, double miss) {
+                const double shifted = h - miss / ts;
+                if (std::abs(miss / ts) > kShiftLayers * std::max(zs - h, 0.0) / state_.m_layers ||
+                    !(shifted > lo && shifted < hi))
+                    return false;
+                // The same water on the shifted thickness must stay admissible.
+                const double scale = (zs - h) / (zs - shifted);
+                for (const double theta : trial)
+                    if (theta * scale > ts || theta * scale < p.theta_r)
+                        return false;
+                solved_height = h;
+                hg1 = shifted;
+                residual = 0.0;
+                return true;
+            };
+            if (implicit_column && std::abs(residual) > tolerance && !keepShifted(hg1, residual)) {
+                // Otherwise secant steps from the predictor (slope Sy, the balance's
+                // own slope) find a sign change, then Illinois false position closes
+                // on it, inside [0, zs]; bisection to this tolerance costs ~50
+                // column solves. Whatever this cannot settle falls through to the
+                // bracketed solve below.
+                double a = hg1, fa = residual;
+                double b = std::clamp(a - fa / std::max(Sy, kSyFloor), lo, hi),
+                       fb = evaluate(b, receipts);
+                if (std::abs(fb) > tolerance && keepShifted(b, fb))
+                    fb = 0.0;
+                for (int search = 0; search < 8 && std::abs(fb) > tolerance && (fa > 0) == (fb > 0);
+                     ++search) {
+                    const double c =
+                        fb != fa ? std::clamp(b - fb * (b - a) / (fb - fa), lo, hi) : b;
+                    if (c == b)
                         break;
-                    if (residual > 0)
-                        hi = hg1;
-                    else
-                        lo = hg1;
+                    a = b;
+                    fa = fb;
+                    b = c;
+                    fb = evaluate(b);
                 }
-                if (std::abs(residual) > tolerance)
-                    throw std::runtime_error(
-                        "SIGMA table/column water settlement did not converge.");
+                for (int iteration = 0;
+                     iteration < 60 && std::abs(fb) > tolerance && (fa > 0) != (fb > 0);
+                     ++iteration) {
+                    double c = b - fb * (b - a) / (fb - fa);
+                    if (!(c > std::min(a, b) && c < std::max(a, b)))
+                        c = 0.5 * (a + b);
+                    if (c == a || c == b)
+                        break;
+                    const double fc = evaluate(c);
+                    if ((fc > 0) == (fb > 0)) {
+                        fa *= 0.5; // Illinois: the far end has gone stale
+                    } else {
+                        a = b;
+                        fa = fb;
+                    }
+                    b = c;
+                    fb = fc;
+                }
+                if (solved_height >= 0.0) {
+                    // kept shifted after the first secant step
+                } else if (std::abs(fb) <= tolerance) {
+                    hg1 = b;
+                    residual = fb;
+                } else {
+                    residual = evaluate(hg1); // the bracketed solve starts from here
+                }
             }
+            if (std::abs(residual) > tolerance) {
+                double lower = evaluate(lo);
+                if (lower > tolerance) {
+                    // No saturated water remains to support this withdrawal.
+                    // Preserve the existing deep-first refund order, using the
+                    // settled column balance rather than a floored predictor.
+                    double short_volume = lower * A;
+                    const double deep = std::min(short_volume, state_.qdeep_last[u] * A * dt);
+                    state_.qdeep_last[u] -= deep / (A * dt);
+                    book(state_.led_deep, -deep);
+                    external += deep / A;
+                    short_volume -= deep;
+                    const double node =
+                        std::min(short_volume, std::max(0.0, state_.qnode_last[u] * dt));
+                    if (node > 0) {
+                        countNodeRefund();
+                        state_.qnode_last[u] -= node / dt;
+                        book(state_.led_node, -node);
+                        external += node / A;
+                    }
+                    lower = evaluate(lo);
+                    if (lower > tolerance)
+                        throw std::runtime_error(
+                            "SIGMA saturated withdrawals exceed available column/table water.");
+                }
+                const double upper = evaluate(hi);
+                if (upper < -tolerance) {
+                    hg1 = hi;
+                    dunne_vol = -upper * A;
+                } else if (std::abs(lower) <= tolerance) {
+                    hg1 = lo;
+                    evaluate(hg1);
+                } else if (std::abs(upper) <= tolerance) {
+                    hg1 = hi;
+                } else {
+                    // Bounded scalar consistency solve; no forcing or water
+                    // histories change in a trial, and no future flux is credit.
+                    // The implicit column's trials are full solves, so its cells
+                    // close the bracket by Illinois false position (bisection when
+                    // that does not shrink it); the kinematic column bisects.
+                    double f_lo = lower, f_hi = upper;
+                    int side = 0;
+                    for (int iteration = 0; iteration < 100; ++iteration) {
+                        hg1 = lo + .5 * (hi - lo);
+                        if (implicit_column && f_hi > f_lo) {
+                            const double secant = lo - f_lo * (hi - lo) / (f_hi - f_lo);
+                            if (secant > lo && secant < hi)
+                                hg1 = secant;
+                        }
+                        residual = evaluate(hg1);
+                        if (std::abs(residual) <= tolerance)
+                            break;
+                        if (residual > 0) {
+                            hi = hg1;
+                            f_hi = residual;
+                            if (side == 1)
+                                f_lo *= 0.5;
+                            side = 1;
+                        } else {
+                            lo = hg1;
+                            f_lo = residual;
+                            if (side == -1)
+                                f_hi *= 0.5;
+                            side = -1;
+                        }
+                    }
+                    if (std::abs(residual) > tolerance)
+                        throw std::runtime_error(
+                            "SIGMA table/column water settlement did not converge.");
+                }
+            }
+            if (receipts && solved_height < 0.0)
+                evaluate(hg1, true);
+            if (solved_height >= 0.0)
+                for (double& theta : trial) // the same water on the shifted thickness
+                    theta *= (zs - solved_height) / (zs - hg1);
+            if (!implicit_column || runtime_rk2 || !(future_lid_up > 0.0) ||
+                !(cs.table_flux < 0.0) || reserve_pass == kReservePasses)
+                break;
+            const double drainable = std::max(ts - trial.back(), kSyFloor) * hg1 * A;
+            if (!(drainable < future_lid_up))
+                break;
+            reserve_cut += (future_lid_up - drainable) / A;
         }
-        if (tr_.n_layers > 0 || (heat_.active() && sigma_stage))
-            evaluate(hg1, true);
+        if (implicit_column) {
+            // The physical recharge is the face the column solved at the
+            // settled table, not the estimate the caps used.
+            q0 = cs.table_flux;
+            state_.q0_last[u] = q0;
+            book(state_.led_recharge, q0 * A * dt);
+            if (q0 < 0.0)
+                book(state_.led_caprise, -q0 * A * dt);
+        }
         for (int j = 0; j < state_.m_layers; ++j)
             state_.theta_sigma[static_cast<std::size_t>(j) * n + u] = trial[j];
         rejected = cs.rejected;
@@ -3286,7 +3768,7 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
     }
     if (journal_) {
         if (clock_telemetry_.active())
-            journal_->fired.push_back(i);
+            journal_->fired.push_back({i, time, dt});
     } else {
         clock_telemetry_.fired(i, static_cast<int>(cl), time, dt, state_.dt_cell[u], origin);
     }
@@ -4613,9 +5095,16 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
                                       GwFiringOrigin origin, double intake_through) {
     perf::ProcessTimer process_timer(perf::ProcessPhase::gw_cells);
     prepareRechargeBatch(cells);
-    if (fireGwCellsParallel(cells, dt, surf, time, origin, intake_through))
+    if (fireGwCellsParallel(cells, dt, surf, time, accepted_end, origin, intake_through))
         return;
-    for (const int i : cells) {
+    for (const int i : cells)
+        fireListedCell(i, dt, surf, time, accepted_end, origin, intake_through);
+}
+
+void SubsurfaceSolver::fireListedCell(int i, double dt, SurfaceStateData& surf, double time,
+                                      double accepted_end, GwFiringOrigin origin,
+                                      double intake_through) {
+    {
         const auto u = static_cast<std::size_t>(i);
         const bool exact =
             accepted_end >= 0 && (clock_state_ || source_owned_[u] || lid_receipts_enabled_);
@@ -4629,7 +5118,7 @@ void SubsurfaceSolver::fireGwCellList(const std::vector<int>& cells, double dt,
                 source_cell_end_[u] = accepted_end;
             if (clock_state_)
                 cell_completed_[u] = accepted_end;
-            continue;
+            return;
         }
         const double end = exact ? accepted_end : time + dt;
         const double start = cell_time;
@@ -4692,14 +5181,16 @@ bool SubsurfaceSolver::parallelCellSweepAvailable() noexcept {
 }
 
 bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double dt,
-                                           SurfaceStateData& surf, double time,
+                                           SurfaceStateData& surf, double time, double accepted_end,
                                            GwFiringOrigin origin, double intake_through) {
 #if defined(SWMM_USE_OPENMP)
     // Eligible only where a cell's firing touches its own cell, bed and edge-side
     // slots plus the journaled run-wide accumulators. Every other profile keeps
     // the serial loop: heat and layered transport, the independent clock and
-    // LID receipts (dated shared queues), sources/boundaries/paired cells
-    // (shared receipts), RK2 stages and reaction laws (one shared workspace).
+    // LID receipts (dated shared queues), runtime source rows, RK2 stages and
+    // reaction laws (one shared workspace). Cells with sources, boundaries or
+    // paired receipts touch shared receipts and the shared gather fraction, so
+    // they fire serially after the parallel part, journaled like the rest.
     const int threads = opts_ ? opts_->num_threads : 1;
     const int count = static_cast<int>(cells.size());
     if (threads < 2 || count < 512 || heat_.active() || tr_.n_layers > 0 || clock_state_ ||
@@ -4707,12 +5198,18 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         (opts_ && opts_->reconstruction_order == 2) || (reactions_ && !reactors_.empty()) ||
         !runtime_sources_.rows.empty())
         return false;
-    for (const int i : cells) {
-        const auto u = static_cast<std::size_t>(i);
+    std::vector<int> serial; // list positions fired by fireListedCell
+    for (int k = 0; k < count; ++k) {
+        const auto u = static_cast<std::size_t>(cells[static_cast<std::size_t>(k)]);
         if (source_owned_[u] || (u < cell_sources_.size() && !cell_sources_[u].empty()) ||
             (u < cell_boundaries_.size() && !cell_boundaries_[u].empty()))
-            return false;
+            serial.push_back(k);
     }
+    if (count - static_cast<int>(serial.size()) < 512)
+        return false;
+    std::vector<unsigned char> is_serial(static_cast<std::size_t>(count), 0);
+    for (const int k : serial)
+        is_serial[static_cast<std::size_t>(k)] = 1;
 
     // gatherNode's shared scratch: the serial sweep's first gather clears the
     // previous owner's bed slots, and every later gather clears its
@@ -4723,12 +5220,14 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
             bed_gathered_[b] = 0.0;
     bed_gathered_cell_ = -1;
 
+    // One journal per thread, then one for the serial cells.
     auto& journals = journal_scratch_.journals;
-    journals.resize(static_cast<std::size_t>(threads));
+    journals.resize(static_cast<std::size_t>(threads) + 1);
     for (auto& j : journals) {
         j.adds.clear();
         j.pending_surface.clear();
         j.fired.clear();
+        j.marks.clear();
         j.node_refunds = 0;
     }
     std::vector<std::exception_ptr> errors(static_cast<std::size_t>(threads));
@@ -4742,9 +5241,10 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         journal_ = &journals[tid];
 #pragma omp for schedule(static)
         for (int k = 0; k < count; ++k) {
-            if (errors[tid])
+            if (errors[tid] || is_serial[static_cast<std::size_t>(k)])
                 continue;
             try {
+                journal_->mark(k);
                 fireCell(cells[static_cast<std::size_t>(k)], dt, surf, time, origin,
                          intake_through);
             } catch (...) {
@@ -4754,17 +5254,58 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
         }
         journal_ = nullptr;
     }
-    for (const auto& j : journals) {
-        for (const auto& [total, amount] : j.adds)
-            *total += amount;
-        pending_surface_.insert(pending_surface_.end(), j.pending_surface.begin(),
-                                j.pending_surface.end());
-        node_refunds_ += j.node_refunds;
-        // Eligible cells fire over the batch's own (time, dt), as in fireCell.
-        for (const int c : j.fired)
-            clock_telemetry_.fired(c, state_.closure[static_cast<std::size_t>(c)], time, dt,
-                                   state_.dt_cell[static_cast<std::size_t>(c)], origin);
+    // The serial cells, in list order, up to the earliest parallel failure.
+    auto& later = journals.back();
+    const int stop = *std::min_element(error_at.begin(), error_at.end());
+    std::exception_ptr serial_error;
+    int serial_error_at = count;
+    journal_ = &later;
+    for (const int k : serial) {
+        if (k >= stop)
+            break;
+        try {
+            later.mark(k);
+            fireListedCell(cells[static_cast<std::size_t>(k)], dt, surf, time, accepted_end, origin,
+                           intake_through);
+        } catch (...) {
+            serial_error = std::current_exception();
+            serial_error_at = k;
+            break;
+        }
     }
+    journal_ = nullptr;
+    // Replay in list order. The thread journals, concatenated in thread order,
+    // are in list order; merge them with the serial journal position by position.
+    const auto replay = [&](const LedgerJournal& j, std::size_t m) {
+        const auto& a = j.marks[m];
+        const bool last = m + 1 == j.marks.size();
+        const auto& b = last ? LedgerJournal::Mark{count, j.adds.size(), j.pending_surface.size(),
+                                                   j.fired.size()}
+                             : j.marks[m + 1];
+        for (std::size_t e = a.adds; e < b.adds; ++e)
+            *j.adds[e].first += j.adds[e].second;
+        pending_surface_.insert(pending_surface_.end(),
+                                j.pending_surface.begin() + static_cast<std::ptrdiff_t>(a.pending),
+                                j.pending_surface.begin() + static_cast<std::ptrdiff_t>(b.pending));
+        for (std::size_t e = a.fired; e < b.fired; ++e) {
+            const auto& f = j.fired[e];
+            clock_telemetry_.fired(f.cell, state_.closure[static_cast<std::size_t>(f.cell)], f.time,
+                                   f.dt, state_.dt_cell[static_cast<std::size_t>(f.cell)], origin);
+        }
+    };
+    std::size_t s_mark = 0;
+    for (std::size_t t = 0; t + 1 < journals.size(); ++t)
+        for (std::size_t m = 0; m < journals[t].marks.size(); ++m) {
+            for (; s_mark < later.marks.size() &&
+                   later.marks[s_mark].position < journals[t].marks[m].position;
+                 ++s_mark)
+                replay(later, s_mark);
+            replay(journals[t], m);
+        }
+    for (; s_mark < later.marks.size(); ++s_mark)
+        replay(later, s_mark);
+    for (const auto& j : journals)
+        node_refunds_ += j.node_refunds;
     for (int k = 0; k + 1 < count; ++k)
         for (const auto b : cell_beds_[cells[static_cast<std::size_t>(k)]])
             bed_gathered_[b] = 0.0;
@@ -4772,12 +5313,15 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
     // As in the serial loop, a failure leaves the firings that did complete in
     // place for the caller's enclosing transaction; report the earliest one.
     const auto first = std::min_element(error_at.begin(), error_at.end());
+    if (serial_error && serial_error_at < *first)
+        std::rethrow_exception(serial_error);
     if (*first < count)
         std::rethrow_exception(errors[static_cast<std::size_t>(first - error_at.begin())]);
     ++parallel_cell_sweeps_;
     return true;
 #else
-    (void)cells, (void)dt, (void)surf, (void)time, (void)origin, (void)intake_through;
+    (void)cells, (void)dt, (void)surf, (void)time, (void)accepted_end, (void)origin,
+        (void)intake_through;
     return false;
 #endif
 }
@@ -4838,8 +5382,8 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
         const double length = state_.zs[cell] - state_.hg[cell];
         if (!(length > 0))
             continue;
-        if (independentClock() && length < soil::kRechargeLengthFloor)
-            continue; // legacy extension law floors storage as well as its rate
+        if (length < soil::kRechargeLengthFloor)
+            continue; // the extension law floors storage as well as its rate
         const auto p = paramsOf(cell);
         OpenSwmmGwRechargeInputV1 v{};
         v.struct_size = sizeof(v);
@@ -4882,7 +5426,7 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
  * @param[in] length Finite positive unsaturated length m matching the current cell state.
  * @return Raw signed recharge m/s, positive down and negative capillary rise. A cached extension
  * value is used only when evaluator/slot are valid and every immutable input matches exactly.
- * Independent sub-millimetre columns use rechargeQ0AtLength() on the CPU so the legacy
+ * Sub-millimetre columns use rechargeQ0AtLength() on the CPU so the legacy
  * extension's rate floor cannot invent storage. Other uncached rows use rechargeQ0().
  * No storage, front, ledgers or cache is
  * changed.
@@ -4890,7 +5434,7 @@ void SubsurfaceSolver::prepareRechargeBatch(const std::vector<int>& cells) {
  */
 double SubsurfaceSolver::rawRecharge(int cell, const soil::Params& p,
                                      double length) const noexcept {
-    if (independentClock() && length < soil::kRechargeLengthFloor)
+    if (length < soil::kRechargeLengthFloor)
         return soil::rechargeQ0AtLength(p, length, state_.hu[cell]);
     const int slot = recharge_backend_.evaluate && std::size_t(cell) < recharge_slots_.size()
                          ? recharge_slots_[cell]

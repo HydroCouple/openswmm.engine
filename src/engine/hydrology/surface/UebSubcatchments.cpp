@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "UebSubcatchments.hpp"
 #include "SnowCheckpoint.hpp"
@@ -255,7 +256,7 @@ double nextSnowBoundary(const SimulationContext& ctx, double elapsed, double pro
     proposed = std::min(proposed, next - elapsed);
     if (!ctx.snowpacks.meteorology.empty()) {
         const double start = ctx.options.start_date;
-        const double hour = (start - std::floor(start)) * 86400. + elapsed;
+        const double hour = (start - std::floor(start)) * constants::SEC_PER_DAY + elapsed;
         const double boundary = (std::floor((hour + 1e-5) / 3600.) + 1) * 3600.;
         proposed = std::min(proposed, boundary - hour);
     }
@@ -288,12 +289,12 @@ std::string advanceSubcatchments(SimulationContext& ctx, snow::SnowSoA& soa, dou
         double horizon = nextSnowBoundary(ctx, elapsed, config.step);
         const int gage = ctx.subcatches.gage[sc];
         if (gage >= 0) {
-            const double limit = date + horizon / 86400.;
+            const double limit = date + horizon / constants::SEC_PER_DAY;
             const double change = gage::gageNextRateChange(ctx, gage, date, limit);
             // Keep the exact seconds when no gage boundary shortened them;
             // converting an OLE day difference loses sub-microsecond bits.
             if (change < limit && change > date + 1e-10)
-                horizon = std::min(horizon, (change - date) * 86400.);
+                horizon = std::min(horizon, (change - date) * constants::SEC_PER_DAY);
         }
         horizon = std::min(horizon, ctx.options.totalDurationMs() / 1000. - elapsed);
         if (snowTransientForcing(ctx))

@@ -26,6 +26,7 @@
  * @license   Apache-2.0
  */
 
+#include "Constants.hpp"
 #include "openswmm_api_common.hpp"
 #include "../../../include/openswmm/engine/openswmm_forcing.h"
 #include "../data/ForcingData.hpp"
@@ -298,7 +299,8 @@ SWMM_ENGINE_API int swmm_forcing_climate_temperature(SWMM_Engine engine, double 
     int unit_sys = openswmm::ucf::getUnitSystem(static_cast<int>(ctx.options.flow_units));
     double temp_f = value;
     if (unit_sys == 1) {
-        temp_f = (mode == SWMM_FORCING_ADD) ? value * 9.0 / 5.0 : value * 9.0 / 5.0 + 32.0;
+        temp_f = (mode == SWMM_FORCING_ADD) ? value * 9.0 / 5.0
+                                            : value * 9.0 / 5.0 + openswmm::constants::F_AT_0C;
     }
 
     ctx.forcing.climate_temperature_mode = static_cast<openswmm::ForcingMode>(mode);
@@ -496,7 +498,9 @@ double to_internal(const openswmm::SimulationContext& ctx, int variable, double 
     if (us != 1)
         return v; // US: already internal
     if (variable == SWMM_FORCE_ELEM_AIR_TEMPERATURE)
-        return (mode == SWMM_FORCING_ADD) ? v * 1.8 : v * 1.8 + 32.0;
+        return (mode == SWMM_FORCING_ADD)
+                   ? v * openswmm::constants::F_PER_C
+                   : v * openswmm::constants::F_PER_C + openswmm::constants::F_AT_0C;
     if (variable == SWMM_FORCE_ELEM_WIND_SPEED)
         return v / 1.609344; // km/hr -> mph
     return v;                // % and W/m2 are unitless-ish
@@ -520,7 +524,8 @@ double from_internal(const openswmm::SimulationContext& ctx, int variable, doubl
     if (us != 1)
         return v;
     if (variable == SWMM_FORCE_ELEM_AIR_TEMPERATURE)
-        return (mode == SWMM_FORCING_ADD) ? v / 1.8 : (v - 32.0) * 5.0 / 9.0;
+        return (mode == SWMM_FORCING_ADD) ? v / openswmm::constants::F_PER_C
+                                          : (v - openswmm::constants::F_AT_0C) * 5.0 / 9.0;
     if (variable == SWMM_FORCE_ELEM_WIND_SPEED)
         return v * 1.609344;
     return v;

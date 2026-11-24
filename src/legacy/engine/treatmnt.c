@@ -47,13 +47,14 @@ enum ProcessVarType {
 //-----------------------------------------------------------------------------
 //  Shared variables
 //-----------------------------------------------------------------------------
-static int ErrCode; // treatment error code
-static int J;       // index of node being analyzed
-static double Dt;   // curent time step (sec)
-static double Q;    // node inflow (cfs)
-static double V;    // node volume (ft3)
-static double* R;   // array of pollut. removals
-static double* Cin; // node inflow concentrations
+static int ErrCode;  // treatment error code
+static int J;        // index of node being analyzed
+static double Dt;    // curent time step (sec)
+static double Q;     // node inflow (cfs)
+static double V;     // node volume (ft3)
+static double* R;    // array of pollut. removals
+static double* Cin;  // node inflow concentrations
+static int ExprType; // REMOVAL or CONCEN: type of the expression being evaluated
 
 //-----------------------------------------------------------------------------
 //  External functions (declared in funcs.h)
@@ -361,7 +362,6 @@ int getVariableIndex(char* s) {
 double getVariableValue(int varCode) {
     int p;
     double a1, a2, y;
-    TTreatment* treatment;
 
     // --- variable is a process variable
     if (varCode < PVMAX) {
@@ -392,11 +392,14 @@ double getVariableValue(int varCode) {
         }
     }
 
-    // --- variable is a pollutant concentration
+    // --- variable is a pollutant concentration: the inflow concentration
+    //     in a removal expression, the node's concentration before treatment
+    //     in a concentration expression (SWMM 5 Reference Manual Vol. III,
+    //     section 5.4.2). It used to follow the type of the named pollutant's
+    //     own equation, and a pollutant with none read as a removal.
     else if (varCode < PVMAX + Nobjects[POLLUT]) {
         p = varCode - PVMAX;
-        treatment = &Node[J].treatment[p];
-        if (treatment->treatType == REMOVAL)
+        if (ExprType == REMOVAL)
             return Cin[p];
         return Node[J].newQual[p];
     }
@@ -421,6 +424,7 @@ double getVariableValue(int varCode) {
 double getRemoval(int p) {
     double c0 = Node[J].newQual[p]; // initial node concentration
     double r;                       // removal value
+    int exprType;                   // expression type of the caller
     TTreatment* treatment;
 
     // --- case where removal already being computed for another pollutant
@@ -444,9 +448,13 @@ double getRemoval(int p) {
         return 0.0;
     }
 
-    // --- apply treatment eqn.
+    // --- apply treatment eqn. (an R_ variable in it evaluates another
+    //     pollutant's equation, so restore the expression type after)
     treatment = &Node[J].treatment[p];
+    exprType = ExprType;
+    ExprType = treatment->treatType;
     r = mathexpr_eval(treatment->equation, getVariableValue);
+    ExprType = exprType;
     r = MAX(0.0, r);
 
     // --- case where treatment eqn. is for removal

@@ -61,6 +61,7 @@
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 #include "ForceMain.hpp"
+#include "HydClosureKernels.hpp"
 #include "Culvert.hpp"
 #include "AquiferLinkExchange.hpp"      // G-X4
 #include "../2d/coupling/PondModel.hpp" // coupled-junction pond area
@@ -74,6 +75,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 
@@ -127,8 +129,6 @@ extern long g_trace_rstep_sn;
 namespace dynwave {
 
 using constants::GRAVITY;
-using constants::SQRT_GRAVITY;
-using constants::INV_SQRT_GRAVITY;
 using constants::FUDGE;
 
 // ============================================================================
@@ -204,6 +204,34 @@ double DWSolver::getSlotWidth(double y, double y_full, double w_max, XsectShape 
  */
 static inline double conveyArea(double a, double a_full) {
     return (a > a_full) ? a_full : a;
+}
+
+/**
+ * @brief Area of the static Sjoberg Preissmann slot above the crown at depth y.
+ *
+ * @details The integral of getSlotWidth() from the crown to y (Simpson's rule
+ * on the Sjoberg formula up to 1.78 y_full, 1% of w_max above), so the slot
+ * area grows with depth and matches the width given to node continuity. Same
+ * as legacy dwflow.c getSlotArea().
+ */
+static double slotArea(double y, double y_full, double w_max) {
+    const int n = 8;
+    const double eta = std::min(y / y_full, 1.78);
+    const double dx = (eta - 1.0) / n;
+    double sum = 0.0;
+    for (int i = 0; i <= n; ++i) {
+        const double f = std::exp(-std::pow(1.0 + i * dx, 2.4));
+        if (i == 0 || i == n)
+            sum += f;
+        else if (i % 2 == 1)
+            sum += 4.0 * f;
+        else
+            sum += 2.0 * f;
+    }
+    double a = y_full * w_max * 0.5423 * sum * dx / 3.0;
+    if (y > 1.78 * y_full)
+        a += (y - 1.78 * y_full) * 0.01 * w_max;
+    return a;
 }
 
 // ============================================================================
@@ -771,7 +799,7 @@ void DWSolver::init(int n_nodes, int n_links, const XSectGroups& groups,
     // Dynamic Preissmann Slot (DPS) initialization
     if (surcharge_method == SurchargeMethod::DYNAMIC_SLOT) {
         // Convert c_pT from m/s to ft/s (internal units)
-        dps_config_.c_pT = ctx.options.dps_target_celerity * 3.28084;
+        dps_config_.c_pT = ctx.options.dps_target_celerity / ucf::FT_TO_M;
         dps_config_.alpha = std::max(ctx.options.dps_alpha, 2.0);
         dps_config_.r = std::max(ctx.options.dps_decay_time, 0.001);
         dps_config_.c_pT_sq = dps_config_.c_pT * dps_config_.c_pT;
@@ -2684,17 +2712,17 @@ void DWSolver::momentumKernels(SimulationContext& ctx, double dt, int step) {
             // is numerically the same and leaves the kernel values in place.
             if (depth1_[uj] > yf) {
                 const double wSlot = getSlotWidth(depth1_[uj], yf, wm, shape);
-                area1_[uj] = af + (depth1_[uj] - yf) * wSlot;
+                area1_[uj] = af + (wSlot > 0.0 ? slotArea(depth1_[uj], yf, wm) : 0.0);
                 hrad1_[uj] = rf;
             }
             if (depth2_[uj] > yf) {
                 const double wSlot = getSlotWidth(depth2_[uj], yf, wm, shape);
-                area2_[uj] = af + (depth2_[uj] - yf) * wSlot;
+                area2_[uj] = af + (wSlot > 0.0 ? slotArea(depth2_[uj], yf, wm) : 0.0);
             }
             const double yMid = depth_mid_[uj];
             if (yMid > yf) {
                 const double wSlot = getSlotWidth(yMid, yf, wm, shape);
-                area_mid_[uj] = af + (yMid - yf) * wSlot;
+                area_mid_[uj] = af + (wSlot > 0.0 ? slotArea(yMid, yf, wm) : 0.0);
                 if (wSlot > 0.0)
                     width_mid_[uj] = wSlot;
                 hrad_mid_[uj] = rf;
@@ -3073,12 +3101,12 @@ void DWSolver::processManningLink(SimulationContext& ctx, double dt, int step, s
             // pass getLinkStep's 0.01 gate and set the variable step. Only
             // W == 0 short-circuits — legacy's A/0 = inf gives Fr = 0 too.
             double dh = (wMid > 0.0) ? aFr / wMid : 0.0;
-            // PARITY: legacy link_getFroude computes sqrt(GRAVITY * y) directly
-            // (link.c). Using the precomputed SQRT_GRAVITY constant (a truncated
-            // sqrt(32.2)) times sqrt(dh) differs by ~3e-9 and reorders the FP
-            // ops; that shifts Froude across the sigma (0.5/1.0) and SUB/SUPER
-            // critical knife-edges, amplifying into macroscopic transients.
-            fr = (dh > 0.0) ? absv / std::sqrt(constants::GRAVITY * dh) : 0.0;
+            // PARITY: legacy link_getFroude computes fabs(v) / sqrt(GRAVITY * y)
+            // (link.c); froudeNumber() is that expression in that order. A
+            // precomputed sqrt(g) times sqrt(dh) reorders the FP ops and shifts
+            // Froude across the sigma (0.5/1.0) and SUB/SUPER critical
+            // knife-edges, amplifying into macroscopic transients.
+            fr = (dh > 0.0) ? hydkernels::froudeNumber(absv, dh) : 0.0;
         }
 
         // Reclassify SUBCRITICAL → SUPERCRITICAL
@@ -3850,6 +3878,10 @@ void DWSolver::computeAASkipFlags(const SimulationContext& ctx) {
     // static-slot kink) are non-smooth in the link-level sumdqdh inputs — not in
     // the node-continuity branch — so the dedicated walks below still skip them
     // in BOTH continuity modes.
+    //
+    // is_surcharged still holds the PREVIOUS evaluation's branch here (set
+    // inside setNodeDepth from its input depth); updateNodeDepthsTeam skips the
+    // node as well when the current evaluation takes the surcharge branch.
     if (surcharge_method == SurchargeMethod::EXTRAN &&
         node_continuity == NodeContinuity::EXPLICIT) {
         for (int i = 0; i < n_nodes_; ++i) {
@@ -3995,6 +4027,8 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
                                     int& unconv_shared) {
     auto& nodes = ctx.nodes;
     const bool use_anderson = anderson_accel;
+    const bool extran_explicit =
+        surcharge_method == SurchargeMethod::EXTRAN && node_continuity == NodeContinuity::EXPLICIT;
     int local_unconv = 0; // per-thread partial of the unconverged-node count
 
 // Phase 1: Compute G(y) for each node via setNodeDepth.
@@ -4030,14 +4064,27 @@ void DWSolver::updateNodeDepthsTeam(SimulationContext& ctx, double dt, int step,
         setNodeDepth(ctx, i, dt, step);
         double g_k = nodes.depth[ui]; // G(y_k) — the Picard update
 
-        // --- Anderson acceleration (depth-2 mixing) ---
+        // --- Anderson acceleration (two-point mixing, one stored iterate) ---
         // On step 0: just record state for next iteration.
         // On step 1+: use previous iterate to compute optimal blend.
         // Skip AA when the fixed-point operator G is non-smooth at this node
         // (see computeAASkipFlags for the enumerated conditions) or when the
         // residual is too large to trust the linear-convergence assumption
         // AA is built on.
-        if (use_anderson && step >= 1 && !aa_skip_[ui] && nodes.storage_area[ui] == 0.0 &&
+        //
+        // Two exclusions can only be decided now, from this evaluation:
+        //  - aa_skip_ was formed before this pass from the surcharge flag of
+        //    the PREVIOUS evaluation (setNodeDepth sets it from its input
+        //    depth). The blend mixes that evaluation with this one, so under
+        //    EXTRAN + EXPLICIT it is valid only if neither took the dQ/dH
+        //    surcharge branch.
+        //  - Overflow and ponded volume are booked only at or above the flood
+        //    limit. A blend landing below it books neither, and the water the
+        //    plain update sent to flooding is lost, so a plain update at the
+        //    limit is kept.
+        const bool surcharge_branch_now = extran_explicit && xnode_.is_surcharged[ui] != 0;
+        if (use_anderson && step >= 1 && !aa_skip_[ui] && !surcharge_branch_now &&
+            g_k < floodLimitDepth(ctx, ui) && nodes.storage_area[ui] == 0.0 &&
             !lidnode::active(ctx, i)) {
             double r_k = g_k - y_last; // residual at current iterate
 
@@ -4420,8 +4467,9 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         if (semi_implicit) {
             // Unified path — free-surface and surcharged alike, matching the
             // real-node SEMI_IMPLICIT branch (which likewise ignores the
-            // is_surcharged dQ/dH split and the crown clamp).
-            y_vj = y_old + dV / denom_semi;
+            // is_surcharged dQ/dH split and the crown clamp), with the head
+            // response applied to the change from y_last (see that branch).
+            y_vj = y_last + (surf_area * (y_old - y_last) + dV) / denom_semi;
             xnode_.old_surf_area[ui] = surf_area;
             if (step > 0)
                 y_vj = (1.0 - omega) * y_last + omega * y_vj;
@@ -4475,20 +4523,28 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         //
         //   A * dH = 0.5 * [Q_net_old + Q_net_new] * dt
         //
-        // Linearising Q_net_new around the current head estimate:
+        // The link flows of this iteration, and so Q_net, were computed at
+        // the latest iterate y_last. Linearising Q_net_new about it:
         //
-        //   Q_net_new ≈ Q_net + (dQ_net/dH) * dH
+        //   Q_net_new ≈ Q_net(y_last) + (dQ_net/dH) * (y_new - y_last)
         //
         // where sumdqdh is accumulated POSITIVE from the link dqdh values
         // (higher head ⟶ more net outflow through connected links), so
         // dQ_net/dH = -sumdqdh — the same sign convention the EXTRAN
-        // surcharge branch divides by.  Substituting and rearranging:
+        // surcharge branch divides by.  With dV the trapezoidal volume
+        // 0.5 * [Q_net_old + Q_net(y_last)] * dt, substituting gives
         //
-        //   dH = dV / (A + dt * sumdqdh / 2)
+        //   A * (y_new - y_old) = dV - 0.5 * dt * sumdqdh * (y_new - y_last)
         //
-        // dV already contains the trapezoidal average of old_net_inflow and
-        // current dQ, so the sumdqdh correction folds the head-dependent
-        // flow response into the same timestep.
+        //   y_new = y_last + [A * (y_old - y_last) + dV] / (A + dt * sumdqdh / 2)
+        //
+        // The head response multiplies the change from y_last, NOT from
+        // y_old: Q_net(y_last) already holds the response to y_last - y_old,
+        // and y_old + dV / (A + dt * sumdqdh / 2) counted it twice, which
+        // converged to A_eff = A + dt * sumdqdh / 2 instead of A. At
+        // convergence (y_new = y_last) this form satisfies A * dH = dV
+        // exactly, the equation the EXPLICIT free-surface branch solves; the
+        // sumdqdh term only shortens the path there.
         //
         // The equation unifies the free-surface and surcharged regimes:
         // when surfArea dominates the denominator ≈ A (classic dV/A path);
@@ -4500,8 +4556,7 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         if (nodes.storage_area[ui] == 0.0)
             denom = std::max(denom, min_surf_area_);
 
-        double dy = dV / denom;
-        y_new = y_old + dy;
+        y_new = y_last + (surf_area * (y_old - y_last) + dV) / denom;
 
         // Save non-ponded surface area (used by flooding logic and CFL)
         if (!is_ponded) {
@@ -4621,6 +4676,34 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
 }
 
 // ============================================================================
+// floodLimitDepth -- depth at which a node starts to flood
+// ============================================================================
+//
+// A committed depth above this books overflow (or, where ponding is allowed,
+// ponded volume) instead of storage. A sealed virtual junction never floods.
+
+double DWSolver::floodLimitDepth(const SimulationContext& ctx, std::size_t ui) const {
+    const NodeTile& t = node_tile_[ui];
+    const bool is_inlet_node = (ui < ctx.nodes.is_inlet.size() && ctx.nodes.is_inlet[ui] != 0);
+    if (t.is_virtual != 0 && !is_inlet_node)
+        return std::numeric_limits<double>::infinity();
+
+    const bool is_coupled = (ui < ctx.coupled_node.size() && ctx.coupled_node[ui]);
+    const bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
+
+    // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
+    // MaxDepth token when one was supplied (carried on NodeData::rim_depth),
+    // else the derived street y_full. Never below the derived depth, so a
+    // rendering-only rim cannot make the node flood early.
+    double y_max = t.full_depth;
+    if (is_inlet_node && ctx.nodes.rim_depth[ui] > 0.0)
+        y_max = std::max(y_max, ctx.nodes.rim_depth[ui]);
+    if (!can_pond)
+        y_max += t.sur_depth;
+    return y_max;
+}
+
+// ============================================================================
 // commitNodeDepthState -- canonical commit of an accepted node depth
 // ============================================================================
 //
@@ -4677,15 +4760,7 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
     const bool can_pond = (ctx.options.allow_ponding || is_coupled) && (t.ponded_area > 0.0);
 
     // --- Determine max non-flooded depth ---
-    // Plan D-E2: an inlet junction's flood threshold is the [INLET_JUNCTIONS]
-    // MaxDepth token when one was supplied (carried on NodeData::rim_depth),
-    // else the derived street y_full. Never below the derived depth, so a
-    // rendering-only rim cannot make the node flood early.
-    double y_max = t.full_depth;
-    if (is_inlet_node && nodes.rim_depth[ui] > 0.0)
-        y_max = std::max(y_max, nodes.rim_depth[ui]);
-    if (!can_pond)
-        y_max += t.sur_depth;
+    const double y_max = floodLimitDepth(ctx, ui);
 
     // --- Flooding logic (matching legacy getFloodedDepth) ---
     // Reset first so a re-commit (accepted Anderson mix after the raw Picard
@@ -4700,6 +4775,17 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
     // volume, the routing mass balance's flooding gate and the control-rule /
     // quality node volume off by that amount (sampleram JCT-38: +50.26 ft3,
     // 4 ft * 12.566 ft2, from the first ponded step on).
+    // SEMI_IMPLICIT stores water above the crown of a surcharged junction (Eq. 3-45 keeps the
+    // conduits' crown-cutoff surface area there), which neither the junction (whose volume is
+    // booked as zero, legacy) nor the full conduits hold. The junction books it in held_volume,
+    // beside a volume kept exactly in the legacy convention (so no hydraulic reader sees it): while
+    // surcharged below the rim, the step's storage the legacy volume does not take; at the rim,
+    // what it held. Plain junctions only (no storage, chamber, wet well, LID or inlet node). The
+    // explicit surcharge branch drives the net flow to zero instead.
+    const bool holds_surcharge = node_continuity == NodeContinuity::SEMI_IMPLICIT &&
+                                 !t.is_storage && t.rpt_full_volume == 0.0 && t.y_crown > 0.0 &&
+                                 nodes.storage_area[ui] == 0.0 && !is_inlet_node &&
+                                 !lidnode::active(ctx, node_idx);
     nodes.overflow[ui] = 0.0;
     if (y_new > y_max) {
         if (!can_pond) {
@@ -4722,6 +4808,21 @@ void DWSolver::commitNodeDepthState(SimulationContext& ctx, int node_idx, double
         // Legacy node_getVolume default branch: fullVolume * (depth / fullDepth)
         nodes.volume[ui] = (t.full_depth > 0.0) ? t.rpt_full_volume * (y_new / t.full_depth) : 0.0;
     }
+    double held = 0.0;
+    if (holds_surcharge && y_new > t.y_crown) {
+        if (y_new >= y_max) {
+            held = nodes.old_held_volume[ui]; // what it held when it reached the rim
+        } else {
+            // The step's net inflow less what the legacy volume took (a draining pond's water
+            // is that volume's); on the step entering surcharge, its share above the crown.
+            const double y_old = nodes.old_depth[ui];
+            held = nodes.old_held_volume[ui] + nodes.old_volume[ui] + dV - nodes.volume[ui];
+            if (!(y_old > t.y_crown))
+                held = y_new > y_old ? held * (y_new - t.y_crown) / (y_new - y_old) : 0.0;
+            held = std::max(held, 0.0);
+        }
+    }
+    nodes.held_volume[ui] = held;
 
     // An inlet junction floods (above) but is still a zero-storage node: the
     // half-link surface area it carries is the continuity linearization of the

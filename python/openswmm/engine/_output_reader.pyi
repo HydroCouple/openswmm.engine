@@ -75,7 +75,7 @@ class OutputReader:
     pollutant_units: List[Optional[str]]
 
     # Time axis
-    period_times: NDArray[Any]  # dtype = datetime64[s]
+    period_times: NDArray[Any]  # dtype = datetime64[us]
 
     def __init__(self, path: _PathLike, *, live: bool = ...) -> None: ...
     def close(self) -> None: ...

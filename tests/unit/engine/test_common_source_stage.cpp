@@ -241,6 +241,39 @@ struct Model {
         gw.state().hu[cell] = gw.state().theta_s[cell] * L - volume / mesh.tri_area[cell];
     }
     /**
+     * @brief Give a cell a receiver whose room persists: a hydrostatic column (closed-form
+     * recharge zero) holding exactly `volume` m3 of room, the table placed to make it so.
+     *
+     * room() fills the column at the current table, which is wetter than hydrostatic and, under
+     * the drainage sign (2026-11-18), drains to the table during a firing and opens more room.
+     * Tests that need a limited receiver through a firing use this instead.
+     */
+    void heldRoom(double volume, int cell = 0) {
+        auto& s = gw.state();
+        if (s.closure[cell] != int8_t(GwClosure::CLOSED_FORM)) {
+            room(volume, cell); // SIGMA keeps its state in the layer contents
+            return;
+        }
+        openswmm::twoD::soil::Params p;
+        p.law = config.options.soil_char;
+        p.Ks = s.Ks[cell];
+        p.theta_s = s.theta_s[cell];
+        p.theta_r = s.theta_r[cell];
+        p.alpha = config.rows[0].alpha;
+        const double target = volume / mesh.tri_area[cell], zs = s.zs[cell];
+        double lo = 0, hi = zs;
+        for (int k = 0; k < 200; ++k) {
+            const double L = .5 * (lo + hi);
+            if (s.theta_s[cell] * L - openswmm::twoD::soil::equilibriumStorage(p, L) < target)
+                lo = L;
+            else
+                hi = L;
+        }
+        const double L = .5 * (lo + hi);
+        s.hg[cell] = zs - L;
+        s.hu[cell] = openswmm::twoD::soil::equilibriumStorage(p, L);
+    }
+    /**
      * @brief Attach owned source/groundwater state to the common stage and optional marcher.
      *
      * Requires setup to have populated valid mesh/state/sources/preview. Fatal assertion records stage
@@ -1652,7 +1685,7 @@ TEST(CommonSourceStage, PartialAreasKeepScarceAwardsInTheirCellsAcrossSourceOrde
 TEST(CommonSourceStage, NumericalBackstopKeepsOwnedReturnsOutOfGenericMeshAccumulator) {
     Model m;
     mixedPollutants(m);
-    m.room(.005);
+    m.heldRoom(.005);
     m.attach();
     ASSERT_EQ(m.stage.advance(0, 1), "");
     ASSERT_EQ(m.stage.advance(1, 2), "");
@@ -1678,7 +1711,7 @@ TEST(CommonSourceStage, PhysicalDunneUsesReviewedSourceOwnership) {
 TEST(CommonSourceStage, PendingIntervalsRefundOriginalMixturesAndRetryExactlyOnce) {
     Model m;
     mixedPollutants(m);
-    m.room(.005);
+    m.heldRoom(.005);
     m.attach();
     std::vector<SurfaceIntakeReceipt> original;
     for (int t = 0; t < 2; ++t) {
@@ -1924,7 +1957,7 @@ TEST(CommonSourceStage, PartialRejectionPreservesOriginalConcentrationAndAccepte
     for (double rise : {.001, .01, .1, .5, .7, .75, .78, .79, .8, 1., 4.}) {
         Model m;
         mixedPollutants(m);
-        m.room(.005);
+        m.heldRoom(.005);
         m.attach();
         ASSERT_EQ(m.stage.advance(0, 1), "");
         double incoming = 0;
@@ -2854,7 +2887,7 @@ TEST(CommonSourceStage, SourceHistoryRetainsPendingIntakesAtSlowerReceiverCadenc
 TEST(CommonSourceStage, SourceHistoryDistinguishesRefundAvailabilityAndAdoption) {
     Model m;
     mixedPollutants(m);
-    m.room(.005);
+    m.heldRoom(.005);
     m.attach();
     SourceResultHistory history;
     ASSERT_EQ(history.append(m.stage), "");
@@ -3143,7 +3176,7 @@ TEST(CommonSourceStage, SourceHistoryHdf5RejectsTruncationAndUnknownUnitsWithout
 TEST(CommonSourceStage, SourceHistoryHdf5RejectsIncompleteEndpointsAndInvalidTransferSemantics) {
     Model m;
     mixedPollutants(m);
-    m.room(.005);
+    m.heldRoom(.005);
     m.attach();
     SourceResultHistory history;
     ASSERT_EQ(history.append(m.stage), "");
@@ -3381,6 +3414,9 @@ void marcherRestartModel(Model& m, Momentum2D mode = Momentum2D::LOCAL_INERTIAL,
     a.connected = true;
     a.inside = {.7, .4};
     a.closure = closure;
+    // Keep surface water moving at the checkpoint: at Ks 0.01 m/s the source water infiltrates
+    // and drains (drainage sign, 2026-11-18) and the mesh is dry within 3 s.
+    a.ks = 1e-5;
     mixedPollutants(m, 2, a, true);
     m.options.momentum = mode;
     m.options.max_timestep = .3;
@@ -3972,13 +4008,21 @@ TEST(CommonSourceStage, RouterCheckpointPreservesPartialBatchWeatherReportFrames
     for (auto momentum :
          {Momentum2D::LOCAL_INERTIAL, Momentum2D::DIFFUSIVE_WAVE, Momentum2D::FULL_SWE})
         for (auto closure : {GwClosure::CLOSED_FORM, GwClosure::SIGMA}) {
+            // At Ks 0.01 m/s the aquifer drains (drainage sign, 2026-11-18), the table
+            // reaches the ground and the thin-column bound turned this case into minutes.
+            // Of 1e-5 to 3e-3 m/s, 1e-3 is the lowest that returns aquifer water before the
+            // checkpoint, where the ledgers are compared; below it they compare zeros.
+            const double ks = 1e-3;
             RouterSourceModel continuous;
+            continuous.aquifer_conductivity = ks;
             continuous.setup(momentum, closure, true);
             for (int i = 0; i < 6; ++i) {
                 if (i == 2)
                     continuous.weather(216);
                 ASSERT_NO_THROW(continuous.tick());
             }
+            if (closure == GwClosure::CLOSED_FORM)
+                EXPECT_GT(continuous.source.stage.meshReturn(), 0);
             EXPECT_LT(continuous.source.stage.completedEnd(),
                       continuous.source.context.current_time);
             EXPECT_GT(continuous.router.reportWeight(2300), 0);
@@ -3994,6 +4038,7 @@ TEST(CommonSourceStage, RouterCheckpointPreservesPartialBatchWeatherReportFrames
             ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context, file.string()),
                       "");
             RouterSourceModel resumed;
+            resumed.aquifer_conductivity = ks;
             resumed.setup(momentum, closure, true);
             ASSERT_EQ(resumed.router.loadCheckpoint(resumed.source.context, file.string()), "");
             routerEqual(continuous, resumed, "router-initial");
@@ -4103,7 +4148,11 @@ TEST(CommonSourceStage, RouterCheckpointSupportsInitialAndExplicitTailFlushAndOn
 #ifdef OPENSWMM_HAS_HDF5_MODEL
 TEST(CommonSourceStage,
      RouterCheckpointResumesSavedSourceHistoryAfterPostprocessingAndRenderWithoutReplay) {
+    // As in RouterLedgerUses...: keep the nearly saturated aquifer off diffusion microsteps.
+    // At Ks 0.01 m/s its 1 m saturated column drains (drainage sign, 2026-11-18), the table
+    // reaches the ground and the thin-column bound (6e-5 s) makes the history replay quadratic.
     RouterSourceModel continuous;
+    continuous.aquifer_conductivity = 1e-5;
     continuous.setup(Momentum2D::LOCAL_INERTIAL, GwClosure::CLOSED_FORM, true, .8);
     SourceResultHistory history;
     continuous.router.setSourceResultHistory(history);
@@ -4114,6 +4163,7 @@ TEST(CommonSourceStage,
     ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context, file.string()), "");
     ASSERT_EQ(history.save(result.string()), "");
     RouterSourceModel resumed;
+    resumed.aquifer_conductivity = 1e-5;
     resumed.setup(Momentum2D::LOCAL_INERTIAL, GwClosure::CLOSED_FORM, true, .8);
     ASSERT_EQ(resumed.router.loadCheckpoint(resumed.source.context, file.string()), "");
     SourceResultHistory prefix;
@@ -5104,7 +5154,7 @@ TEST(RichardsCommonSource, RefundsRetainDonorIdentityAndPhysicalReturnsCreditOnl
         Model m;
         m.setup(true, 1, false, false, false, a);
         if (closure != GwClosure::ENSLAVED)
-            m.room(.005);
+            m.heldRoom(.005);
         m.attach();
         ASSERT_EQ(m.stage.advance(0, 1), "");
         const auto originals = m.gw.pendingSourceReceipts(0);

@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "UebSnow.hpp"
 #include "UebReference.hpp"
 #include <algorithm>
@@ -63,7 +64,7 @@ void remember(State& state, double dt, double ts, double tb) {
     double duration = 0;
     for (const auto& h : state.history)
         duration += h.seconds;
-    double excess = std::max(0., duration - 86400.);
+    double excess = std::max(0., duration - constants::SEC_PER_DAY);
     std::size_t erase = 0;
     while (erase < state.history.size() && excess >= state.history[erase].seconds) {
         excess -= state.history[erase].seconds;
@@ -84,12 +85,13 @@ std::string stateError(const State& s) {
         return "Invalid UEB snow inventory.";
     double duration = 0;
     for (const auto& h : s.history) {
-        if (!finite(h.seconds) || h.seconds <= 0 || !finite(h.surface) || h.surface <= -273.15 ||
-            !finite(h.bulk) || h.bulk <= -273.15)
+        if (!finite(h.seconds) || h.seconds <= 0 || !finite(h.surface) ||
+            h.surface <= -constants::KELVIN_OFFSET || !finite(h.bulk) ||
+            h.bulk <= -constants::KELVIN_OFFSET)
             return "Invalid UEB thermal history.";
         duration += h.seconds;
     }
-    if (!finite(duration) || duration > 86400. + 1e-7)
+    if (!finite(duration) || duration > constants::SEC_PER_DAY + 1e-7)
         return "UEB thermal history exceeds 24 hours.";
     return {};
 }
@@ -134,7 +136,7 @@ bool step(State& state, const Parameters& p, const Site& site, const Forcing& f,
                                           p.rain_temperature,
                                           p.snow_temperature,
                                           0,
-                                          273.15,
+                                          constants::KELVIN_OFFSET,
                                           p.emissivity,
                                           2.0747e-7,
                                           latent_heat,
@@ -156,7 +158,7 @@ bool step(State& state, const Parameters& p, const Site& site, const Forcing& f,
                                           p.drainage_conductivity,
                                           p.active_soil_depth,
                                           p.equilibrium_conductance,
-                                          9.81,
+                                          ueb_reference::kGravity,
                                           p.ground_albedo,
                                           p.visible_albedo,
                                           p.infrared_albedo,
@@ -225,7 +227,8 @@ bool step(State& state, const Parameters& p, const Site& site, const Forcing& f,
         std::abs(next.water_residual) > 1e-10 * std::max(1., state.water + next.rain + next.snow) ||
         std::abs(next.energy_residual) >
             1e-10 * std::max({1., std::abs(state.energy), std::abs(next.net_energy)}) ||
-        next.surface_temperature <= -273.15 || next.bulk_temperature <= -273.15 || diagnostics > 0)
+        next.surface_temperature <= -constants::KELVIN_OFFSET ||
+        next.bulk_temperature <= -constants::KELVIN_OFFSET || diagnostics > 0)
         return false;
     state.energy = water[1];
     state.water = water[2];
@@ -324,7 +327,7 @@ std::string Parameters::validate() const {
                      max_step})
         if (!finite(x))
             return "Nonfinite UEB parameter.";
-    if (rain_temperature <= snow_temperature || snow_temperature <= -273.15 ||
+    if (rain_temperature <= snow_temperature || snow_temperature <= -constants::KELVIN_OFFSET ||
         !fraction(emissivity) || roughness <= 0 || measurement_height <= roughness ||
         snow_density <= 0 || snow_density >= 917 || soil_density <= 0 || soil_heat_capacity <= 0 ||
         active_soil_depth <= 0 || liquid_retention < 0 ||

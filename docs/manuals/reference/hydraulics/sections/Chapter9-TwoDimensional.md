@@ -556,9 +556,9 @@ C-API edge arrays use stride 4; an all-triangle mesh keeps the
 serve mixed meshes with the same closures as the CPU marcher (§9.11.1).
 
 <!-- figure spec: a quad beside a triangle sharing one face: local edge numbering k = 0..3 with endpoints v[(k+1)%nv], v[(k+2)%nv]; the padded slot layout 4t + k with the unused fourth slot of the triangle greyed; the centroid-to-edge normal distance d_e of (9-33) drawn for both cells -->
-![Figure 9-4](figures/png/hydraulics_ch9_mesh_stencil.png)
+![Figure 9-2](figures/png/hydraulics_ch9_mesh_stencil.png)
 
-*Figure 9-4 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance*
+*Figure 9-2 A quadrilateral and a triangle sharing a face: local edge numbering, the padded slot layout and the centroid-to-edge distance*
 
 <!-- source: plans/2D_TRI_QUAD_MESH_PLAN_2026-09-06.md §2.1,§2.3,§2.4,§2.5; plans/2D_INPUT_FORMAT_SPEC.md:140-152; src/engine/2d/mesh/MeshBuilder.cpp:21-27,82-115,117-176,179-233; src/engine/2d/solver/InertialEdges.cpp:112-147; src/engine/2d/solver/ExplicitInertialSolver.cpp:916-921,1552-1560; src/engine/2d/input/SectionHandlers2D.cpp:870-877; src/engine/2d/solver/SurfaceSolverFactory.cpp:286-301; docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:1421-1441 (former §9.11b) -->
 
@@ -693,7 +693,7 @@ and inverse are exact inverses for the same \f$\varepsilon\f$ and
 head-seeded and volume-seeded states round-trip. A dry cell's head
 under VFR is seeded at \f$\eta(0) = \eta_s - \bar{h}_s/\varepsilon \in (z_1, \eta_s)\f$, the value the closure itself returns at \f$V = 0\f$, so
 that seeding the head back through the forward relation reproduces
-exactly zero volume. Figure 9-3 (§9.5.9) sketches the wetting cases.
+exactly zero volume. Figure 9-5 (§9.5.9) sketches the wetting cases.
 
 Implementation: the closure lives in `src/engine/2d/mesh/VfrClosure.hpp`
 — @ref openswmm::twoD::vfrSort3, @ref openswmm::twoD::vfrWetFraction,
@@ -1202,9 +1202,9 @@ cycle so the cheap cadence suffices. `YES` and `NO` force it either way
 for any closure.
 
 <!-- figure spec: plan view of a wetting front on a dry mesh: the flux-active cells, the one-ring halo of the default cadence, the five-ring halo and marked frontier ring under FRONT_REBUILD, and the breach cell whose depth crossing h_on triggers the early rebuild -->
-![Figure 9-5](figures/png/hydraulics_ch9_active_set.png)
+![Figure 9-3](figures/png/hydraulics_ch9_active_set.png)
 
-*Figure 9-5 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild*
+*Figure 9-3 The flux-active set at a wetting front: the default one-ring halo, the front-rebuild halo and the breach that forces an early rebuild*
 
 <!-- source: src/engine/2d/solver/ExplicitInertialSolver.cpp:59-63,126-134,595-603,627-676,759-783,1443-1446; src/engine/2d/data/SolverOptions2D.hpp:214-221; src/engine/2d/input/SectionHandlers2D.cpp:195-199; docs/manuals/reference/hydraulics/sections/Chapter9-TwoDimensional.md:606-636 (retained text) -->
 
@@ -1292,7 +1292,7 @@ The boundary and coupling loops are serial; they are perimeter- and
 point-count-sized. The quantity \f$\sum_i V_i + \sum_f (\text{acc}_{L,f} + \text{acc}_{R,f})\f$ is invariant under the face phase and is asserted
 directly when `OPENSWMM_2D_MARCHER_CHECK` is set.
 
-Figure 9-2 assembles the co-advance batch of §9.7.3 and the marcher's
+Figure 9-4 assembles the co-advance batch of §9.7.3 and the marcher's
 substep loop into one workflow.
 
 <!-- workflow: coupling_batch -->
@@ -1320,7 +1320,7 @@ flowchart TD
     Q --> A
 </pre>
 
-*Figure 9-2 One 1D–2D co-advance batch and the explicit marcher's
+*Figure 9-4 One 1D–2D co-advance batch and the explicit marcher's
 substep loop within it (rendered diagram)*
 
 Implementation:
@@ -1436,15 +1436,14 @@ cell integrates in a single lazy pass over the whole interval since
 the last synchronization; the result is floored at zero volume, so a
 forced evaporation override on a dry cell is harmless.
 
-Figure 9-3 sketches the geometry the rules act on: the three wetting
+Figure 9-5 sketches the geometry the rules act on: the three wetting
 cases of the planar-bed cell (§9.4.1) and the wetted-edge face gate
 (§9.5.2).
 
-![Figure 9-3](figures/png/hydraulics_ch9_vfr_wetting_cases.png)
+![Figure 9-5](figures/png/hydraulics_ch9_vfr_wetting_cases.png)
 
-*Figure 9-3 Wetting cases of a planar-bed triangular cell and the
-wetted-edge face gate (placeholder — to be replaced by a final
-drawing)*
+*Figure 9-5 Wetting cases of a planar-bed triangular cell and the
+wetted-edge face gate*
 
 Implementation: the face-wet tests are
 @ref openswmm::twoD::inertial::faceFlowDepth and
@@ -1639,9 +1638,9 @@ clipping an extrapolated negative depth would define a different
 polynomial. The hydrostatic cut and available-volume flux bound remain
 separate safeguards.
 
-![Figure 9-7](figures/png/hydraulics_ch9_reconstruction.png)
+![Figure 9-6](figures/png/hydraulics_ch9_reconstruction.png)
 
-*Figure 9-7 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.*
+*Figure 9-6 Coupled surface/depth reconstruction and the connected-wet-stencil decision at a shoreline. The drawing is schematic, not model output.*
 
 **Pressure and bed-force consistency.** Hydrostatic cutting uses
 \f$z_f^*=\max(z_{Lf},z_{Rf})\f$ and
@@ -2004,6 +2003,19 @@ not the paper's submerged-weir calibration. Per-node coefficients override
 the selected preset; authored mapping-row Cd/Area can override the orifice
 terms and opening geometry.
 
+Figure 9-7 draws the law for the default 1.2 m manhole (\f$A\f$ = 1.131 m²,
+\f$L\f$ = 3.770 m). In free drainage the weir is the smaller control below a
+surface depth of 0.139 m (0.116 \f$D\f$) and the orifice above it; where the
+two cross, the blend is \f$2^{-1/16}\f$ = 0.958 of either. Once the network
+head rises past the crest the presets part: with the surface 0.30 m and the
+network 0.15 m over the crest, `DEFAULT` drains 0.324 m³/s, where the orifice
+governs, and `RUBINATO2017` drains 0.109 m³/s, where its small submerged-weir
+coefficient governs. Spill uses Coo alone, which the two presets share.
+
+![Figure 9-7 The WEIR_ORIFICE exchange law of a 1.2 m manhole](figures/png/hydraulics_ch9_weir_orifice_exchange.png)
+
+*Figure 9-7 The WEIR_ORIFICE exchange law of the default 1.2 m manhole: (a) free drainage against the surface depth over the crest, (b) drainage and spill against the head difference with the surface held 0.30 m over the crest, DEFAULT against RUBINATO2017, and (c) the regularized root. Discharge in m³/s, heads in m; synthetic, the engine's law evaluated directly.*
+
 `COUPLING_HEAD CELL`, `VERTEX` and `STENCIL_WET_MEAN` select different head
 representations. The wet stencil excludes dry bed elevations from a water
 surface estimate; it is not the same as averaging all numerical cells
@@ -2018,9 +2030,19 @@ For non-storage coupled junctions, `COUPLING_POND_MODE FOOTPRINT`, `CHAMBER`
 and `TRACKING` select the effective above-rim storage. The smoothed area
 transition lies above the rim. Storage nodes retain their storage curves.
 `COUPLING_EQUALIZE` bounds the 1D-side exchange over the interval for which
-its head is held; the surface state evolves within that interval. It is
-not a proof that a frozen two-reservoir equilibrium is never crossed.
-Availability budgets still prevent spending donor water twice.
+its head is held, \f$|Q| \le |\Delta h| A_1/T\f$ with \f$A_1\f$ the node's
+pond area and \f$T\f$ the coupling window; the surface state evolves within
+that interval. It is not a proof that a frozen two-reservoir equilibrium is
+never crossed. Availability budgets still prevent spending donor water twice.
+It is on by default for every junction coupling (before 2026-11-21 only for
+`WEIR_ORIFICE`). Without it a junction sitting at its rim under the orifice law
+drains and spills back in turn: on the Bellinge groundwater-quality storm
+(04:30 to 06:30, `COUPLING_AREA AUTO`) the overflow chamber G70F62X reversed
+in 108 of 246 coupling windows, and the network exchanged 72 ML drained and
+246 ML spilled for a net of 174 ML spilled. With the cap it reverses in 7, the
+gross exchange falls to 55 and 233 ML, the net is 178 ML, and the surface
+depths differ by a relative L2 of 0.016 (two cells' maximum depth by more than
+5 cm).
 
 #### Node configuration, defaults and mesh registration {#hydraulics_node_coupling_configuration}
 
@@ -2335,6 +2357,11 @@ accumulated into the point's ledger \f$\int Q\,dt\f$.
       the following batch, clear one-shot forcings, and reset the
       window accumulators.
 
+Figure 7-1 of the Engine Manual (@ref engine_manual_2d_cpu) replays steps
+2 and 6 for one junction: the batch booking, the uniform drain of the
+delivery queue, and the pending volume that closes
+delivered + pending = out − in.
+
 **Forcing override surface.** The C API can replace or augment the
 computed exchange per cell: `swmm_2d_force_coupling_flux(engine, idx,
 value, mode, persist)` prescribes a coupling rate (m/s, positive into
@@ -2342,9 +2369,13 @@ the 2D domain) with `mode` selecting override or add and `persist`
 selecting one-shot or persistent application; `swmm_2d_force_rainfall`
 / `swmm_2d_force_evap` (and their `_uniform` variants) do the same for
 the meteorological sources, and `swmm_2d_force_clear_all` clears every
-prescription. One-shot prescriptions expire after the step they apply
-to; any change marks the forcing state dirty so it takes effect on the
-very next batch regardless of the 30 s refresh cadence.
+prescription. A change made between routing steps ends the sync batch
+at the end of the step it was made in, so it applies over exactly that
+step even when the batch would otherwise span several steps (a
+`COUPLING_SYNC` span, or a variable routing step running shorter than
+the nominal one); one-shot prescriptions then expire on the step after.
+Any change also marks the forcing state dirty, bypassing the 30 s
+refresh cadence.
 
 Implementation: the exchange law and its sensitivity are
 @ref openswmm::twoD::computeNodeCouplingQ and
@@ -2386,9 +2417,9 @@ table puts it in. The 2D → 1D drain is external inflow under either
 setting.
 
 <!-- figure spec: the 1D routing continuity table under COUPLING_IN_FLOODING NO (spill in the "2D Coupling Outflow" row) and YES (spill inside "Flooding Loss"), the same totals and the same continuity error in both; the 2D block of §9.9 unchanged beneath -->
-![Figure 9-6](figures/png/hydraulics_ch9_coupling_modes.png)
+![Figure 9-8](figures/png/hydraulics_ch9_coupling_modes.png)
 
-*Figure 9-6 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows*
+*Figure 9-8 Where a node spill is booked under COUPLING_IN_FLOODING: the same totals and the same continuity error, in two different rows*
 
 <!-- source: src/engine/2d/input/SectionHandlers2D.cpp:247-253; src/engine/2d/data/SolverOptions2D.hpp:420-429; src/engine/core/SWMMEngine.cpp:4975-4992 -->
 
@@ -2517,6 +2548,18 @@ speeds during unavailable intervals. Depth and speed envelopes are sampled
 independently; their peaks need not occur at the same time. Good water
 continuity alone does not establish velocity accuracy.
 
+Figure 9-9 applies the fit to a triangle and a quadrilateral, and shows the
+case it refuses. Every edge of the triangle is wet at one depth, and one edge
+carries 30 % more than a uniform (0.60, 0.25) m/s flow would: the fit returns
+(0.70, 0.32) m/s and leaves a residual of −0.06 m/s on every edge. The same
+excess on a 0.02 m edge of the quadrilateral moves the vector by less than
+0.01 m/s, because that edge's weight is small. With two opposite edges wet and
+the other two dry, the wet normals are parallel and the cell reports NaN.
+
+![Figure 9-9 The least-squares cell velocity](figures/png/hydraulics_ch9_lsq_cell_velocity.png)
+
+*Figure 9-9 The output cell velocity of the local-inertial and diffusive-wave closures: edge-normal velocities Q/A and the area-weighted least-squares vector on (a) a triangle and (b) a quadrilateral with one shallow edge, and (c) the rank-deficient case reported as NaN. Velocities in m/s, depths in m; synthetic edge data fitted with the engine's algorithm.*
+
 The same refresh keeps whole-run statistics of each cell, written with the
 envelopes: maximum and minimum free-surface elevation, the time-weighted mean
 depth and mean velocity (integrals over the refresh spans divided by the time
@@ -2528,6 +2571,18 @@ Each dataset names its statistic in `cell_methods` (`time: maximum`,
 `time: minimum`, `time: mean`). Checkpoints carry the statistics, so a resumed
 run continues them; a checkpoint written before they existed restarts them at
 the restore.
+
+Figure 9-10 maps three of these statistics for the coupled worked example of
+@ref application_manual_ch6_coupled_1d2d "Application Manual Chapter 6". In
+six of its eight cells the depth and the speed peak at different times. The
+four northern cells are fastest 0.5 minutes into the run and deepest at
+8.2 minutes; the southern cells T0, T2 and T3 are deepest at 3.0 hours, when
+the tidal stage on the east edge crests, and T0 and T3 are fastest at
+8.2 minutes.
+
+![Figure 9-10 Whole-run statistics of the coupled worked example](figures/png/hydraulics_ch9_whole_run_statistics.png)
+
+*Figure 9-10 Whole-run statistics of the coupled worked example, read from its results file: (a) the maximum depth (m), (b) the time of the maximum depth and (c) the time of the maximum speed, in hours from the start of the run (minutes below one hour). Simulated: coupled_1d2d/2d_complete_example.inp, six hours.*
 
 Saved rendering uses available stored velocity arrays as authoritative,
 including their NaNs. Edge reconstruction is retained only for sources or
@@ -2715,9 +2770,9 @@ warm-up pair per case provide the CPU ratios; history diagnostics are
 excluded from the timing executable. This is a depth-accuracy comparison,
 not equal velocity error, same-grid speedup or a general convergence order.
 
-![Figure 9-8](figures/png/hydraulics_ch9_accuracy_cost.png)
+![Figure 9-11](figures/png/hydraulics_ch9_accuracy_cost.png)
 
-*Figure 9-8 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.*
+*Figure 9-11 Final CPU cost and depth error relative to the earlier reconstruction, at different mesh resolutions. Points are measured pairs; bars are paired medians.*
 
 The wet Bellinge control uses 25,600 loaded cells, a cold-start ten-minute
 storm interval, VFR storage and second-order FULL_SWE. It advances 2,728
@@ -2798,7 +2853,7 @@ sections at @ref engine_manual_sect_2D_BOUNDARY_CONDITIONS,
 *Table 9-5 The forty-two live `[2D_OPTIONS]` keys and the theory each
 selects*
 
-### 9.11.1 The computational backend
+### 9.11.1 The computational backend {#hydraulics_ref_ch9_backend}
 
 The computational backend is chosen by `BACKEND`. The built-in `CPU`
 marcher is OpenMP-threaded on the host and uses the project's `THREADS`
@@ -2867,6 +2922,56 @@ served by the CPU marcher. There is no silent physics substitution. The
 same holds for `FRONT_REBUILD YES` outside `FULL_SWE`, coupled
 groundwater and porous heat. The run notice names each missing capability, and such a
 model loads no plugin at all.
+
+Figure 9-12 traces the choice for both solvers: the 1D finite-volume network
+of @ref hydraulics_ref_ch8_device_backend "Section 8.9.1" and the 2D marcher of
+this section. They differ in what `AUTO` means, since the 1D solver stays on
+the CPU under `AUTO` while the 2D marcher applies the mesh-size floors, and in
+when the scope is checked: the 2D marcher checks the model before it loads a
+plugin, the 1D solver after loading one and again at every advance.
+
+<!-- workflow: compute_backend -->
+<pre class="mermaid">
+flowchart TD
+    A[Run opens the option - FV_BACKEND for the 1D finite-volume network, BACKEND in 2D_OPTIONS for the mesh, default AUTO] --> B{OPENSWMM_FV_BACKEND or OPENSWMM_2D_BACKEND set}
+    B -- yes --> C[The environment value replaces the option]
+    B -- no --> D[The option value]
+    C --> E{Which solver}
+    D --> E
+    E -- 1D finite volume --> F{Backend}
+    F -- CPU or AUTO --> F0[CPU finite-volume solver - AUTO never loads a plugin]
+    F -- OMP, CUDA, HIP or SYCL --> F1{Plugin installed, built for this engine, device present}
+    F1 -- no --> F2[CPU solver, console notice gives the reason]
+    F1 -- yes --> F3{Every option within the plugin scope}
+    F3 -- no --> F4[CPU solver, report warning names the option]
+    F3 -- yes --> F5[Device substeps - FV_LTS and FV_COMPACTION off, FV_STRUCTURE_COUPLING SUBSTEP clamped to ROUTING_STEP]
+    F5 --> F6{This advance needs a CPU-only path}
+    F6 -- yes --> F7[That advance runs the CPU loop, console notice once]
+    F6 -- no --> F8[The advance runs on the device]
+    E -- 2D mesh --> G{Backend}
+    G -- CPU --> G0[Built-in CPU marcher]
+    G -- AUTO, OMP, CUDA, HIP or SYCL --> G1{Model within the plugin capabilities}
+    G1 -- no, for example HEAT_MODEL COUPLED or a mesh aquifer --> G2[CPU marcher, notice names each missing capability, no plugin loaded]
+    G1 -- yes --> G3{AUTO}
+    G3 -- no, a named backend --> G4{That plugin installed with a usable device}
+    G4 -- yes --> GP[Plugin marcher]
+    G4 -- no --> G5[CPU marcher with a fallback notice]
+    G3 -- yes --> G6{At least 10000 cells and a CUDA, HIP or SYCL plugin with a device}
+    G6 -- yes --> GP
+    G6 -- no --> G7{At least 50000 cells and the OpenMP plugin}
+    G7 -- yes --> GP
+    G7 -- no --> G8[CPU marcher, notice gives the cell count and the device floor]
+</pre>
+<div class="workflow-links" data-workflow="compute_backend">
+<span data-node="F3">@ref hydraulics_ref_ch8_device_backend "8.9.1 The device backend: what the plugin covers"</span>
+<span data-node="F5">@ref hydraulics_ref_ch8_device_backend "8.9.1 The device backend: the global-step path"</span>
+<span data-node="G1">@ref hydraulics_ref_ch9_backend "9.11.1 The computational backend: refused models"</span>
+<span data-node="G6">@ref hydraulics_ref_ch9_backend "9.11.1 The computational backend: the AUTO floors"</span>
+</div>
+
+*Figure 9-12 How a run chooses the compute backend of the 1D finite-volume solver and of the 2D marcher, and where each falls back to the CPU (rendered diagram)*
+
+<!-- source: src/engine/2d/solver/SurfaceSolverFactory.cpp:475-580 (makeSurfaceSolver: environment over option, capability refusal before any plugin, named backends, AUTO floors 10000 and 50000); src/engine/2d/solver/SurfaceCapabilities.hpp:31-84; src/engine/2d/SurfaceRouter2D.cpp:1338-1371; src/engine/hydraulics/fv/NetworkSolverFactory.cpp:433-470 (makeNetworkSolver: AUTO stays on the CPU); src/engine/hydraulics/Routing.cpp:1562-1596 (scope check after the plugin loads, structure clamp); src/engine/hydraulics/fv/ExplicitFvSolver.cpp:363-384 (deviceSupports), 583-584 (LTS and compaction off), 588-618 (per-advance fallback) -->
 
 ### 9.11.2 Retired keys
 

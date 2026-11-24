@@ -108,9 +108,6 @@ extensions = [
     # sphinx-design: tab-set / grid / grid-item-card directives used in
     # the User Guide and Migration pages.
     'sphinx_design',
-    # sphinxcontrib-mermaid: workflow / state diagrams (.. mermaid::)
-    # rendered client-side, matching the Doxygen manuals.
-    'sphinxcontrib.mermaid',
 ]
 
 # MyST (Markdown) settings
@@ -200,11 +197,7 @@ exclude_patterns = [
     'LEGACY_API_EXPANSION_PLAN.md',
 ]
 
-on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
-if not on_rtd:
-    html_theme = 'pydata_sphinx_theme'
-else:
-    html_theme = 'default'
+html_theme = 'pydata_sphinx_theme'
 
 html_theme_options = {
     "logo": {
@@ -212,16 +205,9 @@ html_theme_options = {
         "image_light": "images/hydrocouple_logo.png",
         "image_dark": "images/hydrocouple_logo.png",
     },
-    # Top-nav cross-link back to the Doxygen C/C++ engine docs.
-    # Deployment layout (see .github/workflows/documentation.yml):
-    #     /         Doxygen docs (root)
-    #     /python/  these (Sphinx) docs
-    # ``../index.html`` resolves to the Doxygen root when both sites are
-    # co-deployed under GitHub Pages.  When viewing the Sphinx docs
-    # locally without the Doxygen bundle, this link 404s — that's an
-    # accepted local-only limitation.
+    # Use the published manual URL from every nested Python page.
     "external_links": [
-        {"name": "C/C++ Engine Docs", "url": "../index.html"},
+        {"name": "C/C++ Engine Docs", "url": "https://www.hydrocouple.org/openswmm.engine/"},
     ],
     "icon_links": [
         {
@@ -454,3 +440,27 @@ def _epytext_to_rst(app, what, name, obj, options, lines):
 def setup(app):
     app.connect('autodoc-skip-member', skip_member)
     app.connect('autodoc-process-docstring', _epytext_to_rst)
+
+
+# -- HydroCouple documentation theme ---------------------------------------
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "_hydrocouple"))
+import hydrocouple_theme  # noqa: E402
+
+hydrocouple_theme.configure(
+    globals(),
+    manual_id="openswmm.engine.python",
+    project_label="OpenSWMM Engine · Python",
+    repository="https://github.com/HydroCouple/openswmm.engine",
+    hero={
+        "kicker": "OpenSWMM Engine · Python",
+        "title": "Storm water modeling from Python",
+        "lede": "The openswmm package runs the reentrant OpenSWMM 6 engine and the SWMM 5 "
+                "compatibility layer: build and edit models, step simulations, and read "
+                "results as numpy arrays.",
+        "actions": [
+            {"label": "Get started", "url": "guide/quickstart", "style": "solid"},
+            {"label": "API reference", "url": "api", "style": "ghost"},
+            {"label": "C/C++ engine manual", "url": "https://www.hydrocouple.org/openswmm.engine/", "style": "ghost"},
+        ],
+    },
+)

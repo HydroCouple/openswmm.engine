@@ -239,6 +239,7 @@ void DefaultInputPlugin::register_builtin_handlers() {
     registry_.register_builtin("PROFILES", capture("PROFILES"));
     registry_.register_builtin("REPORT", input::handle_report);
     registry_.register_builtin("FILES", input::handle_files);
+    registry_.register_builtin("RESTART", input::handle_restart);
     registry_.register_builtin("ADJUSTMENTS", input::handle_adjustments);
     registry_.register_builtin("EVENTS", input::handle_events);
     registry_.register_builtin("FROZEN_GROUND", input::handle_frozen_ground);

@@ -24,6 +24,7 @@
  * @license   Apache-2.0
  */
 
+#include "../core/Constants.hpp"
 #include "Gage.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
@@ -93,7 +94,8 @@ PrecipSplit splitPrecip(const SimulationContext& ctx, std::size_t sub) {
     if (!ctx.options.ignore_snow_melt && pack >= 0 &&
         snow_config.modelFor(pack) == surface::SnowKind::Ueb) {
         const auto& p = snow_config.parameters;
-        const double temperature = (ctx.climate_state.temperature - 32.) / 1.8;
+        const double temperature =
+            (ctx.climate_state.temperature - constants::F_AT_0C) / constants::F_PER_C;
         const double fraction = snow_config.division_temperature
                                     ? (is_snowing ? 1. : 0.)
                                     : std::clamp((p.rain_temperature - temperature) /
@@ -454,8 +456,8 @@ double gageNextRateChange(const SimulationContext& ctx, int j, double date, doub
     const auto* table = gageRainSeries(ctx, j);
     if (!table || table->x.empty() || ctx.options.ignore_rainfall)
         return limit;
-    constexpr double tolerance = 1e-5 / 86400.;
-    const double duration = ctx.gages.interval_sec[j] / 86400.;
+    constexpr double tolerance = 1e-5 / constants::SEC_PER_DAY;
+    const double duration = ctx.gages.interval_sec[j] / constants::SEC_PER_DAY;
     int current = ctx.gages.st_cur[j];
     double end = date, rate = 0;
     if (current >= 0) {
@@ -478,6 +480,35 @@ double gageNextRateChange(const SimulationContext& ctx, int j, double date, doub
         end = table->x[current] + duration;
     }
     return limit;
+}
+
+void refreshGageLookahead(SimulationContext& ctx) {
+    if (ctx.options.ignore_rainfall)
+        return;
+    for (int j = 0; j < ctx.n_gages(); ++j) {
+        const auto uj = static_cast<std::size_t>(j);
+        const Table* tbl = gageRainSeries(ctx, j);
+        if (uj >= ctx.gages.st_init.size() || !ctx.gages.st_init[uj] || !tbl || tbl->x.empty())
+            continue;
+        const int cur = ctx.gages.st_cur[uj];
+        if (cur == kNoState) { // the saving run's series held nothing before the record
+            initGageState(ctx, j, tbl);
+            continue;
+        }
+        if (ctx.gages.st_next[uj] != kNoDate)
+            continue;
+        // gage_initState reads its lookahead with factor 1; a later advance with the month's.
+        double adjustment = 1.0;
+        if (!(cur == 0 && tbl->x[0] <= ctx.options.start_date)) {
+            const double when =
+                cur >= 0 ? tbl->x[static_cast<std::size_t>(cur)] : ctx.options.start_date;
+            const int month = datetime::monthOfYear(when) - 1;
+            adjustment = month >= 0 && month < 12 ? ctx.adjust_rain[month] : 1.0;
+        }
+        const int next = nextNonzeroRecord(ctx, j, *tbl, cur, adjustment);
+        ctx.gages.st_next[uj] = next;
+        ctx.gages.next_rainfall[uj] = next >= 0 ? recordRate(ctx, j, *tbl, next) * adjustment : 0.0;
+    }
 }
 
 void updateAllGages(SimulationContext& ctx, double current_time) {

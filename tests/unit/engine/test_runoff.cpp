@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "hydrology/Runoff.hpp"
+#include "core/Constants.hpp"
 #include "core/SimulationOptions.hpp"
 
 using namespace openswmm;
@@ -48,8 +49,8 @@ TEST(RunoffAlpha, BasicComputation) {
     double area_imperv = 43560.0 * 0.5;
     double area_perv = 43560.0 * 0.5;
 
-    double expected_alpha_i = PHI * 200.0 * sq_slope / (0.01 * area_imperv);
-    double expected_alpha_p = PHI * 200.0 * sq_slope / (0.10 * area_perv);
+    double expected_alpha_i = constants::PHI * 200.0 * sq_slope / (0.01 * area_imperv);
+    double expected_alpha_p = constants::PHI * 200.0 * sq_slope / (0.10 * area_perv);
 
     EXPECT_NEAR(soa.alpha_imperv[0], expected_alpha_i, 1e-10);
     EXPECT_NEAR(soa.alpha_perv[0], expected_alpha_p, 1e-10);

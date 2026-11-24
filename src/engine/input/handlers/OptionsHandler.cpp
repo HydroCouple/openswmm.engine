@@ -80,6 +80,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "OptionsHandler.hpp"
 
 #include "../Tokenizer.hpp"
@@ -324,7 +325,7 @@ static bool legacyTime(const std::string& val, double& days) {
 static double legacyStepSeconds(double days) {
     int h = 0, m = 0, s = 0;
     datetime::decodeTime(days, h, m, s);
-    return s + 60.0 * m + 3600.0 * h + 86400.0 * std::trunc(days);
+    return s + 60.0 * m + 3600.0 * h + constants::SEC_PER_DAY * std::trunc(days);
 }
 
 // ============================================================================
@@ -929,6 +930,8 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.fv.backend = fv::Backend::HIP;
             else if (bv == "SYCL")
                 opt.fv.backend = fv::Backend::SYCL;
+            else if (bv == "METAL")
+                opt.fv.backend = fv::Backend::METAL;
 
         } else if (key == "FV_MIN_PARALLEL_CELLS") {
             opt.fv.min_parallel_cells = static_cast<long>(to_double(val));
@@ -1095,9 +1098,10 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
     // when both dates were parsed from their parts; anything else falls back
     // to SimulationOptions::totalDurationMs().
     if (got_start_date && got_end_date) {
-        opt.total_duration_ms = std::floor((end_date_part - start_date_part) * 86400.0 +
-                                           (end_time_part - start_time_part) * 86400.0) *
-                                1000.0;
+        opt.total_duration_ms =
+            std::floor((end_date_part - start_date_part) * constants::SEC_PER_DAY +
+                       (end_time_part - start_time_part) * constants::SEC_PER_DAY) *
+            1000.0;
     }
     if (got_rpt_date || got_rpt_time) {
         opt.report_start = rpt_date_part + rpt_time_part;

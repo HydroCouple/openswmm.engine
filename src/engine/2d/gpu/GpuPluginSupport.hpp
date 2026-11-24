@@ -12,6 +12,8 @@
 #pragma once
 #include "../solver/GpuPluginAbi.h"
 #include "ExplicitKokkosSurfaceSolver.hpp"
+#include "../../hydraulics/fv/FvDeviceMarcher.hpp"
+#include "../../hydraulics/fv/gpu/KokkosNetworkMarcher.hpp"
 #include <cstdio>
 #include <exception>
 
@@ -31,11 +33,32 @@ inline thread_local char error[512]{};
  * destruction uses the matching plugin entry point. No exception escapes, and process-runtime
  * finalization is outside this helper.
  */
-template <class Initialize> void* make(Initialize initialize) noexcept {
+template <class Initialize> void* make(Initialize initialize, bool metal = false) noexcept {
     error[0] = '\0';
     try {
         initialize();
-        return static_cast<ISurfaceSolver*>(new ExplicitKokkosSurfaceSolver());
+        return static_cast<ISurfaceSolver*>(new ExplicitKokkosSurfaceSolver(metal));
+    } catch (const std::exception& e) {
+        std::snprintf(error, sizeof error, "%s", e.what());
+    } catch (...) {
+        std::snprintf(error, sizeof error, "Unknown plugin initialization failure");
+    }
+    return nullptr;
+}
+
+/**
+ * @brief Create the 1D network substep marcher after the backend runtime is initialized.
+ *
+ * @param[in] initialize Callable that initializes the backend's Kokkos runtime; may throw.
+ * @return Owning openswmm::fv::IFvDeviceMarcher* as void*, or nullptr with `error` set.
+ */
+template <class Initialize>
+void* makeNetworkMarcher(Initialize initialize, bool metal = false) noexcept {
+    error[0] = '\0';
+    try {
+        initialize();
+        return static_cast<openswmm::fv::IFvDeviceMarcher*>(
+            openswmm::fv::gpu::makeKokkosNetworkMarcher(metal));
     } catch (const std::exception& e) {
         std::snprintf(error, sizeof error, "%s", e.what());
     } catch (...) {
@@ -52,4 +75,8 @@ extern "C" OPENSWMM_GPU_ABI const char* openswmm_gpu_last_error() {
 }
 extern "C" OPENSWMM_GPU_ABI void openswmm_destroy_gpu_explicit_solver(void* solver) {
     delete static_cast<openswmm::twoD::ISurfaceSolver*>(solver);
+}
+
+extern "C" OPENSWMM_GPU_ABI void openswmm_destroy_gpu_network_marcher(void* marcher) {
+    delete static_cast<openswmm::fv::IFvDeviceMarcher*>(marcher);
 }

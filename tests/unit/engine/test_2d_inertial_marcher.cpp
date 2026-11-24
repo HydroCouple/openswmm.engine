@@ -1028,7 +1028,8 @@ TEST(CoupledGroundwaterRk2, SurfaceInfiltrationAndAquiferAdvanceTogetherAndRefin
         r.init(dt, .005, .0005, .2);
         auto& water = r.gw.state();
         for (int i = 0; i < water.n_cells; ++i) {
-            water.hu[i] = .35 * (water.zs[i] - water.hg[i]);
+            // Wetter than the RUSSO hydrostatic column, so it drains to the table.
+            water.hu[i] = .44 * (water.zs[i] - water.hg[i]);
             water.wetting_front[i] = .1;
         }
         water.led_init_storage = water.storage();
@@ -1620,7 +1621,8 @@ TEST(CoupledGroundwaterRk2, FullStepAndTwoHalfStepsDifferAtThirdLocalOrder) {
         for (auto* r : {&full, &half}) {
             auto& w = r->gw.state();
             for (int i = 0; i < w.n_cells; ++i) {
-                w.hu[i] = .35 * (w.zs[i] - w.hg[i]);
+                // Wetter than hydrostatic, so the column drains (drainage sign).
+                w.hu[i] = .44 * (w.zs[i] - w.hg[i]);
                 w.wetting_front[i] = .1;
             }
             w.led_init_storage = w.storage();
@@ -2918,7 +2920,9 @@ TEST(CoupledGroundwaterRk2, SigmaInvalidLayerAndBulkStatesRefuseWithoutMutationA
     }
 }
 
-TEST(CoupledGroundwaterRk2, SigmaCapillaryTransportRetainsSecondTemporalOrder) {
+TEST(CoupledGroundwaterRk2, SigmaCapillaryColumnConvergesAtFirstOrderUnderRk2) {
+    // The capillary column (S2, 2026-11-19) is backward Euler in each RK2 stage, so the coupled
+    // trajectory converges at first order; it still differs from the kinematic column's.
     const auto trajectory = [](double dt, bool capillary) {
         CoupledRkRig r;
         r.init(dt, .003, .01, .2, "NONE", GwClosure::SIGMA, SoilChar::GARDNER, 4, capillary);
@@ -2948,9 +2952,9 @@ TEST(CoupledGroundwaterRk2, SigmaCapillaryTransportRetainsSecondTemporalOrder) {
             error += std::pow(actual[i] - reference[i], 2);
         error = std::sqrt(error);
         RecordProperty("sigma_capillary_error_" + std::to_string(int(dt * 1000)), error);
-        EXPECT_LT(error, 1e-4);
+        EXPECT_LT(error, 2e-3);
         if (previous > 0)
-            EXPECT_GT(previous / error, 3.5);
+            EXPECT_GT(previous / error, 1.8);
         previous = error;
     }
 }
@@ -3237,7 +3241,9 @@ TEST(CoupledGroundwaterRk2, PassiveSharedSurfaceLayerTransportRefinesAndClosesEv
                 continue;
             const auto trajectory = [&](double dt) {
                 CoupledRkRig r;
-                r.init(dt, .003, .001, .2, "NONE", closure, SoilChar::GARDNER, 4, true);
+                // The kinematic column: second order here is the RK2 coupling's. The capillary
+                // column is backward Euler in each stage, first order (S2, 2026-11-19).
+                r.init(dt, .003, .001, .2, "NONE", closure, SoilChar::GARDNER, 4, false);
                 initRkQuality(r, layered, true, true);
                 seedRkQuality(r, 2, .001);
                 auto& t = r.gw.transport();
@@ -12422,6 +12428,54 @@ TEST(IndependentGroundwaterClock, TwelveRungsCloseWaterAndTracerAtVariableRoutin
     EXPECT_GT(gw.state().led_infil_in, 0.);
     EXPECT_EQ(gw.cellCompletedTime(mesh.n_cells() - 1), 6.);
     EXPECT_LT(solver.last_step_size(), .051);
+}
+
+// A groundwater check cadence finer than the surface's own step used to land every check with a
+// global step of every active cell, so a tiered surface did the work of an untiered one. The
+// checks now end the substeps of a tiered cycle: same firings, coarse tiers on longer steps.
+TEST(IndependentGroundwaterClock, FineCheckCadenceKeepsTheSurfaceTiers) {
+    long evaluations[2] = {};
+    unsigned long long firings[2] = {};
+    for (int run = 0; run < 2; ++run) {
+        // Still water over a step in the bed: 4 m deep on the left, 0.05 m on the right.
+        auto mesh = makeGridMesh(8, 8, 2., [](double x, double) { return x < 8. ? 0. : 3.95; });
+        auto surface = makeState(mesh);
+        SolverOptions2D opts;
+        opts.momentum = Momentum2D::LOCAL_INERTIAL;
+        opts.max_timestep = 5.;
+        opts.groundwater = 1;
+        opts.lts_tiers = run == 0 ? 1 : 3;
+        seedSurface(mesh, opts, surface, 4.);
+        ExplicitInertialSolver solver;
+        solver.initialize(mesh, surface, opts);
+        SubsurfaceConfig config;
+        config.options.authored = config.options.independent_clock = true;
+        config.options.gw_et = "NONE";
+        config.options.closure = GwClosure::ENSLAVED;
+        config.options.base_step = config.options.max_step = .0625; // every cell at the ceiling
+        config.options.base_step_set = true;
+        GwAquiferRow r;
+        r.zs = 2;
+        r.hg0 = 1;
+        r.theta_s = .45;
+        r.theta_r = .1;
+        r.Ks = 1e-7;
+        r.alpha = 2;
+        config.rows = {r};
+        SubsurfaceSolver gw;
+        std::vector<std::string> warnings;
+        ASSERT_EQ(gw.initialize(mesh, solver.inertialEdges(), opts, {}, 0, config, warnings), "");
+        solver.setSubsurface(&gw, 8.);
+        for (int start = 0; start < 8; ++start)
+            solver.advance(start, start + 1);
+        evaluations[run] = solver.run_stats().nrhs;
+        firings[run] = gw.clockState()->firings[int(GwClosure::ENSLAVED)];
+        for (int i = 0; i < mesh.n_triangles(); ++i)
+            EXPECT_EQ(gw.cellCompletedTime(i), 8.);
+    }
+    EXPECT_EQ(firings[0], 128u * 256u); // 128 cells on the 0.03125 s check cadence for 8 s
+    EXPECT_EQ(firings[1], firings[0]);
+    EXPECT_LT(evaluations[1], .8 * evaluations[0]);
 }
 
 TEST(IndependentGroundwaterClock, FastSurfaceDoesNotForceTheSlowAquiferAtWindowEnds) {

@@ -147,8 +147,8 @@ std::string oadateToIso(double oa) {
  *
  * Assigns zero-based ordinals and imported_from_file source; OADate converts to whole-second text
  * without timezone arithmetic. Does not validate chronology or duplicate keys.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -179,7 +179,7 @@ void insert_input_timeseries(sqlite3* db, const std::string& sim, const std::str
             sqlite3_bind_null(stmt.get(), 7);
         else
             bind_text(stmt.get(), 7, source_column);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -187,8 +187,8 @@ void insert_input_timeseries(sqlite3* db, const std::string& sim, const std::str
  * @brief Insert embedded gage rainfall observations.
  *
  * Writes whole-second timestamp text; no unit conversion, deduplication or date-order check.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -212,7 +212,7 @@ void insert_raingage_data(sqlite3* db, const std::string& sim, const std::string
             sqlite3_bind_null(stmt.get(), 5);
         else
             bind_text(stmt.get(), 5, r.station_id);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -220,8 +220,8 @@ void insert_raingage_data(sqlite3* db, const std::string& sim, const std::string
  * @brief Insert embedded daily climate rows without unit conversion.
  *
  * Copies date strings and all numeric columns directly; no finite, date or range validation.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -245,7 +245,7 @@ void insert_climate_data(sqlite3* db, const std::string& sim,
         bind_double(stmt.get(), 6, r.wind_speed);
         bind_double(stmt.get(), 7, r.sky_cover);
         bind_double(stmt.get(), 8, r.humidity);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -255,8 +255,8 @@ void insert_climate_data(sqlite3* db, const std::string& sim,
  * @brief Insert one node interface flow and available pollutant child values.
  *
  * Flow/concentrations are copied without unit conversion or metadata validation; excess values/IDs
- * are ignored. Preparation/allocation may throw; bind and step return codes are ignored, so void
- * completion does not certify row insertion. No local transaction or rollback.
+ * are ignored. Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -282,7 +282,7 @@ void insert_routing_node_row(sqlite3* db, const std::string& sim, const std::str
         bind_text(stmt.get(), 4, row.object_id);
         bind_text(stmt.get(), 5, oadateToIso(row.timestamp_oa));
         bind_double(stmt.get(), 6, row.flow_value);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
     // Pollutant child rows — one per pollutant_id at this timestamp.
     for (std::size_t p = 0; p < pollutant_ids.size() && p < row.pollutant_values.size(); ++p) {
@@ -297,7 +297,7 @@ void insert_routing_node_row(sqlite3* db, const std::string& sim, const std::str
         bind_text(stmt.get(), 5, oadateToIso(row.timestamp_oa));
         bind_text(stmt.get(), 6, pollutant_ids[p]);
         bind_double(stmt.get(), 7, row.pollutant_values[p]);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -305,8 +305,8 @@ void insert_routing_node_row(sqlite3* db, const std::string& sim, const std::str
  * @brief Insert one catchment interface flow observation.
  *
  * Does not store pollutant children or a separate units catalogue; copies flow as supplied.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -329,15 +329,15 @@ void insert_routing_subcatch_row(sqlite3* db, const std::string& sim, const std:
     bind_text(stmt.get(), 4, row.object_id);
     bind_text(stmt.get(), 5, oadateToIso(row.timestamp_oa));
     bind_double(stmt.get(), 6, row.flow_value);
-    sqlite3_step(stmt.get());
+    checked_model_step(db, stmt.get());
 }
 
 /**
  * @brief Insert one gage interface rainfall observation.
  *
  * Copies row.flow_value into rainfall_value without unit conversion; no pollutant children.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -360,15 +360,15 @@ void insert_routing_gage_row(sqlite3* db, const std::string& sim, const std::str
     bind_text(stmt.get(), 4, row.object_id);
     bind_text(stmt.get(), 5, oadateToIso(row.timestamp_oa));
     bind_double(stmt.get(), 6, row.flow_value);
-    sqlite3_step(stmt.get());
+    checked_model_step(db, stmt.get());
 }
 
 /**
  * @brief Insert a legacy hotstart slot parent and save-format provenance.
  *
  * No state rows or file bytes are inserted by this helper. Does not validate enum compatibility or
- * overwrite existing slots. Preparation/allocation may throw; bind and step return codes are
- * ignored, so void completion does not certify row insertion. No local transaction or rollback.
+ * overwrite existing slots. Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -418,7 +418,7 @@ void insert_hotstart_slot_row(sqlite3* db, const std::string& sim, const std::st
         bind_text(stmt.get(), 10, "NATIVE");
     else
         sqlite3_bind_null(stmt.get(), 10);
-    sqlite3_step(stmt.get());
+    checked_model_step(db, stmt.get());
 }
 
 /**
@@ -427,8 +427,8 @@ void insert_hotstart_slot_row(sqlite3* db, const std::string& sim, const std::st
  * Stops node/link/pollutant loops at available registry names. Copies depth ft, flow cfs, volume
  * ft3 and retained setting/time/concentration conventions, with optional HRT. Updates slot counts
  * and opaque runoff/tail blobs; no model/snapshot compatibility validation or runtime restoration.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -460,7 +460,7 @@ void insert_hotstart_state(sqlite3* db, const std::string& sim, const std::strin
                 bind_double(stmt.get(), 7, s.hrt);
             else
                 sqlite3_bind_null(stmt.get(), 7);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
     // Node pollutant state.
@@ -482,7 +482,7 @@ void insert_hotstart_state(sqlite3* db, const std::string& sim, const std::strin
                 bind_text(stmt.get(), 3, node_id);
                 bind_text(stmt.get(), 4, ctx.pollutant_names.name_of(static_cast<int>(p)));
                 bind_double(stmt.get(), 5, concs[p]);
-                sqlite3_step(stmt.get());
+                checked_model_step(db, stmt.get());
             }
         }
     }
@@ -507,7 +507,7 @@ void insert_hotstart_state(sqlite3* db, const std::string& sim, const std::strin
             bind_double(stmt.get(), 8, s.target_setting);
             bind_double(stmt.get(), 9, s.time_open);
             bind_double(stmt.get(), 10, s.time_closed);
-            sqlite3_step(stmt.get());
+            checked_model_step(db, stmt.get());
         }
     }
     // Link pollutant state.
@@ -529,7 +529,7 @@ void insert_hotstart_state(sqlite3* db, const std::string& sim, const std::strin
                 bind_text(stmt.get(), 3, link_id);
                 bind_text(stmt.get(), 4, ctx.pollutant_names.name_of(static_cast<int>(p)));
                 bind_double(stmt.get(), 5, concs[p]);
-                sqlite3_step(stmt.get());
+                checked_model_step(db, stmt.get());
             }
         }
     }
@@ -551,7 +551,7 @@ void insert_hotstart_state(sqlite3* db, const std::string& sim, const std::strin
         bind_bytes(4, snap.tail_raw);
         bind_text(stmt.get(), 5, sim);
         bind_text(stmt.get(), 6, slot);
-        sqlite3_step(stmt.get());
+        checked_model_step(db, stmt.get());
     }
 }
 
@@ -587,8 +587,8 @@ formats::HsfLayout hsfLayout(const SimulationContext& ctx) {
  * Uses effective path and last-colon selector, checks readable input and throws GpkgError for
  * missing/parse failure. Parses all text rows; selector is retained as provenance rather than
  * applied by this dispatcher. Persists basename, raw series values and whole-second timestamps.
- * Existing database samples are not cleared. Preparation/allocation may throw; bind and step return
- * codes are ignored, so void completion does not certify row insertion. No local transaction or
+ * Existing database samples are not cleared. Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or
  * rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
@@ -623,7 +623,8 @@ void writeTimeseriesSlots(sqlite3* db, const SimulationContext& ctx, const std::
  * Strips an optional column suffix, requires readable standard gage text and throws GpkgError for
  * read/parse failure. Parsing occurs before verifying a matching model gage row; extra file slots
  * can be read then discarded. Rainfall values retain source units. Preparation/allocation may
- * throw; bind and step return codes are ignored, so void completion does not certify row insertion.
+ * throw; a failed insert throws
+ * GpkgError.
  * No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
@@ -657,8 +658,8 @@ void writeRaingageSlots(sqlite3* db, const SimulationContext& ctx, const std::st
  *
  * Requires readable climate CSV and throws GpkgError on failure. Uses whole effective token without
  * :column stripping and copies format values without conversion. No-op for an empty slot.
- * Preparation/allocation may throw; bind and step return codes are ignored, so void completion does
- * not certify row insertion. No local transaction or rollback.
+ * Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -686,8 +687,8 @@ void writeClimateSlot(sqlite3* db, const SimulationContext& ctx, const std::stri
  * Missing non-USE file is omitted without a pending-row record. Readable files must parse or throw
  * GpkgError. NODE retains available pollutant children; other kinds retain only flow/rainfall.
  * Parser metadata is not checked against ctx or persisted as a unit catalogue; values retain input
- * file units. Preparation/allocation may throw; bind and step return codes are ignored, so void
- * completion does not certify row insertion. No local transaction or rollback.
+ * file units. Preparation/allocation may throw; a failed insert throws
+ * GpkgError. No local transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
  *     cleanup and parent catalogue rows.
@@ -758,8 +759,8 @@ const char* flowUnitsToken(int fu) {
  *
  * Empty slot is a no-op; unreadable or native OpenSWMM file throws GpkgError. Parses using the
  * model-borrowing legacy layout, inserts populated use parent then state. Does not validate every
- * registry/layout correspondence or restore runtime state. Preparation/allocation may throw; bind
- * and step return codes are ignored, so void completion does not certify row insertion. No local
+ * registry/layout correspondence or restore runtime state. Preparation, allocation and a failed
+ * insert throw. No local
  * transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,
@@ -799,8 +800,8 @@ void writeHotstartUseSlot(sqlite3* db, const SimulationContext& ctx, const std::
  * Names entries save_N using original vector position, skipping empty paths.
  * Missing/unreadable/native files become pending v4 rows with model counts and requested save
  * format; readable legacy files parse into populated state or throw GpkgError. Retains OADate
- * schedule. Does not execute saves or modify source files. Preparation/allocation may throw; bind
- * and step return codes are ignored, so void completion does not certify row insertion. No local
+ * schedule. Does not execute saves or modify source files. Preparation, allocation and a failed
+ * insert throw. No local
  * transaction or rollback.
  *
  * @param[in,out] db Borrowed writable schema-compatible SQLite connection; caller owns transaction,

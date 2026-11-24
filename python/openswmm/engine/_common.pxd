@@ -52,6 +52,14 @@ cdef extern from "openswmm_engine.h":
 
     # --- Engine lifecycle ---
     cdef const char* swmm_engine_abi_tag() noexcept nogil
+    # Compute backends (a backend's plugin, device and the 1D device scope)
+    ctypedef struct SWMM_BackendInfo:
+        int usable
+        char device_name[128]
+        unsigned long long device_mem_bytes
+        char reason[256]
+    cdef int swmm_backend_info(int solver, const char* backend, SWMM_BackendInfo* out)
+    cdef int swmm_fv_device_supported(SWMM_Engine e, int* supported, char* why, int buflen)
     cdef SWMM_Engine swmm_engine_create()
     cdef int  swmm_engine_open(SWMM_Engine e, const char* inp, const char* rpt, const char* out, const char* input_plugin_lib)
     cdef int  swmm_engine_open_metadata(SWMM_Engine e, const char* inp)
@@ -720,6 +728,20 @@ cdef extern from "openswmm_hotstart.h":
     cdef int swmm_hotstart_saves_add(SWMM_Engine e, const char* path, double datetime)
     cdef int swmm_hotstart_saves_remove(SWMM_Engine e, int idx)
     cdef int swmm_hotstart_saves_clear(SWMM_Engine e)
+
+cdef extern from "openswmm_restart.h":
+    # [RESTART] settings and read-only inspection of GeoPackage/HDF5 restart files.
+    cdef int swmm_restart_get(SWMM_Engine e, const char* key, char* buf, int buflen)
+    cdef int swmm_restart_set(SWMM_Engine e, const char* key, const char* value)
+    cdef int swmm_restart_record_at_count(SWMM_Engine e, int* count)
+    cdef int swmm_restart_record_at_get(SWMM_Engine e, int idx, double* datetime)
+    cdef int swmm_restart_record_at_add(SWMM_Engine e, double datetime)
+    cdef int swmm_restart_record_at_clear(SWMM_Engine e)
+    cdef int swmm_restart_uses_checkpoint(SWMM_Engine e, int* uses)
+    cdef int swmm_restart_probe(const char* path, int* backend)
+    cdef int swmm_restart_inspect_json(const char* path, char* utf8, size_t capacity,
+                                       size_t* required) nogil
+    cdef const char* swmm_restart_last_error()
 
 cdef extern from "openswmm_pollutants.h":
     # Identity

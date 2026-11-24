@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "SnowCheckpoint.hpp"
 #include "MeshSnow.hpp"
 #include "DegreeDaySnow.hpp"
@@ -122,11 +123,13 @@ void point(Archive& a, ueb::State& s) {
     double duration = 0;
     a.sequence(s.history, [&](auto& h) {
         scalars(a, h.seconds, h.surface, h.bulk);
-        require(h.seconds > 0 && h.surface > -273.15 && h.bulk > -273.15,
+        require(h.seconds > 0 && h.surface > -constants::KELVIN_OFFSET &&
+                    h.bulk > -constants::KELVIN_OFFSET,
                 "Invalid snow checkpoint thermal history.");
         duration += h.seconds;
     });
-    require(duration <= 86400. + 1e-7, "Snow checkpoint thermal history exceeds 24 hours.");
+    require(duration <= constants::SEC_PER_DAY + 1e-7,
+            "Snow checkpoint thermal history exceeds 24 hours.");
 }
 /** @brief Stream a covered-point state and verify whole-footprint water consistency.
  * @param[in,out] a Native reader/writer; can advance before validation fails.

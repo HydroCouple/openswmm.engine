@@ -220,7 +220,8 @@ SWMM_ENGINE_API int swmm_gpkg_simulation_count(SWMM_Gpkg gpkg) {
     if (!gpkg)
         return -1;
     try {
-        return count_query(as_handle(gpkg)->db.get(), "SELECT count(*) FROM simulations");
+        return count_query(as_handle(gpkg)->db.get(),
+                           "SELECT count(*) FROM simulations WHERE status IS NOT 'model'");
     } catch (...) {
         return -1;
     }
@@ -231,9 +232,9 @@ SWMM_ENGINE_API int swmm_gpkg_simulation_id(SWMM_Gpkg gpkg, int index, char* buf
         return SWMM_GPKG_ERR;
     auto* h = as_handle(gpkg);
     try {
-        auto stmt =
-            prepare(h->db.get(),
-                    "SELECT simulation_id FROM simulations ORDER BY created_at LIMIT 1 OFFSET ?");
+        auto stmt = prepare(h->db.get(),
+                            "SELECT simulation_id FROM simulations WHERE status IS NOT 'model' "
+                            "ORDER BY created_at LIMIT 1 OFFSET ?");
         bind_int(stmt.get(), 1, index);
         if (sqlite3_step(stmt.get()) == SQLITE_ROW) {
             std::string id = column_text(stmt.get(), 0);

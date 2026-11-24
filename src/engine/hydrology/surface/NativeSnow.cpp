@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "NativeSnow.hpp"
 #include "UebSubcatchments.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -128,7 +129,7 @@ std::string initializeNativeSnow(SimulationContext& ctx_, snow::SnowSolver& snow
                                  ucf::Ucf[ucf::RAINFALL][unit_sys_snow];
                 soa.tbase[idx] = p[2];
                 if (unit_sys_snow == 1) // SI: convert °C to °F
-                    soa.tbase[idx] = (9. / 5.) * soa.tbase[idx] + 32.0;
+                    soa.tbase[idx] = (9. / 5.) * soa.tbase[idx] + constants::F_AT_0C;
                 soa.fwfrac[idx] = p[3];
                 soa.wsnow[idx] = p[4] / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];
                 soa.fw[idx] = std::min(p[5], p[3] * p[4]) / ucf::Ucf[ucf::RAINDEPTH][unit_sys_snow];

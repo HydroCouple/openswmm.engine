@@ -1,7 +1,3 @@
-.. image:: images/hydrocouple_logo.png
-   :alt: HydroCouple Logo
-   :width: 200px
-
 ========
 OpenSWMM
 ========

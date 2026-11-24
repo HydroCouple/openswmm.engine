@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 #include <cmath>
 #include <fstream>
+#include <numbers>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -37,7 +38,9 @@
 #include "hydraulics/Routing.hpp"
 #include "hydraulics/XSectBatch.hpp"
 #include "hydraulics/ForceMain.hpp"
+#include "hydraulics/HydClosureKernels.hpp"
 #include "hydraulics/Node.hpp"
+#include "core/Constants.hpp"
 #include "core/SimulationContext.hpp"
 
 #ifndef BENCHMARK_DATA_DIR
@@ -81,6 +84,22 @@ TEST(DWConstants, SlotCrownCutoff) {
 
 TEST(DWConstants, SlotWidthFactor) {
     EXPECT_DOUBLE_EQ(SLOT_WIDTH_FACTOR, 0.001);
+}
+
+// ============================================================================
+// Froude number: one definition for DW and FV
+// ============================================================================
+
+TEST(FroudeNumber, IsLegacyLinkGetFroudeForm) {
+    // legacy link.c: fabs(v) / sqrt(GRAVITY * y), in that order. The FV path
+    // used to compute |v| * INV_SQRT_GRAVITY / sqrt(y) with a mistyped
+    // INV_SQRT_GRAVITY = 0.17622692584 (1/sqrt(32.2) = 0.17622684421...),
+    // 4.6e-7 relative high; that constant no longer exists.
+    for (double v : {-3.2, 0.0, 0.75, 12.0})
+        for (double y : {0.01, 0.4, 2.5, 30.0})
+            EXPECT_EQ(hydkernels::froudeNumber(v, y), std::fabs(v) / std::sqrt(32.2 * y))
+                << "v=" << v << " y=" << y;
+    EXPECT_NE(hydkernels::froudeNumber(1.0, 1.0), 0.17622692584);
 }
 
 // ============================================================================
@@ -398,7 +417,8 @@ TEST(XSectGeometry, CircularAreaAtHalfDepth) {
     // where theta = pi (180 deg) → area = pi*D^2/8 = pi*16/8 = 2*pi ≈ 6.283
     double a = xsect::getAofY(xs, 2.0);
     double expected =
-        M_PI * 4.0; // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
+        std::numbers::pi *
+        4.0; // pi * r^2 / 2 = pi * 4 / 2... Actually A = pi*R^2 at half = pi*4/2 = 2pi
     EXPECT_NEAR(a, xs.a_full / 2.0, 0.01 * xs.a_full);
 }
 
@@ -408,7 +428,7 @@ TEST(XSectGeometry, CircularFullArea) {
     xsect::setParams(xs, static_cast<int>(XSectShape::CIRCULAR), p, 1.0);
 
     // Full area = pi*D^2/4 = pi*9/4 ≈ 7.069
-    double expected = M_PI * 9.0 / 4.0;
+    double expected = std::numbers::pi * 9.0 / 4.0;
     EXPECT_NEAR(xs.a_full, expected, 0.01);
 }
 
@@ -636,8 +656,8 @@ protected:
             ctx.links.xsect_shape[i] = XsectShape::CIRCULAR;
             ctx.links.xsect_batch_shape[i] = static_cast<int>(XSectShape::CIRCULAR);
             ctx.links.xsect_y_full[i] = 2.0;
-            ctx.links.xsect_a_full[i] = M_PI; // π·1²
-            ctx.links.xsect_r_full[i] = 0.5;  // full-flow hyd. radius D/4 (2 ft pipe)
+            ctx.links.xsect_a_full[i] = constants::PI; // π·1², as setParams computes it
+            ctx.links.xsect_r_full[i] = 0.5;           // full-flow hyd. radius D/4 (2 ft pipe)
             ctx.links.xsect_w_max[i] = 2.0;
             C.roughness[cr] = 0.013;
             C.length[cr] = 400.0;
@@ -944,6 +964,95 @@ TEST_F(AASkipFlagTest, SemiImplicitSumdqdhDampsDepthUpdate) {
         << "sumdqdh term must damp, not amplify, the depth update";
 }
 
+// ============================================================================
+// Anderson mixing exclusions decided from the current evaluation
+//
+// Each test computes the plain Picard update of J0 once (setNodeDepthForTest),
+// restores the input depth, seeds a history whose residual has the opposite
+// sign (mixing coefficient 0.5), and runs one node-update pass. A node that
+// must not be mixed keeps the plain update exactly.
+// ============================================================================
+
+namespace {
+/// J0 state: input depth y, inflow q (cfs) at old_net_inflow q, surface area, sumdqdh.
+void setJ0(SimulationContext& ctx, DWSolver& solver, double y, double q, double area,
+           double sumdqdh) {
+    ctx.nodes.old_depth[0] = y;
+    ctx.nodes.depth[0] = y;
+    ctx.nodes.head[0] = ctx.nodes.invert_elev[0] + y;
+    ctx.nodes.inflow[0] = q;
+    ctx.nodes.outflow[0] = 0.0;
+    ctx.nodes.old_net_inflow[0] = q;
+    solver.nodeNewSurfAreaDataMut()[0] = area;
+    solver.nodeSumDqdh(0) = sumdqdh;
+}
+} // namespace
+
+TEST_F(AASkipFlagTest, AndersonKeepsPlainUpdateAtFloodLimit) {
+    // SEMI_IMPLICIT: a surcharged junction is eligible, so only the flood
+    // limit (J0 full depth 6 ft, no surcharge depth, no ponding) can stop the mix.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::SEMI_IMPLICIT);
+    solver.execute(ctx, 10.0);
+    ASSERT_EQ(solver.aaSkipFlags()[0], 0);
+    const double dt = 10.0;
+    const double y = 5.98;
+
+    // Plain update: 5.98 + 500 ft3 / 50 ft2, relaxed, is far above 6 ft -> capped, overflow.
+    setJ0(ctx, solver, y, 50.0, 50.0, 0.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    const double g = ctx.nodes.depth[0];
+    const double overflow = ctx.nodes.overflow[0];
+    ASSERT_DOUBLE_EQ(g, 6.0);
+    ASSERT_GT(overflow, 0.0);
+    const double r = g - y;
+    ASSERT_LE(std::fabs(r), 20.0 * solver.head_tol);
+
+    setJ0(ctx, solver, y, 50.0, 50.0, 0.0);
+    solver.seedAndersonHistoryForTest(0, 6.0, 6.0 - r); // previous residual -r
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_EQ(ctx.nodes.depth[0], g) << "a blend below the flood limit books no overflow";
+    EXPECT_EQ(ctx.nodes.overflow[0], overflow) << "the plain update's flooding must be kept";
+
+    // Control: below the flood limit the same kind of history is mixed.
+    setJ0(ctx, solver, 3.0, 0.5, 50.0, 0.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    const double g_low = ctx.nodes.depth[0];
+    const double r_low = g_low - 3.0;
+    ASSERT_GT(std::fabs(r_low), 1e-6);
+    ASSERT_LE(std::fabs(r_low), 20.0 * solver.head_tol);
+    setJ0(ctx, solver, 3.0, 0.5, 50.0, 0.0);
+    solver.seedAndersonHistoryForTest(0, 3.0, 3.0 - r_low);
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_NEAR(ctx.nodes.depth[0], 0.5 * g_low + 0.5 * (3.0 - r_low), 1e-12)
+        << "an eligible node must still be mixed";
+}
+
+TEST_F(AASkipFlagTest, ExtranExplicitSkipsMixWhenCurrentEvaluationSurcharges) {
+    // EXTRAN + EXPLICIT: the history evaluation was below the crown (skip flag
+    // clear), but this evaluation's input is above it, so the update takes the
+    // dQ/dH surcharge branch. Mixing the two branches is what the surcharge
+    // exclusion forbids.
+    initSolver(SurchargeMethod::EXTRAN, NodeContinuity::EXPLICIT);
+    solver.execute(ctx, 10.0);
+    ASSERT_EQ(solver.aaSkipFlags()[0], 0) << "precondition: previous evaluation not surcharged";
+    const double dt = 10.0;
+    const double y = 2.1; // J0 crown depth is 2 ft
+
+    setJ0(ctx, solver, y, 0.05, 50.0, 5.0);
+    solver.setNodeDepthForTest(ctx, 0, dt, /*step=*/1);
+    ASSERT_EQ(solver.nodeSurchargedFlag(0), 1);
+    const double g = ctx.nodes.depth[0];
+    const double r = g - y;
+    ASSERT_GT(std::fabs(r), 1e-6);
+    ASSERT_LE(std::fabs(r), 20.0 * solver.head_tol);
+
+    setJ0(ctx, solver, y, 0.05, 50.0, 5.0);
+    solver.seedAndersonHistoryForTest(0, 1.9, 1.9 - r); // free-surface history, residual -r
+    solver.updateNodeDepthsForTest(ctx, dt, /*step=*/1);
+    EXPECT_EQ(ctx.nodes.depth[0], g)
+        << "a surcharge-branch update must not be blended with a free-surface one";
+}
+
 TEST(DPS, DeltaAsFromDhs) {
     // Head-first form of Eq. 19: dAs = T_s · dhs, where T_s = g·A_C·P²/c_pT².
     // In the link-node solver, dhs is set by the node-depth update and dAs
@@ -976,7 +1085,7 @@ TEST(DPS, InitialPreissmannNumber) {
     double alpha = 3.0;
 
     // Circular pipe D=3ft: A_full = pi*9/4, T_w = 3ft
-    double A_full = M_PI * 9.0 / 4.0;
+    double A_full = std::numbers::pi * 9.0 / 4.0;
     double T_w = 3.0;
     double l_D = A_full / T_w;            // hydraulic depth
     double c_g = std::sqrt(32.174 * l_D); // gravity-wave celerity

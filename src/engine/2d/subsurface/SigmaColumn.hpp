@@ -16,8 +16,8 @@
 
 /**
  * @file      SigmaColumn.hpp
- * @brief     G-steps 4 and 5 — closure B: the σ-coordinate explicit unsaturated
- *        column with a moving lower boundary (the water table).
+ * @brief     G-steps 4 and 5 — closure B: the σ-coordinate unsaturated column with a
+ *        moving lower boundary (the water table).
  *
  * @section sigma_layout Coordinate and state
  *
@@ -39,25 +39,34 @@
  * ```
  * w_j ← w_j + Δt·( F_{j−1/2} − F_{j+1/2} )          [downward-positive]
  *
- * F_{j+1/2} = K(θ_up)                                  advective, upwind
+ * F_{j+1/2} = K(θ_up)                                  CAPILLARY_DIFF NO: gravity, upwind
+ *           | K̄_{j+1/2}·(1 + (ψ_{j+1} − ψ_j)/Δz)       CAPILLARY_DIFF YES: Darcy on suction
  *           − θ_donor·σ_{j+1/2}·L̇                      grid motion (ALE)
- *           − ( D̄_{j+1/2} / (L·Δσ) )·( θ_{j+1} − θ_j ) optional capillary
  * ```
  *
- * - Gravity is downward, so the advective donor is always the layer above.
- * - The grid term is upwinded on its own sign: with `L̇ > 0` (table falling,
- *   column growing) the faces sweep downward and the donor is the layer
- *   below; with `L̇ < 0` it is the layer above.
- * - `D̄` is the harmonic mean of the two layers' diffusivities. Off by
- *   default (D-N3).
+ * - **Kinematic column (`CAPILLARY_DIFF NO`)**: explicit; gravity is
+ *   downward, so the advective donor is always the layer above.
+ * - **Capillary column (`CAPILLARY_DIFF YES`, the default; S2 2026-11-19)**:
+ *   the Darcy fluxes advance by backward Euler in mixed form (Celia,
+ *   Bouloutas & Zarba 1990), K̄ the arithmetic mean of the two layers. Every
+ *   face, the table face included, vanishes on a hydrostatic profile, so a
+ *   column at rest stays there; there is no stability bound.
+ * - The grid term is upwinded on its own sign and explicit in both: with
+ *   `L̇ > 0` (table falling, column growing) the faces sweep downward and the
+ *   donor is the layer below; with `L̇ < 0` it is the layer above.
  *
  * @section sigma_bc Boundaries and the handover
  *
  * - **Top (σ=0):** `F_top = q⁺ − q_ET`, with the top layer's acceptance
  *   capping `q⁺` — the excess is *rejected* and returned to the caller for
- *   the surface state (Hortonian / saturation rejection).
- * - **Bottom (σ=1):** `F_bot = q₀_phys − θ_bot·L̇`. The first term is the
- *   physical Darcy flux across the table; the second is the **handover** —
+ *   the surface state (Hortonian / saturation rejection). The kinematic
+ *   column accepts what the top layer has room for; the capillary column
+ *   accepts the offered rate until the ground saturates, then the Darcy rate
+ *   from ψ = 0 at the ground (a Signorini condition).
+ * - **Bottom (σ=1):** `F_bot = q₀ − θ_bot·L̇`. The first term is the
+ *   physical flux across the table (kinematic: the caller's free drainage
+ *   `q0_phys`; capillary: Darcy to ψ = 0 at the table, solved with the
+ *   column and reported as `table_flux`); the second is the **handover** —
  *   the water swept across the moving boundary. Both together are what the
  *   saturated zone gains. `SubsurfaceSolver` settles the table using the
  *   actual bounded `F_bot`, compression surplus and residual support from
@@ -106,21 +115,29 @@ struct ColumnStep {
     double et_stress = 0.0;
     double q_et = 0.0; ///< ET demand at the top (m/s, ≥ 0)
     double handover_theta =
-        -1.0;               ///< <0: actual bottom layer; otherwise paired table storage coefficient
-    double q0_phys = 0.0;   ///< physical Darcy flux across the table (m/s)
-    bool capillary = false; ///< include the diffusive term
+        -1.0;             ///< <0: actual bottom layer; otherwise paired table storage coefficient
+    double q0_phys = 0.0; ///< kinematic column: physical flux across the table (m/s)
+    /// Capillary column: lower bound on the solved table flux (m/s): what the table can supply
+    /// upward (0 for an empty table), under every GW_ET mode.
+    double q0_min = -1.0e300;
+    bool capillary = false; ///< CAPILLARY_DIFF: the implicit capillary (Darcy) column
 
     const std::vector<double>* layer_inflow =
         nullptr;                          ///< accepted internal contact water depths (m)
     ColumnTransfers* transfers = nullptr; ///< optional accepted-sweep receipt
 
     // ---- out ----
-    double f_top = 0.0;       ///< accepted top flux (m/s) — `q_in` after rejection
-    double rejected = 0.0;    ///< `q_in − f_top` (m/s, ≥ 0) back to the surface
-    double f_bot = 0.0;       ///< total bottom flux incl. handover (m/s)
-    double et_taken = 0.0;    ///< ET actually removed (m/s, ≤ `q_et`)
-    double theta_bot = 0.0;   ///< bottom-layer θ after the sweep (specific yield)
-    double dt_limit = 1.0e30; ///< the column's own explicit stability bound (s)
+    double f_top = 0.0;     ///< accepted top flux (m/s) — `q_in` after rejection
+    double rejected = 0.0;  ///< `q_in − f_top` (m/s, ≥ 0) back to the surface
+    double f_bot = 0.0;     ///< total bottom flux incl. handover (m/s)
+    double et_taken = 0.0;  ///< ET actually removed (m/s, ≤ `q_et`)
+    double theta_bot = 0.0; ///< bottom-layer θ after the sweep (specific yield)
+    /// The kinematic Courant bound (s): the explicit column's stability bound, the capillary
+    /// column's accuracy bound.
+    double dt_limit = 1.0e30;
+    double table_flux = 0.0;   ///< physical flux across the table the step used (m/s, + down)
+    int implicit_solves = 0;   ///< capillary column: backward-Euler solves (1 unless sub-stepped)
+    int newton_iterations = 0; ///< capillary column: Newton iterations over those solves
     /// Water (m/s) the compressed column could not hold, delivered DOWN to
     /// the saturated zone in this same firing. A rising table saturates the
     /// column from below; clamping this away is the ALE failure plan gate 5
@@ -143,10 +160,13 @@ struct ColumnStep {
  * `n_cells` for the layer-major SoA)
  * @param[in,out] st     step inputs and outputs
  *
- * Positivity is enforced per face by an availability share, the same idiom as the surface
- * solver's volume share: a face may not take more water than its donor layer holds above `θ_r`,
- * and the shares are scaled together when a layer's outgoing faces over-subscribe it.
- * First-order upwind in v1 (D-N4); MUSCL is a recorded follow-up.
+ * Kinematic column: positivity is enforced per face by an availability share, the same idiom as
+ * the surface solver's volume share: a face may not take more water than its donor layer holds
+ * above `θ_r`, and the shares are scaled together when a layer's outgoing faces over-subscribe
+ * it. First-order upwind in v1 (D-N4); MUSCL is a recorded follow-up. Capillary column: the
+ * implicit solve keeps every layer within [θ_r, θ_s] by construction (Newton with a line search,
+ * halving the step inside the call if it does not converge); the new water is taken from the
+ * final fluxes, so water is conserved to roundoff either way.
  *
  * @pre For an advancing step, theta points to at least 1+(m-1)*stride doubles, stride > 0, and p
  * contains validated SI soil parameters. Optional layer_inflow has at least m water-depth
@@ -166,7 +186,7 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride,
 /// soil, old theta, layer count, L_old, capillary, forward_euler, or Euler grid velocity.
 /// No serialized state.
 struct ColumnPreparation {
-    std::vector<double> psi, conductivity, diffusivity, celerity, diffusion_bound;
+    std::vector<double> psi, conductivity, celerity;
     bool fixed_velocity = false;
     double dt_limit = 1.0e30;
 };
@@ -181,8 +201,10 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride, Colu
                    const ColumnPreparation& prepared) noexcept;
 
 /**
- * @brief The explicit stability bound of a column, without advancing it (§2.3): `Δt_u ≤
- * C_col·min_j[ L·Δσ / ( c(θ_j) + |σ_j·L̇| + 2·D̄_j/(L·Δσ) ) ]` with celerity `c(θ) = dK/dθ`.
+ * @brief The kinematic Courant bound of a column, without advancing it (§2.3): `Δt_u ≤
+ * C_col·min_j[ L·Δσ / ( c(θ_j) + |σ_j·L̇| ) ]` with celerity `c(θ) = dK/dθ`. The stability
+ * bound of the kinematic column and the accuracy bound of the capillary one, which, being
+ * implicit, has no stability bound.
  *
  * @param[in] p Borrowed validated SI soil-law parameters.
  * @param[in] theta Required strided layer water-content array, dimensionless; at least
@@ -193,13 +215,35 @@ void advanceColumn(const soil::Params& p, double* theta, int m, int stride, Colu
  * @param[in] L Finite column thickness in m.
  * @param[in] Ldot Finite column-thickness rate in m/s, positive for a falling table.
  * @param[in] c_col Finite Courant factor, numerically floored at 1e-6.
- * @param[in] capillary Whether to include the moisture diffusivity contribution.
- * @return Explicit stability interval in s, with L floored at 1e-3 m; a near-zero total celerity
+ * @return Interval in s, with L floored at 1e-3 m; a near-zero total celerity
  * leaves the large 1e30 s sentinel scaled by c_col.
  * @note No bounds/physical validation, allocation, state advancement or stored references.
  */
 double columnDtLimit(const soil::Params& p, const double* theta, int m, int stride, double L,
-                     double Ldot, double c_col, bool capillary) noexcept;
+                     double Ldot, double c_col) noexcept;
+
+/**
+ * @brief Physical flux across the water table, `q₀_phys` (m/s, positive down).
+ *
+ * The capillary column's table face at the column's current state: Darcy from the bottom layer
+ * center, half a layer above the table, to `ψ = 0`,
+ * `q = ½(K(ψ_bot) + K_s)·(1 − ψ_bot/(Δz/2))`, zero on a hydrostatic profile. The column solves this face implicitly; this explicit value is the
+ * estimate the caller's availability caps and clock use before the solve. The kinematic column
+ * (gravity only) carries information downward only, and its consistent outflow is free drainage
+ * `K(ψ_bot)`; a `ψ = 0` condition there piles water onto the bottom layer until the specific
+ * yield vanishes and the table oscillates.
+ *
+ * @param[in] p Borrowed validated SI soil-law parameters.
+ * @param[in] theta Required strided layer water contents, layer 0 at the ground; at least
+ * 1+(m-1)*stride readable doubles.
+ * @param[in] m Strictly positive layer count.
+ * @param[in] stride Strictly positive distance in doubles between layers.
+ * @param[in] L Column thickness, m.
+ * @param[in] capillary Whether the column carries capillary diffusion (`CAPILLARY_DIFF`).
+ * @return Flux in m/s, before the caller's availability caps. No allocation or stored state.
+ */
+double tableFlux(const soil::Params& p, const double* theta, int m, int stride, double L,
+                 bool capillary) noexcept;
 
 /**
  * @brief Seed a column to hydrostatic equilibrium above a table at depth `L`.

@@ -733,9 +733,34 @@ TEST(EngineCheckpoint, RefusesIncompleteProfilesChangedModelsAndUnrelatedDestina
     b.context().tables[0].is_file_based = true;
     EXPECT_FALSE(b.enableCheckpointing().empty());
     b.context().tables[0].is_file_based = false;
-    b.context().forcing.climate_evap_mode = ForcingMode::OVERRIDE;
-    EXPECT_FALSE(b.enableCheckpointing().empty());
-    b.context().forcing.climate_evap_mode = ForcingMode::NONE;
+    // Forcing of a channel whose restore is not tested is refused by name (climate evaporation
+    // and the RESTORED_FORCING channels are saved; RestartRecords tests their resume).
+    b.context().forcing.climate_wind_mode = ForcingMode::OVERRIDE;
+    EXPECT_EQ(b.enableCheckpointing(),
+              "Engine checkpoint cannot recover runtime climate temperature or wind forcing.");
+    b.context().forcing.climate_wind_mode = ForcingMode::NONE;
+    for (auto [modes, message] :
+         {std::pair{&b.context().forcing.node_temperature_mode,
+                    "Engine checkpoint cannot recover runtime node temperature forcing."},
+          std::pair{&b.context().forcing.link_seepage_mode,
+                    "Engine checkpoint cannot recover runtime link seepage forcing."},
+          std::pair{&b.context().forcing.node_age_mode,
+                    "Engine checkpoint cannot recover runtime node age forcing."}}) {
+        ASSERT_FALSE(modes->empty()) << message;
+        (*modes)[0] = ForcingMode::OVERRIDE;
+        EXPECT_EQ(b.enableCheckpointing(), message);
+        (*modes)[0] = ForcingMode::NONE;
+    }
+    // A persistent per-element climate forcing is refused too; it is not saved either.
+    for (auto* channels : {b.context().forcing.elem_air_temp, b.context().forcing.elem_humidity,
+                           b.context().forcing.elem_wind, b.context().forcing.elem_shortwave}) {
+        channels[1].mode.assign(1, ForcingMode::OVERRIDE);
+        channels[1].value.assign(1, 1.0);
+        channels[1].persist.assign(1, ForcingPersist::PERSIST);
+        EXPECT_EQ(b.enableCheckpointing(),
+                  "Engine checkpoint cannot recover runtime element climate forcing.");
+        channels[1].clear();
+    }
     ASSERT_EQ(b.enableCheckpointing(), "");
     ASSERT_EQ(b.close(), 0);
     ASSERT_NO_THROW(start(b, "guards-reopened"));
@@ -2138,9 +2163,10 @@ TEST(EngineCheckpoint, MappedSigmaChemistryContinuesFullSessionAcrossMidnightWit
             return mass;
         };
         const double initial_mass = tr.ledgeredStorage(dye) + surface_mass();
-        const double initial_table = gw.state().hg[0];
-        // An accepted, cold leakage packet moves the table before the saved
-        // boundary; a second packet is still waiting at that boundary.
+        const double initial_column = gw.state().hu[0];
+        // An accepted, cold leakage packet changes the column before the saved
+        // boundary (the capillary column holds it above the table); a second
+        // packet is still waiting at that boundary.
         std::vector<double> concentration(tr.n_species, 0);
         concentration[dye] = 7;
         concentration[tr.temp_row] = -4;
@@ -2148,7 +2174,7 @@ TEST(EngineCheckpoint, MappedSigmaChemistryContinuesFullSessionAcrossMidnightWit
         gw.bookLinkContact(0, .002, concentration, -.25, -.25);
         while (source.engine.context().current_time < boundary)
             ASSERT_NO_THROW(step(source.engine));
-        ASSERT_NE(gw.state().hg[0], initial_table);
+        ASSERT_NE(gw.state().hu[0], initial_column);
         ASSERT_NE(tr.gained_contact[dye], 0);
         gw.bookLinkContact(0, .00025, concentration, -.25, -.25);
         ASSERT_NE(gw.state().lacc[0], 0);
@@ -3045,6 +3071,24 @@ TEST(EngineCheckpoint, CoupledThermalNativeHotstartRestoresFullAcceptedEngineSta
     EXPECT_FALSE(scheduled->engine_checkpoint.empty());
     ASSERT_EQ(target.engine.end(), SWMM_OK);
     ASSERT_EQ(target_api.engine.end(), SWMM_OK);
+}
+
+// A run stepped to its end writes its end-of-run native hot start. The step that finds the run
+// complete marks it ENDED before end(), and end() wrote checkpoint-based saves only while the run
+// was RUNNING, so the file was silently never written.
+TEST(EngineCheckpoint, CoupledThermalEndOfRunHotstartIsWrittenWhenSteppedToTheEnd) {
+    const auto path = root() / "surface-thermal-native-end.hsf";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    ThermalSurfaceSession source;
+    ASSERT_NO_THROW(source.startNativeHotstart("surface-thermal-native-end", path.string(), true));
+    double elapsed = 0.0;
+    while (swmm_engine_step(&source.engine, &elapsed) == SWMM_OK && elapsed > 0.0) {
+    }
+    ASSERT_EQ(source.engine.end(), SWMM_OK) << source.engine.context().error_message;
+    std::unique_ptr<HotStartFile> scheduled(HotStartManager::open(path.string()));
+    ASSERT_TRUE(scheduled) << HotStartManager::last_io_error();
+    EXPECT_FALSE(scheduled->engine_checkpoint.empty());
 }
 
 // A native hot start that restores a full engine checkpoint starts the run
@@ -13523,6 +13567,137 @@ TEST(EngineCheckpoint, NetworkPollutantsFirstOrderSharedMeshOwnsPhysicalQueuesAn
             sameMesh(name + "-a", name + "-b", 5);
 #endif
     }
+}
+// Routing checkpoints before version 6 carry no gross 1D<->2D exchange water
+// (NodeData::coupling_drain_queue and siblings), and before version 7 no SEMI_IMPLICIT held
+// surcharge water (NodeData::held_volume). The gross queues restore from the net queue (the mass
+// queue was paired against the net water: drained water is its positive part, spilled water its
+// negative part) and the held water as none. The older files are a version 7 checkpoint with
+// those blocks cut out, re-framed through the surface and engine records around it.
+TEST(EngineCheckpoint, RoutingVersions5And6RestoreTheColumnsTheyLack) {
+    SWMMEngine a;
+    ASSERT_NO_THROW(startNetworkPollutants(a, "routing-v5-a", 0, true, true, 0));
+    const int s = a.context().node_names.find("S");
+    ASSERT_GE(s, 0);
+    const auto us = static_cast<std::size_t>(s);
+    while (a.context().current_time < 1.237 || a.context().nodes.coupling_queue[us] == 0) {
+        ASSERT_LT(a.context().elapsed_ms, a.context().options.totalDurationMs())
+            << "no boundary with coupling water queued for the node";
+        ASSERT_NO_THROW(step(a));
+    }
+    const auto good = root() / "routing-v5-good.chk";
+    ASSERT_EQ(a.saveCheckpoint(good.string()), "");
+
+    using Archive = detail::CompletedSourceArchive;
+    // A nested record is stored as a length-prefixed string that starts with its own
+    // length-prefixed magic: its 8-byte length sits 16 bytes before the magic's text.
+    const auto locate = [](const std::string& outer, const std::string& magic, std::size_t& at,
+                           uint64_t& size) {
+        const auto tag = outer.find(magic);
+        ASSERT_NE(tag, std::string::npos) << magic;
+        ASSERT_EQ(outer.find(magic, tag + 1), std::string::npos) << magic;
+        ASSERT_GE(tag, 16u);
+        at = tag - 16;
+        std::memcpy(&size, outer.data() + at, sizeof(size));
+        ASSERT_LE(size, outer.size() - at - 8);
+    };
+    const auto framed = [](std::string bytes) {
+        Archive a;
+        a(bytes);
+        return a.bytes();
+    };
+    std::string magic, model, payload;
+    uint32_t version = 0, sum = 0;
+    Archive file(bytes(good));
+    file(magic, version, model, sum, payload);
+    file.finish();
+
+    std::size_t s_at = 0;
+    uint64_t s_size = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        locate(payload, "OpenSWMM joint DW surface/source boundary", s_at, s_size));
+    std::string smagic, smodel, spayload;
+    uint32_t sversion = 0, endian = 0, long_bytes = 0, ssum = 0;
+    Archive surface(payload.substr(s_at + 8, s_size));
+    surface(smagic, sversion, endian, long_bytes, smodel, spayload, ssum);
+    surface.finish();
+
+    std::size_t h_at = 0;
+    uint64_t h_size = 0;
+    ASSERT_NO_FATAL_FAILURE(
+        locate(spayload, "OpenSWMM accepted DW hydraulic boundary", h_at, h_size));
+    std::string hmagic, hmodel, body;
+    uint32_t hversion = 0, hsum = 0;
+    Archive hydraulic(spayload.substr(h_at + 8, h_size));
+    hydraulic(hmagic, hversion, hmodel, hsum, body);
+    hydraulic.finish();
+    ASSERT_EQ(hversion, 7u);
+
+    // Version 6 archives the four gross columns right after the node columns, version 7 the held
+    // surcharge column after them.
+    const auto& live = a.context().nodes;
+    auto drain = live.coupling_drain_queue, spill = live.coupling_spill_queue,
+         drain_in = live.coupling_drain_inflow, spill_out = live.coupling_spill_outflow;
+    auto held = live.held_volume;
+    ASSERT_TRUE(drain[us] != 0 || spill[us] != 0);
+    Archive gross_block, held_block;
+    gross_block.fixed(drain, spill, drain_in, spill_out);
+    held_block.fixed(held);
+    const auto cut = body.find(gross_block.bytes());
+    ASSERT_NE(cut, std::string::npos) << "the gross block is not where version 6 puts it";
+    ASSERT_EQ(body.find(gross_block.bytes(), cut + 1), std::string::npos);
+    const auto held_at = cut + gross_block.bytes().size();
+    ASSERT_EQ(body.compare(held_at, held_block.bytes().size(), held_block.bytes()), 0)
+        << "the held column is not where version 7 puts it";
+
+    for (const uint32_t target : {6u, 5u}) {
+        SCOPED_TRACE(target);
+        auto older = body;
+        if (target == 6)
+            older.erase(held_at, held_block.bytes().size());
+        else
+            older.erase(cut, gross_block.bytes().size() + held_block.bytes().size());
+        uint32_t older_version = target, older_sum = crc(older);
+        Archive hout;
+        hout(hmagic, older_version, hmodel, older_sum, older);
+        auto older_surface = spayload;
+        older_surface.replace(h_at, h_size + 8, framed(hout.bytes()));
+        uint32_t older_ssum = crc(older_surface);
+        Archive sout;
+        sout(smagic, sversion, endian, long_bytes, smodel, older_surface, older_ssum);
+        auto older_payload = payload;
+        older_payload.replace(s_at, s_size + 8, framed(sout.bytes()));
+        uint32_t older_sum_engine = crc(older_payload);
+        Archive out;
+        out(magic, version, model, older_sum_engine, older_payload);
+        const auto tag = "routing-v" + std::to_string(target);
+        const auto path = root() / (tag + "-old.chk");
+        write(path, out.bytes());
+
+        SWMMEngine b;
+        ASSERT_NO_THROW(startNetworkPollutants(b, tag + "-b", 0, true, true, 0));
+        ASSERT_EQ(b.loadCheckpoint(path.string()), "");
+        const auto& restored = b.context().nodes;
+        EXPECT_EQ(restored.coupling_queue, live.coupling_queue);
+        EXPECT_EQ(restored.coupling_qual_queue, live.coupling_qual_queue);
+        EXPECT_EQ(restored.depth, live.depth);
+        EXPECT_EQ(b.context().links.flow, a.context().links.flow);
+        EXPECT_EQ(restored.held_volume, std::vector<double>(live.volume.size(), 0.0));
+        ASSERT_EQ(restored.coupling_drain_queue.size(), live.coupling_queue.size());
+        for (std::size_t i = 0; i < live.coupling_queue.size(); ++i) {
+            const double q = live.coupling_queue[i];
+            EXPECT_EQ(restored.coupling_drain_queue[i], target == 6 ? drain[i] : std::max(0.0, q))
+                << i;
+            EXPECT_EQ(restored.coupling_spill_queue[i], target == 6 ? spill[i] : std::max(0.0, -q))
+                << i;
+            EXPECT_EQ(restored.coupling_drain_inflow[i], target == 6 ? drain_in[i] : 0.0) << i;
+            EXPECT_EQ(restored.coupling_spill_outflow[i], target == 6 ? spill_out[i] : 0.0) << i;
+        }
+        while (b.context().elapsed_ms < b.context().options.totalDurationMs())
+            ASSERT_NO_THROW(step(b));
+        ASSERT_EQ(b.end(), 0);
+    }
+    ASSERT_EQ(a.end(), 0);
 }
 #endif
 

@@ -37,6 +37,25 @@
 
 namespace openswmm::input {
 
+namespace {
+
+/// Does the double quote at line[i] open a quoted run? Only where legacy
+/// getTokens sees one -- at the start of a token (input.c:926) -- or after
+/// '=' in a key="value" token (config="Folder/model.rxn", ded3057d). Inside
+/// a name such as 24"CULVERT it is an ordinary character, as in legacy:
+/// treated as an opening quote it never closed and swallowed the rest of the
+/// row (2-weirs-4subs read as ERROR 203: too few items).
+bool opens_quote(std::string_view line, std::size_t i) noexcept {
+    if (line[i] != '"')
+        return false;
+    if (i == 0)
+        return true;
+    const char prev = line[i - 1];
+    return prev == ' ' || prev == '\t' || prev == ',' || prev == '=';
+}
+
+} // namespace
+
 // ============================================================================
 // strip_comment
 // ============================================================================
@@ -45,7 +64,7 @@ std::string_view Tokenizer::strip_comment(std::string_view line) noexcept {
     bool in_quote = false;
     for (std::size_t i = 0; i < line.size(); ++i) {
         const char c = line[i];
-        if (c == '"') {
+        if (c == '"' && (in_quote || opens_quote(line, i))) {
             in_quote = !in_quote;
         } else if (c == ';' && !in_quote) {
             return line.substr(0, i);
@@ -60,8 +79,9 @@ std::string_view Tokenizer::strip_comment(std::string_view line) noexcept {
 
 bool Tokenizer::is_pure_csv_line(std::string_view line) noexcept {
     bool in_quotes = false;
-    for (char c : line) {
-        if (c == '"') {
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '"' && (in_quotes || opens_quote(line, i))) {
             in_quotes = !in_quotes;
             continue;
         }
@@ -138,13 +158,14 @@ std::vector<std::string> Tokenizer::tokenize(std::string_view line) {
 
         // Regular token: read to the next delimiter. A comma only ends the
         // token where it separates; otherwise it is an ordinary name
-        // character, as it is in legacy SWMM. Embedded quotes group values
-        // such as config="folder name/model.rxn" and remain in the token.
+        // character, as it is in legacy SWMM. A quote after '=' groups a
+        // value such as config="folder name/model.rxn", which stays in the
+        // token; any other embedded quote is part of the name (24"CULVERT).
         std::size_t start = i;
         bool in_quote = false;
         while (i < n) {
             const char c = stripped[i];
-            if (c == '"')
+            if (c == '"' && (in_quote || opens_quote(stripped, i)))
                 in_quote = !in_quote;
             else if (!in_quote &&
                      (is_space(c) || (c == ',' && comma_separates(stripped, i, pure_csv))))

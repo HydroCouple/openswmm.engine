@@ -9,6 +9,7 @@
  * @license   Apache-2.0
  */
 
+#include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
 #include "MeshHeat.hpp"
 #include "../data/MeshData.hpp"
@@ -131,8 +132,9 @@ MeshAtmosphericFlux outward(const MeshHeatState& h, int i, double t, double evap
     MeshAtmosphericFlux flux;
     flux.radiation = h.radiative ? radiativeFluxOut(ctx, elem, t, true) : 0;
     if (h.surface) {
-        const double air =
-            (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) - 32) * 5. / 9;
+        const double air = (ctx.forcing.elementAirTempF(elem, ctx.climate_state.temperature) -
+                            constants::F_AT_0C) *
+                           5. / 9;
         const double wind =
             ctx.forcing.elementWindMph(elem, ctx.climate_state.wind_speed) * kMphToMs;
         const double transfer =
@@ -302,7 +304,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
     for (const auto& b : boundaries)
         rate[b.store] += b.conductance;
     const double slope = derivative(a.temperature);
-    if (!std::isfinite(slope) || slope < 0 || !(a.temperature + 273.15 > 0))
+    if (!std::isfinite(slope) || slope < 0 || !(a.temperature + constants::KELVIN_OFFSET > 0))
         return refused("Invalid atmospheric temperature, weather or heat-transfer derivative.");
     rate[a.water] += 2 * a.wet * slope;
     long double divisions = 1;
@@ -352,7 +354,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
             const auto equation = [&](double t) {
                 return t - tbase + response * a.wet * outward(*a.mesh_heat, a.cell, t, 0).total();
             };
-            double lo = -273.15 + 1e-9, hi = std::max(100., tbase + 100.);
+            double lo = -constants::KELVIN_OFFSET + 1e-9, hi = std::max(100., tbase + 100.);
             double flo = equation(lo), fhi = equation(hi);
             if (!std::isfinite(flo) || !std::isfinite(fhi))
                 return refused("Nonfinite nonlinear atmospheric flux.");
@@ -388,7 +390,7 @@ ThermalSolution solveAtmosphericColumnMidpoint(GroundColumnAssembly& a,
             }
             if (!std::isfinite(end))
                 return refused("Nonfinite atmospheric midpoint state.");
-            if (!(end + 273.15 > 0) || local_slope < 0 ||
+            if (!(end + constants::KELVIN_OFFSET > 0) || local_slope < 0 ||
                 h * (double(rate[a.water]) - 2 * a.wet * slope + a.wet * local_slope) >
                     2 * stores[a.water].capacity ||
                 std::abs(solved.temperature[a.water] - middle) >

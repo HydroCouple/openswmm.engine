@@ -1296,8 +1296,9 @@ TEST(Aquifer2D, IndependentBulkColumnReturnsOnlyWaterBeyondItsFullStorage) {
         auto& surface = r.eng->surfaceRouter2D();
         auto& gw = surface.subsurface();
         auto& cell = gw.state();
-        // A full thin column cannot recharge downward. Only the external
-        // receipt can add water to the surface or collapse this column.
+        // A full thin column drains only its small excess over hydrostatic
+        // storage (drainage sign, 2026-11-18). Only the external receipt can
+        // add water to the surface or collapse this column.
         cell.hu[0] = cell.theta_s[0] * (cell.zs[0] - cell.hg[0]);
         const double capacity = cell.area[0] * cell.theta_s[0] * cell.zs[0];
         auto& tracer = gw.transport();
@@ -1312,12 +1313,17 @@ TEST(Aquifer2D, IndependentBulkColumnReturnsOnlyWaterBeyondItsFullStorage) {
         gw.bookLinkSeepage(0, inflow);
         gw.bookLinkSeepageMass(0, 0, concentration * inflow);
         gw.advanceClock(end, surface.state(), false, true);
-        EXPECT_DOUBLE_EQ(cell.led_recharge, 0.);
+        EXPECT_GE(cell.led_recharge, 0.);
         EXPECT_NEAR(cell.dunne_cumulative[0], inflow, 1e-12);
         EXPECT_NEAR(cell.xacc_to_surface[0], inflow, 1e-12);
         EXPECT_NEAR(gw.satVolume(0) + gw.unsatVolume(0), capacity, 1e-12);
         EXPECT_NEAR(tracer.xacc_to_surface[0], concentration * inflow, 1e-12);
-        EXPECT_NEAR(tracer.unsat_mass[0], inflow > 0 ? 0. : initial_unsat_mass, 1e-12);
+        if (inflow > 0)
+            EXPECT_NEAR(tracer.unsat_mass[0], 0., 1e-12);
+        else { // drained water leaves at the column's own concentration
+            EXPECT_LE(tracer.unsat_mass[0], initial_unsat_mass + 1e-12);
+            EXPECT_NEAR(tracer.unsat_mass[0], concentration * gw.unsatVolume(0), 1e-12);
+        }
         EXPECT_NEAR(tracer.sat_mass[0] + tracer.unsat_mass[0] + tracer.xacc_to_surface[0],
                     concentration * (capacity + inflow), 1e-12);
         finish(r);
@@ -1341,7 +1347,16 @@ TEST(Aquifer2D, IndependentPartlyFilledColumnSettlesRechargeBeforeReleasingRealE
         auto& surface = r.eng->surfaceRouter2D();
         auto& gw = surface.subsurface();
         auto& state = gw.state();
-        state.hu[0] = .4 * (state.zs[0] - state.hg[0]);
+        // Wetter than hydrostatic but not full, so the column drains to the
+        // table (drainage sign) before any real excess is released.
+        openswmm::twoD::soil::Params p;
+        p.law = openswmm::twoD::SoilChar::GARDNER;
+        p.Ks = .1 / 1000;
+        p.theta_s = .45;
+        p.theta_r = .1;
+        p.alpha = 2;
+        const double length = state.zs[0] - state.hg[0];
+        state.hu[0] = .5 * (openswmm::twoD::soil::equilibriumStorage(p, length) + .45 * length);
         auto& tr = gw.transport();
         tr.sat_mass[0] = concentration * gw.satVolume(0);
         tr.unsat_mass[0] = concentration * gw.unsatVolume(0);
@@ -1436,8 +1451,9 @@ TEST(Aquifer2D, ThinRechargePreservesActualEquilibriumAndLegacyRatesAboveTheFloo
         for (double length : {1e-7, .0005}) {
             EXPECT_NEAR(soil::rechargeQ0AtLength(p, length, soil::equilibriumStorage(p, length)),
                         0., 1e-12);
-            EXPECT_GT(soil::rechargeQ0AtLength(p, length, p.theta_r * length), 0.);
-            EXPECT_LE(soil::rechargeQ0AtLength(p, length, p.theta_s * length), 0.);
+            // Drainage sign: a residual column draws water up, a full one drains.
+            EXPECT_LT(soil::rechargeQ0AtLength(p, length, p.theta_r * length), 0.);
+            EXPECT_GE(soil::rechargeQ0AtLength(p, length, p.theta_s * length), 0.);
         }
         for (double length : {.001, .01, 1.})
             for (double theta : {.1, .3, .45})
@@ -1466,14 +1482,28 @@ TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
             auto& state = gw.state();
             state.hg[0] = state.zs[0] - length;
             state.hu[0] = state.theta_s[0] * (state.zs[0] - state.hg[0]);
-            const double head = state.hg[0], column = state.hu[0], water = state.liveStorage();
+            const double column = state.hu[0], water = state.liveStorage();
+            const double actual = state.zs[0] - state.hg[0]; // the stored length, not `length`
             gw.prepareClock();
             gw.advanceClock(1. / 256, surface.state(), false, true);
-            // Full storage is above hydrostatic equilibrium. With capillary
-            // rise disabled and no forcing there is no downward recharge.
-            EXPECT_DOUBLE_EQ(state.q0_last[0], 0.);
-            EXPECT_DOUBLE_EQ(state.hg[0], head);
-            EXPECT_DOUBLE_EQ(state.hu[0], column);
+            // Full storage is above hydrostatic equilibrium, so the column
+            // drains (drainage sign), but only its actual excess at this
+            // length, never the storage of an invented millimetre.
+            openswmm::twoD::soil::Params p;
+            p.law = std::string(law) == "GARDNER"        ? openswmm::twoD::SoilChar::GARDNER
+                    : std::string(law) == "RUSSO"        ? openswmm::twoD::SoilChar::RUSSO
+                    : std::string(law) == "BROOKS_COREY" ? openswmm::twoD::SoilChar::BROOKS_COREY
+                                                         : openswmm::twoD::SoilChar::VAN_GENUCHTEN;
+            p.Ks = .1 / 1000;
+            p.theta_s = .45;
+            p.theta_r = .1;
+            p.alpha = 2;
+            const double excess =
+                (column - openswmm::twoD::soil::equilibriumStorage(p, actual)) * state.area[0];
+            EXPECT_GE(state.q0_last[0], 0.);
+            EXPECT_GE(state.led_recharge, 0.);
+            // Roundoff allowance: 1e-12 of the column's own storage.
+            EXPECT_LE(state.led_recharge, excess + 1e-12 * column * state.area[0]);
             EXPECT_DOUBLE_EQ(state.dunne_cumulative[0], 0.);
             EXPECT_DOUBLE_EQ(state.reject_cumulative[0], 0.);
             EXPECT_NEAR(state.liveStorage(), water, 1e-12);
@@ -1484,8 +1514,11 @@ TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
 TEST(Aquifer2D, IndependentColumnDrainageWakesWithoutExternalReceipts) {
     auto r = openDeck(
         "clock-column-drainage",
+        // The kinematic column drains from its hydrostatic seed; the capillary column (the
+        // default) holds it at rest, and the clock rungs cells at start.
         deck(
-            "[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n"
+            "[2D_AQUIFER_OPTIONS]\nCAPILLARY_DIFF NO\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\n"
+            "NODE_ENROLMENT ROWS\nM_LAYERS 4\n"
             "[2D_AQUIFER]\n* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",
             "", 0.));
     ASSERT_TRUE(r.opened);
@@ -1513,8 +1546,10 @@ TEST(Aquifer2D, IndependentBaseRungCapsWetProducerChecks) {
         SCOPED_TRACE(ceiling);
         auto r =
             openDeck("clock-base-producer-" + std::string(ceiling),
-                     deck("[2D_AQUIFER_OPTIONS]\nGW_CLOCK INDEPENDENT\nGW_HEAD_TOLERANCE .0001\n"
-                          "GW_MAX_STEP " +
+                     // The kinematic column drains from its hydrostatic seed, which is the work
+                     // these producer checks schedule; the capillary column holds it at rest.
+                     deck("[2D_AQUIFER_OPTIONS]\nCAPILLARY_DIFF NO\nGW_CLOCK INDEPENDENT\n"
+                          "GW_HEAD_TOLERANCE .0001\nGW_MAX_STEP " +
                               std::string(ceiling) +
                               "\nNODE_ENROLMENT ROWS\nM_LAYERS 4\n[2D_AQUIFER]\n"
                               "* 36 1 .45 .1 2 HG0 .5 CLOSURE SIGMA\n",
@@ -1619,6 +1654,53 @@ TEST(Aquifer2D, IndependentLayerContactUsesItsReceivingLayerBudget) {
     EXPECT_GT(gw.clockState()->excess_in[2], 0.);
     EXPECT_NEAR(s.liveStorage(), water0 + volume, 1e-12);
     EXPECT_NEAR(mass(), mass0 + concentration * volume, 1e-12);
+    finish(r);
+}
+
+// A conduit withdrawal booked for a later producer check reserves table water. Capillary rise in
+// the firings before that check must not spend it. The column is dried to near residual, so its
+// table face asks for far more than the table holds; GW_ET NONE, because the capillary column's
+// face runs both ways under every mode.
+TEST(Aquifer2D, CapillaryRiseLeavesAPendingConduitWithdrawalItsWater) {
+    auto r = openDeck("clock-rise-pending-export",
+                      deck(aquiferSection("CLOSURE SIGMA HG0 .5 SOIL_CHAR BROOKS_COREY",
+                                          "GW_CLOCK INDEPENDENT\nGW_ET NONE\nNODE_ENROLMENT ROWS\n"
+                                          "M_LAYERS 4\n"),
+                           "INFILTRATION NO\n", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    auto& s = gw.state();
+    for (int c = 0; c < s.n_cells; ++c) {
+        const double L = s.zs[c] - s.hg[c];
+        s.hu[c] = 0;
+        for (int j = 0; j < s.m_layers; ++j) {
+            s.theta_sigma[std::size_t(j) * s.n_cells + c] = s.theta_r[c] + .005;
+            s.hu[c] += (s.theta_r[c] + .005) * L / s.m_layers;
+        }
+    }
+    const double column0 = s.hu[0];
+    const double residual0 = s.continuityResidual(); // the drying above is outside the ledgers
+    gw.prepareClock();
+    gw.refreshClockAfterEdit(surface.state()); // the dried column now asks to fire every second
+    constexpr double end = 50.;
+    gw.setProducerEnd(end);
+    const double reserve = .9 * gw.unreservedDrainableWater(0);
+    ASSERT_GT(reserve, 0.);
+    gw.bookLinkSeepage(0, -reserve);
+    for (double t = 1.; t < end; t += 1.)
+        gw.advanceClock(t, surface.state(), false);
+    ASSERT_GT(gw.cellCompletedTime(0), 0.); // the cell fired before the withdrawal was due
+    EXPECT_GT(s.hu[0], column0);            // and capillary rise took table water
+    EXPECT_GE(gw.specificYieldOf(0) * s.hg[0] * s.area[0], reserve * (1 - 1e-12));
+    gw.advanceClock(end, surface.state(), false, true);
+    EXPECT_EQ(gw.cellCompletedTime(0), end);
+    EXPECT_NEAR(s.led_link, -reserve, 1e-15 * reserve);
+    EXPECT_GE(s.hg[0], 0.);
+    EXPECT_NEAR(s.continuityResidual(), residual0, 1e-11);
     finish(r);
 }
 
@@ -1761,6 +1843,11 @@ TEST(Aquifer2D, ClockAccuracyFloorIsPerCell) {
     EXPECT_EQ(floored.rung(0), 0);
     EXPECT_EQ(floored.rung(1), 3); // 1 s = 0.125 s * 2^3
     EXPECT_EQ(floored.floorRung(1), 3);
+    ASSERT_EQ(floored.cellsByFloorRung().size(), 4u);
+    EXPECT_EQ(floored.cellsByFloorRung()[0], std::vector<int>{0});
+    EXPECT_TRUE(floored.cellsByFloorRung()[1].empty());
+    EXPECT_EQ(floored.cellsByFloorRung()[3], std::vector<int>{1});
+    EXPECT_EQ(base.cellsByFloorRung(), (std::vector<std::vector<int>>{{0, 1}}));
     // Physical stability is never floored.
     const std::vector<double> stiff{.05, .05};
     const GwClock physical(options, stiff, {}, accuracy, floors);
@@ -1814,6 +1901,52 @@ TEST(Aquifer2D, AutoBaseStepFloorsOnlyNodeBedCells) {
     }
 }
 
+// A budget wake is an accuracy firing, so under AUTO a cell is checked for one at its own floor:
+// the node-bed cell at every 0.125 s check, the rest only at 1 s checks. Checking every cell at
+// every 0.125 s was a third of an independent-clock run's wall time on Bellinge.
+TEST(Aquifer2D, AutoBaseStepChecksBudgetsAtEachCellsOwnFloor) {
+    auto r =
+        openDeck("floor-auto-bed-budget",
+                 deck(aquiferSection("", "GW_CLOCK INDEPENDENT\nNODE_ENROLMENT ROWS\n", "J1 1\n"),
+                      "INFILTRATION NO\n", 0.));
+    ASSERT_TRUE(r.opened);
+    ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK);
+    r.started = true;
+    auto& surface = r.eng->surfaceRouter2D();
+    auto& gw = surface.subsurface();
+    gw.prepareClock();
+    const auto* clock = gw.clockState();
+    ASSERT_TRUE(clock && clock->schedule);
+    int bed = -1, other = -1;
+    for (const auto& b : gw.nodeBeds())
+        bed = b.cell;
+    for (int cell : clock->cells)
+        if (cell != bed)
+            other = cell;
+    ASSERT_GE(bed, 0);
+    ASSERT_GE(other, 0);
+    ASSERT_EQ(clock->schedule->floorRung(clock->dense[bed]), 0);
+    ASSERT_EQ(clock->schedule->floorRung(clock->dense[other]), 3);
+    ASSERT_GT(gw.clockRung(other), 3); // not due at 1 s on its own
+    ASSERT_GT(gw.clockRung(bed), 0);   // nor the bed cell at 0.125 s
+    // Each cell is handed far more water than its budget room in the first 0.125 s.
+    gw.setProducerEnd(.125);
+    gw.bookInfiltrationFromSurface(bed, 1.);
+    gw.bookInfiltrationFromSurface(other, 1.);
+    gw.advanceClock(.125, surface.state(), false);
+    EXPECT_EQ(gw.cellCompletedTime(bed), .125); // woken at the base-step check
+    EXPECT_EQ(gw.cellCompletedTime(other), 0.); // not checked until its 1 s floor
+    for (int k = 2; k <= 8; ++k) {
+        gw.setProducerEnd(.125 * k);
+        gw.advanceClock(.125 * k, surface.state(), false);
+    }
+    EXPECT_EQ(gw.cellCompletedTime(other), 1.);
+    EXPECT_GE(std::accumulate(clock->budget_firings.begin(), clock->budget_firings.end(), 0ull),
+              2ull);
+    finish(r);
+}
+
 TEST(Aquifer2D, PondedThinColumnKeepsTheTableUnderANodeDraw) {
     // A full aquifer cell under 1 m of ponding; a storage node on the aquifer
     // bottom draws about 2.3e-4 m3/s (0.45 Ks A) through its bed. SHARED keeps
@@ -1852,6 +1985,69 @@ TEST(Aquifer2D, PondedThinColumnKeepsTheTableUnderANodeDraw) {
         EXPECT_NEAR(s.continuityResidual(), 0., 1e-9) << clock;
         finish(r);
     }
+}
+
+TEST(Aquifer2D, ClosedFormColumnRelaxesTowardEquilibriumAfterRain) {
+    // A closed-form column wetter than hydrostatic equilibrium drains to the
+    // table; a drier one draws water up. One cell, table 2 m deep, 20 mm of
+    // rain in the first hour, then 5 h dry. The rain must reach the table
+    // (it ends higher) and the column must move back toward equilibrium. A
+    // column that starts at equilibrium with no rain must not move.
+    using namespace openswmm::twoD;
+    const auto deckFor = [](const char* law, const char* clock, double rain) {
+        std::ostringstream m;
+        m << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2026\n"
+             "START_TIME 00:00:00\nEND_DATE 01/01/2026\nEND_TIME 06:00:00\nREPORT_STEP 00:15:00\n"
+             "WET_STEP 00:01:00\nDRY_STEP 00:01:00\nROUTING_STEP 5\n"
+             "[JUNCTIONS]\nJ1 -5.0 4.0 0 0 0\n[OUTFALLS]\nO1 -5.5 FREE NO\n"
+             "[CONDUITS]\nC1 J1 O1 30.0 0.013 0 0 0\n[XSECTIONS]\nC1 CIRCULAR 0.5 0 0 0 1\n"
+             "[RAINGAGES]\nRG1 INTENSITY 0:15 1.0 TIMESERIES RAIN\n"
+             "[TIMESERIES]\nRAIN 0:00 "
+          << rain
+          << "\nRAIN 1:00 0.0\n[COORDINATES]\nJ1 50.0 50.0\nO1 60.0 60.0\n"
+             "[2D_OPTIONS]\nINTEGRATOR EXPLICIT\nLTS_TIERS 1\nMAX_TIMESTEP 5\nEVAPORATION NO\n"
+             "RAINFALL_MODE SYSTEM\n[2D_VERTICES]\n0 0 0\n10 0 0\n10 10 0\n"
+             "[2D_TRIANGLES]\n0 1 2 .03 0\n"
+             "[2D_AQUIFER_OPTIONS]\nCLOSURE CLOSED_FORM\nGW_ET NONE\nSOIL_CHAR "
+          << law << "\nGW_CLOCK " << clock
+          << "\n[2D_AQUIFER]\n* 36 3 .40 .05 2 HG0 1\n[REPORT]\nINPUT NO\n";
+        return m.str();
+    };
+    for (const auto& [law, kind] :
+         {std::pair{"GARDNER", SoilChar::GARDNER}, std::pair{"RUSSO", SoilChar::RUSSO}})
+        for (const char* clock : {"SHARED", "INDEPENDENT"})
+            for (double rain : {0.0, 20.0}) {
+                const std::string tag =
+                    std::string("relax-") + law + "-" + clock + (rain > 0 ? "-pulse" : "-control");
+                auto r = openDeck(tag, deckFor(law, clock, rain));
+                ASSERT_TRUE(r.opened) << tag;
+                ASSERT_EQ(swmm_engine_initialize(r.e), SWMM_OK) << tag;
+                ASSERT_EQ(swmm_engine_start(r.e, 0), SWMM_OK) << tag;
+                r.started = true;
+                const auto& s = r.eng->surfaceRouter2D().subsurface().state();
+                soil::Params p;
+                p.law = kind;
+                p.Ks = 36e-3 / 3600;
+                p.theta_s = .40;
+                p.theta_r = .05;
+                p.alpha = 2;
+                const auto gap = [&] {
+                    return std::abs(s.hu[0] - soil::equilibriumStorage(p, s.zs[0] - s.hg[0]));
+                };
+                const double hg0 = s.hg[0], hu0 = s.hu[0];
+                double elapsed = 0, gap_after_rain = -1;
+                while (swmm_engine_step(r.e, &elapsed) == SWMM_OK && elapsed > 0.0)
+                    if (gap_after_rain < 0 && elapsed >= 1.25 / 24)
+                        gap_after_rain = gap();
+                if (rain == 0) {
+                    EXPECT_NEAR(s.hg[0], hg0, 1e-12) << tag;
+                    EXPECT_NEAR(s.hu[0], hu0, 1e-12) << tag;
+                } else {
+                    EXPECT_GT(s.hg[0], hg0) << tag;
+                    EXPECT_LT(gap(), gap_after_rain) << tag;
+                }
+                finish(r);
+            }
 }
 
 TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) { // G-X3

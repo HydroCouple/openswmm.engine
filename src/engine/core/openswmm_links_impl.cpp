@@ -35,15 +35,12 @@
 #include "../hydraulics/Transect.hpp"
 #include "TypeHelpers.hpp"
 #include "StringCase.hpp"
+#include "Constants.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <string>
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 // ============================================================================
 // ABI ⇄ storage shape-code parity (compile-time)
@@ -828,7 +825,9 @@ SWMM_ENGINE_API int swmm_link_set_xsect(SWMM_Engine engine, int idx, int shape, 
     case openswmm::XsectShape::CIRCULAR: {
         double d = geom1;
         ctx.links.xsect_y_full[uidx] = d;
-        ctx.links.xsect_a_full[uidx] = M_PI * d * d / 4.0;
+        // Same expression as xsect::setParams, so the placeholder equals the
+        // geometry resolve_cross_references computes at finalize bit for bit.
+        ctx.links.xsect_a_full[uidx] = openswmm::constants::PI / 4.0 * d * d;
         ctx.links.xsect_w_max[uidx] = d;
         break;
     }
@@ -1376,14 +1375,14 @@ SWMM_ENGINE_API int swmm_link_get_hyd_powers_bulk(SWMM_Engine engine, double* bu
         return SWMM_ERR_BADPARAM;
     const auto& ctx = to_engine(engine)->context();
     const int n = std::min(count, ctx.n_links());
-    constexpr double GAMMA = 62.4;
     for (int i = 0; i < n; ++i) {
         const auto ui = static_cast<std::size_t>(i);
         const int n1 = ctx.links.node1[ui];
         const int n2 = ctx.links.node2[ui];
         const double h1 = (n1 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
         const double h2 = (n2 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
-        buf[i] = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+        buf[i] =
+            openswmm::constants::GAMMA_WATER * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
     }
     return SWMM_OK;
 }
@@ -1918,9 +1917,9 @@ SWMM_ENGINE_API int swmm_link_get_hyd_power(SWMM_Engine engine, int idx, double*
     int n2 = ctx.links.node2[ui];
     double h1 = (n1 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n1)] : 0.0;
     double h2 = (n2 >= 0) ? ctx.nodes.head[static_cast<std::size_t>(n2)] : 0.0;
-    constexpr double GAMMA = 62.4;
     if (power)
-        *power = GAMMA * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
+        *power =
+            openswmm::constants::GAMMA_WATER * std::fabs(ctx.links.flow[ui]) * std::fabs(h1 - h2);
     return SWMM_OK;
 }
 

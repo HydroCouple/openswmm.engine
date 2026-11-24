@@ -588,7 +588,8 @@ std::string SurfaceRouter2D::coupledWaterProfile(const SimulationContext& ctx,
          {&n.user_lat_flow, &n.runoff_inflow, &n.gw_inflow, &n.ext_inflow, &n.dwf_inflow,
           &n.rdii_inflow, &n.iface_inflow, &n.lid_drain_inflow, &n.coupling_qual_queue,
           &n.coupling_qual_inflow, &n.coupling_age_vol_queue, &n.coupling_age_vol_inflow,
-          &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow})
+          &n.coupling_temp_vol_queue, &n.coupling_temp_vol_inflow, &n.coupling_drain_queue,
+          &n.coupling_spill_queue, &n.coupling_drain_inflow, &n.coupling_spill_outflow})
         for (double value : *values)
             if (value != 0)
                 return "Coupled water checkpoint contains another node water source.";
@@ -626,7 +627,8 @@ std::string SurfaceRouter2D::changingVolumeProfile(const SimulationContext& ctx,
     std::set<int> mapped;
     for (const auto& point : node_coupling_points_) {
         if (point.equalize)
-            return "Changing-volume exchange excludes equalization caps.";
+            return "Changing-volume exchange excludes equalization caps; set [2D_OPTIONS] "
+                   "COUPLING_EQUALIZE NO.";
         mapped.insert(point.node_idx);
     }
     if (mapped.size() != std::size_t(ctx.n_nodes()))

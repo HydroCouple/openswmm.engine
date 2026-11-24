@@ -63,6 +63,11 @@
 #include "KokkosTypes.hpp"
 #include "KokkosPerfCounters.hpp"
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+#include "metal/FaceClient.hpp"
+#include <memory>
+#endif
+
 namespace openswmm::twoD::gpu {
 
 struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
@@ -81,7 +86,13 @@ public:
      * initialize(). Default counters/flags do not prove runtime availability or allocate mesh
      * state.
      */
-    ExplicitKokkosSurfaceSolver() = default;
+    explicit ExplicitKokkosSurfaceSolver(bool metal = false)
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        : metal_requested_(metal)
+#endif
+    {
+        (void)metal;
+    }
     /**
      * @brief Retire optional telemetry through finalize() then release owned Kokkos view
      * handles.
@@ -229,6 +240,11 @@ public:
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    bool metal_requested_;
+    std::unique_ptr<metal::SurfaceClient> metal_swe_;
+    std::unique_ptr<metal::FaceClient> metal_faces_;
+#endif
     friend struct ExplicitKokkosSurfaceSolverTestAccess;
     kperf::Counters perf_counters_;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).
@@ -356,7 +372,7 @@ private:
     DView d_cmass_, d_saccL_, d_saccR_, d_rain_conc_, d_csrc_, d_runoff_;
     DView d_species_ledger_; ///< per-cell rain, coupling and infiltration mass since publication
     DView d_species_ledger_runs_; ///< d_species_ledger_ summed over runs of cells
-    IView d_binds_;          ///< per-face dispersion limiter binds since publication
+    IView d_binds_;               ///< per-face dispersion limiter binds since publication
     DView d_bc_conc_, d_bc_gain_, d_bc_loss_, d_bc_req_mass_, d_bc_app_mass_;
     DView d_exch_mass_, d_exch_spill_, d_cp_gain_, d_node_conc_;
     bool has_csrc_ = false, has_runoff_ = false, has_node_conc_ = false;

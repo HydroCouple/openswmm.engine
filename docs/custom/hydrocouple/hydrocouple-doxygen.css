@@ -1,0 +1,407 @@
+/* HydroCouple documentation theme for Doxygen (on top of doxygen-awesome).
+ *
+ * Load order in HTML_EXTRA_STYLESHEET: doxygen-awesome.css, hc-fonts.css, hc-tokens.css,
+ * hc-diagrams.css, this file, then any project stylesheet. Maps the tokens onto
+ * doxygen-awesome's variables (the tokens switch with html.dark-mode / html.light-mode /
+ * the system setting), then styles the top bar, navigation, landing hero and content in
+ * the hydrocouple.org idiom. Doxygen's tree view, search and index pages are unchanged.
+ */
+
+html, html.light-mode, html.dark-mode, html:not(.light-mode) {
+  --primary-color: var(--hc-link);
+  --primary-dark-color: var(--hc-link-hover);
+  --primary-light-color: var(--hc-accent);
+  --page-background-color: var(--hc-bg);
+  --page-foreground-color: var(--hc-text);
+  --page-secondary-foreground-color: var(--hc-text-muted);
+  --separator-color: var(--hc-line);
+  --side-nav-background: var(--hc-bg);
+  --side-nav-foreground: var(--hc-text-muted);
+  --header-background: var(--hc-bg);
+  --header-foreground: var(--hc-text);
+  --searchbar-background: var(--hc-surface);
+  --searchbar-foreground: var(--hc-text);
+  --searchbar-border-radius: var(--hc-radius-small);
+  --toc-background: var(--hc-surface);
+  --toc-foreground: var(--hc-text-muted);
+  --tablehead-background: var(--hc-raised);
+  --tablehead-foreground: var(--hc-text);
+  --odd-color: var(--hc-raised);
+  --menu-display: block;
+  --menu-focus-foreground: var(--hc-on-accent-soft);
+  --menu-focus-background: var(--hc-accent-soft);
+  --menu-selected-background: var(--hc-accent-soft);
+  --code-background: var(--hc-inline-code-bg);
+  --code-foreground: var(--hc-inline-code);
+  --fragment-background: var(--hc-code-bg);
+  --fragment-foreground: var(--hc-code-text);
+  --fragment-linenumber-background: var(--hc-raised);
+  --fragment-linenumber-border: var(--hc-line);
+  --blockquote-background: var(--hc-raised);
+  --blockquote-foreground: var(--hc-text-muted);
+  --note-color: var(--hc-accent-soft);
+  --note-color-dark: var(--hc-primary);
+  --note-color-darker: var(--hc-on-accent-soft);
+  --warning-color: var(--hc-flag-soft);
+  --warning-color-dark: var(--hc-flag);
+  --warning-color-darker: var(--hc-on-flag-soft);
+  --bug-color: var(--hc-danger-soft);
+  --bug-color-dark: var(--hc-danger);
+  --bug-color-darker: var(--hc-on-danger-soft);
+  --deprecated-color: var(--hc-danger-soft);
+  --deprecated-color-dark: var(--hc-danger);
+  --deprecated-color-darker: var(--hc-on-danger-soft);
+  --todo-color: var(--hc-planned-soft);
+  --todo-color-dark: var(--hc-planned);
+  --todo-color-darker: var(--hc-on-planned-soft);
+  --invariant-color: var(--hc-ok-soft);
+  --invariant-color-dark: var(--hc-ok);
+  --invariant-color-darker: var(--hc-on-ok-soft);
+  --font-family: var(--hc-font-body);
+  --font-family-monospace: var(--hc-font-mono);
+  --border-radius-large: var(--hc-radius);
+  --border-radius-medium: var(--hc-radius-small);
+  --border-radius-small: 6px;
+  --box-shadow: var(--hc-shadow);
+}
+
+/* Code colors: checked to at least 5.3:1 on the code background in each mode. */
+html, html.light-mode {
+  --fragment-keyword: #6f2dbd;
+  --fragment-keywordtype: #0550ae;
+  --fragment-keywordflow: #a40e26;
+  --fragment-comment: #57606a;
+  --fragment-token: #0a3069;
+  --fragment-preprocessor: #953800;
+  --fragment-link: #0068b0;
+  --fragment-linenumber-color: #57606a;
+}
+html.dark-mode {
+  --fragment-keyword: #d2a8ff;
+  --fragment-keywordtype: #79c0ff;
+  --fragment-keywordflow: #ff7b72;
+  --fragment-comment: #9aa7b4;
+  --fragment-token: #a5d6ff;
+  --fragment-preprocessor: #ffa657;
+  --fragment-link: #6cc0ff;
+  --fragment-linenumber-color: #8b9cad;
+}
+@media (prefers-color-scheme: dark) {
+  html:not(.light-mode) {
+    --fragment-keyword: #d2a8ff;
+    --fragment-keywordtype: #79c0ff;
+    --fragment-keywordflow: #ff7b72;
+    --fragment-comment: #9aa7b4;
+    --fragment-token: #a5d6ff;
+    --fragment-preprocessor: #ffa657;
+    --fragment-link: #6cc0ff;
+    --fragment-linenumber-color: #8b9cad;
+  }
+}
+
+body { font-family: var(--hc-font-body); background: var(--hc-bg); color: var(--hc-text); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, h5, h6, div.header .title, .contents h1, .contents h2, .contents h3 {
+  font-family: var(--hc-font-head);
+  letter-spacing: -0.015em;
+  color: var(--hc-text);
+}
+div.header .title { font-weight: 750; font-size: clamp(1.7rem, 3vw, 2.3rem); }
+div.header { background: transparent; border-bottom: 1px solid var(--hc-line); }
+a, a:visited { color: var(--hc-link); }
+a:hover { color: var(--hc-link-hover); }
+:focus-visible { outline: 2px solid var(--hc-accent); outline-offset: 2px; }
+
+/* ---------- Top bar ---------- */
+#titlearea, .github-corner { display: none !important; }
+.hc-topbar {
+  flex: 0 0 100%;
+  position: relative;
+  z-index: 10000; /* above Doxygen's menu bar (.sm, z-index 9999 in tabs.css) so the Documentation menu is on top */
+  background: var(--hc-nav-bg);
+  backdrop-filter: saturate(1.4) blur(10px);
+  -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--hc-line);
+}
+.hc-topbar__inner {
+  display: flex; align-items: center; gap: 0.7rem; min-width: 0;
+  height: var(--hc-topbar-height);
+  padding: 0 1.25rem;
+}
+.hc-topbar a { text-decoration: none !important; }
+.hc-brand__home { display: flex; align-items: center; gap: 0.55rem; color: var(--hc-text) !important; white-space: nowrap; }
+.hc-brand__mark { width: 30px; height: 30px; }
+.hc-brand__name { font-family: var(--hc-font-head); font-weight: 700; font-size: 1.08rem; letter-spacing: -0.01em; }
+.hc-brand__sep { width: 1px; height: 22px; background: var(--hc-line-strong); opacity: 0.6; }
+.hc-brand__project { font-weight: 600; font-size: 0.95rem; color: var(--hc-text-muted) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hc-brand__project:hover { color: var(--hc-link-hover) !important; }
+.hc-topbar__nav { margin-left: auto; display: flex; align-items: center; gap: 0.25rem; flex: 0 0 auto; }
+.hc-manuals { position: relative; }
+.hc-manuals__button, .hc-topbar__icon {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem;
+  height: 2.25rem; padding: 0 0.8rem;
+  font: 500 0.93rem var(--hc-font-body);
+  color: var(--hc-text-muted) !important;
+  background: transparent; border: 0; border-radius: var(--hc-radius-small);
+  cursor: pointer;
+}
+.hc-topbar__icon { width: 2.25rem; padding: 0; }
+.hc-manuals__button::after { content: ""; border: 4px solid transparent; border-top-color: currentColor; margin-top: 4px; }
+.hc-manuals__button:hover, .hc-manuals__button[aria-expanded="true"], .hc-topbar__icon:hover {
+  background: var(--hc-raised); color: var(--hc-link-hover) !important;
+}
+.hc-mode-toggle__dark { display: none; }
+html.dark-mode .hc-mode-toggle__dark { display: inline; }
+html.dark-mode .hc-mode-toggle__light { display: none; }
+.hc-mode-toggle span { font-size: 1.15rem; line-height: 1; }
+doxygen-awesome-dark-mode-toggle { display: none !important; }
+
+/* doxygen-awesome colors every link state with !important (a:link, a:visited, ...); these
+   selectors outrank it for the top bar and hero. */
+.hc-topbar a:is(:link, :visited, :hover, :focus, :active),
+.hc-hero a:is(:link, :visited, :hover, :focus, :active) { font-weight: inherit; }
+.hc-brand__home:is(:link, :visited, :hover, :focus, :active) { color: var(--hc-text) !important; }
+.hc-brand__project:is(:link, :visited) { color: var(--hc-text-muted) !important; }
+.hc-brand__project:is(:hover, :focus, :active) { color: var(--hc-link-hover) !important; }
+.hc-topbar__icon:is(:link, :visited) { color: var(--hc-text-muted) !important; }
+.hc-topbar__icon:is(:hover, :focus, :active) { color: var(--hc-link-hover) !important; }
+.hc-manuals__item:is(:link, :visited, :hover, :focus, :active) { color: var(--hc-text) !important; }
+.hc-manuals__item.active:is(:link, :visited, :hover, :focus, :active) { color: var(--hc-on-accent-soft) !important; }
+.hc-manuals__footer a:is(:link, :visited, :hover, :focus, :active) { color: var(--hc-link) !important; }
+.hc-btn--solid:is(:link, :visited) { color: #00518c !important; }
+.hc-btn--solid:is(:hover, :focus, :active) { color: #0071bf !important; }
+.hc-btn--ghost:is(:link, :visited, :hover, :focus, :active) { color: #ffffff !important; }
+
+.hc-manuals__menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  width: min(44rem, 94vw);
+  border: 1px solid var(--hc-line);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+  box-shadow: var(--hc-shadow-lift);
+  overflow: hidden;
+  z-index: 200;
+}
+.hc-manuals__menu[hidden] { display: none; }
+.hc-manuals__groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.25rem 1rem; padding: 1rem 1.1rem 0.6rem; }
+@media (max-width: 860px) { .hc-manuals__groups { grid-template-columns: 1fr; } }
+.hc-manuals__group ul { list-style: none; margin: 0; padding: 0; }
+.hc-manuals__heading {
+  margin: 0 0 0.35rem 0.6rem;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--hc-text-muted);
+}
+.hc-manuals__item {
+  display: flex; flex-direction: column;
+  padding: 0.4rem 0.6rem; border-radius: var(--hc-radius-small);
+  color: var(--hc-text) !important;
+}
+.hc-manuals__item:hover, .hc-manuals__item:focus { background: var(--hc-raised); }
+.hc-manuals__item.active { background: var(--hc-accent-soft); color: var(--hc-on-accent-soft) !important; }
+.hc-manuals__title { font-weight: 600; font-size: 0.92rem; line-height: 1.3; }
+.hc-manuals__kind { font-size: 0.78rem; color: var(--hc-text-muted); }
+.hc-manuals__item.active .hc-manuals__kind { color: var(--hc-on-accent-soft); }
+.hc-manuals__footer {
+  display: flex; flex-wrap: wrap; gap: 1.2rem;
+  padding: 0.7rem 1.7rem; border-top: 1px solid var(--hc-line); background: var(--hc-raised);
+  font-size: 0.88rem; font-weight: 600;
+}
+.hc-manuals__footer a { color: var(--hc-link) !important; }
+@media (max-width: 760px) {
+  .hc-brand__name, .hc-brand__sep { display: none; }
+  .hc-topbar__inner { padding: 0 0.75rem; gap: 0.4rem; }
+  .hc-manuals__button { padding: 0 0.5rem; }
+  .hc-manuals__menu { position: fixed; left: 0.5rem; right: 0.5rem; top: calc(var(--hc-topbar-height) + 4px); width: auto; max-height: 80vh; overflow-y: auto; }
+  .hc-hero { margin: 0.8rem 0.6rem 1.2rem; }
+  .hc-hero__inner { padding: 1.8rem 1.2rem; }
+}
+
+/* ---------- Doxygen menu bar and search ---------- */
+#main-nav, #main-menu, .sm-dox, .sm-dox ul { background: var(--hc-bg) !important; }
+#main-nav { border-bottom: 1px solid var(--hc-line); }
+/* On wide screens Doxygen's tabs.css hides its small-screen menu button by moving it
+   99999 px up, but its container sits at the right edge of the page, so the button
+   stuck out past it and every page scrolled sideways. The full menu is always shown at
+   these widths, so the button is not needed there. */
+@media (min-width: 768px) { .main-menu-btn { display: none; } }
+.sm-dox a, .sm-dox a:focus, .sm-dox a:active, .sm-dox a.highlighted {
+  color: var(--hc-text-muted) !important;
+  font-family: var(--hc-font-body); font-weight: 500;
+  border-radius: var(--hc-radius-small);
+  background-image: none !important;
+  text-shadow: none !important;
+}
+.sm-dox a:hover { background: var(--hc-raised) !important; color: var(--hc-link-hover) !important; }
+.sm-dox a span.sub-arrow { background: transparent !important; }
+.sm-dox ul { border: 1px solid var(--hc-line) !important; border-radius: var(--hc-radius-small) !important; box-shadow: var(--hc-shadow-lift) !important; }
+#MSearchBox {
+  border: 1px solid var(--hc-line) !important;
+  background: var(--hc-surface) !important;
+  box-shadow: none !important;
+}
+#MSearchField { color: var(--hc-text) !important; font-family: var(--hc-font-body); }
+
+/* ---------- Tree view (side navigation) ---------- */
+#side-nav, #nav-tree { background: var(--hc-bg) !important; }
+#side-nav { border-right: 1px solid var(--hc-line); }
+#nav-tree .label, #nav-tree .label a, #nav-tree a {
+  color: var(--hc-text-muted) !important;
+  font-family: var(--hc-font-body);
+  font-size: 0.9rem;
+}
+#nav-tree .item:hover > .label a, #nav-tree a:hover { color: var(--hc-link-hover) !important; }
+#nav-tree .selected {
+  background-image: none !important;
+  background: var(--hc-accent-soft) !important;
+  box-shadow: inset 3px 0 0 var(--hc-primary);
+  border-radius: 0 var(--hc-radius-small) var(--hc-radius-small) 0;
+  text-shadow: none !important;
+}
+#nav-tree .selected .label a, #nav-tree .selected a { color: var(--hc-on-accent-soft) !important; font-weight: 600; }
+#nav-tree .arrow { color: var(--hc-text-muted) !important; }
+.ui-resizable-e { background: var(--hc-line) !important; width: 1px !important; }
+
+/* ---------- Content ---------- */
+div.contents { line-height: 1.65; }
+div.contents code, div.contents p code, div.contents li code, div.contents td code {
+  background: var(--hc-inline-code-bg);
+  color: var(--hc-inline-code);
+  border-radius: 6px;
+  padding: 0.08em 0.35em;
+}
+a.el, a.code, a.codeRef, .contents a code, a code {
+  color: var(--hc-link) !important;
+  font-weight: 500;
+}
+a.el:hover, a.code:hover { color: var(--hc-link-hover) !important; }
+div.contents a.el code, div.contents a code { background: var(--hc-inline-code-bg); }
+
+div.fragment, pre.fragment {
+  background: var(--hc-code-bg) !important;
+  border: 1px solid var(--hc-line) !important;
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+div.line { font-family: var(--hc-font-mono); }
+
+.memitem {
+  border: 1px solid var(--hc-line) !important;
+  border-radius: var(--hc-radius) !important;
+  background: var(--hc-surface) !important;
+  box-shadow: var(--hc-shadow) !important;
+  overflow: hidden;
+}
+.memproto, h2.memtitle {
+  background: var(--hc-raised) !important;
+  border-color: var(--hc-line) !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.memproto { font-family: var(--hc-font-mono); }
+.memname, .memname td { font-weight: 600; color: var(--hc-text); }
+.memdoc { background: var(--hc-surface) !important; }
+h2.memtitle { border-radius: var(--hc-radius-small) var(--hc-radius-small) 0 0 !important; font-family: var(--hc-font-mono); }
+
+table.markdownTable, table.doxtable, table.fieldtable, table.memberdecls {
+  border-color: var(--hc-line) !important;
+}
+table.markdownTable, table.doxtable, table.fieldtable {
+  border: 1px solid var(--hc-line);
+  border-radius: var(--hc-radius-small);
+  overflow: hidden;
+}
+table.markdownTable th, table.doxtable th, .fieldtable th {
+  background: var(--hc-raised) !important;
+  color: var(--hc-text) !important;
+  font-weight: 650;
+}
+table.markdownTable td, table.markdownTable th, table.doxtable td, table.doxtable th { border-color: var(--hc-line) !important; }
+.memberdecls .heading h2 { border-bottom-color: var(--hc-line); font-family: var(--hc-font-head); }
+
+/* Page table of contents (doxygen-awesome interactive TOC) */
+div.toc { background: var(--hc-surface) !important; border: 1px solid var(--hc-line) !important; border-radius: var(--hc-radius) !important; }
+div.toc h3 {
+  font-size: 0.72rem !important; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--hc-text-muted) !important;
+}
+div.toc li a { color: var(--hc-text-muted) !important; }
+div.toc li a.active, div.toc li a:hover { color: var(--hc-link-hover) !important; }
+
+/* Doxygen 1.14+ markup: inline code as span.tt, the right-hand page outline (#page-nav),
+   the tree-view sync icon and the tree's edge. Doxygen's own stylesheet gives them fixed light
+   colors, which stay light in dark mode. */
+span.tt {
+  background: var(--hc-inline-code-bg) !important;
+  color: var(--hc-inline-code) !important;
+  border: 0 !important;
+  border-radius: 6px;
+  padding: 0.08em 0.35em;
+}
+a span.tt { color: var(--hc-link) !important; }
+#page-nav, .page-nav-panel { background: var(--hc-bg) !important; border-color: var(--hc-line) !important; }
+#page-nav-resize-handle { background: var(--hc-line) !important; }
+#page-nav li.vis { background: var(--hc-accent-soft) !important; }
+#page-nav a:is(:link, :visited) { color: var(--hc-text-muted) !important; }
+#page-nav li.vis > .item a:is(:link, :visited) { color: var(--hc-on-accent-soft) !important; }
+#page-nav a:is(:hover, :focus) { color: var(--hc-link-hover) !important; }
+/* The outline copies each heading's anchor into its entry, and doxygen-awesome makes a.anchor a
+   block: every entry's text dropped below its indent, so all levels lined up flush left. */
+ul.page-outline a.anchor { display: none; }
+div.nav-sync-icon { background: var(--hc-surface) !important; border-color: var(--hc-line) !important; }
+#nav-tree { border-color: var(--hc-line) !important; }
+
+/* Member labels (inline, virtual...), the N/C/F icons of the index trees, level selectors and
+   parameter names: doxygen-awesome and doxygen.css color these with fixed or link colors that fail
+   contrast in dark mode. */
+span.mlabel, .memtitle .mlabel, span.icon {
+  background: var(--hc-primary) !important;
+  color: var(--hc-on-primary) !important;
+  border: 0 !important;
+}
+div.levels span, div.levels a { color: var(--hc-link) !important; }
+.paramname em, td.paramname em, .paramname { color: var(--hc-on-flag-soft) !important; }
+
+/* Bottom bar (breadcrumb and generator note) */
+#nav-path, #nav-path ul {
+  background: var(--hc-raised) !important;
+  border-top: 1px solid var(--hc-line) !important;
+  border-color: var(--hc-line) !important;
+  color: var(--hc-text-muted) !important;
+  background-image: none !important;
+}
+#nav-path li.navelem a, #nav-path li.footer, #nav-path li.footer a { color: var(--hc-text-muted) !important; text-shadow: none !important; }
+#nav-path li.navelem { background-image: none !important; }
+
+/* ---------- Landing hero (index page; inserted by hc-doxygen.js) ---------- */
+.hc-hero {
+  position: relative;
+  margin: 1.4rem 1.5rem 1.6rem;
+  border-radius: var(--hc-radius);
+  background: linear-gradient(160deg, var(--hc-hero-from) 0%, var(--hc-hero-mid) 55%, var(--hc-hero-to) 100%);
+  color: var(--hc-on-hero);
+  overflow: hidden;
+  box-shadow: var(--hc-shadow-lift);
+}
+.hc-hero__inner { padding: 2.6rem 2.2rem 2.4rem; text-align: center; }
+.hc-hero__kicker {
+  margin: 0 0 0.8rem;
+  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--hc-hero-kicker);
+}
+.hc-hero__title {
+  margin: 0 auto 0.9rem; max-width: 24ch;
+  font-family: var(--hc-font-head); font-weight: 800; letter-spacing: -0.02em; line-height: 1.12;
+  font-size: clamp(1.8rem, 3.6vw, 2.7rem); color: var(--hc-on-hero);
+}
+.hc-hero__lede { max-width: 64ch; margin: 0 auto 1.5rem; font-size: 1.08rem; color: var(--hc-hero-lede); }
+.hc-hero__actions { display: flex; flex-wrap: wrap; gap: 0.7rem; justify-content: center; }
+.hc-btn {
+  display: inline-block; padding: 0.65rem 1.2rem; border-radius: 10px;
+  font-weight: 600; font-size: 0.95rem; text-decoration: none !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease;
+}
+.hc-btn:hover { transform: translateY(-1px); }
+.hc-btn--solid, .hc-btn--solid:visited { background: #ffffff; color: #00518c !important; }
+.hc-btn--solid:hover { box-shadow: var(--hc-shadow-lift); color: #0071bf !important; }
+.hc-btn--ghost, .hc-btn--ghost:visited { border: 1.5px solid rgba(255, 255, 255, 0.6); color: #ffffff !important; }
+.hc-btn--ghost:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.1); color: #ffffff !important; }
+.hc-landing div.header { display: none; }

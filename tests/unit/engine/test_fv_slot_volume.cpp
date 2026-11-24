@@ -26,6 +26,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <numbers>
 #include <sstream>
 #include <string>
 
@@ -223,7 +224,7 @@ TEST(FvSlotVolume, pressurizedSlotVolumeMatchesTheClosure) {
     // the published depth, which no longer carries it).
     ASSERT_GT(r.j0_depth, 3.0);
     const double mean_piezo = 0.5 * (r.j0_depth + 15.0);
-    const double a_full = M_PI * 1.5 * 1.5;
+    const double a_full = std::numbers::pi * 1.5 * 1.5;
     const double t_req = 32.2 * a_full / (100.0 * 100.0); // g*A_full/c^2
     const double t_slot = std::min(t_req, 0.05 * 3.0);    // 5%-of-Wmax cap
     const double expected = t_slot * (mean_piezo - 3.0) * 300.0;

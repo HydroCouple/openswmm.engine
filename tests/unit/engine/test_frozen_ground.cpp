@@ -809,7 +809,7 @@ struct MeshResult {
     std::string error;
     std::vector<double> infiltration; // cumulative depth per cell, m
     std::vector<double> factor, enthalpy;
-    std::vector<double> first_factor; // after the first engine step
+    std::vector<double> first_factor;                            // after the first engine step
     std::vector<double> api_temperature, api_frozen, api_factor; // the public bulk getter
     int api_status = -1;
     frost::Slab slab;

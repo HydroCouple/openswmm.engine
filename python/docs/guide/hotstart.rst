@@ -109,6 +109,76 @@ Save and apply
 
 ----
 
+Restart records
+===============
+
+``solver.restart`` (:class:`RestartSettings`) is the model's ``[RESTART]``
+section. It records restart states into a GeoPackage or HDF5 file, and
+starts a run from one of them. Each record holds the bytes of a native hot
+start file. :func:`inspect_restart_file` lists the runs and records of a
+file without changing it. Set the section after ``open()`` and before
+``initialize()``:
+
+.. code-block:: python
+
+    from datetime import datetime
+    from openswmm.engine import Solver, inspect_restart_file
+
+    s = Solver("warmup.inp", "warmup.rpt", "warmup.out")
+    s.open()
+    s.restart.record_file = "states.h5"
+    s.restart.record_format = "HDF5"
+    s.restart.record_at = ["END", datetime(2020, 1, 1, 0, 30)]
+    s.initialize()
+    s.start()
+    for _ in s.steps():
+        pass
+    s.end()
+    s.close()
+
+    run = inspect_restart_file("states.h5")["runs"][0]
+    print(run["run_id"], [r["record_id"] for r in run["records"]])
+
+    s2 = Solver("storm.inp", "storm.rpt", "storm.out")
+    s2.open()
+    s2.restart.source_file = "states.h5"
+    s2.restart.source_run = run["run_id"]
+    s2.restart.source_record = "LATEST"
+    s2.restart.mode = "INITIAL_CONDITIONS"
+    s2.initialize()
+
+``LATEST`` is the run's last complete record, chosen once when the run
+starts. ``CONTINUE`` instead of ``INITIAL_CONDITIONS`` resumes the
+original simulation; it needs a record written with
+``record_continuation = True``.
+
+.. mermaid::
+   :alt: Lineage of a restart record
+   :caption: Lineage of a restart record: the run that writes it, and a later
+      run that starts from it as initial conditions or continues the original
+      simulation. The engine manual's Files chapter also draws the GeoPackage
+      and HDF5 storage layout.
+
+   flowchart TD
+       A[Run with RECORD_FILE and RECORD_FORMAT] --> B[Records at each RECORD_EVERY interval and each RECORD_AT time, or one record at the end]
+       B --> C{RECORD_CONTINUATION YES}
+       C -- no --> D[Record holds the native Hot Start state]
+       C -- yes --> E[Record also holds the engine checkpoint, and the binary output written so far]
+       D --> F[Record kept under the run ID, complete once its status is written last]
+       E --> F
+       F --> G[Later run names SOURCE_FILE, SOURCE_RUN and a record ID or LATEST]
+       G --> H{MODE}
+       H -- INITIAL_CONDITIONS --> I{Model has heat, frozen ground or an independent groundwater clock}
+       I -- no --> J[Saved node, link and subcatchment state at the model's own start date, with new mass balances]
+       I -- yes --> R[Run refused, naming the reason]
+       H -- CONTINUE --> K{Record has the checkpoint, same engine version, later end date, model otherwise unchanged}
+       K -- no --> R
+       K -- yes --> L[Resumes the saved clocks, numerical history and mass balances, and the binary output when the record carries it]
+       J --> M[New run names the source file, run, record and mode as its parent]
+       L --> M
+
+----
+
 Inspecting a file
 =================
 
