@@ -3,7 +3,7 @@ name: Deployment
 # Releases (docs/releases/README.md):
 #   v<X.Y.Z[-phase.N]> tag   the engine: zips, wheels and sdist on a GitHub Release, then PyPI.
 #   py-v<PEP 440> tag        the Python packages alone (.postN and/or .devN), to PyPI.
-#   the release pull request development wheels on the rolling `dev` pre-release.
+#   a manual run on swmm6_rel development wheels on the rolling `dev` pre-release.
 
 permissions:
   contents: read
@@ -18,7 +18,8 @@ on:
   workflow_dispatch:
 
 # One run per branch or pull request: a newer commit cancels the older run.
-# A tag's release run is never canceled.
+# A tag's release run is never canceled. A manual run on swmm6_rel is grouped
+# by its ref, so pushes to the release pull request do not cancel it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -46,10 +47,11 @@ jobs:
   #
   #  CMakeLists.txt is the source (scripts/bump_version.py writes the other
   #  declarations). A `v` tag must equal it; a `py-v` tag is a Python-only
-  #  release of it with .postN and/or .devN; the release pull request (head
-  #  swmm6_rel, this repository) builds development wheels numbered by this
-  #  workflow's run, for every interpreter. Other runs build the committed
-  #  version; other pull requests, for Python 3.12 only.
+  #  release of it with .postN and/or .devN; a manual run on swmm6_rel builds
+  #  development wheels numbered by this workflow's run, for every interpreter
+  #  (a full set takes 2-2.5 h, longer than the gap between pushes to the
+  #  release pull request, which would cancel it). Other runs build the
+  #  committed version; pull requests, for Python 3.12 only.
   # ──────────────────────────────────────────────────────────────────────
   version:
     name: Python version
@@ -65,7 +67,7 @@ jobs:
       - name: Resolve the version
         id: resolve
         env:
-          DEV: ${{ github.event_name == 'pull_request' && github.head_ref == 'swmm6_rel' && github.event.pull_request.head.repo.full_name == github.repository }}
+          DEV: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/swmm6_rel' }}
           RUN: ${{ github.run_number }}
         run: |
           if [ "$DEV" = true ]; then
@@ -305,10 +307,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-        with:
-          # Development wheels are built from the release branch's own commit,
-          # not the pull request's test merge.
-          ref: ${{ needs.version.outputs.dev == 'true' && github.event.pull_request.head.sha || '' }}
 
       - name: Set up Python (to stamp the version)
         if: needs.version.outputs.python != ''
@@ -410,8 +408,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.version.outputs.dev == 'true' && github.event.pull_request.head.sha || '' }}
 
       - name: Set up Python (to stamp the version)
         if: needs.version.outputs.python != ''
@@ -579,9 +575,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   #  Development wheels — the rolling `dev` pre-release.
   #
-  #  The release pull request's runs replace its wheels once every platform
-  #  passed the smoke test, and move the `dev` tag to the commit they were
-  #  built from. Not PyPI: a full set is ~475 MB, and PyPI caps a project at
+  #  A manual run on swmm6_rel replaces its wheels once every platform passed
+  #  the smoke test, and moves the `dev` tag to the commit they were built
+  #  from (gh workflow run deployment.yml --ref swmm6_rel). Not PyPI: a full set is ~475 MB, and PyPI caps a project at
   #  10 GB. Install with
   #    pip install --pre --find-links https://github.com/HydroCouple/openswmm.engine/releases/expanded_assets/dev openswmm
   # ──────────────────────────────────────────────────────────────────────
@@ -599,7 +595,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      SHA: ${{ github.event.pull_request.head.sha }}
+      SHA: ${{ github.sha }}
       VERSION: ${{ needs.version.outputs.python }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -620,7 +616,7 @@ jobs:
 
       - name: Replace the wheels on the dev pre-release
         run: |
-          notes="Development wheels $VERSION of OpenSWMM Engine, developed by HydroCouple, built from $SHA ($RUN_URL). They are replaced on every push to swmm6_rel and are not a release.
+          notes="Development wheels $VERSION of OpenSWMM Engine, developed by HydroCouple, built from $SHA ($RUN_URL). They are replaced by each manual Deployment run on swmm6_rel and are not a release.
 
           pip install --pre --find-links https://github.com/$GH_REPO/releases/expanded_assets/dev openswmm openswmm-gpu-omp"
           if gh release view dev >/dev/null 2>&1; then

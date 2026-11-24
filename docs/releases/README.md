@@ -51,7 +51,13 @@ The run builds every wheel and the sdist at that version from the tagged commit,
 
 ## Development wheels
 
-Each push to `swmm6_rel` updates its release pull request. That run builds wheels for every interpreter at `<version>.dev<run number>`, from the branch's own commit. When every platform passes the smoke test, it replaces the wheels on the rolling `dev` pre-release and moves the `dev` tag to that commit. Only the latest build is kept. Install it with:
+Run the `Deployment` workflow by hand on `swmm6_rel`, from the Actions tab or with:
+
+```sh
+gh workflow run deployment.yml --ref swmm6_rel
+```
+
+The run builds wheels for every interpreter at `<version>.dev<run number>`. When every platform passes the smoke test, it replaces the wheels on the rolling `dev` pre-release and moves the `dev` tag to the commit it built. Only the latest build is kept. A full set takes two to two and a half hours. Pushes come faster than that and would cancel it, so the release pull request's own runs build Python 3.12 only; pushes don't cancel a manual run. Install the wheels with:
 
 ```sh
 pip install --pre --find-links https://github.com/HydroCouple/openswmm.engine/releases/expanded_assets/dev openswmm openswmm-gpu-omp
