@@ -360,7 +360,8 @@ TEST(SoftRainGageEngine, MixedFamiliesArmBothPlanesWithNoFallback) {
     writeTwoGageInp(inp, "RG1 NORMAL CV 0.30\nRG2 UNIFORM HALFRANGE 1.8");
     const PlaneProbe pr = runPlaneProbe(inp, rpt, csv);
     ASSERT_TRUE(pr.ran);
-    EXPECT_EQ(pr.planes, 2) << "each family must carry its own plane";
+    // O-16b: each family plane is carried as a + and a - half, so 2 families = 4.
+    EXPECT_EQ(pr.planes, 4) << "each family must carry its own plane (+/- halves)";
     EXPECT_EQ(pr.mixed_family_warnings, 0)
         << "the first-family fallback and its warning must not exist";
     EXPECT_GT(pr.band, 1.0e-6);
@@ -380,11 +381,11 @@ TEST(SoftRainGageEngine, SingleFamilyLeavesSecondPlaneUnarmed) {
     ASSERT_TRUE(pn.ran);
     ASSERT_TRUE(pu.ran);
     // NORMAL + LOGNORMAL share the probit coefficient: one plane, no warning.
-    EXPECT_EQ(pn.planes, 1);
+    EXPECT_EQ(pn.planes, 2);  // one family = one plane = +/- halves (O-16b)
     EXPECT_EQ(pn.mixed_family_warnings, 0);
     EXPECT_GT(pn.band, 1.0e-6);
     // All-UNIFORM: the UNIFORM plane is the primary and the only plane.
-    EXPECT_EQ(pu.planes, 1);
+    EXPECT_EQ(pu.planes, 2);  // one family = one plane = +/- halves (O-16b)
     EXPECT_GT(pu.band, 1.0e-6);
 }
 
