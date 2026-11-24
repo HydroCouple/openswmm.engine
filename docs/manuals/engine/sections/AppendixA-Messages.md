@@ -473,3 +473,6 @@ One or more rows of an external rainfall CSV could not be parsed and were skippe
 
 WARNING 108:     slot width cap overrides FV_SLOT_CELERITY for xxx.
 The Preissmann slot width computed from FV_SLOT_CELERITY exceeded the cap of 5 % of the conduit's top width and was clamped to it.
+
+WARNING 109:     undefined object xxx in the [REPORT] section was ignored.
+A SUBCATCHMENTS, NODES or LINKS entry in the [REPORT] section names an object the model does not have. The name is skipped and the run goes on; EPA SWMM 5 stops with ERROR 209 instead.
