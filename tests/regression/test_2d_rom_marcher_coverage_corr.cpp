@@ -244,6 +244,8 @@ std::vector<std::vector<double>> driveMarcher(const Surface& sf,
     opts.cell_closure = CellClosure2D::FLAT;
     // the 2D ROM operator is derived and calibrated for the local-inertial marcher (LOCAL_INERTIAL_DEVIATION_OPERATOR.md); upstream's default is FULL_SWE since ebdd4d04
     opts.momentum = Momentum2D::LOCAL_INERTIAL;
+    if (const char* mv = std::getenv("W4_MOMENTUM"))   // diag harness knob (fullswe-diag)
+        if (std::string(mv) == "FULL_SWE") opts.momentum = Momentum2D::FULL_SWE;
     SurfaceStateData state;
     seedSteady(mesh, state);
     BoundaryData b;
@@ -473,7 +475,7 @@ struct DepthBin {
     double lo = 0.0, hi = 0.0;
     int n = 0;
     double cov_sum = 0.0;
-    std::vector<double> ratios;
+    std::vector<double> ratios, w_mc, w_rom;
     // W4b: the MC's and the ROM's own depth-to-roughness elasticity per bin,
     // (q95−q05 of depth)/(median depth) divided by (q95−q05 of mm)/1.
     std::vector<double> e_mc, e_rom;
@@ -482,6 +484,7 @@ struct DepthBin {
 struct Score {
     int samples = 0;
     double median_cont = 0.0, ratio_med = 0.0, w_frac = 0.0, member_cov = 0.0, ratio_med_mid = 0.0;
+    double w_mc_med = 0.0, w_rom_med = 0.0;   // fullswe-diag: absolute q05-q95 widths (m)
     double wet_frac = 0.0;   // fraction of (cell,time) samples with MC median ≥ 1e-4 m
     // W4b: the same statistics binned by the MC median depth (m), so a
     // converging surface's thalweg and its thin-film flanks are not pooled.
@@ -497,7 +500,7 @@ Score scoreBands(const RomBands& bands, const MeshData& mesh0,
     const int hi = static_cast<int>(std::round(0.95 * (M - 1)));
     int n_tot = 0, n_cov = 0, n_w = 0, n_w_ok = 0, n_all = 0;
     double member_cov_sum = 0.0;
-    std::vector<double> ratios, ratios_mid, hc(static_cast<std::size_t>(M));
+    std::vector<double> ratios, ratios_mid, hc(static_cast<std::size_t>(M)), all_wmc, all_wrom;
     std::vector<DepthBin> bins = {{1e-4, 1e-3}, {1e-3, 3e-3}, {3e-3, 1e-2}, {1e-2, 2e-2}, {2e-2, 5e-2},
                                   {5e-2, 1e-1}, {1e-1, 2e-1}, {2e-1, 1e9}};
     // Relative Manning spread of the comonotone design at the same-index
@@ -526,10 +529,12 @@ Score scoreBands(const RomBands& bands, const MeshData& mesh0,
             if (mc_w > 1e-6) {
                 const double ratio = (q95 - q05) / mc_w;
                 ++n_w; ratios.push_back(ratio);
+                all_wmc.push_back(mc_w); all_wrom.push_back(q95 - q05);
                 if (ratio >= 0.3 && ratio <= 3.0) ++n_w_ok;
                 for (auto& b : bins)
                     if (mc_med >= b.lo && mc_med < b.hi) {
                         ++b.n; b.cov_sum += icov; b.ratios.push_back(ratio);
+                        b.w_mc.push_back(mc_w); b.w_rom.push_back(q95 - q05);
                         b.e_mc.push_back((mc_w / mc_med) / dmm_rel);
                         b.e_rom.push_back(((q95 - q05) / mc_med) / dmm_rel);
                         break;
@@ -545,7 +550,12 @@ Score scoreBands(const RomBands& bands, const MeshData& mesh0,
     s.w_frac = n_w ? static_cast<double>(n_w_ok) / n_w : 0.0;
     if (!ratios.empty())     { std::sort(ratios.begin(), ratios.end());         s.ratio_med     = ratios[ratios.size() / 2]; }
     if (!ratios_mid.empty()) { std::sort(ratios_mid.begin(), ratios_mid.end()); s.ratio_med_mid = ratios_mid[ratios_mid.size() / 2]; }
+    if (!all_wmc.empty()) {
+        std::sort(all_wmc.begin(), all_wmc.end()); std::sort(all_wrom.begin(), all_wrom.end());
+        s.w_mc_med = all_wmc[all_wmc.size() / 2]; s.w_rom_med = all_wrom[all_wrom.size() / 2];
+    }
     for (auto& b : bins) {
+        std::sort(b.w_mc.begin(), b.w_mc.end()); std::sort(b.w_rom.begin(), b.w_rom.end());
         std::sort(b.ratios.begin(), b.ratios.end());
         std::sort(b.e_mc.begin(), b.e_mc.end());
         std::sort(b.e_rom.begin(), b.e_rom.end());
@@ -559,19 +569,20 @@ void printDepthBins(const char* cell, const char* rung, const Score& s) {
     for (const auto& b : s.bins) {
         if (b.n == 0) continue;
         std::printf("[W4 depth-bin] %-22s %s MC depth [%.0e,%.0e) m: n=%6d  cov=%.3f  width-med=%.3f  "
-                    "elasticity MC=%.3f ROM=%.3f\n",
+                    "elasticity MC=%.3f ROM=%.3f  |W| MC=%.3e ROM=%.3e m\n",
                     cell, rung, b.lo, b.hi, b.n, b.cov_sum / b.n,
                     b.ratios[b.ratios.size() / 2],
-                    b.e_mc[b.e_mc.size() / 2], b.e_rom[b.e_rom.size() / 2]);
+                    b.e_mc[b.e_mc.size() / 2], b.e_rom[b.e_rom.size() / 2],
+                    b.w_mc[b.w_mc.size() / 2], b.w_rom[b.w_rom.size() / 2]);
     }
 }
 
 void printScore(const char* cell, const char* rung, const Score& s, const RomBands& b);
 void printScoreImpl(const char* cell, const char* rung, const Score& s, const RomBands& b) {
     std::printf("[W4 2D-ROM-vs-marcher] %-28s %s median-containment=%.3f member-coverage=%.3f "
-                "width-med=%.3f (midpoint %.3f) in[0.3,3]=%.3f wet=%.2f n=%d%s\n",
+                "width-med=%.3f (midpoint %.3f) in[0.3,3]=%.3f wet=%.2f n=%d |W|med MC=%.3e ROM=%.3e m%s\n",
                 cell, rung, s.median_cont, s.member_cov, s.ratio_med, s.ratio_med_mid,
-                s.w_frac, s.wet_frac, s.samples,
+                s.w_frac, s.wet_frac, s.samples, s.w_mc_med, s.w_rom_med,
                 b.ks_used ? (b.reduced_path ? "  [CORR_LEN reduced]" : "  [CORR_LEN materialized]") : "");
 }
 void printScore(const char* cell, const char* rung, const Score& s, const RomBands& b) {
@@ -656,6 +667,20 @@ MC runMC(const Surface& sf, const std::vector<std::vector<double>>& n_fields,
     return mc;
 }
 
+
+// fullswe-diag: per-member window drift (max over cells of |h(last)-h(first)|), and over scored window
+void printMcDrift(const char* cell, const MC& mc) {
+    std::vector<double> d;
+    for (const auto& m : mc) {
+        double x = 0.0;
+        for (std::size_t t = 0; t < m.front().size(); ++t)
+            x = std::max(x, std::abs(m.back()[t] - m[static_cast<std::size_t>(kScoreR0)][t]));
+        d.push_back(x);
+    }
+    std::sort(d.begin(), d.end());
+    std::printf("[W4 mc-drift] %s scored-window max|dh| per member: min=%.2e med=%.2e max=%.2e m\n",
+                cell, d.front(), d[d.size() / 2], d.back());
+}
 struct Fixture {
     Surface sf;
     MeshData mesh;
@@ -687,8 +712,8 @@ Fixture makeFixture(const Surface& sf) {
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST(Rom2dMarcherCoverageCorr, CorrelatedFieldsAndSecondSurface) {
-    const Surface plane  {"plane",   0.0,       3000.0};
-    const Surface channel{"channel", gThalweg,  6000.0};
+    const Surface plane  {"plane",   0.0,       envDbl("W4_SPIN_PLANE", 3000.0)};
+    const Surface channel{"channel", gThalweg,  envDbl("W4_SPIN_CHANNEL", 6000.0)};
     const double corr_lens[2] = {20.0, 100.0};
 
     Fixture fp = makeFixture(plane);
@@ -785,6 +810,7 @@ TEST(Rom2dMarcherCoverageCorr, CorrelatedFieldsAndSecondSurface) {
             std::fill(nf[static_cast<std::size_t>(i)].begin(), nf[static_cast<std::size_t>(i)].end(),
                       kBaseN * mult[static_cast<std::size_t>(i)]);
         const MC mc = runMC(plane, nf, {});
+        printMcDrift("plane-mann-comono", mc);
         // W4_SWEEP="e:d,e:d,..." runs the adv rung for each (elasticity,
         // diffusivity multiplier) pair against the same MC (H13-2D sweep);
         // unset = the four rungs at (1, 1).
@@ -825,7 +851,7 @@ TEST(Rom2dMarcherCoverageCorr, CorrelatedFieldsAndSecondSurface) {
         }
     }
 
-    if (cellEnabled("channel-mann-comono") || cellEnabled("channel-rain-corr20") || cellEnabled("channel-mann-dw")) {
+    if (cellEnabled("channel-mann-comono") || cellEnabled("channel-rain-corr20") || cellEnabled("channel-mann-dw") || cellEnabled("channel-fixture")) {
         Fixture fc = makeFixture(channel);
         std::printf("[W4 fixture] channel : thalweg T=%.3f, nominal window drift max|dh|=%.2e m, "
                     "max depth %.3f m\n", gThalweg, fc.steadiness,
@@ -839,6 +865,7 @@ TEST(Rom2dMarcherCoverageCorr, CorrelatedFieldsAndSecondSurface) {
                 std::fill(nf[static_cast<std::size_t>(i)].begin(), nf[static_cast<std::size_t>(i)].end(),
                           kBaseN * mult[static_cast<std::size_t>(i)]);
             const MC mc = runMC(channel, nf, {});
+            printMcDrift("channel-mann-comono", mc);
             RomInputs in;
             in.mann_mult = mult;
             const Rung rungs[] = {Rung::LEGACY, Rung::ISO, Rung::ANISO, Rung::ANISO_ADV};

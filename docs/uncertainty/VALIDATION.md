@@ -3924,3 +3924,35 @@ W4 channel comonotone Manning 0.953/8.846 (pinned: 0.818/1.308), W3 adv width 1.
 `demo_off.inp` now pin LOCAL_INERTIAL; with the pin W3 adv is 0.856/1.319 and the W4 plane/channel cells match
 the pre-merge record. The router now records a report warning when the 2D ROM is enabled under any other closure
 (bands are a ranking there). Test: `SurfaceROMRouterOperator.WarnsUnlessMomentumIsLocalInertial`.
+
+### Why the 2D ROM is validated under LOCAL_INERTIAL only (measured 2026-11-23)
+Under upstream's default MOMENTUM_EQUATION FULL_SWE the W4 channel comonotone-Manning cell reads 0.953/8.846
+(LOCAL_INERTIAL 0.818/1.308). Splitting the ratio (harness knob `W4_MOMENTUM`, absolute widths printed) shows the
+marcher moved, not the ROM: MC q05–q95 width 5.07e-3 → 5.81e-4 m, ROM width 7.50e-3 → 6.06e-3 m.
+
+| cell (adv rung) | mode | coverage | ratio | MC width (m) | ROM width (m) |
+|---|---|---|---|---|---|
+| channel | LOCAL_INERTIAL | 0.818 | 1.308 | 5.07e-3 | 7.50e-3 |
+| channel | FULL_SWE | 0.953 | 8.846 | 5.81e-4 | 6.06e-3 |
+| plane | LOCAL_INERTIAL | 0.856 | 1.319 | 1.83e-2 | 2.23e-2 |
+| plane | FULL_SWE | 0.862 | 1.429 | 1.71e-2 | 2.26e-2 |
+
+By MC depth bin the channel flanks (3 mm–5 cm) lose their depth-to-roughness elasticity: MC 0.61 → 0.03–0.09
+(ROM 0.34–0.93 either way), while the thalweg (> 5 cm) is unchanged (1.82 → 1.60, 1.05 → 1.05, 0.55 → 0.46). The
+plane, whose bed step per cell (~0.005 m) is below its depth, keeps MC elasticity 0.60–0.87. A 1D transcription of
+the FULL_SWE kernel (`prototypes/full_swe_decay.py`: hydrostatic reconstruction, HLL, per-cell semi-implicit
+friction, order 1) reproduces the mechanism. The deviation operator still collapses to advection–diffusion,
+D ≈ 0.9·(D_phys + D_num) with the scheme's own n-independent D_num = Δx(c² − u²)/(2c), and c_k falls to
+0.55·(5/3)u on 1 cm films (D_num ≈ 4·D_phys there). But the steady Manning elasticity on a sloped chute drops with
+the bed step per cell dz = S·Δx: 0.57 (dz/h = 0.09), 0.41 (0.35), 0.13 (1.75), 0.016–0.06 (dz/h ≥ 7). The
+reconstruction turns a face with dz ≳ h into a dry-bed outflow that does not depend on n. The local-inertial face law
+keeps 0.600 at every dz/h where its prototype is stable (≤ 1.75); the 2D harness flanks measure 0.61. The value is
+not a single function of dz/h (0.110 vs 0.016 at dz/h = 1.39, depending on h and Δx). The FULL_SWE channel also
+never settles: nominal-window drift 2.4e-3 / 8.6e-4 / 3.2e-3 m after 6,000 / 12,000 / 18,000 s of spin-up, against
+3.5e-5 m under LOCAL_INERTIAL. Because the FULL_SWE sensitivity depends on h, dz and Δx, no internal constant
+reproduces it. The sidecar keeps validating its 2D bands under LOCAL_INERTIAL and records a report warning under
+any other closure.
+
+For upstream (deterministic model, not the sidecar): at RECONSTRUCTION_ORDER 1, FULL_SWE's steady depth on films
+with dz ≳ h is nearly insensitive to Manning's n (prototype elasticity 0.016–0.13 against Manning's 0.6), so
+roughness hardly shapes shallow sheet flow on steep cells. RECONSTRUCTION_ORDER 2 is untested here.

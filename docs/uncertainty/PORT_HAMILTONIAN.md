@@ -746,3 +746,4 @@ cases the current code excludes). Acceptance gates as in the table.
   UncertaintyConfig*, GeoPackage model_supplement [2D_ROM]/[UNCERTAINTY] not parsed — recorded gap; RunoffElasticity
   snapshots lid_return_applied_cfs; MeshData::edge_mx/my accessors; upstream registers site_drainage_model itself);
   audits clean; 1D sidecar gates identical; W3/W4 + Bellinge OFF on the merged line running.
+- 2026-11-23: FULL_SWE validation: no single-behaviour path — see VALIDATION 'Why the 2D ROM is validated under LOCAL_INERTIAL only'.
