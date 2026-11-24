@@ -796,3 +796,5 @@ cases the current code excludes). Acceptance gates as in the table.
   (G80F13P cycling wet well now 0.59× narrow; MC spread there is the pump's on/off phase, which no linear half sees); (b) mechanism C
   (stage 2, one-sided S) now the leading sink (G71F05R/04R, G72F646); (c) coupled G71O020 08:00 spike; (d) the limiter rule for pumps
   is beyond the note — kept by owner decision 2026-11-23 (smoke sinks 9,783 → 7,786 at G70F11P; coupled band 0.012 m vs MC 0.733).
+
+- 2026-11-23: FULL_SWE validation: no single-behaviour path — see VALIDATION 'Why the 2D ROM is validated under LOCAL_INERTIAL only'.
