@@ -157,8 +157,8 @@ StripResult runStrip(const std::string& tag, double init_depth) {
         swmm_engine_destroy(e);
         return r;
     };
-    if (swmm_engine_open(e, inp.string().c_str(), (kOutDir / (tag + ".rpt")).string().c_str(),
-                         "", nullptr) != SWMM_OK ||
+    if (swmm_engine_open(e, inp.string().c_str(), (kOutDir / (tag + ".rpt")).string().c_str(), "",
+                         nullptr) != SWMM_OK ||
         swmm_engine_initialize(e) != SWMM_OK || swmm_engine_start(e, 0) != SWMM_OK)
         return fail();
     int nt = 0;
