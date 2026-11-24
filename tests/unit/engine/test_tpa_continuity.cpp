@@ -48,7 +48,8 @@ std::string outPath(const std::string& name) {
 
 // The plan's force-main deck: WW (wet well) -> PMP -> WWD, P1..P12 rising to FM12 at 60 ft,
 // P13..P20 falling to the vented DMH at 40 ft, G1 to a free outfall. Sealed interior junctions.
-std::string forceMainDeck(const std::string& method, bool cycling) {
+std::string forceMainDeck(const std::string& method, bool cycling,
+                          const char* node_continuity = nullptr) {
     std::ostringstream ss;
     ss << "[OPTIONS]\n"
           "FLOW_UNITS GPM\nFLOW_ROUTING DYNWAVE\nLINK_OFFSETS ELEVATION\n"
@@ -60,6 +61,8 @@ std::string forceMainDeck(const std::string& method, bool cycling) {
        << "\nINERTIAL_DAMPING PARTIAL\nNORMAL_FLOW_LIMITED BOTH\nMIN_SLOPE 0\nTHREADS 1\n";
     if (method == "TPA")
         ss << "TPA_CELERITY 159\n";
+    if (node_continuity)
+        ss << "NODE_CONTINUITY " << node_continuity << "\n";
     ss << "\n[JUNCTIONS]\nWWD 10.000 3 0 984.252 0\n";
     const double rise[] = {14.167, 18.333, 22.500, 26.667, 30.833, 35.000,
                            39.167, 43.333, 47.500, 51.667, 55.833, 60.000};
@@ -180,4 +183,22 @@ TEST(TpaContinuity, PumpCycling) {
     expectConservesLikeExtran("cycling", tpa, extran);
     // Routing continuity on its own, the plan's line.
     EXPECT_LE(std::fabs(tpa.cont_err), 0.01);
+}
+
+// NODE_CONTINUITY SEMI_IMPLICIT: a surcharged EXTRAN junction must not store water over the
+// crown-cutoff half-pipe area. Before the fix the 21 sealed junctions of this main held the pumped
+// water as 2,800 ft² of phantom manhole (booked as held volume, so the ledger read 0.17 %), the
+// wet well filled in 5.5 h instead of 7.5 min, and nothing reached the outfall in 6 h.
+TEST(SemiImplicitSurcharge, ExtranForceMainDeliversLikeExplicit) {
+    const DeckRun semi =
+        runDeck("extran_cycling_semi", forceMainDeck("EXTRAN", true, "SEMI_IMPLICIT"));
+    const DeckRun expl =
+        runDeck("extran_cycling_explicit", forceMainDeck("EXTRAN", true, "EXPLICIT"));
+    ASSERT_TRUE(semi.ok && expl.ok);
+    ASSERT_GT(expl.out_volume, 0.0);
+    EXPECT_NEAR(semi.out_volume / expl.out_volume, 1.0, 0.05)
+        << "outfall volume ratio semi/explicit";
+    EXPECT_NEAR(semi.peak_flow / expl.peak_flow, 1.0, 0.10) << "peak G1 flow ratio semi/explicit";
+    EXPECT_LE(std::fabs(semi.cont_err), 0.03)
+        << "semi-implicit continuity " << 100.0 * semi.cont_err << " %";
 }

@@ -4673,11 +4673,33 @@ void DWSolver::setNodeDepth(SimulationContext& ctx, int node_idx, double dt, int
         // over, producing a smooth transition without a branch.
         // =================================================================
 
-        double denom = surf_area + 0.5 * dt * xnode_.sumdqdh[ui];
+        // A surcharged EXTRAN junction is a sealed manhole: Eq. 3-45 keeps the crown-cutoff
+        // half-pipe widths in surf_area, which the explicit scheme drops for its dQ/dH surcharge
+        // branch. Here that area acted as storage — a pressurized force main filled some
+        // 2,800 ft² of phantom manhole area per 50 ft of head instead of delivering over its
+        // high point, and the ledger only closed by booking the water as held. Fade the
+        // capacitance out above the crown the way the explicit branch fades its surface area
+        // in, exp(-15·(y − y_crown)/y_crown); the Σdq/dh term then carries the update and the
+        // formulation degrades to the zero-storage Newton step it was designed to reach.
+        // With no capacitance the trapezoidal balance 0.5·(Q_old + Q_new) = 0 would demand
+        // Q_new = −Q_old, not Q_new = 0, and a freshly surcharged junction hunts (Bellinge:
+        // 17 iterations a step for 2.6). The balance blends to the instantaneous one, and its
+        // Jacobian from dt·Σdq/dh/2 to dt·Σdq/dh, with the same fade.
+        // Only where the conduits answer the head (Σdq/dh > 0): with no flow-head relation the
+        // zero-storage update has no equation, and the junction keeps its surface area.
+        double a_node = surf_area;
+        double phi = 1.0; // 1: trapezoidal (free surface); 0: instantaneous (sealed)
+        if (is_surcharged && surcharge_method == SurchargeMethod::EXTRAN && yCrown > 0.0 &&
+            xnode_.sumdqdh[ui] > 0.0) {
+            phi = std::exp(-15.0 * (y_last - yCrown) / yCrown);
+            a_node = surf_area * phi;
+        }
+        const double dv_eff = phi * dV + (1.0 - phi) * dQ * dt;
+        double denom = a_node + (0.5 * phi + (1.0 - phi)) * dt * xnode_.sumdqdh[ui];
         if (nodes.storage_area[ui] == 0.0)
             denom = std::max(denom, min_surf_area_);
 
-        y_new = y_last + (surf_area * (y_old - y_last) + dV) / denom;
+        y_new = y_last + (a_node * (y_old - y_last) + dv_eff) / denom;
 
         // Save non-ponded surface area (used by flooding logic and CFL)
         if (!is_ponded) {
