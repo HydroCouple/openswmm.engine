@@ -1,5 +1,10 @@
 name: Deployment
 
+# Releases (docs/releases/README.md):
+#   v<X.Y.Z[-phase.N]> tag   the engine: zips, wheels and sdist on a GitHub Release, then PyPI.
+#   py-v<PEP 440> tag        the Python packages alone (.postN and/or .devN), to PyPI.
+#   the release pull request development wheels on the rolling `dev` pre-release.
+
 permissions:
   contents: read
 
@@ -7,7 +12,7 @@ on:
   push:
     # swmm6_rel is tested through its pull request; a push trigger too would run everything twice.
     branches: [main]
-    tags: ["v*.*.*"]
+    tags: ["v*.*.*", "py-v*"]
   pull_request:
     branches: [main, develop, swmm6_rel]
   workflow_dispatch:
@@ -37,10 +42,56 @@ jobs:
     uses: ./.github/workflows/python_contracts.yml
 
   # ──────────────────────────────────────────────────────────────────────
+  #  The version the Python packages are built at, and which interpreters.
+  #
+  #  CMakeLists.txt is the source (scripts/bump_version.py writes the other
+  #  declarations). A `v` tag must equal it; a `py-v` tag is a Python-only
+  #  release of it with .postN and/or .devN; the release pull request (head
+  #  swmm6_rel, this repository) builds development wheels numbered by this
+  #  workflow's run, for every interpreter. Other runs build the committed
+  #  version; other pull requests, for Python 3.12 only.
+  # ──────────────────────────────────────────────────────────────────────
+  version:
+    name: Python version
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.resolve.outputs.python }}
+      dev: ${{ steps.resolve.outputs.dev }}
+      interpreters: ${{ steps.resolve.outputs.interpreters }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve the version
+        id: resolve
+        env:
+          DEV: ${{ github.event_name == 'pull_request' && github.head_ref == 'swmm6_rel' && github.event.pull_request.head.repo.full_name == github.repository }}
+          RUN: ${{ github.run_number }}
+        run: |
+          if [ "$DEV" = true ]; then
+            python=$(python3 scripts/python_release_version.py resolve --ref "$GITHUB_REF" --dev-run "$RUN")
+          else
+            python=$(python3 scripts/python_release_version.py resolve --ref "$GITHUB_REF")
+          fi
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ "$DEV" != true ]; then
+            interpreters='cp312-*'
+          else
+            interpreters='cp310-* cp311-* cp312-* cp313-*'
+          fi
+          {
+            echo "python=$python"
+            echo "dev=$DEV"
+            echo "interpreters=$interpreters"
+          } >> "$GITHUB_OUTPUT"
+          echo "Python packages: ${python:-the committed version}; development wheels: $DEV; interpreters: $interpreters"
+
+  # ──────────────────────────────────────────────────────────────────────
   #  Build release binaries
   # ──────────────────────────────────────────────────────────────────────
   build:
     name: "Build (${{ matrix.alias }})"
+    # A Python-only release ships no engine zips.
+    if: ${{ !startsWith(github.ref, 'refs/tags/py-v') }}
     permissions:
       contents: read
     strategy:
@@ -234,6 +285,7 @@ jobs:
     # Independent of the engine `build` job: wheels rebuild the engine from
     # source via scikit-build-core, so a single-platform engine-zip failure must
     # not block all wheels. (Previously `needs: build` coupled them.)
+    needs: version
     permissions:
       contents: read
     strategy:
@@ -247,11 +299,29 @@ jobs:
           - macos-15-intel        # macOS x86_64
     runs-on: ${{ matrix.os }}
     env:
-      # A pull request builds and tests one Python; main and tags build them all.
-      CIBW_BUILD: ${{ github.event_name == 'pull_request' && 'cp312-*' || 'cp310-* cp311-* cp312-* cp313-*' }}
+      # A pull request builds and tests one Python; main, tags and the release
+      # pull request's development wheels build them all.
+      CIBW_BUILD: ${{ needs.version.outputs.interpreters }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # Development wheels are built from the release branch's own commit,
+          # not the pull request's test merge.
+          ref: ${{ needs.version.outputs.dev == 'true' && github.event.pull_request.head.sha || '' }}
+
+      - name: Set up Python (to stamp the version)
+        if: needs.version.outputs.python != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Stamp the Python version
+        if: needs.version.outputs.python != ''
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.python }}
+        run: python scripts/python_release_version.py stamp "$VERSION"
 
       # Export GHA cache creds so the in-container vcpkg (Linux) and the
       # host vcpkg (macOS/Windows) can both reuse the x-gha binary cache.
@@ -324,6 +394,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   gpu-omp-wheels:
     name: "GPU-omp wheels (${{ matrix.os }})"
+    needs: version
     permissions:
       contents: read
     strategy:
@@ -339,6 +410,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.dev == 'true' && github.event.pull_request.head.sha || '' }}
+
+      - name: Set up Python (to stamp the version)
+        if: needs.version.outputs.python != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The companion pins `openswmm == <version>`, so it is stamped with the
+      # base wheels' version.
+      - name: Stamp the Python version
+        if: needs.version.outputs.python != ''
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.python }}
+        run: python scripts/python_release_version.py stamp "$VERSION"
 
       - name: Export GitHub Actions cache variables
         uses: actions/github-script@v8
@@ -404,7 +492,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────
   wheel-smoke:
     name: "Wheel smoke (${{ matrix.os }})"
-    needs: [wheels, gpu-omp-wheels]
+    needs: [version, wheels, gpu-omp-wheels]
     strategy:
       fail-fast: false
       matrix:
@@ -440,6 +528,9 @@ jobs:
 
       - name: Install wheels into a fresh venv and run the example
         shell: bash
+        env:
+          # The version both packages must report when CI stamped one.
+          EXPECTED: ${{ needs.version.outputs.python }}
         run: |
           set -euo pipefail
           # The repo is checked out, so python/smoke_test.py lives in python/ —
@@ -464,6 +555,9 @@ jobs:
           # resolving to PyPI.
           "$PY" -m pip install --only-binary :all: --no-index --find-links wheelhouse openswmm openswmm-gpu-omp
           "$PY" -m pip show openswmm | tee wheel-smoke-${{ matrix.os }}.txt
+          if [ -n "$EXPECTED" ]; then
+            "$PY" -c "import importlib.metadata as m, os, sys; v = {d: m.version(d) for d in ('openswmm', 'openswmm-gpu-omp')}; print(v); sys.exit(any(x != os.environ['EXPECTED'] for x in v.values()))" | tee -a wheel-smoke-${{ matrix.os }}.txt
+          fi
           # A plugin must be auto-discovered on `import openswmm`
           # (_register_gpu_plugin → OPENSWMM_GPU_PLUGIN_PATH), the companion must
           # import, and the discovered directory must actually CONTAIN a built
@@ -483,10 +577,73 @@ jobs:
           path: wheel-smoke-*.txt
 
   # ──────────────────────────────────────────────────────────────────────
+  #  Development wheels — the rolling `dev` pre-release.
+  #
+  #  The release pull request's runs replace its wheels once every platform
+  #  passed the smoke test, and move the `dev` tag to the commit they were
+  #  built from. Not PyPI: a full set is ~475 MB, and PyPI caps a project at
+  #  10 GB. Install with
+  #    pip install --pre --find-links https://github.com/HydroCouple/openswmm.engine/releases/expanded_assets/dev openswmm
+  # ──────────────────────────────────────────────────────────────────────
+  dev-wheels:
+    name: Publish development wheels
+    needs: [version, wheels, gpu-omp-wheels, wheel-smoke]
+    if: needs.version.outputs.dev == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One publication at a time; a newer one waits instead of cutting this short.
+    concurrency:
+      group: dev-wheels
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      VERSION: ${{ needs.version.outputs.python }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Download the base and companion wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: python-*wheels-*
+          merge-multiple: true
+          path: wheelhouse
+
+      - name: Point the dev tag at the built commit
+        run: |
+          if gh api "repos/$GH_REPO/git/ref/tags/dev" >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/dev" -f sha="$SHA" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/dev -f sha="$SHA" >/dev/null
+          fi
+
+      - name: Replace the wheels on the dev pre-release
+        run: |
+          notes="Development wheels $VERSION of OpenSWMM Engine, developed by HydroCouple, built from $SHA ($RUN_URL). They are replaced on every push to swmm6_rel and are not a release.
+
+          pip install --pre --find-links https://github.com/$GH_REPO/releases/expanded_assets/dev openswmm openswmm-gpu-omp"
+          if gh release view dev >/dev/null 2>&1; then
+            gh release edit dev --prerelease --latest=false --title "Development wheels" --notes "$notes"
+          else
+            gh release create dev --verify-tag --prerelease --latest=false --title "Development wheels" --notes "$notes"
+          fi
+          gh release upload dev wheelhouse/*.whl --clobber
+          # Then drop the wheels of earlier builds, so pip only sees this one.
+          keep=$(cd wheelhouse && ls -1 *.whl)
+          gh release view dev --json assets --jq '.assets[].name' | while read -r name; do
+            if ! grep -qxF "$name" <<<"$keep"; then
+              gh release delete-asset dev "$name" --yes
+            fi
+          done
+          echo "dev pre-release: $(ls wheelhouse/*.whl | wc -l) wheels at $VERSION from $SHA"
+
+  # ──────────────────────────────────────────────────────────────────────
   #  Python source distribution (sdist) — platform-independent, built once.
   # ──────────────────────────────────────────────────────────────────────
   sdist:
     name: "Python sdist"
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -497,10 +654,18 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Check version sync (CMake / vcpkg / pyproject)
+      # On the committed declarations, before any stamp: the gate allows a
+      # .devN, not the .postN a Python-only release may stamp.
+      - name: Check version sync (every declaration)
         run: |
-          python -m unittest discover -s scripts -p test_version_sync.py
+          python -m unittest discover -s scripts -p "test_*version*.py"
           python scripts/check_version_sync.py
+
+      - name: Stamp the Python version
+        if: needs.version.outputs.python != ''
+        env:
+          VERSION: ${{ needs.version.outputs.python }}
+        run: python scripts/python_release_version.py stamp "$VERSION"
 
       - name: Install build frontend
         run: |
@@ -613,3 +778,62 @@ jobs:
         with:
           generate_release_notes: true
           files: dist/**/*
+
+  # ──────────────────────────────────────────────────────────────────────
+  #  Publish to PyPI — `openswmm` (wheels and sdist) and `openswmm-gpu-omp`.
+  #
+  #  After the GitHub Release for a `v` tag, or for a `py-v` tag on its own
+  #  (that run makes no GitHub Release). Trusted publishing: each project on
+  #  pypi.org names this repository, deployment.yml and the `pypi` environment
+  #  as a publisher, so no token is stored here. skip-existing lets a failed
+  #  run be re-run.
+  # ──────────────────────────────────────────────────────────────────────
+  pypi:
+    name: Publish to PyPI
+    needs: [version, wheels, gpu-omp-wheels, wheel-smoke, sdist, python-contracts, release]
+    if: >-
+      ${{ !cancelled() &&
+      (startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/py-v')) &&
+      needs.wheels.result == 'success' && needs.gpu-omp-wheels.result == 'success' &&
+      needs.wheel-smoke.result == 'success' && needs.sdist.result == 'success' &&
+      needs.python-contracts.result == 'success' &&
+      (needs.release.result == 'success' ||
+       (startsWith(github.ref, 'refs/tags/py-v') && needs.release.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/openswmm/${{ needs.version.outputs.python }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the openswmm wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: python-wheels-*
+          merge-multiple: true
+          path: dist/openswmm
+
+      - name: Download the openswmm sdist
+        uses: actions/download-artifact@v5
+        with:
+          name: python-sdist
+          path: dist/openswmm
+
+      - name: Download the openswmm-gpu-omp wheels
+        uses: actions/download-artifact@v5
+        with:
+          pattern: python-gpu-omp-wheels-*
+          merge-multiple: true
+          path: dist/openswmm-gpu-omp
+
+      - name: Publish openswmm
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/openswmm/
+          skip-existing: true
+
+      - name: Publish openswmm-gpu-omp
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/openswmm-gpu-omp/
+          skip-existing: true
