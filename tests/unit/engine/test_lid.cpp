@@ -2032,3 +2032,87 @@ TEST(LidRunoffAreaTest, FullCoverageByReplicateUnitsShedsNothing) {
     EXPECT_LT(vol_full, 0.02 * vol_ref) << "fully LID-covered subcatchment shed "
                                         << vol_full / vol_ref << "x its bare twin (issue #131)";
 }
+
+// Issue #201. A one-acre subcatchment fully covered by permeable pavement takes 24 in of
+// rain. The Subcatchment Runoff Summary printed 0.00 Total Infil (and Total Evap) because
+// the per-subcatchment statistics held only the non-LID subareas' losses, while the
+// continuity table and the LID Performance Summary carried the LID infiltration. Legacy
+// books Vinfil + VlidInfil and a Vevap that includes the LID units (subcatch.c:770).
+TEST(LIDRunoffSummary, TotalInfilAndEvapIncludeLidShares) {
+    std::filesystem::create_directories("lid_area_out");
+    const char* inp = "lid_area_out/issue201_full_pp.inp";
+    const char* rpt = "lid_area_out/issue201_full_pp.rpt";
+    {
+        std::ofstream f(inp, std::ios::trunc);
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING KINWAVE\n"
+             "START_DATE 01/01/2020\nSTART_TIME 00:00:00\nEND_DATE 01/03/2020\n"
+             "END_TIME 00:00:00\nREPORT_STEP 00:15:00\nWET_STEP 00:05:00\nDRY_STEP 01:00:00\n"
+             "ROUTING_STEP 60\n\n[EVAPORATION]\nCONSTANT 0.1\nDRY_ONLY NO\n\n"
+             "[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES RAIN24\n\n"
+             "[SUBCATCHMENTS]\nS1 RG1 OF1 1 100 200 1 0\n\n"
+             "[SUBAREAS]\nS1 0.012 0.1 0.05 0.1 25 OUTLET\n\n"
+             "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+             "[LID_CONTROLS]\nPP PP\nPP SURFACE 0 0 0.01 1 5\nPP PAVEMENT 6 0.15 0 100 0 0 0\n"
+             "PP SOIL 12 0.5 0.2 0.1 0.5 10 3.5\nPP STORAGE 12 0.75 0.5 0 NO\n"
+             "PP DRAIN 0 0.5 6 6 0 0\n\n"
+             "[LID_USAGE]\nS1 PP 1 43560 0 0 0 0\n\n"
+             "[OUTFALLS]\nOF1 0 FREE NO\n\n[TIMESERIES]\n";
+        for (int h = 0; h < 24; ++h)
+            f << "RAIN24 " << h << ":00 1.0\n";
+        f << "RAIN24 24:00 0.0\n\n[REPORT]\nSUBCATCHMENTS ALL\n";
+    }
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp, rpt, "lid_area_out/issue201_full_pp.out", nullptr), SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), SWMM_OK);
+    ASSERT_EQ(swmm_engine_start(e, 1), SWMM_OK);
+    double elapsed = 0.0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), SWMM_OK);
+    } while (elapsed > 0.0);
+
+    // The statistics the summary prints equal the runoff ledger (one subcatchment).
+    const auto& ctx = static_cast<SWMMEngine*>(e)->context();
+    const double stat_infil = ctx.subcatches.stat_infil_vol[0];
+    const double stat_evap = ctx.subcatches.stat_evap_vol[0];
+    EXPECT_GT(ctx.mass_balance.runoff_infil, 0.1 * 43560.0); // more than 0.1 in infiltrated
+    EXPECT_GT(ctx.mass_balance.runoff_evap, 0.0);
+    EXPECT_NEAR(stat_infil, ctx.mass_balance.runoff_infil, 1e-6 * ctx.mass_balance.runoff_infil);
+    EXPECT_NEAR(stat_evap, ctx.mass_balance.runoff_evap, 1e-6 * ctx.mass_balance.runoff_evap);
+
+    swmm_engine_end(e);
+    swmm_engine_report(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+
+    // The report's Total Infil column matches the continuity table's Infiltration Loss.
+    std::ifstream in(rpt);
+    std::string line, s1_row;
+    double continuity_infil_in = -1.0;
+    bool in_summary = false;
+    while (std::getline(in, line)) {
+        if (continuity_infil_in < 0.0 && line.find("Infiltration Loss ....") != std::string::npos) {
+            std::istringstream ss(line.substr(line.find("....") + 1));
+            std::string dots;
+            double vol = 0.0, depth = 0.0;
+            ss >> dots >> vol >> depth;
+            continuity_infil_in = depth;
+        }
+        if (line.find("Subcatchment Runoff Summary") != std::string::npos)
+            in_summary = true;
+        if (in_summary && line.rfind("  S1 ", 0) == 0) {
+            s1_row = line;
+            break;
+        }
+    }
+    ASSERT_FALSE(s1_row.empty()) << "no S1 row in the Subcatchment Runoff Summary";
+    std::istringstream row(s1_row);
+    std::string name;
+    double precip = 0.0, runon = 0.0, evap = 0.0, infil = 0.0;
+    row >> name >> precip >> runon >> evap >> infil;
+    EXPECT_NEAR(precip, 24.0, 0.01);
+    EXPECT_GT(continuity_infil_in, 0.1);
+    EXPECT_NEAR(infil, continuity_infil_in, 0.006) << s1_row;
+    EXPECT_GT(evap, 0.0) << s1_row;
+}

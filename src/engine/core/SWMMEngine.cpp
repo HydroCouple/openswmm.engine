@@ -4856,8 +4856,19 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
             auto uu = static_cast<std::size_t>(u);
             if (ownsSpatialSource(g.subcatch_idx[uu]))
                 continue;
-            ctx_.mass_balance.runoff_evap += g.evap_loss[uu] * g.area[uu];
-            ctx_.mass_balance.runoff_infil += g.infil_loss[uu] * g.area[uu];
+            const double lid_evap_ft3 = g.evap_loss[uu] * g.area[uu];
+            const double lid_infil_ft3 = g.infil_loss[uu] * g.area[uu];
+            ctx_.mass_balance.runoff_evap += lid_evap_ft3;
+            ctx_.mass_balance.runoff_infil += lid_infil_ft3;
+            // The per-subcatchment statistics take the same shares: legacy
+            // stats_updateSubcatchStats receives Vevap (LID evaporation
+            // included by lid_getRunoff) and Vinfil + VlidInfil
+            // (subcatch.c:770). RunoffSolver books only the non-LID shares,
+            // so the Subcatchment Runoff Summary printed 0.00 Total Infil
+            // for a LID-covered subcatchment (issue #201).
+            const auto usc = static_cast<std::size_t>(g.subcatch_idx[uu]);
+            ctx_.subcatches.stat_evap_vol[usc] += lid_evap_ft3;
+            ctx_.subcatches.stat_infil_vol[usc] += lid_infil_ft3;
         }
     }
 
