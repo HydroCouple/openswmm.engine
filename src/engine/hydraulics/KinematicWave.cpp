@@ -345,11 +345,16 @@ int KWSolver::solveConduit(int idx, const XSectParams& xs, double q_full, double
     double aHi = 1.0;
     double fHi = 1.0 + C1 + C2;
     // xsect_getAmax: Amax[type]*aFull, or aBot for IRREGULAR / CUSTOM
-    // (the kernel's getAmax is the ratio Amax[type]).
-    double aLo = (xs.type == static_cast<int>(XSectShape::IRREGULAR) ||
-                  xs.type == static_cast<int>(XSectShape::CUSTOM))
-                     ? xs.a_bot / a_full
-                     : xsect::getAmax(xs);
+    // (the kernel's getAmax is the ratio Amax[type]). Legacy divides that
+    // area by aFull again, and the round trip is not always the ratio: for a
+    // 10-inch circle it comes back 1 ulp above 0.9756. The bracket end feeds
+    // the root finder's start guess and bisection, so the ratio itself took
+    // another path as a full pipe receded (benchmarks 487-nodes-copper).
+    const double a_max = (xs.type == static_cast<int>(XSectShape::IRREGULAR) ||
+                          xs.type == static_cast<int>(XSectShape::CUSTOM))
+                             ? xs.a_bot
+                             : xsect::getAmax(xs) * a_full;
+    double aLo = a_max / a_full;
     double fLo;
     if (aLo < aHi)
         fLo = (beta1 * xs.s_max) + (C1 * aLo) + C2;

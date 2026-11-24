@@ -1956,6 +1956,9 @@ endif()
 # A kinematic-wave conduit with an initial flow starts carrying it, as in
 # legacy (benchmarks 193-h-h-si-units-elements).
 add_gtest_unit(test_engine_kw_initial_flow test_kw_initial_flow.cpp)
+# A kinematic-wave solve brackets the outlet area where legacy does
+# (benchmarks 487-nodes-copper).
+add_gtest_unit(test_engine_kw_bracket_area test_kw_bracket_area.cpp)
 # A pollutant name in a treatment expression reads the concentration the
 # expression's type calls for (Reference Manual Vol. III 5.4.2), in both
 # engines (benchmarks 193-h-h-si-units-elements).
