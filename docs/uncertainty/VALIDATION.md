@@ -3924,3 +3924,60 @@ W4 channel comonotone Manning 0.953/8.846 (pinned: 0.818/1.308), W3 adv width 1.
 `demo_off.inp` now pin LOCAL_INERTIAL; with the pin W3 adv is 0.856/1.319 and the W4 plane/channel cells match
 the pre-merge record. The router now records a report warning when the 2D ROM is enabled under any other closure
 (bands are a ranking there). Test: `SurfaceROMRouterOperator.WarnsUnlessMomentumIsLocalInertial`.
+
+### O-16b — sign-split rain planes with one-sided secants (stage 1, 2026-11-18) — ADOPTED 2026-11-23
+
+**Adopted 2026-11-23 (owner decision): storage-class move 0.811/0.948 → 0.799/0.750 accepted as the honest trade (the old number was coverage bought by a 5× over-wide band at G80F13P); pump limiter rule kept.** (originally on side branch `ph/o16b-sign-split`) (design: `O16_PLANE_SINKS.md` §4; record:
+`PORT_HAMILTONIAN.md` §6 O-16b). **Law** (no knob): every rain-channel plane is carried in two halves, Ψ⁺ for κ > 0 and
+Ψ⁻ for κ < 0, each on its own edge list. Flowing conduits keep the tangent in both halves. Structures and depth-rated pumps
+(`pumpFlowAtDepth`, frozen setting, y_on/y_off) get one-sided secants d± over σ± (1.645 RMS of the members' deviation on
+that side); a closed structure, a stopped pump or a dry pipe has d⁻ = 0. Where the two lists coincide and the halves have
+never differed, the channel is the single-plane one bit for bit. **Beyond the O-16 note — kept by owner decision 2026-11-23**: a pump
+running below its curve (wet-well limiter) gets d⁻ ≥ Q*/σ⁻.
+
+**Gates (Release)**: SR-5 0.921/1.028, SR-7 0.917/0.969, CL-1e 0.941/1.025; rom_coverage P8 0.905/0.997, EXPL 0.825/0.990,
+SEMI 0.843/0.990, front 0.959/1.181; structures Ex8 0.825/0.985 — all identical at the printed digit. Unit:
+spectral_rom1d 101, member_ports 53, additive_channel 15, ph_operator 6, port_graph_replay 2.
+
+| Storage gate (cov/width) | HEAD | O-16b |
+|---|---|---|
+| A, B1 per-member / planes | 0.891/0.961 / 0.722/0.083 | 0.891/0.961 / 0.724/0.097 |
+| A, J2 per-member / planes | 0.716/0.515 / 0.735/0.242 | 0.709/0.515 / 0.781/0.275 |
+| A, J4 per-member / planes | 0.698/0.493 / 0.725/0.305 | 0.689/0.493 / 0.769/0.353 |
+| B, B1 per-member / planes | 0.728/0.962 / 0.782/0.658 | 0.728/0.962 / **0.932/0.983** |
+| B, J2 per-member / planes | 0.910/1.147 / 0.981/1.112 | 0.785/0.891 / 0.952/0.998 |
+| B, J4 per-member / planes | 0.831/0.958 / 0.806/0.953 | 0.738/0.801 / 0.754/0.862 |
+| R, B1 / J2 / J4 per-member | 0.952/0.902 / 0.886/0.902 / 0.859/0.896 | unchanged |
+
+**1D smoke** (`demo_o16.inp` to 10:00, OFF; member-steps > 0.05 ft below invert / deepest ft / highest member above main ft):
+
+| Node | HEAD | O-16b |
+|---|---|---|
+| G71O020 | 59,053 / −89.0 / +89.0 | 4,780 / −2.2 / +15.8 |
+| G70F11P | 26,453 / −52.6 / +54.7 | 7,786 / −28.3 / +5.8 (9,783 / −31.8 without the limiter rule) |
+| G71F12P | 13,159 / −1.2 | 0 |
+| G72F646 | 9,331 / −11.5 | unchanged (mechanism C) |
+| G71F041 | 3,509 / −22.0 | 3,486 / −21.4 |
+| network | 1,331,482 | 1,203,037 |
+
+**New sinks (mechanism C exposed)**: G71F05R −454.6 ft, G71F04R −349.5 ft, G71F320 −73.5 ft — the storage chain behind
+G71F68Y (rule pump off, outlet closed: d⁻ = 0, correct). At 06:38 G71F05R's S falls 2,732 → 51.7 ft² and the O-14 carry
+multiplies Ψ⁻ ×53; the symmetric secant had drained it. Stage 2 (one-sided S) targets this.
+
+**Bellinge OFF, coupled, vs mc_v3** (`demo_off_o16b` vs `demo_off_premerge` = O-15):
+
+| Metric | O-15 | O-16b |
+|---|---|---|
+| 1D all | 0.949/1.261 | 0.951/1.258 |
+| trunk | 0.839/1.269 | 0.829/1.269 |
+| **storage** | 0.811/0.948 calibrated | **0.799/0.750 ranking only** |
+| 2D street | 0.659/0.181 | 0.660/0.181 |
+| Brier / no-skill | 0.0363 / 0.1117 | 0.0357 / 0.1109 |
+
+The storage drop is G80F13P (pumped storage, flat PUMP4, y_on 1.33 / y_off 0.58 m): 3.390 → 0.376 m against an MC span of
+0.633 m — the MC spread there is the pump's on/off phase, which no linear half sees. Same with or without the limiter rule.
+Wall 2,250 s vs 1,955 s under load average 17–20 (not a cost measurement). Coupled G71O020 still spikes at 08:00
+(q95 invert + 380 → + 226 ft; 12,026 member-steps, deepest −597.9 ft): not the 1D smoke's mechanism, unexplained.
+
+**Open decisions (owner)**: (1) accept or reject the storage-class drop (G80F13P); (2) stage 2, one-sided S at crown entry,
+now the leading sink (G71F05R/04R, G72F646); (3) the coupled G71O020 08:00 spike; (4) keep or drop the pump limiter rule.

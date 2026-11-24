@@ -410,3 +410,153 @@ TEST(AdditiveChannelPH, AssembledMatrixIsColumnDominantOnRandomNetworks) {
     ASSERT_TRUE(bad.assembleFull(Lb));
     EXPECT_FALSE(PHOperator::checkColumnDominant(Lb));
 }
+
+// ---------------------------------------------------------------------------
+// O-16b — sign-split planes (docs/uncertainty/O16_PLANE_SINKS.md §4).
+// SignSplitPlanes carries every plane in two halves, Psi+ for kappa > 0 and
+// Psi- for kappa < 0, each on its own edge list (one-sided secants). Where the
+// two lists coincide it must be the single-plane channel bit for bit.
+// ---------------------------------------------------------------------------
+using openswmm::uncertainty::SignSplitPlanes;
+
+namespace {
+
+// Midpoint-stratified probit-like coefficients, symmetric about 0 (M even).
+std::vector<double> symmetricKappa(int M) {
+    std::vector<double> k(static_cast<std::size_t>(M));
+    for (int i = 0; i < M; ++i) k[static_cast<std::size_t>(i)] = -2.0 + 4.0 * (i + 0.5) / M;
+    return k;
+}
+
+// The single-plane channel as it was before O-16b (the in-test reference):
+// O-14 volume carry, one AdditiveSystem, kappa as given.
+struct OldPlanes {
+    AdditiveSystem sys;
+    std::vector<double> psi, S_prev;
+    void step(int n, const std::vector<FlowEdge>& edges, const std::vector<double>& S, double dt,
+              const std::vector<std::vector<double>>& q) {
+        const auto un = static_cast<std::size_t>(n);
+        if (psi.size() != q.size() * un) psi.assign(q.size() * un, 0.0);
+        if (S_prev.size() == un)
+            for (std::size_t p = 0; p < q.size(); ++p)
+                for (std::size_t t = 0; t < un; ++t) psi[p * un + t] *= S_prev[t] / S[t];
+        S_prev = S;
+        sys.build(n, edges, S.data(), dt, nullptr);
+        for (std::size_t p = 0; p < q.size(); ++p) sys.step(q[p].data(), &psi[p * un]);
+    }
+};
+
+// Member i's deviation at node t from what is handed to the ROM.
+double memberLevel(const SignSplitPlanes& s, int n, int M, int i, int t) {
+    double v = 0.0;
+    for (int p = 0; p < s.np; ++p)
+        v += s.kappa[static_cast<std::size_t>(i * s.np + p)] * s.state[static_cast<std::size_t>(p * n + t)];
+    (void)M;
+    return v;
+}
+
+}  // namespace
+
+TEST(AdditiveSignSplit, SignSplitIsBitIdenticalWithoutThresholds) {
+    // A branched network of flowing conduits only (both halves' lists are the
+    // same), storage that changes every step (the O-14 carry is exercised), two
+    // sources: every member level equals the single-plane channel exactly.
+    const int n = 7, M = 50;
+    std::vector<FlowEdge> edges = {conduit(0, 2, 0.4, -0.1), conduit(1, 2, 0.3, -0.05), conduit(2, 3, 0.6, -0.2),
+                                   conduit(3, 4, 0.5, -0.1), conduit(5, 4, 0.2, -0.02), conduit(4, 6, 0.7, -0.3),
+                                   conduit(6, -1, 0.9, 0.0)};
+    std::mt19937 rng(7);
+    std::uniform_real_distribution<double> U(0.5, 2.0);
+    const std::vector<double> kA = symmetricKappa(M);
+    std::vector<double> kB(kA.rbegin(), kA.rend());
+    for (double& k : kB) k *= 0.5;
+    SignSplitPlanes split;
+    OldPlanes old;
+    for (int step = 0; step < 40; ++step) {
+        std::vector<double> S(n);
+        for (double& v : S) v = 50.0 * U(rng);
+        std::vector<std::vector<double>> q(2, std::vector<double>(n, 0.0));
+        for (int t = 0; t < n; ++t) { q[0][static_cast<std::size_t>(t)] = U(rng); q[1][static_cast<std::size_t>(t)] = (t % 2) * U(rng); }
+        const std::vector<std::vector<double>> kap = {kA, kB};
+        const int np = split.step(n, edges, edges, S.data(), 10.0, nullptr, q, kap, M);
+        old.step(n, edges, S, 10.0, q);
+        ASSERT_EQ(np, 2) << "the lists coincide: one plane per source";
+        ASSERT_FALSE(split.split);
+        for (int i = 0; i < M; ++i)
+            for (int t = 0; t < n; ++t) {
+                const double ref = kA[static_cast<std::size_t>(i)] * old.psi[static_cast<std::size_t>(t)] +
+                                   kB[static_cast<std::size_t>(i)] * old.psi[static_cast<std::size_t>(n + t)];
+                EXPECT_EQ(memberLevel(split, n, M, i, t), ref) << "step " << step << " member " << i << " node " << t;
+            }
+    }
+}
+
+TEST(AdditiveSignSplit, ClosedOutletHasNoLowerLine) {
+    // Node 0 drains through a flowing conduit to the outfall and through a
+    // threshold outlet (closed in the main run) into node 1, which drains to
+    // the outfall. Upper half: the outlet's secant d+ > 0; lower half: d- = 0.
+    // The members below the main run then carry nothing into node 1 (Psi- = 0
+    // there), while the single symmetric plane gave them a reversed line:
+    // kappa < 0 times a positive Psi at a dry node.
+    const int n = 2, M = 20;
+    FlowEdge c0 = conduit(0, -1, 0.5, 0.0);
+    FlowEdge c1 = conduit(1, -1, 0.5, 0.0);
+    FlowEdge orf;
+    orf.up = 0; orf.dn = 1; orf.conduit = false; orf.d = 0.3;
+    std::vector<FlowEdge> ep = {c0, orf, c1}, em = ep;
+    em[1].d = 0.0;
+    SignSplitPlanes split;
+    OldPlanes sym;
+    const std::vector<double> S(n, 20.0);
+    const std::vector<std::vector<double>> q = {{1.0, 0.0}};
+    const std::vector<std::vector<double>> kap = {symmetricKappa(M)};
+    for (int step = 0; step < 30; ++step) {
+        ASSERT_EQ(split.step(n, ep, em, S.data(), 10.0, nullptr, q, kap, M), 2);
+        sym.step(n, ep, S, 10.0, q);
+    }
+    EXPECT_TRUE(split.split);
+    double low_split = 0.0, low_sym = 0.0, high_split = 0.0;
+    for (int i = 0; i < M; ++i) {
+        low_split = std::min(low_split, memberLevel(split, n, M, i, 1));
+        high_split = std::max(high_split, memberLevel(split, n, M, i, 1));
+        low_sym = std::min(low_sym, kap[0][static_cast<std::size_t>(i)] * sym.psi[1]);
+    }
+    EXPECT_EQ(low_split, 0.0) << "a member below the main run drained a node through a closed outlet";
+    EXPECT_GT(high_split, 0.0) << "the upper half lost the outlet that opens for it";
+    EXPECT_LT(low_sym, -0.1) << "the symmetric plane should show the reversed line (the defect fixed here)";
+    // The upper half is the symmetric plane's upper side (same + list).
+    for (int i = 0; i < M; ++i)
+        if (kap[0][static_cast<std::size_t>(i)] > 0.0)
+            EXPECT_DOUBLE_EQ(memberLevel(split, n, M, i, 1), kap[0][static_cast<std::size_t>(i)] * sym.psi[1]);
+}
+
+TEST(AdditiveSignSplit, HalvesCarryVolumeAcrossAChangeOfStorage) {
+    // Lists differ for a few steps, then coincide: the halves stay split (their
+    // histories differ) and both are carried with the O-14 volume rescale;
+    // with zero sources and equal lists they relax together.
+    const int n = 3, M = 10;
+    std::vector<FlowEdge> ep = {conduit(0, 1, 0.4, -0.1), conduit(1, 2, 0.4, -0.1), conduit(2, -1, 0.4, 0.0)};
+    std::vector<FlowEdge> em = ep;
+    FlowEdge pump;
+    pump.up = 0; pump.dn = -1; pump.conduit = false; pump.d = 0.8;
+    ep.push_back(pump);
+    pump.d = 0.0;
+    em.push_back(pump);
+    SignSplitPlanes split;
+    std::vector<double> S(n, 30.0);
+    const std::vector<std::vector<double>> kap = {symmetricKappa(M)};
+    std::vector<std::vector<double>> q = {{1.0, 0.0, 0.0}};
+    for (int k = 0; k < 5; ++k) split.step(n, ep, em, S.data(), 10.0, nullptr, q, kap, M);
+    ASSERT_TRUE(split.split);
+    const double vp = split.psi_pos[0], vm = split.psi_neg[0];
+    EXPECT_GT(vm, vp) << "the lower half has no pump line, so it holds more";
+    // Storage doubles with no flow: volume S*Psi is kept, so Psi halves (both halves).
+    std::vector<FlowEdge> none;
+    for (double& s : S) s *= 2.0;
+    q = {{0.0, 0.0, 0.0}};
+    split.step(n, none, none, S.data(), 10.0, nullptr, q, kap, M);
+    EXPECT_NEAR(split.psi_pos[0], 0.5 * vp, 1.0e-12 * vp);
+    EXPECT_NEAR(split.psi_neg[0], 0.5 * vm, 1.0e-12 * vm);
+    EXPECT_TRUE(split.split) << "histories differ: the halves stay split";
+    EXPECT_EQ(split.np, 2);
+}

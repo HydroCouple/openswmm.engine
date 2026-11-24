@@ -369,6 +369,117 @@ private:
     std::vector<std::uint8_t> pinned_scratch_;
 };
 
+/// True when two oriented edge lists are the same edge for edge (every field).
+inline bool sameAdditiveEdges(const std::vector<FlowEdge>& a, const std::vector<FlowEdge>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t k = 0; k < a.size(); ++k) {
+        const FlowEdge& x = a[k];
+        const FlowEdge& y = b[k];
+        if (x.up != y.up || x.dn != y.dn || x.link != y.link || x.conduit != y.conduit ||
+            x.q != y.q || x.ju != y.ju || x.jd != y.jd || x.d != y.d)
+            return false;
+    }
+    return true;
+}
+
+/// O-16b: sign-split planes (docs/uncertainty/O16_PLANE_SINKS.md §4).
+///
+/// Every additive plane p is carried as two planes, Psi+ for the members'
+/// positive coefficients (kappa+ = max(kappa, 0)) and Psi- for the negative ones
+/// (kappa- = min(kappa, 0)); member i's deviation is
+/// sum_p kappa+_ip Psi+_p + kappa-_ip Psi-_p. Each half is the same linear,
+/// stable backward-Euler system (AdditiveSystem), assembled on ITS edge list:
+/// a threshold outlet's line is the secant of the rating over its own half of
+/// the member range, so a member below the main run is never drained through an
+/// outlet that is closed for it (closed structure, dry pipe: d- = 0), and a
+/// member above it sees the outlet that opens for it (pump below capacity,
+/// structure about to start). Both halves carry volume (O-14: Psi rescaled by
+/// S_old/S_new before the step).
+///
+/// Where the two lists are the same, and the halves have never differed, one
+/// system is built and one plane per source is handed out with the members'
+/// own kappa: bit-identical to the single-plane channel (kappa+ Psi + kappa- Psi
+/// = kappa Psi since one term is 0, but summed in another order). Once the
+/// halves have differed both are stepped (with one shared factor while the lists
+/// coincide) and 2P planes are handed out, plus-halves first.
+struct SignSplitPlanes {
+    AdditiveSystem pos, neg;               ///< the + half's system; the - half's while the lists differ
+    std::vector<double> psi_pos, psi_neg;  ///< P x n each
+    std::vector<double> S_prev;            ///< storage of the last step (the planes carry volume S*Psi)
+    int n_src = -1;                        ///< source count the state belongs to
+    int n = -1;
+    bool split = false;                    ///< the halves differ (Psi- carried on its own)
+    // Handed to the ROM after step(): np planes (P or 2P), np x n, M x np.
+    int np = 0;
+    std::vector<double> state, kappa;
+    int sweeps = 0;
+
+    void reset() {
+        psi_pos.clear(); psi_neg.clear(); S_prev.clear();
+        n_src = -1; n = -1; split = false; np = 0; state.clear(); kappa.clear(); sweeps = 0;
+    }
+
+    /// One step. q: P sources (n each, cfs per unit coefficient); kap: P x M
+    /// coefficients. Returns the number of planes handed out (np).
+    int step(int n_nodes, const std::vector<FlowEdge>& edges_pos, const std::vector<FlowEdge>& edges_neg,
+             const double* S, double dt, const std::vector<char>* pinned,
+             const std::vector<std::vector<double>>& q, const std::vector<std::vector<double>>& kap, int M) {
+        const auto P = q.size();
+        const auto un = static_cast<std::size_t>(std::max(n_nodes, 0));
+        const auto uM = static_cast<std::size_t>(std::max(M, 0));
+        if (static_cast<int>(P) != n_src || n_nodes != n) {   // (re)start at zero deviation
+            n_src = static_cast<int>(P);
+            n = n_nodes;
+            psi_pos.assign(P * un, 0.0);
+            psi_neg = psi_pos;
+            split = false;
+        }
+        sweeps = 0;
+        if (P == 0) { np = 0; state.clear(); kappa.clear(); return 0; }
+        // O-14: carry volume across the change of S.
+        if (S_prev.size() == un) {
+            for (std::size_t p = 0; p < P; ++p)
+                for (std::size_t t = 0; t < un; ++t) psi_pos[p * un + t] *= S_prev[t] / S[t];
+            if (split)
+                for (std::size_t p = 0; p < P; ++p)
+                    for (std::size_t t = 0; t < un; ++t) psi_neg[p * un + t] *= S_prev[t] / S[t];
+        }
+        S_prev.assign(S, S + un);
+        const bool differ = !sameAdditiveEdges(edges_pos, edges_neg);
+        pos.build(n_nodes, edges_pos, S, dt, pinned);
+        if (differ) neg.build(n_nodes, edges_neg, S, dt, pinned);
+        if (differ && !split) { psi_neg = psi_pos; split = true; }
+        for (std::size_t p = 0; p < P; ++p) sweeps = std::max(sweeps, pos.step(q[p].data(), &psi_pos[p * un]));
+        if (split) {
+            AdditiveSystem& sm = differ ? neg : pos;
+            for (std::size_t p = 0; p < P; ++p) sweeps = std::max(sweeps, sm.step(q[p].data(), &psi_neg[p * un]));
+            if (!differ && psi_pos == psi_neg) split = false;
+        } else {
+            psi_neg = psi_pos;
+        }
+        if (!split) {
+            np = static_cast<int>(P);
+            state = psi_pos;
+            kappa.assign(uM * P, 0.0);
+            for (std::size_t i = 0; i < uM; ++i)
+                for (std::size_t p = 0; p < P; ++p) kappa[i * P + p] = (i < kap[p].size()) ? kap[p][i] : 0.0;
+        } else {
+            np = static_cast<int>(2 * P);
+            state.resize(2 * P * un);
+            std::copy(psi_pos.begin(), psi_pos.end(), state.begin());
+            std::copy(psi_neg.begin(), psi_neg.end(), state.begin() + static_cast<std::ptrdiff_t>(P * un));
+            kappa.assign(uM * 2 * P, 0.0);
+            for (std::size_t i = 0; i < uM; ++i)
+                for (std::size_t p = 0; p < P; ++p) {
+                    const double k = (i < kap[p].size()) ? kap[p][i] : 0.0;
+                    kappa[i * 2 * P + p] = k > 0.0 ? k : 0.0;
+                    kappa[i * 2 * P + P + p] = k < 0.0 ? k : 0.0;
+                }
+        }
+        return np;
+    }
+};
+
 }  // namespace openswmm::uncertainty
 
 #endif  // OPENSWMM_ENGINE_UNCERTAINTY_ROM_ADDITIVE_CHANNEL_HPP

@@ -746,3 +746,53 @@ cases the current code excludes). Acceptance gates as in the table.
   UncertaintyConfig*, GeoPackage model_supplement [2D_ROM]/[UNCERTAINTY] not parsed — recorded gap; RunoffElasticity
   snapshots lid_return_applied_cfs; MeshData::edge_mx/my accessors; upstream registers site_drainage_model itself);
   audits clean; 1D sidecar gates identical; W3/W4 + Bellinge OFF on the merged line running.
+- 2026-11-18: O-16b, stage 1 (docs/uncertainty/O16_PLANE_SINKS.md §4; side branch `ph/o16b-sign-split`; ADOPTED 2026-11-23 (owner decision): storage-class move 0.811/0.948 → 0.799/0.750 accepted as the honest trade (the old number was coverage bought by a 5× over-wide band at G80F13P); pump limiter rule kept; Release darwin-v2-rel). **Implemented as a law,
+  no knob.** `computeRom1dFlowSource` builds two aligned rain-channel edge lists (`rom1d_rain_pos_`/`_neg_`, `rom1d_fs_edges_` and
+  the Manning flow response untouched): flowing conduits identical in both; structures (weir/orifice/outlet, flowing or still) d± =
+  max(tangent, one-sided secant of `flowAtShiftedDepth` about Q(h*)), d− = 0 when the main run's flow is 0; depth-rated pumps (PUMP2/4)
+  now enter the rain channel through `pumpFlowAtDepth` at the frozen setting ((b1), y_on/y_off honoured), about the main run's
+  actual flow Q*: d+ = (Q(d*+σ+) − Q*)/σ+, d− = (Q* − Q(d*−σ−))/σ−, d− = 0 for a stopped pump; volume/head/ideal pumps keep the
+  tangent; dry pipes d+ = Qn(y+σ+)/σ+, d− = 0. σ± = 1.645 RMS of the members' rain-channel deviation at the node over the members
+  with positive / negative deviation (report band halves without planes). **One rule beyond the note**: a pump running below its
+  curve at the main run's depth (wet-well limiter, legacy getModPumpFlow; G70F11P) gets d− ≥ Q*/σ− (secant to zero flow at the bottom
+  of the member range) — kept by owner decision 2026-11-23. `uncertainty::SignSplitPlanes` (RomAdditiveChannel.hpp) carries Ψ+/Ψ− with the O-14 S_old/S_new carry on both,
+  builds the second AdditiveSystem only while the lists differ, and hands P planes with κ while the halves never differed
+  (bit-identical path) else 2P planes (κ+ = max(κ,0) on Ψ+, κ− = min(κ,0) on Ψ−). `stepRom1dStorageMembers` gets the 2P planes (u_i =
+  Σ κ+Ψ+ + κ−Ψ−; its member state belongs to the source count, so the switch to 2P does not restart it); its port-graph plane edges use
+  d+ for z_up ≥ 0 and d− below; its linear part keeps the + half's line (approximation, hook OFF by default). Diagnostics: plane trace
+  gains `psi_neg` and `:m<d−>` per edge; env `OPENSWMM_ADD_SINK_REPORT=1` (+ `OPENSWMM_ADD_SINK_NODES`) prints `[ADD-sinks]` at end()
+  (member-steps whose unclamped level is > 0.05 ft below the invert, deepest, highest member above main), OFF path included.
+  **Tests**: additive_channel 12 → 15 (`AdditiveSignSplit.SignSplitIsBitIdenticalWithoutThresholds`: branched flowing-conduit net,
+  S changing every step, two sources, EXPECT_EQ on every member level vs the pre-O-16b single-plane code kept in the test;
+  `ClosedOutletHasNoLowerLine`; `HalvesCarryVolumeAcrossAChangeOfStorage`); member_ports 52 → 53
+  (`AdditiveSignSplit.ThresholdOutletsDoNotDrainDryMembers`: J0 → side orifice (crest 0.85 ft, main peak 0.712) → dry J1 → 0.5 ft
+  pipe; W (300 ft²) → PUMP4 flat 3 cfs off in the main run (y_on 1.0 / y_off 0.7, main peak 0.826); 21 rain-scaled deterministic
+  runs. Result: J1 lowest κ<0 member depth 0.000 ft (0 member-steps below invert); W width ROM/MC median 1.218, upper half (q95 − q50)
+  0.909; pump on the + list, never on the − list while the main pump is off. **Mutations**: symmetric structure secant ⇒ J1 −1.271 ft,
+  15,900 member-steps below invert (fails); pumps excluded ⇒ W median 1.780, upper half 1.802 — inside the 2.0 band bound, caught only
+  by the edge-list assertion (the lower half dominates this well's band, so "≫ MC" is not reachable here)). **Gates (Release)**:
+  spectral_rom1d 101, member_ports 53, additive_channel 15, ph_operator 6, port_graph_replay 2 pass; SR-5 0.921/1.028, SR-7
+  0.917/0.969, CL-1e 0.941/1.025 (identical at the printed digit); regression_rom_coverage P8 0.905/0.997, EXPL 0.825/0.990, SEMI
+  0.843/0.990, front 0.959/1.181 (identical); structures Ex8 0.825/0.985, steady 0.851/0.990. **Storage gate** (HEAD vs O-16b, same
+  Release tree; per-member A/B/R headline unchanged 0.891/0.961, 0.728/0.962, 0.952/0.902): planes-only B B1 0.782/0.658 →
+  **0.932/0.983**, B J2 0.981/1.112 → 0.952/0.998, B J4 0.806/0.953 → 0.754/0.862; per-member B J2 0.910/1.147 → 0.785/0.891, B J4
+  0.831/0.958 → 0.738/0.801 (the member path's linear part); A planes-only B1 0.722/0.083 → 0.724/0.097, J2 0.735/0.242 → 0.781/0.275,
+  J4 0.725/0.305 → 0.769/0.353, per-member A J2 0.716 → 0.709, J4 0.698 → 0.689; R planes-only J2 0.873 → 0.885, J4 0.846 → 0.859.
+  **1D smoke** (demo_o16.inp to 10:00, OFF, `[ADD-sinks]`, before = HEAD + counter): G71O020 59,053 / −89.0 ft / +89.0 → 4,780 / −2.2 /
+  +15.8; G70F11P 26,453 / −52.6 / +54.7 → 7,786 / −28.3 / +5.8 (9,783 / −31.8 without the limiter rule); G71F12P 13,159 / −1.2 → 0;
+  G72F646 9,331 / −11.5 unchanged (mechanism C); G71F041 3,509 / −22.0 → 3,486 / −21.4; G72R150 51 → 0; network 1,331,482 → 1,203,037
+  member-steps. **New sinks**: G71F05R −454.6 ft (22,874), G71F04R −349.5 (16,855), G71F320 −73.5 (16,882): the storage chain behind
+  G71F68Y (rule pump off, outlet G71F68Yout1 closed) — the − half has no line through the closed outlet (right), G71F05R's S collapses
+  2,732 → 51.7 ft² at 06:38 and the O-14 carry multiplies Ψ− ×53 (mechanism C; the symmetric secant had drained it). **Bellinge OFF**
+  (coupled, `demo_off_o16b`, vs `demo_off_premerge` = O-15; demo_off.* now holds the merge run, left untouched): 1D all 0.949/1.261 →
+  **0.951/1.258** (holds); trunk 0.839/1.269 → 0.829/1.269; **storage 0.811/0.948 → 0.799/0.750, RANKING ONLY — the hold fails**
+  (G80F13P, pumped storage, PUMP4 flat, y_on 1.33 / y_off 0.58 m: 3.390 → 0.376 m vs MC 0.633 — the pump secant; in the smoke it is
+  the same with or without the limiter rule); 2D street 0.659/0.181 → 0.660/0.181; Brier 0.0363/0.1117 → 0.0357/0.1109; wall 2,250 s
+  vs 1,955 s (load average 17–20 from other jobs during the run; not a cost measurement). Nodes (median 05–10 h band, m; MC span):
+  G71O020 0.016 → 0.018 (0.007), G70F11P 0.068 → 0.012 (0.733), G71F12P 0.483 → 0.184 (0.109), G72F646 0.014 → 0.020 (0.003),
+  G71F041 0.017 → 0.016 (0.005), G72UD11 0.099 → 0.113 (1.105), G72R83B 0.188 → 0.189 (0.062), G72R150 0.451 → 0.457 (0.454).
+  Coupled `[ADD-sinks]`: G71O020 still 12,026 / −597.9 ft / +318.3 (08:00 q95 invert + 380 → + 226 ft) — the coupled spike is not the
+  1D smoke's mechanism; G70F11P 543 / −2.0; G71F05R/04R/320 3,195/2,694/3,926. **Open**: (a) owner: storage class below the hold
+  (G80F13P cycling wet well now 0.59× narrow; MC spread there is the pump's on/off phase, which no linear half sees); (b) mechanism C
+  (stage 2, one-sided S) now the leading sink (G71F05R/04R, G72F646); (c) coupled G71O020 08:00 spike; (d) the limiter rule for pumps
+  is beyond the note — kept by owner decision 2026-11-23 (smoke sinks 9,783 → 7,786 at G70F11P; coupled band 0.012 m vs MC 0.733).
