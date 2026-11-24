@@ -314,6 +314,35 @@ TEST(ReportResolverTest, NONE_LeavesAllFlagsZero) {
         EXPECT_EQ(ctx.links.rpt_flag[static_cast<std::size_t>(i)], 0);
 }
 
+// Issue #21. A [REPORT] name that matches nothing is WARNING 109 and is ignored;
+// legacy stops with ERROR 209 (report.c:173), and the engine used to drop it silently.
+TEST(ReportResolverTest, SOME_UnknownNameWarnsAndIsIgnored) {
+    SimulationContext ctx;
+    build_small_model(ctx, 2, 2, 1);
+    ctx.options.rpt_subcatchments = 2;
+    ctx.options.rpt_subcatch_names = {"S1", "Ghost_S"};
+    ctx.options.rpt_nodes = 2;
+    ctx.options.rpt_node_names = {"Ghost_N", "N0"};
+    ctx.options.rpt_links = 2;
+    ctx.options.rpt_link_names = {"Ghost_L"};
+
+    openswmm::input::resolve_cross_references(ctx);
+
+    EXPECT_TRUE(ctx.errors.empty()) << ctx.errors.front();
+    EXPECT_EQ(ctx.subcatches.rpt_flag[1], 1);
+    EXPECT_EQ(ctx.nodes.rpt_flag[0], 1);
+    EXPECT_EQ(ctx.nodes.rpt_flag[1], 0);
+    EXPECT_EQ(ctx.links.rpt_flag[0], 0);
+    ASSERT_EQ(ctx.warnings.size(), 3u);
+    for (const char* ghost : {"Ghost_S", "Ghost_N", "Ghost_L"}) {
+        bool found = false;
+        for (const auto& w : ctx.warnings)
+            found = found || (w.find("WARNING 109") != std::string::npos &&
+                              w.find(ghost) != std::string::npos);
+        EXPECT_TRUE(found) << ghost;
+    }
+}
+
 TEST(ReportResolverTest, SOME_SetsOnlyNamedObjects) {
     SimulationContext ctx;
     build_small_model(ctx, 3, 4, 2);

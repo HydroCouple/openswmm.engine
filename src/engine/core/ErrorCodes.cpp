@@ -254,6 +254,7 @@ static const std::unordered_map<int, const char*>& warning_table() {
         {108, "the Preissmann slot width cap (5% of the section top width) "
               "overrides the requested FV_SLOT_CELERITY for %s; celerities "
               "below the cap-implied value have no effect there."},
+        {109, "undefined object %s in the [REPORT] section was ignored."},
     };
     return table;
 }

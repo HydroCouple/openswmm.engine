@@ -113,6 +113,7 @@ using openswmm::WARN_NEGATIVE_OFFSET;
 using openswmm::WARN_MIN_ELEV_DROP;
 using openswmm::WARN_REGULATOR_CREST_LOW;
 using openswmm::WARN_MAX_DEPTH_INCREASED;
+using openswmm::WARN_REPORT_OBJECT_UNDEFINED;
 
 // -------------------------------------------------------------------------
 // Load external FILE timeseries from disk
@@ -4142,7 +4143,9 @@ void resolve_cross_references(SimulationContext& ctx) {
     // -------------------------------------------------------------------------
     // Propagate rpt_subcatchments / rpt_nodes / rpt_links from SimulationOptions
     // to per-object rpt_flag vectors.  ALL → every object; SOME → named objects;
-    // NONE → no objects.
+    // NONE → no objects. A name that matches nothing is WARNING 109 and the run
+    // goes on: legacy stops with ERROR 209 (report.c:173), which USEPA #171 /
+    // issue #21 asked to soften, and the engine had been dropping it silently.
     {
         auto& opts = ctx.options;
 
@@ -4154,6 +4157,8 @@ void resolve_cross_references(SimulationContext& ctx) {
                 int idx = ctx.subcatch_names.find(name);
                 if (idx >= 0)
                     ctx.subcatches.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+                else
+                    ctx.warnings.push_back(format_warning(WARN_REPORT_OBJECT_UNDEFINED, name));
             }
         }
         // NONE (0): leave all zeros
@@ -4166,6 +4171,8 @@ void resolve_cross_references(SimulationContext& ctx) {
                 int idx = ctx.node_names.find(name);
                 if (idx >= 0)
                     ctx.nodes.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+                else
+                    ctx.warnings.push_back(format_warning(WARN_REPORT_OBJECT_UNDEFINED, name));
             }
         }
 
@@ -4177,6 +4184,8 @@ void resolve_cross_references(SimulationContext& ctx) {
                 int idx = ctx.link_names.find(name);
                 if (idx >= 0)
                     ctx.links.rpt_flag[static_cast<std::size_t>(idx)] = 1;
+                else
+                    ctx.warnings.push_back(format_warning(WARN_REPORT_OBJECT_UNDEFINED, name));
             }
         }
     }
