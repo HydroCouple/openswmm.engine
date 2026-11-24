@@ -599,6 +599,29 @@ TEST(RubinatoModel, PhysicalShaftSensitivity) {
     std::printf("%d of 36 shaft rows not steady over 300-900 s\n", unsteady);
 }
 
+// A steady surcharge must spill at a steady rate. The spill is limited to the
+// pond the manhole holds above its rim; taken from dynamic wave's booked node
+// volume, that limit drifted away from the pond the node's depth holds and cut
+// this row's exchange from about 4.1 to about 1 l/s for minutes at a time.
+TEST(RubinatoModel, DryFloodplainSpillHoldsItsRate) {
+    const auto rig = read_yaml(kRef / "rig_geometry.yaml");
+    const auto rows = read_csv(kRef / "table2_steady_exchange.csv");
+    ASSERT_EQ(rows.size(), 36u);
+    const auto& row = rows.at(33); // S4_6: dry floodplain, the row that varied most
+    ASSERT_EQ(row.at("scenario"), "S4");
+    Case c;
+    c.scenario = "S4";
+    c.q_e = std::atof(row.at("q_e_lps").c_str());
+    c.h_p = std::atof(row.at("h_p_m").c_str());
+    c.q3 = std::fabs(0.1 * c.q_e / std::atof(row.at("surcharge_pct").c_str()));
+    const Result r = run(c, rig, "WEIR_ORIFICE", "S4_6_SHAFT_steady", 0, {}, true, 0.5, 900);
+    ASSERT_TRUE(r.ok);
+    ASSERT_GE(r.long_windows, 9);
+    EXPECT_GT(r.q_long_lps, 0.0);
+    EXPECT_TRUE(r.steady) << "one-minute exchange " << r.q_minute_min_lps << " to "
+                          << r.q_minute_max_lps << " l/s around a mean of " << r.q_long_lps;
+}
+
 // Guard temporal consistency independently of experimental goodness of fit.
 // The geometry, forcing, coefficients and one-second smoothing reference
 // remain fixed; only the routing/coupling interval is halved.

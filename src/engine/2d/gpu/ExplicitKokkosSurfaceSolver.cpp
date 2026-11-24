@@ -774,9 +774,12 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
     if (nn > 0) {
         devRefresh(d_node_invert_, state.nodes_1d->invert_elev);
         devRefresh(d_node_fulldepth_, state.nodes_1d->full_depth);
-        // The spill budget's pond base (see SurfaceStateData::node_pond_base).
-        devRefresh(d_node_fullvol_,
-                   state.node_pond_base ? *state.node_pond_base : state.nodes_1d->full_volume);
+        // The spill budget's pond base (see SurfaceStateData::node_pond_base). When the
+        // router publishes the spillable volume itself (node_spill_volume), that is pushed
+        // in place of the node volume and the base stays zero.
+        if (!state.node_spill_volume)
+            devRefresh(d_node_fullvol_,
+                       state.node_pond_base ? *state.node_pond_base : state.nodes_1d->full_volume);
     }
 
     // Transport rows: device state, face accumulators and the per-slot totals
@@ -3328,7 +3331,8 @@ void ExplicitKokkosSurfaceSolver::pushNodeState() {
         return;
     devRefresh(d_node_head_, state_->nodes_1d->head);
     devRefresh(d_node_depth_, state_->nodes_1d->depth);
-    devRefresh(d_node_volume_, state_->nodes_1d->volume);
+    devRefresh(d_node_volume_,
+               state_->node_spill_volume ? *state_->node_spill_volume : state_->nodes_1d->volume);
     if (state_->node_pond_area_m2 &&
         state_->node_pond_area_m2->size() == d_node_pond_area_.extent(0))
         devRefresh(d_node_pond_area_, *state_->node_pond_area_m2);

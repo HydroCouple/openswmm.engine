@@ -191,51 +191,50 @@ both runs, but the ordinary 1D continuity error is about 35.93%. Passing
 this anti-choking check does not establish spatial convergence. Exchange is
 delivered to one cell even when the opening covers several cells.
 
-## Long-window check of the 0.5 s shaft table — 23 November 2026
+## Long-window check of the 0.5 s shaft table — 23-24 November 2026
 
-The 21 October table samples each row once, over 240-300 s. The 240-300 s
-rates of six shaft rows no longer reproduce that archive with the current
-engine: S3_1, S3_2, S3_5, S4_2, S4_6 and S4_7 differ by 0.13 to 0.74 L/s.
-The difference starts at one change of 16 November 2026, which limits the
-cell speed used for the local-inertial time step. It alters the sequence of
-2D steps, not the exchange law.
+The 21 October table samples each row once, over 240-300 s. Those rates no
+longer reproduce with the current engine for six shaft rows (S3_1, S3_2,
+S3_5, S4_2, S4_6 and S4_7 differed by 0.13 to 0.74 L/s on 23 November),
+and the dry-floodplain rows were not steady at all: the exchange of S4_6
+fell from about 4.1 to about 1 L/s for minutes at a time and recovered.
 
-`PhysicalShaftSensitivity` now runs each row for 900 s and also reports the
-mean rate over 300-900 s, the smallest and largest one-minute rate in that
-span, and whether those rates stay within 2% of the mean. The 240-300 s and
-180-240 s columns keep their meaning. **29/36** rows are steady by that
-measure: all 15 S1, 2 of 5 S2, all 8 S3 and 4 of 8 S4. The other seven are:
+The cause was the limit on a sewer-to-surface spill. A spill may take only
+the water the manhole holds above its rim during one routing step. That
+limit was read from dynamic wave's booked node volume, a running sum of
+step volume changes. With the manhole head held by the nearby fixed
+outfall, the sum drifted to about an eighth of the pond the node's depth
+holds and throttled the spill. The limit now uses the pond the depth holds
+(§9.7.1). A single late window on such a row followed the sequence of 2D
+steps, which is why a time-step change of 16 November moved the values.
 
-| Case | \f$Q_e\f$ (L/s) | Q 240-300 s (L/s) | Mean Q 300-900 s (L/s) | One-minute Q range (L/s) |
-|---|---|---|---|---|
-| S2_2_SHAFT | 0.25 | -0.327 | -0.264 | -0.337 to -0.190 |
-| S2_3_SHAFT | 0.28 | -0.143 | -0.145 | -0.163 to -0.142 |
-| S2_5_SHAFT | 0.32 | -0.147 | -0.147 | -0.149 to -0.146 |
-| S4_1_SHAFT | 1.74 | +2.008 | +1.499 | +0.899 to +2.020 |
-| S4_4_SHAFT | 3.18 | +3.479 | +2.627 | +2.122 to +3.464 |
-| S4_6_SHAFT | 3.82 | +3.144 | +2.349 | +0.956 to +4.138 |
-| S4_7_SHAFT | 4.10 | +3.363 | +4.425 | +4.316 to +4.470 |
+`PhysicalShaftSensitivity` runs each row for 900 s and reports the mean
+rate over 300-900 s, the smallest and largest one-minute rate in that span,
+and whether those rates stay within 2% of the mean. The 240-300 s and
+180-240 s columns keep their meaning. With the corrected limit **33/36**
+rows are steady: all 15 S1, 2 of 5 S2, all 8 S3 and all 8 S4. The four S4
+rows that were not:
 
-Signed rates are positive to the surface. The four S4 rows do not settle:
-their exchange drops for minutes at a time and recovers. In S4_6 it falls
-from about 4.1 to about 1 L/s while the cell that receives the exchange
-holds about 0.3 mm of water and its neighbors about 5 mm. A single late
-window is therefore not a steady rate for these rows, and its value follows
-the 2D step sequence. Over 1,800 s the same S4_6 deck stays flat with any
-one of these changes, each to a different rate:
+| Case | \f$Q_e\f$ (L/s) | Before: mean Q (one-minute range) (L/s) | After: mean Q (one-minute range) (L/s) |
+|---|---|---|---|
+| S4_1_SHAFT | 1.74 | 1.499 (0.899 to 2.020) | 2.023 (2.020 to 2.027) |
+| S4_4_SHAFT | 3.18 | 2.627 (2.122 to 3.464) | 3.480 (3.475 to 3.496) |
+| S4_6_SHAFT | 3.82 | 2.349 (0.956 to 4.138) | 4.128 (4.124 to 4.134) |
+| S4_7_SHAFT | 4.10 | 4.425 (4.316 to 4.470) | 4.460 (4.455 to 4.468) |
 
-| S4_6_SHAFT change | Q (L/s) |
-|---|---|
-| `CFL_NUMBER 0.35` | 3.90 |
-| `MAX_TIMESTEP 0.05` | 4.09 |
-| `MOMENTUM_EQUATION FULL_SWE` | 3.72 |
-| `COUPLING_EQUALIZE NO` | 6.76 |
+Rates are positive to the surface. The other S3 and S4 means change by
+0.005 L/s or less and the S1 and S2 rows, which drain to the sewer, do not
+change. Three submerged-weir rows stay outside the 2% measure: S2_2
+(-0.337 to -0.190 L/s around -0.264), S2_3 (-0.163 to -0.142) and S2_5
+(-0.149 to -0.146).
 
-In S4_6 the settled rate is set by the head-equalization cap, not by the
-exchange equation alone: removing the cap raises it from about 4.1 to
-6.76 L/s against a measured 3.82 L/s. The 21 October tables and figures
-above remain a dated archive and are not regenerated here. This check adds
-no experimental qualification.
+Over 300-900 s the shaft bias \f$100(|Q_{model}|/Q_e-1)\f$ is +4.4 to
++9.2% for S1, -54.0 to +214.3% for S2, -6.5 to -0.2% for S3 and +6.5 to
++16.3% for S4. In S4_6 the settled rate is set by the head-equalization
+cap, not by the exchange equation alone: with `COUPLING_EQUALIZE NO` the
+uncorrected engine gave 6.76 L/s against a measured 3.82 L/s. The
+21 October tables and figures above remain a dated archive and are not
+regenerated here. This check adds no experimental qualification.
 
 ## Synthetic transient demonstration
 

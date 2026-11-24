@@ -2900,10 +2900,20 @@ void ExplicitInertialSolver::fireCellsImpl(const std::vector<int>& cells, double
                 // assigns them the 2D-cell footprint as ponded_area and
                 // DynamicWave lets is_coupled bypass ALLOW_PONDING — so this
                 // budget is non-zero whenever there is water to give.
+                //
+                // Under DW that booked volume is a running sum of the step
+                // volume changes, while the node's depth moves by ΔV / pond
+                // area; held at a head by a nearby boundary, the sum drifted to
+                // an eighth of the pond the depth holds and cut a steady spill
+                // to a quarter for minutes at a time. The router therefore
+                // publishes the pond the depth holds (node_spill_volume).
                 const auto ni = static_cast<std::size_t>(cp.node_idx);
                 const double pond_base = state_->node_pond_base ? (*state_->node_pond_base)[ni]
                                                                 : state_->nodes_1d->full_volume[ni];
-                const double ponded_1d = std::max(0.0, state_->nodes_1d->volume[ni] - pond_base);
+                const double ponded_1d =
+                    state_->node_spill_volume
+                        ? (*state_->node_spill_volume)[ni]
+                        : std::max(0.0, state_->nodes_1d->volume[ni] - pond_base);
                 const double avail = ponded_1d * opts_->vol_1d_to_2d - node_drawn_[ni];
                 if (avail <= 0.0)
                     continue;

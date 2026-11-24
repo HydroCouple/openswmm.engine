@@ -1085,6 +1085,11 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
             state_.node_pond_base = (ctx.options.routing_model == RoutingModel::DYNWAVE)
                                         ? &ctx.nodes.rpt_full_volume
                                         : &ctx.nodes.full_volume;
+            state_.node_spill_volume = nullptr;
+            if (ctx.options.routing_model == RoutingModel::DYNWAVE) {
+                node_spill_volume_.assign(static_cast<std::size_t>(ctx.n_nodes()), 0.0);
+                state_.node_spill_volume = &node_spill_volume_;
+            }
         }
     }
 
@@ -2276,6 +2281,33 @@ void SurfaceRouter2D::updateTrackingPonds(SimulationContext& ctx, double dt) {
     }
 }
 
+// The pond each coupled node's depth holds above its rim, for the advance about
+// to run: the most a 1D → 2D spill may take from it (DW only). The pond shape
+// is the one DW's depth update uses (DWSolver::initNodeStates): the
+// configured pond of a junction, the ponded-area step of a storage node or of
+// a junction without one.
+/**
+ * @brief Publish per-node spillable pond volume for the advance about to run.
+ * @param[in] ctx Prepared native node depths, ponded areas and per-node pond areas/bands.
+ * @note No-op unless the surface state borrows this router's spill-volume vector (dynamic wave
+ * with coupling points). Rewrites the entries of coupled nodes in native ft³ from the current
+ * depth above the rim. No water or clock change.
+ */
+void SurfaceRouter2D::publishSpillVolumes(const SimulationContext& ctx) {
+    if (state_.node_spill_volume != &node_spill_volume_)
+        return;
+    for (const auto& cp : node_coupling_points_) {
+        const auto i = static_cast<std::size_t>(cp.node_idx);
+        const double x = ctx.nodes.depth[i] - ctx.nodes.full_depth[i];
+        const bool storage =
+            ctx.nodes.type[i] == NodeType::STORAGE || ctx.nodes.storage_area[i] > 0.0;
+        node_spill_volume_[i] =
+            (!storage && i < ctx.coupled_pond_area.size())
+                ? pond::volume(x, ctx.coupled_pond_area[i], ctx.coupled_pond_band[i])
+                : (x > 0.0 ? x * ctx.nodes.ponded_area[i] : 0.0);
+    }
+}
+
 // COUPLING_EQUALIZE: each coupled node's 1D surface area for the advance about
 // to run (the pond area at its current depth, floored at MIN_SURFAREA; the
 // conduit ends DW adds on top only make the true area larger, so the cap
@@ -2759,6 +2791,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
     prepareMeshHeat(ctx, state_, dt);
     if (subsurface_.heat().active())
         subsurface_.heat().prepare();
+    publishSpillVolumes(ctx);
     publishEqualizeAreas(ctx, dt);
     {
         // Offer the solver the Lie-split stage that follows this advance

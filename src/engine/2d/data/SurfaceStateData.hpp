@@ -100,6 +100,14 @@ struct SurfaceStateData {
     /// full depth below the pond). A 1D→2D spill may only draw volume above
     /// it. Null falls back to `full_volume`.
     const std::vector<double>* node_pond_base = nullptr;
+    /// Per-node volume (1D ft³) a coupled node can give to the surface in the
+    /// advance about to run, published by the router before each advance.
+    /// Set under DW, where it is the pond the node's depth holds above its
+    /// rim: DW moves a ponded node's depth by ΔV / pond area but books its
+    /// volume as a running sum of ΔV, and the two drift apart while the depth
+    /// is the state the next routing step starts from. Null: the booked
+    /// volume above `node_pond_base`.
+    const std::vector<double>* node_spill_volume = nullptr;
     /// Head-sampling cell lists of the coupling points (COUPLING_HEAD VERTEX /
     /// STENCIL_WET_MEAN), indexed by CouplingPoint::head_begin/head_end.
     const std::vector<int>* coupling_head_cells = nullptr;

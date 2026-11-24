@@ -1708,6 +1708,7 @@ private:
     /// COUPLING_EQUALIZE: each coupled node's 1D surface area (m²) for the
     /// coming advance, published on the state.
     std::vector<double> node_pond_area_m2_;
+    std::vector<double> node_spill_volume_; ///< backs SurfaceStateData::node_spill_volume
     /**
      * @brief Relax tracking-mode coupled pond area toward wet footprint while preserving
      * above-rim volume.
@@ -1734,6 +1735,7 @@ private:
      * pointer clear; prepared point indices/layouts and exclusive state required. Later vector
      * rebuild/move invalidates views.
      */
+    void publishSpillVolumes(const SimulationContext& ctx);
     void publishEqualizeAreas(const SimulationContext& ctx, double window);
     /// S4: published 1D node row values `[node * n_species + s]` (pollutant
     /// conc, MSX conc, age, temperature), refreshed once per batch by

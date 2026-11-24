@@ -72,11 +72,14 @@ the 180-240 s and 240-300 s rates (`q_previous_lps`, `q_num_lps`) and adds
 `q_long_lps` (mean rate over 300-900 s), `q_minute_min_lps` and
 `q_minute_max_lps` (extremes of the one-minute rates in that span),
 `long_windows` (their count) and `steady` (YES when they stay within 2 % of the
-mean). `continuity_pct` and `duration_s` now describe the 900 s run. Seven rows
-are not steady at the 0.5 s step (S2_2, S2_3, S2_5, S4_1, S4_4, S4_6, S4_7); the
-S4 rows drop and recover for minutes at a time, so their 240-300 s rate depends
-on the sequence of 2D steps and changed with the 16 November 2026 time-step
-limiter. The other three tests still run 300 s.
+mean). `continuity_pct` and `duration_s` now describe the 900 s run. On
+23 November seven rows were not steady at the 0.5 s step (S2_2, S2_3, S2_5,
+S4_1, S4_4, S4_6, S4_7). The S4 rows dropped and recovered for minutes at a time
+because the spill limit read dynamic wave's booked node volume, which drifted
+away from the pond the node's depth holds; the limit uses that pond since
+24 November and all S4 rows are steady (`DryFloodplainSpillHoldsItsRate` guards
+S4_6). S2_2, S2_3 and S2_5 remain outside the 2 % measure. The other tests run
+300 s.
 
 Review report and proposed publication text: `docs/validation/rubinato2017/`.
 The original junction representation is retained as evidence of its large

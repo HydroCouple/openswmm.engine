@@ -1931,8 +1931,12 @@ current 2D heads and the routing step's 1D heads, and \f$\int Q\,dt\f$ is
 accumulated exactly per point. Two hard caps make the ledger
 unfalsifiable: a drain may take at most \f$\beta\f$ of the source cell's
 volume per substep, and a spill draws against a per-node budget of the
-node's stored volume for the whole advance — so the same water cannot
-spill twice within a routing step.
+water the node holds above its rim for the whole advance — so the same
+water cannot spill twice within a routing step. Under dynamic wave that
+budget is the pond the node's depth holds (depth above the rim times the
+pond area the depth update uses), not the node's booked volume: the booked
+volume is a running sum of the step volume changes and can drift away from
+the depth, which is the state the next routing step starts from.
 
 The 2D head at a coupling point is not simply a cell head. Vertex-coupled
 points use a **wet-masked, depth-weighted mean** of the incident cells'
