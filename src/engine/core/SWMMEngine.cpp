@@ -1820,14 +1820,32 @@ int SWMMEngine::initialize() noexcept {
             // Recompute derived state from the applied depths/flows so continuity,
             // the area_mid_ seeding in init_modules(), and the old_net_inflow seeding
             // below all start from the hot-started state (legacy initNodes / initLinks).
+            // Node volume follows legacy initNodes in the convention the
+            // tree routers and the dynamic wave book it in (as the fresh start
+            // above does): ponded water above full depth, else fullVolume *
+            // (depth / fullDepth) — 0 for a plain junction or outfall. The
+            // MIN_SURFAREA volume an outfall's restored depth otherwise became
+            // was never drained, so the outfall reported it as flooding every
+            // step and quality routing lost it (benchmarks wq-extran1). FV
+            // keeps full_volume as its node area.
             const int us_hs = ucf::getUnitSystem(static_cast<int>(ctx_.options.flow_units));
+            const bool legacy_volume = ctx_.options.routing_model != RoutingModel::FV;
             for (int i = 0; i < ctx_.n_nodes(); ++i) {
                 auto ui = static_cast<std::size_t>(i);
                 double y = ctx_.nodes.depth[ui];
                 ctx_.nodes.old_depth[ui] = y;
                 ctx_.nodes.head[ui] = ctx_.nodes.invert_elev[ui] + y;
-                double vol =
-                    node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs, &ctx_.node_subtypes);
+                const double fd = ctx_.nodes.full_depth[ui];
+                double vol;
+                if (legacy_volume && ctx_.options.allow_ponding &&
+                    ctx_.nodes.ponded_area[ui] > 0.0 && y > fd)
+                    vol = ctx_.nodes.rpt_full_volume[ui] + (y - fd) * ctx_.nodes.ponded_area[ui];
+                else if (legacy_volume && ctx_.nodes.type[ui] != NodeType::STORAGE &&
+                         ctx_.nodes.storage_area[ui] <= 0.0)
+                    vol = (fd > 0.0) ? ctx_.nodes.rpt_full_volume[ui] * (y / fd) : 0.0;
+                else
+                    vol =
+                        node::getVolume(ctx_.nodes, i, y, &ctx_.tables, us_hs, &ctx_.node_subtypes);
                 ctx_.nodes.volume[ui] = vol;
                 ctx_.nodes.old_volume[ui] = vol;
             }
