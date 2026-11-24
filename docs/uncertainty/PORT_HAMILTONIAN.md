@@ -798,3 +798,5 @@ cases the current code excludes). Acceptance gates as in the table.
   is beyond the note — kept by owner decision 2026-11-23 (smoke sinks 9,783 → 7,786 at G70F11P; coupled band 0.012 m vs MC 0.733).
 
 - 2026-11-23: FULL_SWE validation: no single-behaviour path — see VALIDATION 'Why the 2D ROM is validated under LOCAL_INERTIAL only'.
+- 2026-11-24: final Bellinge table on the merged line vs the regenerated MC (mc_v4): 1D 0.951/1.269, trunk 0.847/1.326,
+  storage 0.783/0.821 (ranking, the O-16b trade), 2D 0.658/0.185, Brier 0.0372/0.1105 — see VALIDATION 'Final Bellinge table on the merged line'.

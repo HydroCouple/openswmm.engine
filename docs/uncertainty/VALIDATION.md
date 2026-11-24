@@ -3982,6 +3982,37 @@ Wall 2,250 s vs 1,955 s under load average 17–20 (not a cost measurement). Cou
 **Decided 2026-11-23 (owner)**: (1) the storage-class drop (G80F13P) accepted; (4) the pump limiter rule kept.
 **Open**: (2) stage 2, one-sided S at crown entry, now the leading sink (G71F05R/04R, G72F646); (3) the coupled G71O020 08:00 spike.
 
+### Final Bellinge table on the merged line (mc_v4, 2026-11-24)
+Engine = `feature/uncertainty-sidecar` 0644c64b (swmm6_rel 723bc021 merged, O-16b adopted, LOCAL_INERTIAL pinned,
+per-member hook OFF). The reference `mc_v3` was generated on the pre-merge engine and is no longer like-for-like:
+on the same member inputs the merged engine's 1D routing continuity error is 4–5 % (mc_v3 10–12 %), and the
+deterministic exchange moved again with 723bc021 (1D→2D spill 4,851 m³, 2D→1D drain 867 m³; the pinned 0d33aad2
+run had 7,596 / 3,647, the pre-merge run 6,125 / 2,538). **mc_v4** = the same ten-member Latin hypercube
+(`members.csv` identical to mc_v3; each member's total precipitation = demo_off's 5.560 mm × rain_mult to four
+digits) rerun on 0644c64b (`data/bellinge_demo/mc_v4`, ~2.5 min per member single-thread). `demo_off` rerun on the
+same binary: wall 2,426 s, continuity 4.11 %; the previous outputs are archived as `demo_off_pin0d33.*`.
+
+Scored 05–10 h against mc_v4 (coverage / width-ratio median; nominal 0.90):
+
+| cell | result | verdict |
+|---|---|---|
+| 1D all manholes (1,011) | 0.951 / 1.269 | CALIBRATED (bins 0.5–2 cm 0.977/1.258, 2–5 0.938/1.275, 5–20 0.915/1.459, 20–100 0.786/1.019, >1 m 0.826/1.623) |
+| 1D trunk transect | 0.847 / 1.326 | CALIBRATED |
+| STORAGE (16 nodes, class split) | 0.783 / 0.821 | RANKING ONLY — the O-16b trade (G80F13P 0.449 m vs MC 0.651; was 3.397 before O-16b) |
+| COUPLED near rim (63) / far (932) | 0.872 / 1.136, 0.959 / 1.291 | CALIBRATED |
+| 2D street depth | 0.658 / 0.185 | RANKING ONLY (by MC span: 0.5–2 cm 0.529/0.199, 2–5 0.542/0.059, 5–20 0.630/0.346, 20–100 0.389/0.181, >1 m 0.310/0.252) |
+| P(depth > 20 cm) Brier | 0.0372 vs no-skill 0.1105 (0.34) | reliability 50–75 % → 79 %, 75–95 % → 76 %, >95 % → 88.5 % |
+
+Against the stale mc_v3 the same run reads 1D 0.950/1.269, trunk 0.846/1.358, 2D 0.656/0.190, Brier 0.0383 — so the
+ROM-vs-MC verdicts barely depend on which engine generated the members even though the deterministic flood volumes
+differ by 2–4×; the trunk 1.538 / 2D 0.241 of the pinned 0d33aad2 run were that engine's, not a stale-reference artefact.
+Class split pinned-0d33aad2 → final (both vs mc_v4): ALL 0.949/1.262 → 0.951/1.269, STORAGE 0.812/0.959 → 0.783/0.821,
+near rim 0.867/1.121 → 0.872/1.136. Largest band changes (median 05–10 h, m): narrowed G80F13P 3.397 → 0.449 (MC 0.651),
+G60F160–G60F210 0.53–0.61 → 0.23–0.34 (MC 0.22, improved), G70F11P 0.374 → 0.045 (MC 0.655, pump wet well, known
+narrow), G71F12P 0.449 → 0.185 (MC 0.108); widened G65F070–G65F130 and G70F010/030/040/100 0.4–1.4 → 0.8–1.8 m against
+MC spans 0.10–0.39 m (4–8× over-wide, laterals feeding the G65/G70 trunk) — new on this line, cause not isolated (O-16b
+upper half or upstream coupling), recorded as open.
+
 ### Why the 2D ROM is validated under LOCAL_INERTIAL only (measured 2026-11-23)
 Under upstream's default MOMENTUM_EQUATION FULL_SWE the W4 channel comonotone-Manning cell reads 0.953/8.846
 (LOCAL_INERTIAL 0.818/1.308). Splitting the ratio (harness knob `W4_MOMENTUM`, absolute widths printed) shows the
