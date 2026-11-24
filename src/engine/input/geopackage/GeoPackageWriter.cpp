@@ -2752,6 +2752,9 @@ static void write_options_2d(sqlite3* db, const SimulationContext& ctx, const st
         case twoD::Backend2D::METAL:
             backend = "METAL";
             break;
+        case twoD::Backend2D::WEBGPU:
+            backend = "WEBGPU";
+            break;
         case twoD::Backend2D::AUTO:
             break;
         }

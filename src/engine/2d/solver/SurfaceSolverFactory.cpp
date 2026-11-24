@@ -28,6 +28,9 @@
 #include "GpuPluginAbi.h"
 #include "PluginSurfaceSolver.hpp"
 #include "SurfaceCapabilities.hpp"
+#ifdef OPENSWMM_ENABLE_WEBGPU
+#include "../webgpu/WebGpuSurfaceSolver.hpp"
+#endif
 #include <cstring>
 #include <stdexcept>
 #include "../data/SolverOptions2D.hpp"
@@ -464,6 +467,8 @@ std::string backend_name(Backend2D b) {
         return "sycl";
     case Backend2D::METAL:
         return "metal";
+    case Backend2D::WEBGPU:
+        return "webgpu";
     case Backend2D::AUTO:
         break;
     }
@@ -511,6 +516,40 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
         mode = opts.backend == Backend2D::AUTO && opts.auto_backend_cpu
                    ? "cpu"
                    : backend_name(opts.backend);
+    if (mode == "webgpu") {
+        // Opt-in only (AUTO never selects it): the browser build's WebGPU marcher. What it
+        // does not implement is refused loudly and served by the CPU marcher (R6).
+#ifdef OPENSWMM_ENABLE_WEBGPU
+        std::string lacking;
+        if (const std::uint64_t bits = required & ~webgpu::kWebGpuSurfaceCapabilities)
+            lacking = surfaceCapabilityNames(bits);
+        const std::string options = webgpu::unsupportedOptions(opts);
+        if (!options.empty())
+            lacking += (lacking.empty() ? "" : ", ") + options;
+        if (!lacking.empty()) {
+            std::fprintf(stderr,
+                         "[openswmm 2D] backend 'webgpu': the WebGPU marcher does not implement "
+                         "%s; using the CPU marcher for this model.\n",
+                         lacking.c_str());
+            return serial_marcher("cpu (explicit marcher; WebGPU not applicable)");
+        }
+        std::string why;
+        if (auto solver = webgpu::makeWebGpuSurfaceSolver(why)) {
+            if (chosen)
+                *chosen = "webgpu";
+            return solver;
+        }
+        std::fprintf(stderr,
+                     "[openswmm 2D] backend 'webgpu' requested but %s; falling back to the CPU "
+                     "marcher.\n",
+                     why.c_str());
+        return serial_marcher("cpu (explicit marcher; no WebGPU device)");
+#else
+        std::fprintf(stderr, "[openswmm 2D] backend 'webgpu' runs only in the browser build; "
+                             "using the CPU marcher.\n");
+        return serial_marcher("cpu (explicit marcher; WebGPU not in this build)");
+#endif
+    }
     if (mode != "cpu" && mode != "auto" && mode != "omp" && mode != "cuda" && mode != "hip" &&
         mode != "sycl")
         throw std::invalid_argument("Invalid OPENSWMM_2D_BACKEND: " + mode);

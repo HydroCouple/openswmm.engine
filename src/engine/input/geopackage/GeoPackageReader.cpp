@@ -448,13 +448,14 @@ static void apply_option_2d(SimulationContext& ctx, const std::string& key,
             throw std::runtime_error("Invalid 2D_RECONSTRUCTION_ORDER");
         o->reconstruction_order = val == "2" ? 2 : 1;
     } else if (key == "2D_BACKEND")
-        o->backend = (val == "CPU")     ? twoD::Backend2D::CPU
-                     : (val == "OMP")   ? twoD::Backend2D::OMP
-                     : (val == "CUDA")  ? twoD::Backend2D::CUDA
-                     : (val == "HIP")   ? twoD::Backend2D::HIP
-                     : (val == "SYCL")  ? twoD::Backend2D::SYCL
-                     : (val == "METAL") ? twoD::Backend2D::METAL
-                                        : twoD::Backend2D::AUTO;
+        o->backend = (val == "CPU")      ? twoD::Backend2D::CPU
+                     : (val == "OMP")    ? twoD::Backend2D::OMP
+                     : (val == "CUDA")   ? twoD::Backend2D::CUDA
+                     : (val == "HIP")    ? twoD::Backend2D::HIP
+                     : (val == "SYCL")   ? twoD::Backend2D::SYCL
+                     : (val == "METAL")  ? twoD::Backend2D::METAL
+                     : (val == "WEBGPU") ? twoD::Backend2D::WEBGPU
+                                         : twoD::Backend2D::AUTO;
     else if (key == "2D_REPORT_2D")
         o->report_2d = (val == "YES");
     else if (key == "2D_OUTPUT_PRECISION")

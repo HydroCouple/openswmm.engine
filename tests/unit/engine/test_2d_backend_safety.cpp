@@ -87,6 +87,35 @@ TEST(BackendSafety, CpuDefaultDoesNotProbeEvenForLargeModels) {
     EXPECT_EQ(o.backend, Backend2D::AUTO);
     EXPECT_FALSE(makeGwRechargeBackend(o, 1000000).evaluate);
 }
+TEST(BackendSafety, WebGpuOutsideTheBrowserBuildRunsTheCpuMarcher) {
+    // BACKEND WEBGPU names the browser build's marcher. Elsewhere it is a notice and the CPU
+    // marcher, never an error, and no GPU plugin is probed; the authored token round-trips.
+    Env env("OPENSWMM_2D_BACKEND", nullptr);
+    SolverOptions2D o;
+    o.momentum = Momentum2D::LOCAL_INERTIAL;
+    o.backend = Backend2D::WEBGPU;
+    const auto before = openswmm_test_probe_count();
+    std::string label;
+    auto s = makeSurfaceSolver(o, &label, 1000000);
+    ASSERT_TRUE(s);
+    EXPECT_EQ(label.substr(0, 3), "cpu");
+    EXPECT_NE(label.find("WebGPU"), std::string::npos);
+    {
+        Env override("OPENSWMM_2D_BACKEND", "webgpu");
+        o.backend = Backend2D::AUTO;
+        s = makeSurfaceSolver(o, &label, 1000000);
+        ASSERT_TRUE(s);
+        EXPECT_EQ(label.substr(0, 3), "cpu");
+    }
+    EXPECT_EQ(openswmm_test_probe_count(), before);
+    auto e = swmm_engine_new();
+    ASSERT_NE(e, nullptr);
+    ASSERT_EQ(swmm_options_set_ext(e, "BACKEND", "WEBGPU"), SWMM_OK);
+    char value[32] = {};
+    ASSERT_EQ(swmm_options_get_ext(e, "BACKEND", value, sizeof value), SWMM_OK);
+    EXPECT_STREQ(value, "WEBGPU");
+    swmm_engine_destroy(e);
+}
 TEST(BackendSafety, StalePluginRejectedBeforeProbe) {
     Env env("OPENSWMM_2D_BACKEND", "cuda"), stale("OPENSWMM_TEST_STALE_GPU", "1");
     SolverOptions2D o;

@@ -166,7 +166,8 @@ enum class CouplingPondMode2D : int8_t { FOOTPRINT = 0, CHAMBER = 1, TRACKING = 
  * The OPENSWMM_2D_BACKEND environment variable, when set, overrides this
  * option (same precedence as OPENSWMM_FV_BACKEND over FV_BACKEND).
  *
- * Parsed from [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL).
+ * Parsed from [2D_OPTIONS] BACKEND (AUTO|CPU|OMP|CUDA|HIP|SYCL|METAL|WEBGPU). AUTO never
+ * selects WEBGPU; a build without it runs the CPU marcher with a notice.
  */
 enum class Backend2D : int8_t {
     CPU = 0,  ///< Built-in marcher (OpenMP-threaded on the host), no plugin.
@@ -175,7 +176,8 @@ enum class Backend2D : int8_t {
     CUDA = 3, ///< Kokkos CUDA device plugin (NVIDIA).
     HIP = 4,  ///< Kokkos HIP device plugin (AMD).
     SYCL = 5,
-    METAL = 6 ///< Apple GPU face flux through Kokkos SYCL.
+    METAL = 6, ///< Apple GPU face flux through Kokkos SYCL.
+    WEBGPU = 7 ///< Browser build only: the WebGPU marcher (WebGpuSurfaceSolver); opt-in.
 };
 
 /**

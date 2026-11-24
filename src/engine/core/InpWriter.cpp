@@ -1241,9 +1241,10 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
             f, "%-22s %s\n", "COUPLING_COEFFS",
             nodecoupling2d::formatValue(NodeCoupling2DKey::COEFFS, o.coupling_coeffs).c_str());
     {
-        static const char* sBackend2D[] = {"CPU", "AUTO", "OMP", "CUDA", "HIP", "SYCL", "METAL"};
+        static const char* sBackend2D[] = {"CPU", "AUTO", "OMP",   "CUDA",
+                                           "HIP", "SYCL", "METAL", "WEBGPU"};
         const int bi = static_cast<int>(o.backend);
-        std::fprintf(f, "%-22s %s\n", "BACKEND", (bi >= 0 && bi <= 6) ? sBackend2D[bi] : "AUTO");
+        std::fprintf(f, "%-22s %s\n", "BACKEND", (bi >= 0 && bi <= 7) ? sBackend2D[bi] : "AUTO");
     }
     if (!o.output_file.empty()) {
         const std::string of_tok =

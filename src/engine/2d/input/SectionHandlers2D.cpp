@@ -583,8 +583,11 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
             opts.backend = Backend2D::SYCL;
         else if (iequals(val, "METAL"))
             opts.backend = Backend2D::METAL;
+        else if (iequals(val, "WEBGPU"))
+            opts.backend = Backend2D::WEBGPU;
         else
-            return "Unknown BACKEND: " + val + " (expected AUTO|CPU|OMP|CUDA|HIP|SYCL|METAL)";
+            return "Unknown BACKEND: " + val +
+                   " (expected AUTO|CPU|OMP|CUDA|HIP|SYCL|METAL|WEBGPU)";
     } else if (iequals(key, "OUTPUT_PRECISION")) {
         if (iequals(val, "FLOAT32") || iequals(val, "F32") || iequals(val, "SINGLE"))
             opts.output_precision = OutputPrecision2D::FLOAT32;
@@ -1048,6 +1051,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
             return "SYCL";
         case Backend2D::METAL:
             return "METAL";
+        case Backend2D::WEBGPU:
+            return "WEBGPU";
         case Backend2D::AUTO:
             break;
         }
