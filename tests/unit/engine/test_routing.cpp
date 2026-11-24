@@ -1844,18 +1844,21 @@ TEST(DWSolverGVF, BackwaterM1Benchmark) {
 // The Ritter (1892) exact solution is evaluated at t ∈ {2,4,6,8} s, all
 // before the wet front reaches the downstream boundary (t_max ≈ 11.0 s).
 //
-// Assertions (initial targets — calibrate after first clean baseline run):
+// Analytical targets:
 //   Dam-station spot check : |h[25] − 4h₀/9| / h₀ < 10 %   (all 4 times)
 //   L₁(h) wet region       : mean error < 5 % of h₀ = 0.05 ft (all 4 times)
-//   Front position error   : < 3 Δx = 15 ft                  (all 4 times)
+//   Front position error   : < 3 Δx = 15 ft from the exact position of the
+//                            0.01 ft depth the front is detected at
 // ============================================================================
 
 // Shared driver: builds the strip, runs the DW solver to t=8 s, and checks the
 // solver depths against the Ritter reference at t in {2,4,6,8} s using the
 // supplied tolerances. Two tests below call it: a regression baseline pinned to
-// the solver's current (known-imperfect) dry-bed behaviour, and a DISABLED test
-// carrying the true analytical targets (it auto-enables when the wet/dry front
-// handling is fixed). See README.md and docs/TODO_LEGACY_ALIGNMENT.md.
+// the solver's current dry-bed behavior, and a DISABLED test carrying the
+// analytical targets. The dynamic-wave formulation is SWMM 5's and matches
+// SWMM 5.2.4 on this strip to three decimals, lagging front included, so the
+// analytical targets are met by the finite-volume routing instead
+// (FvEngine.RitterDryBedFrontOnAJunctionChain). See README.md.
 /**
  * @brief Compare the dynamic-wave dry-bed strip against supplied Ritter error bounds.
  *
@@ -2008,10 +2011,10 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft, double tol_fron
     const int check_each = 4; // every 2 s
 
     // Tolerances (tol_dam_ft, tol_l1_ft, tol_front_ft) are supplied by the
-    // caller. The Preissmann implicit scheme cannot resolve the Ritter
-    // rarefaction origin (SKIP_DRY freezes the wet/dry front), so the baseline
-    // caller pins generous regression thresholds while the analytical caller
-    // carries the true targets. See README.md for details.
+    // caller. The SWMM 5 dynamic-wave formulation does not resolve the Ritter
+    // rarefaction or its front, so the baseline caller pins regression
+    // thresholds while the analytical caller carries the true targets. See
+    // README.md for details.
     const double h_wet_tol = 0.01; // exclude near-dry nodes from L1
 
     for (int step = 1; step <= n_steps; ++step) {
@@ -2073,8 +2076,12 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft, double tol_fron
         }
 
         // ── Front position error ─────────────────────────────────────────
-        // Analytical front: xi_f = 2*c0*t  →  node index = (x_d + xi_f)/dx
-        const double xi_front_ref = 2.0 * c0 * t;
+        // The solver front below is where the depth last exceeds h_wet_tol, so
+        // the reference is the exact position of that depth, not the zero-depth
+        // tip 2*c0*t: h = (2*c0 - xi/t)^2 / (9g) = h_wet_tol gives
+        // xi = (2*c0 - 3*sqrt(g*h_wet_tol)) * t. (Against the tip, the exact
+        // depths sampled at the nodes score 13.3 ft off at 8 s.)
+        const double xi_front_ref = (2.0 * c0 - 3.0 * std::sqrt(g * h_wet_tol)) * t;
         const double x_front_ref = x_d + xi_front_ref; // absolute
         // Solver front: first node where depth drops below h_wet_tol
         double x_front_solver = x_d + xi_front_ref; // fallback
@@ -2093,19 +2100,20 @@ static void runRitterDryBed(double tol_dam_ft, double tol_l1_ft, double tol_fron
 }
 
 // Regression baseline: tolerances pinned to the solver's CURRENT dry-bed
-// behaviour, NOT the Ritter analytical solution. The Preissmann scheme cannot
-// resolve the rarefaction origin (engine gap, see README.md), so these
-// generous thresholds only guard against further regression — passing here does
-// NOT mean the solver reproduces Ritter.
+// behavior, NOT the Ritter analytical solution (worst values: dam station
+// 0.35 ft off at 2 s, L1 0.063 ft and front 44.7 ft behind at 8 s). These
+// thresholds only guard against further regression — passing here does NOT
+// mean the solver reproduces Ritter.
 TEST(DWSolverRitter, DryBedRegressionBaseline) {
-    runRitterDryBed(/*tol_dam_ft=*/0.40, /*tol_l1_ft=*/0.10, /*tol_front_ft=*/65.0);
+    runRitterDryBed(/*tol_dam_ft=*/0.40, /*tol_l1_ft=*/0.10, /*tol_front_ft=*/50.0);
 }
 
-// True analytical-verification targets from the benchmark provenance metrics
-// (dam-station |h - 4h0/9| within 10% of h0 = 0.10 ft, L1 < 0.05 ft, front
-// within 3*dx = 15 ft). DISABLED because the current wet/dry handling cannot
-// meet them; remove the DISABLED_ prefix once the engine gap is fixed so this
-// becomes a genuine Ritter analytical check.
+// Analytical targets from the benchmark provenance metrics (dam-station
+// |h - 4h0/9| within 10% of h0 = 0.10 ft, L1 < 0.05 ft, front within
+// 3*dx = 15 ft). DISABLED as a record of what dynamic wave does not meet:
+// the formulation is SWMM 5's, and changing its front behavior would leave
+// 5.2.4 parity on every wetting event. Dry-bed fronts are FLOW_ROUTING FV's
+// job (FvEngine.RitterDryBedFrontOnAJunctionChain).
 TEST(DWSolverRitter, DISABLED_DryBedMatchesRitterAnalytical) {
     runRitterDryBed(/*tol_dam_ft=*/0.10, /*tol_l1_ft=*/0.05, /*tol_front_ft=*/15.0);
 }

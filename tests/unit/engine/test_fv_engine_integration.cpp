@@ -2858,3 +2858,96 @@ TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
         ASSERT_EQ(engine.report(), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Dry-bed dam break on a junction chain: FV is the engine's answer.
+//
+// The Ritter strip of tests/benchmarks/manufactured/dw-ritter-drybed-strip
+// (50 conduits of 5 ft, 5 ft wide, a 1 ft reservoir held upstream of a dry
+// bed), run through the whole engine. Dynamic wave reproduces SWMM 5.2.4 on it,
+// lagging front and cell-to-cell oscillation included; the finite-volume
+// routing follows the exact solution: front within 3 cells of the exact 0.01 ft
+// depth contour and mean wet-depth error under 5 % of the reservoir depth.
+//
+// The depth at the dam station is reported and held to a recorded bound, not
+// the analytical 10 %: it reads 0.64 ft at 2 s and 0.51 ft at 8 s against
+// 4/9 ft, the same with second order or 1 ft cells, so it comes from the
+// junction every 5 ft rather than the in-conduit scheme.
+// ---------------------------------------------------------------------------
+TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
+    const int n = 50;
+    const double g = 32.2, h0 = 1.0, dx = 5.0, x_dam = 125.0, wet = 0.01;
+    const double c0 = std::sqrt(g * h0);
+    const std::string base = outDir() + "/ritter_strip_fv";
+    {
+        std::ofstream os(base + ".inp");
+        os << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\nSTART_DATE 01/01/2026\n"
+              "END_DATE 01/01/2026\nEND_TIME 00:00:08\nREPORT_STEP 0:00:01\nROUTING_STEP 0.5\n"
+              "VARIABLE_STEP 0\nMIN_SURFAREA 0.01\nMIN_SLOPE 0\nTHREADS 1\n[JUNCTIONS]\n";
+        for (int i = 1; i < n; ++i)
+            os << "J" << i << " 0 100 " << (i * dx <= x_dam ? h0 : 0.0) << " 0 0\n";
+        os << "[OUTFALLS]\nUP 0 FIXED " << h0 << " NO\nDN 0 FREE NO\n[CONDUITS]\n";
+        for (int i = 0; i < n; ++i)
+            os << "C" << i << " " << (i == 0 ? "UP" : "J" + std::to_string(i)) << " "
+               << (i == n - 1 ? "DN" : "J" + std::to_string(i + 1)) << " " << dx << " 0.0001 0 0\n";
+        os << "[XSECTIONS]\n";
+        for (int i = 0; i < n; ++i)
+            os << "C" << i << " RECT_OPEN 4 5 0 0 1\n";
+    }
+    openswmm::SWMMEngine engine;
+    ASSERT_EQ(
+        engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(), (base + ".out").c_str()), 0);
+    ASSERT_EQ(engine.initialize(), 0);
+    ASSERT_EQ(engine.start(0), 0);
+    auto& ctx = engine.context();
+    std::vector<int> node(static_cast<std::size_t>(n + 1));
+    for (int i = 0; i <= n; ++i) {
+        node[static_cast<std::size_t>(i)] = ctx.node_names.find(i == 0   ? "UP"
+                                                                : i == n ? "DN"
+                                                                         : "J" + std::to_string(i));
+        ASSERT_GE(node[static_cast<std::size_t>(i)], 0);
+    }
+    auto exact = [&](double x, double t) {
+        const double xi = x - x_dam;
+        if (xi <= -c0 * t)
+            return h0;
+        if (xi >= 2.0 * c0 * t)
+            return 0.0;
+        const double r = 2.0 * c0 - xi / t;
+        return r * r / (9.0 * g);
+    };
+    std::ofstream csv(base + "_metrics.csv");
+    csv << "t_s,front_ft,front_exact_ft,l1_depth_ft,dam_depth_ft\n";
+    double elapsed = 0.0, next = 2.0;
+    int checked = 0;
+    do {
+        ASSERT_EQ(engine.step(&elapsed), 0) << engine.last_error_message();
+        const double t = ctx.current_time;
+        if (t < next - 1e-6)
+            continue;
+        double front = 0.0, l1 = 0.0;
+        int wet_nodes = 0;
+        for (int i = 0; i <= n; ++i) {
+            const double h = ctx.nodes.depth[node[static_cast<std::size_t>(i)]];
+            if (h > wet)
+                front = dx * (i + 0.5);
+            const double want = exact(i * dx, t);
+            if (want > wet) {
+                l1 += std::fabs(h - want);
+                ++wet_nodes;
+            }
+        }
+        ASSERT_GT(wet_nodes, 0);
+        l1 /= wet_nodes;
+        const double front_exact = x_dam + (2.0 * c0 - 3.0 * std::sqrt(g * wet)) * t;
+        const double dam = ctx.nodes.depth[node[25]];
+        csv << t << "," << front << "," << front_exact << "," << l1 << "," << dam << "\n";
+        EXPECT_NEAR(front, front_exact, 3.0 * dx) << "front at " << t << " s";
+        EXPECT_LT(l1, 0.05 * h0) << "mean wet-depth error at " << t << " s";
+        EXPECT_NEAR(dam, 4.0 * h0 / 9.0, 0.25) << "dam-station depth at " << t << " s";
+        ++checked;
+        next += 2.0;
+    } while (elapsed > 0.0);
+    ASSERT_EQ(engine.end(), 0);
+    EXPECT_EQ(checked, 4);
+}

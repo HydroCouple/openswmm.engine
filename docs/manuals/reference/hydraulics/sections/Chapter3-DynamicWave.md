@@ -737,6 +737,17 @@ earlier in Section 3.2:
     head cannot exceed its maximum value and any excess inflow it
     receives is lost from the system (see Section 3.3.7).
 
+Dynamic wave is not a shock-capturing scheme. A front advancing over a dry
+bed, as after a dam break or a sudden gate opening, lags the exact solution
+and the depths behind it can oscillate from node to node; this is the SWMM 5
+formulation and SWMM 5.2.4 gives the same result. On a frictionless strip
+with a 1 ft reservoir released onto a dry bed, the front (where the depth
+last exceeds 0.01 ft) is about 40 ft behind its exact position after 8 s, and
+reducing the time step does not close the gap. Use `FLOW_ROUTING FV`
+(Chapter 8) where the arrival of a dry-bed front matters: on the same strip
+it stays within about 10 ft of the exact position with a mean depth error
+near 2 % of the reservoir depth.
+
 ### 3.3.9 Dynamic Preissmann Slot
 
 The slot method of Section 3.3.6 makes the slot width a fixed function
