@@ -453,7 +453,18 @@ void InterfaceManager::writeFileHeader(const SimulationContext& ctx) {
         return;
 
     std::fprintf(outfile_, "SWMM5 Interface File");
-    std::fprintf(outfile_, "\n%s", "OpenSWMM Engine Output");
+    // Line 2 is the project's first title line, as legacy writes Title[0]
+    // (iface.c:359): the first [TITLE] line that is neither blank nor a
+    // comment, or an empty line when there is none (issue #215).
+    std::string title;
+    for (const auto& line : ctx.title_notes) {
+        const auto first = line.find_first_not_of(" \t");
+        if (first == std::string::npos || line[first] == ';')
+            continue;
+        title = line;
+        break;
+    }
+    std::fprintf(outfile_, "\n%s", title.c_str());
 
     // Reporting timestep
     int report_step = static_cast<int>(ctx.options.report_step);

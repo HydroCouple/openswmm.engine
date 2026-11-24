@@ -2116,3 +2116,41 @@ TEST(LIDRunoffSummary, TotalInfilAndEvapIncludeLidShares) {
     EXPECT_NEAR(infil, continuity_infil_in, 0.006) << s1_row;
     EXPECT_GT(evap, 0.0) << s1_row;
 }
+
+// Issue #215. Legacy opens each [LID_USAGE] report file while reading the input and
+// stops with ERROR 305 when it cannot (lid.c:564). The engine opened it at the first
+// save and, when that failed, finished the run without the report or any message.
+TEST(LIDReportFile, UnopenableReportFileIsError305BeforeAnyStep) {
+    std::filesystem::create_directories("lid_area_out");
+    const char* inp = "lid_area_out/issue215_rptfile.inp";
+    {
+        std::ofstream f(inp, std::ios::trunc);
+        f << "[OPTIONS]\nFLOW_UNITS CFS\nINFILTRATION HORTON\nFLOW_ROUTING KINWAVE\n"
+             "START_DATE 01/01/2020\nSTART_TIME 00:00:00\nEND_DATE 01/01/2020\n"
+             "END_TIME 02:00:00\nREPORT_STEP 00:15:00\nWET_STEP 00:05:00\nDRY_STEP 01:00:00\n"
+             "ROUTING_STEP 60\n\n[RAINGAGES]\nRG1 INTENSITY 1:00 1.0 TIMESERIES RAIN\n\n"
+             "[SUBCATCHMENTS]\nS1 RG1 OF1 1 100 200 1 0\n\n"
+             "[SUBAREAS]\nS1 0.012 0.1 0.05 0.1 25 OUTLET\n\n"
+             "[INFILTRATION]\nS1 3.0 0.5 4 7 0\n\n"
+             "[LID_CONTROLS]\nPP PP\nPP SURFACE 0 0 0.01 1 5\nPP PAVEMENT 6 0.15 0 100 0 0 0\n"
+             "PP SOIL 12 0.5 0.2 0.1 0.5 10 3.5\nPP STORAGE 12 0.75 0.5 0 NO\n"
+             "PP DRAIN 0 0.5 6 6 0 0\n\n"
+             "[LID_USAGE]\nS1 PP 1 43560 0 0 0 0 \"lid_area_out/no_such_dir/pp.txt\"\n\n"
+             "[OUTFALLS]\nOF1 0 FREE NO\n\n[TIMESERIES]\nRAIN 0:00 1.0\nRAIN 1:00 0.0\n";
+    }
+    std::filesystem::remove_all("lid_area_out/no_such_dir");
+
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp, "lid_area_out/issue215_rptfile.rpt",
+                               "lid_area_out/issue215_rptfile.out", nullptr),
+              SWMM_OK)
+        << swmm_get_last_error_msg(e);
+    int rc = swmm_engine_initialize(e);
+    if (rc == SWMM_OK)
+        rc = swmm_engine_start(e, 1);
+    EXPECT_NE(rc, SWMM_OK) << "an unopenable LID report file must stop the run before any step";
+    const std::string msg = swmm_get_last_error_msg(e);
+    EXPECT_NE(msg.find("305"), std::string::npos) << msg;
+    EXPECT_NE(msg.find("no_such_dir/pp.txt"), std::string::npos) << msg;
+    swmm_engine_destroy(e);
+}

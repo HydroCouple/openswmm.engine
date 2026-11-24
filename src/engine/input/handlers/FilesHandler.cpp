@@ -28,6 +28,9 @@
 
 #include "FilesHandler.hpp"
 
+#include <string_view>
+#include <utility>
+
 #include "../Tokenizer.hpp"
 #include "../InputParseUtils.hpp"
 #include "../../core/SimulationContext.hpp"
@@ -104,22 +107,62 @@ bool is_time_token(const std::string& s) {
 void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines) {
     auto& files = ctx.files;
 
+    // Legacy iface_readFileParams reads the mode and the kind with findmatch():
+    // a keyword matches when it is the leading part of the token (input.c
+    // match()), so `SAVE Outflows/Calibration` is SAVE OUTFLOWS. Any other
+    // token is ERROR 205 naming it, and a row with one token is ERROR 203. The
+    // engine compared whole words and dropped every other row without a
+    // message, so decks spelled that way ran without their interface file
+    // (issue #215).
+    static constexpr std::pair<std::string_view, FileMode> kModes[] = {{"NO", FileMode::NONE},
+                                                                       {"SCRATCH", FileMode::NONE},
+                                                                       {"USE", FileMode::USE},
+                                                                       {"SAVE", FileMode::SAVE}};
+    static constexpr std::string_view kKinds[] = {"RAINFALL", "RUNOFF",  "HOTSTART",
+                                                  "RDII",     "INFLOWS", "OUTFLOWS"};
+    const auto leads_with = [](std::string_view token, std::string_view keyword) {
+        return token.size() >= keyword.size() && token.compare(0, keyword.size(), keyword) == 0;
+    };
+
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
-        if (tok.size() < 3)
-            continue; // need at least mode + kind + path
+        if (tok.empty())
+            continue;
+        if (tok.size() < 2) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, "", "[FILES] " + line));
+            continue;
+        }
 
         const std::string mode_word = Tokenizer::to_upper(tok[0]);
-        const std::string kind_word = Tokenizer::to_upper(tok[1]);
-        const std::string path = unquote(tok[2]);
+        const std::string kind_token = Tokenizer::to_upper(tok[1]);
 
         FileMode mode = FileMode::NONE;
-        if (mode_word == "SAVE")
-            mode = FileMode::SAVE;
-        else if (mode_word == "USE")
-            mode = FileMode::USE;
-        else
-            continue; // unrecognised mode — skip silently (legacy behaviour)
+        bool mode_known = false;
+        for (const auto& [keyword, value] : kModes) {
+            if (leads_with(mode_word, keyword)) {
+                mode = value;
+                mode_known = true;
+                break;
+            }
+        }
+        if (!mode_known) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0], "in [FILES]"));
+            continue;
+        }
+        std::string kind_word;
+        for (const auto keyword : kKinds) {
+            if (leads_with(kind_token, keyword)) {
+                kind_word = std::string(keyword);
+                break;
+            }
+        }
+        if (kind_word.empty()) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1], "in [FILES]"));
+            continue;
+        }
+        if (tok.size() < 3)
+            continue; // legacy: the keywords alone are accepted and set nothing
+        const std::string path = unquote(tok[2]);
 
         if (kind_word == "RAINFALL") {
             files.rainfall_mode = mode;
@@ -185,12 +228,10 @@ void handle_files(SimulationContext& ctx, const std::vector<std::string>& lines)
                     }
                 }
                 files.hotstart_saves.push_back(std::move(entry));
-            } else { // USE
+            } else if (mode == FileMode::USE) {
                 files.hotstart_use_path = path;
-            }
+            } // legacy handles only USE and SAVE for HOTSTART
         }
-        // Unknown kinds are silently ignored — preserves the legacy
-        // behaviour of skipping rows that aren't part of the spec.
     }
 }
 

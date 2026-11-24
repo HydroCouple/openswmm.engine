@@ -340,7 +340,7 @@ TEST_F(IfaceRoutingTest, SaveOutflows_WritesLegacyHeaderAndRows) {
     const auto out_iface = scratch("iface_save_out.txt");
     write_file(in_iface, constant_inflow_iface("J1", 2.0));
 
-    open_model("save", minimal_model_inp());
+    open_model("save", "[TITLE]\n;;Project Title/Notes\nIface save test\n\n" + minimal_model_inp());
     ASSERT_EQ(swmm_files_set(engine_, "INFLOWS_PATH", in_iface.c_str()), SWMM_OK);
     ASSERT_EQ(swmm_files_set(engine_, "OUTFLOWS_PATH", out_iface.c_str()), SWMM_OK);
     ASSERT_EQ(swmm_engine_start(engine_, 1), SWMM_OK) << swmm_get_last_error_msg(engine_);
@@ -353,6 +353,17 @@ TEST_F(IfaceRoutingTest, SaveOutflows_WritesLegacyHeaderAndRows) {
     // Legacy header format.
     EXPECT_EQ(content.rfind("SWMM5 Interface File", 0), 0u)
         << "first line must be the legacy magic string";
+    // Issue #215: line 2 is the first title line (legacy Title[0]), and the
+    // first record is the outlets' state at the report start (iface.c:392).
+    {
+        std::istringstream hs(content);
+        std::string l1, l2;
+        std::getline(hs, l1);
+        std::getline(hs, l2);
+        EXPECT_EQ(l2, "Iface save test");
+    }
+    EXPECT_NE(content.find("O1               2026 01  01  00  00  00  0.000000"), std::string::npos)
+        << "missing the report-start record";
     EXPECT_NE(content.find("FLOW CFS"), std::string::npos);
     EXPECT_NE(content.find("number of nodes"), std::string::npos);
     EXPECT_NE(content.find("O1"), std::string::npos)
@@ -371,7 +382,7 @@ TEST_F(IfaceRoutingTest, SaveOutflows_WritesLegacyHeaderAndRows) {
         if (past_header && line.rfind("O1", 0) == 0)
             ++rows;
     }
-    EXPECT_GE(rows, 10) << "expected ~12 report-step rows for O1";
+    EXPECT_GE(rows, 11) << "expected the report-start row plus ~12 report-step rows for O1";
     EXPECT_LE(rows, 14) << "rows written per routing step instead of per "
                            "reporting step?";
 }

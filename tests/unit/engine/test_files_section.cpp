@@ -91,15 +91,43 @@ TEST(FilesHandlerTest, ParsesSaveHotstartWithDateTime) {
     EXPECT_GT(ctx.files.hotstart_saves.front().datetime, 0.0);
 }
 
-TEST(FilesHandlerTest, IgnoresUnknownKindAndMode) {
+// Issue #215. Legacy iface_readFileParams rejects an unknown mode or kind with
+// ERROR 205 naming the token (iface.c:96-101); the engine dropped such rows silently.
+TEST(FilesHandlerTest, UnknownKindOrModeIsError205) {
     SimulationContext ctx;
     openswmm::input::handle_files(ctx, {
-                                           "UNKNOWNMODE RAINFALL \"x.dat\"",   // bad mode → skipped
-                                           "USE         FROBNICATE \"y.dat\"", // bad kind → skipped
-                                           "USE         RAINFALL   \"good.dat\"",
+                                           "KEEP RAINFALL \"x.dat\"", // bad mode
+                                           "SAVE NOTAKIND \"y.dat\"", // bad kind
+                                           "USE  RAINFALL \"good.dat\"",
+                                           "SAVE", // one token: ERROR 203
                                        });
     EXPECT_EQ(ctx.files.rainfall_path, "good.dat");
     EXPECT_EQ(ctx.files.rainfall_mode, FileMode::USE);
+    ASSERT_EQ(ctx.errors.size(), 3u);
+    EXPECT_NE(ctx.errors[0].find("ERROR 205"), std::string::npos) << ctx.errors[0];
+    EXPECT_NE(ctx.errors[0].find("KEEP"), std::string::npos) << ctx.errors[0];
+    EXPECT_NE(ctx.errors[1].find("ERROR 205"), std::string::npos) << ctx.errors[1];
+    EXPECT_NE(ctx.errors[1].find("NOTAKIND"), std::string::npos) << ctx.errors[1];
+    EXPECT_NE(ctx.errors[2].find("ERROR 203"), std::string::npos) << ctx.errors[2];
+}
+
+// Issue #215. Legacy findmatch() accepts a token whose leading characters are the
+// keyword (input.c match()), so `SAVE Outflows/Calibration` is SAVE OUTFLOWS and
+// `Use RAINfall` is USE RAINFALL. A row with the two keywords alone sets nothing.
+TEST(FilesHandlerTest, LeadingKeywordMatchesLikeLegacy) {
+    SimulationContext ctx;
+    openswmm::input::handle_files(ctx, {
+                                           "SAVE Outflows/Calibration \"out.txt\"",
+                                           "Use  RAINfall             \"rain.dat\"",
+                                           "SCRATCH RUNOFF",
+                                           "NO RDII \"ignored.dat\"",
+                                       });
+    EXPECT_TRUE(ctx.errors.empty()) << ctx.errors.front();
+    EXPECT_EQ(ctx.files.outflows_path, "out.txt");
+    EXPECT_EQ(ctx.files.rainfall_mode, FileMode::USE);
+    EXPECT_EQ(ctx.files.rainfall_path, "rain.dat");
+    EXPECT_EQ(ctx.files.runoff_mode, FileMode::NONE);
+    EXPECT_EQ(ctx.files.rdii_mode, FileMode::NONE);
 }
 
 // ---------------------------------------------------------------------------

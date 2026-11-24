@@ -2166,6 +2166,11 @@ int SWMMEngine::start(int save_results) noexcept {
         }
         if (!out_path.empty()) {
             iface_.writeFileHeader(ctx_);
+            // Legacy follows the header with the outlets' state at the report
+            // start (iface.c:392, ReportStart = max(REPORT_START, START)), so
+            // the file holds one record more than there are report steps.
+            iface_.writeOutfallResults(
+                ctx_, std::max(ctx_.options.report_start, ctx_.options.start_date));
         }
     }
 
@@ -11462,6 +11467,24 @@ void SWMMEngine::initHydrology() noexcept {
     //    no-op, and the LID footprint's rainfall is counted twice
     //    (issue #131).
     lid_.init(ctx_);
+    // Legacy opens every [LID_USAGE] report file while reading the input and
+    // stops with ERROR 305 when it cannot (lid.c:564). The solver opens them
+    // at the first save and, when that failed, ran on without the report and
+    // without a message (issue #215). Probe them here, before any step; the
+    // caller turns ctx_.errors into the initialization error.
+    for (int t = 0; t < lid_.numGroups(); ++t) {
+        const auto& g = lid_.group(t);
+        for (int u = 0; u < g.count; ++u) {
+            const auto& path = g.rpt_path[static_cast<std::size_t>(u)];
+            if (path.empty())
+                continue;
+            if (std::FILE* probe = openswmm::io::fopen_utf8(path, "wt")) {
+                std::fclose(probe);
+                continue;
+            }
+            ctx_.errors.push_back(format_error(ERR_RPT_FILE, "", path));
+        }
+    }
     // A4: size the per-layer species block against the units the manager
     // just built, and seed whatever they already hold.
     transport::initLidLayerAge(ctx_, lid_);
