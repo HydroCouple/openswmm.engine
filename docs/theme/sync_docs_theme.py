@@ -19,7 +19,8 @@ HTML_EXTRA_STYLESHEET into the output root by base name):
     hc-fonts.css (font URLs without the fonts/ prefix), hc-tokens.css, hc-diagrams.css,
     hydrocouple-doxygen.css, hc-doxygen.js, hc-diagrams.js, hydrocouple_logo.png, *.woff2, *-OFL.txt
 With --header, the region between <!-- hc:topbar:begin --> and <!-- hc:topbar:end --> in
-that header is replaced by the top bar rendered from manuals.json.
+that header is replaced by the top bar rendered from manuals.json. A manual's optional "nav"
+links (paths relative to its output root) appear in its own top bar, before the menu.
 """
 import argparse
 import html
@@ -85,13 +86,15 @@ def render_topbar(manual_id, repository):
             groups.append(f'<div class="hc-manuals__group"><p class="hc-manuals__heading">{e(group["title"])}</p>'
                           f'<ul>{"".join(items)}</ul></div>')
     links = "".join(f'<a href="{e(l["url"])}">{e(l["title"])}</a>' for l in registry["links"])
+    own = next((m for g in registry["groups"] for m in g["manuals"] if m["id"] == manual_id), {})
+    nav = "".join(f'\n      <a href="$relpath^{e(l["url"])}">{e(l["title"])}</a>' for l in own.get("nav", []))
     return f"""{BEGIN}
 <header class="hc-topbar" role="banner">
   <div class="hc-topbar__inner">
     <a class="hc-brand__home" href="{e(registry["home"])}" title="HydroCouple home"><img class="hc-brand__mark" src="$relpath^hydrocouple_logo.png" alt="" width="30" height="30"/><span class="hc-brand__name">HydroCouple</span></a>
     <span class="hc-brand__sep" aria-hidden="true"></span>
     <a class="hc-brand__project" href="$relpath^index.html">$projectname</a>
-    <nav class="hc-topbar__nav" aria-label="HydroCouple documentation">
+    <nav class="hc-topbar__nav" aria-label="HydroCouple documentation">{nav}
       <div class="hc-manuals">
         <button class="hc-manuals__button" type="button" aria-expanded="false" aria-haspopup="true">Documentation</button>
         <div class="hc-manuals__menu" hidden="hidden">
