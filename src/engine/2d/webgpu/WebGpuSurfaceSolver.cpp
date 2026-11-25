@@ -1597,6 +1597,9 @@ void WebGpuSurfaceSolver::pushNodeState() {
     // The routing step's held 1D state (== the Kokkos pushNodeState): each point's node head
     // relative to its datum and node depth, its COUPLING_EQUALIZE factor (pond area over the
     // window; 0 = no cap), and each node's spill budget, its ponded volume in integer units.
+    // The budget is the pond the node's depth holds when the router publishes it
+    // (node_spill_volume, as the CPU and Kokkos marchers read it): the dynamic wave books a
+    // ponded node's volume as a running sum that drifts from that pond.
     const auto& s = *state_;
     const auto& nodes = *s.nodes_1d;
     const double len = opts_->len_1d_to_2d, vol = opts_->vol_1d_to_2d;
@@ -1615,7 +1618,9 @@ void WebGpuSurfaceSolver::pushNodeState() {
     for (std::size_t n = 0; n < nn; ++n) {
         const auto ni = static_cast<std::size_t>(node_slot_node_[n]);
         const double base = s.node_pond_base ? (*s.node_pond_base)[ni] : nodes.full_volume[ni];
-        const double ponded = std::max(0.0, nodes.volume[ni] - base) * vol;
+        const double ponded = (s.node_spill_volume ? (*s.node_spill_volume)[ni]
+                                                   : std::max(0.0, nodes.volume[ni] - base)) *
+                              vol;
         const auto u = static_cast<std::uint64_t>(std::max<std::int64_t>(0, toUnits(ponded)));
         cp_budget_[n] = static_cast<std::uint32_t>(u);
         cp_budget_[nn + n] = static_cast<std::uint32_t>(u >> 32);
