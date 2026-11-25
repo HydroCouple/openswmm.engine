@@ -485,11 +485,11 @@ zero-width branch and the free-surface branch, and the apex cell's head
 reached 877,208 ft within 50 substeps. With the rules in place,
 implicit × TPA closes continuity at 0.000 %. An earlier probe recorded
 the implicit path under-tracking the explicit vacuum at a crest; the
-Phase 6 scoring against the digitized laboratory record did not
+scoring against the digitized laboratory record (§8.4.6) does not
 reproduce that gap — the two land within a millimetre of each other at
-the crest minimum (0.1037 m implicit against 0.1035 m explicit, NSE
-0.9960 against 0.9955 on the 14.1 m pressure trace) — so both are
-validated configurations for the sub-atmospheric class.
+the crest minimum (0.1040 m implicit against 0.1037 m explicit, NSE
+0.996 for both on the 14.1 m pressure trace) — so both are validated
+configurations for the sub-atmospheric class.
 
 **Hot start.** The regime flags are cleared on cold start *and* on
 restore from a hot start file. A restored run whose reach was
@@ -501,21 +501,21 @@ bit-parity, so sub-atmospheric heads are invisible in it by default.
 `REPORT_SIGNED_HEADS YES` publishes the true signed piezometric head in
 the `.out` HEAD field (both solvers; DEPTH stays floored; the default
 NO keeps bit parity). The measured payoff on the negative-pressure
-siphon validation case: a minimum crest head of +0.1035 m — 0.0398 m
-below the crest invert of 0.1433 m — in the output file, where every
-slot-closure column floors at the invert (−0.0003 m, the float32 noise
-of the legacy HEAD field). The case is scored over the 40 s the deck
-runs, which is where its own header puts the boundary of the physics
-the model contains; the vacuum is still deepening monotonically when
-the run ends, so this figure is a lower bound on the closure's reach,
-not a plateau. Phase 6 of the companion study scored this trace
-against the record digitized from the source figures: NSE 0.9955
-(explicit Euler) and 0.9960 (implicit) on the 14.1 m pressure station,
-at an RMSE of ~4 mm — below the source figure's own ±8 mm resolution —
-while the best slot-closure column scores 0.55 and every dynamic-wave
-column goes negative. The sub-atmospheric decline is tracked to within
-what the published figure can resolve; this is the closure's measured
-payoff, and it is only observable with `REPORT_SIGNED_HEADS YES` set.
+siphon validation case (§8.4.6, measured 2026-11-25): a minimum crest
+head of +0.1037 m — 0.0396 m below the crest invert of 0.1433 m — in
+the output file, where the slot-closure columns bottom out 0.036–0.044 m
+*above* the invert. The case is scored over the 40 s the deck runs,
+which is where its own header puts the boundary of the physics the
+model contains; the vacuum is still deepening monotonically when the
+run ends, so this figure is a lower bound on the closure's reach, not
+a plateau. Scored against the record digitized from the source figures,
+the TPA columns reach NSE 0.996 on the 14.1 m pressure station at an
+RMSE of 4 mm — below the source figure's own ±8 mm resolution — while
+the best slot-closure column scores 0.55 and the best dynamic-wave
+column (its own TPA port) 0.57. The sub-atmospheric decline is tracked
+to within what the published figure can resolve; this is the closure's
+measured payoff, and it is only observable with `REPORT_SIGNED_HEADS
+YES` set.
 
 **Known limitation: high-celerity filling.** At \f$a\f$ = 150 m/s the
 rapid-fill validation case diverges at the reflected return surge — a
@@ -568,6 +568,169 @@ rules are `cellPressurized` and `ghostPressurized` in
 `tests/unit/engine/test_fv_tpa_closure.cpp`. The dynamic wave solver
 carries its own port of the approach as `SURCHARGE_METHOD TPA`
 (@ref hydraulics_ref_ch3_dynamic_wave "Chapter 3").
+
+### 8.4.6 Validation against the laboratory record
+
+The closures of §8.4 and the unsteady-friction term of §8.5.4 were
+scored against four published laboratory experiments, in thirteen
+configurations spanning both solvers, on engine commit `26e23cc5`
+(2026-11-25). The study folder (`studies/mixed_flow_closures/`, untracked
+by design; decks, digitized series, runner and scoring) re-runs from any
+checkout given the engine binary, and the memo of record is
+`docs/analysis/MIXED_FLOW_CLOSURES_STUDY_2026-11-25.md`. Observations
+are digitized from the source figures at the publishers' native raster
+resolution; scores are the Nash–Sutcliffe efficiency (NSE) and root mean
+square error of Pinto, Vasconcelos and Soares (2025), on the digitized
+series resampled at the observation times. A bore arrival is the first
+crossing of an absolute threshold shared by the measurement and every
+configuration.
+
+The configurations ("columns") are, for the finite-volume solver, the
+slot closure with the explicit (C1) and implicit (C2) pressurized
+update, TPA explicit (C3) and implicit (C3i), and the same with
+Vítkovský unsteady friction at the paper-calibrated \f$k_{3}\f$ (C4 slot
+implicit, C5 TPA explicit — the paper's SVUF, C5i TPA implicit); for the
+dynamic wave solver EXTRAN (C6), the static slot (C7), the dynamic slot
+(C8), TPA (C9), TPA with unsteady friction (C10) and the slot with
+unsteady friction (C11).
+
+| Experiment | Apparatus and event | Scored series |
+|---|---|---|
+| E1 | Soares et al. (2015), via Pinto et al. (2025): copper pipe D = 20 mm, L = 15.22 m, a = 1255 m/s, 0.133 L/s stopped by a quasi-instantaneous valve closure | valve pressure head: the 2.0–2.4 s point-wise inset and the peak/trough envelope of the 4L/a oscillation over 0–3.9 s |
+| E2 | Vasconcelos, Wright and Roe (2006): acrylic pipe D = 94 mm, L = 14.33 m at rest 78 % full, 3.1 L/s admitted at a fill box, surge tank at the far end; run at the 2006 numerics (a = 25 m/s, n = 0.012) and at Pinto et al.'s (a = 150 m/s, n = 0.009) | pressure and velocity at 9.9 m, surge-tank level |
+| E3 | Vasconcelos et al. (2006): the E2 pipeline raised 0.15 m at its center, primed to 0.30 m, 0.45 L/s siphoned off at the fill box; a = 300 m/s | pressure at 14.1 m and velocity at 9.9 m over the 40 s before air intrudes |
+| E4 | Aureli et al. (2015), via Pinto et al. (2025): D = 192 mm V-shaped pipe, 7.00 m at 8.4 % down then 5.12 m at 27.7 % adverse, dam-break from a 0.561 m head at a gate 5.00 m in; a = 50 m/s | pressure at 3.00 m and 8.52 m over 0–30 s |
+
+**E3, the sub-atmospheric siphon — the closure's payoff.** Only TPA
+tracks the measured decline at the 14.1 m transducer, and only TPA
+carries the crest below atmospheric pressure. The slot columns under
+both solvers bottom out above the crest invert because a slot has no
+representation of head below the crown (§8.11); the dynamic-wave TPA
+port holds its latch but is bounded by the node invert (Chapter 3
+§3.3.11). The explicit slot C1, which the 2026-08-31 round recorded as
+a loud failure at t = 0, completes on this engine after the slot
+wave-speed bound of §8.5.3 landed, and scores 0.32.
+
+| Column | NSE, pressure at 14.1 m | RMSE (m) | Minimum crest gauge head (m) |
+|---|---|---|---|
+| C1 FV slot explicit | 0.321 | 0.051 | +0.036 |
+| C2 FV slot implicit | 0.548 | 0.042 | +0.044 |
+| C3 FV TPA explicit | **0.996** | 0.004 | **−0.040** |
+| C3i FV TPA implicit | **0.996** | 0.004 | **−0.039** |
+| C4 FV slot implicit + UF | 0.545 | 0.042 | +0.044 |
+| C5 FV TPA explicit + UF | 0.995 | 0.004 | −0.041 |
+| C5i FV TPA implicit + UF | 0.996 | 0.004 | −0.040 |
+| C6 DW EXTRAN | −0.516 | 0.077 | +0.090 |
+| C7 DW slot | −0.628 | 0.079 | +0.089 |
+| C8 DW dynamic slot | −0.614 | 0.079 | +0.088 |
+| C9 DW TPA | 0.569 | 0.041 | +0.031 |
+| C10 DW TPA + UF | 0.563 | 0.041 | +0.031 |
+| C11 DW slot + UF | −0.631 | 0.079 | +0.089 |
+
+The 4 mm RMSE of the TPA columns is below the ±8 mm resolution of the
+source figure (the published model markers and the experimental line
+overlap into a band), so the closure tracks the record to within what
+the figure can resolve. The crest gauge head is the signed head at the
+crest station less the crest invert (0.1433 m); a negative value is a
+vacuum the slot cannot represent. Unsteady friction changes nothing
+here: the siphon's velocities are a few centimeters per second.
+
+**E2, the filling bore.** Every finite-volume column puts the bore at
+the 9.9 m station within 0.06 s of the measured 6.69 s at the 2006
+numerics and scores the pressure trace at NSE 0.92–0.93, the surge-tank
+level at 0.85–0.86 and the velocity at 0.54–0.62. At Pinto et al.'s
+numerics (a = 150 m/s, dx = 0.094 m) the explicit columns arrive 0.9 s
+early and the implicit ones 0.3 s early, with the same pressure score.
+The two closures are indistinguishable on this case — above the crown
+TPA *is* a slot (§8.4.5) — and unsteady friction moves the scores by
+hundredths. The dynamic-wave columns arrive 1.0–7.7 s late and score the
+pressure trace below 0.45 at best; TPA and the dynamic slot pass a one-
+or two-step pressurization spike of 12–19 m of head through the virtual
+junction at the bore, which destroys their pressure score while leaving
+the surge-tank score (0.73–0.79) intact. Splicing the 9.9 m reach with
+two more virtual junctions changes no finite-volume score by more than
+0.004 and no bore arrival by more than 0.04 s, the §8.6.2 composition
+property measured end to end.
+
+| Column | Bore at 9.9 m, 2006 numerics (s; measured 6.69) | NSE pressure / surge tank / velocity | Bore, 2025 numerics (s) | NSE pressure / surge tank / velocity |
+|---|---|---|---|---|
+| C1 | 6.75 | 0.93 / 0.85 / 0.60 | 5.79 | 0.94 / 0.70 / 0.29 |
+| C2 | 6.04 | 0.92 / 0.85 / 0.54 | 6.39 | 0.84 / 0.67 / 0.04 |
+| C3 | 6.70 | 0.93 / 0.85 / 0.60 | 5.79 | 0.94 / 0.70 / 0.29 |
+| C3i | 6.02 | 0.93 / 0.85 / 0.58 | 6.35 | 0.91 / 0.67 / 0.07 |
+| C5 | 6.02 | 0.93 / 0.86 / 0.62 | 5.96 | 0.92 / 0.73 / 0.33 |
+| C6 EXTRAN | 14.37 | −0.66 / −0.10 / −0.87 | 10.90 | spike / 0.01 / −0.78 |
+| C7 slot | 9.98 | 0.42 / 0.35 / −1.29 | 9.84 | 0.43 / 0.42 / −1.47 |
+| C8 dynamic slot | 7.70 | spike / 0.75 / −0.52 | 7.65 | spike / 0.79 / −0.62 |
+| C9 TPA | 8.00 | spike / 0.73 / −0.58 | 8.85 | 0.75 / 0.79 / −0.66 |
+
+**E1, water hammer.** The finite-volume solver reproduces the surge
+itself and not its decay. On the single-conduit deck the explicit
+columns overshoot the Joukowsky peak (measured 99.3 m) by 43 %
+(142.9 m) and the implicit ones by 34 %; on the same pipe cut into
+three conduits by virtual junctions the explicit columns land on it
+(99.4–99.5 m). All columns then damp the 4L/a oscillation two to three
+times faster than the apparatus (decay time constant 0.65–0.72 s
+explicit, 1.1–1.2 s implicit, against 1.43 s measured), which is why
+the unsteady-friction term — whose whole purpose is the damping the
+paper reproduced at \f$k_{3}\f$ = 0.015 — cannot be exercised on this
+case: there is less oscillation left to damp than the record shows.
+Below the crown the slot floors the troughs at the pipe crown while TPA
+carries them to −8 to −11 m against a measured −7 m. The dynamic wave
+solver does not represent water hammer: the slots give a 0.4 m rise,
+and EXTRAN and TPA pin the sealed dead end at its surcharge cap.
+The single-conduit overshoot is an initialization defect, not physics:
+a *static*, flow-free 45 m column with a sealed one-conduit dead-end
+junction launches a ±45 m transient on its own, and the same column with
+one virtual junction at mid-length, or with a storage node as the dead
+end, stays at rest. It is recorded as a finite-volume follow-up in the
+memo (finding F1); the spliced deck's numbers describe the physics.
+
+**E4, the V-shaped pipe.** The explicit slot (C1) is the only configuration positive at
+both stations — NSE 0.35 at 3.00 m, 0.34 at 8.52 m, the first slosh
+arriving 0.2 s late — and no column reaches the 0.8 the issue asked of
+the calibrated unsteady-friction run. TPA scores the upstream station
+at −1.6 (explicit) and −1.8 (implicit): once the pool has drained
+through the gate the pressurized reach rings at the acoustic celerity
+where the record shows a smooth slosh. Unsteady friction at Pinto et
+al.'s calibration (n = 0.007, \f$k_{3}\f$ = 0.005) makes every
+finite-volume column worse, and its response to \f$k_{3}\f$ is
+non-monotone (the SVUF column at 8.52 m: −5.0 at 0, +0.24 at
+0.025–0.030, −0.86 at 0.045). The dynamic wave solver cannot run the
+dam-break: EXTRAN, the dynamic slot and both unsteady-friction columns
+spike with 20–150 % continuity error, the static slot delivers the
+first slosh 2.2 s late at a third of its height, and DW TPA never
+brings water past 0.02 m at 8.52 m. The pipe ends are vented plain
+junctions, as the apparatus is open to the atmosphere; sealing them had
+let TPA pull a vacuum at the capped upstream end that the apparatus
+cannot have.
+
+**Sensitivity.** Three grids were run on top of the matrix (400 runs; tables in the
+memo). *Unsteady friction* \f$k_{3}\f$ from 0 to 0.045: on E2 the
+finite-volume scores move by hundredths (the SVUF column's surge-tank
+score rises monotonically, 0.846 → 0.869), on E1 every
+\f$k_{3} > 0\f$ lowers the score because the numerical damping already
+exceeds the measured one, on E4 the response is non-monotone. *Manning
+n* from 0.007 to 0.013: E2 and E4 improve monotonically up to the top of
+the grid, past the calibrated 0.009 and 0.012, with or without unsteady
+friction — the simulated oscillations want more friction than the
+acrylic pipes have — while E3 and E1 are insensitive. *Celerity* from 25
+to 300 m/s on E2: the explicit slot and TPA columns complete at every
+value and score the pressure trace at 0.93–0.95 (the high-celerity
+filling divergence of §8.4.5 stays closed), the implicit slot degrades
+above 50 m/s and spikes at 300, and the dynamic-wave TPA is clean only
+between 50 and 150 m/s.
+
+**Limits of the record.** Every series is digitized from a figure: E1's
+point-wise record is a 0.5 s inset and its envelope a per-cycle
+reduction; E3's 14.1 m trace is a band centerline; E4's observations
+are the sparse plotted dots. Two decks carry boundary choices the
+apparatus did not have: E1's closed valve is a sealed dead end with the
+steady flow already seeded (an orifice closed by a control rule produces
+no water hammer, because a node with a structure attached stores
+`MIN_SURFAREA` times its head), and E4's gate is a full-section orifice
+between a sealed upstream-side node and a dry downstream-side node.
+Both are recorded in the deck headers and in the memo.
 
 ## 8.5 Numerical scheme
 

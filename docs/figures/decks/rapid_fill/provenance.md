@@ -6,7 +6,7 @@
 | Copied from | `studies/mixed_flow_closures/decks/e2_rapid_fill_2006.inp` (untracked study folder), 2026-09-20 |
 | Study plan | `plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md`, experiment e2 (2006 parameterization) |
 | Used by | the Application Manual's filling-pipe chapter; figures `workflow_ch2_rapid_fill_pressure_9p9`, `workflow_ch2_rapid_fill_front` |
-| Changed on copy | nothing: byte-identical to the study deck |
+| Changed on copy | nothing at the time. 2026-11-25: `REPORT_STEP` respelled as the fractional clock `0:00:00.05` (the engine reads a bare decimal token as hours since 63b59b41; the old spelling gave a 3-minute report step and a one-frame `.out`). The rebuilt study deck additionally runs 60 s instead of 5 min. |
 
 ## The experiment
 

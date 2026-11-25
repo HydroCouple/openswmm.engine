@@ -1313,23 +1313,23 @@ negative-pressure siphon class — are finite-volume territory
 (@ref hydraulics_ref_ch8_finite_volume "Chapter 8"). DW TPA's value is
 sealed sub-crown behavior: no spurious geometry flip, no spurious
 flooding, and a head that recovers smoothly when inflow returns. On the
-rapid-filling laboratory case of Vasconcelos et al. (2006), DW TPA's
-bore arrival lands within 2 % of the finite-volume timing (10.25 s
-against 10.45 s), where the Sjőberg static slot arrives about 20 %
-early (8.35 s) — measured on the mixed-flow closure study of issue
-#156. Phase 6 of that study, scoring against the digitized laboratory
-record on a shared absolute threshold (head first exceeding 0.15 m at
-the 9.9 m station, measured at 6.69 s), places the columns in absolute
-terms: the dynamic slot lands 0.14 s early (6.55 s), the static slot
-at 9.95 s, DW TPA at 12.25 s, and EXTRAN at 14.35 s — so DW TPA's
-agreement with the finite-volume timing above is scheme consistency,
-not accuracy on this filling case (and the finite-volume columns'
-own timing there is compromised by a documented initial-condition
-seeding defect). On the negative-pressure siphon case, Phase 6
-measured every dynamic-wave column bottoming at 0.231–0.233 m of
-crest head against 0.1035 m for finite-volume TPA — the quantified
-form of the invert-floor limit above. To observe signed heads in the
-binary output file at all, set
+rapid-filling laboratory case of Vasconcelos et al. (2006), scored
+against the digitized laboratory record on a shared absolute threshold
+(head first exceeding 0.15 m at the 9.9 m station, measured at 6.69 s;
+the mixed-flow closure study of issue #156, re-measured 2026-11-25,
+hydraulics Chapter 8 §8.4.6), the finite-volume columns arrive at
+6.70–6.75 s and every dynamic-wave column late: the dynamic slot at
+7.70 s, DW TPA at 8.00 s, the static slot at 9.98 s and EXTRAN at
+14.37 s. DW TPA and the dynamic slot also put a brief pressurization
+spike (12–19 m of head for one or two report steps) on the virtual
+junction as the bore passes, which the slot does not. On the
+negative-pressure siphon case the same study measures EXTRAN and both
+slots bottoming at 0.232 m of crest head, DW TPA at 0.174 m (0.031 m
+above the crest invert, NSE 0.57 on the 14.1 m pressure trace against
+−0.5 to −0.6 for the other dynamic-wave columns) and finite-volume TPA
+at 0.1037 m, 0.040 m *below* the invert — the quantified form of the
+invert-floor limit above. To observe signed heads in the binary output
+file at all, set
 `REPORT_SIGNED_HEADS YES` (default `NO` preserves legacy bit-parity;
 the HEAD field then carries the true signed head while DEPTH stays
 floored — both solvers honor the option).

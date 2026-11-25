@@ -6,7 +6,7 @@
 | Copied from | `studies/mixed_flow_closures/decks/e3_negative_pressure.inp` (untracked study folder), 2026-09-20 |
 | Study plan | `plans/MIXED_FLOW_CLOSURES_TPA_UF_PLAN_2026-08-29.md`, experiment e3; engine issue #156 |
 | Used by | the Application Manual's sub-atmospheric chapter; figures `workflow_ch3_negative_pressure_head_14p1`, `workflow_ch3_velocity_9p9` |
-| Changed on copy | one line added: `FV_PRESSURE_CLOSURE TPA` (see below) |
+| Changed on copy | one line added: `FV_PRESSURE_CLOSURE TPA` (see below). 2026-11-25: `REPORT_STEP` respelled as the fractional clock `0:00:00.02` (a bare decimal token is read as hours since 63b59b41). |
 
 ## The one change from the study deck
 
