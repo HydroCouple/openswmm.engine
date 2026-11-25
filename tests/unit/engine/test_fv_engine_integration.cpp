@@ -2688,7 +2688,7 @@ TEST(FvEngine, ReportedVolumesUseAcceptedWindows) {
     file << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\n"
             "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
             "END_DATE 01/01/2026\nEND_TIME 00:03:00\n"
-            "REPORT_STEP 00:00:01\nROUTING_STEP 7\nVARIABLE_STEP 0\n"
+            "REPORT_STEP 00:00:07\nROUTING_STEP 7\nVARIABLE_STEP 0\n"
             "FV_MIN_CELLS 4\nFV_TIME_INTEGRATION EULER\nFV_LTS NO\n"
             "[STORAGE]\nS 0 10 0 FUNCTIONAL 0 0 100\n"
             "[OUTFALLS]\nO 0 FREE YES\n"
@@ -2739,7 +2739,7 @@ TEST(FvEngine, VirtualJunctionTotalsUseTheSplicedFace) {
         file << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING FV\n"
                 "START_DATE 01/01/2026\nSTART_TIME 00:00:00\n"
                 "END_DATE 01/01/2026\nEND_TIME 00:01:00\n"
-                "REPORT_STEP 00:00:01\nROUTING_STEP 3\nVARIABLE_STEP 0\n"
+                "REPORT_STEP 00:00:03\nROUTING_STEP 3\nVARIABLE_STEP 0\n"
                 "FV_MIN_CELLS 4\nFV_TIME_INTEGRATION "
              << (mode == "RK2" ? "RK2" : "EULER") << "\nFV_LTS " << (mode == "LTS" ? "YES" : "NO")
              << "\n"
@@ -3034,14 +3034,15 @@ TEST(FvEngine, PressurizedDeadEndSeedsAtRest) {
  * ROUTING_STEP leaves the report grid behind the routing clock and the legacy
  * interpolation weight f = (report - old) / (new - old) goes negative: on the
  * mixed-flow study's water-hammer deck f reached -20 and the binary output
- * carried 770 m of head where the solution peaked at 99.5 m. The weight is now
- * clamped to [0, 1], so every reported value lies between the step's start and
- * end states. This gate is that deck in feet: a 148 ft column carrying
- * 0.33 cfs stopped against a sealed dead end (Joukowsky rise aV/g = 52 ft),
- * reported twice per routing step; the Node Depth Summary's reported maximum
- * must not exceed the routing-step maximum the same summary prints. Measured
- * 2026-11-25: unclamped, 727.33 ft reported (the binary output swinging from
- * -429 to 727 ft) against a 201.37 ft maximum; clamped, 201.37 ft for both.
+ * carried 770 m of head where the solution peaked at 99.5 m. A deck written that
+ * way is refused at initialization (ERROR 195, legacy parity), but a report step
+ * lowered through the API after initialization still puts the grid behind, so
+ * the weight is clamped to [0, 1] and every reported value lies between the
+ * step's start and end states. This gate is that deck in feet: a 148 ft column
+ * carrying 0.33 cfs stopped against a sealed dead end (Joukowsky rise
+ * aV/g = 52 ft), written with equal steps and switched to two reports per
+ * routing step after initialize(); the Node Depth Summary's reported maximum
+ * must not exceed the routing-step maximum the same summary prints.
  */
 TEST(FvEngine, LaggingReportsStayWithinTheRoutingStep) {
     const std::string base = outDir() + "/lagging_reports";
@@ -3054,7 +3055,7 @@ TEST(FvEngine, LaggingReportsStayWithinTheRoutingStep) {
               "START_TIME           00:00:00\n"
               "END_DATE             01/01/2026\n"
               "END_TIME             00:00:01\n"
-              "REPORT_STEP          0:00:00.001\n"
+              "REPORT_STEP          0:00:00.002\n"
               "ROUTING_STEP         0.002\n"
               "VARIABLE_STEP        0\n"
               "FV_CELL_LENGTH       5.0\n"
@@ -3077,9 +3078,21 @@ TEST(FvEngine, LaggingReportsStayWithinTheRoutingStep) {
               "OVF    RECT_OPEN 10.0 1.0 0  0\n"
               "\n[REPORT]\nNODES ALL\nLINKS ALL\n";
     }
-    ASSERT_EQ(swmm_engine_run((base + ".inp").c_str(), (base + ".rpt").c_str(),
-                              (base + ".out").c_str(), nullptr),
-              0);
+    {
+        openswmm::SWMMEngine engine;
+        ASSERT_EQ(
+            engine.open((base + ".inp").c_str(), (base + ".rpt").c_str(), (base + ".out").c_str()),
+            0);
+        ASSERT_EQ(engine.initialize(), 0);
+        engine.context().options.report_step = 0.001; // two reports per routing step
+        ASSERT_EQ(engine.start(1), 0);
+        double elapsed = 0.0;
+        do {
+            ASSERT_EQ(engine.step(&elapsed), 0);
+        } while (elapsed > 0.0);
+        ASSERT_EQ(engine.end(), 0);
+        ASSERT_EQ(engine.report(), 0);
+    }
     // Node Depth Summary row: name type avg max maxHGL day time reportedMax
     std::ifstream in(base + ".rpt");
     std::string line;

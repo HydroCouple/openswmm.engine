@@ -549,15 +549,13 @@ below `ROUTING_STEP`; with the two equal, or the routing step cut to the
 Courant substep, every cadence gives 99.5 m, and the report file's own
 routing-step maximum reads 99.48 m in every case. The engine emitted one
 report per routing step, so a finer report grid fell behind the routing
-clock and the output interpolation weight reached −20. Legacy refuses such a
-deck (ERROR 195); this engine accepts it for the finite-volume solver, whose
-routing step is only a cadence, and now bounds the weight to [0, 1] so a
-lagging report carries a state the step held (gate
-`FvEngine.LaggingReportsStayWithinTheRoutingStep`). The grid still lags —
-the honest cadence for a water-hammer deck is `ROUTING_STEP` at or below
-`REPORT_STEP`; emitting every due report per routing step, or refusing the
-deck as legacy does, is the owner's design call (the 2D split-report protocol
-and two finite-volume accounting tests rely on the finer report grid).
+clock and the output interpolation weight reached −20. The weight was first
+bounded to [0, 1] (25b4cfa1); on the owner's decision the deck is now refused
+at initialization with ERROR 195, as legacy refuses it (gate
+`SentinelParityOptions.ReportStepShorterThanRoutingStepIs195`). The bound
+stays for a report step lowered through the options API after initialization
+(gate `FvEngine.LaggingReportsStayWithinTheRoutingStep`). A water-hammer deck
+that needs fine reports sets `ROUTING_STEP` at or below `REPORT_STEP`.
 
 **Aureli (E4) does not yield to numerics.** Local time stepping off, Courant
 0.9 and 0.024 m cells give the best finite-volume result, the explicit slot at
@@ -631,9 +629,8 @@ Findings for the engine (none fixed here):
 - **F8 — a report step shorter than the routing step extrapolates the
   output** (§4.4): the report grid fell behind the routing clock and the
   interpolation weight reached −20 (770 m in the `.out` for a 99.5 m
-  solution). The weight is now bounded; the lagging grid itself is a design
-  call left to the owner (refuse as legacy, or emit every due report per
-  step). **Bounded (same day); cadence open.**
+  solution). The weight is bounded, and such a deck is now refused at
+  initialization with ERROR 195, as legacy refuses it. **Fixed (same day).**
 
 ## 6. Side findings (not fixed here)
 

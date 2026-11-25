@@ -340,7 +340,10 @@ TEST_F(SplitReports, NativeWriterCombinationsExactAndOvershotReports) {
 }
 TEST_F(SplitReports, ReportStartSkipsAndNativeSingleTickCadence) {
     ASSERT_NO_FATAL_FAILURE(parity("skip-early", true, true, .31, 6));
-    ASSERT_NO_FATAL_FAILURE(parity("coarse", true, true, 3.1));
+    // Coarse but legal: a routing step longer than the 2 s REPORT_STEP is
+    // ERROR 195 (legacy parity), so the coarse tick is 1.9 s, still one report
+    // per routing step.
+    ASSERT_NO_FATAL_FAILURE(parity("coarse", true, true, 1.9));
 }
 TEST_F(SplitReports, EarlyFinishFlushesActualPendingWindowWithoutExtraStep) {
     ASSERT_NO_FATAL_FAILURE(parity("early", true, true, .31, 0, 9));

@@ -7732,10 +7732,12 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
     // legacy formula EXTRAPOLATES: on the mixed-flow study's water-hammer
     // deck (REPORT_STEP 0.001 under ROUTING_STEP 0.002) f reached -20 and the
     // binary output carried 770 m of head where the solution peaked at 99.5 m.
-    // Legacy never gets here (project_validate refuses such a deck, ERROR 195);
-    // this engine keeps the report grid and clamps the weight so a lagging
-    // report carries the step's own start state instead of an extrapolation.
-    // Inert wherever the grid keeps up (f already in (0, 1]).
+    // Such a deck is refused at initialization (ERROR 195, as legacy's
+    // project_readInput refuses it), but a REPORT_STEP changed through the
+    // options API after initialization can still put the grid behind, so the
+    // weight stays clamped: a lagging report carries the step's own start
+    // state instead of an extrapolation. Inert wherever the grid keeps up
+    // (f already in (0, 1]).
     auto reportWeight = [this](double span) {
         const double f = (span > 0.0) ? (ctx_.next_report_ms - ctx_.old_elapsed_ms) / span : 1.0;
         return std::clamp(f, 0.0, 1.0);
@@ -11592,6 +11594,22 @@ void SWMMEngine::initHydrology() noexcept {
                ctx_.options.end_date <= ctx_.options.report_start) {
         ctx_.errors.push_back(format_error(ERR_REPORT_DATE, ""));
         set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+    } else if (ctx_.options.end_date > 0.0) {
+        // Legacy project_readInput (project.c:186-193): the reporting step,
+        // clamped to the run's duration, cannot be shorter than the routing
+        // step as written. One report is emitted per routing step, so a finer
+        // report grid falls behind the routing clock and the output's time
+        // axis lags the simulation: on the mixed-flow study's water-hammer
+        // deck (REPORT_STEP 0.001 under ROUTING_STEP 0.002) the frame stamped
+        // 60 ms held the state at 90 ms.
+        double report_s = ctx_.options.report_step;
+        const double duration_s = ctx_.options.totalDurationMs() / 1000.0;
+        if (duration_s > 0.0 && report_s > duration_s)
+            report_s = duration_s;
+        if (report_s < ctx_.options.linkValidateRoutingStep()) {
+            ctx_.errors.push_back(format_error(ERR_REPORT_STEP, ""));
+            set_error(SWMM_ERR_PARSE, ctx_.errors.back().c_str());
+        }
     }
 
     // Climate-file requirement (legacy climate_validate, climate.c:850-858):

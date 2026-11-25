@@ -697,11 +697,11 @@ puts both decks on the same numbers. A second artifact met on the way was
 not the solver's either: with a `REPORT_STEP` shorter than the
 `ROUTING_STEP` the report grid falls behind the routing clock (one report
 per routing step) and the output interpolation extrapolated (770 m of
-head in the binary output where the solution peaked at 99.5 m). The
-interpolation weight is now bounded, so a lagging report carries a state
-the step held; the grid still lags, so a water-hammer deck should keep
-`ROUTING_STEP` at or below `REPORT_STEP` (legacy refuses the reverse
-outright, ERROR 195).
+head in the binary output where the solution peaked at 99.5 m). Such a
+deck is now refused at initialization with ERROR 195, as SWMM 5 refuses
+it; a water-hammer deck that needs fine reports sets `ROUTING_STEP` at
+or below `REPORT_STEP`, which costs the finite-volume solver nothing
+since it substeps at its own Courant limit.
 
 **E4, the V-shaped pipe.** The explicit slot (C1) is the only configuration positive at
 both stations — NSE 0.35 at 3.00 m, 0.34 at 8.52 m, the first slosh

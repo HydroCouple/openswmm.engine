@@ -580,3 +580,32 @@ TEST(SentinelParityRainFile, StartDateRoundTrips) {
     const std::string text = rewritten("sentinel_raingage_file_startdate");
     EXPECT_TRUE(contains(text, "STA1 IN 01/02/2020")) << text;
 }
+
+// Legacy project_readInput (project.c:191) refuses a reporting step shorter
+// than the routing step with ERROR 195. v6 accepted it and emitted one report
+// per routing step, so the report grid fell behind the routing clock and the
+// binary output's time axis lagged the simulation (the mixed-flow study's
+// water-hammer deck: the frame stamped 60 ms held the state at 90 ms). The
+// check runs at initialize beside ERROR 191/193, where v6 handles legacy's
+// other project_readInput date checks; the equal-step twin still runs.
+TEST(SentinelParityOptions, ReportStepShorterThanRoutingStepIs195) {
+    const std::string stem = "sentinel_report_step_short";
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, (stem + ".inp").c_str(), (stem + ".rpt").c_str(),
+                               (stem + ".out").c_str(), nullptr),
+              SWMM_OK);
+    EXPECT_NE(swmm_engine_initialize(e), SWMM_OK);
+    const std::string msg = swmm_get_last_error_msg(e);
+    swmm_engine_close(e);
+    swmm_engine_destroy(e);
+    EXPECT_TRUE(contains(msg, "ERROR 195: reporting time step or duration is less than routing "
+                              "time step."))
+        << msg;
+    EXPECT_TRUE(contains(read_file(stem + ".rpt"), "ERROR 195")) << read_file(stem + ".rpt");
+}
+
+TEST(SentinelParityOptions, ReportStepEqualToRoutingStepRuns) {
+    std::string rpt;
+    EXPECT_EQ(run_model("sentinel_report_step_equal", rpt), SWMM_OK) << rpt;
+    EXPECT_FALSE(contains(rpt, "ERROR")) << rpt;
+}

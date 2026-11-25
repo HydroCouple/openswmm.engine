@@ -162,7 +162,7 @@ Three sections carry a keyword spelled `DISPERSION`, and they mean different thi
 
 | Keyword | Values | Default | Description |
 |---|---|---|---|
-| REPORT_STEP | HH:MM:SS | 00:15:00 | Interval at which computed results are written to the binary output file. |
+| REPORT_STEP | HH:MM:SS | 00:15:00 | Interval at which computed results are written to the binary output file. After it is clamped to the run's duration it must not be shorter than ROUTING_STEP as written (ERROR 195, as in SWMM 5). |
 | REPORT_SIGNED_HEADS | YES / TRUE / ON / 1 / NO | NO | Writes the true signed piezometric head to the output HEAD field, needed to see sub-atmospheric TPA heads; NO keeps legacy bit-parity. DEPTH stays floored either way. |
 
 #### Dynamic wave solver
