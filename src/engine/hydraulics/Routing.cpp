@@ -1517,6 +1517,29 @@ void Router::initFv(SimulationContext& ctx) {
                                : 0.0;
                 };
                 init_depth = 0.5 * (end_depth(n1, v1) + end_depth(n2, v2));
+            } else if (n1 >= 0 && n2 >= 0) {
+                // links.depth is legacy initLinkDepths' average of the end-node
+                // depths CLAMPED to the full depth, which is right for the
+                // dynamic wave (its conduits carry depth, its nodes carry the
+                // pressure) and wrong here: the cells ARE the pressure carriers,
+                // so a conduit standing between two pressurized nodes was seeded
+                // at the crown while its nodes stood on the slot line. Measured
+                // on the mixed-flow study's Soares deck (a 45 m column at rest
+                // behind a sealed dead end): the first node solve walked the
+                // dead end 148 ft down to meet its crown-seeded cells, the
+                // column fell to atmospheric pressure, and the reservoir drove a
+                // 90 m water hammer through a pipe in which nothing should have
+                // moved. Seed the slot depth from the uncapped end-node average
+                // (the VJ branch above already does) — only when that average
+                // is above the crown, so every free-surface seed is bit-for-bit
+                // what it was.
+                const double y1 = std::max(0.0, ctx.nodes.depth[static_cast<std::size_t>(n1)] -
+                                                    ctx.links.offset1[uj]);
+                const double y2 = std::max(0.0, ctx.nodes.depth[static_cast<std::size_t>(n2)] -
+                                                    ctx.links.offset2[uj]);
+                const double avg = 0.5 * (y1 + y2);
+                if (avg > g.y_full && avg > init_depth)
+                    init_depth = avg;
             }
         }
         const double uniform = fv::kernels::areaOfDepth(g, init_depth);

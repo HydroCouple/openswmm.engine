@@ -2951,3 +2951,168 @@ TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
     ASSERT_EQ(engine.end(), 0);
     EXPECT_EQ(checked, 4);
 }
+
+/**
+ * @brief A pressurized column behind a sealed dead end starts, and stays, at rest.
+ *
+ * Router::initFv seeded every conduit from links.depth, which legacy
+ * initLinkDepths clamps to the full depth. The dynamic wave is served by
+ * that (its nodes carry the pressure); the finite-volume cells carry it
+ * themselves, so a conduit between two pressurized nodes was seeded at the
+ * crown while its nodes stood on the slot line. On the mixed-flow study's
+ * Soares water-hammer deck the first node solve then walked the sealed dead
+ * end 148 ft down to its crown-seeded cells, and a reservoir at 148 ft drove
+ * a 90 m water hammer through a column in which nothing should have moved.
+ * This gate is that deck with the flow removed: 148 ft of head at both ends,
+ * no discharge, one second. Pre-fix the dead end reads 1.0 ft after the first
+ * step and the conduit carries 0.1 cfs; fixed, both stay at zero change.
+ */
+TEST(FvEngine, PressurizedDeadEndSeedsAtRest) {
+    const std::string inp = outDir() + "/dead_end_at_rest.inp";
+    {
+        std::ofstream os(inp);
+        os << "[OPTIONS]\n"
+              "FLOW_UNITS           CFS\n"
+              "FLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\n"
+              "START_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\n"
+              "END_TIME             00:00:01\n"
+              "REPORT_STEP          0:00:00.01\n"
+              "ROUTING_STEP         0.002\n"
+              "FV_CELL_LENGTH       5.0\n"
+              "FV_MIN_CELLS         4\n"
+              "FV_SLOT_CELERITY     1000\n"
+              "REPORT_SIGNED_HEADS  YES\n"
+              "\n[STORAGE]\n;;Name Elev MaxDepth InitDepth Shape      A1 A2 A0\n"
+              "RES    0.0  300.0    148.0     FUNCTIONAL 0  0  100000\n"
+              "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth\n"
+              "JV     0.0  1.0      148.0     500\n"
+              "\n[OUTFALLS]\n;;Name Elev Type Gated\nOUT    0.0  FREE NO\n"
+              "\n[WEIRS]\n;;Name From To  Type       CrestHt Cd\n"
+              "OVF    RES  OUT TRANSVERSE 299.0   3.33\n"
+              "\n[CONDUITS]\n;;Name From To Length N     Z1 Z2 Q0\n"
+              "P1     RES  JV 50.0   0.012 0  0  0\n"
+              "\n[XSECTIONS]\n;;Link Shape     G1   G2  G3 G4 Barrels\n"
+              "P1     CIRCULAR  1.0  0   0  0  1\n"
+              "OVF    RECT_OPEN 10.0 1.0 0  0\n";
+    }
+    SWMM_Engine e = swmm_engine_create();
+    ASSERT_EQ(swmm_engine_open(e, inp.c_str(), (outDir() + "/dead_end_at_rest.rpt").c_str(),
+                               (outDir() + "/dead_end_at_rest.out").c_str(), nullptr),
+              0)
+        << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_initialize(e), 0) << swmm_get_last_error_msg(e);
+    ASSERT_EQ(swmm_engine_start(e, 1), 0) << swmm_get_last_error_msg(e);
+    const int jv = swmm_node_index(e, "JV");
+    const int p1 = swmm_link_index(e, "P1");
+    ASSERT_GE(jv, 0);
+    ASSERT_GE(p1, 0);
+    double worst_head = 0.0, worst_flow = 0.0, elapsed = 0.0;
+    int steps = 0;
+    do {
+        ASSERT_EQ(swmm_engine_step(e, &elapsed), 0) << swmm_get_last_error_msg(e);
+        double head = 0.0, flow = 0.0;
+        ASSERT_EQ(swmm_node_get_head(e, jv, &head), 0);
+        ASSERT_EQ(swmm_link_get_flow(e, p1, &flow), 0);
+        worst_head = std::max(worst_head, std::fabs(head - 148.0));
+        worst_flow = std::max(worst_flow, std::fabs(flow));
+        ++steps;
+    } while (elapsed > 0.0 && steps < 100000);
+    swmm_engine_end(e);
+    swmm_engine_destroy(e);
+    EXPECT_GT(steps, 100);
+    // Pre-fix: worst_head 147.0 ft (the dead end at its crown), worst_flow ~0.1 cfs.
+    EXPECT_LT(worst_head, 0.01) << "the sealed dead end left its 148 ft resting head";
+    EXPECT_LT(worst_flow, 1e-6) << "a column at rest moved";
+}
+
+/**
+ * @brief A report instant that the routing clock has left behind reports a state the step held.
+ *
+ * One report is emitted per routing step, so a REPORT_STEP shorter than the
+ * ROUTING_STEP leaves the report grid behind the routing clock and the legacy
+ * interpolation weight f = (report - old) / (new - old) goes negative: on the
+ * mixed-flow study's water-hammer deck f reached -20 and the binary output
+ * carried 770 m of head where the solution peaked at 99.5 m. The weight is now
+ * clamped to [0, 1], so every reported value lies between the step's start and
+ * end states. This gate is that deck in feet: a 148 ft column carrying
+ * 0.33 cfs stopped against a sealed dead end (Joukowsky rise aV/g = 52 ft),
+ * reported twice per routing step; the Node Depth Summary's reported maximum
+ * must not exceed the routing-step maximum the same summary prints. Measured
+ * 2026-11-25: unclamped, 727.33 ft reported (the binary output swinging from
+ * -429 to 727 ft) against a 201.37 ft maximum; clamped, 201.37 ft for both.
+ */
+TEST(FvEngine, LaggingReportsStayWithinTheRoutingStep) {
+    const std::string base = outDir() + "/lagging_reports";
+    {
+        std::ofstream os(base + ".inp");
+        os << "[OPTIONS]\n"
+              "FLOW_UNITS           CFS\n"
+              "FLOW_ROUTING         FV\n"
+              "START_DATE           01/01/2026\n"
+              "START_TIME           00:00:00\n"
+              "END_DATE             01/01/2026\n"
+              "END_TIME             00:00:01\n"
+              "REPORT_STEP          0:00:00.001\n"
+              "ROUTING_STEP         0.002\n"
+              "VARIABLE_STEP        0\n"
+              "FV_CELL_LENGTH       5.0\n"
+              "FV_MIN_CELLS         4\n"
+              "FV_CFL               0.9\n"
+              "FV_SLOT_CELERITY     4000\n"
+              "FV_PRESSURE_CLOSURE  TPA\n"
+              "REPORT_SIGNED_HEADS  YES\n"
+              "\n[STORAGE]\n;;Name Elev MaxDepth InitDepth Shape      A1 A2 A0\n"
+              "RES    0.0  300.0    148.8     FUNCTIONAL 0  0  100000\n"
+              "\n[JUNCTIONS]\n;;Name Elev MaxDepth InitDepth SurDepth\n"
+              "JV     0.0  1.0      148.0     1000\n"
+              "\n[OUTFALLS]\n;;Name Elev Type Gated\nOUT    0.0  FREE NO\n"
+              "\n[WEIRS]\n;;Name From To  Type       CrestHt Cd\n"
+              "OVF    RES  OUT TRANSVERSE 299.0   3.33\n"
+              "\n[CONDUITS]\n;;Name From To Length N     Z1 Z2 Q0\n"
+              "P1     RES  JV 50.0   0.012 0  0  0.33\n"
+              "\n[XSECTIONS]\n;;Link Shape     G1   G2  G3 G4 Barrels\n"
+              "P1     CIRCULAR  1.0  0   0  0  1\n"
+              "OVF    RECT_OPEN 10.0 1.0 0  0\n"
+              "\n[REPORT]\nNODES ALL\nLINKS ALL\n";
+    }
+    ASSERT_EQ(swmm_engine_run((base + ".inp").c_str(), (base + ".rpt").c_str(),
+                              (base + ".out").c_str(), nullptr),
+              0);
+    // Node Depth Summary row: name type avg max maxHGL day time reportedMax
+    std::ifstream in(base + ".rpt");
+    std::string line;
+    double max_depth = -1.0, reported_max = -1.0;
+    bool in_summary = false;
+    while (std::getline(in, line)) {
+        if (line.find("Node Depth Summary") != std::string::npos)
+            in_summary = true;
+        if (!in_summary)
+            continue;
+        std::istringstream ls(line);
+        std::string name, type;
+        ls >> name >> type;
+        if (name != "JV")
+            continue;
+        std::vector<double> v;
+        double x = 0.0;
+        std::string tok;
+        while (ls >> tok) {
+            try {
+                x = std::stod(tok);
+                v.push_back(x);
+            } catch (...) {
+            }
+        }
+        // avg, max, maxHGL, day, (time parsed as a number fails), reportedMax
+        ASSERT_GE(v.size(), 5u) << line;
+        max_depth = v[1];
+        reported_max = v.back();
+        break;
+    }
+    ASSERT_GT(max_depth, 190.0) << "the water hammer did not form (148 ft + aV/g = 200 ft)";
+    EXPECT_LE(reported_max, max_depth * 1.001 + 0.01)
+        << "a lagging report extrapolated past the step: reported " << reported_max
+        << " ft against a routing-step maximum of " << max_depth << " ft";
+}

@@ -1327,7 +1327,7 @@ negative-pressure siphon case the same study measures EXTRAN and both
 slots bottoming at 0.232 m of crest head, DW TPA at 0.174 m (0.031 m
 above the crest invert, NSE 0.57 on the 14.1 m pressure trace against
 −0.5 to −0.6 for the other dynamic-wave columns) and finite-volume TPA
-at 0.1037 m, 0.040 m *below* the invert — the quantified form of the
+at 0.1035 m, 0.040 m *below* the invert — the quantified form of the
 invert-floor limit above. To observe signed heads in the binary output
 file at all, set
 `REPORT_SIGNED_HEADS YES` (default `NO` preserves legacy bit-parity;

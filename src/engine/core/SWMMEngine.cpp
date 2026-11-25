@@ -7725,6 +7725,21 @@ void convertSnapshotToDisplay(SimulationSnapshot& s, const ucf::DisplayUnits& du
  *          posts it to the IO thread for asynchronous writing.
  */
 void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
+    // Legacy-parity interpolation weight at the report instant (output.c:650):
+    // f = (reportTime - OldRoutingTime) / (NewRoutingTime - OldRoutingTime).
+    // One report is emitted per routing step, so a REPORT_STEP shorter than the
+    // ROUTING_STEP leaves the report grid behind the routing clock and the
+    // legacy formula EXTRAPOLATES: on the mixed-flow study's water-hammer
+    // deck (REPORT_STEP 0.001 under ROUTING_STEP 0.002) f reached -20 and the
+    // binary output carried 770 m of head where the solution peaked at 99.5 m.
+    // Legacy never gets here (project_validate refuses such a deck, ERROR 195);
+    // this engine keeps the report grid and clamps the weight so a lagging
+    // report carries the step's own start state instead of an extrapolation.
+    // Inert wherever the grid keeps up (f already in (0, 1]).
+    auto reportWeight = [this](double span) {
+        const double f = (span > 0.0) ? (ctx_.next_report_ms - ctx_.old_elapsed_ms) / span : 1.0;
+        return std::clamp(f, 0.0, 1.0);
+    };
     if (split_ && split_->role == SWMM_SPLIT_SURFACE && split_->settled_reports &&
         !split_->reporting) {
         split_->awaiting_report = hydraulics::TimestepController::output_due(ctx_);
@@ -7760,8 +7775,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
         // mode, where legacy takes the period average, is not reproduced.)
         {
             const double span = ctx_.elapsed_ms - ctx_.old_elapsed_ms;
-            const double f =
-                (span > 0.0) ? (ctx_.next_report_ms - ctx_.old_elapsed_ms) / span : 1.0;
+            const double f = reportWeight(span);
             const double f1 = 1.0 - f;
             const double ucf_len = ucf::UCF(ucf::LENGTH, ctx_.options);
             for (int i = 0; i < ctx_.n_nodes(); ++i) {
@@ -7803,8 +7817,7 @@ void SWMMEngine::postOutputSnapshot(double /*dt_step*/) {
             // all on the ms clock. The routing step brackets the report time
             // (elapsed_ms >= next_report_ms > old_elapsed_ms) so f ∈ (0, 1].
             const double route_span = ctx_.elapsed_ms - ctx_.old_elapsed_ms;
-            const double f_rt =
-                (route_span > 0.0) ? (ctx_.next_report_ms - ctx_.old_elapsed_ms) / route_span : 1.0;
+            const double f_rt = reportWeight(route_span);
             const double f1_rt = 1.0 - f_rt;
 
             // Node results — legacy node_getResults (node.c:483-494):

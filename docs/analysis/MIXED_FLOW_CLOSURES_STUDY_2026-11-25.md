@@ -120,18 +120,20 @@ best dynamic-wave column (NSE 0.57, crest 0.031 m above the invert, where the
 other dynamic-wave columns sit 0.09 m above it); in the 2026-08-31 round every
 dynamic-wave column scored −0.5 to −0.6 — the TPA continuity fix in the dynamic
 wave solver since then is what moved it. The explicit slot C1 completes but
-oscillates spuriously about the record (NSE 0.32; it failed loud at t = 0 on
-2026-08-31, before the §8.5.3 slot wave-speed bound). Unsteady friction is
-inert here (velocities of a few cm/s).
+oscillates spuriously about the record (NSE 0.69 after the F1 seeding fix,
+0.32 before it; it failed loud at t = 0 on 2026-08-31, before the §8.5.3 slot
+wave-speed bound) and never goes below atmospheric. Unsteady friction is
+inert here (velocities of a few cm/s). Table re-run after the F1 fix; the
+TPA columns moved by under 0.001.
 
 | column | NSE p141 | NSE v99 | crest min gauge head (m) | note |
 |---|---|---|---|---|
-| C1 | 0.321 | -32.245 | 0.036 |  |
+| C1 | 0.691 | -3.463 | 0.045 |  |
 | C2 | 0.548 | 0.278 | 0.044 |  |
-| C3 | 0.996 | 0.810 | -0.040 |  |
+| C3 | 0.996 | 0.815 | -0.040 |  |
 | C3i | 0.996 | 0.827 | -0.039 |  |
 | C4 | 0.545 | 0.269 | 0.044 |  |
-| C5 | 0.995 | 0.707 | -0.041 |  |
+| C5 | 0.996 | 0.770 | -0.040 |  |
 | C5i | 0.996 | 0.798 | -0.040 |  |
 | C6 | -0.516 | -0.787 | 0.090 |  |
 | C7 | -0.628 | -3.775 | 0.089 |  |
@@ -203,20 +205,21 @@ the dynamic-wave columns move by 0.2–2.8 s and their spikes change station.
 
 ### 3.3 E1 — water hammer
 
-The finite-volume solver reproduces the surge itself and not its decay. On
-the single-conduit deck (16 cells of 0.95 m) the explicit columns overshoot
-the Joukowsky peak (99.3 m measured and predicted) by 43 % (142.9 m) and the
-implicit ones by 34 % (133.2 m); on the same pipe cut into three conduits by
-two virtual junctions the explicit columns land on it (99.4–99.5 m). Every
-finite-volume column then damps the 4L/a oscillation two to three times
-faster than the apparatus (decay time constant 0.65–0.72 s explicit,
-1.1–1.2 s implicit, against 1.43 s measured), so by 2 s the simulated peaks
-are at 45–48 m against 58 m measured. That is why the unsteady-friction term,
-whose purpose is exactly the damping Pinto et al. reproduced at
-k3 = 0.015, cannot be exercised on this case: C5 differs from C3 by hundredths
-of NSE on the envelope and the k3 sweep (§4) is flat. Below the crown the slot
-floors the troughs at the pipe crown (0.02 m) while TPA carries them to −8 to
-−11 m against −7 m measured. The dynamic wave solver does not represent water
+The tables below are the matrix as re-run after the seeding fix of finding
+F1 (the first run's single-conduit cells overshot the Joukowsky peak by 43 %;
+see F1). On both decks the explicit columns land on the peak (99.4–99.5 m
+against 99.3 m measured and predicted) and the implicit ones overshoot it by a
+third (133 m); every finite-volume column then damps the 4L/a oscillation
+about twice as fast as the apparatus at the paper's 1 m cells and the
+matrix's Courant number of 0.66 (decay time constant 0.67–0.73 s explicit,
+1.2 s implicit, against 1.43 s measured), so by 2 s the simulated peaks are at
+46–48 m against 58 m measured and the envelope scores 0.14–0.57. The probes
+of §4.4 show the case is reproduced on a converged mesh: at 0.25 m cells and
+Courant 0.9, TPA without unsteady friction is under-damped (τ 3.2 s) and TPA
+with k3 = 0.015 matches the record (τ 1.18–1.25 s, envelope NSE 0.983–0.994,
+inset 0.56–0.64) — the paper's own finding. Below the crown the slot floors
+the troughs at the pipe crown (0.02 m) while TPA carries them to −8 to −11 m
+against −7 m measured. The dynamic wave solver does not represent water
 hammer: the slot columns give a 0.4 m rise and EXTRAN/TPA pin the sealed dead
 end at its 200 m surcharge cap.
 
@@ -512,6 +515,63 @@ threshold.
 | 150 | 12.33 | 10.92 | 12.32 |
 | 300 | 12.31 | — | 12.30 |
 
+### 4.4 Numerics probes after the matrix (same day; records in `results/summary_probe_*.csv`)
+
+Run on the engine with the F1 seeding fix, through the runner's `--set` overrides.
+
+**Soares (E1) is reproduced on a converged mesh.** On either deck, with 0.25 m
+cells, `FV_CFL 0.9` and the routing step equal to the Courant substep
+(0.00017 s): TPA explicit without unsteady friction gives the Joukowsky peak and
+an under-damped decay (τ 3.2 s against 1.43 s measured, envelope NSE −0.4 /
+−0.3); TPA explicit with Vítkovský friction at the paper's k3 = 0.015 gives the
+peak (99.5 m), τ 1.18–1.25 s and envelope NSE 0.983–0.994 on peaks and
+troughs (0.56–0.64 point-wise on the 2.0–2.4 s inset). At the paper's 1 m
+cells the scheme's own damping stands in for the term (Courant 0.9, no UF:
+τ 1.01 s, envelope 0.95 / 0.97; with UF 0.60 / 0.68), and at the matrix's
+Courant number of 0.66 it over-damps everything (§3.3). The issue's Soares
+criterion (NSE ≥ 0.90) is therefore met where the mesh is converged, and the
+unsteady-friction term does the job the paper assigns it.
+
+| Numerics (e1_soares, TPA explicit) | k3 | first peak (m) | τ (s) | envelope NSE peaks / troughs |
+|---|---|---|---|---|
+| dx 1 m, Cr 0.66 (matrix) | 0 | 99.5 | 0.66 | 0.19 / 0.31 |
+| dx 1 m, Cr 0.66 (matrix) | 0.015 | 99.5 | 0.71 | −0.05 / 0.10 |
+| dx 1 m, Cr 0.9 | 0 | 99.5 | 1.01 | 0.95 / 0.97 |
+| dx 1 m, Cr 0.9 | 0.015 | 99.5 | 0.77 | 0.60 / 0.68 |
+| dx 0.25 m, Cr 0.9 | 0 | 99.5 | 3.18 | −0.38 / −0.32 |
+| dx 0.25 m, Cr 0.9 | 0.015 | 99.5 | 1.18 | **0.983 / 0.992** |
+| dx 0.25 m, Cr 0.9, spliced deck | 0.015 | 99.5 | 1.25 | **0.994 / 0.996** |
+
+**A report step shorter than the routing step corrupts the output, not the
+solution (F8, fixed).** The probes that first looked like a "several substeps
+per routing step" blow-up (first peaks of 669–1495 m) all had `REPORT_STEP`
+below `ROUTING_STEP`; with the two equal, or the routing step cut to the
+Courant substep, every cadence gives 99.5 m, and the report file's own
+routing-step maximum reads 99.48 m in every case. The engine emitted one
+report per routing step, so a finer report grid fell behind the routing
+clock and the output interpolation weight reached −20. Legacy refuses such a
+deck (ERROR 195); this engine accepts it for the finite-volume solver, whose
+routing step is only a cadence, and now bounds the weight to [0, 1] so a
+lagging report carries a state the step held (gate
+`FvEngine.LaggingReportsStayWithinTheRoutingStep`). The grid still lags —
+the honest cadence for a water-hammer deck is `ROUTING_STEP` at or below
+`REPORT_STEP`; emitting every due report per routing step, or refusing the
+deck as legacy does, is the owner's design call (the 2D split-report protocol
+and two finite-volume accounting tests rely on the finer report grid).
+
+**Aureli (E4) does not yield to numerics.** Local time stepping off, Courant
+0.9 and 0.024 m cells give the best finite-volume result, the explicit slot at
+NSE 0.37 / 0.38 with the slosh timing fixed (bore 2.08 s against 2.005 s);
+local time stepping ON at Courant 0.9 degrades it (0.03 / −0.58, a spurious
+rise at 0.6 s), second order hurts (0.06 / −3.0), and TPA stays negative on the
+upstream station. The gap is the gate (an orifice law between a sealed and a
+dry node) and amplitude damping, not the closure.
+
+**E2 at the paper's Courant number** (0.95, one substep per routing step): the
+bore arrives at 5.92 s against 6.69 s measured — the matrix's 6.70 s at
+Courant 0.5 was partly dissipation slowing the bore; the pressure score (0.93)
+does not move.
+
 ## 5. Findings
 
 Against the issue's acceptance criteria:
@@ -519,7 +579,7 @@ Against the issue's acceptance criteria:
 | Criterion (issue #156) | Measured on 26e23cc5 |
 |---|---|
 | TPA-FV reproduces the 2006 rapid-filling experiment (bore arrival, head traces) | **Met.** Bore at 9.9 m 6.70 s against 6.69 s measured; pressure NSE 0.93, surge tank 0.85, velocity 0.60 (C3). |
-| TPA sustains sealed sub-atmospheric reaches the slot closure cannot | **Met.** Crest 0.040 m below the invert at NSE 0.996 (RMSE 4 mm); every slot column bottoms 0.036–0.089 m above it. |
+| TPA sustains sealed sub-atmospheric reaches the slot closure cannot | **Met.** Crest 0.040 m below the invert at NSE 0.996 (RMSE 4 mm); every slot column bottoms 0.044–0.090 m above it. |
 | UF reproduces Soares NSE ≥ 0.90 at the paper's (n, k3) | **Not met.** 0.015 point-wise, 0.14 / 0.40 on the envelope (single conduit); 0.24 / 0.37 (spliced). The solver damps the oscillation 2–3× faster than measured before any friction term acts (F2), and the single-conduit deck carries the dead-end defect (F1). |
 | UF reproduces Vasconcelos Neto NSE ≥ 0.9 | **Met for pressure and surge tank** (0.93, 0.86), **not for velocity** (0.62 best). |
 | UF reproduces Aureli NSE ≥ 0.8 | **Not met** by any column: best 0.35 / 0.34 (explicit slot without UF); the SVUF column scores −1.7 / −4.9. |
@@ -532,8 +592,16 @@ Findings for the engine (none fixed here):
   static, flow-free 45 m column with a sealed one-conduit dead-end junction
   launches a ±45 m transient (`results/_smoke/e1_P5_static.inp`); a
   virtual-junction splice or a storage-node dead end removes it. It doubles
-  E1's first water-hammer peak on the single-conduit deck. Falsifier: the
-  static deck; a fix should leave the spliced deck bit-identical.
+  E1's first water-hammer peak on the single-conduit deck. **Cause and fix
+  (same day):** `Router::initFv` seeded every conduit without a virtual
+  junction from the link's initial depth, clamped to the full depth by
+  legacy `initLinkDepths`, so the cells of a pressurized conduit started at
+  the crown while its nodes stood on the slot line; the first node solve
+  then walked the dead end down to its cells. Cells are now seeded from the
+  uncapped end-node average whenever it lies above the crown; free-surface
+  seeds are bit-identical (seven decks compared), the static column stays
+  at rest, and the single-conduit deck gives 99.4 m. Gate
+  `FvEngine.PressurizedDeadEndSeedsAtRest`.
 - **F2 — water-hammer decay is over-damped.** Both closures, at the paper's
   dx = 1 m and Cr 0.9, damp the 4L/a oscillation with τ = 0.65–0.72 s
   (explicit) / 1.1–1.2 s (implicit) against 1.43 s measured, so the
@@ -560,6 +628,12 @@ Findings for the engine (none fixed here):
   every column worse and its k3 response is non-monotone.
 - **F7 — input reference mismatch**: `[VIRTUAL_JUNCTIONS]` rows need an
   elevation token (§6).
+- **F8 — a report step shorter than the routing step extrapolates the
+  output** (§4.4): the report grid fell behind the routing clock and the
+  interpolation weight reached −20 (770 m in the `.out` for a 99.5 m
+  solution). The weight is now bounded; the lagging grid itself is a design
+  call left to the owner (refuse as legacy, or emit every due report per
+  step). **Bounded (same day); cadence open.**
 
 ## 6. Side findings (not fixed here)
 

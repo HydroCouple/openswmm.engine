@@ -487,7 +487,7 @@ implicit × TPA closes continuity at 0.000 %. An earlier probe recorded
 the implicit path under-tracking the explicit vacuum at a crest; the
 scoring against the digitized laboratory record (§8.4.6) does not
 reproduce that gap — the two land within a millimetre of each other at
-the crest minimum (0.1040 m implicit against 0.1037 m explicit, NSE
+the crest minimum (0.1040 m implicit against 0.1035 m explicit, NSE
 0.996 for both on the 14.1 m pressure trace) — so both are validated
 configurations for the sub-atmospheric class.
 
@@ -502,8 +502,8 @@ bit-parity, so sub-atmospheric heads are invisible in it by default.
 the `.out` HEAD field (both solvers; DEPTH stays floored; the default
 NO keeps bit parity). The measured payoff on the negative-pressure
 siphon validation case (§8.4.6, measured 2026-11-25): a minimum crest
-head of +0.1037 m — 0.0396 m below the crest invert of 0.1433 m — in
-the output file, where the slot-closure columns bottom out 0.036–0.044 m
+head of +0.1035 m — 0.0398 m below the crest invert of 0.1433 m — in
+the output file, where the slot-closure columns bottom out 0.044–0.046 m
 *above* the invert. The case is scored over the 40 s the deck runs,
 which is where its own header puts the boundary of the physics the
 model contains; the vacuum is still deepening monotonically when the
@@ -511,7 +511,7 @@ run ends, so this figure is a lower bound on the closure's reach, not
 a plateau. Scored against the record digitized from the source figures,
 the TPA columns reach NSE 0.996 on the 14.1 m pressure station at an
 RMSE of 4 mm — below the source figure's own ±8 mm resolution — while
-the best slot-closure column scores 0.55 and the best dynamic-wave
+the best slot-closure column scores 0.69 and the best dynamic-wave
 column (its own TPA port) 0.57. The sub-atmospheric decline is tracked
 to within what the published figure can resolve; this is the closure's
 measured payoff, and it is only observable with `REPORT_SIGNED_HEADS
@@ -609,16 +609,18 @@ representation of head below the crown (§8.11); the dynamic-wave TPA
 port holds its latch but is bounded by the node invert (Chapter 3
 §3.3.11). The explicit slot C1, which the 2026-08-31 round recorded as
 a loud failure at t = 0, completes on this engine after the slot
-wave-speed bound of §8.5.3 landed, and scores 0.32.
+wave-speed bound of §8.5.3 landed and, with the pressurized seeding of
+§8.4.6's water-hammer paragraph, scores 0.69 — while oscillating about
+the record and never going below atmospheric.
 
 | Column | NSE, pressure at 14.1 m | RMSE (m) | Minimum crest gauge head (m) |
 |---|---|---|---|
-| C1 FV slot explicit | 0.321 | 0.051 | +0.036 |
+| C1 FV slot explicit | 0.691 | 0.035 | +0.046 |
 | C2 FV slot implicit | 0.548 | 0.042 | +0.044 |
 | C3 FV TPA explicit | **0.996** | 0.004 | **−0.040** |
 | C3i FV TPA implicit | **0.996** | 0.004 | **−0.039** |
 | C4 FV slot implicit + UF | 0.545 | 0.042 | +0.044 |
-| C5 FV TPA explicit + UF | 0.995 | 0.004 | −0.041 |
+| C5 FV TPA explicit + UF | 0.996 | 0.004 | −0.040 |
 | C5i FV TPA implicit + UF | 0.996 | 0.004 | −0.040 |
 | C6 DW EXTRAN | −0.516 | 0.077 | +0.090 |
 | C7 DW slot | −0.628 | 0.079 | +0.089 |
@@ -664,27 +666,42 @@ property measured end to end.
 | C8 dynamic slot | 7.70 | spike / 0.75 / −0.52 | 7.65 | spike / 0.79 / −0.62 |
 | C9 TPA | 8.00 | spike / 0.73 / −0.58 | 8.85 | 0.75 / 0.79 / −0.66 |
 
-**E1, water hammer.** The finite-volume solver reproduces the surge
-itself and not its decay. On the single-conduit deck the explicit
-columns overshoot the Joukowsky peak (measured 99.3 m) by 43 %
-(142.9 m) and the implicit ones by 34 %; on the same pipe cut into
-three conduits by virtual junctions the explicit columns land on it
-(99.4–99.5 m). All columns then damp the 4L/a oscillation two to three
-times faster than the apparatus (decay time constant 0.65–0.72 s
-explicit, 1.1–1.2 s implicit, against 1.43 s measured), which is why
-the unsteady-friction term — whose whole purpose is the damping the
-paper reproduced at \f$k_{3}\f$ = 0.015 — cannot be exercised on this
-case: there is less oscillation left to damp than the record shows.
-Below the crown the slot floors the troughs at the pipe crown while TPA
-carries them to −8 to −11 m against a measured −7 m. The dynamic wave
-solver does not represent water hammer: the slots give a 0.4 m rise,
-and EXTRAN and TPA pin the sealed dead end at its surcharge cap.
-The single-conduit overshoot is an initialization defect, not physics:
-a *static*, flow-free 45 m column with a sealed one-conduit dead-end
-junction launches a ±45 m transient on its own, and the same column with
-one virtual junction at mid-length, or with a storage node as the dead
-end, stays at rest. It is recorded as a finite-volume follow-up in the
-memo (finding F1); the spliced deck's numbers describe the physics.
+**E1, water hammer.** The explicit columns land on the Joukowsky peak
+(99.4–99.5 m against 99.3 m measured; the implicit columns 133 m) and
+then, at the paper's 1 m cells and the matrix's Courant number of 0.66,
+damp the 4L/a oscillation about twice as fast as the apparatus (decay
+time constant 0.67–0.73 s explicit, 1.2 s implicit, against 1.43 s
+measured), so the envelope scores 0.14–0.19. The case is reproduced once
+the mesh is converged: at 0.25 m cells and Courant 0.9, TPA without
+unsteady friction is *under*-damped (τ = 3.2 s) and TPA with
+\f$k_{3}\f$ = 0.015 lands on the record (τ = 1.18–1.25 s, envelope
+NSE 0.98–0.99 on peaks and troughs, 0.56–0.64 point-wise on the inset),
+which is the paper's own finding: steady friction alone cannot supply
+the damping and the unsteady term does. The 1 m mesh's numerical damping
+happens to stand in for the term, which is why \f$k_{3}\f$ only hurts
+there. Below the crown the slot floors the troughs at the pipe crown
+while TPA carries them to −8 to −11 m against a measured −7 m. The
+dynamic wave solver does not represent water hammer: the slots give a
+0.4 m rise, and EXTRAN and TPA pin the sealed dead end at its surcharge
+cap.
+The study's first scoring round found the single-conduit deck
+overshooting that peak by 43 % (142.9 m) while the same pipe spliced by
+virtual junctions landed on it: an initialization defect, not physics.
+The cells of a conduit standing between two pressurized nodes were
+seeded at the crown (the link's initial depth is clamped to the full
+depth for the dynamic wave) while the nodes stood on the slot line, so a
+*static*, flow-free 45 m column launched a ±45 m transient on its own.
+Seeding the slot depth from the uncapped end-node heads (gate
+`FvEngine.PressurizedDeadEndSeedsAtRest`) leaves the column at rest and
+puts both decks on the same numbers. A second artifact met on the way was
+not the solver's either: with a `REPORT_STEP` shorter than the
+`ROUTING_STEP` the report grid falls behind the routing clock (one report
+per routing step) and the output interpolation extrapolated (770 m of
+head in the binary output where the solution peaked at 99.5 m). The
+interpolation weight is now bounded, so a lagging report carries a state
+the step held; the grid still lags, so a water-hammer deck should keep
+`ROUTING_STEP` at or below `REPORT_STEP` (legacy refuses the reverse
+outright, ERROR 195).
 
 **E4, the V-shaped pipe.** The explicit slot (C1) is the only configuration positive at
 both stations — NSE 0.35 at 3.00 m, 0.34 at 8.52 m, the first slosh
