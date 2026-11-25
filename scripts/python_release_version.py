@@ -8,8 +8,9 @@ resolve prints the version to stamp, or nothing when the committed version stand
 
     refs/tags/v<X.Y.Z[-phase.N]>  an engine release. The tag must equal CMakeLists.txt's
                                   version; prints its PEP 440 form (v6.0.0-alpha.4 -> 6.0.0a4).
-    refs/tags/py-v<version>       a Python-only release of that engine version: its PEP 440
-                                  form with .postN and/or .devN (py-v6.0.0a4.post1).
+    refs/tags/py-v<version>       the Python packages alone at that engine version: its PEP 440
+                                  form, optionally with .postN and/or .devN (py-v6.0.0a4,
+                                  py-v6.0.0a4.post1).
     --dev-run N                   development wheels: the PEP 440 form plus .devN.
 
 It exits 1, naming the problem, for a tag that does not fit. stamp writes a version of that
@@ -39,12 +40,11 @@ def resolve(ref: str, dev_run: int | None = None, root: Path | None = None) -> s
     release = engine_release(sync.ROOT if root is None else root)
     if ref.startswith("refs/tags/py-v"):
         version = ref[len("refs/tags/py-v"):]
-        m = re.fullmatch(re.escape(release["pep440"]) + SUFFIX, version)
-        if m is None or not (m.group(1) or m.group(2)):
+        if re.fullmatch(re.escape(release["pep440"]) + SUFFIX, version) is None:
             raise ValueError(
-                f"tag py-v{version} is not a Python-only release of {release['pep440']}: "
-                f"use py-v{release['pep440']}.postN or py-v{release['pep440']}.devN "
-                "(a release of the engine itself is a v tag)")
+                f"tag py-v{version} does not match CMakeLists.txt's version: use "
+                f"py-v{release['pep440']}, optionally with .postN and/or .devN "
+                "(another version needs scripts/bump_version.py first)")
         return version
     if ref.startswith("refs/tags/v"):
         tag = ref[len("refs/tags/v"):]

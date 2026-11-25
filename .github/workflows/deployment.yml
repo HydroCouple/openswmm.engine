@@ -2,7 +2,7 @@ name: Deployment
 
 # Releases (docs/releases/README.md):
 #   v<X.Y.Z[-phase.N]> tag   the engine: zips, wheels and sdist on a GitHub Release, then PyPI.
-#   py-v<PEP 440> tag        the Python packages alone (.postN and/or .devN), to PyPI.
+#   py-v<PEP 440> tag        the Python packages alone (optional .postN/.devN), to PyPI.
 #   a manual run on swmm6_rel development wheels on the rolling `dev` pre-release.
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
   #
   #  CMakeLists.txt is the source (scripts/bump_version.py writes the other
   #  declarations). A `v` tag must equal it; a `py-v` tag is a Python-only
-  #  release of it with .postN and/or .devN; a manual run on swmm6_rel builds
+  #  release of it, optionally with .postN and/or .devN; a manual run on swmm6_rel builds
   #  development wheels numbered by this workflow's run, for every interpreter
   #  (a full set takes 2-2.5 h, longer than the gap between pushes to the
   #  release pull request, which would cancel it). Other runs build the

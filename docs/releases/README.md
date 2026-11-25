@@ -38,16 +38,31 @@ It also runs the C++ unit-test gate and installs the wheels into fresh environme
 
 ## Releasing the Python packages alone: a `py-v` tag
 
-A `py-v` tag publishes the Python packages without an engine release. Use it for a bindings fix, or to put a development version on PyPI for a package that installs from there.
+A `py-v` tag publishes the Python packages without an engine release: an alpha or beta for testers, a bindings fix, or a development version for a package that installs from PyPI.
 
-The tag is the engine version's PEP 440 form followed by `.postN`, `.devN` or both:
+The tag is the PEP 440 form of the version in `CMakeLists.txt`, optionally followed by `.devN`, `.postN` or both:
+
+| To publish | `CMakeLists.txt` version | Tag |
+| --- | --- | --- |
+| a preview of alpha 5 | `6.0.0-alpha.5` | `py-v6.0.0a5.dev1` |
+| alpha 5 | `6.0.0-alpha.5` | `py-v6.0.0a5` |
+| a fix to alpha 5 | `6.0.0-alpha.5` | `py-v6.0.0a5.post1` |
+| beta 1 | `6.0.0-beta.1` | `py-v6.0.0b1` |
+| release candidate 1 | `6.0.0-rc.1` | `py-v6.0.0rc1` |
+| the release | `6.0.0` | `py-v6.0.0` |
 
 ```sh
-git tag py-v6.0.0a5.post1 && git push origin py-v6.0.0a5.post1   # a fix after 6.0.0a5
-git tag py-v6.0.0a5.dev3  && git push origin py-v6.0.0a5.dev3    # a preview before it
+python scripts/bump_version.py 6.0.0-beta.1   # only when the stage changes; commit it
+git tag py-v6.0.0b1 && git push origin py-v6.0.0b1
 ```
 
-The run builds every wheel and the sdist at that version from the tagged commit, which includes the engine as it is at that commit. It runs the wheel smoke tests and publishes to PyPI. It builds no engine archives and creates no GitHub Release. A tag for another engine version, or one without a suffix, is refused.
+A tag for any other version is refused before anything is built, so the wheels always report the same version as the engine inside them.
+
+The run builds every wheel and the sdist at that version from the tagged commit, which includes the engine as it is at that commit. It runs the wheel smoke tests and publishes to PyPI. It builds no engine archives and creates no GitHub Release.
+
+PyPI accepts each version once; deleting its files does not free the number. Each version adds about 760 MB toward PyPI's 10 GB limit for `openswmm`, which held 1.5 GB in November 2026. pip installs alphas, betas and release candidates only when asked: `pip install --pre openswmm`, or a pinned version such as `pip install openswmm==6.0.0b1`.
+
+A `v` tag of a version a `py-v` tag already published still makes the GitHub Release. Its PyPI step skips the files that are already there, so PyPI keeps the wheels from the `py-v` tag's commit. Tag the same commit with both to keep the two in step.
 
 ## Development wheels
 
@@ -63,7 +78,7 @@ The run builds wheels for every interpreter at `<version>.dev<run number>`. When
 pip install --pre --find-links https://github.com/HydroCouple/openswmm.engine/releases/expanded_assets/dev openswmm openswmm-gpu-omp
 ```
 
-These wheels are not on PyPI: a full set is about 475 MB, and PyPI limits a project to 10 GB.
+These wheels are not on PyPI: a full set is about 760 MB, and PyPI limits a project to 10 GB.
 
 ## One-time setup
 
@@ -76,4 +91,4 @@ PyPI accepts uploads from this workflow through trusted publishing; no token is 
 | Workflow | `deployment.yml` |
 | Environment | `pypi` |
 
-In the repository's settings, create the `pypi` environment. Adding required reviewers to it makes every PyPI upload wait for an approval.
+In the repository's settings, create the `pypi` environment and limit it to the tags `v*.*.*` and `py-v*` (Deployment branches and tags → Selected branches and tags), so only a release tag can upload. Adding required reviewers to it makes every PyPI upload wait for an approval.

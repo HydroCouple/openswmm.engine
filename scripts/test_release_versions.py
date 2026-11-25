@@ -120,14 +120,15 @@ class ResolveTests(unittest.TestCase):
             with self.subTest(ref=ref), self.assertRaises(ValueError):
                 self.resolve(ref)
 
-    def test_a_python_only_tag_carries_a_post_or_dev_suffix(self):
-        for version in ("6.2.0rc3.post1", "6.2.0rc3.dev4", "6.2.0rc3.post1.dev2"):
+    def test_a_python_only_tag_is_the_source_version_with_an_optional_suffix(self):
+        for version in ("6.2.0rc3", "6.2.0rc3.post1", "6.2.0rc3.dev4", "6.2.0rc3.post1.dev2"):
             with self.subTest(version=version):
                 self.assertEqual(self.resolve(f"refs/tags/py-v{version}"), version)
 
     def test_a_python_only_tag_that_does_not_fit_is_refused(self):
-        for version in ("6.2.0rc3", "6.2.0rc2.post1", "6.2.0rc3.dev", "6.2.0rc3-post1",
-                        "6.2.0-rc.3.post1", "6.2.0rc3.dev1.post2", "6.2.0rc3.post1 "):
+        for version in ("6.2.0", "6.2.0rc4", "6.2.0b1", "6.2.0rc2.post1", "6.2.0rc3.dev",
+                        "6.2.0rc3-post1", "6.2.0-rc.3", "6.2.0-rc.3.post1",
+                        "6.2.0rc3.dev1.post2", "6.2.0rc3.post1 ", "6.2.0rc3 "):
             with self.subTest(version=version), self.assertRaises(ValueError):
                 self.resolve(f"refs/tags/py-v{version}")
 
