@@ -443,6 +443,30 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         options_.mesh_scaled_to_si = true;
     }
 
+    // Connectivity must be checked BEFORE the topology build: buildMeshTopology
+    // indexes vx/vy/vz by every cell's vertex ids, and validateMesh (which also
+    // range-checks them) needs the areas that build computes. A deck whose
+    // [2D_TRIANGLES]/[2D_QUADS] row names a vertex [2D_VERTICES] never defined
+    // read past the vertex arrays here (found by fuzz_inp_open, 2026-11-24).
+    // The heat-preview path in openswmm_mesh_heat_impl.cpp already does this.
+    {
+        const int nv_total = mesh_.n_vertices();
+        for (int t = 0; t < mesh_.n_triangles(); ++t) {
+            const int nv = mesh_.cell_vertex_count(t);
+            if (nv != 3 && nv != 4)
+                throw std::runtime_error("2D mesh validation failed: Cell " + std::to_string(t) +
+                                         " has unsupported vertex count " + std::to_string(nv));
+            for (int k = 0; k < nv; ++k) {
+                const int v = mesh_.cell_vertex(t, k);
+                if (v < 0 || v >= nv_total)
+                    throw std::runtime_error(
+                        std::string("2D mesh validation failed: ") + (nv == 4 ? "Quad " : "Triangle ") +
+                        std::to_string(t) + " has out-of-range vertex index " + std::to_string(v) +
+                        " (mesh has " + std::to_string(nv_total) + " vertices)");
+            }
+        }
+    }
+
     // Build mesh topology (neighbours, edge geometry, areas)
     buildMeshTopology(mesh_);
 
