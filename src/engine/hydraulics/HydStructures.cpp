@@ -1012,7 +1012,12 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
 
         double hgl1 = nodes.depth[un1] + nodes.invert_elev[un1];
         double hgl2 = tailwaterHead(ctx, un1, un2);
-        double dir = (hgl1 >= hgl2) ? 1.0 : -1.0;
+        // legacy weir_getInflow: dir = (h1 > h2) ? +1 : -1, so equal heads
+        // run in reverse and a flap gate closes (orifices and outlets take
+        // h1 >= h2 as forward). Read forward, a surcharged gated weir between
+        // two full nodes reported its full depth where legacy reports 0
+        // (benchmarks 392-nodes).
+        double dir = (hgl1 > hgl2) ? 1.0 : -1.0;
 
         // ROADWAY weir — legacy weir_getInflow hands the swapped heads and
         // the DESIGN crest (invert + offset, no setting adjustment) to
@@ -1022,9 +1027,8 @@ void StructureSolver::computeWeirFlowK(SimulationContext& ctx, double* node_new_
         // (extran4-roadway's 90010, first overtopping step 0.0144 vs
         // legacy's HDS-5 0.0124 cfs).
         if (weirs_.weir_type[uk] == 4) {
-            // legacy: dir = (h1 > h2) ? +1 : -1 — equal heads run in
-            // reverse, and the submerged HDS-5 flow is not zero there.
-            dir = (hgl1 > hgl2) ? 1.0 : -1.0;
+            // Equal heads run in reverse (above), and the submerged HDS-5
+            // flow is not zero there.
             if (dir < 0.0)
                 std::swap(hgl1, hgl2);
             const double h_road =
