@@ -1622,10 +1622,16 @@ int SWMMEngine::initialize() noexcept {
             // legacy flowrout.c:507 books a conduit's initial volume over
             // link_getLength(i) — the ROUTING length (an IRREGULAR section's
             // flood-plain length, not its authored main-channel length).
-            double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
-            double vol = xsect::getAofY(xs, y) * len * barrels;
-            ctx_.links.volume[uj] = vol;
-            ctx_.links.old_volume[uj] = vol;
+            // Under IGNORE_ROUTING swmm_start never calls routing_open
+            // (swmm5.c:743), so the conduit keeps link_initState's volume of
+            // 0 beside its normal depth; booked here, the volume stayed in the
+            // system storage at every report (benchmarks 3525-nodes, 12 ft3).
+            if (!ctx_.options.ignore_routing) {
+                double len = (cr >= 0) ? CD.true_length[static_cast<std::size_t>(cr)] : 0.0;
+                double vol = xsect::getAofY(xs, y) * len * barrels;
+                ctx_.links.volume[uj] = vol;
+                ctx_.links.old_volume[uj] = vol;
+            }
         }
     }
 
@@ -1634,9 +1640,11 @@ int SWMMEngine::initialize() noexcept {
     // start with dry junctions and empty flowless conduits. Run for them, the
     // junction depth fed the first kinematic-wave step a volume drain legacy
     // does not have (benchmarks 193-h-h-si-units-elements). FV keeps the
-    // DW-class start.
-    const bool dw_class_init = ctx_.options.routing_model == RoutingModel::DYNWAVE ||
-                               ctx_.options.routing_model == RoutingModel::FV;
+    // DW-class start. Under IGNORE_ROUTING flowrout_init never runs, so no
+    // junction or outfall depth is seeded from the links.
+    const bool dw_class_init =
+        !ctx_.options.ignore_routing && (ctx_.options.routing_model == RoutingModel::DYNWAVE ||
+                                         ctx_.options.routing_model == RoutingModel::FV);
 
     // initNodeDepths (legacy flowrout.c): seed each non-storage / non-outfall
     // junction's initial depth from the AVERAGE of its connecting links' flow

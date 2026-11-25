@@ -1974,6 +1974,9 @@ add_gtest_unit(test_engine_hotstart_legacy_node_volume test_hotstart_legacy_node
 # A weir between two equal heads runs in reverse, as in legacy
 # (benchmarks 392-nodes).
 add_gtest_unit(test_engine_weir_equal_heads test_weir_equal_heads.cpp)
+# Under IGNORE_ROUTING a conduit with an initial flow starts as legacy's
+# does (benchmarks 3525-nodes).
+add_gtest_unit(test_engine_ignore_routing_initial_state test_ignore_routing_initial_state.cpp)
 # A pollutant name in a treatment expression reads the concentration the
 # expression's type calls for (Reference Manual Vol. III 5.4.2), in both
 # engines (benchmarks 193-h-h-si-units-elements).
