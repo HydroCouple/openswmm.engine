@@ -1795,7 +1795,8 @@ int SWMMEngine::initialize() noexcept {
         if (std::FILE* probe = openswmm::io::fopen_utf8(hs_path, "rb"))
             std::fclose(probe);
         else {
-            set_error(CFFI_ERR_HOTSTART, format_error(ERR_HOTSTART_FILE, hs_path).c_str());
+            set_error(CFFI_ERR_HOTSTART,
+                      format_error(ERR_HOTSTART_FILE, hs_path, "(USE HOTSTART)").c_str());
             return CFFI_ERR_HOTSTART;
         }
     }
