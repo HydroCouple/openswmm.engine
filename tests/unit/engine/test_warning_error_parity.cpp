@@ -454,3 +454,35 @@ TEST(WarningErrorParity, ShortNodeRowsAre203) {
         EXPECT_TRUE(contains(rpt_text, "ERROR 203")) << c.tag << "\n" << rpt_text;
     }
 }
+
+// Legacy node.c stops with ERROR 205 on an outfall type, divider type or
+// storage shape it does not know, before it counts the type's own items, so a
+// six-item storage row with an unknown shape is 205, not 203. The engine ran
+// such rows as FREE, with the default divider method, or as FUNCTIONAL. Decks
+// are written to short_rows/ beside the test data.
+TEST(WarningErrorParity, UnknownNodeTypeKeywordsAre205) {
+    std::filesystem::create_directories("short_rows");
+    std::string rpt_text;
+    const struct {
+        const char* tag;
+        const char* section;
+        const char* row;
+        const char* word;
+    } cases[] = {
+        {"outfall_unknown_type", "OUTFALLS", "O9  0  OPEN", "OPEN"},
+        {"outfall_unknown_type_four", "OUTFALLS", "O9  0  OPEN  5", "OPEN"},
+        {"divider_unknown_type", "DIVIDERS", "D9  6  C2  SPILL", "SPILL"},
+        {"storage_unknown_six", "STORAGE", "S9  4  10  0  BOWL  1000", "BOWL"},
+        {"storage_unknown_eight", "STORAGE", "S9  4  10  0  BOWL  1000  0  0", "BOWL"},
+    };
+    for (const auto& c : cases) {
+        const std::string inp = std::string("short_rows/") + c.tag + ".inp";
+        std::ofstream(inp) << shortRowsDeck(c.section, c.row);
+        EXPECT_NE(open_model(inp, std::string("short_rows/") + c.tag + ".rpt", rpt_text), 0)
+            << c.tag << " opened clean";
+        EXPECT_TRUE(contains(rpt_text, std::string("ERROR 205: invalid keyword ") + c.word))
+            << c.tag << "\n"
+            << rpt_text;
+        EXPECT_FALSE(contains(rpt_text, "ERROR 203")) << c.tag << "\n" << rpt_text;
+    }
+}

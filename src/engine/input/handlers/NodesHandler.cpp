@@ -269,11 +269,11 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
  *
  * A row with fewer items than legacy requires appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME
  * through add_unique and retain the earlier object. New rows and partial field writes are not
- * rolled back on later refusal/allocation. Creates OUTFALL subtype; unknown boundary token keeps
- * default FREE. FIXED stores project-length stage; TIDAL/TIMESERIES retain the boundary table name
- * with unresolved -1. FREE/NORMAL may include a * stage placeholder before gate. Route-to
- * subcatchment is looked up immediately and may stay -1; no target creation or full boundary
- * validation.
+ * rolled back on later refusal/allocation. Creates OUTFALL subtype; an unknown boundary type
+ * appends ERR_KEYWORD. FIXED stores project-length stage; TIDAL/TIMESERIES retain the boundary
+ * table name with unresolved -1. FREE/NORMAL may include a * stage placeholder before gate.
+ * Route-to subcatchment is looked up immediately and may stay -1; no target creation or full
+ * boundary validation.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -289,17 +289,23 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty())
             continue;
-        // Legacy outfall_readParams (node.c:1359, 1378): three items, and a
-        // fourth for the stage data of a FIXED, TIDAL or TIMESERIES outfall;
-        // fewer is ERROR 203. Such rows used to be skipped, or taken with a
-        // zero stage, without a word.
+        // Legacy outfall_readParams (node.c:1359-1379): three items, an
+        // outfall type it knows (else ERROR 205), and a fourth item for the
+        // stage data of a FIXED, TIDAL or TIMESERIES outfall; fewer is
+        // ERROR 203. Such rows used to be skipped, taken with a zero stage, or
+        // (an unknown type) run as FREE, without a word.
         if (tok.size() < 3) {
             ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
             continue;
         }
-        if (tok.size() < 4) {
+        {
             const std::string kind = Tokenizer::to_upper(tok[2]);
-            if (kind == "FIXED" || kind == "TIDAL" || kind == "TIMESERIES") {
+            const bool staged = kind == "FIXED" || kind == "TIDAL" || kind == "TIMESERIES";
+            if (!staged && kind != "FREE" && kind != "NORMAL") {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[2]));
+                continue;
+            }
+            if (staged && tok.size() < 4) {
                 ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
                 continue;
             }
@@ -390,8 +396,8 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
  * rolled back on later refusal/allocation. Retains diversion-link name and optional TABULAR curve
  * for post-parse resolution. CUTOFF/TABULAR use one method parameter, WEIR uses
  * qMin/dhMax/coefficient, OVERFLOW none; optional depth/initial/surcharge/ponded fields follow that
- * method-dependent tail. Unknown method keeps defaults; numeric parsing is permissive, without full
- * range/topology validation.
+ * method-dependent tail. An unknown method appends ERR_KEYWORD; numeric parsing is permissive,
+ * without full range/topology validation.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -403,18 +409,23 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty())
             continue;
-        // Legacy divider_readParams (node.c:1139-1195): four items, five for a
-        // TABULAR or CUTOFF divider and seven for a WEIR; fewer is ERROR 203.
-        // Such rows used to be skipped, or taken with zero parameters, without
-        // a word.
+        // Legacy divider_readParams (node.c:1139-1195): four items, a divider
+        // type it knows (else ERROR 205), five items for a TABULAR or CUTOFF
+        // divider and seven for a WEIR; fewer is ERROR 203. Such rows used to
+        // be skipped, taken with zero parameters, or (an unknown type) run
+        // with the default method, without a word.
         {
             std::size_t need = 4;
             if (tok.size() >= 4) {
                 const std::string kind = Tokenizer::to_upper(tok[3]);
-                if (kind == "TABULAR" || kind == "CUTOFF")
+                if (kind == "TABULAR" || kind == "CUTOFF") {
                     need = 5;
-                else if (kind == "WEIR")
+                } else if (kind == "WEIR") {
                     need = 7;
+                } else if (kind != "OVERFLOW") {
+                    ctx.errors.push_back(format_error(ERR_KEYWORD, tok[3]));
+                    continue;
+                }
             }
             if (tok.size() < need) {
                 ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
@@ -510,8 +521,8 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
  * through add_unique and retain the earlier object. New rows and partial field writes are not
  * rolled back on later refusal/allocation. Registers STORAGE with elevation/max/initial depth, then
  * TABULAR curve name, FUNCTIONAL coefficients or geometric p1/p2/p3 with derived quadratic
- * coefficients when valid. Unknown shape defaults FUNCTIONAL; invalid geometric derivation leaves
- * default coefficients. Tail supplies surcharge, evaporation fraction, then bare Ksat or
+ * coefficients when valid. An unknown shape appends ERR_KEYWORD; invalid geometric derivation
+ * leaves default coefficients. Tail supplies surcharge, evaporation fraction, then bare Ksat or
  * suction/Ksat/IMD. Keeps raw project-unit dimensions/comments; no final geometry/table/finite
  * validation or exfiltration state initialization.
  *
@@ -525,18 +536,23 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         auto tok = Tokenizer::tokenize(pl.data);
         if (tok.empty())
             continue;
-        // Legacy storage_readParams (node.c:672, 707): six items, and eight for
-        // every known shape but TABULAR (three shape parameters); fewer is
-        // ERROR 203. Rows of four or five items used to be taken as FUNCTIONAL
-        // with zero coefficients, and shorter ones skipped, without a word.
-        {
-            StorageShape kw_shape = StorageShape::FUNCTIONAL;
-            const bool known =
-                tok.size() > 4 && storage_shape_from_keyword(Tokenizer::to_upper(tok[4]), kw_shape);
-            if (tok.size() < 6 || (known && kw_shape != StorageShape::TABULAR && tok.size() < 8)) {
-                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
-                continue;
-            }
+        // Legacy storage_readParams (node.c:672-708): six items, a shape it
+        // knows (else ERROR 205), and eight items for every shape but TABULAR
+        // (three shape parameters); fewer is ERROR 203. Rows of four or five
+        // items used to be taken as FUNCTIONAL with zero coefficients, shorter
+        // ones skipped, and an unknown shape run as FUNCTIONAL, without a word.
+        if (tok.size() < 6) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
+        StorageShape sshape = StorageShape::FUNCTIONAL;
+        if (!storage_shape_from_keyword(Tokenizer::to_upper(tok[4]), sshape)) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+            continue;
+        }
+        if (sshape != StorageShape::TABULAR && tok.size() < 8) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
         }
 
         const std::string& name = tok[0];
@@ -552,14 +568,6 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.nodes.invert_elev[idx] = to_double(tok[1]); // Elev
         ctx.nodes.full_depth[idx] = to_double(tok[2]);  // MaxDepth
         ctx.nodes.init_depth[idx] = to_double(tok[3]);  // InitDepth
-
-        const std::string shape = Tokenizer::to_upper(tok[4]);
-
-        // Unknown keyword ⇒ leave the row at its FUNCTIONAL default, matching how
-        // every other handler here treats an unrecognised keyword (e.g. LinksHandler's
-        // SHAPE_MAP miss): these handlers have no error channel to report into.
-        StorageShape sshape = StorageShape::FUNCTIONAL;
-        storage_shape_from_keyword(shape, sshape);
         S.shape[srow] = sshape;
 
         if (sshape == StorageShape::TABULAR) {
