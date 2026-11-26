@@ -1249,6 +1249,12 @@ if(OPENSWMM_BUILD_2D)
     add_gtest_unit(test_engine_common_source_stage test_common_source_stage.cpp)
     add_gtest_unit(test_engine_sigma_conservation test_sigma_conservation.cpp)
     add_gtest_unit(test_engine_sigma_porewater_map test_sigma_porewater_map.cpp)
+    # Track 4A (2026-11-26): the parallel cell sweep and the ratio face loop
+    # equal the serial answers bit for bit; lateral Darcy converges under mesh
+    # refinement. Outputs under tests/output/gw2d_parallel_sweeps.
+    add_gtest_unit(test_engine_gw2d_parallel_sweeps test_gw2d_parallel_sweeps.cpp)
+    target_compile_definitions(test_engine_gw2d_parallel_sweeps PRIVATE
+        OPENSWMM_GW2D_SWEEP_TEST_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/output")
     target_compile_definitions(test_engine_common_source_stage PRIVATE OPENSWMM_R4_STAGE_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_stage_2026-10-06/models")
     target_compile_definitions(test_engine_source_water_driver PRIVATE OPENSWMM_R4_WATER_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_water_2026-10-05/models")
     target_compile_definitions(test_engine_source_clock_groups PRIVATE OPENSWMM_R4_CLOCK_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r4_clocks_2026-10-05/models")
