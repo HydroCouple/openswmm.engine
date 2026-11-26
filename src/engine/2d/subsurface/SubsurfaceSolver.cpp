@@ -565,7 +565,7 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
                 continue; // no-flow face
             const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
             const double Te = std::max({state_.hg[u], state_.hg[ju], 0.01 * zs});
-            sumT += Ke * Te * edges.xi[eu] * edges.inv_dx[eu];
+            sumT += Ke * Te * edges.xi[eu] * edges.inv_dx_normal[eu];
         }
     }
     if (u < cell_boundaries_.size())
@@ -891,7 +891,7 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         const std::size_t don = (dH > 0.0) ? l : r;
         const double T = state_.hg[don];
         const double K = harmonic(state_.Ks[l], state_.Ks[r]);
-        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH;
+        double Q = K * T * E.xi[eu] * E.inv_dx_normal[eu] * dH;
         const double Sy = std::max(face_yield[don], kSyFloor);
         const int nf = std::max(1, cell_nface_[don]);
         const double cap =
@@ -976,7 +976,7 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
                                                    gradient(int(r), s), ca, cb, B);
             if (porous_temperature) {
                 const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
-                dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+                dMd = alpha * std::abs(Q) * E.inv_dx_normal[eu] * dt * (ca - cb);
             }
             if (dMd == 0.0)
                 continue;
@@ -1281,7 +1281,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
 
         const double K = harmonic(state_.Ks[l], state_.Ks[r]);
 
-        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH; // m³/s, + is L→R
+        double Q = K * T * E.xi[eu] * E.inv_dx_normal[eu] * dH; // m³/s, + is L→R
 
         // Positivity: no face may take more than its share of the donor's
         // drainable water in one step. The share is split across the donor's
@@ -1439,7 +1439,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
                             // molecular phase heat, so only mechanical mixing
                             // rides this accepted water-temperature packet.
                             const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
-                            dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+                            dMd = alpha * std::abs(Q) * E.inv_dx_normal[eu] * dt * (ca - cb);
                         }
                         if (dMd == 0.0)
                             continue;

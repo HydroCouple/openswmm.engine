@@ -412,8 +412,10 @@ TEST(Gw2DLateralDarcy, StripConvergesUnderMeshRefinement) {
             RecordProperty(tag + "_err_analytic_over_delta", std::to_string(err_analytic / delta));
             RecordProperty(tag + "_err_finest_over_delta", std::to_string(err_self / delta));
             EXPECT_LT(run.drift, 1e-9) << "lateral Darcy must conserve the strip's water";
+            // Both layouts: the gradient arm is the face-normal projection of the centroid
+            // chord (inv_dx_normal), so the zigzag's skewed pairs no longer change the limit.
+            EXPECT_LT(err_analytic, .05 * delta) << "nx=" << nx;
             if (orthogonal) {
-                EXPECT_LT(err_analytic, .05 * delta) << "nx=" << nx;
                 if (nx == 16)
                     EXPECT_LT(err_self, 1e-3 * delta) << "coarsest mesh already converged";
                 if (previous > 0)
@@ -428,4 +430,6 @@ TEST(Gw2DLateralDarcy, StripConvergesUnderMeshRefinement) {
         layout_gap = std::max(layout_gap, std::abs(fine[0].hg[c] - valueAt(fine[1], fine[0].x[c])));
     RecordProperty("zigzag_vs_orthogonal_finest_over_delta", std::to_string(layout_gap / delta));
     csv << "layout_gap_over_delta,,,,," << layout_gap / delta << ",\n";
+    // With the centroid chord as the arm this gap was 2.7 % of the step (2026-11-26).
+    EXPECT_LT(layout_gap, 1e-6 * delta);
 }
