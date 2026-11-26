@@ -267,6 +267,38 @@ TEST(OptionsParserTest, MaxTrials) {
     EXPECT_EQ(ctx.options.max_trials, 8);
 }
 
+// THREADS keeps legacy atoi's grammar (numeric prefix, non-numeric -> 0) but
+// rejects values outside int. atoi wrapped 99999999999 to 1,215,752,191 and
+// the engine then hung asking OpenMP for that team (fuzz finding F2).
+TEST(OptionsParserTest, ThreadsPlainAndLegacyPrefix) {
+    SimulationContext ctx;
+    parse(ctx, {"THREADS  4"});
+    EXPECT_EQ(ctx.options.num_threads, 4);
+    EXPECT_TRUE(ctx.errors.empty());
+
+    SimulationContext prefix;
+    parse(prefix, {"THREADS  6abc"});
+    EXPECT_EQ(prefix.options.num_threads, 6);
+    EXPECT_TRUE(prefix.errors.empty());
+}
+
+TEST(OptionsParserTest, ThreadsOutOfIntRangeIsAnError) {
+    for (const char* v : {"99999999999", "2147483648", "-2147483649",
+                          "99999999999999999999999", "-1"}) {
+        SimulationContext ctx;
+        const int before = ctx.options.num_threads;
+        parse(ctx, {std::string("THREADS  ") + v});
+        ASSERT_EQ(ctx.errors.size(), 1u) << v;
+        EXPECT_NE(ctx.errors[0].find("ERROR 211"), std::string::npos) << ctx.errors[0];
+        EXPECT_EQ(ctx.options.num_threads, before) << v;
+    }
+
+    SimulationContext max_int;
+    parse(max_int, {"THREADS  2147483647"});
+    EXPECT_TRUE(max_int.errors.empty());
+    EXPECT_EQ(max_int.options.num_threads, 2147483647);
+}
+
 TEST(OptionsParserTest, HeadTolerance) {
     SimulationContext ctx;
     parse(ctx, {"HEAD_TOLERANCE  0.001"});

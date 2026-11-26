@@ -78,26 +78,45 @@ int kokkosOmpThreads();
  */
 void setKokkosOmpThreads(int n);
 
+/// Explicit THREADS requests are honoured up to this many threads per logical
+/// CPU (deliberate oversubscription stays allowed); larger requests are
+/// lowered to the ceiling with a warning. Guards against typos such as
+/// THREADS 99999999, which otherwise asked OpenMP for a ~1e8-thread team.
+constexpr int kMaxThreadsPerLogicalCpu = 8;
+
+/// Ceiling used when the logical CPU count is unknown, and the floor of the
+/// per-CPU ceiling on small machines.
+constexpr int kMaxThreadsUnknownCpus = 256;
+
+/**
+ * @brief Largest explicit team resolveRequested() will return on this machine.
+ *
+ * @return max(kMaxThreadsPerLogicalCpu x logical CPUs, kMaxThreadsUnknownCpus), or
+ *     kMaxThreadsUnknownCpus when the logical count is unknown.
+ */
+int maxExplicitThreads();
+
 /**
  * @brief Resolve a thread request and optionally append oversubscription diagnostics.
  *
  * For positive requests, warns when request+host reservation exceeds known logical CPUs; otherwise
  * warns above the current OpenMP maximum. On macOS can additionally warn above performance-cluster
- * size. No actual runtime team is changed. Caller keeps request+reservation representable as int.
+ * size. Positive requests above maxExplicitThreads() are lowered to it, with a warning. No actual
+ * runtime team is changed.
  *
  * @param[in] requested Requested team size; <=0 resolves from OpenMP maximum. Exactly zero
  *     additionally enables automatic core-clamp heuristics.
  * @param[in] what Borrowed non-null NUL-terminated activity label used in formatted warnings.
  * @param[in,out] warnings Optional caller-owned sink; new messages append without clearing existing
  *     entries.
- * @return OpenMP maximum for requested<=0; otherwise the positive request is returned unchanged.
+ * @return OpenMP maximum for requested<=0; otherwise min(requested, maxExplicitThreads()).
  */
 int resolveRequested(int requested, const char* what, std::vector<std::string>* warnings);
 
 /**
  * @brief Compare a team plus host reservation with known logical concurrency.
  *
- * @param[in] threads Team count; caller keeps threads+hostReservedThreads() representable as int.
+ * @param[in] threads Team count; the sum with hostReservedThreads() is formed in 64 bits.
  * @return True only when logical CPU count is known and the sum exceeds it; false when hardware
  *     count is unknown.
  */

@@ -90,6 +90,7 @@
 #include "../InputParseUtils.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstring>
@@ -661,11 +662,16 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
 
         } else if (key == "THREADS") {
             // Legacy atoi accepts a numeric prefix (and maps nonnumeric text to zero).
-            const int value = std::atoi(val.c_str());
-            if (value < 0)
+            // strtoll keeps that grammar but reports overflow: atoi on a value
+            // outside int is undefined and in practice wraps (99999999999 became
+            // 1,215,752,191 threads and hung start-up), so such values are
+            // rejected like any other bad number.
+            errno = 0;
+            const long long value = std::strtoll(val.c_str(), nullptr, 10);
+            if (errno == ERANGE || value < 0 || value > std::numeric_limits<int>::max())
                 ctx.errors.push_back(format_error(ERR_NUMBER, val));
             else
-                opt.num_threads = value;
+                opt.num_threads = static_cast<int>(value);
 
             // -----------------------------------------------------------------
             // Boolean flags

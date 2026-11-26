@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 #include <thread>
 
 #if defined(SWMM_USE_OPENMP)
@@ -81,7 +82,20 @@ int hostReservedThreads() {
 
 bool isOversubscribed(int threads) {
     const int logical = logicalCpus();
-    return logical > 0 && threads + hostReservedThreads() > logical;
+    // 64-bit sum: threads and the reservation are each at most INT_MAX.
+    return logical > 0 &&
+           static_cast<long long>(threads) + hostReservedThreads() > logical;
+}
+
+int maxExplicitThreads() {
+    const int logical = logicalCpus();
+    if (logical <= 0)
+        return kMaxThreadsUnknownCpus;
+    const long long cap = static_cast<long long>(logical) * kMaxThreadsPerLogicalCpu;
+    if (cap < kMaxThreadsUnknownCpus)
+        return kMaxThreadsUnknownCpus;
+    return cap > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max()
+                                                 : static_cast<int>(cap);
 }
 
 int resolveRequested(int requested, const char* what, std::vector<std::string>* warnings) {
@@ -89,14 +103,27 @@ int resolveRequested(int requested, const char* what, std::vector<std::string>* 
     if (requested <= 0)
         return omp_max;
 
-    const int nt = requested;
+    // Ceiling on explicit requests: oversubscription stays the caller's
+    // choice up to kMaxThreadsPerLogicalCpu threads per logical CPU, but a
+    // typo such as THREADS 99999999 must not ask the runtime for a team that
+    // large (start-up hung on a ~1.2e9 request).
+    const int ceiling = maxExplicitThreads();
+    const int nt = requested > ceiling ? ceiling : requested;
     if (!warnings)
         return nt;
 
     char buf[512];
+    if (nt < requested) {
+        std::snprintf(buf, sizeof buf,
+                      "THREADS = %d is above this machine's ceiling of %d for the %s "
+                      "(%d per logical processor, at least %d); using %d.",
+                      requested, ceiling, what, kMaxThreadsPerLogicalCpu,
+                      kMaxThreadsUnknownCpus, nt);
+        warnings->emplace_back(buf);
+    }
     const int logical = logicalCpus();
     const int reserved = hostReservedThreads();
-    if (logical > 0 && nt + reserved > logical) {
+    if (logical > 0 && static_cast<long long>(nt) + reserved > logical) {
         if (reserved > 0)
             std::snprintf(buf, sizeof buf,
                           "THREADS = %d plus the %d threads the host application reserves "
