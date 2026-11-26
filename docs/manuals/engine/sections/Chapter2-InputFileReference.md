@@ -1359,6 +1359,7 @@ Provides cross-section geometric data for conduit and regulator links of the dra
 
 Formats:
 Link    Shape            Geom1 Geom2 Geom3 Geom4 (Barrels Culvert)
+Link    CUSTOM          Geom1 Curve Geom3 Geom4 (Barrels Culvert)
 Link    IRREGULAR    Tsect
 Link    STREET          Street
 
@@ -1408,7 +1409,7 @@ CUSTOM    Full Height    Shape Curve
 4Size code of a standard shaped elliptical pipe as listed in Appendix A12. Leave blank (or 0) if the pipe has custom dimensions.
 5Size code of a standard arch pipe as listed in Appendix A13. Leave blank (or 0) if the pipe has custom dimensions).
 6Set to zero to use a standard modified baskethandle shape whose top radius is half the base width.
-The CUSTOM shape is a closed conduit whose width versus height is described by a user-supplied Shape Curve.
+The CUSTOM shape is a closed conduit whose width versus height is described by a user-supplied Shape Curve. Geom3 and Geom4 are not used by the shape but must still be present (enter 0) so that Barrels and Culvert fall in their columns: a row such as `C1 CUSTOM 10 MyCurve 2` stops the run with ERROR 203 (too few items), in this engine and in SWMM 5 alike. The SWMM 5.2 User's Manual shows the shorter form `Link CUSTOM Geom1 Curve (Barrels)`, which neither engine reads.
 An IRREGULAR cross-section is used to model an open channel whose geometry is described by a Transect object.
 A STREET cross-section is used to model street conduits and inlet flow capture (see the [INLETS] and [INLETS_USAGE] sections).
 The Culvert code number is used only for closed conduits acting as culverts that should be analyzed for inlet control conditions using the FHWA HDS-5 methodology.
