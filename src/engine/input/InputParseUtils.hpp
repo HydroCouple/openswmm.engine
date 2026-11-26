@@ -357,6 +357,20 @@ constexpr int legacy_findmatch(std::string_view tok,
 }
 
 /**
+ * @brief legacy_findmatch() over a word array, for a site that maps the index back to its word.
+ * @param[in] tok Borrowed token as authored.
+ * @param[in] words Keywords in legacy order.
+ * @return Zero-based index into words, or -1 when tok begins with none of them.
+ */
+template <std::size_t N>
+constexpr int legacy_findmatch(std::string_view tok, const std::string_view (&words)[N]) noexcept {
+    for (std::size_t i = 0; i < N; ++i)
+        if (legacy_match(tok, words[i]))
+            return static_cast<int>(i);
+    return -1;
+}
+
+/**
  * @brief Compare two whole words ignoring ASCII case, as legacy strcomp() does.
  *
  * Legacy uses this, not findmatch(), at a few sites (NONE/ALL in [REPORT], DRY_ONLY YES/NO in

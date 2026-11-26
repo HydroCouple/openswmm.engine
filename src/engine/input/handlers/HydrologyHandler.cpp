@@ -235,12 +235,20 @@ static void ensure_subcatch_gw_capacity(SimulationContext& ctx, int idx) {
  *     authoring units except the stated conversions.
  */
 void handle_evaporation(SimulationContext& ctx, const std::vector<std::string>& lines) {
+    // Legacy EvapTypeWords, in legacy order; climate_readEvapParams reads them with findmatch.
+    static constexpr std::string_view kEvapWords[] = {
+        "CONSTANT", "MONTHLY", "TIMESERIES", "TEMPERATURE", "FILE", "RECOVERY", "DRY_ONLY"};
     for (const auto& line : lines) {
         auto tok = Tokenizer::tokenize(line);
         if (tok.empty())
             continue;
 
-        const std::string key = Tokenizer::to_upper(tok[0]);
+        const int k = legacy_findmatch(tok[0], kEvapWords);
+        if (k < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0]));
+            continue;
+        }
+        const std::string_view key = kEvapWords[k];
 
         if (key == "CONSTANT" && tok.size() >= 2) {
             ctx.options.evap_type = 0;
@@ -266,7 +274,13 @@ void handle_evaporation(SimulationContext& ctx, const std::vector<std::string>& 
         } else if (key == "RECOVERY" && tok.size() >= 2) {
             ctx.options.evap_recovery_pat = tok[1];
         } else if (key == "DRY_ONLY" && tok.size() >= 2) {
-            ctx.options.evap_dry_only = Tokenizer::parse_boolean(tok[1]);
+            // Legacy compares whole words here (strcomp), so NOZ is ERROR 205.
+            if (legacy_strcomp(tok[1], "NO"))
+                ctx.options.evap_dry_only = false;
+            else if (legacy_strcomp(tok[1], "YES"))
+                ctx.options.evap_dry_only = true;
+            else
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
         }
     }
 }
@@ -295,7 +309,23 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
         if (tok.empty())
             continue;
 
-        const std::string key = Tokenizer::to_upper(tok[0]);
+        // This engine's own keys are taken as written (SNOWMELT_MODEL begins with the legacy
+        // SNOWMELT); any other key is read as legacy climate_readParams reads TempKeyWords,
+        // with findmatch, and is ERROR 205 when it begins with none of them.
+        static constexpr std::string_view kTempWords[] = {"TIMESERIES", "FILE", "WINDSPEED",
+                                                          "SNOWMELT", "ADC"};
+        std::string key = Tokenizer::to_upper(tok[0]);
+        const bool own_key = key == "SITE" || key == "SNOWMELT_MODEL" || key == "SNOW_STEP" ||
+                             key == "MET_FILE" || key == "SHORTWAVE" || key == "LONGWAVE" ||
+                             key == "HUMIDITY";
+        if (!own_key) {
+            const int k = legacy_findmatch(tok[0], kTempWords);
+            if (k < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0]));
+                continue;
+            }
+            key = kTempWords[k];
+        }
 
         if (key == "SITE" || key == "SNOWMELT_MODEL" || key == "SNOW_STEP" || key == "MET_FILE" ||
             key == "SHORTWAVE" || key == "LONGWAVE") {
@@ -322,23 +352,26 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
             }
             // Optional climate-file temperature units keyword (legacy tok[3]):
             //   C10 = tenths degC, C = degC, F = degF.
+            // Legacy reads it with findmatch over {C10, C, F}: ERROR 205 otherwise.
             if (tok.size() >= 4) {
-                const std::string u = Tokenizer::to_upper(tok[3]);
-                if (u == "C10")
-                    ctx.options.temp_units = 0;
-                else if (u == "C")
-                    ctx.options.temp_units = 1;
-                else if (u == "F")
-                    ctx.options.temp_units = 2;
+                const int units = legacy_findmatch(tok[3], {"C10", "C", "F"});
+                if (units < 0) {
+                    ctx.errors.push_back(format_error(ERR_KEYWORD, tok[3]));
+                    continue;
+                }
+                ctx.options.temp_units = units;
             }
         } else if (key == "WINDSPEED" && tok.size() >= 2) {
-            const std::string wtype = Tokenizer::to_upper(tok[1]);
-            if (wtype == "MONTHLY" && tok.size() >= 14) {
+            // Legacy: FILE compared as a whole word (strcomp); any other word is the monthly
+            // form, whose word legacy does not check, and which needs twelve values.
+            if (legacy_strcomp(tok[1], "FILE")) {
+                ctx.options.wind_type = 1;
+            } else if (tok.size() < 14) {
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            } else {
                 ctx.options.wind_type = 0;
                 for (int i = 0; i < 12; ++i)
                     ctx.options.wind_speed[i] = to_double(tok[2 + i]);
-            } else if (wtype == "FILE") {
-                ctx.options.wind_type = 1;
             }
         }
         // H2: relative humidity, % — the met input SurfaceExchange needs and
@@ -397,13 +430,15 @@ void handle_temperature(SimulationContext& ctx, const std::vector<std::string>& 
                 ctx.options.snow_max_melt = to_double(tok[8]);
             }
         } else if (key == "ADC" && tok.size() >= 12) {
-            const std::string surface = Tokenizer::to_upper(tok[1]);
-            if (surface == "IMPERVIOUS") {
+            // Legacy match()es IMPERV, then PERV; ERROR 205 otherwise.
+            if (legacy_match(tok[1], "IMPERV")) {
                 for (int i = 0; i < 10; ++i)
                     ctx.options.adc_imperv[i] = to_double(tok[2 + i]);
-            } else if (surface == "PERVIOUS") {
+            } else if (legacy_match(tok[1], "PERV")) {
                 for (int i = 0; i < 10; ++i)
                     ctx.options.adc_perv[i] = to_double(tok[2 + i]);
+            } else {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
             }
         }
     }
@@ -442,7 +477,21 @@ void handle_snowpacks(SimulationContext& ctx, const std::vector<std::string>& li
 
         ensure_snowpack_capacity(ctx.snowpacks, idx);
 
-        const std::string surface = Tokenizer::to_upper(tok[1]);
+        // UEB is this engine's own, taken as written; otherwise legacy snow_readMeltParams reads
+        // SnowmeltWords {PLOWABLE, IMPERV, PERV, REMOVAL} with findmatch, ERROR 205 when none
+        // matches.
+        static constexpr std::string_view kSnowWords[] = {"PLOWABLE", "IMPERV", "PERV", "REMOVAL"};
+        static constexpr std::string_view kSnowSurfaces[] = {"PLOWABLE", "IMPERVIOUS", "PERVIOUS",
+                                                             "REMOVAL"};
+        std::string_view surface = "UEB";
+        if (Tokenizer::to_upper(tok[1]) != "UEB") {
+            const int k = legacy_findmatch(tok[1], kSnowWords);
+            if (k < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+                continue;
+            }
+            surface = kSnowSurfaces[k];
+        }
 
         if (surface == "UEB") {
             const auto error = openswmm::surface::setSnowpackUeb(
@@ -742,12 +791,12 @@ void handle_gwf(SimulationContext& ctx, const std::vector<std::string>& lines) {
         }
         const std::string& subcatch = *canon;
 
-        // Legacy gwater.c accepts any "LAT..." spelling for LATERAL.
-        const std::string type_tok = Tokenizer::to_upper(tok[1]);
+        // Legacy gwater.c match()es LAT, then DEEP: any "LAT..." spelling is LATERAL and any
+        // "DEEP..." spelling DEEP.
         std::string type;
-        if (type_tok.rfind("LAT", 0) == 0)
+        if (legacy_match(tok[1], "LAT"))
             type = "LATERAL";
-        else if (type_tok == "DEEP")
+        else if (legacy_match(tok[1], "DEEP"))
             type = "DEEP";
         else {
             ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
@@ -832,9 +881,17 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
 
         const std::string layer = Tokenizer::to_upper(tok[1]);
 
-        // First line for a LID sets its type code (e.g., BC, RG, GR, etc.)
-        if (tok.size() == 2) {
+        // The LID's type. NODE is this engine's own, taken as written; otherwise legacy
+        // readLidControl reads tok[1] with findmatch over LidTypeWords first (BCZ is BC), on a
+        // row of any length, and only then over the layer words.
+        static constexpr std::string_view kLidTypes[] = {"BC", "RG", "GR", "IT",
+                                                         "PP", "RB", "RD", "VS"};
+        if (tok.size() == 2 && layer == "NODE") {
             ctx.lid_controls.lid_type[idx] = layer;
+            continue;
+        }
+        if (const int t = legacy_findmatch(tok[1], kLidTypes); t >= 0) {
+            ctx.lid_controls.lid_type[idx] = std::string(kLidTypes[t]);
             continue;
         }
 
@@ -870,14 +927,25 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             continue;
         }
 
+        // Layer rows: legacy LidLayerWords read with findmatch (DRAINMAT is listed before
+        // DRAIN), ERROR 205 when none matches.
+        static constexpr std::string_view kLidLayers[] = {
+            "SURFACE", "SOIL", "STORAGE", "PAVEMENT", "DRAINMAT", "DRAIN", "REMOVALS"};
+        const int lw = legacy_findmatch(tok[1], kLidLayers);
+        if (lw < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
+        }
+        const std::string_view layer_word = kLidLayers[lw];
+
         // Subsequent lines define layer parameters
-        if (layer == "SURFACE") {
+        if (layer_word == "SURFACE") {
             for (std::size_t i = 0; i < 5 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.surface[idx][i] = to_double(tok[2 + i]);
-        } else if (layer == "SOIL") {
+        } else if (layer_word == "SOIL") {
             for (std::size_t i = 0; i < 7 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.soil[idx][i] = to_double(tok[2 + i]);
-        } else if (layer == "PAVEMENT") {
+        } else if (layer_word == "PAVEMENT") {
             double degree = 0.0;
             if (tok.size() > 8 &&
                 (!parse_double_strict(tok[8], degree) || !(degree >= 0.0 && degree <= 1.0))) {
@@ -888,23 +956,23 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
                 pavement[i] = to_double(tok[2 + i]);
             pavement[6] = degree;
-        } else if (layer == "STORAGE") {
+        } else if (layer_word == "STORAGE") {
             auto& storage = ctx.lid_controls.storage[idx];
             for (std::size_t i = 0; i < 4 && (i + 2) < tok.size(); ++i)
                 storage[i] = to_double(tok[2 + i]);
             // Legacy readStorageData: covered only when the optional token matches YES.
             storage[4] =
                 tok.size() > 6 && Tokenizer::to_upper(tok[6]).starts_with("YES") ? 1.0 : 0.0;
-        } else if (layer == "DRAIN") {
+        } else if (layer_word == "DRAIN") {
             for (std::size_t i = 0; i < 6 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drain[idx][i] = to_double(tok[2 + i]);
             ctx.lid_controls.drain_curve.resize(ctx.lid_controls.names.size());
             if (tok.size() > 8)
                 ctx.lid_controls.drain_curve[idx] = tok[8];
-        } else if (layer == "DRAINMAT") {
+        } else if (layer_word == "DRAINMAT") {
             for (std::size_t i = 0; i < 3 && (i + 2) < tok.size(); ++i)
                 ctx.lid_controls.drainmat[idx][i] = to_double(tok[2 + i]);
-        } else if (layer == "REMOVALS") {
+        } else if (layer_word == "REMOVALS") {
             // Format: LID_ID REMOVALS  PollutName1  %Removal1  PollutName2  %Removal2 ...
             auto uidx = static_cast<std::size_t>(idx);
             if (ctx.lid_controls.removals.size() <= uidx)
@@ -924,9 +992,6 @@ void handle_lid_controls(SimulationContext& ctx, const std::vector<std::string>&
                     byname[uidx].push_back({tok[i], frac});
                 }
             }
-        } else {
-            // Unknown layer or it's actually the type code with params
-            ctx.lid_controls.lid_type[idx] = layer;
         }
     }
 }

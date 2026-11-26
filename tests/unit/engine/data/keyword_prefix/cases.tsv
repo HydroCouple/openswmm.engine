@@ -94,3 +94,48 @@ tr_nc_z	network.inp	NC   0.03	NCZ  0.03	same
 tr_x1_z	network.inp	X1   TR1	X1Z  TR1	same
 tr_gr_z	network.inp	GR   10	GRZ  10	same
 tr_bad	network.inp	GR   10	GG   10	refuse:205
+#
+# Hydrology and climate: RainTypeWords, GageDataWords, EvapTypeWords (DRY_ONLY
+# YES/NO compared as whole words), TempKeyWords (WINDSPEED FILE compared as a
+# whole word), ADC IMPERVIOUS/PERVIOUS, SnowmeltWords, LidTypeWords,
+# LidLayerWords, [GWF] LAT/DEEP and [ADJUSTMENTS] (already read by prefix).
+rg_intensity_z	hydrology.inp	G1   INTENSITY	G1   INTENSITYZ	same
+rg_volume_z	hydrology.inp	G2   VOLUME	G2   VOLUMEZ	same
+rg_cumulative_z	hydrology.inp	G3   CUMULATIVE	G3   CUMULATIVEZ	same
+rg_type_bad	hydrology.inp	G2   VOLUME	G2   VOL	refuse:205
+rg_source_z	hydrology.inp	TIMESERIES   R1	TIMESERIESZ  R1	same
+rg_source_bad	hydrology.inp	TIMESERIES   R1	SERIES   R1	refuse:205
+ev_monthly_z	hydrology.inp	MONTHLY       0.1	MONTHLYZ      0.1	same
+ev_recovery_z	hydrology.inp	RECOVERY      RP	RECOVERYZ     RP	same
+ev_dry_only_z	hydrology.inp	DRY_ONLY      YES	DRY_ONLYZ     YES	same
+ev_key_bad	hydrology.inp	RECOVERY      RP	RECOVER       RP	refuse:205
+ev_dry_only_suffix_bad	hydrology.inp	DRY_ONLY      YES	DRY_ONLY      YESZ	refuse:205
+ev_dry_only_word_bad	hydrology.inp	DRY_ONLY      YES	DRY_ONLY      MAYBE	refuse:205
+tmp_timeseries_z	hydrology.inp	TIMESERIES    TT	TIMESERIESZ   TT	same
+tmp_windspeed_z	hydrology.inp	WINDSPEED     MONTHLY	WINDSPEEDZ    MONTHLY	same
+tmp_wind_monthly_word	hydrology.inp	WINDSPEED     MONTHLY	WINDSPEED     MONTHLYZ	same
+tmp_snowmelt_z	hydrology.inp	SNOWMELT      34	SNOWMELTZ     34	same
+tmp_adc_z	hydrology.inp	ADC           IMPERVIOUS	ADCZ          IMPERVIOUS	same
+tmp_adc_imperv_z	hydrology.inp	ADC           IMPERVIOUS	ADC           IMPERVIOUSZ	same
+tmp_adc_perv_z	hydrology.inp	ADC           PERVIOUS	ADC           PERVIOUSZ	same
+tmp_adc_perv_short	hydrology.inp	ADC           PERVIOUS	ADC           PERV	same
+tmp_adc_bad	hydrology.inp	ADC           PERVIOUS	ADC           POROUS	refuse:205
+tmp_key_bad	hydrology.inp	SNOWMELT      34	MELT          34	refuse:205
+sp_plowable_z	hydrology.inp	SP1   PLOWABLE	SP1   PLOWABLEZ	same
+sp_impervious_z	hydrology.inp	SP1   IMPERVIOUS	SP1   IMPERVIOUSZ	same
+sp_pervious_z	hydrology.inp	SP1   PERVIOUS	SP1   PERVIOUSZ	same
+sp_imperv_short	hydrology.inp	SP1   IMPERVIOUS	SP1   IMPERV	same
+sp_removal_z	hydrology.inp	SP1   REMOVAL	SP1   REMOVALZ	same
+sp_bad	hydrology.inp	SP1   REMOVAL	SP1   REMOVE	refuse:205
+lid_type_z	hydrology.inp	LB   BC\n	LB   BCZ\n	same
+lid_type_lower	hydrology.inp	LR   RB\n	LR   rb\n	same
+lid_surface_z	hydrology.inp	LB   SURFACE	LB   SURFACEZ	same
+lid_soil_z	hydrology.inp	LB   SOIL	LB   SOILZ	same
+lid_storage_z	hydrology.inp	LR   STORAGE	LR   STORAGEZ	same
+lid_drain_z	hydrology.inp	LR   DRAIN 	LR   DRAINZ	same
+lid_drainmat_z	hydrology.inp	LG   DRAINMAT	LG   DRAINMATZ	same
+lid_pavement_z	hydrology.inp	LP   PAVEMENT	LP   PAVEMENTZ	same
+lid_layer_bad	hydrology.inp	LB   SOIL	LB   DIRT	refuse:205
+gwf_deep_z	hydrology.inp	S1   DEEP 	S1   DEEPER 	same
+gwf_lateral_short	hydrology.inp	S1   LATERAL	S1   LAT	same
+adj_temp_short	hydrology.inp	TEMPERATURE    2	TEMPZ          2	same

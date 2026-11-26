@@ -456,14 +456,13 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
 
         ensure_gage_capacity(ctx, idx);
 
-        // Format: VOLUME or INTENSITY → store in rain_type
-        const std::string fmt = Tokenizer::to_upper(tok[1]);
-        if (fmt == "VOLUME")
-            ctx.gages.rain_type[idx] = 1;
-        else if (fmt == "CUMULATIVE")
-            ctx.gages.rain_type[idx] = 2;
-        else
-            ctx.gages.rain_type[idx] = 0; // INTENSITY
+        // Format: legacy RainTypeWords read with findmatch (gage.c), ERROR 205 otherwise
+        const int rain_type = legacy_findmatch(tok[1], {"INTENSITY", "VOLUME", "CUMULATIVE"});
+        if (rain_type < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
+        }
+        ctx.gages.rain_type[idx] = rain_type;
 
         // Recording interval. SWMM specifies the rain-gage interval in
         // DECIMAL HOURS or "H:MM[:SS]" format — NOT seconds. A bare decimal
@@ -482,9 +481,14 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
         ctx.gages.snow_factor[idx] = to_double(tok[3], 1.0);
 
         // Source: TIMESERIES <name>  or  FILE "<path>"  or  FILE "<path:col>"
-        const std::string src = Tokenizer::to_upper(tok[4]);
+        // (legacy GageDataWords read with findmatch, ERROR 205 otherwise)
+        const int src = legacy_findmatch(tok[4], {"TIMESERIES", "FILE"});
+        if (src < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+            continue;
+        }
 
-        if (src == "TIMESERIES" && tok.size() > 5) {
+        if (src == 0 && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::TIMESERIES;
             ctx.gages.ts_name[idx] = tok[5]; // Store name for deferred resolution
             ctx.gages.ts_index[idx] = ctx.find_timeseries(tok[5]);
@@ -496,7 +500,7 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 if (sf > 0.0)
                     ctx.gages.scale_factor[idx] = sf;
             }
-        } else if (src == "FILE" && tok.size() > 5) {
+        } else if (src == 1 && tok.size() > 5) {
             ctx.gages.source[idx] = RainSource::FILE_RAIN;
 
             // tok[5] already has quotes stripped by the tokenizer.
@@ -537,8 +541,13 @@ void handle_raingages(SimulationContext& ctx, const std::vector<std::string>& li
                 if (tok.size() > 6 && tok[6] != "*")
                     ctx.gages.station_id[idx] = tok[6];
                 if (tok.size() > 7) {
-                    const std::string u = Tokenizer::to_upper(tok[7]);
-                    ctx.gages.rain_units[idx] = (u == "MM") ? 1 : 0; // default IN
+                    // legacy RainUnitsWords read with findmatch, ERROR 205 otherwise
+                    const int units = legacy_findmatch(tok[7], {"IN", "MM"});
+                    if (units < 0) {
+                        ctx.errors.push_back(format_error(ERR_KEYWORD, tok[7]));
+                        continue;
+                    }
+                    ctx.gages.rain_units[idx] = units;
                 }
                 // Optional start date (legacy gage.c:207-212): a token whose
                 // FIRST character is `*` means none; anything else must be a
