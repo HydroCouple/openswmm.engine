@@ -221,6 +221,10 @@ void node_validate(int nodeIndex) {
     // --- see if full depth was increased to accommodate conduit crown
     if (Node[nodeIndex].fullDepth > Node[nodeIndex].oldDepth && Node[nodeIndex].oldDepth > 0.0) {
         report_writeWarningMsg(WARN02, Node[nodeIndex].ID);
+    } else if (Node[nodeIndex].linkAboveFull) {
+        // --- a storage node without surcharge depth kept its full depth
+        //     below a link that rises above it (link_validate)
+        report_writeWarningMsg(WARN14, Node[nodeIndex].ID);
     }
 
     // --- check that initial depth does not exceed max. depth

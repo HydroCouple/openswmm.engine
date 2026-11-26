@@ -113,6 +113,7 @@ using openswmm::WARN_NEGATIVE_OFFSET;
 using openswmm::WARN_MIN_ELEV_DROP;
 using openswmm::WARN_REGULATOR_CREST_LOW;
 using openswmm::WARN_MAX_DEPTH_INCREASED;
+using openswmm::WARN_LINK_ABOVE_STORAGE;
 using openswmm::WARN_INLET_REMOVED;
 using openswmm::WARN_REPORT_OBJECT_UNDEFINED;
 
@@ -4069,6 +4070,10 @@ void resolve_cross_references(SimulationContext& ctx) {
     std::vector<double> authored_full_depth(ctx.nodes.full_depth.begin(),
                                             ctx.nodes.full_depth.end());
 
+    // A storage node with no surcharge depth keeps its full depth below a
+    // higher crown; it is flagged here for WARNING 14 (issue #6, USEPA #207).
+    std::vector<char> crown_above_storage(static_cast<std::size_t>(n_nodes), 0);
+
     // Extend a node's full depth to a connected link's crown.
     // Legacy link_validate (link.c:446-466): every node EXCEPT a storage node
     // with no surcharge depth. Virtual junctions are a v6 concept and stay
@@ -4079,8 +4084,11 @@ void resolve_cross_references(SimulationContext& ctx) {
         auto un = static_cast<std::size_t>(n);
         if (ctx.nodes.is_virtual[un])
             return;
-        if (ctx.nodes.type[un] == NodeType::STORAGE && !(ctx.nodes.sur_depth[un] > 0.0))
+        if (ctx.nodes.type[un] == NodeType::STORAGE && !(ctx.nodes.sur_depth[un] > 0.0)) {
+            if (crown > ctx.nodes.full_depth[un])
+                crown_above_storage[un] = 1;
             return;
+        }
         if (crown <= ctx.nodes.full_depth[un])
             return;
         ctx.nodes.full_depth[un] = crown;
@@ -4138,6 +4146,9 @@ void resolve_cross_references(SimulationContext& ctx) {
         if (ctx.nodes.full_depth[un] > authored_full_depth[un] && authored_full_depth[un] > 0.0) {
             ctx.warnings.push_back(
                 format_warning(WARN_MAX_DEPTH_INCREASED, ctx.node_names.name_of(n)));
+        } else if (crown_above_storage[un]) {
+            ctx.warnings.push_back(
+                format_warning(WARN_LINK_ABOVE_STORAGE, ctx.node_names.name_of(n)));
         }
     }
 

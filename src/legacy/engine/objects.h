@@ -506,6 +506,7 @@ typedef struct {
     int degree;                 // number of outflow links
     int inlet;                  // is an inlet BYPASS or CAPTURE node
     char updated;               // true if state has been updated
+    char linkAboveFull;         // a link's opening rises above fullDepth (storage, WARN14)
     double crownElev;           // top of highest flowing closed conduit (ft)
     double inflow;              // total inflow (cfs)
     double outflow;             // total outflow (cfs)

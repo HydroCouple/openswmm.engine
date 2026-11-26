@@ -450,6 +450,9 @@ Curb and gutter inlets can only be placed in conduits with a Street shaped cross
 WARNING 13:     parameters for same month provided more than once for Unit Hydrograph xxx.
 Two or more rows of the [HYDROGRAPHS] section give parameters for the same month of the same unit hydrograph. The last row read wins; the earlier ones are discarded.
 
+WARNING 14:     link opening extends above maximum depth of Storage Node xxx.
+The top of a conduit, orifice, weir or outlet connected to the storage node is higher than the node's maximum depth. A junction's maximum depth is raised to the top of its highest link (WARNING 02), and so is a storage node's when it has a surcharge depth. A storage node without one keeps the maximum depth it was given, so its water level never reaches the part of the opening above that depth, and water that would rise higher leaves the node as flooding. Check the node's maximum depth and the link's offset and height.
+
 WARNING 101:     Time Series xxx has duplicate x values.
 The series repeats a time or an abscissa. Interpolation uses the first of each duplicate, which is rarely what was meant.
 

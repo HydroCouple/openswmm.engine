@@ -487,6 +487,30 @@ TEST(WarningErrorParity, UnknownNodeTypeKeywordsAre205) {
     }
 }
 
+// Issue #6 (USEPA #207). A link whose opening rises above a node's maximum
+// depth raises a junction's depth with WARNING 02, but a storage node without
+// a surcharge depth keeps its own, as legacy link_validate does, and the
+// engine said nothing. It is WARNING 14 now; a storage node with a surcharge
+// depth is raised like a junction, and a crown level with the rim is quiet.
+TEST(WarningErrorParity, LinkAboveStorageMaxDepthWarns14) {
+    std::string rpt_text;
+    EXPECT_EQ(open_model("warnerr_storage_crown.inp", "warnerr_storage_crown.rpt", rpt_text), 0)
+        << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, "ERROR ")) << rpt_text;
+    const std::string w02 = "WARNING 02: maximum depth increased for Node ";
+    const std::string w14 = "WARNING 14: link opening extends above maximum depth of Storage Node ";
+    for (const char* id : {"W2Chamber", "SurChamber"}) {
+        EXPECT_TRUE(contains(rpt_text, w02 + id)) << id << "\n" << rpt_text;
+        EXPECT_FALSE(contains(rpt_text, w14 + id)) << id << "\n" << rpt_text;
+    }
+    for (const char* id : {"WeirChamber", "LowPond"}) {
+        EXPECT_TRUE(contains(rpt_text, w14 + id)) << id << "\n" << rpt_text;
+        EXPECT_FALSE(contains(rpt_text, w02 + id)) << id << "\n" << rpt_text;
+    }
+    EXPECT_FALSE(contains(rpt_text, w02 + "OkChamber")) << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, w14 + "OkChamber")) << rpt_text;
+}
+
 // Issue #36 (USEPA #104). Legacy removes an inlet whose design its conduit's
 // shape cannot host, with WARNING 12 (inlet_validate). The engine printed the
 // warning as "ERROR 635", and the usage stayed behind in the Street Inlet

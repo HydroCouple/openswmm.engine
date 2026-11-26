@@ -459,15 +459,22 @@ void link_validate(int j) {
         return;
 
     // --- extend upstream node's full depth to link's crown elevation
+    //     (a storage node with no surcharge depth keeps its own;
+    //     node_validate warns when the link rises above it)
     n = Link[j].node1;
     if (Node[n].type != STORAGE || Node[n].surDepth > 0.0) {
         Node[n].fullDepth = MAX(Node[n].fullDepth, Link[j].offset1 + Link[j].xsect.yFull);
+    } else if (Link[j].offset1 + Link[j].xsect.yFull > Node[n].fullDepth) {
+        Node[n].linkAboveFull = TRUE;
     }
 
     // --- do same for downstream node only for conduit links
     n = Link[j].node2;
     if ((Node[n].type != STORAGE || Node[n].surDepth > 0.0) && Link[j].type == CONDUIT) {
         Node[n].fullDepth = MAX(Node[n].fullDepth, Link[j].offset2 + Link[j].xsect.yFull);
+    } else if (Link[j].type == CONDUIT &&
+               Link[j].offset2 + Link[j].xsect.yFull > Node[n].fullDepth) {
+        Node[n].linkAboveFull = TRUE;
     }
 }
 
