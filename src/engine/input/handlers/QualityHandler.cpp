@@ -185,8 +185,13 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
 
         // SnowOnly
         if (tok.size() > 6) {
-            const std::string snow = Tokenizer::to_upper(tok[6]);
-            ctx.pollutants.snow_only[idx] = (snow == "YES" || snow == "1");
+            // legacy landuse.c: findmatch over NoYesWords, ERROR 205 otherwise
+            const int snow = legacy_no_yes(tok[6]);
+            if (snow < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[6]));
+                continue;
+            }
+            ctx.pollutants.snow_only[idx] = snow == 1;
         }
 
         // CoPollut

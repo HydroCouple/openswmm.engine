@@ -38,7 +38,7 @@ J2   95    10   0   0   0
 
 [OUTFALLS]
 O1   80   FREE   NO
-O2   80   FREE   NO
+O2   80   FREE   YES
 
 [STORAGE]
 SU1  85   10   0   TABULAR   SC1   0   0
@@ -53,6 +53,9 @@ P1   SU1   O1   PC1   ON   0   0
 [WEIRS]
 W1   J1   J2   TRANSVERSE   8   3.33   NO   0   0   NO
 
+[ORIFICES]
+OR1  J1   J2   SIDE   0   0.65   NO   0
+
 [OUTLETS]
 OL1  J2   O2   0   TABULAR/HEAD   OC1   NO
 
@@ -60,6 +63,13 @@ OL1  J2   O2   0   TABULAR/HEAD   OC1   NO
 C1   CIRCULAR   2   0   0   0   1
 C2   CIRCULAR   2   0   0   0   1
 W1   RECT_OPEN  1   2   0   0
+OR1  CIRCULAR   1   0   0   0
+
+[LOSSES]
+C1   0   0   0   NO   0
+
+[POLLUTANTS]
+TSS   MG/L   0   0   0   0   NO
 
 [CURVES]
 SC1  STORAGE   0    100

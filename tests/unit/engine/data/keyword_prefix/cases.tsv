@@ -28,3 +28,23 @@ hdr_timeseries_z	network.inp	[TIMESERIES]	[TIMESERIESZ]	same
 hdr_control	network.inp	[CONTROLS]	[CONTROL]	same
 hdr_report_z	network.inp	[REPORT]	[REPORTZ]	same
 hdr_lower_prefix	network.inp	[JUNCTIONS]	[junc]	same
+#
+# YES/NO and OFF/ON flags: legacy findmatch over NoYesWords / OffOnWords; a
+# word that begins with neither is ERROR 205.
+flag_outfall_noz	network.inp	O1   80   FREE   NO\n	O1   80   FREE   NOZ\n	same
+flag_outfall_yesz	network.inp	O2   80   FREE   YES\n	O2   80   FREE   YESZ\n	same
+flag_outfall_bad	network.inp	O1   80   FREE   NO\n	O1   80   FREE   SHUT\n	refuse:205
+flag_pump_onz	network.inp	PC1   ON   0	PC1   ONZ   0	same
+flag_pump_bad	network.inp	PC1   ON   0	PC1   RUN   0	refuse:205
+flag_weir_gate_noz	network.inp	3.33   NO   0	3.33   NOZ   0	same
+flag_weir_gate_bad	network.inp	3.33   NO   0	3.33   MAYBE   0	refuse:205
+flag_weir_surcharge_noz	network.inp	3.33   NO   0   0   NO	3.33   NO   0   0   NOZ	same
+flag_weir_surcharge_bad	network.inp	3.33   NO   0   0   NO	3.33   NO   0   0   MAYBE	refuse:205
+flag_orifice_noz	network.inp	0.65   NO	0.65   NOZ	same
+flag_orifice_bad	network.inp	0.65   NO	0.65   MAYBE	refuse:205
+flag_outlet_noz	network.inp	OC1   NO	OC1   NOZ	same
+flag_outlet_bad	network.inp	OC1   NO	OC1   MAYBE	refuse:205
+flag_losses_noz	network.inp	C1   0   0   0   NO   0	C1   0   0   0   NOZ   0	same
+flag_losses_bad	network.inp	C1   0   0   0   NO   0	C1   0   0   0   MAYBE   0	refuse:205
+flag_snow_nope	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   NOPE	same
+flag_snow_bad	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   MAYBE	refuse:205

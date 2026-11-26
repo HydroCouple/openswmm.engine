@@ -375,6 +375,24 @@ constexpr bool legacy_strcomp(std::string_view a, std::string_view b) noexcept {
     return true;
 }
 
+/**
+ * @brief Read a YES/NO flag column as legacy findmatch(tok, NoYesWords) does.
+ *
+ * This engine's TRUE/FALSE/1/0 are taken first, as whole words. Then a word that begins with NO
+ * is NO and one that begins with YES is YES ("NOZ" is NO). Legacy refuses any other word with
+ * ERROR 205, so callers do too.
+ *
+ * @param[in] tok Borrowed token as authored.
+ * @return 1 for yes, 0 for no, -1 when tok is neither.
+ */
+constexpr int legacy_no_yes(std::string_view tok) noexcept {
+    if (legacy_strcomp(tok, "TRUE") || tok == "1")
+        return 1;
+    if (legacy_strcomp(tok, "FALSE") || tok == "0")
+        return 0;
+    return legacy_findmatch(tok, {"NO", "YES"});
+}
+
 } /* namespace openswmm::input */
 
 #endif /* OPENSWMM_ENGINE_INPUT_PARSE_UTILS_HPP */

@@ -222,9 +222,15 @@ void handle_pumps(SimulationContext& ctx, const std::vector<std::string>& lines)
             ctx.links.pump_curve_name[idx] = tok[3];
             ctx.link_subtypes.pumps.curve[upr] = ctx.find_curve(tok[3]);
         }
-        // tok[4]: init status (ON/OFF)
+        // tok[4]: init status (legacy link.c pump_readParams: findmatch over OffOnWords,
+        // ERROR 205 when the word begins with neither OFF nor ON)
         if (tok.size() > 4) {
-            const bool on = Tokenizer::to_upper(tok[4]) == "ON";
+            const int state = legacy_findmatch(tok[4], {"OFF", "ON"});
+            if (state < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+            const bool on = state == 1;
             ctx.link_subtypes.pumps.init_state[upr] = on ? uint8_t{1} : uint8_t{0};
             double init_val = on ? 1.0 : 0.0;
             ctx.links.setting[idx] = init_val;
@@ -285,9 +291,15 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         // tok[5]: discharge coefficient
         if (tok.size() > 5)
             ctx.link_subtypes.orifices.cd[uorr] = to_double(tok[5]);
-        // tok[6]: flap gate (YES/NO)
-        if (tok.size() > 6)
-            ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[6]);
+        // tok[6]: flap gate (YES/NO; legacy findmatch, ERROR 205 otherwise)
+        if (tok.size() > 6) {
+            const int gated = legacy_no_yes(tok[6]);
+            if (gated < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[6]));
+                continue;
+            }
+            ctx.links.has_flap_gate[idx] = gated == 1;
+        }
         // tok[7]: open/close time (seconds)
         if (tok.size() > 7)
             ctx.link_subtypes.orifices.orate[uorr] = to_double(tok[7]);
@@ -353,9 +365,15 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         // tok[5]: discharge coefficient
         if (tok.size() > 5)
             ctx.link_subtypes.weirs.cd[uwr] = to_double(tok[5]);
-        // tok[6]: flap gate (YES/NO)
-        if (tok.size() > 6)
-            ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[6]);
+        // tok[6]: flap gate (YES/NO; legacy findmatch, ERROR 205 otherwise; '*' keeps NO)
+        if (tok.size() > 6 && tok[6] != "*") {
+            const int gated = legacy_no_yes(tok[6]);
+            if (gated < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[6]));
+                continue;
+            }
+            ctx.links.has_flap_gate[idx] = gated == 1;
+        }
         // tok[7]: end contractions
         if (tok.size() > 7)
             ctx.link_subtypes.weirs.end_contractions[uwr] = to_double(tok[7]);
@@ -363,9 +381,14 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         if (tok.size() > 8 && tok[8] != "*")
             ctx.link_subtypes.weirs.cd2[uwr] = to_double(tok[8]);
         // tok[9]: can-surcharge flag (legacy x[6], default YES)
-        if (tok.size() > 9 && tok[9] != "*")
-            ctx.link_subtypes.weirs.can_surcharge[uwr] =
-                (Tokenizer::to_upper(tok[9]) == "YES") ? uint8_t{1} : uint8_t{0};
+        if (tok.size() > 9 && tok[9] != "*") {
+            const int surcharge = legacy_no_yes(tok[9]);
+            if (surcharge < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[9]));
+                continue;
+            }
+            ctx.link_subtypes.weirs.can_surcharge[uwr] = static_cast<uint8_t>(surcharge);
+        }
         // tok[10] road width, tok[11] road surface (legacy weir_readParams
         // x[7], x[8]: read for a ROADWAY weir only; an unknown surface word
         // leaves 0 = no surface → the user's Cd is used as is)
@@ -469,8 +492,14 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         //   TABULAR/*    : Name N1 N2 Offset Type Curve  [Gated]  -> tok[6]
         //   FUNCTIONAL/* : Name N1 N2 Offset Type C1 C2  [Gated]  -> tok[7]
         const std::size_t gate_tok = is_tabular ? 6u : 7u;
-        if (tok.size() > gate_tok)
-            ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[gate_tok]);
+        if (tok.size() > gate_tok) {
+            const int gated = legacy_no_yes(tok[gate_tok]);
+            if (gated < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[gate_tok]));
+                continue;
+            }
+            ctx.links.has_flap_gate[idx] = gated == 1;
+        }
         if (!pl.comment.empty())
             ctx.links.comments[static_cast<std::size_t>(idx)] = pl.comment;
     }
@@ -738,8 +767,14 @@ void handle_losses(SimulationContext& ctx, const std::vector<std::string>& lines
             if (tok.size() > 5)
                 ctx.link_subtypes.conduits.seep_rate[ucr] = to_double(tok[5]);
         }
-        if (tok.size() > 4)
-            ctx.links.has_flap_gate[idx] = Tokenizer::parse_boolean(tok[4]);
+        if (tok.size() > 4) {
+            const int gated = legacy_no_yes(tok[4]); // legacy link.c: ERROR 205 otherwise
+            if (gated < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+            ctx.links.has_flap_gate[idx] = gated == 1;
+        }
     }
 }
 

@@ -367,9 +367,14 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
             ++next;
         }
 
-        // Gated (YES/NO)
+        // Gated (YES/NO; legacy node.c outfall_readParams findmatch, ERROR 205 otherwise)
         if (tok.size() > next) {
-            O.has_flap_gate[orow] = Tokenizer::parse_boolean(tok[next]);
+            const int gated = legacy_no_yes(tok[next]);
+            if (gated < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[next]));
+                continue;
+            }
+            O.has_flap_gate[orow] = gated == 1;
             ++next;
         }
 
