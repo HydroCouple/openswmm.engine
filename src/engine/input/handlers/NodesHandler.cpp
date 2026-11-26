@@ -201,8 +201,8 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 /**
  * @brief Parse virtual-junction authoring flags and optional drawing rim depth.
  *
- * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
- * object. New rows and partial field writes are not rolled back on later refusal/allocation.
+ * A bare name appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME through add_unique and retain
+ * the earlier object. New rows and partial field writes are not rolled back on later refusal/allocation.
  * Accepts NAME INVERT [RIM_DEPTH]; >3 tokens appends ERR_VJ_EXTRA_TOKENS before registration.
  * Creates JUNCTION type with is_virtual=1. Rim depth is max(0,to_double), used for rendering;
  * hydraulic properties derive from attached conduits later. No topology/coupling validation here.
@@ -215,8 +215,14 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
 void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 2)
+        if (tok.empty())
             continue;
+        // A bare name used to be skipped without a word, so the deck failed
+        // later with "undefined object" at the first conduit that named it.
+        if (tok.size() < 2) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         const std::string& name = tok[0];
 

@@ -697,6 +697,17 @@ TEST(VirtualJunction, ValidationRuleCodes) {
         expectOpenError("vj_err_tokens", m, "621");
     }
 
+    // 203: a bare name (no invert elevation). It used to be skipped without a
+    // word, so the open failed later with 209 "undefined object MID" at the
+    // first conduit that named it.
+    {
+        std::string m = splitModel(true);
+        const auto pos = m.find("MID     9.0");
+        ASSERT_NE(pos, std::string::npos);
+        m.replace(pos, 11, "MID");
+        expectOpenError("vj_err_bare_name", m, "203");
+    }
+
     // 609: only one conduit attached (drop C_DN; O_OUT dangles but the VJ
     // rule fires regardless).
     {

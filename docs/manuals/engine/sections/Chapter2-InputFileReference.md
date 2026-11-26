@@ -2056,13 +2056,15 @@ Purpose:
 Declares junction nodes that exist only to join two conduits, with no physical structure of their own.
 
 Format:
-    Name
+    Name  Elev  (MaxDepth)
 
 Parameters:
-Name    name of a junction declared in the [JUNCTIONS] section.
+Name    name of the virtual junction. The row declares the node; it is not listed in [JUNCTIONS].
+Elev    invert elevation (ft or m). The two attached conduits' ends sit on it, since their offsets at a virtual junction must be zero.
+MaxDepth    rim depth above the invert (ft or m), used only for drawing the ground line; optional (default 0, meaning none).
 
 Remarks:
-One token per line. Invert elevation and maximum depth are not read here — they are derived from the two attached conduits after parsing, so a virtual junction never imposes a node geometry of its own on the solution. Supplying any extra token is a parse error (ERROR 609).
+A virtual junction joins exactly two conduits of the same cross section. Its full depth for the solution is the pipe crown, derived from the attached conduits, so MaxDepth never affects results. A row with only a name is ERROR 203 (too few items); a fourth token is ERROR 621 (too many items). The connection rules (two conduits, matching sections, zero offsets, agreeing inverts, no coupling to a 2D surface mesh, DYNWAVE or FV routing) are ERRORs 609 to 619.
 
 This section has no counterpart in SWMM 5.
 
