@@ -116,12 +116,12 @@ static void ensure_spatial_capacity(SimulationContext& ctx, int n_nodes) {
 /**
  * @brief Parse ordinary junction definitions and retained object comments.
  *
- * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
- * object. New rows and partial field writes are not rolled back on later refusal/allocation.
- * Registers name/grows node before checking optional depth/surcharge/ponded-area values for
- * negativity; rejected values therefore leave a default registered row. Invert may be negative.
- * Stores JUNCTION type, elevations/depths and ponded area without a complete finite/numeric check;
- * post-parse supplies topology/solver initialization.
+ * A row with fewer items than legacy requires appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME
+ * through add_unique and retain the earlier object. New rows and partial field writes are not
+ * rolled back on later refusal/allocation. Registers name/grows node before checking optional
+ * depth/surcharge/ponded-area values for negativity; rejected values therefore leave a default
+ * registered row. Invert may be negative. Stores JUNCTION type, elevations/depths and ponded area
+ * without a complete finite/numeric check; post-parse supplies topology/solver initialization.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -135,8 +135,14 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
     ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 2)
+        if (tok.empty())
             continue;
+        // Legacy junc_readParams (node.c:611): a name without an elevation is
+        // ERROR 203. It used to be skipped without a word.
+        if (tok.size() < 2) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
 
         const std::string& name = tok[0];
 
@@ -202,8 +208,8 @@ void handle_junctions(SimulationContext& ctx, const std::vector<std::string>& li
  * @brief Parse virtual-junction authoring flags and optional drawing rim depth.
  *
  * A bare name appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME through add_unique and retain
- * the earlier object. New rows and partial field writes are not rolled back on later refusal/allocation.
- * Accepts NAME INVERT [RIM_DEPTH]; >3 tokens appends ERR_VJ_EXTRA_TOKENS before registration.
+ * the earlier object. New rows and partial field writes are not rolled back on later
+ * refusal/allocation. Accepts NAME INVERT [RIM_DEPTH]; >3 tokens appends ERR_VJ_EXTRA_TOKENS before registration.
  * Creates JUNCTION type with is_virtual=1. Rim depth is max(0,to_double), used for rendering;
  * hydraulic properties derive from attached conduits later. No topology/coupling validation here.
  *
@@ -261,12 +267,13 @@ void handle_virtual_junctions(SimulationContext& ctx, const std::vector<std::str
 /**
  * @brief Parse outfall boundary type, stage/reference and optional gate/route target.
  *
- * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
- * object. New rows and partial field writes are not rolled back on later refusal/allocation.
- * Creates OUTFALL subtype; unknown boundary token keeps default FREE. FIXED stores project-length
- * stage; TIDAL/TIMESERIES retain the boundary table name with unresolved -1. FREE/NORMAL may
- * include a * stage placeholder before gate. Route-to subcatchment is looked up immediately and may
- * stay -1; no target creation or full boundary validation.
+ * A row with fewer items than legacy requires appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME
+ * through add_unique and retain the earlier object. New rows and partial field writes are not
+ * rolled back on later refusal/allocation. Creates OUTFALL subtype; unknown boundary token keeps
+ * default FREE. FIXED stores project-length stage; TIDAL/TIMESERIES retain the boundary table name
+ * with unresolved -1. FREE/NORMAL may include a * stage placeholder before gate. Route-to
+ * subcatchment is looked up immediately and may stay -1; no target creation or full boundary
+ * validation.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -280,8 +287,23 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
     ctx.node_names.reserve(static_cast<std::size_t>(ctx.node_names.size()) + lines.size());
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 3)
+        if (tok.empty())
             continue;
+        // Legacy outfall_readParams (node.c:1359, 1378): three items, and a
+        // fourth for the stage data of a FIXED, TIDAL or TIMESERIES outfall;
+        // fewer is ERROR 203. Such rows used to be skipped, or taken with a
+        // zero stage, without a word.
+        if (tok.size() < 3) {
+            ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+            continue;
+        }
+        if (tok.size() < 4) {
+            const std::string kind = Tokenizer::to_upper(tok[2]);
+            if (kind == "FIXED" || kind == "TIDAL" || kind == "TIMESERIES") {
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                continue;
+            }
+        }
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.node_names, name, ctx.errors);
@@ -363,12 +385,13 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 /**
  * @brief Parse divider methods, deferred references and type-specific hydraulic fields.
  *
- * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
- * object. New rows and partial field writes are not rolled back on later refusal/allocation.
- * Retains diversion-link name and optional TABULAR curve for post-parse resolution. CUTOFF/TABULAR
- * use one method parameter, WEIR uses qMin/dhMax/coefficient, OVERFLOW none; optional
- * depth/initial/surcharge/ponded fields follow that method-dependent tail. Unknown method keeps
- * defaults; numeric parsing is permissive, without full range/topology validation.
+ * A row with fewer items than legacy requires appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME
+ * through add_unique and retain the earlier object. New rows and partial field writes are not
+ * rolled back on later refusal/allocation. Retains diversion-link name and optional TABULAR curve
+ * for post-parse resolution. CUTOFF/TABULAR use one method parameter, WEIR uses
+ * qMin/dhMax/coefficient, OVERFLOW none; optional depth/initial/surcharge/ponded fields follow that
+ * method-dependent tail. Unknown method keeps defaults; numeric parsing is permissive, without full
+ * range/topology validation.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -378,8 +401,26 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
 void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 4)
+        if (tok.empty())
             continue;
+        // Legacy divider_readParams (node.c:1139-1195): four items, five for a
+        // TABULAR or CUTOFF divider and seven for a WEIR; fewer is ERROR 203.
+        // Such rows used to be skipped, or taken with zero parameters, without
+        // a word.
+        {
+            std::size_t need = 4;
+            if (tok.size() >= 4) {
+                const std::string kind = Tokenizer::to_upper(tok[3]);
+                if (kind == "TABULAR" || kind == "CUTOFF")
+                    need = 5;
+                else if (kind == "WEIR")
+                    need = 7;
+            }
+            if (tok.size() < need) {
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                continue;
+            }
+        }
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.node_names, name, ctx.errors);
@@ -465,14 +506,14 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
 /**
  * @brief Parse storage geometry, raw shape parameters and optional exfiltration.
  *
- * Short rows skip; duplicate IDs append ERR_DUP_NAME through add_unique and retain the earlier
- * object. New rows and partial field writes are not rolled back on later refusal/allocation.
- * Registers STORAGE with elevation/max/initial depth, then TABULAR curve name, FUNCTIONAL
- * coefficients or geometric p1/p2/p3 with derived quadratic coefficients when valid. Unknown shape
- * defaults FUNCTIONAL; invalid geometric derivation leaves default coefficients. Tail supplies
- * surcharge, evaporation fraction, then bare Ksat or suction/Ksat/IMD. Keeps raw project-unit
- * dimensions/comments; no final geometry/table/finite validation or exfiltration state
- * initialization.
+ * A row with fewer items than legacy requires appends ERR_ITEMS; duplicate IDs append ERR_DUP_NAME
+ * through add_unique and retain the earlier object. New rows and partial field writes are not
+ * rolled back on later refusal/allocation. Registers STORAGE with elevation/max/initial depth, then
+ * TABULAR curve name, FUNCTIONAL coefficients or geometric p1/p2/p3 with derived quadratic
+ * coefficients when valid. Unknown shape defaults FUNCTIONAL; invalid geometric derivation leaves
+ * default coefficients. Tail supplies surcharge, evaporation fraction, then bare Ksat or
+ * suction/Ksat/IMD. Keeps raw project-unit dimensions/comments; no final geometry/table/finite
+ * validation or exfiltration state initialization.
  *
  * @param[in,out] ctx Model context receiving authored definitions and errors; caller supplies a
  *     coherent BUILDING/input phase and serializes edits.
@@ -482,8 +523,21 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
 void handle_storage(SimulationContext& ctx, const std::vector<std::string>& lines) {
     for (const auto& pl : parse_section(lines)) {
         auto tok = Tokenizer::tokenize(pl.data);
-        if (tok.size() < 4)
+        if (tok.empty())
             continue;
+        // Legacy storage_readParams (node.c:672, 707): six items, and eight for
+        // every known shape but TABULAR (three shape parameters); fewer is
+        // ERROR 203. Rows of four or five items used to be taken as FUNCTIONAL
+        // with zero coefficients, and shorter ones skipped, without a word.
+        {
+            StorageShape kw_shape = StorageShape::FUNCTIONAL;
+            const bool known =
+                tok.size() > 4 && storage_shape_from_keyword(Tokenizer::to_upper(tok[4]), kw_shape);
+            if (tok.size() < 6 || (known && kw_shape != StorageShape::TABULAR && tok.size() < 8)) {
+                ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
+                continue;
+            }
+        }
 
         const std::string& name = tok[0];
         int idx = add_unique(ctx.node_names, name, ctx.errors);
@@ -499,11 +553,6 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
         ctx.nodes.full_depth[idx] = to_double(tok[2]);  // MaxDepth
         ctx.nodes.init_depth[idx] = to_double(tok[3]);  // InitDepth
 
-        if (tok.size() < 5) {
-            if (!pl.comment.empty())
-                ctx.nodes.comments[static_cast<std::size_t>(idx)] = pl.comment;
-            continue;
-        }
         const std::string shape = Tokenizer::to_upper(tok[4]);
 
         // Unknown keyword ⇒ leave the row at its FUNCTIONAL default, matching how

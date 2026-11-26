@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -389,4 +390,67 @@ TEST(WarningErrorParity, CoverageOver100PercentWarns110) {
                          "WARNING 110: land use coverages of Subcatchment S3 add to more than 100"))
         << rpt_text;
     EXPECT_FALSE(contains(rpt_text, "Subcatchment S2 add to more")) << rpt_text;
+}
+
+namespace {
+// A deck whose node rows use each section's shortest legal form: a junction
+// with only an elevation, a FREE outfall, a TABULAR storage unit, an OVERFLOW
+// divider. `extra` is appended verbatim to [extra_section].
+std::string shortRowsDeck(const std::string& extra_section, const std::string& extra) {
+    std::ostringstream s;
+    auto section = [&](const char* name, const char* rows) {
+        s << "[" << name << "]\n" << rows;
+        if (extra_section == name)
+            s << extra << "\n";
+        s << "\n";
+    };
+    s << "[OPTIONS]\nFLOW_UNITS CFS\nFLOW_ROUTING DYNWAVE\nSTART_DATE 01/01/2020\n"
+         "END_DATE 01/01/2020\nEND_TIME 01:00:00\nREPORT_STEP 00:05:00\nROUTING_STEP 5\n\n";
+    section("JUNCTIONS", "J1  10\n");
+    section("OUTFALLS", "O1  0  FREE\nO2  0  FREE\n");
+    section("STORAGE", "ST  4  10  0  TABULAR  SC\n");
+    section("DIVIDERS", "DV  6  C2  OVERFLOW\n");
+    s << "[CONDUITS]\nC1  J1  DV  400  0.01  0  0\nC2  DV  O1  400  0.01  0  0\n"
+         "C3  DV  ST  400  0.01  0  0\nC4  ST  O2  400  0.01  0  0\n\n"
+         "[XSECTIONS]\nC1  CIRCULAR  1  0  0  0\nC2  CIRCULAR  1  0  0  0\n"
+         "C3  CIRCULAR  1  0  0  0\nC4  CIRCULAR  1  0  0  0\n\n"
+         "[CURVES]\nSC  STORAGE  0  100\nSC           10  100\n";
+    return s.str();
+}
+} // namespace
+
+// Legacy node.c reads every node row with a minimum item count and stops with
+// ERROR 203 below it: junctions 2; outfalls 3, and 4 for FIXED, TIDAL and
+// TIMESERIES; storage 6, and 8 for every shape but TABULAR; dividers 4, 5
+// for TABULAR and CUTOFF, 7 for WEIR. The engine skipped such rows, or took
+// them with zero parameters, without a word. Decks are written to
+// short_rows/ beside the test data.
+TEST(WarningErrorParity, ShortNodeRowsAre203) {
+    std::filesystem::create_directories("short_rows");
+    std::string rpt_text;
+    const std::string base_inp = "short_rows/base.inp";
+    std::ofstream(base_inp) << shortRowsDeck("", "");
+    EXPECT_EQ(open_model(base_inp, "short_rows/base.rpt", rpt_text), 0) << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, "ERROR ")) << rpt_text;
+
+    const struct {
+        const char* tag;
+        const char* section;
+        const char* row;
+    } cases[] = {
+        {"junction_bare", "JUNCTIONS", "J9"},
+        {"outfall_two_items", "OUTFALLS", "O9  0"},
+        {"outfall_fixed_no_stage", "OUTFALLS", "O9  0  FIXED"},
+        {"storage_four_items", "STORAGE", "S9  4  10  0"},
+        {"storage_functional_short", "STORAGE", "S9  4  10  0  FUNCTIONAL  1000"},
+        {"divider_cutoff_no_flow", "DIVIDERS", "D9  6  C2  CUTOFF"},
+        {"divider_weir_short", "DIVIDERS", "D9  6  C2  WEIR  1  2"},
+    };
+    for (const auto& c : cases) {
+        const std::string inp = std::string("short_rows/") + c.tag + ".inp";
+        std::ofstream(inp) << shortRowsDeck(c.section, c.row);
+        EXPECT_NE(open_model(inp, std::string("short_rows/") + c.tag + ".rpt", rpt_text), 0)
+            << c.tag << " opened clean";
+        EXPECT_TRUE(contains(rpt_text, "ERROR 203")) << c.tag << "\n" << rpt_text;
+    }
 }
