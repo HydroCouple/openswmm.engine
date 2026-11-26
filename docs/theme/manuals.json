@@ -30,8 +30,8 @@
         {"id": "HydroCoupleSDK", "title": "SDK", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleSDK/", "published": true, "nav": [{"title": "SDK developer guide", "url": "guide/index.html"}]},
         {"id": "HydroCoupleComposer", "title": "Composer", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComposer/", "published": true, "nav": [{"title": "Composer user guide", "url": "guide/index.html"}]},
         {"id": "HydroCoupleComponents", "title": "Provider components", "kind": "C++ reference", "url": "https://www.hydrocouple.org/HydroCoupleComponents/", "published": true},
-        {"id": "hydrocouple.platform", "title": "Execution platform", "kind": "Guide + API", "url": "https://www.hydrocouple.org/hydrocouple.platform/", "published": false},
-        {"id": "water-ontology", "title": "Water ontology", "kind": "Reference", "url": "https://www.hydrocouple.org/water-ontology/", "published": false}
+        {"id": "hydrocouple.platform", "title": "Execution platform", "kind": "Guide + API", "url": "https://www.hydrocouple.org/hydrocouple.platform/", "published": true},
+        {"id": "water-ontology", "title": "Water ontology", "kind": "Reference", "url": "https://www.hydrocouple.org/water-ontology/", "published": true}
       ]
     },
     {
