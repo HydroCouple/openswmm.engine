@@ -36,6 +36,7 @@
 #include "XSectBatch.hpp"
 #include "Link.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../core/UnitConversion.hpp"
 #include "HydStructures.hpp"
 #include "Node.hpp"
@@ -659,7 +660,15 @@ void finishRouting(SimulationContext& ctx, hydstruct::StructureSolver* structure
     // volume (legacy pump_validate). The engine-internal full_volume
     // convention (MIN_SURFAREA·fullDepth, for the DW surcharge test) must
     // not leak in here — it would let a junction store water legacy sheds.
-    std::vector<double> legacy_fv(static_cast<std::size_t>(n_nodes), 0.0);
+    // Per-call scratch, reused across steps (Track 1A, 2026-11-26: two fresh
+    // vectors of n_nodes per routing step were allocated and zeroed here). The
+    // references bind the CALLING thread's objects: the parallel node loop
+    // below runs on worker threads, whose own thread-local vectors are empty.
+    static thread_local std::vector<double> legacy_fv_tls;
+    static thread_local std::vector<int> degree_tls;
+    std::vector<double>& legacy_fv = legacy_fv_tls;
+    std::vector<int>& degree = degree_tls;
+    legacy_fv.assign(static_cast<std::size_t>(n_nodes), 0.0);
     {
         const double ucf_vol = ucf::Ucf[ucf::VOLUME][us];
         for (int j = 0; j < n_links; ++j) {
@@ -687,7 +696,7 @@ void finishRouting(SimulationContext& ctx, hydstruct::StructureSolver* structure
 
     // Outflow-link count per node (legacy toposort.c:75-91 — a link whose
     // upstream node is an outfall counts toward its DOWNSTREAM node).
-    std::vector<int> degree(static_cast<std::size_t>(n_nodes), 0);
+    degree.assign(static_cast<std::size_t>(n_nodes), 0);
     for (int j = 0; j < n_links; ++j) {
         auto uj = static_cast<std::size_t>(j);
         int n = (links.direction[uj] < 0) ? links.node2[uj] : links.node1[uj];
@@ -702,16 +711,11 @@ void finishRouting(SimulationContext& ctx, hydstruct::StructureSolver* structure
     }
 
     // --- legacy setNewNodeState for every node (flowrout.c:558-599) ---
-    for (int i = 0; i < n_nodes; ++i) {
-        auto ui = static_cast<std::size_t>(i);
-        if (nodes.type[ui] == NodeType::STORAGE) {
-            // Terminal storage (no outlet link) was never visited by the
-            // sorted-link loop; update it here (legacy flowrout.c:88-91).
-            if (ui >= storage_updated.size() || !storage_updated[ui])
-                updateStorageState(ctx, structures, order, static_cast<int>(order.size()), i, dt);
-            continue;
-        }
-
+    // Track 1A (2026-11-26): a non-storage node writes only its own rows, so
+    // those run in parallel when the node count warrants it; the storage
+    // updates (shared structures, curve lookups) follow serially in index
+    // order. Bit for bit the serial loop's results.
+    const auto set_node_state = [&](std::size_t ui) {
         double net = nodes.inflow[ui] - nodes.outflow[ui] - nodes.losses[ui];
         double v = nodes.old_volume[ui] + net * dt;
         if (v < constants::FUDGE)
@@ -732,6 +736,32 @@ void finishRouting(SimulationContext& ctx, hydstruct::StructureSolver* structure
         // from the conduit-end raises below.
         nodes.depth[ui] = 0.0;
         nodes.head[ui] = nodes.invert_elev[ui];
+    };
+    // Terminal storage (no outlet link) was never visited by the sorted-link
+    // loop; update it here (legacy flowrout.c:88-91).
+    const auto set_storage_state = [&](int i) {
+        auto ui = static_cast<std::size_t>(i);
+        if (ui >= storage_updated.size() || !storage_updated[ui])
+            updateStorageState(ctx, structures, order, static_cast<int>(order.size()), i, dt);
+    };
+    const int threads = threadinfo::perObjectThreads(ctx.options.num_threads, n_nodes);
+    if (threads > 1) {
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads)
+#endif
+        for (int i = 0; i < n_nodes; ++i)
+            if (nodes.type[static_cast<std::size_t>(i)] != NodeType::STORAGE)
+                set_node_state(static_cast<std::size_t>(i));
+        for (int i = 0; i < n_nodes; ++i)
+            if (nodes.type[static_cast<std::size_t>(i)] == NodeType::STORAGE)
+                set_storage_state(i);
+    } else {
+        for (int i = 0; i < n_nodes; ++i) {
+            if (nodes.type[static_cast<std::size_t>(i)] == NodeType::STORAGE)
+                set_storage_state(i);
+            else
+                set_node_state(static_cast<std::size_t>(i));
+        }
     }
 
     // --- legacy setNewLinkState → updateNodeDepth raises (flowrout.c:632) ---

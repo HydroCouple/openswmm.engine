@@ -33,6 +33,7 @@
 #include "fv/NetworkSolverFactory.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../core/UnitConversion.hpp"
 #include "Outfall.hpp"
 #include "AquiferLinkExchange.hpp" // G-X4
@@ -788,7 +789,11 @@ void Router::accumulateLinkStepStats(SimulationContext& ctx, double dt, bool in_
 void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) {
     auto& nodes = ctx.nodes;
     int n = ctx.n_nodes();
-    for (int i = 0; i < n; ++i) {
+    // Track 1A (2026-11-26): every node writes only its own rows, so the pass
+    // runs in parallel when the node count warrants it; storage nodes, whose
+    // losses read curve tables through the shared lookup cursor, follow in a
+    // serial pass in index order. Bit for bit the serial loop's results.
+    const auto init_node = [&](int i) {
         auto ui = static_cast<std::size_t>(i);
 
         // Compute storage node losses (evaporation + seepage)
@@ -890,6 +895,21 @@ void Router::initNodeFlows(SimulationContext& ctx, double dt, double evap_rate) 
         } else {
             nodes.overflow[ui] = 0.0;
         }
+    };
+    const int threads = threadinfo::perObjectThreads(ctx.options.num_threads, n);
+    if (threads > 1) {
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads)
+#endif
+        for (int i = 0; i < n; ++i)
+            if (nodes.type[static_cast<std::size_t>(i)] != NodeType::STORAGE)
+                init_node(i);
+        for (int i = 0; i < n; ++i)
+            if (nodes.type[static_cast<std::size_t>(i)] == NodeType::STORAGE)
+                init_node(i);
+    } else {
+        for (int i = 0; i < n; ++i)
+            init_node(i);
     }
 }
 

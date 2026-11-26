@@ -27,6 +27,7 @@
 #include "../core/Constants.hpp"
 #include "Outfall.hpp"
 #include "../core/SimulationContext.hpp"
+#include "../core/ThreadInfo.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/UnitConversion.hpp"
 #include "XSectBatch.hpp"
@@ -569,8 +570,36 @@ void setAllOutfallDepths(SimulationContext& ctx, double dt_routing) {
         // tests driving the solver directly) gets it built here.
         if (static_cast<int>(outs.link_idx.size()) != outs.count())
             buildOutfallLinkMap(ctx);
-        for (int r = 0; r < outs.count(); ++r)
-            process_outfall(outs.node_idx[static_cast<std::size_t>(r)]);
+        const int count = outs.count();
+        const int threads = threadinfo::perObjectThreads(ctx.options.num_threads, count);
+        if (threads > 1) {
+            // Track 1A (2026-11-26): a FREE, NORMAL or FIXED outfall writes only
+            // its own node, so those run in parallel when the count warrants it.
+            // A TIDAL or TIMESERIES stage lookup moves a table's shared cursor,
+            // so those rows keep their serial order among themselves afterwards.
+            // Bit for bit the serial loop's results.
+            const auto stateful = [&](int j) {
+                const auto t =
+                    outfallStatic(nodes, ctx.node_subtypes, static_cast<std::size_t>(j)).bc_type;
+                return t == OutfallType::TIDAL || t == OutfallType::TIMESERIES;
+            };
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads)
+#endif
+            for (int r = 0; r < count; ++r) {
+                const int j = outs.node_idx[static_cast<std::size_t>(r)];
+                if (!stateful(j))
+                    process_outfall(j);
+            }
+            for (int r = 0; r < count; ++r) {
+                const int j = outs.node_idx[static_cast<std::size_t>(r)];
+                if (stateful(j))
+                    process_outfall(j);
+            }
+        } else {
+            for (int r = 0; r < count; ++r)
+                process_outfall(outs.node_idx[static_cast<std::size_t>(r)]);
+        }
     } else {
         for (int j = 0; j < ctx.n_nodes(); ++j) {
             if (nodes.type[static_cast<std::size_t>(j)] == NodeType::OUTFALL)

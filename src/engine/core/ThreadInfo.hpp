@@ -160,6 +160,22 @@ int dwThreads(int requested, int n_conduits, std::vector<std::string>* warnings)
  */
 int twoDThreads(int requested, int n_triangles, std::vector<std::string>* warnings);
 
+/// Objects below which a per-object pass (one node or subcatchment per iteration, each
+/// writing only its own rows) stays serial: the fork/join is not paid for on less.
+constexpr int kMinObjectsPerParallelPass = 16384;
+
+/**
+ * @brief Thread count for a per-object engine pass (Track 1A, 2026-11-26).
+ *
+ * @param[in] option_threads The model's THREADS option; nonpositive resolves from the OpenMP
+ *     maximum.
+ * @param[in] n Object count of the pass.
+ * @return 1 below kMinObjectsPerParallelPass, inside an active parallel region, or without
+ *     SWMM_USE_OPENMP; otherwise the option or the OpenMP maximum. The passes that use it
+ *     keep every reduction serial and in index order, so their results do not depend on it.
+ */
+int perObjectThreads(int option_threads, int n) noexcept;
+
 } // namespace threadinfo
 } // namespace openswmm
 

@@ -4823,6 +4823,13 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
     const double LANDAREA_TO_FT2 = 1.0 / ucf::UCF(ucf::LANDAREA, ctx_.options);
 
     const auto& rsoa = runoff_.soa();
+    // The land-area factor the statistics divide by, hoisted as the same
+    // division. (Track 1A, 2026-11-26, tried and rejected here: forming the
+    // four totals' terms in a parallel pass and summing them in order cost
+    // more than it saved — 0.35 → 0.60 s at one thread on the 200k deck, no
+    // gain at 8 — because the per-subcatchment work is already cheaper than a
+    // second pass over the terms.)
+    const double landarea_ucf = ucf::UCF(ucf::LANDAREA, ctx_.options);
     for (int i = 0; i < ctx_.n_subcatches(); ++i) {
         if (ownsSpatialSource(i))
             continue;
@@ -4879,11 +4886,9 @@ void SWMMEngine::accumulateRunoffMassBalance(double dt_runoff) noexcept {
         if (ctx_.subcatches.runoff[ui] > ctx_.subcatches.stat_max_runoff[ui])
             ctx_.subcatches.stat_max_runoff[ui] = ctx_.subcatches.runoff[ui];
         ctx_.subcatches.stat_precip_vol[ui] +=
-            rain_ftsec * (ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options)) *
-            dt_runoff;
+            rain_ftsec * (ctx_.subcatches.area[ui] / landarea_ucf) * dt_runoff;
         ctx_.subcatches.stat_runon_vol[ui] +=
-            ctx_.subcatches.runon_rate[ui] *
-            (ctx_.subcatches.area[ui] / ucf::UCF(ucf::LANDAREA, ctx_.options)) * dt_runoff;
+            ctx_.subcatches.runon_rate[ui] * (ctx_.subcatches.area[ui] / landarea_ucf) * dt_runoff;
         ctx_.subcatches.stat_runoff_vol[ui] += ctx_.subcatches.runoff[ui] * dt_runoff;
     }
 
@@ -6112,15 +6117,7 @@ void SWMMEngine::ensureXspCache() noexcept {
 // is large enough to repay starting the team. Order-dependent sums stay in
 // serial loops of their own, so the result does not depend on the count.
 static int perObjectThreads(const SimulationContext& ctx, int n) noexcept {
-#if defined(SWMM_USE_OPENMP)
-    if (n < 16384 || omp_in_parallel())
-        return 1;
-    return ctx.options.num_threads > 0 ? ctx.options.num_threads : threadinfo::ompMaxThreads();
-#else
-    (void)ctx;
-    (void)n;
-    return 1;
-#endif
+    return threadinfo::perObjectThreads(ctx.options.num_threads, n);
 }
 
 void SWMMEngine::accumulateNodeRoutingTotals(double half_step) noexcept {
