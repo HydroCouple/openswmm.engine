@@ -1,0 +1,30 @@
+# Keyword prefix parity cases (issue #96). One case per line, tab-separated:
+#   id    deck    find    replace    expect
+# The case deck is <deck> with the one occurrence of <find> replaced by <replace>
+# (\n and \t escapes allowed). expect is either
+#   same        the run gives the same .out bytes as <deck> itself, or
+#   refuse:NNN  the run is refused and the report has ERROR NNN.
+# Every expectation is checked against EPA SWMM 5.2.4 and OpenSWMM 5.3.0 by
+# tests/verification/name_keyword_case_96_2026-11-26/oracle_cases.py.
+#
+# Section headers: legacy findmatch over SectWords, a header that begins with a
+# section word is that section.
+hdr_junc	network.inp	[JUNCTIONS]	[JUNC]	same
+hdr_curve	network.inp	[CURVES]	[CURVE]	same
+hdr_xsect	network.inp	[XSECTIONS]	[XSECT]	same
+hdr_evap	network.inp	[EVAPORATION]	[EVAP]	same
+hdr_infil	network.inp	[INFILTRATION]	[INFIL]	same
+hdr_options_z	network.inp	[OPTIONS]	[OPTIONSZ]	same
+hdr_raingage	network.inp	[RAINGAGES]	[RAINGAGE]	same
+hdr_subcatch	network.inp	[SUBCATCHMENTS]	[SUBCATCHMENT]	same
+hdr_subarea	network.inp	[SUBAREAS]	[SUBAREA]	same
+hdr_outfall	network.inp	[OUTFALLS]	[OUTFALL]	same
+hdr_storage_z	network.inp	[STORAGE]	[STORAGEZ]	same
+hdr_conduit	network.inp	[CONDUITS]	[CONDUIT]	same
+hdr_pump	network.inp	[PUMPS]	[PUMP]	same
+hdr_weir	network.inp	[WEIRS]	[WEIR]	same
+hdr_outlet	network.inp	[OUTLETS]	[OUTLET]	same
+hdr_timeseries_z	network.inp	[TIMESERIES]	[TIMESERIESZ]	same
+hdr_control	network.inp	[CONTROLS]	[CONTROL]	same
+hdr_report_z	network.inp	[REPORT]	[REPORTZ]	same
+hdr_lower_prefix	network.inp	[JUNCTIONS]	[junc]	same

@@ -36,6 +36,7 @@
 #include <string>
 #include <vector>
 #include <charconv>
+#include <initializer_list>
 #include "../core/charconv_compat.hpp"
 #include "../core/DateTime.hpp"
 #include "../core/ErrorCodes.hpp"
@@ -295,6 +296,83 @@ inline int add_unique(NameIndex& reg, const std::string& name, std::vector<std::
         }
     }
     return idx;
+}
+
+// ============================================================================
+// Legacy keyword matching (input.c match / findmatch / strcomp)
+// ============================================================================
+
+/**
+ * @brief Uppercase an ASCII letter the way legacy UCHAR() does; other bytes are unchanged.
+ * @param[in] c Byte to fold.
+ * @return The uppercase letter for 'a'..'z', otherwise c.
+ */
+constexpr char legacy_upper(char c) noexcept {
+    return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 'a' + 'A') : c;
+}
+
+/**
+ * @brief Test whether a token begins with a keyword, as legacy match() does.
+ *
+ * Case is ignored (ASCII) and leading blanks of the token are skipped. So "fixed_stage" begins
+ * with FIXED and "LPSX" with LPS, but "FIX" does not begin with FIXED.
+ *
+ * @param[in] tok Borrowed token as authored.
+ * @param[in] word Borrowed keyword; an empty keyword matches nothing.
+ * @return True when tok, after leading blanks, starts with every character of word.
+ */
+constexpr bool legacy_match(std::string_view tok, std::string_view word) noexcept {
+    if (word.empty())
+        return false;
+    std::size_t i = 0;
+    while (i < tok.size() && tok[i] == ' ')
+        ++i;
+    if (tok.size() - i < word.size())
+        return false;
+    for (std::size_t j = 0; j < word.size(); ++i, ++j)
+        if (legacy_upper(tok[i]) != legacy_upper(word[j]))
+            return false;
+    return true;
+}
+
+/**
+ * @brief The first keyword a token begins with, as legacy findmatch() does.
+ *
+ * Callers pass legacy's list in legacy's order (keywords.c): when one keyword begins another, the
+ * one listed first wins, as in legacy.
+ *
+ * @param[in] tok Borrowed token as authored.
+ * @param[in] words Keywords in legacy order.
+ * @return Zero-based index into words, or -1 when tok begins with none of them.
+ */
+constexpr int legacy_findmatch(std::string_view tok,
+                               std::initializer_list<std::string_view> words) noexcept {
+    int i = 0;
+    for (const std::string_view w : words) {
+        if (legacy_match(tok, w))
+            return i;
+        ++i;
+    }
+    return -1;
+}
+
+/**
+ * @brief Compare two whole words ignoring ASCII case, as legacy strcomp() does.
+ *
+ * Legacy uses this, not findmatch(), at a few sites (NONE/ALL in [REPORT], DRY_ONLY YES/NO in
+ * [EVAPORATION], FILE in [TIMESERIES]), so a suffixed keyword does not match there.
+ *
+ * @param[in] a Borrowed first word.
+ * @param[in] b Borrowed second word.
+ * @return True when both are nonempty, the same length and equal ignoring case.
+ */
+constexpr bool legacy_strcomp(std::string_view a, std::string_view b) noexcept {
+    if (a.empty() || a.size() != b.size())
+        return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (legacy_upper(a[i]) != legacy_upper(b[i]))
+            return false;
+    return true;
 }
 
 } /* namespace openswmm::input */

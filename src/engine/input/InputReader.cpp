@@ -35,6 +35,7 @@
 #include <deque>
 #include <fstream>
 #include <istream>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -45,9 +46,9 @@
 namespace openswmm::input {
 
 namespace {
-// Legacy SectWords (keywords.c). findmatch() accepts a header that merely
-// BEGINS with one of them ("[PROFILES]" is "[PROFILE"), so such a header
-// draws no unknown-section warning even when v6 has no handler for it.
+// Legacy SectWords (keywords.c), in legacy order. findmatch() accepts a header
+// that merely BEGINS with one of them ("[CURVE]" is "[CURVE", "[JUNC]" is
+// "[JUNC"), so legacy reads such a header as that section.
 constexpr const char* kLegacySectionWords[] = {
     "TITLE",        "OPTION",      "FILE",       "RAINGAGE", "TEMPERATURE", "EVAP",
     "SUBCATCHMENT", "SUBAREA",     "INFIL",      "AQUIFER",  "GROUNDWATER", "SNOWPACK",
@@ -60,6 +61,33 @@ constexpr const char* kLegacySectionWords[] = {
     "MAP",          "LID_CONTROL", "LID_USAGE",  "GWF",      "ADJUSTMENT",  "EVENT",
     "STREET",       "INLET_USAGE", "INLET"};
 
+// This engine's tag for each entry of kLegacySectionWords, in the same order.
+constexpr const char* kLegacySectionTags[] = {
+    "TITLE",         "OPTIONS",      "FILES",        "RAINGAGES", "TEMPERATURE", "EVAPORATION",
+    "SUBCATCHMENTS", "SUBAREAS",     "INFILTRATION", "AQUIFERS",  "GROUNDWATER", "SNOWPACKS",
+    "JUNCTIONS",     "OUTFALLS",     "STORAGE",      "DIVIDERS",  "CONDUITS",    "PUMPS",
+    "ORIFICES",      "WEIRS",        "OUTLETS",      "XSECTIONS", "TRANSECTS",   "LOSSES",
+    "CONTROLS",      "POLLUTANTS",   "LANDUSES",     "BUILDUP",   "WASHOFF",     "COVERAGES",
+    "INFLOWS",       "DWF",          "PATTERNS",     "RDII",      "HYDROGRAPHS", "LOADINGS",
+    "TREATMENT",     "CURVES",       "TIMESERIES",   "REPORT",    "COORDINATES", "VERTICES",
+    "POLYGONS",      "LABELS",       "SYMBOLS",      "BACKDROP",  "TAGS",        "PROFILES",
+    "MAP",           "LID_CONTROLS", "LID_USAGE",    "GWF",       "ADJUSTMENTS", "EVENTS",
+    "STREETS",       "INLET_USAGE",  "INLETS"};
+static_assert(std::size(kLegacySectionWords) == std::size(kLegacySectionTags));
+
+/**
+ * @brief The legacy section a normalized tag begins with (legacy findmatch over SectWords).
+ *
+ * @param[in] tag Borrowed uppercase tag without brackets; no normalization here.
+ * @return Index into kLegacySectionWords of the first word tag begins with, or -1.
+ */
+int legacy_section_index(const std::string& tag) {
+    for (std::size_t i = 0; i < std::size(kLegacySectionWords); ++i)
+        if (tag.rfind(kLegacySectionWords[i], 0) == 0)
+            return static_cast<int>(i);
+    return -1;
+}
+
 /**
  * @brief Test whether a normalized tag begins with a legacy section keyword.
  *
@@ -67,10 +95,7 @@ constexpr const char* kLegacySectionWords[] = {
  * @return True for any legacy keyword prefix, including extended suffixes; false otherwise.
  */
 bool legacy_knows_section(const std::string& tag) {
-    for (const char* w : kLegacySectionWords)
-        if (tag.rfind(w, 0) == 0)
-            return true;
-    return false;
+    return legacy_section_index(tag) >= 0;
 }
 } // namespace
 
@@ -310,6 +335,13 @@ bool InputReader::read_blocks(LineBlocks& blocks, SimulationContext& ctx) {
                 if (!header.empty() && header.back() == ']') {
                     flush_section();
                     current_tag = parse_section_header(header);
+                    // A tag this engine registers is taken as written (6.0-only sections such
+                    // as [INLET_JUNCTIONS] and [RDII_DECAY] begin with a legacy word). Any other
+                    // tag that begins with a legacy section word is read as that section.
+                    if (!current_tag.empty() && !registry_.has(current_tag)) {
+                        if (const int k = legacy_section_index(current_tag); k >= 0)
+                            current_tag = kLegacySectionTags[k];
+                    }
                     skip = std::find(sections_to_skip_.begin(), sections_to_skip_.end(),
                                      current_tag) != sections_to_skip_.end();
                     views = !skip && !current_tag.empty() && registry_.takes_views(current_tag);

@@ -124,6 +124,11 @@ add_gtest_unit(test_engine_parser_core
     test_section_registry.cpp
     test_ignore_flags.cpp
 )
+# Issue #96: keywords and section headers are read as legacy findmatch() reads them.
+add_gtest_unit(test_engine_keyword_prefix test_keyword_prefix_parity.cpp)
+target_compile_definitions(test_engine_keyword_prefix PRIVATE
+    KEYWORD_PREFIX_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/keyword_prefix"
+    KEYWORD_PREFIX_OUT_DIR="${PROJECT_SOURCE_DIR}/tests/unit/engine/data/keyword_prefix_out")
 add_gtest_unit(test_engine_inp_path_spaces   test_inp_path_spaces.cpp)
 add_gtest_unit(test_engine_binary_model_refused test_binary_model_refused.cpp)
 add_gtest_unit(test_engine_options
