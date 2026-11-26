@@ -298,10 +298,12 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
             ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
             continue;
         }
+        // Legacy OutfallTypeWords, read with findmatch (FIXED_STAGE is FIXED).
+        const int otype =
+            legacy_findmatch(tok[2], {"FREE", "NORMAL", "FIXED", "TIDAL", "TIMESERIES"});
         {
-            const std::string kind = Tokenizer::to_upper(tok[2]);
-            const bool staged = kind == "FIXED" || kind == "TIDAL" || kind == "TIMESERIES";
-            if (!staged && kind != "FREE" && kind != "NORMAL") {
+            const bool staged = otype >= 2;
+            if (otype < 0) {
                 ctx.errors.push_back(format_error(ERR_KEYWORD, tok[2]));
                 continue;
             }
@@ -324,17 +326,10 @@ void handle_outfalls(SimulationContext& ctx, const std::vector<std::string>& lin
         ctx.nodes.invert_elev[idx] = to_double(tok[1]); // Elev
 
         // Type: FREE, NORMAL, FIXED, TIDAL, TIMESERIES
-        const std::string otype = Tokenizer::to_upper(tok[2]);
-        if (otype == "FREE")
-            O.bc_type[orow] = OutfallType::FREE;
-        else if (otype == "NORMAL")
-            O.bc_type[orow] = OutfallType::NORMAL;
-        else if (otype == "FIXED")
-            O.bc_type[orow] = OutfallType::FIXED;
-        else if (otype == "TIDAL")
-            O.bc_type[orow] = OutfallType::TIDAL;
-        else if (otype == "TIMESERIES")
-            O.bc_type[orow] = OutfallType::TIMESERIES;
+        static constexpr OutfallType kOutfallTypes[] = {OutfallType::FREE, OutfallType::NORMAL,
+                                                        OutfallType::FIXED, OutfallType::TIDAL,
+                                                        OutfallType::TIMESERIES};
+        O.bc_type[orow] = kOutfallTypes[otype];
 
         // Canonical column layout (legacy outfall_readParams):
         //   name elev FIXED      stage    (gated) (routeTo)
@@ -419,15 +414,18 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         // divider and seven for a WEIR; fewer is ERROR 203. Such rows used to
         // be skipped, taken with zero parameters, or (an unknown type) run
         // with the default method, without a word.
+        // Legacy DividerTypeWords, read with findmatch: 0 CUTOFF, 1 TABULAR, 2 WEIR, 3 OVERFLOW.
+        const int dkind = tok.size() >= 4
+                              ? legacy_findmatch(tok[3], {"CUTOFF", "TABULAR", "WEIR", "OVERFLOW"})
+                              : -1;
         {
             std::size_t need = 4;
             if (tok.size() >= 4) {
-                const std::string kind = Tokenizer::to_upper(tok[3]);
-                if (kind == "TABULAR" || kind == "CUTOFF") {
+                if (dkind == 0 || dkind == 1) {
                     need = 5;
-                } else if (kind == "WEIR") {
+                } else if (dkind == 2) {
                     need = 7;
-                } else if (kind != "OVERFLOW") {
+                } else if (dkind < 0) {
                     ctx.errors.push_back(format_error(ERR_KEYWORD, tok[3]));
                     continue;
                 }
@@ -459,14 +457,13 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         D.link[drow] = dl; // may be -1 if not yet parsed
 
         // tok[3] = divider type
-        const std::string dtype = Tokenizer::to_upper(tok[3]);
-        if (dtype == "CUTOFF") {
+        if (dkind == 0) {
             D.method[drow] = DividerType::CUTOFF;
             if (tok.size() > 4)
                 D.cutoff[drow] = to_double(tok[4]);
-        } else if (dtype == "OVERFLOW") {
+        } else if (dkind == 3) {
             D.method[drow] = DividerType::OVERFLOW_DIV;
-        } else if (dtype == "TABULAR") {
+        } else if (dkind == 1) {
             D.method[drow] = DividerType::TABULAR;
             // tok[4] = curve name (deferred)
             if (tok.size() > 4) {
@@ -474,7 +471,7 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
                 int ci = ctx.find_curve(tok[4]);
                 D.curve[drow] = ci; // may be -1
             }
-        } else if (dtype == "WEIR") {
+        } else if (dkind == 2) {
             D.method[drow] = DividerType::WEIR;
             // Legacy column order (node.c:1112): qMin dhMax cWeir — dhMax is
             // token 5 and the discharge coefficient token 6 (was swapped).
@@ -497,9 +494,9 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         // at all, so every divider silently lost them on load — not just on
         // save, since the live model carried the zeros into the simulation.
         int tail = 5; // CUTOFF, TABULAR
-        if (dtype == "OVERFLOW")
+        if (dkind == 3) // OVERFLOW
             tail = 4;
-        else if (dtype == "WEIR")
+        else if (dkind == 2) // WEIR
             tail = 7;
         const int ntoks = static_cast<int>(tok.size());
         if (ntoks > tail)
@@ -550,10 +547,20 @@ void handle_storage(SimulationContext& ctx, const std::vector<std::string>& line
             ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));
             continue;
         }
+        // The shape word as written first (this engine also writes PARABOLOID), then legacy
+        // RelationWords read with findmatch (TABULARZ is TABULAR).
         StorageShape sshape = StorageShape::FUNCTIONAL;
         if (!storage_shape_from_keyword(Tokenizer::to_upper(tok[4]), sshape)) {
-            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
-            continue;
+            static constexpr StorageShape kRelationShapes[] = {
+                StorageShape::TABULAR, StorageShape::FUNCTIONAL, StorageShape::CYLINDRICAL,
+                StorageShape::CONICAL, StorageShape::PARABOLOID, StorageShape::PYRAMIDAL};
+            const int k = legacy_findmatch(tok[4], {"TABULAR", "FUNCTIONAL", "CYLINDRICAL",
+                                                    "CONICAL", "PARABOLIC", "PYRAMIDAL"});
+            if (k < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+            sshape = kRelationShapes[k];
         }
         if (sshape != StorageShape::TABULAR && tok.size() < 8) {
             ctx.errors.push_back(format_error(ERR_ITEMS, tok[0]));

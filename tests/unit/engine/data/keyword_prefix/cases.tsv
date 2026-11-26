@@ -56,3 +56,21 @@ opt_end_time_z	network.inp	END_TIME             06:00:00	END_TIMEZ            06
 opt_report_step_z	network.inp	REPORT_STEP          00:05:00	REPORT_STEPZ         00:05:00	same
 opt_routing_step_z	network.inp	ROUTING_STEP         0:00:10	ROUTING_STEPZ        0:00:10	same
 opt_dry_step_lower_z	network.inp	DRY_STEP             01:00:00	dry_stepz            01:00:00	same
+#
+# Node type words: OutfallTypeWords, RelationWords (storage) and
+# DividerTypeWords, each read with findmatch; ERROR 205 when none matches.
+out_fixed_z	nodes.inp	OFIX    85   FIXED	OFIX    85   FIXED_STAGE	same
+out_tidal_z	nodes.inp	TIDAL        TC1	TIDALZ       TC1	same
+out_timeseries_z	nodes.inp	TIMESERIES   TSS	TIMESERIESZ  TSS	same
+out_normal_z	nodes.inp	NORMAL       NO	normalz      NO	same
+out_free_z	nodes.inp	FREE         NO	FREEZ        NO	same
+out_short_bad	nodes.inp	OFIX    85   FIXED	OFIX    85   FIX	refuse:205
+stor_tabular_z	network.inp	TABULAR   SC1	TABULARZ  SC1	same
+stor_functional_z	nodes.inp	FUNCTIONAL    100	FUNCTIONALZ   100	same
+stor_cylindrical_z	nodes.inp	CYLINDRICAL   20	CYLINDRICALZ  20	same
+stor_short_bad	nodes.inp	FUNCTIONAL    100	FUNC   100	refuse:205
+div_cutoff_z	nodes.inp	CUTOFF     2	CUTOFFZ    2	same
+div_tabular_z	nodes.inp	TABULAR    DVC	TABULARZ   DVC	same
+div_weir_z	nodes.inp	WEIR       1	WEIRZ      1	same
+div_overflow_z	nodes.inp	OVERFLOW 	OVERFLOWZ 	same
+div_short_bad	nodes.inp	CUTOFF     2	CUT        2	refuse:205
