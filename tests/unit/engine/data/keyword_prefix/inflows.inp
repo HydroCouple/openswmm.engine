@@ -18,6 +18,15 @@ ROUTING_STEP         0:01:00
 [RAINGAGES]
 G1   INTENSITY   1:00   1.0   TIMESERIES   R1
 
+[SUBCATCHMENTS]
+S1   G1   J1   5   50   500   0.5   1000
+
+[SUBAREAS]
+S1   0.01   0.1   0.05   0.05   25   OUTLET
+
+[INFILTRATION]
+S1   3.0   0.5   4   7   0
+
 [JUNCTIONS]
 J1   100   10   0   0   0
 J2   99    10   0   0   0
@@ -35,7 +44,25 @@ C2   CIRCULAR   2   0   0   0   1
 
 [POLLUTANTS]
 TSS   MG/L   0   0   0   0   NO
-BOD   MG/L   0   0   0   0   NO
+BOD   UG/L   0   0   0   0   NO
+
+[LANDUSES]
+RES
+
+[COVERAGES]
+S1   RES   100
+
+[BUILDUP]
+RES   TSS   POW   10   0.5   2   AREA
+RES   BOD   POW   5    0.5   2   CURB
+
+[WASHOFF]
+RES   TSS   EXP   0.1   1.5   0   0
+RES   BOD   EMC   10    0     0   0
+
+[TREATMENT]
+J2   TSS   R = 0.3 * DT / DT
+J2   BOD   C = BOD * exp(-0.1*HRT)
 
 [INFLOWS]
 J1   FLOW   QTS   FLOW     1.0   1.0   0.5   HP

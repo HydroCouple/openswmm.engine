@@ -32,6 +32,7 @@
  */
 
 #include "Treatment.hpp"
+#include "../input/InputParseUtils.hpp"
 #include <cmath>
 #include <stack>
 #include <algorithm>
@@ -250,6 +251,18 @@ tokenize(const std::string& s, const std::function<int(const std::string&)>& pol
                 t.type = TokenType::VARIABLE;
                 t.var = TreatVar::C_POLLUT;
                 t.pollut_ref = pollut_lookup(word);
+                tokens.push_back(t);
+            } else if (const int k =
+                           input::legacy_findmatch(word, {"HRT", "DT", "FLOW", "DEPTH", "AREA"});
+                       k >= 0) {
+                // Legacy getVariableIndex reads ProcessVarWords with findmatch, so HRTZ is
+                // HRT. Exact names and pollutant names are tried first here, where legacy
+                // tries the prefix first: a pollutant such as DTOC keeps its own meaning.
+                static constexpr TreatVar kProcessVars[] = {
+                    TreatVar::HRT, TreatVar::DT, TreatVar::Q, TreatVar::D, TreatVar::AREA};
+                Token t;
+                t.type = TokenType::VARIABLE;
+                t.var = kProcessVars[k];
                 tokens.push_back(t);
             } else {
                 return {}; // unknown identifier

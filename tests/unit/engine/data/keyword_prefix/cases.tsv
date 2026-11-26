@@ -166,3 +166,16 @@ uh_all_z	inflows.inp	ALL   SHORT	ALLZ  SHORT	same
 uh_short_z	inflows.inp	ALL   SHORT	ALL   SHORTZ	same
 uh_medium_z	inflows.inp	ALL   MEDIUM	ALL   MEDIUMZ	same
 uh_long_z	inflows.inp	ALL   LONG	ALL   LONGZ	same
+#
+# Quality: QualUnitsWords and NormalizerWords (findmatch), and [TREATMENT]
+# process variables (ProcessVarWords, findmatch after this engine's exact
+# names and the pollutant names).
+q_units_mg_z	inflows.inp	TSS   MG/L	TSS   MG/LZ	same
+q_units_ug_z	inflows.inp	BOD   UG/L	BOD   UG/LZ	same
+q_units_bad	inflows.inp	BOD   UG/L	BOD   PPM	refuse:205
+q_norm_area_z	inflows.inp	2   AREA	2   AREAZ	same
+q_norm_curb_z	inflows.inp	2   CURB	2   CURBZ	same
+q_norm_bad	inflows.inp	2   AREA	2   ACRE	refuse:205
+q_treat_hrt_z	inflows.inp	*HRT)	*HRTZ)	same
+q_treat_dt_z	inflows.inp	0.3 * DT /	0.3 * DTZ /	same
+q_treat_hrt_lower	inflows.inp	*HRT)	*hrt)	same

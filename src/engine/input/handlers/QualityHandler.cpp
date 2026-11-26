@@ -161,16 +161,16 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (idx < 0)
             continue;
 
-        // Units
-        const std::string units_str = Tokenizer::to_upper(tok[1]);
-        ctx.pollutants.unit_declaration_valid[idx] =
-            units_str == "MG/L" || units_str == "UG/L" || units_str == "#/L";
-        if (units_str == "UG/L")
-            ctx.pollutants.units[idx] = MassUnits::UG_PER_L;
-        else if (units_str == "#/L")
-            ctx.pollutants.units[idx] = MassUnits::COUNTS_PER_L;
-        else
-            ctx.pollutants.units[idx] = MassUnits::MG_PER_L;
+        // Units: legacy QualUnitsWords read with findmatch (landuse.c), ERROR 205 otherwise
+        const int units = legacy_findmatch(tok[1], {"MG/L", "UG/L", "#/L"});
+        if (units < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            continue;
+        }
+        static constexpr MassUnits kUnits[] = {MassUnits::MG_PER_L, MassUnits::UG_PER_L,
+                                               MassUnits::COUNTS_PER_L};
+        ctx.pollutants.unit_declaration_valid[idx] = 1;
+        ctx.pollutants.units[idx] = kUnits[units];
 
         if (tok.size() > 2)
             ctx.pollutants.c_rain[idx] = to_double(tok[2]);
@@ -423,8 +423,15 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
                 else
                     r.c3 = to_double(tok[5]);
             }
-            if (tok.size() > 6)
-                r.normalizer = (Tokenizer::to_upper(tok[6]) == "CURB") ? 1 : 0;
+            if (tok.size() > 6) {
+                // legacy NormalizerWords {AREA, CURB}, findmatch; ERROR 205 otherwise
+                const int norm = legacy_findmatch(tok[6], {"AREA", "CURB"});
+                if (norm < 0) {
+                    ctx.errors.push_back(format_error(ERR_KEYWORD, tok[6]));
+                    continue;
+                }
+                r.normalizer = norm;
+            }
             ctx.reactions.surface.rows.buildup.push_back(std::move(r));
             continue;
         }
@@ -454,10 +461,14 @@ void handle_buildup(SimulationContext& ctx, const std::vector<std::string>& line
             }
         }
 
-        // Normalizer: AREA=0, CURB=1
+        // Normalizer: AREA=0, CURB=1 (legacy NormalizerWords, findmatch; ERROR 205 otherwise)
         if (tok.size() > 6) {
-            const std::string norm = Tokenizer::to_upper(tok[6]);
-            ctx.buildup.normalizer[flat] = (norm == "CURB") ? 1 : 0;
+            const int norm = legacy_findmatch(tok[6], {"AREA", "CURB"});
+            if (norm < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[6]));
+                continue;
+            }
+            ctx.buildup.normalizer[flat] = norm;
         }
     }
 }
