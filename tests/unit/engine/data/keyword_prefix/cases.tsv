@@ -179,3 +179,19 @@ q_norm_bad	inflows.inp	2   AREA	2   ACRE	refuse:205
 q_treat_hrt_z	inflows.inp	*HRT)	*HRTZ)	same
 q_treat_dt_z	inflows.inp	0.3 * DT /	0.3 * DTZ /	same
 q_treat_hrt_lower	inflows.inp	*HRT)	*hrt)	same
+#
+# Streets and inlets: InletTypeWords, GrateTypeWords, ThroatAngleWords and
+# PlacementTypeWords, read with findmatch (an exact word first: legacy's list
+# order reads P_BAR-50x100 as P_BAR-50). No unknown-placement case: legacy's
+# PlacementTypeWords has no NULL terminator, so findmatch on a word it does
+# not know reads past the list.
+inl_grate_z	inlets.inp	IN_A   GRATE	IN_A   GRATEZ	same
+inl_curb_s	inlets.inp	IN_B   CURB	IN_B   CURBS	same
+inl_slotted_z	inlets.inp	IN_C   SLOTTED	IN_C   SLOTTEDZ	same
+inl_type_bad	inlets.inp	IN_A   GRATE	IN_A   GRID	refuse:205
+inl_grate_word_z	inlets.inp	P_BAR-50	P_BAR-50Z	same
+inl_grate_word_bad	inlets.inp	P_BAR-50	P_BAR	refuse:205
+inl_throat_z	inlets.inp	HORIZONTAL	HORIZONTALZ	same
+inl_throat_bad	inlets.inp	HORIZONTAL	FLAT	refuse:205
+inl_place_grade_z	inlets.inp	ON_GRADE	ON_GRADEZ	same
+inl_place_auto_z	inlets.inp	AUTOMATIC	AUTOMATICZ	same

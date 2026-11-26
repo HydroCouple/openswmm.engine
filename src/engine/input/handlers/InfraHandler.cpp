@@ -109,16 +109,23 @@ const char* const kGrateTypeWords[] = {"P_BAR-50",    "P_BAR-50x100", "P_BAR-30"
 const char* const kThroatWords[] = {"HORIZONTAL", "INCLINED", "VERTICAL"};
 
 /**
- * @brief Find the first ASCII-insensitive token in a borrowed keyword array.
+ * @brief Find a keyword the way legacy findmatch() does, an exact word first.
  *
- * @param[in] words Non-NULL array of n non-NULL NUL-terminated canonical words.
+ * The word as written is tried first, then legacy's prefix rule in list order (P_BAR-30Z is
+ * P_BAR-30). Legacy tries only the prefix rule, so it reads P_BAR-50x100 as P_BAR-50, which comes
+ * first in its list; this engine keeps P_BAR-50x100.
+ *
+ * @param[in] words Non-NULL array of n non-NULL NUL-terminated canonical words, in legacy order.
  * @param[in] n Nonnegative keyword count.
- * @param[in] w Borrowed complete keyword, not trimmed.
- * @return First zero-based match or -1; no prefix or Unicode folding.
+ * @param[in] w Borrowed token as authored.
+ * @return Zero-based index or -1; ASCII case is ignored.
  */
 int find_word(const char* const* words, int n, std::string_view w) {
     for (int i = 0; i < n; ++i)
         if (ieq(words[i], w))
+            return i;
+    for (int i = 0; i < n; ++i)
+        if (legacy_match(w, words[i]))
             return i;
     return -1;
 }
@@ -256,15 +263,18 @@ void handle_inlets(SimulationContext& ctx, const std::vector<std::string>& lines
         if (tok.size() < 3)
             continue;
 
-        const std::string type = Tokenizer::to_upper(tok[1]);
-        const bool is_grate = (type == "GRATE" || type == "DROP_GRATE");
-        const bool is_curb = (type == "CURB" || type == "DROP_CURB");
-        const bool is_slotted = (type == "SLOTTED");
-        const bool is_custom = (type == "CUSTOM");
-        if (!is_grate && !is_curb && !is_slotted && !is_custom) {
+        // Legacy InletTypeWords, read with findmatch (GRATEZ is GRATE), ERROR 205 otherwise.
+        static constexpr std::string_view kInletTypes[] = {"GRATE",      "CURB",      "SLOTTED",
+                                                           "DROP_GRATE", "DROP_CURB", "CUSTOM"};
+        const int kind = legacy_findmatch(tok[1], kInletTypes);
+        if (kind < 0) {
             ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
             continue;
         }
+        const std::string type(kInletTypes[kind]);
+        const bool is_grate = (type == "GRATE" || type == "DROP_GRATE");
+        const bool is_curb = (type == "CURB" || type == "DROP_CURB");
+        const bool is_slotted = (type == "SLOTTED");
 
         // --- Duplicate name: merge a GRATE/CURB pair, reject anything else ---
         const int prev = find_inlet_design(ctx, tok[0]);
