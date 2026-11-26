@@ -63,8 +63,10 @@
 #include "../Tokenizer.hpp"
 #include "../../core/SimulationContext.hpp"
 #include "../../data/InfraData.hpp"
+#include "../InputParseUtils.hpp"
 
 #include <string>
+#include <string_view>
 
 namespace openswmm::input {
 
@@ -176,7 +178,32 @@ void handle_report(SimulationContext& ctx, const std::vector<std::string>& lines
         if (tok.size() < 2)
             continue;
 
-        const std::string keyword = Tokenizer::to_upper(tok[0]);
+        // This engine's own LINK_STEPS is taken as written (it begins with the legacy LINK); any
+        // other key is read as legacy report_readOptions reads ReportWords, with findmatch, and is
+        // ERROR 205 when it begins with none of them.
+        static constexpr std::string_view kReportWords[] = {
+            "DISABLED",   "INPUT",     "SUBCATCH", "NODE",     "LINK",
+            "CONTINUITY", "FLOWSTATS", "CONTROL",  "AVERAGES", "NODESTATS"};
+        static constexpr const char* kReportKeys[] = {
+            "DISABLED",   "INPUT",     "SUBCATCHMENTS", "NODES",    "LINKS",
+            "CONTINUITY", "FLOWSTATS", "CONTROLS",      "AVERAGES", "NODESTATS"};
+        std::string keyword = Tokenizer::to_upper(tok[0]);
+        if (keyword != "LINK_STEPS") {
+            const int k = legacy_findmatch(tok[0], kReportWords);
+            if (k < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0]));
+                continue;
+            }
+            keyword = kReportKeys[k];
+        }
+        // A YES/NO value (legacy findmatch over NoYesWords, ERROR 205 otherwise).
+        auto flag = [&](bool& out) {
+            const int v = legacy_no_yes(tok[1]);
+            if (v < 0)
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+            else
+                out = v == 1;
+        };
 
         if (keyword == "SUBCATCHMENTS") {
             ctx.options.rpt_subcatchments =
@@ -186,19 +213,19 @@ void handle_report(SimulationContext& ctx, const std::vector<std::string>& lines
         } else if (keyword == "LINKS") {
             ctx.options.rpt_links = parse_report_list(tok, 1, ctx.options.rpt_link_names);
         } else if (keyword == "INPUT") {
-            ctx.options.rpt_input = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_input);
         } else if (keyword == "CONTINUITY") {
-            ctx.options.rpt_continuity = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_continuity);
         } else if (keyword == "FLOWSTATS") {
-            ctx.options.rpt_flowstats = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_flowstats);
         } else if (keyword == "CONTROLS") {
-            ctx.options.rpt_controls = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_controls);
         } else if (keyword == "AVERAGES") {
-            ctx.options.rpt_averages = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_averages);
         } else if (keyword == "LINK_STEPS") {
-            ctx.options.rpt_link_steps = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_link_steps);
         } else if (keyword == "DISABLED") {
-            ctx.options.rpt_disabled = Tokenizer::parse_boolean(tok[1]);
+            flag(ctx.options.rpt_disabled);
         }
     }
 }

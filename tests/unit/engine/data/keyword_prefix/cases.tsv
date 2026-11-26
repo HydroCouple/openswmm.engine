@@ -222,3 +222,14 @@ ctl_lower_words	network.inp	THEN OUTLET OL1 SETTING = 0.5	then outlet OL1 settin
 ctl_keyword_bad	network.inp	PRIORITY 2	PRIO 2	refuse:205
 ctl_status_bad	network.inp	ELSE PUMP P1 STATUS = OFF	ELSE PUMP P1 STATUS = SHUT	refuse:205
 ctl_expr_undefined	network.inp	EXPRESSION E1 = V1 * 2	EXPRESSION E1 = V1 * 2 + V9	refuse:233
+#
+# [REPORT]: ReportWords and NoYesWords (findmatch); an unknown key or flag word
+# is ERROR 205. (An undefined name is WARNING 109 in this engine by design,
+# where legacy gives ERROR 209, so LINKS ALLZ has no case here.)
+rpt_input_z	network.inp	INPUT      NO	INPUTZ     NO	same
+rpt_controls_short	network.inp	CONTROLS   NO	CONTROL    NO	same
+rpt_nodes_z	network.inp	NODES      J1 J2	NODESZ     J1 J2	same
+rpt_links_z	network.inp	LINKS      ALL	LINKSZ     ALL	same
+rpt_flag_noz	network.inp	INPUT      NO	INPUT      NOZ	same
+rpt_key_bad	network.inp	CONTROLS   NO\n	CONTROLS   NO\nFOO        YES\n	refuse:205
+rpt_flag_bad	network.inp	INPUT      NO	INPUT      MAYBE	refuse:205
