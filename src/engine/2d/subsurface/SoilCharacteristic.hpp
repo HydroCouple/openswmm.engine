@@ -188,6 +188,18 @@ struct Curve {
 Curve curve(const Params& p, double psi) noexcept;
 
 /**
+ * @brief curve() for @p n suctions at once, one transcendental function per pass over the array.
+ *
+ * A σ column evaluates its layers' curves together, and each layer's `exp` feeds its `pow`: run
+ * layer by layer the pair costs ~50 ns, the dependent chain hiding the pipeline, while eight
+ * independent calls of one function pipeline at 2.6 ns (`exp`) and 8 ns (`pow`) each
+ * (2026-11-26, Apple M1 Max). curve() is this with n = 1, so the two agree bit for bit.
+ *
+ * @param[in] psi n finite suction magnitudes (m); @param[out] out n curves. No allocation.
+ */
+void curveBatch(const Params& p, const double* psi, int n, Curve* out) noexcept;
+
+/**
  * @brief Suction head at a given effective saturation — the retention inverse, needed to give
  * the σ column a ψ from its θ. Returns 0 at `Se ≥ 1`.
  *
@@ -200,6 +212,16 @@ Curve curve(const Params& p, double psi) noexcept;
  * returns the final estimate without a convergence status.
  */
 double suctionAtSaturation(const Params& p, double Se) noexcept;
+
+/**
+ * @brief suctionAtSaturation() for @p n saturations at once: the closed forms as one pass per
+ * transcendental function, Russo's Halley iteration with its steps interleaved across the
+ * elements so the `log1p` calls are independent. Same per-element iterates and results as the
+ * scalar form, which is this with n = 1.
+ *
+ * @param[in] Se n finite saturations; @param[out] psi n suctions (m). No allocation.
+ */
+void suctionAtSaturationBatch(const Params& p, const double* Se, int n, double* psi) noexcept;
 
 /**
  * @brief Soil-moisture diffusivity `D(θ) = K(ψ)/|dθ/dψ|` (m²/s) at suction @p psi. Evaluated

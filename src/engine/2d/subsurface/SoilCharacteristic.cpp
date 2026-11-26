@@ -147,145 +147,256 @@ double conductivity(const Params& p, double psi) noexcept {
 
 Curve curve(const Params& p, double psi) noexcept {
     Curve c;
-    if (!(psi > kPsiEps))
-        return c;
-    switch (p.law) {
-    case SoilChar::GARDNER: {
-        // Se = Kr = e^(−αψ): one exponential carries both values and both slopes.
-        const double e = std::exp(-p.alpha * psi);
-        c.Se = clampSe(e);
-        c.dSe = e > kSeMin ? -p.alpha * e : 0.0;
-        c.Kr = std::clamp(e, 0.0, 1.0);
-        c.dKr = -p.alpha * e;
-        return c;
-    }
-    case SoilChar::RUSSO: {
-        // t = (1 + a)e^(−a), a = ½αψ: Se = t^(2/(2+L)), Kr = t², dt/dψ = −½α·a·e^(−a).
-        const double a = 0.5 * p.alpha * psi;
-        const double e = std::exp(-a);
-        const double t = (1.0 + a) * e;
-        const double dt = -0.5 * p.alpha * a * e;
-        const double expo = 2.0 / (2.0 + p.vg_L);
-        const double se = std::pow(std::max(t, kSeMin), expo);
-        c.Se = clampSe(se);
-        c.dSe = (t > kSeMin && se > kSeMin && se < 1.0) ? expo * se / t * dt : 0.0;
-        c.Kr = std::clamp(t * t, 0.0, 1.0);
-        c.dKr = t * t < 1.0 ? 2.0 * t * dt : 0.0;
-        return c;
-    }
-    case SoilChar::BROOKS_COREY: {
-        const double pb = std::max(p.psi_b, kPsiEps);
-        if (psi < pb)
-            return c;
-        if (psi == pb) {
-            // The air-entry kink: a saturated layer sits exactly here (its start suction) and
-            // can only dry, so the slopes are the dry side's one-sided derivatives. The flat
-            // side's zeros leave a Newton with no storage term to move the layer.
-            c.dSe = -p.lambda / pb;
-            c.dKr = -(2.0 + 3.0 * p.lambda) / pb;
-            return c;
-        }
-        const double r = pb / psi;
-        const double se = std::pow(r, p.lambda);
-        c.Se = clampSe(se);
-        c.dSe = se > kSeMin ? -p.lambda * se / psi : 0.0;
-        const double e = 2.0 + 3.0 * p.lambda;
-        const double kr = std::pow(r, e);
-        c.Kr = std::clamp(kr, 0.0, 1.0);
-        c.dKr = kr < 1.0 ? -e * kr / psi : 0.0;
-        return c;
-    }
-    case SoilChar::VAN_GENUCHTEN: {
-        const double n = std::max(p.vg_n, 1.0 + 1.0e-6);
-        const double m = 1.0 - 1.0 / n;
-        const double ap = std::pow(p.alpha * psi, n);
-        const double u = 1.0 + ap;
-        const double se_raw = std::pow(u, -m);
-        const double se = clampSe(se_raw);
-        const bool open = se_raw > kSeMin; // not on the floor: the identities below hold
-        const double dap = n * ap / psi;   // d(αψ)^n/dψ
-        c.Se = se;
-        c.dSe = open ? -m * se_raw / u * dap : 0.0;
-        // Kr = Se^L (1 − (1 − Se^(1/m))^m)², with Se^(1/m) = 1/u off the floor, so
-        // 1 − Se^(1/m) = ap/u and d(ap/u)/dψ = dap/u².
-        const double g = open ? ap / u : 1.0 - std::pow(se, 1.0 / m);
-        const double gm = std::pow(std::max(g, 0.0), m);
-        const double inner = 1.0 - gm;
-        const double seL = std::pow(se, p.vg_L);
-        const double kr = seL * inner * inner;
-        c.Kr = std::clamp(kr, 0.0, 1.0);
-        if (open && kr < 1.0 && g > 0.0) {
-            const double dinner = -m * gm / g * dap / (u * u);
-            const double dseL = p.vg_L * seL / se * c.dSe;
-            c.dKr = dseL * inner * inner + 2.0 * seL * inner * dinner;
-            // For n < 2 the exact slope is unbounded at ψ → 0 (Kr ≈ 1 − 2(αψ)^(n−1)); the chord
-            // to saturation bounds it there. Elsewhere the curve is convex and the chord is
-            // shallower than the slope, so the bound stays inactive; for n ≥ 2 the slope is
-            // finite everywhere and the curve starts concave, where the chord would wrongly
-            // replace it.
-            if (n < 2.0)
-                c.dKr = std::max(c.dKr, (c.Kr - 1.0) / psi);
-        }
-        return c;
-    }
-    }
+    curveBatch(p, &psi, 1, &c);
     return c;
 }
 
+namespace {
+/// Elements the batches process in one pass: a σ column has 8 layers by default, M_LAYERS
+/// authors more; longer arrays go round again.
+constexpr int kChunk = 64;
+} // namespace
+
+void curveBatch(const Params& p, const double* psi, int n, Curve* out) noexcept {
+    for (int start = 0; start < n; start += kChunk) {
+        const int m = std::min(kChunk, n - start);
+        const double* x = psi + start;
+        Curve* c = out + start;
+        // Saturated (ψ ≤ 1e-12, or not a number): the default curve, unit values and zero
+        // slopes. Those elements take a benign argument through the transcendental passes
+        // below and are left at the default by the fill loops.
+        bool wet[kChunk];
+        double xs[kChunk];
+        for (int i = 0; i < m; ++i) {
+            c[i] = Curve{};
+            wet[i] = !(x[i] > kPsiEps);
+            xs[i] = wet[i] ? 1.0 : x[i];
+        }
+        switch (p.law) {
+        case SoilChar::GARDNER: {
+            // Se = Kr = e^(−αψ): one exponential carries both values and both slopes.
+            double e[kChunk];
+            for (int i = 0; i < m; ++i)
+                e[i] = std::exp(-p.alpha * xs[i]);
+            for (int i = 0; i < m; ++i) {
+                if (wet[i])
+                    continue;
+                c[i].Se = clampSe(e[i]);
+                c[i].dSe = e[i] > kSeMin ? -p.alpha * e[i] : 0.0;
+                c[i].Kr = std::clamp(e[i], 0.0, 1.0);
+                c[i].dKr = -p.alpha * e[i];
+            }
+            break;
+        }
+        case SoilChar::RUSSO: {
+            // t = (1 + a)e^(−a), a = ½αψ: Se = t^(2/(2+L)), Kr = t², dt/dψ = −½α·a·e^(−a).
+            const double expo = 2.0 / (2.0 + p.vg_L);
+            double a[kChunk], e[kChunk], se[kChunk];
+            for (int i = 0; i < m; ++i) {
+                a[i] = 0.5 * p.alpha * xs[i];
+                e[i] = std::exp(-a[i]);
+            }
+            for (int i = 0; i < m; ++i) {
+                const double t = (1.0 + a[i]) * e[i];
+                se[i] = std::pow(std::max(t, kSeMin), expo);
+            }
+            for (int i = 0; i < m; ++i) {
+                if (wet[i])
+                    continue;
+                const double t = (1.0 + a[i]) * e[i];
+                const double dt = -0.5 * p.alpha * a[i] * e[i];
+                c[i].Se = clampSe(se[i]);
+                c[i].dSe =
+                    (t > kSeMin && se[i] > kSeMin && se[i] < 1.0) ? expo * se[i] / t * dt : 0.0;
+                c[i].Kr = std::clamp(t * t, 0.0, 1.0);
+                c[i].dKr = t * t < 1.0 ? 2.0 * t * dt : 0.0;
+            }
+            break;
+        }
+        case SoilChar::BROOKS_COREY: {
+            const double pb = std::max(p.psi_b, kPsiEps);
+            const double e = 2.0 + 3.0 * p.lambda;
+            double se[kChunk], kr[kChunk];
+            for (int i = 0; i < m; ++i)
+                se[i] = std::pow(xs[i] > pb ? pb / xs[i] : 1.0, p.lambda);
+            for (int i = 0; i < m; ++i)
+                kr[i] = std::pow(xs[i] > pb ? pb / xs[i] : 1.0, e);
+            for (int i = 0; i < m; ++i) {
+                if (wet[i] || xs[i] < pb)
+                    continue;
+                if (xs[i] == pb) {
+                    // The air-entry kink: a saturated layer sits exactly here (its start
+                    // suction) and can only dry, so the slopes are the dry side's one-sided
+                    // derivatives. The flat side's zeros leave a Newton with no storage term to
+                    // move the layer.
+                    c[i].dSe = -p.lambda / pb;
+                    c[i].dKr = -(2.0 + 3.0 * p.lambda) / pb;
+                    continue;
+                }
+                c[i].Se = clampSe(se[i]);
+                c[i].dSe = se[i] > kSeMin ? -p.lambda * se[i] / xs[i] : 0.0;
+                c[i].Kr = std::clamp(kr[i], 0.0, 1.0);
+                c[i].dKr = kr[i] < 1.0 ? -e * kr[i] / xs[i] : 0.0;
+            }
+            break;
+        }
+        case SoilChar::VAN_GENUCHTEN: {
+            const double n_ = std::max(p.vg_n, 1.0 + 1.0e-6);
+            const double mm = 1.0 - 1.0 / n_;
+            double ap[kChunk], se_raw[kChunk], g[kChunk], gm[kChunk], seL[kChunk];
+            for (int i = 0; i < m; ++i)
+                ap[i] = std::pow(p.alpha * xs[i], n_);
+            for (int i = 0; i < m; ++i)
+                se_raw[i] = std::pow(1.0 + ap[i], -mm);
+            // Kr = Se^L (1 − (1 − Se^(1/m))^m)², with Se^(1/m) = 1/u off the floor, so
+            // 1 − Se^(1/m) = ap/u and d(ap/u)/dψ = dap/u².
+            for (int i = 0; i < m; ++i) {
+                const bool open = se_raw[i] > kSeMin;
+                g[i] = open ? ap[i] / (1.0 + ap[i]) : 1.0 - std::pow(clampSe(se_raw[i]), 1.0 / mm);
+            }
+            for (int i = 0; i < m; ++i)
+                gm[i] = std::pow(std::max(g[i], 0.0), mm);
+            for (int i = 0; i < m; ++i)
+                seL[i] = std::pow(clampSe(se_raw[i]), p.vg_L);
+            for (int i = 0; i < m; ++i) {
+                if (wet[i])
+                    continue;
+                const double u = 1.0 + ap[i];
+                const double se = clampSe(se_raw[i]);
+                const bool open = se_raw[i] > kSeMin;  // not on the floor: the identities hold
+                const double dap = n_ * ap[i] / xs[i]; // d(αψ)^n/dψ
+                c[i].Se = se;
+                c[i].dSe = open ? -mm * se_raw[i] / u * dap : 0.0;
+                const double inner = 1.0 - gm[i];
+                const double kr = seL[i] * inner * inner;
+                c[i].Kr = std::clamp(kr, 0.0, 1.0);
+                if (open && kr < 1.0 && g[i] > 0.0) {
+                    const double dinner = -mm * gm[i] / g[i] * dap / (u * u);
+                    const double dseL = p.vg_L * seL[i] / se * c[i].dSe;
+                    c[i].dKr = dseL * inner * inner + 2.0 * seL[i] * inner * dinner;
+                    // For n < 2 the exact slope is unbounded at ψ → 0 (Kr ≈ 1 − 2(αψ)^(n−1));
+                    // the chord to saturation bounds it there. Elsewhere the curve is convex
+                    // and the chord is shallower than the slope, so the bound stays inactive;
+                    // for n ≥ 2 the slope is finite everywhere and the curve starts concave,
+                    // where the chord would wrongly replace it.
+                    if (n_ < 2.0)
+                        c[i].dKr = std::max(c[i].dKr, (c[i].Kr - 1.0) / xs[i]);
+                }
+            }
+            break;
+        }
+        }
+    }
+}
+
 double suctionAtSaturation(const Params& p, double Se) noexcept {
-    const double se = clampSe(Se);
-    if (se >= 1.0 - 1.0e-12)
-        return 0.0;
-    switch (p.law) {
-    case SoilChar::GARDNER:
-        return -std::log(se) / std::max(p.alpha, kPsiEps);
-    case SoilChar::RUSSO: {
-        // (1 + a)·e^(−a) = t = se^((2+L)/2) has no elementary inverse. Its logarithm,
-        //     g(a) = ln(1 + a) − a + ℓ = 0,   ℓ = −ln t = −½(2 + L)·ln se,
-        // is monotone and concave on a ≥ 0, so Halley's method converges from either side and
-        // cubically: from a start within a few percent two steps reach roundoff, one log1p each.
-        // The start is the series inverse of ℓ = a²/2 − a³/3 + … near saturation (a ≈ s + s²/3,
-        // s = √(2ℓ)) and the fixed point of a = ℓ + ln(1 + a) when dry (ℓ beyond 2.5, where the
-        // series is 7 % high and the log form 6 % low). Before 2026-11-26 this was Newton on
-        // the exponential form from √(2(1 − t)) or ℓ + ln(1 + ℓ): a pow, a log, a log1p and three
-        // to five exp per inverse — the single largest cost of the σ column once its Newton
-        // matrix no longer needed the soil functions.
-        const double ell = -0.5 * (2.0 + p.vg_L) * std::log(se); // se in (kSeMin, 1): ℓ > 0
-        double a;
-        if (ell < 2.5) {
-            const double s = std::sqrt(2.0 * ell);
-            a = s + s * s / 3.0;
-        } else {
-            a = ell + std::log1p(ell);
+    double psi;
+    suctionAtSaturationBatch(p, &Se, 1, &psi);
+    return psi;
+}
+
+void suctionAtSaturationBatch(const Params& p, const double* Se, int n, double* psi) noexcept {
+    const double alpha = std::max(p.alpha, kPsiEps);
+    for (int start = 0; start < n; start += kChunk) {
+        const int m = std::min(kChunk, n - start);
+        const double* x = Se + start;
+        double* out = psi + start;
+        // Saturated elements (Se within 1e-12 of 1) return 0 and take no part in the passes.
+        bool todo[kChunk];
+        double se[kChunk];
+        for (int i = 0; i < m; ++i) {
+            se[i] = clampSe(x[i]);
+            todo[i] = se[i] < 1.0 - 1.0e-12;
+            out[i] = 0.0;
         }
-        for (int it = 0; it < 8; ++it) {
-            const double g = std::log1p(a) - a + ell;
-            const double g1 = -a / (1.0 + a);
-            const double g2 = -1.0 / ((1.0 + a) * (1.0 + a));
-            const double denom = 2.0 * g1 * g1 - g * g2;
-            if (!(std::fabs(denom) > 1.0e-300))
-                break;
-            const double step = 2.0 * g * g1 / denom;
-            a -= step;
-            if (a < 0.0)
-                a = 0.0;
-            // The error after a Halley step of relative size δ is O(δ³): a step of 1e-5 leaves
-            // roundoff, so the next evaluation would change nothing.
-            if (std::fabs(step) <= 1.0e-5 * a)
-                break;
+        switch (p.law) {
+        case SoilChar::GARDNER:
+            for (int i = 0; i < m; ++i)
+                if (todo[i])
+                    out[i] = -std::log(se[i]) / alpha;
+            break;
+        case SoilChar::RUSSO: {
+            // (1 + a)·e^(−a) = t = se^((2+L)/2) has no elementary inverse. Its logarithm,
+            //     g(a) = ln(1 + a) − a + ℓ = 0,   ℓ = −ln t = −½(2 + L)·ln se,
+            // is monotone and concave on a ≥ 0, so Halley's method converges from either side
+            // and cubically: from a start within a few percent two steps reach roundoff, one
+            // log1p each. The start is the series inverse of ℓ = a²/2 − a³/3 + … near saturation
+            // (a ≈ s + s²/3, s = √(2ℓ)) and the fixed point of a = ℓ + ln(1 + a) when dry (ℓ
+            // beyond 2.5, where the series is 7 % high and the log form 6 % low). Before
+            // 2026-11-26 this was Newton on the exponential form from √(2(1 − t)) or
+            // ℓ + ln(1 + ℓ): a pow, a log, a log1p and three to five exp per inverse — the single
+            // largest cost of the σ column once its Newton matrix no longer needed the soil
+            // functions. The steps run interleaved across the elements, so each pass's log1p
+            // calls are independent and pipeline.
+            double ell[kChunk], a[kChunk];
+            bool active[kChunk];
+            for (int i = 0; i < m; ++i) {
+                ell[i] = todo[i] ? -0.5 * (2.0 + p.vg_L) * std::log(se[i]) : 0.0;
+                active[i] = todo[i];
+            }
+            for (int i = 0; i < m; ++i) {
+                if (!todo[i])
+                    continue;
+                if (ell[i] < 2.5) {
+                    const double s = std::sqrt(2.0 * ell[i]);
+                    a[i] = s + s * s / 3.0;
+                } else {
+                    a[i] = ell[i] + std::log1p(ell[i]);
+                }
+            }
+            for (int it = 0; it < 8; ++it) {
+                bool any = false;
+                for (int i = 0; i < m; ++i) {
+                    if (!active[i])
+                        continue;
+                    const double g = std::log1p(a[i]) - a[i] + ell[i];
+                    const double g1 = -a[i] / (1.0 + a[i]);
+                    const double g2 = -1.0 / ((1.0 + a[i]) * (1.0 + a[i]));
+                    const double denom = 2.0 * g1 * g1 - g * g2;
+                    if (!(std::fabs(denom) > 1.0e-300)) {
+                        active[i] = false;
+                        continue;
+                    }
+                    const double step = 2.0 * g * g1 / denom;
+                    a[i] -= step;
+                    if (a[i] < 0.0)
+                        a[i] = 0.0;
+                    // The error after a Halley step of relative size δ is O(δ³): a step of
+                    // 1e-5 leaves roundoff, so the next evaluation would change nothing.
+                    if (std::fabs(step) <= 1.0e-5 * a[i])
+                        active[i] = false;
+                    else
+                        any = true;
+                }
+                if (!any)
+                    break;
+            }
+            for (int i = 0; i < m; ++i)
+                if (todo[i])
+                    out[i] = 2.0 * a[i] / alpha;
+            break;
         }
-        return 2.0 * a / std::max(p.alpha, kPsiEps);
+        case SoilChar::BROOKS_COREY: {
+            const double pb = std::max(p.psi_b, kPsiEps);
+            const double inv_lambda = -1.0 / std::max(p.lambda, 1.0e-6);
+            for (int i = 0; i < m; ++i)
+                if (todo[i])
+                    out[i] = pb * std::pow(se[i], inv_lambda);
+            break;
+        }
+        case SoilChar::VAN_GENUCHTEN: {
+            const double n_ = std::max(p.vg_n, 1.0 + 1.0e-6);
+            const double mm = 1.0 - 1.0 / n_;
+            double t[kChunk];
+            for (int i = 0; i < m; ++i)
+                t[i] = todo[i] ? std::pow(se[i], -1.0 / mm) - 1.0 : 0.0;
+            for (int i = 0; i < m; ++i)
+                if (todo[i])
+                    out[i] = std::pow(std::max(t[i], 0.0), 1.0 / n_) / alpha;
+            break;
+        }
+        }
     }
-    case SoilChar::BROOKS_COREY:
-        return std::max(p.psi_b, kPsiEps) * std::pow(se, -1.0 / std::max(p.lambda, 1.0e-6));
-    case SoilChar::VAN_GENUCHTEN: {
-        const double n = std::max(p.vg_n, 1.0 + 1.0e-6);
-        const double m = 1.0 - 1.0 / n;
-        const double t = std::pow(se, -1.0 / m) - 1.0;
-        return std::pow(std::max(t, 0.0), 1.0 / n) / std::max(p.alpha, kPsiEps);
-    }
-    }
-    return 0.0;
 }
 
 double diffusivity(const Params& p, double psi) noexcept {

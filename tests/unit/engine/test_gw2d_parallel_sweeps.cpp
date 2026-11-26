@@ -550,5 +550,24 @@ TEST(SoilCurve, ValuesMatchTheScalarFunctionsAndSlopesMatchCenteredDifferences) 
         EXPECT_EQ(wet.Kr, 1.);
         EXPECT_EQ(wet.dSe, 0.);
         EXPECT_EQ(wet.dKr, 0.);
+        // The batches (one transcendental pass per function, chunks of 64) are the scalar
+        // forms element by element, bit for bit, saturated and clamped elements included.
+        std::vector<double> psis, ses, psi_out(150);
+        std::vector<soil::Curve> curves(150);
+        for (int i = 0; i < 150; ++i) {
+            psis.push_back(
+                i % 17 == 0 ? 0. : (i % 23 == 0 ? p.psi_b : std::pow(10., -4 + 7. * i / 149.)));
+            ses.push_back(i % 19 == 0 ? 1. : (i % 29 == 0 ? 1e-9 : std::pow(10., -8. * i / 149.)));
+        }
+        soil::curveBatch(p, psis.data(), 150, curves.data());
+        soil::suctionAtSaturationBatch(p, ses.data(), 150, psi_out.data());
+        for (int i = 0; i < 150; ++i) {
+            const soil::Curve one = soil::curve(p, psis[i]);
+            EXPECT_EQ(curves[i].Se, one.Se) << i;
+            EXPECT_EQ(curves[i].dSe, one.dSe) << i;
+            EXPECT_EQ(curves[i].Kr, one.Kr) << i;
+            EXPECT_EQ(curves[i].dKr, one.dKr) << i;
+            EXPECT_EQ(psi_out[i], soil::suctionAtSaturation(p, ses[i])) << i;
+        }
     }
 }
