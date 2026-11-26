@@ -67,26 +67,14 @@
 namespace openswmm::input {
 
 /**
- * @brief Parse one complete case-insensitive pattern-type token.
+ * @brief Read a pattern-type token as legacy inflow_readPatternParams does (findmatch).
  *
- * Constructs an uppercase string despite noexcept, so allocation failure terminates.
- *
- * @param[in] sv Borrowed untrimmed token, uppercased through C-locale character rules.
+ * @param[in] sv Borrowed token; a word that begins with MONTHLY, DAILY, HOURLY or WEEKEND is that
+ *     type (WEEKENDS is WEEKEND), in any case.
  * @return 0 MONTHLY, 1 DAILY, 2 HOURLY, 3 WEEKEND, or -1 if unknown.
  */
 static int parse_pattern_type(std::string_view sv) noexcept {
-    std::string upper(sv);
-    for (auto& c : upper)
-        c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    if (upper == "MONTHLY")
-        return 0;
-    if (upper == "DAILY")
-        return 1;
-    if (upper == "HOURLY")
-        return 2;
-    if (upper == "WEEKEND")
-        return 3;
-    return -1; // not a type keyword
+    return legacy_findmatch(sv, {"MONTHLY", "DAILY", "HOURLY", "WEEKEND"});
 }
 
 /**
@@ -150,7 +138,13 @@ void handle_patterns(SimulationContext& ctx, const std::vector<std::string>& lin
                 facs.push_back(to_double(tok[i], 1.0));
             }
         } else {
-            // New pattern without explicit type — default to MONTHLY
+            // New pattern without explicit type — default to MONTHLY. A word that is neither
+            // a type nor a number is legacy's ERROR 205 (it used to be read as a factor of 1).
+            double first = 0.0;
+            if (!parse_double_strict(tok[1], first)) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
+                continue;
+            }
             std::vector<double> facs;
             for (std::size_t i = 1; i < tok.size(); ++i) {
                 facs.push_back(to_double(tok[i], 1.0));
@@ -193,8 +187,15 @@ void handle_inflows(SimulationContext& ctx, const std::vector<std::string>& line
         const std::string& constituent = tok[1];
         const std::string& ts_name = tok[2];
 
+        // Legacy inflow_readExtInflow match()es a pollutant row's type: a word that begins with
+        // CONCEN is CONCEN and one that begins with MASS is MASS. Any other word is kept as
+        // written; PostParseResolver refuses it on a pollutant row once pollutants are known.
         std::string inflow_type =
             (tok.size() > 3) ? Tokenizer::to_upper(tok[3]) : std::string("FLOW");
+        if (tok.size() > 3 && legacy_match(tok[3], "CONCEN"))
+            inflow_type = "CONCEN";
+        else if (tok.size() > 3 && legacy_match(tok[3], "MASS"))
+            inflow_type = "MASS";
         double m_factor = (tok.size() > 4) ? to_double(tok[4], 1.0) : 1.0;
         double s_factor = (tok.size() > 5) ? to_double(tok[5], 1.0) : 1.0;
         double baseline = (tok.size() > 6) ? to_double(tok[6], 0.0) : 0.0;
@@ -325,9 +326,10 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
 
         // Legacy datetime_findMonth accepts case-insensitive three-letter
         // month prefixes. A named month must not fall through to ALL.
+        // ALL is match()ed (rdii.c), so ALLZ is ALL too.
         int month = -1;
         std::string month_upper = Tokenizer::to_upper(tok[1]);
-        if (month_upper != "ALL") {
+        if (!legacy_match(tok[1], "ALL")) {
             static const char* months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                                            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
             for (int m = 0; m < 12; ++m) {
@@ -351,15 +353,8 @@ void handle_hydrographs(SimulationContext& ctx, const std::vector<std::string>& 
             }
         }
 
-        // Parse response type: Short=0, Medium=1, Long=2
-        int response = -1;
-        std::string resp_upper = Tokenizer::to_upper(tok[2]);
-        if (resp_upper == "SHORT")
-            response = 0;
-        else if (resp_upper == "MEDIUM")
-            response = 1;
-        else if (resp_upper == "LONG")
-            response = 2;
+        // Parse response type: Short=0, Medium=1, Long=2 (legacy UHTypeWords, findmatch)
+        const int response = legacy_findmatch(tok[2], {"SHORT", "MEDIUM", "LONG"});
         if (response < 0)
             continue;
 

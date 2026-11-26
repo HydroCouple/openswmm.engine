@@ -139,3 +139,30 @@ lid_layer_bad	hydrology.inp	LB   SOIL	LB   DIRT	refuse:205
 gwf_deep_z	hydrology.inp	S1   DEEP 	S1   DEEPER 	same
 gwf_lateral_short	hydrology.inp	S1   LATERAL	S1   LAT	same
 adj_temp_short	hydrology.inp	TEMPERATURE    2	TEMPZ          2	same
+#
+# Tables and inflows: CurveTypeWords, PatternTypeWords, [INFLOWS] FLOW,
+# CONCEN and MASS (match()), [DWF] FLOW, [HYDROGRAPHS] ALL (match()) and
+# UHTypeWords.
+crv_storage_z	network.inp	SC1  STORAGE	SC1  STORAGEZ	same
+crv_pump2_z	network.inp	PC1  PUMP2	PC1  PUMP2Z	same
+crv_rating_z	network.inp	OC1  RATING	OC1  RATINGZ	same
+crv_diversion_z	nodes.inp	DVC   DIVERSION	DVC   DIVERSIONZ	same
+crv_tidal_z	nodes.inp	TC1   TIDAL 	TC1   TIDALZ 	same
+crv_control_z	inflows.inp	CC1   CONTROL	CC1   CONTROLS	same
+crv_shape_z	inflows.inp	SH1   SHAPE	SH1   SHAPEZ	same
+crv_pump1_z	inflows.inp	PU1   PUMP1	PU1   PUMP1Z	same
+crv_bad	inflows.inp	CC1   CONTROL	CC1   CTRL	refuse:205
+pat_monthly_z	inflows.inp	MP   MONTHLY	MP   MONTHLYZ	same
+pat_daily_z	inflows.inp	DP   DAILY	DP   DAILYZ	same
+pat_hourly_z	inflows.inp	HP   HOURLY	HP   HOURLYZ	same
+pat_weekend_s	inflows.inp	WP   WEEKEND	WP   WEEKENDS	same
+pat_bad	inflows.inp	DP   DAILY	DP   DAY	refuse:205
+inf_flow_z	inflows.inp	J1   FLOW   QTS	J1   FLOWZ  QTS	same
+inf_concen_long	inflows.inp	CTS   CONCEN	CTS   CONCENTRATION	same
+inf_mass_z	inflows.inp	MTS   MASS	MTS   MASSZ	same
+inf_type_bad	inflows.inp	MTS   MASS	MTS   WEIGHT	refuse:205
+dwf_flow_z	inflows.inp	J2   FLOW   0.2	J2   FLOWS  0.2	same
+uh_all_z	inflows.inp	ALL   SHORT	ALLZ  SHORT	same
+uh_short_z	inflows.inp	ALL   SHORT	ALL   SHORTZ	same
+uh_medium_z	inflows.inp	ALL   MEDIUM	ALL   MEDIUMZ	same
+uh_long_z	inflows.inp	ALL   LONG	ALL   LONGZ	same

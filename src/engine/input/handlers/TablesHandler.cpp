@@ -61,7 +61,9 @@
 #include "../InputParseUtils.hpp"
 
 #include <charconv>
+#include <iterator>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 namespace openswmm::input {
@@ -277,14 +279,17 @@ void handle_timeseries(SimulationContext& ctx, const std::vector<std::string>& l
 // handle_curves()
 // ============================================================================
 
-static const std::unordered_map<std::string, TableType> CURVE_TYPE_MAP = {
-    {"STORAGE", TableType::CURVE_STORAGE}, {"DIVERSION", TableType::CURVE_DIVERSION},
-    {"RATING", TableType::CURVE_RATING},   {"SHAPE", TableType::CURVE_SHAPE},
-    {"CONTROL", TableType::CURVE_CONTROL}, {"TIDAL", TableType::CURVE_TIDAL},
-    {"WEIR", TableType::CURVE_WEIR},       {"PUMP1", TableType::CURVE_PUMP1},
-    {"PUMP2", TableType::CURVE_PUMP2},     {"PUMP3", TableType::CURVE_PUMP3},
-    {"PUMP4", TableType::CURVE_PUMP4},     {"PUMP5", TableType::CURVE_PUMP5},
-};
+// Legacy CurveTypeWords, in legacy order; table_readCurve reads them with findmatch, so
+// STORAGEZ is STORAGE and PUMP10 is PUMP1.
+static constexpr std::string_view kCurveTypeWords[] = {"STORAGE", "DIVERSION", "TIDAL", "RATING",
+                                                       "CONTROL", "SHAPE",     "WEIR",  "PUMP1",
+                                                       "PUMP2",   "PUMP3",     "PUMP4", "PUMP5"};
+static constexpr TableType kCurveTypes[] = {
+    TableType::CURVE_STORAGE, TableType::CURVE_DIVERSION, TableType::CURVE_TIDAL,
+    TableType::CURVE_RATING,  TableType::CURVE_CONTROL,   TableType::CURVE_SHAPE,
+    TableType::CURVE_WEIR,    TableType::CURVE_PUMP1,     TableType::CURVE_PUMP2,
+    TableType::CURVE_PUMP3,   TableType::CURVE_PUMP4,     TableType::CURVE_PUMP5};
+static_assert(std::size(kCurveTypeWords) == std::size(kCurveTypes));
 
 /**
  * @brief Append curve coordinate pairs to kind-scoped named tables.
@@ -329,9 +334,8 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
                 // ERR_KEYWORD; v6 formerly kept the default RATING and mis-parsed
                 // the token as data (e.g. a "GENERAL" curve was silently run).
                 if (tok.size() > 1) {
-                    auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
-                    if (it != CURVE_TYPE_MAP.end()) {
-                        current_type = it->second;
+                    if (const int k = legacy_findmatch(tok[1], kCurveTypeWords); k >= 0) {
+                        current_type = kCurveTypes[k];
                     } else {
                         ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
                     }
@@ -350,12 +354,8 @@ void handle_curves(SimulationContext& ctx, const std::vector<std::string>& lines
         // Data columns: potentially tok[1]/tok[2] (if type present) or tok[1]/tok[2]
         // After the type token, remaining tokens are x-y pairs
         std::size_t data_start = 1;
-        if (tok.size() >= 2) {
-            auto it = CURVE_TYPE_MAP.find(Tokenizer::to_upper(tok[1]));
-            if (it != CURVE_TYPE_MAP.end()) {
-                data_start = 2; // type token consumed
-            }
-        }
+        if (tok.size() >= 2 && legacy_findmatch(tok[1], kCurveTypeWords) >= 0)
+            data_start = 2; // type token consumed
 
         // Pairs: x y [x y ...]
         for (std::size_t i = data_start; i + 1 < tok.size(); i += 2) {

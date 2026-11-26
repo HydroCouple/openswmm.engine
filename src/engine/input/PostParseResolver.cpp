@@ -2769,6 +2769,16 @@ void resolve_cross_references(SimulationContext& ctx) {
         };
         for (const auto& name : ctx.ext_inflows.pattern_name)
             check(name);
+        // A pollutant inflow's type is CONCEN or MASS (legacy inflow.c ERR_KEYWORD otherwise;
+        // InflowsHandler has already read the legacy prefix forms). FLOW is what this engine
+        // stores when a row gives no type.
+        for (int i = 0; i < ctx.ext_inflows.count(); ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const std::string& type = ctx.ext_inflows.inflow_type[ui];
+            if (ctx.pollutant_names.find(ctx.ext_inflows.constituent[ui]) >= 0 &&
+                type != "CONCEN" && type != "MASS" && type != "FLOW")
+                ctx.errors.push_back(format_error(ERR_KEYWORD, type));
+        }
         for (int i = 0; i < ctx.dwf_inflows.count(); ++i) {
             const auto ui = static_cast<std::size_t>(i);
             check(ctx.dwf_inflows.pat1[ui]);
