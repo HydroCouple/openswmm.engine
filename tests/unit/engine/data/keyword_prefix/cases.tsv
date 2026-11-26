@@ -169,10 +169,11 @@ uh_long_z	inflows.inp	ALL   LONG	ALL   LONGZ	same
 #
 # Quality: QualUnitsWords and NormalizerWords (findmatch), and [TREATMENT]
 # process variables (ProcessVarWords, findmatch after this engine's exact
-# names and the pollutant names).
+# names and the pollutant names). Units this engine does not know stay MG/L
+# with the declaration marked unrecognized, where legacy gives ERROR 205, so
+# they have no refuse case.
 q_units_mg_z	inflows.inp	TSS   MG/L	TSS   MG/LZ	same
 q_units_ug_z	inflows.inp	BOD   UG/L	BOD   UG/LZ	same
-q_units_bad	inflows.inp	BOD   UG/L	BOD   PPM	refuse:205
 q_norm_area_z	inflows.inp	2   AREA	2   AREAZ	same
 q_norm_curb_z	inflows.inp	2   CURB	2   CURBZ	same
 q_norm_bad	inflows.inp	2   AREA	2   ACRE	refuse:205

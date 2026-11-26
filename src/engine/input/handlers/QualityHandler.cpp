@@ -161,16 +161,15 @@ void handle_pollutants(SimulationContext& ctx, const std::vector<std::string>& l
         if (idx < 0)
             continue;
 
-        // Units: legacy QualUnitsWords read with findmatch (landuse.c), ERROR 205 otherwise
+        // Units: legacy QualUnitsWords read with findmatch (landuse.c), so UG/LZ is UG/L.
+        // Legacy refuses any other word with ERROR 205; this engine keeps such a pollutant in
+        // MG/L and marks its declaration unrecognized, which the storage exchange refuses to
+        // couple (test_changing_volume_storage_exchange).
         const int units = legacy_findmatch(tok[1], {"MG/L", "UG/L", "#/L"});
-        if (units < 0) {
-            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[1]));
-            continue;
-        }
         static constexpr MassUnits kUnits[] = {MassUnits::MG_PER_L, MassUnits::UG_PER_L,
                                                MassUnits::COUNTS_PER_L};
-        ctx.pollutants.unit_declaration_valid[idx] = 1;
-        ctx.pollutants.units[idx] = kUnits[units];
+        ctx.pollutants.unit_declaration_valid[idx] = units >= 0 ? 1 : 0;
+        ctx.pollutants.units[idx] = units >= 0 ? kUnits[units] : MassUnits::MG_PER_L;
 
         if (tok.size() > 2)
             ctx.pollutants.c_rain[idx] = to_double(tok[2]);
