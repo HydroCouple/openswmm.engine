@@ -85,7 +85,7 @@ The input file for command line SWMM has the same format as the project file use
 
 
 
-Section keywords can appear in mixed lower and upper case. The sections can appear in any arbitrary order in the input file, and not all sections must be present. Each section can contain one or more lines of data. Blank lines may appear anywhere in the file. A semicolon (;) can be used to indicate that what follows on the line is a comment, not data. Data items can appear in any column of a line. Observe how in Figure D-1 these features were used to create a tabular appearance for the data, complete with column headings.
+Section keywords can appear in mixed lower and upper case. A section header or a keyword is read as SWMM 5 reads it: a word that begins with the keyword is that keyword, so `[CURVE]` is `[CURVES]`, `FIXED_STAGE` is FIXED and `END_DATEZ` is END_DATE. A word that begins with none of the keywords allowed in its place is ERROR 205. Keywords this engine adds to SWMM 5 are matched as written. SWMM 5 compares a few keywords as whole words, and so does this engine: NONE and ALL in [REPORT], YES and NO after DRY_ONLY, FILE in [TIMESERIES] and after WINDSPEED, HEAD after an outlet's rating type, and the relational operators in [CONTROLS]. The sections can appear in any arbitrary order in the input file, and not all sections must be present. Each section can contain one or more lines of data. Blank lines may appear anywhere in the file. A semicolon (;) can be used to indicate that what follows on the line is a comment, not data. Data items can appear in any column of a line. Observe how in Figure D-1 these features were used to create a tabular appearance for the data, complete with column headings.
 
 An option is available in the [OPTIONS] section to choose flow units from among cubic feet per second (CFS), gallons per minute (GPM), million gallons per day (MGD), cubic meters per second (CMS), liters per second, (LPS), or million liters per day (MLD). If cubic feet or gallons are chosen for flow units, then US units must be used for all other quantities. If cubic meters or liters are chosen, then metric units must be used for all other quantities. Exceptions are pollutant concentration and Manning’s roughness coefficient (n) which are always expressed in metric units. The default flow units are CFS. @ref manual_reference_tables provides a complete listing of measurement units.
 
@@ -112,7 +112,7 @@ Keyword  Value
 
 Parameters:
 
-Every keyword below is matched case-insensitively by the parser (`OptionsHandler.cpp`, `handle_options()`); only the first value token after the keyword is read. A keyword the parser does not recognise is not an error: it is stored upper-cased in the extension-options map (`SimulationOptions::ext_options`), a non-fatal "Unknown option keyword" warning is written to the report file, and the value stays available to plugins through `swmm_options_get_ext()`. An unrecognised value of FLOW_UNITS, INFILTRATION, FLOW_ROUTING, QUALITY_SOLVER, OUTFALL_BACKFLOW_QUALITY or DISPERSION is stored the same way but without a warning; an unrecognised value of any other enumerated keyword is silently ignored and the default stands. Boolean spellings differ by key: the IGNORE_* keys, ALLOW_PONDING, SKIP_STEADY_STATE and WRITE_ABSOLUTE_PATHS take YES, TRUE or 1 as true and anything else as false; FV_COMPACTION, FV_LTS and FV_NODE_FEEDBACK_DT take NO, FALSE, 0 or OFF as false and anything else as true; the remaining switches list their accepted spellings in the Values column.
+Every keyword below is matched case-insensitively by the parser (`OptionsHandler.cpp`, `handle_options()`); only the first value token after the keyword is read. A keyword that begins with a SWMM 5 option keyword is that option, as in SWMM 5 (`ROUTING_STEPZ` is ROUTING_STEP). Any other keyword the parser does not recognize is not an error: it is stored upper-cased in the extension-options map (`SimulationOptions::ext_options`), a non-fatal "Unknown option keyword" warning is written to the report file, and the value stays available to plugins through `swmm_options_get_ext()`. An unrecognized value of FLOW_UNITS, INFILTRATION, FLOW_ROUTING, QUALITY_SOLVER, OUTFALL_BACKFLOW_QUALITY or DISPERSION is stored the same way but without a warning; an unrecognized value of any other enumerated keyword is silently ignored and the default stands. Boolean spellings differ by key: the IGNORE_* keys, ALLOW_PONDING, SKIP_STEADY_STATE and WRITE_ABSOLUTE_PATHS take YES, TRUE or 1 as true and anything else as false; FV_COMPACTION, FV_LTS and FV_NODE_FEEDBACK_DT take NO, FALSE, 0 or OFF as false and anything else as true; the remaining switches list their accepted spellings in the Values column.
 
 Three sections carry a keyword spelled `DISPERSION`, and they mean different things. In `[OPTIONS]`, `DISPERSION RWPT` or `OFF` is the switch for random-walk particle dispersion under `QUALITY_SOLVER LAGRANGIAN` (quality §7.4.1); it takes no coefficient and warns under any other quality solver. In `[TRANSPORT_OPTIONS]`, `DISPERSION OFF`, `FISCHER` or a number sets the longitudinal dispersion coefficient of the Eulerian ARD engine, in project length squared per second (quality §7.3.3). In `[2D_OPTIONS]`, `DISPERSION` is the isotropic species dispersion coefficient of the 2D surface in m²/s, default 0, with negative values refused. (A fourth, `[GW_TRANSPORT_OPTIONS] DISPERSION YES` or `NO`, is a switch of the groundwater-transport sections, which are authored but inert.) The table below documents only the `[OPTIONS]` key.
 
@@ -286,7 +286,6 @@ LINK_STEPS        YES / NO
 SUBCATCHMENTS    ALL / NONE / &lt;list of subcatchment names&gt;
 NODES                ALL / NONE / &lt;list of node names&gt;
 LINKS                ALL / NONE / &lt;list of link names&gt;
-LID                Name  Subcatch  Fname
 
 Remarks:
 Setting DISABLED to YES disables all reporting (except for error and warning messages) regardless of what other reporting options are chosen.  The default is NO.
@@ -298,8 +297,8 @@ LINK_STEPS (OpenSWMM extension) adds a Conduit Time Step Summary table: for each
 SUBCATCHMENTS gives a list of subcatchments whose results are to be reported. The default is NONE.
 NODES gives a list of nodes whose results are to be reported. The default is NONE.
 LINKS gives a list of links whose results are to be reported. The default is NONE.
-LID specifies that the LID control Name in subcatchment Subcatch should have a detailed performance report for it written to file Fname.
-The SUBCATCHMENTS, NODES, LINKS, and LID lines can be repeated multiple times. 
+The SUBCATCHMENTS, NODES and LINKS lines can be repeated multiple times.
+A key that begins with one of these keys is that key (`NODESZ` is NODES), and any other key is ERROR 205, as in SWMM 5. The SWMM 5.0 line `LID Name Subcatch Fname` is such a key: EPA SWMM 5.2 and this engine refuse it, and a LID unit's report file is named in [LID_USAGE]. A name in the lists that is not an object of the model is WARNING 109 and is ignored, where SWMM 5 stops with ERROR 209.
 ### Section: [FILES] {#engine_manual_sect_FILES}
 
 Purpose:
@@ -432,7 +431,7 @@ Use only one of the above formats (CONSTANT, MONTHLY, TIMESERIES, TEMPERATURE, o
 TEMPERATURE indicates that evaporation rates will be computed from the daily air temperatures contained in an external climate file whose name is provided in the [TEMPERATURE] section. This method also uses the site’s latitude, which can also be specified in the [TEMPERATURE] section.
 FILE indicates that evaporation data will be read directly from the same external climate file used for air     temperatures as specified in the [TEMPERATURE] section. Supplying monthly pan coefficients for these data is optional.
 RECOVERY identifies an optional monthly time pattern of multipliers used to modify infiltration recovery rates during dry periods. For example, if the normal infiltration recovery rate was 1% during a specific time period and a pattern factor of 0.8 applied to this period, then the actual recovery rate would be 0.8%.
-DRY_ONLY determines if evaporation only occurs during periods with no precipitation. The default is NO.
+DRY_ONLY determines if evaporation only occurs during periods with no precipitation. The default is NO. As in SWMM 5, the value is compared as a whole word: any word other than YES or NO is ERROR 205.
 The evaporation rates provided in this section are potential rates. The actual amount of water evaporated will depend on the amount available as a simulation progresses.
  
 ### Section: [TEMPERATURE] {#engine_manual_sect_TEMPERATURE}
