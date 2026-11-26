@@ -301,27 +301,44 @@ inline void dump_load() noexcept {
                  sec_mesh2d_dispatch);
 }
 
-// Adds the elapsed wall time between construction and destruction to `acc`.
+// Adds the elapsed wall time between construction and destruction to `acc`
+// when OPENSWMM_PERF is set.
+//
+// Gated like GatedTimer because the accumulators are process globals: an
+// ungated += meant every engine wrote them on every open/step whether or not
+// anyone was profiling, which is a data race whenever a host runs engines on
+// two threads (ThreadSanitizer, test_engine_concurrent, 2026-11-25:
+// sec_open_validate in open(), sec_1d_step in stepRouting()). Nothing reads
+// these totals unless OPENSWMM_PERF is set, so gating loses no output.
+// Profiling several concurrent engines still shares the totals, as the
+// one-profiled-simulation-at-a-time contract above already states.
 struct ScopedTimer {
-    double* acc;
+    double* acc = nullptr;
     std::chrono::steady_clock::time_point t0;
     /**
-     * @brief Start an unconditional wall timer against a borrowed accumulator.
+     * @brief Start a profiling-gated wall timer against a borrowed accumulator.
      *
-     * Reads the clock even when profiling is disabled. Nested ScopedTimers include child time, unlike
-     * GatedTimer. Do not copy; destruction must occur before a is destroyed.
+     * When profiling is disabled, stores no accumulator and reads no clock. Nested ScopedTimers
+     * include child time, unlike GatedTimer. Do not copy; destruction must occur before a is
+     * destroyed.
      *
      * @param[in,out] a Caller-owned seconds accumulator that must outlive this timer; updates are not
      *     synchronized.
      */
-    explicit ScopedTimer(double& a) noexcept : acc(&a), t0(std::chrono::steady_clock::now()) {}
+    explicit ScopedTimer(double& a) noexcept {
+        if (enabled()) {
+            acc = &a;
+            t0 = std::chrono::steady_clock::now();
+        }
+    }
     /**
      * @brief Add complete elapsed wall seconds to the borrowed accumulator.
      *
-     * No environment check and no locking; nested timer intervals can overlap.
+     * No-op when disabled at construction. No locking; nested timer intervals can overlap.
      */
     ~ScopedTimer() noexcept {
-        *acc += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (acc)
+            *acc += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     }
     /**
      * @brief Prevent copying an active ScopedTimer scope.
