@@ -1789,6 +1789,16 @@ int SWMMEngine::initialize() noexcept {
             return CFFI_ERR_HOTSTART;
         }
     }
+    // A USE HOTSTART file that cannot be opened is legacy's ERROR 331 (iface.c
+    // openHotstartFile1), in the report as well as through the API.
+    if (!restart_hs && !ctx_.files.hotstart_use_path.empty()) {
+        if (std::FILE* probe = openswmm::io::fopen_utf8(hs_path, "rb"))
+            std::fclose(probe);
+        else {
+            set_error(CFFI_ERR_HOTSTART, format_error(ERR_HOTSTART_FILE, hs_path).c_str());
+            return CFFI_ERR_HOTSTART;
+        }
+    }
     const bool hs_native = restart_hs || (!ctx_.files.hotstart_use_path.empty() &&
                                           HotStartManager::is_native_file(hs_path));
     std::unique_ptr<HotStartFile> deferred_hotstart;

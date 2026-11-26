@@ -1,0 +1,25 @@
+[TITLE]
+A USE HOTSTART file that cannot be opened is reported as legacy reports it
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+
+[FILES]
+USE HOTSTART "warnerr_hotstart_missing_no_such_file.hsf"
+
+[JUNCTIONS]
+J1   10   5   0   0   0
+
+[OUTFALLS]
+O1   8   FREE   NO
+
+[CONDUITS]
+C1   J1   O1   100   0.013   0   0   0   0
+
+[XSECTIONS]
+C1   CIRCULAR   1   0   0   0   1

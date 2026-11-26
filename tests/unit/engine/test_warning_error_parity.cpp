@@ -511,6 +511,17 @@ TEST(WarningErrorParity, LinkAboveStorageMaxDepthWarns14) {
     EXPECT_FALSE(contains(rpt_text, w14 + "OkChamber")) << rpt_text;
 }
 
+// Issue #96 side finding. A USE HOTSTART file that cannot be opened stops the
+// run in legacy with "ERROR 331: cannot open hot start interface file" in the
+// report. The engine stopped too, but its report carried only its own text,
+// with no error code, so tools that read the report for ERROR lines missed it.
+TEST(WarningErrorParity, UnopenableHotstartIsError331) {
+    std::string rpt_text;
+    open_model("warnerr_hotstart_missing.inp", "warnerr_hotstart_missing.rpt", rpt_text);
+    EXPECT_TRUE(contains(rpt_text, "ERROR 331: cannot open hot start interface file")) << rpt_text;
+    EXPECT_TRUE(contains(rpt_text, "warnerr_hotstart_missing_no_such_file.hsf")) << rpt_text;
+}
+
 // Issue #36 (USEPA #104). Legacy removes an inlet whose design its conduit's
 // shape cannot host, with WARNING 12 (inlet_validate). The engine printed the
 // warning as "ERROR 635", and the usage stayed behind in the Street Inlet
