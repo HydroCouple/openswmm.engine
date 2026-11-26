@@ -50,6 +50,7 @@
 
 #include "../InputParseUtils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <limits>
 #include <string>
@@ -281,10 +282,16 @@ void handle_orifices(SimulationContext& ctx, const std::vector<std::string>& lin
         const int orr = ctx.link_subtypes.set_link_type(ctx.links, idx, LinkType::ORIFICE);
         const auto uorr = static_cast<std::size_t>(orr);
         set_link_nodes(ctx, idx, tok[1], tok[2]);
-        // tok[3]: SIDE or BOTTOM → orifice_type (0=BOTTOM, 1=SIDE)
-        if (tok.size() > 3)
-            ctx.link_subtypes.orifices.orifice_type[uorr] =
-                (Tokenizer::to_upper(tok[3]) == "SIDE") ? 1.0 : 0.0;
+        // tok[3]: SIDE or BOTTOM → orifice_type (0=BOTTOM, 1=SIDE); legacy
+        // orifice_readParams reads OrificeTypeWords with findmatch, ERROR 205 otherwise
+        if (tok.size() > 3) {
+            const int otype = legacy_findmatch(tok[3], {"SIDE", "BOTTOM"});
+            if (otype < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[3]));
+                continue;
+            }
+            ctx.link_subtypes.orifices.orifice_type[uorr] = otype == 0 ? 1.0 : 0.0;
+        }
         // tok[4]: offset (height above invert)
         if (tok.size() > 4)
             ctx.links.offset1[idx] = offsetToken(ctx, tok[4]);
@@ -345,18 +352,17 @@ void handle_weirs(SimulationContext& ctx, const std::vector<std::string>& lines)
         const auto uwr = static_cast<std::size_t>(wr);
         set_link_nodes(ctx, idx, tok[1], tok[2]);
         // tok[3]: weir type (TRANSVERSE=0, SIDEFLOW=1, V-NOTCH=2, TRAPEZOIDAL=3,
-        // ROADWAY=4 — legacy WeirTypeWords order)
+        // ROADWAY=4 — legacy WeirTypeWords order, read with findmatch in
+        // weir_readParams; ERROR 205 when none matches)
         double wt = 0.0;
         if (tok.size() > 3) {
-            std::string wtype = Tokenizer::to_upper(tok[3]);
-            if (wtype == "SIDEFLOW")
-                wt = 1.0;
-            else if (wtype == "V-NOTCH")
-                wt = 2.0;
-            else if (wtype == "TRAPEZOIDAL")
-                wt = 3.0;
-            else if (wtype == "ROADWAY")
-                wt = 4.0;
+            const int wtype = legacy_findmatch(
+                tok[3], {"TRANSVERSE", "SIDEFLOW", "V-NOTCH", "TRAPEZOIDAL", "ROADWAY"});
+            if (wtype < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[3]));
+                continue;
+            }
+            wt = wtype;
             ctx.link_subtypes.weirs.weir_type[uwr] = wt;
         }
         // tok[4]: crest height (above invert)
@@ -465,12 +471,28 @@ void handle_outlets(SimulationContext& ctx, const std::vector<std::string>& line
         // tok[6]: C2 exponent (FUNCTIONAL only)
         // outlet_type: 0=FUNCTIONAL_HEAD, 1=FUNCTIONAL_DEPTH,
         //              2=TABULAR_HEAD,     3=TABULAR_DEPTH
+        // Legacy outlet_readParams: findmatch over RelationWords picks the rating, FUNCTIONAL
+        // or (any other relation word) a curve, and ERROR 205 when none matches; the rating
+        // is head-based only when the word after '/' is HEAD (any case, whole word).
         if (tok.size() > 4) {
-            const auto& type_str = tok[4];
-            bool is_tabular = (type_str.find("TABULAR") != std::string::npos);
-            bool is_depth_based = (type_str.find("DEPTH") != std::string::npos);
+            const std::string_view type_str = tok[4];
+            const int rel = legacy_findmatch(type_str, {"TABULAR", "FUNCTIONAL", "CYLINDRICAL",
+                                                        "CONICAL", "PARABOLIC", "PYRAMIDAL"});
+            if (rel < 0) {
+                ctx.errors.push_back(format_error(ERR_KEYWORD, tok[4]));
+                continue;
+            }
+            std::string_view qualifier;
+            if (const auto slash = type_str.find('/'); slash != std::string_view::npos) {
+                qualifier = type_str.substr(slash);
+                qualifier.remove_prefix(
+                    std::min(qualifier.find_first_not_of('/'), qualifier.size()));
+                qualifier = qualifier.substr(0, qualifier.find('/'));
+            }
+            const bool is_tabular = rel != 1;
+            const bool is_head_based = legacy_strcomp(qualifier, "HEAD");
             ctx.link_subtypes.outlets.outlet_type[uolr] =
-                is_tabular ? (is_depth_based ? 3.0 : 2.0) : (is_depth_based ? 1.0 : 0.0);
+                is_tabular ? (is_head_based ? 2.0 : 3.0) : (is_head_based ? 0.0 : 1.0);
         }
         int outlet_type = static_cast<int>(ctx.link_subtypes.outlets.outlet_type[uolr]);
         bool is_tabular = (outlet_type >= 2);
@@ -815,7 +837,13 @@ void handle_transects(SimulationContext& ctx, const std::vector<std::string>& li
         if (tok.empty())
             continue;
 
-        const std::string keyword = Tokenizer::to_upper(tok[0]);
+        // Legacy transect_readParams reads TransectKeyWords with findmatch, ERROR 205 otherwise.
+        const int key = legacy_findmatch(tok[0], {"NC", "X1", "GR"});
+        if (key < 0) {
+            ctx.errors.push_back(format_error(ERR_KEYWORD, tok[0]));
+            continue;
+        }
+        const std::string keyword = key == 0 ? "NC" : key == 1 ? "X1" : "GR";
 
         if (keyword == "NC") {
             // NC  nLeft  nRight  nChannel

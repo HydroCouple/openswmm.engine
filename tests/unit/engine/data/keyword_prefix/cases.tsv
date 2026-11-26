@@ -36,12 +36,12 @@ flag_outfall_yesz	network.inp	O2   80   FREE   YES\n	O2   80   FREE   YESZ\n	sam
 flag_outfall_bad	network.inp	O1   80   FREE   NO\n	O1   80   FREE   SHUT\n	refuse:205
 flag_pump_onz	network.inp	PC1   ON   0	PC1   ONZ   0	same
 flag_pump_bad	network.inp	PC1   ON   0	PC1   RUN   0	refuse:205
-flag_weir_gate_noz	network.inp	3.33   NO   0	3.33   NOZ   0	same
-flag_weir_gate_bad	network.inp	3.33   NO   0	3.33   MAYBE   0	refuse:205
-flag_weir_surcharge_noz	network.inp	3.33   NO   0   0   NO	3.33   NO   0   0   NOZ	same
-flag_weir_surcharge_bad	network.inp	3.33   NO   0   0   NO	3.33   NO   0   0   MAYBE	refuse:205
-flag_orifice_noz	network.inp	0.65   NO	0.65   NOZ	same
-flag_orifice_bad	network.inp	0.65   NO	0.65   MAYBE	refuse:205
+flag_weir_gate_noz	network.inp	8   3.33   NO   0	8   3.33   NOZ   0	same
+flag_weir_gate_bad	network.inp	8   3.33   NO   0	8   3.33   MAYBE   0	refuse:205
+flag_weir_surcharge_noz	network.inp	8   3.33   NO   0   0   NO	8   3.33   NO   0   0   NOZ	same
+flag_weir_surcharge_bad	network.inp	8   3.33   NO   0   0   NO	8   3.33   NO   0   0   MAYBE	refuse:205
+flag_orifice_noz	network.inp	SIDE   0   0.65   NO	SIDE   0   0.65   NOZ	same
+flag_orifice_bad	network.inp	SIDE   0   0.65   NO	SIDE   0   0.65   MAYBE	refuse:205
 flag_outlet_noz	network.inp	OC1   NO	OC1   NOZ	same
 flag_outlet_bad	network.inp	OC1   NO	OC1   MAYBE	refuse:205
 flag_losses_noz	network.inp	C1   0   0   0   NO   0	C1   0   0   0   NOZ   0	same
@@ -74,3 +74,23 @@ div_tabular_z	nodes.inp	TABULAR    DVC	TABULARZ   DVC	same
 div_weir_z	nodes.inp	WEIR       1	WEIRZ      1	same
 div_overflow_z	nodes.inp	OVERFLOW 	OVERFLOWZ 	same
 div_short_bad	nodes.inp	CUTOFF     2	CUT        2	refuse:205
+#
+# Link words: OrificeTypeWords, WeirTypeWords, RelationWords (outlets, with a
+# whole-word HEAD qualifier) and TransectKeyWords, read with findmatch.
+lnk_orifice_side_z	network.inp	SIDE   0   0.65	SIDEZ  0   0.65	same
+lnk_orifice_bottom_z	network.inp	BOTTOM   0	BOTTOMZ  0	same
+lnk_orifice_bad	network.inp	SIDE   0   0.65	LATERAL   0   0.65	refuse:205
+lnk_weir_transverse_z	network.inp	TRANSVERSE   8	TRANSVERSEZ  8	same
+lnk_weir_sideflow_z	network.inp	SIDEFLOW     1	SIDEFLOWZ    1	same
+lnk_weir_vnotch_z	network.inp	V-NOTCH      1	V-NOTCHZ     1	same
+lnk_weir_trapezoidal_z	network.inp	TRAPEZOIDAL  1	TRAPEZOIDALZ 1	same
+lnk_weir_roadway_z	network.inp	ROADWAY      1	ROADWAYZ     1	same
+lnk_weir_bad	network.inp	TRANSVERSE   8	TRANS        8	refuse:205
+lnk_outlet_tabular_lower	network.inp	TABULAR/HEAD	tabular/head	same
+lnk_outlet_tabular_z	network.inp	TABULAR/HEAD	TABULARZ/HEAD	same
+lnk_outlet_functional_lower	network.inp	FUNCTIONAL/DEPTH	functional/depth	same
+lnk_outlet_bad	network.inp	TABULAR/HEAD	TAB/HEAD	refuse:205
+tr_nc_z	network.inp	NC   0.03	NCZ  0.03	same
+tr_x1_z	network.inp	X1   TR1	X1Z  TR1	same
+tr_gr_z	network.inp	GR   10	GRZ  10	same
+tr_bad	network.inp	GR   10	GG   10	refuse:205
