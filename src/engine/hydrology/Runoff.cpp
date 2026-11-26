@@ -938,8 +938,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 #ifdef SWMM_USE_OPENMP
     // Ordinary native sources own disjoint reservoir/infiltration/report rows.
     // Weather preparation precedes this loop; downstream publication follows its join.
-    const bool ordinary = !source_forcing && !boundary && !spatial_fractions &&
-                          (ctx.options.ignore_snow_melt || ctx.snowpacks.plowable.empty());
+    // Snow does not gate the team (Track 1A, 2026-11-26): the kernel only reads the
+    // pack state (snow_net_*, the UEB fluxes, the plowable fraction), all written by
+    // the snow block that runs before this call in SWMMEngine::stepRunoff.
+    const bool ordinary = !source_forcing && !boundary && !spatial_fractions;
     const int threads =
         ordinary && count >= 512 && !omp_in_parallel()
             ? (ctx.options.num_threads > 0 ? ctx.options.num_threads : threadinfo::ompMaxThreads())
