@@ -10680,6 +10680,28 @@ void SWMMEngine::validate_project() noexcept {
                 format_error(ERR_SUBCATCH_OUTLET, ctx_.subcatch_names.name_of(s)));
     }
 
+    // WARNING 110 (issue #124): land use coverages adding to more than 100 %.
+    // Each land use's buildup and washoff scale by its own coverage, so two
+    // land uses at 100 % each load the subcatchment twice. Legacy accepts the
+    // deck without a word (subcatch_readLanduseParams has no sum check), so
+    // this warns rather than refusing a deck legacy runs. The allowance
+    // absorbs rounding in rows such as 33.33 / 33.33 / 33.34.
+    {
+        const int n_lu = ctx_.landuse_names.size();
+        const auto n_sub = static_cast<std::size_t>(ctx_.n_subcatches());
+        if (n_lu > 0 && ctx_.subcatches.coverage.size() >= n_sub * static_cast<std::size_t>(n_lu)) {
+            for (std::size_t s = 0; s < n_sub; ++s) {
+                double total = 0.0;
+                for (int l = 0; l < n_lu; ++l)
+                    total += ctx_.subcatches.coverage[s * static_cast<std::size_t>(n_lu) +
+                                                      static_cast<std::size_t>(l)];
+                if (total > 100.0 + 1.0e-6)
+                    ctx_.warnings.push_back(format_warning(
+                        WARN_COVERAGE_OVER_100, ctx_.subcatch_names.name_of(static_cast<int>(s))));
+            }
+        }
+    }
+
     // Legacy gage_validate checks only a TIMESERIES gage, and returns before
     // any check for a co-gage (one sharing an earlier used gage's series).
     const int ng = ctx_.n_gages();

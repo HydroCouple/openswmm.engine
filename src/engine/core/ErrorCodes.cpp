@@ -255,6 +255,7 @@ static const std::unordered_map<int, const char*>& warning_table() {
               "overrides the requested FV_SLOT_CELERITY for %s; celerities "
               "below the cap-implied value have no effect there."},
         {109, "undefined object %s in the [REPORT] section was ignored."},
+        {110, "land use coverages of Subcatchment %s add to more than 100 percent."},
     };
     return table;
 }

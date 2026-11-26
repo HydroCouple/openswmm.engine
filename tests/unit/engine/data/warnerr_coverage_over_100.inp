@@ -1,0 +1,83 @@
+[TITLE]
+Land use coverages above 100 percent (issue #124): S1 takes two land uses at
+100 percent each, S3 60 + 50 percent across two lines; S2 adds to 100 with
+rounding (33.33 / 33.33 / 33.34) and must stay quiet.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+MIN_SLOPE            0
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/01/2020
+END_TIME             01:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         5
+
+[RAINGAGES]
+;;Name  Format     Interval  SCF  Source
+G1      INTENSITY  0:05      1.0  TIMESERIES  R1
+
+[SUBCATCHMENTS]
+;;Name  Gage  Outlet  Area  %Imperv  Width  %Slope  CurbLen
+S1      G1    J1      5     50       500    1       0
+S2      G1    J1      5     50       500    1       0
+S3      G1    J1      5     50       500    1       0
+
+[SUBAREAS]
+;;Subcat  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo
+S1        0.01      0.1     0.05      0.05    25       OUTLET
+S2        0.01      0.1     0.05      0.05    25       OUTLET
+S3        0.01      0.1     0.05      0.05    25       OUTLET
+
+[INFILTRATION]
+;;Subcat  MaxRate  MinRate  Decay  DryTime  MaxInfil
+S1        3.0      0.5      4      7        0
+S2        3.0      0.5      4      7        0
+S3        3.0      0.5      4      7        0
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10    5         0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  Stage  Gated
+O1       0     FREE         NO
+
+[CONDUITS]
+;;Name  From  To   Length  Rough   In  Out  Init  Max
+C1       J1    O1   400     0.01    0   0    0     0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4  Barrels
+C1       CIRCULAR  1.0    0      0      0      1
+
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay
+TSS     MG/L   0      0    0      0
+
+[LANDUSES]
+;;Name
+LU1
+LU2
+LU3
+
+[COVERAGES]
+;;Subcat  LandUse  Percent  LandUse  Percent  LandUse  Percent
+S1        LU1      100      LU2      100
+S2        LU1      33.33    LU2      33.33    LU3      33.34
+S3        LU1      60
+S3        LU2      50
+
+[TIMESERIES]
+;;Name  Time  Value
+R1      0:00  1.0
+R1      0:30  0.0
+
+[COORDINATES]
+J1  0    0
+O1  100  0

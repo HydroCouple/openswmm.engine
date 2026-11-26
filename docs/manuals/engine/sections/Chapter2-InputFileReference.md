@@ -1659,6 +1659,7 @@ Remarks:
 More than one pair of land use - percentage values can be entered per line. If more than one line is needed, then the subcatchment name must still be entered first on the succeeding lines.
 If a land use does not pertain to a subcatchment, then it does not have to be entered.
 If no land uses are associated with a subcatchment then no pollutants will appear in the runoff from the subcatchment.
+The percentages for a subcatchment should not add to more than 100. Each land use's buildup and washoff are scaled by its own coverage, so an excess loads the subcatchment more than once; the run goes on with the values as given, after WARNING 110.
 
 
 

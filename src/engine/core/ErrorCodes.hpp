@@ -289,6 +289,7 @@ enum WarnCode : int {
         107,                ///< unreadable row(s) skipped in rainfall CSV for Rain Gage %s
     WARN_FV_SLOT_CAP = 108, ///< slot width cap (5% of top width) overrides FV_SLOT_CELERITY for %s
     WARN_REPORT_OBJECT_UNDEFINED = 109, ///< undefined object %s in [REPORT] was ignored
+    WARN_COVERAGE_OVER_100 = 110, ///< land use coverages of Subcatchment %s exceed 100 percent
 };
 
 // ============================================================================

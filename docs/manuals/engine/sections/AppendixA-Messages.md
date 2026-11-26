@@ -476,3 +476,6 @@ The Preissmann slot width computed from FV_SLOT_CELERITY exceeded the cap of 5 %
 
 WARNING 109:     undefined object xxx in the [REPORT] section was ignored.
 A SUBCATCHMENTS, NODES or LINKS entry in the [REPORT] section names an object the model does not have. The name is skipped and the run goes on; EPA SWMM 5 stops with ERROR 209 instead.
+
+WARNING 110:     land use coverages of Subcatchment xxx add to more than 100 percent.
+The [COVERAGES] percentages given for the subcatchment sum to more than 100. Each land use's buildup and washoff are scaled by its own coverage, so the excess loads the subcatchment more than once. The run goes on with the values as given; EPA SWMM 5 accepts them without a message.

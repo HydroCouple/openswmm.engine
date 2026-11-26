@@ -370,3 +370,23 @@ TEST(PostOpenFailure, StartFailureSurvivesTeardown) {
     const std::string rpt_text = read_file("warnerr_bad_iface.rpt");
     EXPECT_TRUE(contains(rpt_text, cause)) << rpt_text;
 }
+
+// Issue #124. Land use coverages adding to more than 100 % are WARNING 110:
+// each land use's buildup and washoff scale by its own coverage, so the excess
+// loads the subcatchment more than once. Legacy accepts the deck silently, so
+// the engine warns and runs it with the values as given. Rows for one
+// subcatchment add up across lines (S3), and rounding to 100 stays quiet (S2).
+TEST(WarningErrorParity, CoverageOver100PercentWarns110) {
+    std::string rpt_text;
+    const int rc =
+        open_model("warnerr_coverage_over_100.inp", "warnerr_coverage_over_100.rpt", rpt_text);
+    EXPECT_EQ(rc, 0) << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, "ERROR ")) << rpt_text;
+    EXPECT_TRUE(contains(rpt_text,
+                         "WARNING 110: land use coverages of Subcatchment S1 add to more than 100"))
+        << rpt_text;
+    EXPECT_TRUE(contains(rpt_text,
+                         "WARNING 110: land use coverages of Subcatchment S3 add to more than 100"))
+        << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, "Subcatchment S2 add to more")) << rpt_text;
+}
