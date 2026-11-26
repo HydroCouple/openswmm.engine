@@ -25,6 +25,7 @@
  */
 
 #include "SigmaColumn.hpp"
+#include "../../core/RunoffProfile.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -367,6 +368,7 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
                     s.psi.swap(s.trial_psi);
                     merit = next;
                     moved = true;
+                    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_linesearch_halvings, ls);
                     break;
                 }
                 if (polishing)
@@ -558,6 +560,9 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
     ImplicitTotals totals;
     int solves = 0, iterations = 0;
     if (dz1 > 0.0) {
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+        int prof_level = -1; // the halving level that converged; -1 = none did
+#endif
         for (int level = 0; level <= kSubstepHalvings; ++level) {
             const int pieces = 1 << level;
             const double h = st.dt / static_cast<double>(pieces);
@@ -573,9 +578,19 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
                     if (level < kSubstepHalvings)
                         break;
                 }
-            if (ok)
+            if (ok) {
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+                prof_level = level;
+#endif
                 break;
+            }
         }
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+        if (prof_level < 0)
+            OPENSWMM_RUNOFF_PROFILE_COUNT(sigma_column_failed);
+        else if (prof_level > 0)
+            OPENSWMM_RUNOFF_PROFILE_COUNT(sigma_substep_halved);
+#endif
     } else {
         // A collapsed column passes its top flux straight to the table: the limit of the solve
         // as its layers vanish.
@@ -595,6 +610,8 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
     st.deficit_from_sat = (draw + draw_end) / st.dt;
     st.implicit_solves = solves + totals.solves;
     st.newton_iterations = iterations + totals.iterations;
+    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_solves, st.implicit_solves);
+    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_newton_iter, st.newton_iterations);
     if (st.transfers) {
         auto& r = *st.transfers;
         r.infiltration = st.f_top * st.dt;

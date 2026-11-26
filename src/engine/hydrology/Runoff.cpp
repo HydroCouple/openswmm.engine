@@ -43,6 +43,7 @@
 #include "Runoff.hpp"
 #include "Gage.hpp"
 #include "../core/Constants.hpp"
+#include "../core/RunoffProfile.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/OdeSolver.hpp"
@@ -145,6 +146,7 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha,
     // --- Check if not enough inflow to fill depression storage ---
     // Matches legacy subcatch.c line 1046
     if (depth + inflow * tx <= dStore) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_below_store);
         depth += inflow * tx;
     } else {
         // --- Fill depression storage first, reduce remaining time ---
@@ -169,11 +171,14 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha,
                                  [captured_inflow, captured_alpha,
                                   captured_dStore](double /*t*/, const double* d, double* dddt) {
                                      double rx = *d - captured_dStore;
+                                     if (rx > 0.0)
+                                         OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_ode_pow);
                                      double outflow =
                                          (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
                                      *dddt = captured_inflow - outflow;
                                  });
         } else {
+            OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_linear);
             tx = std::max(tx, 0.0);
             depth += inflow * tx;
         }
@@ -488,6 +493,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             double subarea_area = total_area * frac;
             if (spatial_fractions && subarea_area <= 0.0)
                 return 0.0;
+            OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_subareas);
             const double initial_depth = depth;
 
             // Step 3.1: Available surface moisture (legacy line 923)
@@ -594,6 +600,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             double runoff_rate = 0.0;
             double t_runoff = dt; // legacy tRunoff
             if (surfEvap + infil >= surfMoisture) {
+                OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_loss_shortcut);
                 depth = 0.0;
             } else {
                 // Step 3.7: Subtract losses from inflow before ODE. Legacy is
@@ -623,6 +630,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 const double xDepth = depth - dStore;
                 if (xDepth > 1.0e-10) { // legacy ZERO
                     if (subarea_n > 0.0) {
+                        OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_pow_outflow);
                         runoff_rate = alpha * std::pow(xDepth, MEXP);
                     } else {
                         runoff_rate = xDepth / t_runoff;

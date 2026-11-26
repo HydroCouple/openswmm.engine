@@ -2631,6 +2631,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
     for (std::size_t g = 0; !gage_changed && g < n_gages; ++g)
         gage_changed = rates[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ || state_.forcing_dirty || gage_changed) {
+        perf::ProcessTimer rain_timer(perf::ProcessPhase::surface_rain);
         state_.forcing_dirty = false;
         state_.forcing_step_sync = false;
         updateRainfall(ctx);
@@ -2730,6 +2731,7 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
     if (infil_.active()) {
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
+            perf::ProcessTimer infil_timer(perf::ProcessPhase::surface_infil);
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
                                options_.num_threads,
                                state_.frost_open.empty() ? nullptr : &state_.frost_open);
@@ -4419,6 +4421,7 @@ void SurfaceRouter2D::resolveBoundaryValues(SimulationContext& ctx, double t) {
  * not safe to retry as a fresh batch.
  */
 void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_massbal);
     auto& mb = ctx.mass_balance_2d;
     int nt = mesh_.n_triangles();
 

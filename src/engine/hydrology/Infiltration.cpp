@@ -26,6 +26,7 @@
 
 #include "Infiltration.hpp"
 #include "../core/Constants.hpp"
+#include "../core/RunoffProfile.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../core/SimulationOptions.hpp"
 #include <cmath>
@@ -75,9 +76,12 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
         state.regen; // Recovery factor applied at call-site via ClimateState.recovery_factor
 
     // Special cases: no infiltration or constant infiltration
-    if (df < 0.0 || kd < 0.0 || kr < 0.0)
+    if (df < 0.0 || kd < 0.0 || kr < 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_special);
         return 0.0;
+    }
     if (df == 0.0 || kd == 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_special);
         double fp = f0;
         fp = std::min(fp, ia);
         return std::max(0.0, fp);
@@ -87,6 +91,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
     double tlim = 16.0 / kd;
 
     if (ia > TINY) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_wet);
         // Compute average infiltration rate over timestep
         double t1 = tp + dt;
         double Fp, F1;
@@ -115,9 +120,11 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
         } else {
             // Infiltration limited by available water — Newton-Raphson
             // to find tp where F(tp) matches actual infiltrated volume
+            OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_newton);
             F1 = Fp + fp * dt;
             tp = tp + dt / 2.0;
             for (int iter = 0; iter < 20; ++iter) {
+                OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_newton_iter);
                 double kt = 60.0 <= kd * tp ? 60.0 : kd * tp;
                 double ex = std::exp(-kt);
                 double FF = fmin * tp + df / kd * (1.0 - ex) - F1;
@@ -139,6 +146,7 @@ double horton_getInfil(HortonState& state, double precip, double depth, double d
     }
     // Dry period with regeneration
     else if (kr > 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_horton_dry);
         double r = std::exp(-kr * dt);
         tp = 1.0 - std::exp(-kd * tp);
         tp = -std::log(1.0 - r * tp) / kd;
@@ -166,9 +174,12 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
     double kr = state.regen;
 
     // Special cases: no infiltration or constant infiltration
-    if (df < 0.0 || kd < 0.0 || kr < 0.0)
+    if (df < 0.0 || kd < 0.0 || kr < 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_modhorton_special);
         return 0.0;
+    }
     if (df == 0.0 || kd == 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_modhorton_special);
         double fp = f0;
         double fa = precip + depth / dt;
         fp = std::min(fp, fa);
@@ -179,6 +190,7 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
     double fa = precip + depth / dt;
 
     if (fa > TINY) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_modhorton_wet);
         // Saturated condition check
         if (state.Fmax > 0.0 && state.Fe >= state.Fmax)
             return 0.0;
@@ -205,6 +217,7 @@ double modHorton_getInfil(HortonState& state, double precip, double depth, doubl
     }
     // Dry period — exponential recovery
     else if (kr > 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_modhorton_dry);
         double decay_factor = std::exp(-kr * dt);
         state.Fe *= decay_factor;
         state.Fe = std::max(state.Fe, 0.0);
@@ -270,18 +283,22 @@ static double grnampt_getF2(double f1, double c1, double ks, double ts) {
     // --- use explicit form of G-A equation for small time steps
     //     and when initial cum. infil. is > 0.01 * c1
     if (ts < 10.0 && f1 > 0.01 * c1) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_f2_explicit);
         f2 = f1 + ks * (1.0 + c1 / f1) * ts;
         return std::max(f2, f2min);
     }
 
     // --- use Newton-Raphson method to solve integrated G-A equation
+    OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_f2_newton);
     double c2 = c1 * std::log(f1 + c1) - ks * ts;
     for (int i = 1; i <= 20; ++i) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_f2_newton_iter);
         double df2 = (f2 - f1 - c1 * std::log(f2 + c1) + c2) / (1.0 - c1 / (f2 + c1));
         if (std::fabs(df2) < 0.00001)
             return std::max(f2, f2min);
         f2 -= df2;
     }
+    OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_f2_exhausted);
     return f2min;
 }
 
@@ -301,6 +318,7 @@ static double grnampt_getSatInfil(GreenAmptState& s, double tstep, double irate,
                                   double ks, double lu, double Fumax, double recovery_factor) {
     // --- total available inflow rate (rain + ponded depth)
     double ia = irate + depth / tstep;
+    OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_sat);
     if (ia < TINY)
         return 0.0;
 
@@ -350,6 +368,7 @@ static double grnampt_getUnsatInfil(GreenAmptState& s, double tstep, double irat
 
     // --- no rainfall so recover upper zone moisture
     if (ia == 0.0) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_unsat_dry);
         if (s.Fu <= 0.0)
             return 0.0;
         double kr = lu / 90000.0 * recovery_factor;
@@ -373,6 +392,7 @@ static double grnampt_getUnsatInfil(GreenAmptState& s, double tstep, double irat
 
     // --- rainfall does not exceed Ksat
     if (ia <= ks) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_unsat_lowrain);
         double dF = ia * tstep;
         s.F += dF;
         s.Fu += dF;
@@ -385,6 +405,7 @@ static double grnampt_getUnsatInfil(GreenAmptState& s, double tstep, double irat
     }
 
     // --- rainfall exceeds Ksat; renew time to drain upper zone
+    OPENSWMM_RUNOFF_PROFILE_COUNT(infil_ga_unsat_wet);
     s.T = 5400.0 / lu / recovery_factor;
 
     // --- find volume needed to saturate surface
@@ -475,6 +496,7 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
 
     // --- Case where there is rainfall ---
     if (precip > TINY) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(infil_cn_rain);
         // Check if new rain event
         if (state.T >= state.Tmax) {
             state.P = 0.0;
@@ -499,12 +521,14 @@ double curvenum_getInfil(CurveNumState& state, double precip, double depth, doub
     else {
         // If there is ponded water, use previous infil rate
         if (depth > MIN_TOTAL_DEPTH && state.S > 0.0) {
+            OPENSWMM_RUNOFF_PROFILE_COUNT(infil_cn_pond);
             f1 = state.f;
             if (f1 * dt > state.S)
                 f1 = state.S / dt;
         }
         // Otherwise update inter-event time
         else {
+            OPENSWMM_RUNOFF_PROFILE_COUNT(infil_cn_dry);
             state.T += dt;
         }
     }

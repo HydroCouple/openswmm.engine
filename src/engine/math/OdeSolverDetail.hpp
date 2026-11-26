@@ -23,6 +23,7 @@
  */
 #pragma once
 #include "OdeSolver.hpp"
+#include "../core/RunoffProfile.hpp"
 #include <cmath>
 #include <utility>
 
@@ -232,6 +233,7 @@ int integrateScalar(double* ystart, double x1, double x2, double eps, double h1,
     double hdid, hnext;
     double x = x1;
     double h = h1;
+    ::openswmm::perf::OdeScalarProfile prof;
 
     for (int nstp = 1; nstp <= MAXSTP; nstp++) {
         derivs(x, &y, &dydx);
@@ -264,6 +266,7 @@ int integrateScalar(double* ystart, double x1, double x2, double eps, double h1,
             errmax /= eps;
 
             if (errmax > 1.0) {
+                prof.reject();
                 htemp = SAFETY * h * std::pow(errmax, PSHRNK);
                 if (h >= 0) {
                     if (htemp > 0.1 * h)
@@ -289,6 +292,7 @@ int integrateScalar(double* ystart, double x1, double x2, double eps, double h1,
                 hnext = 5.0 * h;
             x += (hdid = h);
             y = ytemp;
+            prof.accept();
             break;
         }
         if (underflow)
@@ -298,11 +302,14 @@ int integrateScalar(double* ystart, double x1, double x2, double eps, double h1,
             *ystart = y;
             return ODE_OK;
         }
-        if (std::fabs(hnext) <= 0.0)
+        if (std::fabs(hnext) <= 0.0) {
+            prof.fail();
             return ODE_UNDERFLOW;
+        }
         h = hnext;
     }
     (void)hdid;
+    prof.fail();
     return ODE_MAX_STEPS;
 }
 } // namespace openswmm::ode

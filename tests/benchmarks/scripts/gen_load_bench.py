@@ -34,6 +34,10 @@ inflow_heavy     the dead resolver loop and the report-preamble quadratic
 fv_variant       NetworkMeshBuilder per-conduit geometry tabulation
 roofs_N          per-subcatchment runoff at scale (roofs to free outfalls)
 mixed_N          roofs_N with pervious, Horton, inter-subarea routing
+perv_<method>_N  all-pervious roofs_N under one infiltration method
+half_horton_N    roofs_N at 50 % impervious (both subareas active)
+gw_horton_N      perv_horton_N with a lumped aquifer per subcatchment
+snow_N           half_horton_N with snow packs and a freezing storm
 ===============  =========================================================
 
 Every model is deterministic: no RNG is used at all, so a given (name, size)
@@ -361,8 +365,24 @@ def gen_fv_variant(n: int = 100_000) -> str:
     return "\n".join(parts) + "\n"
 
 
+#: [INFILTRATION] header and per-subcatchment columns of each [OPTIONS]
+#: INFILTRATION method, in US units (in/hr, in). HORTON's row is the one the
+#: roofs/mixed decks have always carried.
+ROOF_INFIL_ROWS = {
+    "HORTON": (";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil", "3.0  0.5  4  7  0"),
+    "MODIFIED_HORTON": (";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil",
+                        "3.0  0.5  4  7  0"),
+    "GREEN_AMPT": (";;Subcatch  Suction  Ksat  IMD", "3.5  0.5  0.25"),
+    "MODIFIED_GREEN_AMPT": (";;Subcatch  Suction  Ksat  IMD", "3.5  0.5  0.25"),
+    "CURVE_NUMBER": (";;Subcatch  CurveNo  Ksat  DryTime", "80  0.5  7"),
+}
+
+
 def gen_roofs(n_sub: int, *, n_gages: int = 4, n_outfalls: int | None = None,
-              pervious_every: int = 0, report: bool = True) -> str:
+              pervious_every: int = 0, report: bool = True,
+              imperv_pct: int | None = None, infil: str = "HORTON",
+              aquifer: bool = False, snow: bool = False,
+              name: str | None = None) -> str:
     """Building roofs as subcatchments, each draining to a FREE outfall.
 
     This is how a 2D model carries roofs: a 1D subcatchment per building whose
@@ -378,10 +398,21 @@ def gen_roofs(n_sub: int, *, n_gages: int = 4, n_outfalls: int | None = None,
     exercised too. Parameters vary with the index so no two neighbours are
     identical. ``report=False`` writes [REPORT] NONE, for sizes where a full
     binary output would not fit on disk.
+
+    The runoff / infiltration profiling round (2026-11-26) adds, each off by
+    default so the earlier decks reproduce byte for byte: ``imperv_pct`` sets
+    every subcatchment's %Imperv (0 = all pervious; 50 = both subareas
+    active); ``infil`` picks the [OPTIONS] INFILTRATION method and the
+    matching [INFILTRATION] row layout (ROOF_INFIL_ROWS); ``aquifer`` gives
+    every subcatchment a lumped aquifer draining to its outfall; ``snow`` adds
+    two snow packs (one with a REMOVAL row), an air-temperature series that
+    makes the storms fall as snow until 02:30, and the SnowPack column;
+    ``name`` replaces the title's ``<kind>_<n>`` label.
     """
     n_out = n_sub if n_outfalls is None else n_outfalls
     kind = "mixed" if pervious_every else "roofs"
-    title = (f"{kind}_{n_sub} — {n_sub} roof subcatchments, {n_gages} gages, "
+    label = name if name else f"{kind}_{n_sub}"
+    title = (f"{label} — {n_sub} roof subcatchments, {n_gages} gages, "
              f"{n_out} free outfalls")
     parts = [f"""[TITLE]
 {title}
@@ -390,7 +421,7 @@ def gen_roofs(n_sub: int, *, n_gages: int = 4, n_outfalls: int | None = None,
 
 [OPTIONS]
 FLOW_UNITS           CFS
-INFILTRATION         HORTON
+INFILTRATION         {infil}
 FLOW_ROUTING         KINWAVE
 START_DATE           01/01/2020
 START_TIME           00:00:00
@@ -407,6 +438,14 @@ ROUTING_STEP         0:00:30
 CONSTANT             0.1
 DRY_ONLY             NO
 """]
+    if snow:
+        # Long SNOWMELT form (every field explicit; see tests/parity/snow):
+        # 34 F dividing temperature, so the 25 F hours below fall as snow.
+        parts.append("""[TEMPERATURE]
+TIMESERIES           AIR
+;;                   divT  ATIwt  nrg   elev   lat   dtlong  minM  maxM
+SNOWMELT             34.0  0.5    0.6   500.0  42.0  0.0     0.0   0.0
+""")
 
     # 5-minute intensities: a 2-hour triangular storm per gage, each gage's
     # storm starting 15 minutes after the previous one and peaking higher.
@@ -422,11 +461,27 @@ DRY_ONLY             NO
             frac = k / 12 if k <= 12 else (24 - k) / 12
             parts.append(f"RAIN{g}  01/01/2020  {t // 60:02d}:{t % 60:02d}  "
                          f"{peak * frac:.4f}")
+    if snow:
+        # 25 F while the storms fall (snow), 50 F from 02:30 on (melt).
+        for t, f in (("00:00", 25.0), ("02:00", 25.0), ("02:30", 50.0), ("06:00", 50.0)):
+            parts.append(f"AIR  01/01/2020  {t}  {f:.1f}")
 
     parts.append("\n[RAINGAGES]")
     parts.append(";;Name  Format  Interval  SCF  Source")
     for g in range(n_gages):
         parts.append(f"RG{g}  INTENSITY  0:05  1.0  TIMESERIES  RAIN{g}")
+
+    if snow:
+        # SP0 starts with 1 in of snow and is plowed; SP1 starts bare. The
+        # PLOWABLE rows make both packs plowable for the runoff threading gate.
+        parts.append("\n[SNOWPACKS]")
+        parts.append(";;Name  Surface  Cmin  Cmax  Tbase  FWF  SD0  FW0  SD100/SNN0")
+        for sp, sd0 in (("SP0", 1.0), ("SP1", 0.0)):
+            parts.append(f"{sp}  PLOWABLE    0.002  0.006  32.0  0.10  {sd0:.1f}  0.0  0.25")
+            parts.append(f"{sp}  IMPERVIOUS  0.002  0.006  32.0  0.10  {sd0:.1f}  0.0  0.0")
+            parts.append(f"{sp}  PERVIOUS    0.001  0.003  32.0  0.05  {sd0:.1f}  0.0  0.0")
+        parts.append(";;      REMOVAL  Dplow  Fout  Fimp  Fperv  Fimelt  Fsub")
+        parts.append("SP0  REMOVAL  1.0  0.20  0.10  0.10  0.10  0.0")
 
     parts.append("\n[OUTFALLS]")
     parts.append(";;Name  Elev  Type  Stage  Gated")
@@ -437,15 +492,16 @@ DRY_ONLY             NO
         return pervious_every > 0 and s % pervious_every == 0
 
     parts.append("\n[SUBCATCHMENTS]")
-    parts.append(";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen")
+    parts.append(";;Name  Gage  Outlet  Area  %Imperv  Width  Slope  CurbLen"
+                 + ("  SnowPack" if snow else ""))
     for s in range(n_sub):
         gage = s * n_gages // n_sub
         area = 0.02 + (s % 97) * 0.0005
         width = 30.0 + (s % 53) * 0.5
         slope = 1.0 + (s % 31) * 0.5
-        imperv = 40 if pervious(s) else 100
+        imperv = imperv_pct if imperv_pct is not None else (40 if pervious(s) else 100)
         parts.append(f"S{s}  RG{gage}  OUT{s % n_out}  {area:.4f}  {imperv}  "
-                     f"{width:.1f}  {slope:.1f}  0")
+                     f"{width:.1f}  {slope:.1f}  0" + (f"  SP{s % 2}" if snow else ""))
 
     parts.append("\n[SUBAREAS]")
     parts.append(";;Subcatch  N-Imperv  N-Perv  S-Imperv  S-Perv  PctZero  RouteTo  PctRouted")
@@ -455,9 +511,22 @@ DRY_ONLY             NO
         parts.append(f"S{s}  0.012  0.1  {ds_imperv:.2f}  0.1  25  {route}")
 
     parts.append("\n[INFILTRATION]")
-    parts.append(";;Subcatch  MaxRate  MinRate  Decay  DryTime  MaxInfil")
+    infil_header, infil_row = ROOF_INFIL_ROWS[infil]
+    parts.append(infil_header)
     for s in range(n_sub):
-        parts.append(f"S{s}  3.0  0.5  4  7  0")
+        parts.append(f"S{s}  {infil_row}")
+
+    if aquifer:
+        # One aquifer, 5 ft of saturated depth under a 20 ft surface, every
+        # subcatchment's groundwater draining to its own outfall (the
+        # [GROUNDWATER] row layout of tests/parity/roundtrip gw-interaction).
+        parts.append("\n[AQUIFERS]")
+        parts.append(";;Name  Por  WP  FC  Ksat  Kslope  Tslope  ETu  ETs  Seep  Ebot  Egw  Umc")
+        parts.append("AQ1  0.46  0.15  0.3  5  10  15  0.35  14  0.002  0  5  0.301")
+        parts.append("\n[GROUNDWATER]")
+        parts.append(";;Subcatch  Aquifer  Node  Esurf  A1  B1  A2  B2  A3  Dsw  Egwt")
+        for s in range(n_sub):
+            parts.append(f"S{s}  AQ1  OUT{s % n_out}  20  0.001  1  0.001  1  0  2  *")
 
     parts.append("\n[REPORT]")
     parts.append("SUBCATCHMENTS ALL" if report else "SUBCATCHMENTS NONE")
@@ -623,6 +692,34 @@ MODELS = {
                         "20k roofs, outfalls coupled to 2D cells"),
     "roofs2d_200k":    (lambda: gen_roofs_2d(200_000),
                         "200k roofs, outfalls coupled to 2D cells"),
+    # Runoff / infiltration profiling round (2026-11-26): the pervious,
+    # per-method, aquifer and snow decks the roof study did not have.
+    "perv_horton_20k":     (lambda: gen_roofs(20_000, imperv_pct=0, name="perv_horton_20k"),
+                            "20k all-pervious subcatchments, Horton"),
+    "perv_horton_200k":    (lambda: gen_roofs(200_000, imperv_pct=0, name="perv_horton_200k"),
+                            "200k all-pervious, Horton"),
+    "perv_modhorton_20k":  (lambda: gen_roofs(20_000, imperv_pct=0, infil="MODIFIED_HORTON",
+                                              name="perv_modhorton_20k"),
+                            "20k all-pervious, Modified Horton"),
+    "perv_grnampt_20k":    (lambda: gen_roofs(20_000, imperv_pct=0, infil="GREEN_AMPT",
+                                              name="perv_grnampt_20k"),
+                            "20k all-pervious, Green-Ampt"),
+    "perv_grnampt_200k":   (lambda: gen_roofs(200_000, imperv_pct=0, infil="GREEN_AMPT",
+                                              name="perv_grnampt_200k"),
+                            "200k all-pervious, Green-Ampt"),
+    "perv_modgrnampt_20k": (lambda: gen_roofs(20_000, imperv_pct=0, infil="MODIFIED_GREEN_AMPT",
+                                              name="perv_modgrnampt_20k"),
+                            "20k all-pervious, Modified Green-Ampt"),
+    "perv_cn_20k":         (lambda: gen_roofs(20_000, imperv_pct=0, infil="CURVE_NUMBER",
+                                              name="perv_cn_20k"),
+                            "20k all-pervious, Curve Number"),
+    "half_horton_20k":     (lambda: gen_roofs(20_000, imperv_pct=50, name="half_horton_20k"),
+                            "20k at 50% impervious, Horton, both subareas"),
+    "gw_horton_20k":       (lambda: gen_roofs(20_000, imperv_pct=0, aquifer=True,
+                                              name="gw_horton_20k"),
+                            "20k all-pervious, Horton, lumped aquifer each"),
+    "snow_20k":            (lambda: gen_roofs(20_000, imperv_pct=50, snow=True, name="snow_20k"),
+                            "20k at 50% impervious, snow packs, freezing storm"),
 }
 
 #: Small stand-ins used by the ctest smoke target — same code paths, seconds
@@ -655,6 +752,21 @@ SMOKE_OVERRIDES = {
     "mixed_200k":      lambda: gen_roofs(500, pervious_every=4),
     "roofs2d_20k":     lambda: gen_roofs_2d(500),
     "roofs2d_200k":    lambda: gen_roofs_2d(500),
+    "perv_horton_20k":     lambda: gen_roofs(500, imperv_pct=0, name="perv_horton_20k"),
+    "perv_horton_200k":    lambda: gen_roofs(500, imperv_pct=0, name="perv_horton_200k"),
+    "perv_modhorton_20k":  lambda: gen_roofs(500, imperv_pct=0, infil="MODIFIED_HORTON",
+                                             name="perv_modhorton_20k"),
+    "perv_grnampt_20k":    lambda: gen_roofs(500, imperv_pct=0, infil="GREEN_AMPT",
+                                             name="perv_grnampt_20k"),
+    "perv_grnampt_200k":   lambda: gen_roofs(500, imperv_pct=0, infil="GREEN_AMPT",
+                                             name="perv_grnampt_200k"),
+    "perv_modgrnampt_20k": lambda: gen_roofs(500, imperv_pct=0, infil="MODIFIED_GREEN_AMPT",
+                                             name="perv_modgrnampt_20k"),
+    "perv_cn_20k":         lambda: gen_roofs(500, imperv_pct=0, infil="CURVE_NUMBER",
+                                             name="perv_cn_20k"),
+    "half_horton_20k":     lambda: gen_roofs(500, imperv_pct=50, name="half_horton_20k"),
+    "gw_horton_20k":       lambda: gen_roofs(500, imperv_pct=0, aquifer=True, name="gw_horton_20k"),
+    "snow_20k":            lambda: gen_roofs(500, imperv_pct=50, snow=True, name="snow_20k"),
 }
 
 

@@ -3170,6 +3170,13 @@ void SWMMEngine::stepRunoff(double dt_routing) {
     const double next_routing_ms =
         std::min(ctx_.elapsed_ms + 1000.0 * dt_routing, ctx_.options.totalDurationMs());
     while (new_runoff_ms_ < next_routing_ms) {
+        // Self-time sections of this substep ([PERF-HYD] under OPENSWMM_PERF=1):
+        // runoff_step is the whole body, each section below is stopped before
+        // the next starts, and the kernels' own timers (runoff, lid,
+        // groundwater, subcatch_snow) are subtracted from the section they
+        // run in.
+        perf::ProcessTimer step_timer(perf::ProcessPhase::runoff_step);
+        perf::ProcessTimer t_prep(perf::ProcessPhase::runoff_prep);
         // Save old runoff/runon/conc + GW/snow/LID-drain state for interpolation
         // at the RUNOFF step cadence (matching legacy subcatch_setOldState +
         // lid_setOldGroupState, which legacy calls inside runoff_execute — NOT
@@ -3270,6 +3277,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // members carrying the PREVIOUS step's state (legacy HasRunoff/HasSnow).
         bool is_raining = false;
 
+        t_prep.stop();
+        perf::ProcessTimer t_weather(perf::ProcessPhase::runoff_weather);
         // A1. Update rain gages and detect rainfall
         gage::updateAllGages(ctx_, abs_time);
         for (int g = 0; g < ctx_.n_gages(); ++g) {
@@ -3575,6 +3584,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             }
         }
 
+        t_weather.stop();
+        perf::ProcessTimer t_snow(perf::ProcessPhase::runoff_snow);
         // A3. Snowmelt — per-subcatchment precipitation split into rain vs.
         //     snow, accumulation + plowing, then melt and per-subcatch net
         //     precip wiring (Gap #18/#20). Matches legacy runoff.c:
@@ -3740,12 +3751,14 @@ void SWMMEngine::stepRunoff(double dt_routing) {
         // wrote the adjusted values back over the authored ones, which the
         // .inp writer and the C API then reported as the user's input.
 
+        t_snow.stop();
         // A4. Runoff (computes subcatches.runoff[i] = newRunoff rate)
         //     Runoff solver is self-contained; output is subcatches.runoff[i].
         //     Routing picks it up via Phase 2 interpolation → nodes.runoff_inflow[].
         runoff_.execute(ctx_, dt_runoff, ctx_.climate_state.evap_rate,
                         ctx_.climate_state.infil_factor, ctx_.climate_state.recovery_factor, mon,
                         nullptr, nullptr, nullptr, ordinarySourceOwners());
+        perf::ProcessTimer t_post(perf::ProcessPhase::runoff_post);
 
         // A3: subcatchment surface age, immediately after the depths this
         // step produced. Reads the solver's own SoA because
@@ -3915,6 +3928,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
 #endif
         }
 
+        t_post.stop();
+        perf::ProcessTimer t_lid(perf::ProcessPhase::runoff_lid_io);
         // A5. Groundwater — IGNORE_GROUNDWATER skips the coupling + solver
         //     entirely (legacy subcatch.c:712 `!IgnoreGwater && ...groundwater`).
         //     With the solver skipped, gw_flow[] stays 0 so the downstream GW
@@ -4463,6 +4478,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             }
         }
 
+        t_lid.stop();
+        perf::ProcessTimer t_gw(perf::ProcessPhase::runoff_gw_io);
         // A6b'. Groundwater — AFTER the LID units, as legacy subcatch_getRunoff
         // orders it (lid_getRunoff then gwater_getGroundwater, subcatch.c:
         // 730-738): the aquifer receives the LID units' infiltration and
@@ -4476,6 +4493,8 @@ void SWMMEngine::stepRunoff(double dt_routing) {
             stepGroundwater(dt_runoff);
         }
 
+        t_gw.stop();
+        perf::ProcessTimer t_massbal(perf::ProcessPhase::runoff_massbal);
         // A6c. Accumulate runoff mass-balance totals now that the LID routing
         // has finalised subcatches.runoff (moved from A4b — see note there).
         accumulateRunoffMassBalance(dt_runoff);
