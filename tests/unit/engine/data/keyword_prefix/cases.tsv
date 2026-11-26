@@ -48,3 +48,11 @@ flag_losses_noz	network.inp	C1   0   0   0   NO   0	C1   0   0   0   NOZ   0	sam
 flag_losses_bad	network.inp	C1   0   0   0   NO   0	C1   0   0   0   MAYBE   0	refuse:205
 flag_snow_nope	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   NOPE	same
 flag_snow_bad	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   MAYBE	refuse:205
+#
+# [OPTIONS] keys: legacy project_readOption findmatch over OptionWords.
+opt_flow_routing_z	network.inp	FLOW_ROUTING         DYNWAVE	FLOW_ROUTINGZ        DYNWAVE	same
+opt_end_date_z	network.inp	END_DATE             01/01/2020	END_DATEZ            01/01/2020	same
+opt_end_time_z	network.inp	END_TIME             06:00:00	END_TIMEZ            06:00:00	same
+opt_report_step_z	network.inp	REPORT_STEP          00:05:00	REPORT_STEPZ         00:05:00	same
+opt_routing_step_z	network.inp	ROUTING_STEP         0:00:10	ROUTING_STEPZ        0:00:10	same
+opt_dry_step_lower_z	network.inp	DRY_STEP             01:00:00	dry_stepz            01:00:00	same

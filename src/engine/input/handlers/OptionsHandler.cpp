@@ -136,8 +136,55 @@ static bool legacyPrefix(const std::string& tok, const char* keyword) {
     return tok.size() >= n && tok.compare(0, n, keyword) == 0;
 }
 
-// legacy OptionWords (keywords.c): project_readOption warns only for a key
-// none of these prefixes.
+// legacy OptionWords (keywords.c), in legacy order. project_readOption reads a
+// key by the first of these it begins with (FLOW_ROUTINGZ is FLOW_ROUTING) and
+// warns only for a key that begins with none of them. No key of this engine's
+// own begins with one, so the mapping cannot take a 6.0 key.
+static const char* const kOptionWords[] = {"FLOW_UNITS",
+                                           "INFILTRATION",
+                                           "FLOW_ROUTING",
+                                           "START_DATE",
+                                           "START_TIME",
+                                           "END_DATE",
+                                           "END_TIME",
+                                           "REPORT_START_DATE",
+                                           "REPORT_START_TIME",
+                                           "SWEEP_START",
+                                           "SWEEP_END",
+                                           "DRY_DAYS",
+                                           "WET_STEP",
+                                           "DRY_STEP",
+                                           "ROUTING_STEP",
+                                           "RULE_STEP",
+                                           "REPORT_STEP",
+                                           "ALLOW_PONDING",
+                                           "INERTIAL_DAMPING",
+                                           "SLOPE_WEIGHTING",
+                                           "VARIABLE_STEP",
+                                           "NORMAL_FLOW_LIMITED",
+                                           "LENGTHENING_STEP",
+                                           "MIN_SURFAREA",
+                                           "COMPATIBILITY",
+                                           "SKIP_STEADY_STATE",
+                                           "TEMPDIR",
+                                           "IGNORE_RAINFALL",
+                                           "FORCE_MAIN_EQUATION",
+                                           "LINK_OFFSETS",
+                                           "MIN_SLOPE",
+                                           "IGNORE_SNOWMELT",
+                                           "IGNORE_GROUNDWATER",
+                                           "IGNORE_ROUTING",
+                                           "IGNORE_QUALITY",
+                                           "MAX_TRIALS",
+                                           "HEAD_TOLERANCE",
+                                           "SYS_FLOW_TOL",
+                                           "LAT_FLOW_TOL",
+                                           "IGNORE_RDII",
+                                           "MINIMUM_STEP",
+                                           "THREADS",
+                                           "SURCHARGE_METHOD",
+                                           "OUTFALL_BACKFLOW_QUALITY"};
+
 /**
  * @brief Test whether an uppercased option key has a legacy-recognized prefix.
  *
@@ -148,51 +195,7 @@ static bool legacyPrefix(const std::string& tok, const char* keyword) {
  * @return True for any configured legacy keyword prefix, false otherwise.
  */
 static bool legacy_knows_option(const std::string& key) {
-    static const char* const kWords[] = {"FLOW_UNITS",
-                                         "INFILTRATION",
-                                         "FLOW_ROUTING",
-                                         "START_DATE",
-                                         "START_TIME",
-                                         "END_DATE",
-                                         "END_TIME",
-                                         "REPORT_START_DATE",
-                                         "REPORT_START_TIME",
-                                         "SWEEP_START",
-                                         "SWEEP_END",
-                                         "DRY_DAYS",
-                                         "WET_STEP",
-                                         "DRY_STEP",
-                                         "ROUTING_STEP",
-                                         "RULE_STEP",
-                                         "REPORT_STEP",
-                                         "ALLOW_PONDING",
-                                         "INERTIAL_DAMPING",
-                                         "SLOPE_WEIGHTING",
-                                         "VARIABLE_STEP",
-                                         "NORMAL_FLOW_LIMITED",
-                                         "LENGTHENING_STEP",
-                                         "MIN_SURFAREA",
-                                         "COMPATIBILITY",
-                                         "SKIP_STEADY_STATE",
-                                         "TEMPDIR",
-                                         "IGNORE_RAINFALL",
-                                         "FORCE_MAIN_EQUATION",
-                                         "LINK_OFFSETS",
-                                         "MIN_SLOPE",
-                                         "IGNORE_SNOWMELT",
-                                         "IGNORE_GROUNDWATER",
-                                         "IGNORE_ROUTING",
-                                         "IGNORE_QUALITY",
-                                         "MAX_TRIALS",
-                                         "HEAD_TOLERANCE",
-                                         "SYS_FLOW_TOL",
-                                         "LAT_FLOW_TOL",
-                                         "IGNORE_RDII",
-                                         "MINIMUM_STEP",
-                                         "THREADS",
-                                         "SURCHARGE_METHOD",
-                                         "OUTFALL_BACKFLOW_QUALITY"};
-    for (const char* w : kWords)
+    for (const char* w : kOptionWords)
         if (legacyPrefix(key, w))
             return true;
     return false;
@@ -349,7 +352,9 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
         if (tokens.size() < 2)
             continue;
 
-        const std::string key = norm(tokens[0]);
+        std::string key = norm(tokens[0]);
+        if (const int k = legacyFindmatch(key, kOptionWords); k >= 0)
+            key = kOptionWords[k];
         // Value may be a single token or a multi-token (e.g., quoted CRS string).
         // Reconstruct value as original suffix for tokens[1..end]
         const std::string& val = tokens[1];
