@@ -195,3 +195,30 @@ inl_throat_z	inlets.inp	HORIZONTAL	HORIZONTALZ	same
 inl_throat_bad	inlets.inp	HORIZONTAL	FLAT	refuse:205
 inl_place_grade_z	inlets.inp	ON_GRADE	ON_GRADEZ	same
 inl_place_auto_z	inlets.inp	AUTOMATIC	AUTOMATICZ	same
+#
+# [CONTROLS]: VARIABLE and EXPRESSION (match()), RuleKeyWords, ObjectWords,
+# AttribWords, StatusWords/ConduitWords and SettingTypeWords (findmatch); an
+# EXPRESSION naming a variable not defined above it is ERROR 233.
+ctl_variable_z	network.inp	VARIABLE V1	VARIABLEZ V1	same
+ctl_expression_z	network.inp	EXPRESSION E1	EXPRESSIONZ E1	same
+ctl_rule_z	network.inp	RULE R2	RULES R2	same
+ctl_if_z	network.inp	IF SIMULATION	IFZ SIMULATION	same
+ctl_and_z	network.inp	AND NODE	ANDZ NODE	same
+ctl_then_z	network.inp	THEN OUTLET	THENZ OUTLET	same
+ctl_else_z	network.inp	ELSE PUMP	ELSEZ PUMP	same
+ctl_priority_z	network.inp	PRIORITY 2	PRIORITYZ 2	same
+ctl_node_z	network.inp	IF NODE SU1	IF NODES SU1	same
+ctl_simulation_z	network.inp	SIMULATION TIME	SIMULATIONZ TIME	same
+ctl_time_z	network.inp	SIMULATION TIME	SIMULATION TIMEZ	same
+ctl_volume_z	network.inp	SU1 VOLUME	SU1 VOLUMEZ	same
+ctl_depth_z	network.inp	SU1 DEPTH > 2	SU1 DEPTHZ > 2	same
+ctl_pump_z	network.inp	THEN PUMP P1 STATUS = ON	THEN PUMPS P1 STATUS = ON	same
+ctl_status_z	network.inp	THEN PUMP P1 STATUS = ON	THEN PUMP P1 STATUSZ = ON	same
+ctl_on_z	network.inp	STATUS = ON	STATUS = ONZ	same
+ctl_off_z	network.inp	ELSE PUMP P1 STATUS = OFF	ELSE PUMP P1 STATUS = OFFZ	same
+ctl_outlet_z	network.inp	THEN OUTLET OL1	THEN OUTLETZ OL1	same
+ctl_setting_z	network.inp	OL1 SETTING	OL1 SETTINGZ	same
+ctl_lower_words	network.inp	THEN OUTLET OL1 SETTING = 0.5	then outlet OL1 setting = 0.5	same
+ctl_keyword_bad	network.inp	PRIORITY 2	PRIO 2	refuse:205
+ctl_status_bad	network.inp	ELSE PUMP P1 STATUS = OFF	ELSE PUMP P1 STATUS = SHUT	refuse:205
+ctl_expr_undefined	network.inp	EXPRESSION E1 = V1 * 2	EXPRESSION E1 = V1 * 2 + V9	refuse:233

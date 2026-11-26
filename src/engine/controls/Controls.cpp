@@ -33,6 +33,7 @@
 #include "../data/TableData.hpp"
 #include "../core/Constants.hpp"
 #include "../core/ErrorCodes.hpp"
+#include "../input/InputParseUtils.hpp"
 
 #include <cmath>
 #include <algorithm>
@@ -760,6 +761,29 @@ static std::string to_upper(const std::string& s) {
     return r;
 }
 
+// Legacy controls.c word lists, in legacy order. Legacy reads each with findmatch(): a token that
+// begins with one of these words is that word (DEPTHZ is DEPTH, TIMEOPENZ is TIMEOPEN).
+constexpr std::string_view kRuleWords[] = {"RULE", "IF", "AND", "OR", "THEN", "ELSE", "PRIORITY"};
+constexpr std::string_view kObjectWords[] = {"GAGE",    "NODE", "LINK",   "CONDUIT",   "PUMP",
+                                             "ORIFICE", "WEIR", "OUTLET", "SIMULATION"};
+constexpr std::string_view kAttribWords[] = {
+    "DEPTH",      "MAXDEPTH", "HEAD",    "VOLUME",    "INFLOW",    "FLOW",     "FULLFLOW",
+    "FULLDEPTH",  "STATUS",   "SETTING", "LENGTH",    "SLOPE",     "VELOCITY", "TIMEOPEN",
+    "TIMECLOSED", "TIME",     "DATE",    "CLOCKTIME", "DAYOFYEAR", "DAY",      "MONTH"};
+constexpr std::string_view kSettingTypeWords[] = {"CURVE", "TIMESERIES", "PID"};
+
+/** @brief The legacy word a token begins with, as legacy findmatch() reads it.
+ * @param tok Borrowed token as authored.
+ * @param words Legacy word list in legacy order.
+ * @return That word; the token upper-cased when it begins with none of them, so a caller's own
+ *     checks and messages see it unchanged.
+ */
+template <std::size_t N>
+static std::string legacyWord(const std::string& tok, const std::string_view (&words)[N]) {
+    const int k = input::legacy_findmatch(tok, words);
+    return k < 0 ? to_upper(tok) : std::string(words[k]);
+}
+
 /** @brief Split on stream whitespace without quote/comment processing.
  * @param line Borrowed single-line text.
  * @return Owned nonempty tokens in input order; quoted spaces still split.
@@ -905,7 +929,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
         err = "condition clause is empty";
         return false;
     }
-    std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
+    std::string obj_type = legacyWord(toks[static_cast<size_t>(k)], kObjectWords);
 
     if (obj_type == "NODE") {
         if (k + 2 >= static_cast<int>(toks.size())) {
@@ -919,7 +943,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
             err = "'" + toks[static_cast<size_t>(k + 1)] + "' is not the name of a defined NODE";
             return false;
         }
-        std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
+        std::string attr = legacyWord(toks[static_cast<size_t>(k + 2)], kAttribWords);
         int a = nodeAttribute(attr);
         if (a < 0) {
             err_code = ERR_KEYWORD;
@@ -947,7 +971,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
                   obj_type;
             return false;
         }
-        std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
+        std::string attr = legacyWord(toks[static_cast<size_t>(k + 2)], kAttribWords);
         int a = linkAttribute(attr);
         if (a < 0) {
             err_code = ERR_KEYWORD;
@@ -973,7 +997,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
             return false;
         }
         std::string attr = to_upper(toks[static_cast<size_t>(k + 2)]);
-        if (attr == "INTENSITY") {
+        if (input::legacy_match(attr, "INTENSITY")) { // legacy getGageAttrib match()
             cv = ConditionVar::GAGE_RAIN;
         } else {
             // Legacy getGageAttrib uses atoi: n-HR_DEPTH, bare integers,
@@ -999,7 +1023,7 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
             err = "condition clause is incomplete after '" + toks.back() + "'";
             return false;
         }
-        std::string attr = to_upper(toks[static_cast<size_t>(k + 1)]);
+        std::string attr = legacyWord(toks[static_cast<size_t>(k + 1)], kAttribWords);
         int a = simAttribute(attr);
         if (a < 0) {
             err_code = ERR_KEYWORD;
@@ -1027,16 +1051,14 @@ static bool parsePremiseVariable(const std::vector<std::string>& toks, int& k,
  * @return True for a recognized status word.
  */
 static bool parseStatusValue(const std::string& tok, double& val) {
-    std::string u = to_upper(tok);
-    if (u == "OFF" || u == "CLOSED") {
-        val = 0.0;
-        return true;
-    }
-    if (u == "ON" || u == "OPEN") {
-        val = 1.0;
-        return true;
-    }
-    return false;
+    // Legacy reads StatusWords {OFF, ON} with findmatch, then ConduitWords {CLOSED, OPEN}.
+    int k = input::legacy_findmatch(tok, {"OFF", "ON"});
+    if (k < 0)
+        k = input::legacy_findmatch(tok, {"CLOSED", "OPEN"});
+    if (k < 0)
+        return false;
+    val = k;
+    return true;
 }
 
 // ============================================================================
@@ -1274,7 +1296,11 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
         if (toks.empty())
             continue;
 
-        std::string keyword = to_upper(toks[0]);
+        // Legacy input.c: VARIABLE and EXPRESSION by match(), then RuleKeyWords by findmatch.
+        std::string keyword = input::legacy_match(toks[0], "VARIABLE") ? std::string("VARIABLE")
+                              : input::legacy_match(toks[0], "EXPRESSION")
+                                  ? std::string("EXPRESSION")
+                                  : legacyWord(toks[0], kRuleWords);
 
         // ---- VARIABLE keyword (P1-C07) ----
         // Format: VARIABLE <name> = <object> <id> <attribute>
@@ -1307,8 +1333,21 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                     formula += ' ';
                 formula += toks[i];
             }
-            if (addExpression(toks[1], formula) < 0)
+            const int ei = addExpression(toks[1], formula);
+            if (ei < 0)
                 return fail("could not parse the formula for EXPRESSION '" + toks[1] + "'");
+            // Legacy controls_addExpression builds the formula with getVariableIndex over the
+            // VARIABLEs defined above it, so a name it does not know is ERROR 233; evaluating
+            // such a name used to give 0 without a word.
+            for (const auto& tk : expressions_[static_cast<std::size_t>(ei)].postfix) {
+                ConditionVar unused_var;
+                int unused_idx = -1, unused_param = 0;
+                if (tk.type == mathexpr::TokenType::VARIABLE &&
+                    !resolveNamedVariable(tk.var_name, unused_var, unused_idx, unused_param))
+                    return fail("EXPRESSION '" + toks[1] + "' names '" + tk.var_name +
+                                    "', which is not a VARIABLE defined above it",
+                                ERR_MATH_EXPR, tk.var_name);
+            }
             continue;
         }
 
@@ -1478,7 +1517,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
                 continue;
 
             // Parse object type (must be a link type)
-            std::string obj_type = to_upper(toks[static_cast<size_t>(k)]);
+            std::string obj_type = legacyWord(toks[static_cast<size_t>(k)], kObjectWords);
             if (obj_type != "LINK" && obj_type != "CONDUIT" && obj_type != "PUMP" &&
                 obj_type != "ORIFICE" && obj_type != "WEIR" && obj_type != "OUTLET")
                 return fail("'" + toks[static_cast<size_t>(k)] +
@@ -1514,7 +1553,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             // numeric setting.
             if (k >= static_cast<int>(toks.size()))
                 return fail("action is missing its attribute (STATUS or SETTING)", ERR_ITEMS);
-            std::string attr = to_upper(toks[static_cast<size_t>(k)]);
+            std::string attr = legacyWord(toks[static_cast<size_t>(k)], kAttribWords);
             if (attr != "STATUS" && attr != "SETTING")
                 return fail("'" + toks[static_cast<size_t>(k)] +
                                 "' is not a valid "
@@ -1550,7 +1589,7 @@ int ControlEngine::parseRuleText(const std::string& text, SimulationContext& ctx
             Action action;
             action.link_idx = link_idx;
 
-            std::string val_tok = to_upper(toks[static_cast<size_t>(k)]);
+            std::string val_tok = legacyWord(toks[static_cast<size_t>(k)], kSettingTypeWords);
 
             if (val_tok == "CURVE") {
                 // Modulated by curve: next token is curve name
