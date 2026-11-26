@@ -113,6 +113,7 @@ using openswmm::WARN_NEGATIVE_OFFSET;
 using openswmm::WARN_MIN_ELEV_DROP;
 using openswmm::WARN_REGULATOR_CREST_LOW;
 using openswmm::WARN_MAX_DEPTH_INCREASED;
+using openswmm::WARN_INLET_REMOVED;
 using openswmm::WARN_REPORT_OBJECT_UNDEFINED;
 
 // -------------------------------------------------------------------------
@@ -2008,9 +2009,10 @@ bool ij_is_drop_design(const SimulationContext& ctx, int design_idx) {
  *
  * CUSTOM requires DIVERSION/RATING curve, otherwise errors. Clears pending design/capture names
  * after attempted resolution; node-host capture cannot be absent/self/virtual. Determines host
- * conduit/street for either usage host kind. Incompatible conduit-host shapes append warning and
- * disarm design=-1; node-host incompatibility remains for explicit validation. Incremental
- * mutations persist despite later errors; no runtime inlet solver initialization.
+ * conduit/street for either usage host kind. A conduit-hosted usage whose design the host shape
+ * cannot take appends WARNING 12 and is erased; node-host incompatibility remains for explicit
+ * validation. Incremental mutations persist despite later errors; no runtime inlet solver
+ * initialization.
  *
  * @param[in,out] ctx Coherent model context modified incrementally; caller serializes
  *     parsing/initialization and supplies aligned name/data columns.
@@ -2043,6 +2045,7 @@ static void resolve_inlet_references(SimulationContext& ctx) {
     }
 
     // --- Usage rows: pending names, host conduit, street, shape ---
+    std::vector<int> removed;
     for (int r = 0; r < ctx.inlet_usages.count(); ++r) {
         const auto ur = static_cast<std::size_t>(r);
         auto& U = ctx.inlet_usages;
@@ -2096,24 +2099,24 @@ static void resolve_inlet_references(SimulationContext& ctx) {
                                   : U.link_index[ur];
         U.street_index[ur] = ij_street_of_link(ctx, host_link);
 
-        // Shape compatibility, LINK-hosted rows only. Legacy simply drops an
-        // incompatible conduit usage with WARNING 12 rather than refusing the
-        // model, so this is a warning and the row is disarmed by clearing its
-        // design. A node-hosted row keeps its design: an inlet junction has a
-        // dedicated rule (623) which validate_inlet_junctions below reports,
-        // and disarming the row here would mask it behind 633.
+        // Shape compatibility, LINK-hosted rows only. Legacy removes an
+        // incompatible conduit usage with WARNING 12 (inlet.c inlet_validate)
+        // rather than refusing the model, so the row is warned about here and
+        // erased below: neither the inlet solver nor the Street Inlet Flow
+        // Summary sees it. A node-hosted row keeps its design: an inlet
+        // junction has a dedicated rule (623) which validate_inlet_junctions
+        // below reports, and removing the row here would mask it behind 633.
         if (host_node < 0 && U.design_index[ur] >= 0 &&
             !edit::ij_usage_shape_ok(ctx, U.design_index[ur], host_link)) {
-            const std::string host = (host_link >= 0)
-                                         ? ("Link " + ctx.link_names.name_of(host_link))
-                                         : std::string("an unknown host");
-            ctx.warnings.push_back(
-                format_error(ERR_INLET_USAGE_SHAPE,
-                             ctx.inlets.names[static_cast<std::size_t>(U.design_index[ur])],
-                             "(" + host + "; the inlet is ignored)"));
-            U.design_index[ur] = -1;
+            ctx.warnings.push_back(format_warning(
+                WARN_INLET_REMOVED,
+                (host_link >= 0) ? ctx.link_names.name_of(host_link) : std::string()));
+            removed.push_back(r);
         }
     }
+    // Last row first, so the indices still to erase stay valid.
+    for (auto it = removed.rbegin(); it != removed.rend(); ++it)
+        ctx.inlet_usages.erase_row(*it);
 }
 
 /**

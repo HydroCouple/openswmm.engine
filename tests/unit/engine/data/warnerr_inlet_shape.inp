@@ -1,0 +1,43 @@
+[TITLE]
+Issue #36 (USEPA #104): a drop grate on a circular pipe, an incompatible pair
+;; CH (CIRCULAR) cannot host the drop grate: its usage is removed. CH2 (RECT_OPEN)
+;; can, and stays in the Street Inlet Flow Summary.
+
+[OPTIONS]
+FLOW_UNITS CFS
+FLOW_ROUTING DYNWAVE
+START_DATE 01/01/2020
+START_TIME 00:00:00
+END_DATE 01/01/2020
+END_TIME 02:00:00
+REPORT_STEP 00:05:00
+ROUTING_STEP 5
+
+[JUNCTIONS]
+J1    10  5
+J2     9  5
+SINK   5  5
+
+[OUTFALLS]
+O1  8  FREE
+O2  4  FREE
+
+[CONDUITS]
+CH   J1    J2  400  0.015  0  0
+CH2  J2    O1  400  0.015  0  0
+P1   SINK  O2  200  0.013  0  0
+
+[XSECTIONS]
+CH   CIRCULAR   2    0  0  0
+CH2  RECT_OPEN  2    4  0  0
+P1   CIRCULAR   1.5  0  0  0
+
+[INLETS]
+DG  DROP_GRATE  2  2  P_BAR-50
+
+[INLET_USAGE]
+CH   DG  SINK
+CH2  DG  SINK
+
+[INFLOWS]
+J1  FLOW  ""  FLOW  1.0  1.0  10

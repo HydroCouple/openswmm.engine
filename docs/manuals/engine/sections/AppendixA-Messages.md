@@ -402,7 +402,7 @@ ERROR 633:     Inlet Junction xxx has no inlet design assigned.
 An inlet junction without a design captures nothing and should be an ordinary virtual junction.
 
 ERROR 635:     Inlet xxx cannot be used with the cross section of yyy.
-The inlet type is not compatible with the conduit's shape; see ERROR 623 for which shapes each type allows.
+The inlet type is not compatible with the conduit's shape; see ERROR 623 for which shapes each type allows. This error refuses such a pair when it is made through the API. An [INLET_USAGE] row in an input file that pairs them is not refused: the inlet is removed with WARNING 12.
 
 ## A.6 Warning Messages
 WARNING 01:     wet weather time step reduced to recording interval for Rain Gage xxx.

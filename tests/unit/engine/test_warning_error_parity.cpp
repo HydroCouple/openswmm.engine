@@ -486,3 +486,26 @@ TEST(WarningErrorParity, UnknownNodeTypeKeywordsAre205) {
         EXPECT_FALSE(contains(rpt_text, "ERROR 203")) << c.tag << "\n" << rpt_text;
     }
 }
+
+// Issue #36 (USEPA #104). Legacy removes an inlet whose design its conduit's
+// shape cannot host, with WARNING 12 (inlet_validate). The engine printed the
+// warning as "ERROR 635", and the usage stayed behind in the Street Inlet
+// Flow Summary with no design and all of its flow bypassed. The drop grate on
+// the RECT_OPEN conduit CH2 stays.
+TEST(WarningErrorParity, IncompatibleInletIsRemovedWithWarning12) {
+    std::string rpt_text;
+    EXPECT_EQ(open_model("warnerr_inlet_shape.inp", "warnerr_inlet_shape.rpt", rpt_text), 0)
+        << rpt_text;
+    EXPECT_TRUE(contains(rpt_text,
+                         "\n  WARNING 12: inlet removed due to unsupported shape for Conduit CH\n"))
+        << rpt_text;
+    EXPECT_FALSE(contains(rpt_text, "ERROR")) << rpt_text;
+
+    // The table runs from below its starred heading to the next section's.
+    const auto at = rpt_text.find("Street Inlet Flow Summary");
+    ASSERT_NE(at, std::string::npos) << rpt_text;
+    const auto body = rpt_text.find('\n', rpt_text.find("*****", at));
+    const std::string summary = rpt_text.substr(body, rpt_text.find("*****", body) - body);
+    EXPECT_TRUE(contains(summary, "\n  CH2 ")) << summary;
+    EXPECT_FALSE(contains(summary, "\n  CH ")) << summary;
+}
