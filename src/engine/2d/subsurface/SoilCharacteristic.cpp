@@ -240,31 +240,38 @@ double suctionAtSaturation(const Params& p, double Se) noexcept {
     case SoilChar::GARDNER:
         return -std::log(se) / std::max(p.alpha, kPsiEps);
     case SoilChar::RUSSO: {
-        // (1 + a)·e^(−a) = t = se^((2+L)/2) has no elementary inverse.
-        // Newton starts from the larger of two lower bounds of the root:
-        // √(2(1 − t)), from 1 − t ≤ a²/2 (the double root at a = 0 near
-        // saturation), and ℓ + ln(1 + ℓ) with ℓ = −ln t ≤ a (dry). The
-        // logarithm alone, used before 2026-11-19, sent the first step to
-        // a ≈ 1 near saturation and six steps then left ψ wrong by 69 % at
-        // 1 cm. From these bounds Newton reaches its roundoff floor in at
-        // most five steps.
-        const double target = std::pow(se, (2.0 + p.vg_L) * 0.5);
-        const double ell = -std::log(std::max(target, 1.0e-300));
-        double a =
-            std::max({std::sqrt(2.0 * std::max(1.0 - target, 0.0)), ell + std::log1p(ell), 0.0});
-        for (int it = 0; it < 30; ++it) {
-            const double e = std::exp(-a); // one exponential per step serves f and f'
-            const double f = (1.0 + a) * e - target;
-            const double df = -a * e; // d/da
-            if (std::fabs(df) < 1.0e-300)
+        // (1 + a)·e^(−a) = t = se^((2+L)/2) has no elementary inverse. Its logarithm,
+        //     g(a) = ln(1 + a) − a + ℓ = 0,   ℓ = −ln t = −½(2 + L)·ln se,
+        // is monotone and concave on a ≥ 0, so Halley's method converges from either side and
+        // cubically: from a start within a few percent two steps reach roundoff, one log1p each.
+        // The start is the series inverse of ℓ = a²/2 − a³/3 + … near saturation (a ≈ s + s²/3,
+        // s = √(2ℓ)) and the fixed point of a = ℓ + ln(1 + a) when dry (ℓ beyond 2.5, where the
+        // series is 7 % high and the log form 6 % low). Before 2026-11-26 this was Newton on
+        // the exponential form from √(2(1 − t)) or ℓ + ln(1 + ℓ): a pow, a log, a log1p and three
+        // to five exp per inverse — the single largest cost of the σ column once its Newton
+        // matrix no longer needed the soil functions.
+        const double ell = -0.5 * (2.0 + p.vg_L) * std::log(se); // se in (kSeMin, 1): ℓ > 0
+        double a;
+        if (ell < 2.5) {
+            const double s = std::sqrt(2.0 * ell);
+            a = s + s * s / 3.0;
+        } else {
+            a = ell + std::log1p(ell);
+        }
+        for (int it = 0; it < 8; ++it) {
+            const double g = std::log1p(a) - a + ell;
+            const double g1 = -a / (1.0 + a);
+            const double g2 = -1.0 / ((1.0 + a) * (1.0 + a));
+            const double denom = 2.0 * g1 * g1 - g * g2;
+            if (!(std::fabs(denom) > 1.0e-300))
                 break;
-            const double step = f / df;
+            const double step = 2.0 * g * g1 / denom;
             a -= step;
             if (a < 0.0)
                 a = 0.0;
-            // Converged to relative precision, or to the smallest step roundoff in f resolves.
-            if (std::fabs(step) <=
-                1.0e-14 * a + 4.0 * std::numeric_limits<double>::epsilon() / std::fabs(df))
+            // The error after a Halley step of relative size δ is O(δ³): a step of 1e-5 leaves
+            // roundoff, so the next evaluation would change nothing.
+            if (std::fabs(step) <= 1.0e-5 * a)
                 break;
         }
         return 2.0 * a / std::max(p.alpha, kPsiEps);
