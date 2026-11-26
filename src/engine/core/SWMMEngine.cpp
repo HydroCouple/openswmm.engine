@@ -6572,6 +6572,7 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
                         ctx_.options.routing_model == RoutingModel::FV);
     const int np = ctx_.n_pollutants();
 
+    perf::ProcessTimer t_nodes(perf::ProcessPhase::step_massbal_nodes);
     for (int j = 0; j < ctx_.n_nodes(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         const NodeType nt = ctx_.nodes.type[uj];
@@ -6806,6 +6807,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
     inlet_.adjustFloodingTotals(ctx_, dt_routing,
                                 [this](int j) { return router_.fvNodeKeepsOverflow(j); });
 
+    t_nodes.stop();
+    perf::ProcessTimer t_links(perf::ProcessPhase::step_massbal_links);
     // Accumulate link evaporation and seepage losses
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
@@ -6832,6 +6835,8 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
         }
     }
 
+    t_links.stop();
+    perf::ProcessTimer t_ww(perf::ProcessPhase::step_massbal_ww);
     // Wet weather inflow: computed directly from decomposed runoff_inflow array
     // (replaces the previous back-calculation: total_lat - DWF - GW - RDII - ext).
     {
@@ -6919,24 +6924,41 @@ void SWMMEngine::updateRoutingMassBalance(double dt_routing) noexcept {
  *          and routing final storage from node + link volumes.
  */
 void SWMMEngine::computeFinalStorage() noexcept {
+    perf::ProcessTimer t_runoff(perf::ProcessPhase::step_final_runoff);
     // B8a. Compute runoff final storage: ponded depth × subarea area (ft³)
     //      Matches legacy subcatch_getStorage()
     {
         const auto& soa = runoff_.soa();
-        ctx_.mass_balance.runoff_final_store = 0.0;
-        for (int i = 0; i < ctx_.n_subcatches(); ++i) {
-            if (ownsSpatialSource(i))
-                continue;
+        const int n_sub = ctx_.n_subcatches();
+        final_store_terms_.resize(static_cast<std::size_t>(std::max(n_sub, ctx_.n_nodes())));
+        // Each subcatchment's ponded storage, formed in parallel when the count
+        // warrants it (Track 1A, 2026-11-26); the total is summed below in index
+        // order, the same chain of additions whatever the thread count. A
+        // subcatchment owned by a spatial source marks its term as not-a-number.
+        [[maybe_unused]] const int sub_threads = perObjectThreads(ctx_, n_sub);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(sub_threads) if (sub_threads > 1)
+#endif
+        for (int i = 0; i < n_sub; ++i) {
             auto ui = static_cast<std::size_t>(i);
+            if (ownsSpatialSource(i)) {
+                final_store_terms_[ui] = std::numeric_limits<double>::quiet_NaN();
+                continue;
+            }
             double fi = soa.imperv_pct[ui];
             double fp = 1.0 - fi;
             double f0 = soa.frac_imperv0[ui];
             double f1 = soa.frac_imperv1[ui];
             double area = soa.area[ui]; // ft²
-            ctx_.mass_balance.runoff_final_store +=
-                (soa.depth_imperv0[ui] * f0 + soa.depth_imperv1[ui] * f1 +
-                 soa.depth_perv[ui] * fp) *
-                area;
+            final_store_terms_[ui] = (soa.depth_imperv0[ui] * f0 + soa.depth_imperv1[ui] * f1 +
+                                      soa.depth_perv[ui] * fp) *
+                                     area;
+        }
+        ctx_.mass_balance.runoff_final_store = 0.0;
+        for (int i = 0; i < n_sub; ++i) {
+            const double term = final_store_terms_[static_cast<std::size_t>(i)];
+            if (!std::isnan(term))
+                ctx_.mass_balance.runoff_final_store += term;
         }
         // Water still held in LID units is runoff-system storage (legacy
         // massbal counts lid_getStoredVolume() in final storage).
@@ -6983,15 +7005,25 @@ void SWMMEngine::computeFinalStorage() noexcept {
     //  function is called every routing step, so cumulative terms cannot be
     //  added here.)
 
+    t_runoff.stop();
+    perf::ProcessTimer t_routing(perf::ProcessPhase::step_final_routing);
     // B8. Compute routing final storage for mass balance
     //     Sum node volumes + link volumes (matching legacy). Nodes use the
     //     legacy-convention reported volume (junctions contribute 0, as in
     //     legacy node_getVolume) so the continuity error matches legacy rather
     //     than crediting the MIN_SURFAREA junction-state volume as storage.
+    // Each node's reported volume in parallel when the count warrants it, the
+    // sum in node order (Track 1A, as above).
+    const int n_nodes = ctx_.n_nodes();
+    [[maybe_unused]] const int node_threads = perObjectThreads(ctx_, n_nodes);
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(node_threads) if (node_threads > 1)
+#endif
+    for (int j = 0; j < n_nodes; ++j)
+        final_store_terms_[static_cast<std::size_t>(j)] = reportedNodeVolume(j);
     ctx_.mass_balance.routing_final_storage = 0.0;
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
-        ctx_.mass_balance.routing_final_storage += reportedNodeVolume(j);
-    }
+    for (int j = 0; j < n_nodes; ++j)
+        ctx_.mass_balance.routing_final_storage += final_store_terms_[static_cast<std::size_t>(j)];
     for (int j = 0; j < ctx_.n_links(); ++j) {
         auto uj = static_cast<std::size_t>(j);
         ctx_.mass_balance.routing_final_storage += ctx_.links.volume[uj];
@@ -12761,8 +12793,20 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     double sum_ext = 0.0;
     double sum_wd = 0.0; // withdrawals: negative external inflows (legacy: outflow)
     const bool spill_first = router_.fvNative();
+    const int n_nodes = ctx_.n_nodes();
+    [[maybe_unused]] const int threads = perObjectThreads(ctx_, n_nodes);
+    perf::ProcessTimer t_nodes(perf::ProcessPhase::step_lat_nodes);
 
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
+    // Pass 1, per node and independent (Track 1A, 2026-11-26): drain the 1D↔2D
+    // coupling queues into this step's rates and start lat_flow from the external
+    // and dry-weather inflows. Each node writes only its own rows, so the pass
+    // runs in parallel when the node count warrants it; the step accumulators
+    // follow in a serial pass in legacy's addition order, so the sums are the
+    // same bits whatever the thread count.
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+#endif
+    for (int j = 0; j < n_nodes; ++j) {
         auto uj = static_cast<std::size_t>(j);
 
         // Re-derive the 1D↔2D coupling RATE from the exchange VOLUME queued by
@@ -12864,7 +12908,12 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         // runs. FP addition is not associative, so any other order drifts
         // the lateral inflow by 1 ULP at multi-source nodes.
         ctx_.nodes.lat_flow[uj] = ctx_.nodes.ext_inflow[uj] + ctx_.nodes.dwf_inflow[uj];
+    }
 
+    // Pass 2, serial and in node order: the step accumulators, each the same
+    // chain of additions legacy forms.
+    for (int j = 0; j < n_nodes; ++j) {
+        auto uj = static_cast<std::size_t>(j);
         sum_dw += ctx_.nodes.dwf_inflow[uj];
         sum_gw += ctx_.nodes.gw_inflow[uj];
         sum_rdii += ctx_.nodes.rdii_inflow[uj];
@@ -12900,11 +12949,12 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
         ctx_.coupling_delivery_remaining =
             std::max(0.0, ctx_.coupling_delivery_remaining - dt_routing);
 
+    t_nodes.stop();
+    perf::ProcessTimer t_scatter(perf::ProcessPhase::step_lat_scatter);
     // Wet-weather runoff: per subcatchment in index order, exactly like
     // legacy addWetWeatherInflows (routing.c:709-717).
     {
         const int n_sub = ctx_.n_subcatches();
-        const int n_nodes = ctx_.n_nodes();
         if (static_cast<int>(wet_q_interp_.size()) == n_sub) {
             for (int i = 0; i < n_sub; ++i) {
                 auto ui = static_cast<std::size_t>(i);
@@ -12929,31 +12979,37 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     // then iface, then engine-only extensions — legacy source order.
     for (const auto& dq : lid_drain_q_units_)
         ctx_.nodes.lat_flow[static_cast<std::size_t>(dq.first)] += dq.second;
-    for (int j = 0; j < ctx_.n_nodes(); ++j) {
+    t_scatter.stop();
+    perf::ProcessTimer t_nodes2(perf::ProcessPhase::step_lat_nodes2);
+    // Pass 3, per node and independent: the remaining sources join lat_flow.
+    // Runtime-forced lateral inflow: persistent API value with any active
+    // ForcingData forcing overlaid (see effectiveUserLatFlow). Counts as
+    // external inflow for continuity, matching legacy addExternalInflows
+    // (routing.c: apiExtInflow → massbal_addInflowFlow(EXTERNAL_INFLOW, q),
+    // positive only). Without this the routed volume appears in total_out but
+    // never in total_in and the continuity error grows unboundedly negative.
+    // The cumulative routing_forcing_inflow diagnostic (a subset of
+    // routing_external) is accumulated in updateRoutingMassBalance. Issue #113.
+    // The forced inflow is kept per node for the serial accumulation below.
+    lat_user_q_.resize(static_cast<std::size_t>(n_nodes));
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(threads) if (threads > 1)
+#endif
+    for (int j = 0; j < n_nodes; ++j) {
         auto uj = static_cast<std::size_t>(j);
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.rdii_inflow[uj];
         ctx_.nodes.lat_flow[uj] += ctx_.nodes.iface_inflow[uj];
-
-        // Runtime-forced lateral inflow: persistent API value with any
-        // active ForcingData forcing overlaid (see effectiveUserLatFlow).
-        // Counts as external inflow for continuity, matching legacy
-        // addExternalInflows (routing.c: apiExtInflow →
-        // massbal_addInflowFlow(EXTERNAL_INFLOW, q), positive only).
-        // Without this the routed volume appears in total_out but never in
-        // total_in and the continuity error grows unboundedly negative. The
-        // cumulative routing_forcing_inflow diagnostic (a subset of
-        // routing_external) is accumulated in updateRoutingMassBalance.
-        // Issue #113.
         const double q_user = effectiveUserLatFlow(ctx_, uj);
-        if (q_user > 0.0)
-            sum_ext += q_user;
-
+        lat_user_q_[uj] = q_user;
         ctx_.nodes.lat_flow[uj] += q_user + ctx_.nodes.coupling_inflow[uj];
 #ifdef OPENSWMM_HAS_2D
         if (hasSourceDelivery())
             ctx_.nodes.lat_flow[uj] += sourceDeliveryRate(int(uj));
 #endif
     }
+    for (int j = 0; j < n_nodes; ++j)
+        if (const double q_user = lat_user_q_[static_cast<std::size_t>(j)]; q_user > 0.0)
+            sum_ext += q_user;
 
     ctx_.mass_balance.step_dw_inflow = sum_dw;
     ctx_.mass_balance.step_gw_inflow = sum_gw;
@@ -12967,6 +13023,8 @@ void SWMMEngine::assembleLateralInflows(double dt_routing) noexcept {
     // "called after regular lateral flows to all nodes have been set but
     // before a flow routing step has been taken"). Not a mass-balance source:
     // both sides of the transfer stay inside the system.
+    t_nodes2.stop();
+    perf::ProcessTimer t_inlets(perf::ProcessPhase::step_lat_inlets);
     inlet_.computeAll(ctx_, dt_routing, [this](int j) { return router_.fvNodeKeepsOverflow(j); });
 }
 

@@ -68,6 +68,19 @@ enum class ProcessPhase : std::size_t {
     runoff_lid_io,
     runoff_gw_io,
     runoff_massbal,
+    // Self times of the serial per-step bookkeeping around the routing step
+    // (Track 1A, 2026-11-26): the lateral-inflow assembly's node passes,
+    // subcatchment scatter and inlet pass; the routing mass-balance node, link
+    // and wet-weather passes; the final-storage sums.
+    step_lat_nodes,
+    step_lat_scatter,
+    step_lat_nodes2,
+    step_lat_inlets,
+    step_massbal_nodes,
+    step_massbal_links,
+    step_massbal_ww,
+    step_final_runoff,
+    step_final_routing,
     count
 };
 struct ProcessPhaseName {
@@ -116,7 +129,16 @@ inline constexpr std::array<ProcessPhaseName, std::size_t(ProcessPhase::count)> 
      {"HYD", "runoff_post"},
      {"HYD", "runoff_lid_io"},
      {"HYD", "runoff_gw_io"},
-     {"HYD", "runoff_massbal"}}};
+     {"HYD", "runoff_massbal"},
+     {"HYD", "step_lat_nodes"},
+     {"HYD", "step_lat_scatter"},
+     {"HYD", "step_lat_nodes2"},
+     {"HYD", "step_lat_inlets"},
+     {"HYD", "step_massbal_nodes"},
+     {"HYD", "step_massbal_links"},
+     {"HYD", "step_massbal_ww"},
+     {"HYD", "step_final_runoff"},
+     {"HYD", "step_final_routing"}}};
 inline std::array<std::atomic<double>, std::size_t(ProcessPhase::count)> process_seconds{};
 inline std::array<std::atomic<unsigned long long>, std::size_t(ProcessPhase::count)>
     process_calls{};
