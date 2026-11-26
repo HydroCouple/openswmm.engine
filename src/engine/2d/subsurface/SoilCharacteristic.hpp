@@ -160,6 +160,34 @@ double relativeConductivity(const Params& p, double psi) noexcept;
 double conductivity(const Params& p, double psi) noexcept;
 
 /**
+ * @brief Retention and relative conductivity at one suction, with their suction derivatives, from
+ * one pass of the law's transcendental functions (Track 4B, 2026-11-26).
+ *
+ * `Se` and `Kr` are the values effectiveSaturation() and relativeConductivity() return — the same
+ * expressions for Gardner, Russo and Brooks–Corey; van Genuchten's `Kr` through the identity
+ * `Se^(1/m) = 1/(1 + (αψ)^n)`, which agrees to roundoff and saves two `pow` calls. `dSe` = dSe/dψ
+ * and `dKr` = dKr/dψ (both ≤ 0, 1/m) are the analytic derivatives, zero where the value sits on a
+ * clamp. Two conventions serve the σ column's Newton matrix: at Brooks–Corey's air-entry kink
+ * (ψ exactly ψ_b, where a saturated layer starts) the slopes are the dry side's one-sided
+ * derivatives, and for van Genuchten with n < 2, whose slope is unbounded at ψ → 0, `dKr` is
+ * bounded below by the chord to saturation `(Kr − 1)/ψ`.
+ */
+struct Curve {
+    double Se = 1.0, dSe = 0.0, Kr = 1.0, dKr = 0.0;
+};
+
+/**
+ * @brief Evaluate the law's Curve at suction @p psi (m); saturated (all derivatives zero) for
+ * psi <= 1e-12 m.
+ *
+ * @param[in] p Borrowed validated SI soil law: Ks m/s, alpha 1/m, psi_b m, 0 <= theta_r <
+ * theta_s <= 1, lambda > 0, vg_n > 1 and admissible dimensionless vg_L.
+ * @param[in] psi Finite suction magnitude in m.
+ * @return Values and suction derivatives; pure scalar calculation, no allocation.
+ */
+Curve curve(const Params& p, double psi) noexcept;
+
+/**
  * @brief Suction head at a given effective saturation — the retention inverse, needed to give
  * the σ column a ψ from its θ. Returns 0 at `Se ≥ 1`.
  *

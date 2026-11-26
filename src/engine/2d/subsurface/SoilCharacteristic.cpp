@@ -145,6 +145,93 @@ double conductivity(const Params& p, double psi) noexcept {
     return p.Ks * relativeConductivity(p, psi);
 }
 
+Curve curve(const Params& p, double psi) noexcept {
+    Curve c;
+    if (!(psi > kPsiEps))
+        return c;
+    switch (p.law) {
+    case SoilChar::GARDNER: {
+        // Se = Kr = e^(−αψ): one exponential carries both values and both slopes.
+        const double e = std::exp(-p.alpha * psi);
+        c.Se = clampSe(e);
+        c.dSe = e > kSeMin ? -p.alpha * e : 0.0;
+        c.Kr = std::clamp(e, 0.0, 1.0);
+        c.dKr = -p.alpha * e;
+        return c;
+    }
+    case SoilChar::RUSSO: {
+        // t = (1 + a)e^(−a), a = ½αψ: Se = t^(2/(2+L)), Kr = t², dt/dψ = −½α·a·e^(−a).
+        const double a = 0.5 * p.alpha * psi;
+        const double e = std::exp(-a);
+        const double t = (1.0 + a) * e;
+        const double dt = -0.5 * p.alpha * a * e;
+        const double expo = 2.0 / (2.0 + p.vg_L);
+        const double se = std::pow(std::max(t, kSeMin), expo);
+        c.Se = clampSe(se);
+        c.dSe = (t > kSeMin && se > kSeMin && se < 1.0) ? expo * se / t * dt : 0.0;
+        c.Kr = std::clamp(t * t, 0.0, 1.0);
+        c.dKr = t * t < 1.0 ? 2.0 * t * dt : 0.0;
+        return c;
+    }
+    case SoilChar::BROOKS_COREY: {
+        const double pb = std::max(p.psi_b, kPsiEps);
+        if (psi < pb)
+            return c;
+        if (psi == pb) {
+            // The air-entry kink: a saturated layer sits exactly here (its start suction) and
+            // can only dry, so the slopes are the dry side's one-sided derivatives. The flat
+            // side's zeros leave a Newton with no storage term to move the layer.
+            c.dSe = -p.lambda / pb;
+            c.dKr = -(2.0 + 3.0 * p.lambda) / pb;
+            return c;
+        }
+        const double r = pb / psi;
+        const double se = std::pow(r, p.lambda);
+        c.Se = clampSe(se);
+        c.dSe = se > kSeMin ? -p.lambda * se / psi : 0.0;
+        const double e = 2.0 + 3.0 * p.lambda;
+        const double kr = std::pow(r, e);
+        c.Kr = std::clamp(kr, 0.0, 1.0);
+        c.dKr = kr < 1.0 ? -e * kr / psi : 0.0;
+        return c;
+    }
+    case SoilChar::VAN_GENUCHTEN: {
+        const double n = std::max(p.vg_n, 1.0 + 1.0e-6);
+        const double m = 1.0 - 1.0 / n;
+        const double ap = std::pow(p.alpha * psi, n);
+        const double u = 1.0 + ap;
+        const double se_raw = std::pow(u, -m);
+        const double se = clampSe(se_raw);
+        const bool open = se_raw > kSeMin; // not on the floor: the identities below hold
+        const double dap = n * ap / psi;   // d(αψ)^n/dψ
+        c.Se = se;
+        c.dSe = open ? -m * se_raw / u * dap : 0.0;
+        // Kr = Se^L (1 − (1 − Se^(1/m))^m)², with Se^(1/m) = 1/u off the floor, so
+        // 1 − Se^(1/m) = ap/u and d(ap/u)/dψ = dap/u².
+        const double g = open ? ap / u : 1.0 - std::pow(se, 1.0 / m);
+        const double gm = std::pow(std::max(g, 0.0), m);
+        const double inner = 1.0 - gm;
+        const double seL = std::pow(se, p.vg_L);
+        const double kr = seL * inner * inner;
+        c.Kr = std::clamp(kr, 0.0, 1.0);
+        if (open && kr < 1.0 && g > 0.0) {
+            const double dinner = -m * gm / g * dap / (u * u);
+            const double dseL = p.vg_L * seL / se * c.dSe;
+            c.dKr = dseL * inner * inner + 2.0 * seL * inner * dinner;
+            // For n < 2 the exact slope is unbounded at ψ → 0 (Kr ≈ 1 − 2(αψ)^(n−1)); the chord
+            // to saturation bounds it there. Elsewhere the curve is convex and the chord is
+            // shallower than the slope, so the bound stays inactive; for n ≥ 2 the slope is
+            // finite everywhere and the curve starts concave, where the chord would wrongly
+            // replace it.
+            if (n < 2.0)
+                c.dKr = std::max(c.dKr, (c.Kr - 1.0) / psi);
+        }
+        return c;
+    }
+    }
+    return c;
+}
+
 double suctionAtSaturation(const Params& p, double Se) noexcept {
     const double se = clampSe(Se);
     if (se >= 1.0 - 1.0e-12)
@@ -166,8 +253,9 @@ double suctionAtSaturation(const Params& p, double Se) noexcept {
         double a =
             std::max({std::sqrt(2.0 * std::max(1.0 - target, 0.0)), ell + std::log1p(ell), 0.0});
         for (int it = 0; it < 30; ++it) {
-            const double f = (1.0 + a) * std::exp(-a) - target;
-            const double df = -a * std::exp(-a); // d/da
+            const double e = std::exp(-a); // one exponential per step serves f and f'
+            const double f = (1.0 + a) * e - target;
+            const double df = -a * e; // d/da
             if (std::fabs(df) < 1.0e-300)
                 break;
             const double step = f / df;

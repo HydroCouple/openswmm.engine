@@ -24,6 +24,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <vector>
@@ -214,6 +215,27 @@ TEST(Gw2DParallelSweeps, CellSweepMatchesSerialAcrossClosuresAndSoils) {
         if (SubsurfaceSolver::parallelCellSweepAvailable())
             EXPECT_EQ(parallel.gw.parallelCellSweeps(), 4);
         saveBytes("cell_sweep_" + std::to_string(threads) + ".chk", checkpointBytes(parallel.gw));
+        if (threads == 2) {
+            // The state after four sweeps, in text, for tolerance comparisons across numerics
+            // changes of the column (Track 4B): the checkpoint bytes above are bit-level.
+            fs::create_directories(kOutDir);
+            std::ofstream csv(kOutDir / "sigma_state_after_sweeps.csv");
+            csv.precision(17);
+            const auto& s = serial.gw.state();
+            csv << "cell,closure,soil,hg,hu";
+            for (int j = 0; j < s.m_layers; ++j)
+                csv << ",theta" << j;
+            csv << "\n";
+            for (int i = 0; i < SweepRig::kCells; ++i) {
+                csv << i << "," << int(s.closure[i]) << "," << int(s.soil_char[i]) << "," << s.hg[i]
+                    << "," << s.hu[i];
+                for (int j = 0; j < s.m_layers; ++j)
+                    csv << "," << s.theta_sigma[std::size_t(j) * SweepRig::kCells + i];
+                csv << "\n";
+            }
+            csv << "ledger," << s.led_recharge << "," << s.led_lateral << "," << s.led_node << ","
+                << s.led_dunne << "," << s.led_infil_in << "\n";
+        }
     }
 }
 
@@ -432,4 +454,101 @@ TEST(Gw2DLateralDarcy, StripConvergesUnderMeshRefinement) {
     csv << "layout_gap_over_delta,,,,," << layout_gap / delta << ",\n";
     // With the centroid chord as the arm this gap was 2.7 % of the step (2026-11-26).
     EXPECT_LT(layout_gap, 1e-6 * delta);
+}
+
+TEST(SoilCurve, ValuesMatchTheScalarFunctionsAndSlopesMatchCenteredDifferences) {
+    // Track 4B: soil::curve() feeds the σ column's Newton matrix. Its values must be the
+    // scalar functions' (exactly for the laws that share expressions, to roundoff for van
+    // Genuchten's Kr through the Se^(1/m) = 1/(1 + (αψ)^n) identity) and its slopes the
+    // derivatives of those functions, checked against centered differences away from clamps
+    // and kinks. The Russo inverse must still invert its retention curve.
+    struct Case {
+        SoilChar law;
+        double vg_n;
+    };
+    for (const Case c : {Case{SoilChar::GARDNER, 1.6}, Case{SoilChar::RUSSO, 1.6},
+                         Case{SoilChar::BROOKS_COREY, 1.6}, Case{SoilChar::VAN_GENUCHTEN, 1.6},
+                         Case{SoilChar::VAN_GENUCHTEN, 2.5}}) {
+        SCOPED_TRACE("law=" + std::to_string(int(c.law)) + " n=" + std::to_string(c.vg_n));
+        soil::Params p;
+        p.law = c.law;
+        p.Ks = 1e-5;
+        p.alpha = 2.;
+        p.psi_b = .2;
+        p.lambda = .5;
+        p.vg_n = c.vg_n;
+        p.vg_L = .5;
+        int checked_dse = 0, checked_dkr = 0;
+        for (double psi = 1e-4; psi < 2e3; psi *= 1.07) {
+            const soil::Curve k = soil::curve(p, psi);
+            const double se = soil::effectiveSaturation(p, psi);
+            const double kr = soil::relativeConductivity(p, psi);
+            if (c.law == SoilChar::VAN_GENUCHTEN) {
+                EXPECT_NEAR(k.Se, se, 1e-14 * se) << psi;
+                // The scalar form evaluates 1 − Se^(1/m) by cancellation near saturation (its
+                // error reaches 1e-12 relative at ψ ~ 1e-4 for n = 2.5); the curve's ap/(1+ap)
+                // does not.
+                EXPECT_NEAR(k.Kr, kr, 1e-11 * std::max(kr, 1e-300)) << psi;
+            } else {
+                EXPECT_EQ(k.Se, se) << psi;
+                EXPECT_EQ(k.Kr, kr) << psi;
+            }
+            // A centered difference of values near 1 over 2h carries eps/h of roundoff, which
+            // near saturation is far above the 1e-5 relative agreement asked of the slope.
+            constexpr double eps = std::numeric_limits<double>::epsilon();
+            const double h = 1e-6 * std::max(psi, 1e-2);
+            const bool kink = c.law == SoilChar::BROOKS_COREY && std::abs(psi - p.psi_b) < 2 * h;
+            // On a clamp (the 1e-8 floor, or saturated at exactly 1) the slopes are zero; in the
+            // last 1e-9 below saturation the slope is real but too small to difference.
+            const bool clamped = se <= 1e-8 * (1 + 1e-6) || se >= 1.;
+            const bool se_open = !clamped && se < 1 - 1e-9 && !kink;
+            if (se_open) {
+                const double fd = (soil::effectiveSaturation(p, psi + h) -
+                                   soil::effectiveSaturation(p, psi - h)) /
+                                  (2 * h);
+                EXPECT_NEAR(k.dSe, fd, 1e-5 * std::abs(fd) + 8 * eps * se / h) << psi;
+                ++checked_dse;
+                // The inverse returns the suction the curve was evaluated at, to the roundoff of
+                // Se (eps) divided by the retention slope.
+                EXPECT_NEAR(soil::suctionAtSaturation(p, k.Se), psi,
+                            1e-9 * psi + 8 * eps / std::abs(k.dSe))
+                    << psi;
+            } else if (clamped && !kink) {
+                EXPECT_EQ(k.dSe, 0.) << psi;
+            }
+            const bool kr_open = kr > 1e-300 && kr < 1 - 1e-12 && !kink;
+            if (kr_open) {
+                // Differenced on the curve's own values: the scalar form's cancellation (above)
+                // would put 1e-4 of noise on a 1e-8 step near saturation.
+                const double fd =
+                    (soil::curve(p, psi + h).Kr - soil::curve(p, psi - h).Kr) / (2 * h);
+                const double chord = (k.Kr - 1) / psi;
+                // van Genuchten evaluates 1 − (ap/(1 + ap))^m by cancellation in its tail, which
+                // puts eps·(1 + ap)/m of relative noise on Kr and so on its difference quotient.
+                double noise = 8 * eps * kr / h;
+                if (c.law == SoilChar::VAN_GENUCHTEN) {
+                    const double u = 1 + std::pow(p.alpha * psi, p.vg_n);
+                    noise *= 1 + u / (1 - 1 / p.vg_n);
+                }
+                const double rel = 1e-5;
+                if (c.law == SoilChar::VAN_GENUCHTEN && k.dKr == chord) {
+                    // The chord bound: only for n < 2, and only where the slope is unbounded.
+                    EXPECT_LT(c.vg_n, 2.) << psi;
+                    EXPECT_LT(psi, 1e-2) << psi;
+                    EXPECT_LT(fd, chord) << "bounded slope must be steeper than the chord " << psi;
+                } else {
+                    EXPECT_NEAR(k.dKr, fd, rel * std::abs(fd) + noise) << psi;
+                }
+                ++checked_dkr;
+            }
+        }
+        EXPECT_GT(checked_dse, 100);
+        EXPECT_GT(checked_dkr, 100);
+        // Saturated: unit values, zero slopes.
+        const soil::Curve wet = soil::curve(p, 0.);
+        EXPECT_EQ(wet.Se, 1.);
+        EXPECT_EQ(wet.Kr, 1.);
+        EXPECT_EQ(wet.dSe, 0.);
+        EXPECT_EQ(wet.dKr, 0.);
+    }
 }
