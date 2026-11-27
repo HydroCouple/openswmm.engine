@@ -764,6 +764,6 @@ its configuration and state). Both reserved rows are allocated by the transport 
 species-row layout: `ArdEngine.cpp` for the Eulerian mesh, and `rowLayout()`
 in `LagrangianSolver.hpp` for the segment store.
 
-C API surfaces are declared in @ref openswmm_waterage.h and
+C API surfaces are declared in @ref openswmm_water_age.h and
 @ref openswmm_heat.h; the transport-engine configuration itself is in
 @ref openswmm_transport.h.

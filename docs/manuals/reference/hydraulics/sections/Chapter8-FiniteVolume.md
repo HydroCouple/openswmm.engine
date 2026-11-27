@@ -291,7 +291,7 @@ bit-identical results.
 @ref openswmm::fv::kernels::widthOfDepth and
 @ref openswmm::fv::kernels::i1OfDepth; the inversion is
 @ref openswmm::fv::kernels::depthOfArea with the fallback
-@ref openswmm::fv::kernels::depthOfAreaBracketed, all in
+`openswmm::fv::kernels::depthOfAreaBracketed`, all in
 `src/engine/hydraulics/fv/FvKernels.hpp`. The tables are the `i1_tbl`
 and `h_tbl` members of @ref openswmm::fv::FvGeometry
 (`src/engine/hydraulics/fv/NetworkMeshData.hpp`, `kI1Samples` = 129),
@@ -562,7 +562,7 @@ therefore no longer required for it (@ref hydraulics_ref_ch10_planned
 `tpaDepthOfArea`, `tpaAreaOfDepth` and `tpaI1OfDepth` in
 `src/engine/hydraulics/fv/FvKernels.hpp`; the flag transitions, venting
 sweep and regime refresh are
-@ref openswmm::fv::ExplicitFvSolver::updateTpaFlags; the implicit-set
+`openswmm::fv::ExplicitFvSolver::updateTpaFlags`; the implicit-set
 rules are `cellPressurized` and `ghostPressurized` in
 `src/engine/hydraulics/fv/PressurizedHeadSolver.hpp`. Gates:
 `tests/unit/engine/test_fv_tpa_closure.cpp`. The dynamic wave solver
@@ -851,7 +851,7 @@ baseline). It has no effect on the hydraulics.
 @ref openswmm::fv::kernels::physicalFlux, and the species flux is
 @ref openswmm::fv::kernels::speciesFlux, all in
 `src/engine/hydraulics/fv/FvKernels.hpp`. Faces are assembled by
-@ref openswmm::fv::ExplicitFvSolver::computeFaceFlux in
+`openswmm::fv::ExplicitFvSolver::computeFaceFlux` in
 `src/engine/hydraulics/fv/ExplicitFvSolver.cpp`.
 
 ### 8.5.4 Friction, local losses and positivity {#hydraulics_ref_ch8_friction_positivity}
@@ -969,10 +969,10 @@ property either.
 @ref openswmm::fv::kernels::localLossUpdate and
 @ref openswmm::fv::kernels::positivityScale in
 `src/engine/hydraulics/fv/FvKernels.hpp`; the force-main branch is
-@ref openswmm::fv::ExplicitFvSolver::frictionFor, which evaluates
+`openswmm::fv::ExplicitFvSolver::frictionFor`, which evaluates
 `hydkernels::fricSlopeDW` / `hydkernels::fricSlopeHW` from
 `src/engine/hydraulics/HydClosureKernels.hpp`; the outflow scan is
-@ref openswmm::fv::ExplicitFvSolver::limitPositivity.
+`openswmm::fv::ExplicitFvSolver::limitPositivity`.
 
 ### 8.5.5 Time stepping {#hydraulics_ref_ch8_time_stepping}
 
@@ -1322,11 +1322,11 @@ front (left) and an emerged bank acting as a wall (right)*
 `kEtaDeadband` in `src/engine/hydraulics/fv/FvKernels.hpp`; the dry-bed
 signal speeds are @ref openswmm::fv::kernels::waveSpeeds and the null
 face state is produced in
-@ref openswmm::fv::ExplicitFvSolver::faceSide. Dry-cell zeroing is in
-@ref openswmm::fv::ExplicitFvSolver::updateCells and
-@ref openswmm::fv::ExplicitFvSolver::refreshDepths; compaction in
-@ref openswmm::fv::ExplicitFvSolver::rebuildActiveLists
-(`kRebuildInterval` = 8); shoreline seeding in @ref Router::initFv
+`openswmm::fv::ExplicitFvSolver::faceSide`. Dry-cell zeroing is in
+`openswmm::fv::ExplicitFvSolver::updateCells` and
+`openswmm::fv::ExplicitFvSolver::refreshDepths`; compaction in
+`openswmm::fv::ExplicitFvSolver::rebuildActiveLists`
+(`kRebuildInterval` = 8); shoreline seeding in `Router::initFv`
 (`src/engine/hydraulics/Routing.cpp`).
 
 ### 8.5.9 Data layout and the order of operations
@@ -1418,12 +1418,12 @@ copied into device memory without owning containers.
 @ref openswmm::fv::NetworkStateData
 (`src/engine/hydraulics/fv/NetworkMeshData.hpp`), built by
 `src/engine/hydraulics/fv/NetworkMeshBuilder.cpp`. The substep pipeline
-is @ref openswmm::fv::ExplicitFvSolver::takeSubstep and
+is `openswmm::fv::ExplicitFvSolver::takeSubstep` and
 @ref openswmm::fv::ExplicitFvSolver::advance; the macro cycle is
-@ref openswmm::fv::ExplicitFvSolver::runMacroCycle with
-@ref openswmm::fv::ExplicitFvSolver::fireFaces,
-@ref openswmm::fv::ExplicitFvSolver::fireCells and
-@ref openswmm::fv::ExplicitFvSolver::fireNodes, all in
+`openswmm::fv::ExplicitFvSolver::runMacroCycle` with
+`openswmm::fv::ExplicitFvSolver::fireFaces`,
+`openswmm::fv::ExplicitFvSolver::fireCells` and
+`openswmm::fv::ExplicitFvSolver::fireNodes`, all in
 `src/engine/hydraulics/fv/ExplicitFvSolver.cpp`. The kernel bodies live
 in `src/engine/hydraulics/fv/FvKernels.hpp` behind the
 `OPENSWMM_KERNEL_FN` marker.
@@ -1724,7 +1724,7 @@ describe the same run. Conduits capped at any point in a routing step
 are flagged in the report's inlet-control column.
 
 **Implementation.**
-@ref openswmm::fv::ExplicitFvSolver::computeFaceFlux applies the cap
+`openswmm::fv::ExplicitFvSolver::computeFaceFlux` applies the cap
 through `hydkernels::culvertInflow`
 (`src/engine/hydraulics/HydClosureKernels.hpp`); the resolved curve is
 the `culvert_curve` member of @ref openswmm::fv::FvGeometry, filled by
@@ -1819,17 +1819,17 @@ switch that produced those numbers is retired; asking for it warns and
 is ignored).
 
 **Implementation.**
-@ref openswmm::fv::ExplicitFvSolver::relaxNodeFluxes and
-@ref openswmm::fv::ExplicitFvSolver::relaxOneNode implement step 2;
-@ref openswmm::fv::ExplicitFvSolver::updateNodes and
-@ref openswmm::fv::ExplicitFvSolver::fireNodes carry the ledger on the
+`openswmm::fv::ExplicitFvSolver::relaxNodeFluxes` and
+`openswmm::fv::ExplicitFvSolver::relaxOneNode` implement step 2;
+`openswmm::fv::ExplicitFvSolver::updateNodes` and
+`openswmm::fv::ExplicitFvSolver::fireNodes` carry the ledger on the
 global and tiered paths;
-@ref openswmm::fv::ExplicitFvSolver::applyNodeCapacity implements
+`openswmm::fv::ExplicitFvSolver::applyNodeCapacity` implements
 step 6; the storage relation is
 @ref openswmm::fv::ExplicitFvSolver::nodeVolumeFromDepth and
-@ref openswmm::fv::ExplicitFvSolver::nodeDepthFromVolume with the
-slope @ref openswmm::fv::ExplicitFvSolver::nodeStorageSlope; the bound
-(8-32) is @ref openswmm::fv::ExplicitFvSolver::nodeStableDt. Options
+`openswmm::fv::ExplicitFvSolver::nodeDepthFromVolume` with the
+slope `openswmm::fv::ExplicitFvSolver::nodeStorageSlope`; the bound
+(8-32) is `openswmm::fv::ExplicitFvSolver::nodeStableDt`. Options
 are declared in `src/engine/hydraulics/fv/FvOptions.hpp`.
 
 ## 8.7 Reporting

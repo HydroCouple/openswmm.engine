@@ -355,8 +355,8 @@ SWMM_ENGINE_API int swmm_link_set_max_flow(SWMM_Engine engine, int idx, double f
 /**
  * @brief Get the initial flow in a link at simulation start.
  *
- * @details Symmetric getter for @ref swmm_link_set_initial_flow: the authored
- *          initial flow, in any post-construction engine state.
+ * @details Symmetric getter for @ref swmm_link_set_initial_flow "swmm_link_set_initial_flow":
+ *          the authored initial flow, in any post-construction engine state.
  *
  * @param[in] engine Engine handle.
  * @param[in] idx Zero-based link index.

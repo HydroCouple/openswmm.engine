@@ -1325,11 +1325,11 @@ substep loop within it (rendered diagram)*
 
 Implementation:
 @ref openswmm::twoD::ExplicitInertialSolver::advance drives the loop;
-@ref openswmm::twoD::ExplicitInertialSolver::fireFaces,
-@ref openswmm::twoD::ExplicitInertialSolver::fireCells,
-@ref openswmm::twoD::ExplicitInertialSolver::syncAndRebuild,
-@ref openswmm::twoD::ExplicitInertialSolver::settleAccumulators and
-@ref openswmm::twoD::ExplicitInertialSolver::refreshDt0 implement the
+`openswmm::twoD::ExplicitInertialSolver::fireFaces`,
+`openswmm::twoD::ExplicitInertialSolver::fireCells`,
+`openswmm::twoD::ExplicitInertialSolver::syncAndRebuild`,
+`openswmm::twoD::ExplicitInertialSolver::settleAccumulators` and
+`openswmm::twoD::ExplicitInertialSolver::refreshDt0` implement the
 numbered steps. The face layout and CSR incidence are built by
 @ref openswmm::twoD::InertialEdges::build
 (`src/engine/2d/solver/InertialEdges.cpp`); the scalar kernels live in
@@ -1449,12 +1449,12 @@ Implementation: the face-wet tests are
 @ref openswmm::twoD::inertial::faceFlowDepth and
 @ref openswmm::twoD::inertial::faceFlowDepthVfr over
 @ref openswmm::twoD::inertial::faceDepthFromEta; the positivity share
-is applied in @ref openswmm::twoD::ExplicitInertialSolver::fireFaces
+is applied in `openswmm::twoD::ExplicitInertialSolver::fireFaces`
 with the scale factor of
 @ref openswmm::twoD::inertial::positivityScale; the hysteretic
 activation, halo and lazy source passes are
-@ref openswmm::twoD::ExplicitInertialSolver::syncAndRebuild and
-@ref openswmm::twoD::ExplicitInertialSolver::lazySourcesOnly; the
+`openswmm::twoD::ExplicitInertialSolver::syncAndRebuild` and
+`openswmm::twoD::ExplicitInertialSolver::lazySourcesOnly`; the
 evaporation taper is @ref openswmm::twoD::evapSink
 (`src/engine/2d/solver/SurfaceFluxCalculator.hpp`). The slope deadband
 is `kEtaDeadband` in `src/engine/2d/solver/InertialKernels.hpp`.
@@ -1686,7 +1686,7 @@ Hydrology §9.11 and the groundwater transport design for the exact profile.
 Implementation: `src/engine/2d/solver/SweKernels.hpp` — `faceFlux`
 (first order), `faceFluxReconBed` (second order; `faceFluxRecon` retains the constant-bed compatibility entry point), `hllcFlux`, `waveSpeeds`,
 `bjLimiter`, `frictionUpdate`; the face firing is
-@ref openswmm::twoD::ExplicitInertialSolver::fireFacesSwe, the momentum
+`openswmm::twoD::ExplicitInertialSolver::fireFacesSwe`, the momentum
 gather and wall booking are the `FULL_SWE` branch of `fireCells`, the
 gradients are `computeLimitedGradientsSwe` and the two-stage step is
 `runRk2Step` in `src/engine/2d/solver/ExplicitInertialSolver.cpp`; the
@@ -1745,7 +1745,7 @@ a diffusive front cannot outrun the fixed rebuild cadence (§9.5.7).
 
 Implementation: `src/engine/2d/solver/DiffusiveKernels.hpp` —
 `faceDischarge` is (9-42) and `cellDiffusiveDt` is (9-43); the face
-firing is @ref openswmm::twoD::ExplicitInertialSolver::fireFacesDiffusive
+firing is `openswmm::twoD::ExplicitInertialSolver::fireFacesDiffusive`
 and the slope census `refreshDiffusiveSlopes` in
 `src/engine/2d/solver/ExplicitInertialSolver.cpp`.
 
@@ -2391,11 +2391,11 @@ helpers); outfall accumulation and tailwater caching are
 `OutfallExchange` and
 @ref openswmm::twoD::updateOutfallBoundaries; the in-marcher exchange
 loop is the tier-0 tail of
-@ref openswmm::twoD::ExplicitInertialSolver::fireCells; the batch
+`openswmm::twoD::ExplicitInertialSolver::fireCells`; the batch
 orchestration and booking are
 @ref openswmm::twoD::SurfaceRouter2D::advancePostRouting,
-@ref openswmm::twoD::SurfaceRouter2D::coAdvanceStep and
-@ref openswmm::twoD::SurfaceRouter2D::accumulateMassBalance; the
+`openswmm::twoD::SurfaceRouter2D::coAdvanceStep` and
+`openswmm::twoD::SurfaceRouter2D::accumulateMassBalance`; the
 forcing entry points are declared in
 `include/openswmm/engine/openswmm_2d.h`.
 

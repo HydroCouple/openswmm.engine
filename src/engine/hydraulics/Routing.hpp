@@ -124,6 +124,10 @@ public:
      */
     void init(SimulationContext& ctx, RouteModel model);
 
+    /// Publish an accepted native CPU FV water graph for conservative quality.
+    void acceptedQualityWater(const SimulationContext& ctx, double dt,
+                              quality::FvTransportWater& out) const;
+
     /**
      * @brief Dispatch one prepared hydraulic routing interval and publish its current state.
      *
@@ -146,10 +150,6 @@ public:
      * @return DW Picard iteration count, KW effort, one for steady flow, or FV internal operator-step
      *     count; zero can indicate an absent FV solver.
      */
-    /// Publish an accepted native CPU FV water graph for conservative quality.
-    void acceptedQualityWater(const SimulationContext& ctx, double dt,
-                              quality::FvTransportWater& out) const;
-
     int step(SimulationContext& ctx, double dt, double evap_rate = 0.0,
              dynwave::DWSolver::NonConduitFlowFunc non_conduit_fn = nullptr);
 

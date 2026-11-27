@@ -813,25 +813,6 @@ void registerGwTransportSections(GwTransportData& gw, input::SectionRegistry& re
 // Resolution
 // ---------------------------------------------------------------------------
 
-/**
- * @param[in,out] ctx Matching prepared species registry, series names, input path and model
- * tables; logically read by this resolver.
- * @param[in] mesh Final cell count/tags/centroids/local vertex counts, stable and consistently
- * sized.
- * @param[in,out] gw Authoring rows; invalidates caches, loads external initial quality and
- * updates XY source cell assignments while preserving authored location fields.
- * @return All collected file/grammar/cell/tag/species/series/duplicate-source/sign diagnostics;
- * empty when these checks succeed. Does not guarantee complete runtime thermal/native profile
- * qualification.
- * @note Resolves sidecar relative to INP directory; comma/semicolon/tab become separators.
- * Removes previous non-LAYER file rows marked -2, ignores malformed physical first line as
- * header, appends other valid rows while collecting errors. LAYER rows lack that marker and are
- * not deduplicated on re-resolve. XY uses nearest centroid, first minimum wins; caller ensures
- * compatible coordinate units. Signed initial age/temperature accepted here, other negative
- * concentration refused. Does not seed native inventories, activate sources, convert units or
- * advance time. Errors may coexist with loaded/ resolved mutations; allocation/file exceptions
- * can propagate. Exclusive authoring/resolve access.
- */
 int nearestCell(const MeshData& mesh, double x, double y) {
     // Nearest cell centroid — the same rule the mesh editor uses to place a
     // picked point, and cell-generic (centroids are true-area). From the
@@ -851,6 +832,25 @@ int nearestCell(const MeshData& mesh, double x, double y) {
     return best;
 }
 
+/**
+ * @param[in,out] ctx Matching prepared species registry, series names, input path and model
+ * tables; logically read by this resolver.
+ * @param[in] mesh Final cell count/tags/centroids/local vertex counts, stable and consistently
+ * sized.
+ * @param[in,out] gw Authoring rows; invalidates caches, loads external initial quality and
+ * updates XY source cell assignments while preserving authored location fields.
+ * @return All collected file/grammar/cell/tag/species/series/duplicate-source/sign diagnostics;
+ * empty when these checks succeed. Does not guarantee complete runtime thermal/native profile
+ * qualification.
+ * @note Resolves sidecar relative to INP directory; comma/semicolon/tab become separators.
+ * Removes previous non-LAYER file rows marked -2, ignores malformed physical first line as
+ * header, appends other valid rows while collecting errors. LAYER rows lack that marker and are
+ * not deduplicated on re-resolve. XY uses nearest centroid, first minimum wins; caller ensures
+ * compatible coordinate units. Signed initial age/temperature accepted here, other negative
+ * concentration refused. Does not seed native inventories, activate sources, convert units or
+ * advance time. Errors may coexist with loaded/ resolved mutations; allocation/file exceptions
+ * can propagate. Exclusive authoring/resolve access.
+ */
 std::vector<std::string> resolveGwTransport(SimulationContext& ctx, const MeshData& mesh,
                                             GwTransportData& gw) {
     std::vector<std::string> errs;
