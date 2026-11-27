@@ -82,6 +82,10 @@ std::vector<Case> load_cases() {
     std::istringstream in(read_file(kData / "cases.tsv"));
     std::string line;
     while (std::getline(in, line)) {
+        // A Windows checkout gives the file CRLF endings; the last column would
+        // otherwise read "same\r" and take the refuse branch.
+        if (!line.empty() && line.back() == '\r')
+            line.pop_back();
         if (line.empty() || line[0] == '#')
             continue;
         std::vector<std::string> col;
