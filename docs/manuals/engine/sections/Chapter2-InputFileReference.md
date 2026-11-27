@@ -1613,7 +1613,7 @@ Name Units Crain Cgw Cii Kd (Sflag CoPoll CoFract Cdwf Cinit)
 
 Parameters:
 Name    name assigned to a pollutant.
-Units    concentration units (MG/L for milligrams per liter, UG/L for micrograms per liter, or #/L for direct count per liter).
+Units    concentration units (MG/L for milligrams per liter, UG/L for micrograms per liter, or #/L for direct count per liter). Any other unit is ERROR 205, as in SWMM 5.
 Crain    concentration of the pollutant in rainfall (concentration units).
 Cgw    concentration of the pollutant in groundwater (concentration units).
 Cii    concentration of the pollutant in rainfall-dependent infiltration and inflow (concentration units).

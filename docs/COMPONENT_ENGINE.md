@@ -764,12 +764,14 @@ and 1000 counts for #/L. The corresponding native factor also includes
 Conversion rounding is an observation, not a balancing correction.
 
 Conservative enrollment additionally requires a recognized unit declaration.
-Unknown registered INP unit tokens retain the ordinary native mg/L fallback,
-with validity metadata that refuses this optional profile. GeoPackage rows
-must contain the writer's explicit unit codes 0, 1 or 2; text coercion or enum
-wraparound cannot establish a valid declaration. The metadata follows row
-creation/deletion, and a valid pre-start units setter intentionally repairs it.
-Rows skipped entirely by the native parser are outside this declaration check.
+Every input path now refuses an unrecognized unit, so a loaded model always has
+one. An unknown INP unit token is ERROR 205. A GeoPackage row whose units are not
+the writer's code 0, 1 or 2 is ERROR 205 and the open fails (text coercion or
+enum wraparound cannot establish a valid declaration). `swmm_pollutant_add`, like
+`swmm_pollutant_set_units`, refuses any other code with SWMM_ERR_BADPARAM. The
+validity metadata still follows row creation/deletion, and the profile keeps its
+check as a guard. Rows skipped entirely by the native parser are outside this
+declaration check.
 Existing archive formats retain their identities and bytes.
 
 The experimental `openswmm_passive_exchange.h` C facade selects the qualified

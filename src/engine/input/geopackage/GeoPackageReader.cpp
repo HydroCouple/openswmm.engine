@@ -26,6 +26,7 @@
 #include "GpkgGeometry.hpp"
 
 #include "core/NodeCoupling2D.hpp"
+#include "core/ErrorCodes.hpp"
 #include "core/SimulationContext.hpp"
 #include "core/UnitConversion.hpp"
 #include "data/NodeData.hpp"
@@ -1532,10 +1533,17 @@ static void read_pollutants(sqlite3* db, SimulationContext& ctx, const std::stri
             ctx.pollutants.co_pollut.resize(n, -1);
         grow(ctx.pollutants.co_frac);
 
+        // The writer stores units as the code 0 (MG/L), 1 (UG/L) or 2 (#/L). Any other value is
+        // ERROR 205, as an unknown [POLLUTANTS] unit is in an input file; the row keeps a valid
+        // MG/L placeholder (never an out-of-range enum) with its declaration marked invalid.
         const auto unit_code = column_text(stmt.get(), 1);
-        ctx.pollutants.unit_declaration_valid[idx] =
-            unit_code == "0" || unit_code == "1" || unit_code == "2";
-        ctx.pollutants.units[idx] = static_cast<MassUnits>(column_int(stmt.get(), 1));
+        const bool unit_ok = unit_code == "0" || unit_code == "1" || unit_code == "2";
+        ctx.pollutants.unit_declaration_valid[idx] = unit_ok;
+        ctx.pollutants.units[idx] =
+            unit_ok ? static_cast<MassUnits>(column_int(stmt.get(), 1)) : MassUnits::MG_PER_L;
+        if (!unit_ok)
+            ctx.errors.push_back(
+                format_error(ERR_KEYWORD, unit_code, "(the units code of pollutant " + name + ")"));
         ctx.pollutants.c_rain[idx] = column_double(stmt.get(), 2);
         ctx.pollutants.c_gw[idx] = column_double(stmt.get(), 3);
         // Column is file units (1/day) — pre-KD1 files stored the deck

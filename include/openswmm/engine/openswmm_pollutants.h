@@ -78,7 +78,8 @@ SWMM_ENGINE_API const char* swmm_pollutant_id(SWMM_Engine engine, int idx);
  * @param[in] engine Engine handle (SWMM_STATE_BUILDING).
  * @param[in] id Unique null-terminated identifier for the new pollutant.
  * @param[in] units Concentration units code (0=MG/L, 1=UG/L, 2=#/L).
- * @returns SWMM_OK on success, or an error code.
+ * @returns SWMM_OK on success; SWMM_ERR_BADPARAM for a null or duplicate id or a units code other
+ *     than 0, 1 or 2; or another error code.
  *
  *
  * @note A null engine returns SWMM_ERR_BADHANDLE. Requires BUILDING or OPENED, not BUILDING alone.

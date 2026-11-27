@@ -10,6 +10,7 @@
 #include <openswmm/engine/openswmm_edit.h>
 #include "2d/coupling/NodeCoupling.hpp"
 #include "live_passive_recovery_test_support.hpp"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -2128,84 +2129,66 @@ TEST(ChangingVolumeNativeBases, CrcValidRowBasisChangesRefuseBeforePublication) 
     }
 }
 
-TEST(ChangingVolumeNativeBases, UnrecognizedAuthoredUnitsRefuseCouplingAndPreserveNativeFallback) {
+// An unknown [POLLUTANTS] unit is ERROR 205, as in legacy (#96). It used to run as MG/L, with
+// only this profile refusing the pollutant.
+TEST(ChangingVolumeNativeBases, UnrecognizedAuthoredUnitsAreRefusedAtOpen) {
     for (const char* token : {"COUNTS/L", "PPM", "KG/M3"}) {
+        SCOPED_TRACE(token);
         auto input = authoredSlices(true);
         const auto at = input.find("Dye MG/L");
+        ASSERT_NE(at, std::string::npos);
         input.replace(at, strlen("Dye MG/L"), std::string("Dye ") + token);
-        SWMMEngine invalid, ordinary;
-        ASSERT_NO_FATAL_FAILURE(start(invalid, "basis-unknown", input, false, false));
-        ASSERT_NO_FATAL_FAILURE(
-            start(ordinary, "basis-fallback", authoredSlices(true), false, false));
-        EXPECT_EQ(invalid.context().pollutants.units[0], MassUnits::MG_PER_L);
-        ASSERT_EQ(invalid.context().pollutants.unit_declaration_valid.size(), 1u);
-        EXPECT_EQ(invalid.context().pollutants.unit_declaration_valid[0], 0);
-        const auto error = invalid.attachLiveChangingVolumeSlicedExchange();
-        EXPECT_NE(error.find("unit declaration"), std::string::npos) << error;
-        EXPECT_EQ(invalid.livePassiveExchange(), nullptr);
-        EXPECT_EQ(invalid.context().elapsed_ms, 0);
-        double elapsed = 0;
-        for (int k = 0; k < 8; ++k) {
-            ASSERT_EQ(invalid.step(&elapsed), SWMM_OK);
-            ASSERT_EQ(ordinary.step(&elapsed), SWMM_OK);
-            ASSERT_NO_FATAL_FAILURE(sameWater(invalid, ordinary));
-            EXPECT_EQ(invalid.context().nodes.conc, ordinary.context().nodes.conc);
-            EXPECT_EQ(invalid.surfaceRouter2D().state().transport.cell_mass,
-                      ordinary.surfaceRouter2D().state().transport.cell_mass);
-        }
-        EXPECT_EQ(invalid.close(), SWMM_OK);
-        EXPECT_EQ(ordinary.close(), SWMM_OK);
+        std::ofstream(evidence("basis-unknown.inp")) << input;
+        SWMMEngine e;
+        EXPECT_NE(e.open(io::path_utf8(evidence("basis-unknown.inp")).c_str(),
+                         io::path_utf8(evidence("basis-unknown.rpt")).c_str(), nullptr),
+                  SWMM_OK);
+        const auto& errors = e.context().errors;
+        EXPECT_TRUE(std::any_of(errors.begin(), errors.end(), [&](const std::string& m) {
+            return m.find("ERROR 205") != std::string::npos && m.find(token) != std::string::npos;
+        })) << (errors.empty() ? std::string("no errors") : errors.front());
+        e.close();
     }
 }
-TEST(ChangingVolumeNativeBases, DeclarationValiditySurvivesDeletionAndExplicitCorrection) {
-    for (int basis = 0; basis < 3; ++basis)
-        for (bool correct : {false, true}) {
-            auto input = authoredSlices(true);
-            const auto at = input.find("[POLLUTANTS]\nDye MG/L");
-            input.replace(at, strlen("[POLLUTANTS]\nDye MG/L"),
-                          "[POLLUTANTS]\nEarlier MG/L 0 0 0 0 NO * 0 0 0\nDye COUNTS/L");
-            const auto tag =
-                "basis-repair-" + std::to_string(basis) + "-" + std::to_string(correct);
-            std::ofstream(evidence(tag + ".inp")) << input;
-            SWMMEngine e;
-            ASSERT_EQ(e.open(io::path_utf8(evidence(tag + ".inp")).c_str(),
-                             io::path_utf8(evidence(tag + ".rpt")).c_str(), nullptr),
-                      SWMM_OK);
-            auto handle = static_cast<SWMM_Engine>(&e);
-            ASSERT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{1, 0}));
-            ASSERT_EQ(swmm_pollutant_delete(handle, 0, nullptr), SWMM_OK);
-            EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{0}));
-            ASSERT_EQ(swmm_pollutant_add(handle, "Extra", 1), SWMM_OK);
-            EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{0, 1}));
-            ASSERT_EQ(swmm_pollutant_add(handle, "Wrapped", 256), SWMM_OK);
-            EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{0, 1, 0}));
-            ASSERT_EQ(swmm_pollutant_delete(handle, 1, nullptr), SWMM_OK);
-            EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{0, 0}));
-            ASSERT_EQ(swmm_pollutant_delete(handle, 1, nullptr), SWMM_OK);
-            const auto before = e.context().pollutants.units;
-            EXPECT_EQ(swmm_pollutant_set_units(handle, 0, 99), SWMM_ERR_BADPARAM);
-            EXPECT_EQ(e.context().pollutants.units, before);
-            EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                      (std::vector<std::uint8_t>{0}));
-            if (correct) {
-                ASSERT_EQ(swmm_pollutant_set_units(handle, 0, basis), SWMM_OK);
-                EXPECT_EQ(e.context().pollutants.unit_declaration_valid,
-                          (std::vector<std::uint8_t>{1}));
-            }
-            ASSERT_EQ(e.initialize(), SWMM_OK);
-            ASSERT_EQ(e.start(0), SWMM_OK);
-            auto error = e.attachLiveChangingVolumeSlicedExchange();
-            if (correct)
-                EXPECT_TRUE(error.empty()) << error;
-            else
-                EXPECT_NE(error.find("unit declaration"), std::string::npos) << error;
-            EXPECT_EQ(e.close(), SWMM_OK);
+
+// The API refuses a units code other than 0, 1 or 2 in swmm_pollutant_add, as it already did in
+// swmm_pollutant_set_units, so every pollutant carries a recognized declaration through deletion
+// and addition, and the profile attaches for each basis.
+TEST(ChangingVolumeNativeBases, UnitCodesOutsideTheEnumAreRefusedThroughTheApi) {
+    for (int basis = 0; basis < 3; ++basis) {
+        auto input = authoredSlices(true);
+        const auto at = input.find("[POLLUTANTS]\nDye MG/L");
+        ASSERT_NE(at, std::string::npos);
+        input.replace(at, strlen("[POLLUTANTS]\nDye MG/L"),
+                      "[POLLUTANTS]\nEarlier MG/L 0 0 0 0 NO * 0 0 0\nDye MG/L");
+        const auto tag = "basis-api-" + std::to_string(basis);
+        std::ofstream(evidence(tag + ".inp")) << input;
+        SWMMEngine e;
+        ASSERT_EQ(e.open(io::path_utf8(evidence(tag + ".inp")).c_str(),
+                         io::path_utf8(evidence(tag + ".rpt")).c_str(), nullptr),
+                  SWMM_OK);
+        auto handle = static_cast<SWMM_Engine>(&e);
+        ASSERT_EQ(e.context().pollutants.unit_declaration_valid, (std::vector<std::uint8_t>{1, 1}));
+        ASSERT_EQ(swmm_pollutant_delete(handle, 0, nullptr), SWMM_OK);
+        EXPECT_EQ(e.context().pollutants.unit_declaration_valid, (std::vector<std::uint8_t>{1}));
+        ASSERT_EQ(swmm_pollutant_add(handle, "Extra", 1), SWMM_OK);
+        for (const int code : {256, 3, -1}) {
+            EXPECT_EQ(swmm_pollutant_add(handle, "Wrapped", code), SWMM_ERR_BADPARAM) << code;
+            EXPECT_EQ(e.context().n_pollutants(), 2) << code;
         }
+        EXPECT_EQ(e.context().pollutants.unit_declaration_valid, (std::vector<std::uint8_t>{1, 1}));
+        ASSERT_EQ(swmm_pollutant_delete(handle, 1, nullptr), SWMM_OK);
+        const auto before = e.context().pollutants.units;
+        EXPECT_EQ(swmm_pollutant_set_units(handle, 0, 99), SWMM_ERR_BADPARAM);
+        EXPECT_EQ(e.context().pollutants.units, before);
+        ASSERT_EQ(swmm_pollutant_set_units(handle, 0, basis), SWMM_OK);
+        EXPECT_EQ(e.context().pollutants.unit_declaration_valid, (std::vector<std::uint8_t>{1}));
+        ASSERT_EQ(e.initialize(), SWMM_OK);
+        ASSERT_EQ(e.start(0), SWMM_OK);
+        const auto error = e.attachLiveChangingVolumeSlicedExchange();
+        EXPECT_TRUE(error.empty()) << error;
+        EXPECT_EQ(e.close(), SWMM_OK);
+    }
 }
 
 TEST(PassiveStorageFunding, AuthoredNegativeRReducesAvailablePreCreditInventory) {

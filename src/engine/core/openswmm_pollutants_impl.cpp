@@ -104,7 +104,9 @@ SWMM_ENGINE_API const char* swmm_pollutant_id(SWMM_Engine engine, int idx) {
 
 SWMM_ENGINE_API int swmm_pollutant_add(SWMM_Engine engine, const char* id, int units) {
     CHECK_HANDLE(engine);
-    if (!id)
+    // Units are 0 (MG/L), 1 (UG/L) or 2 (#/L), as swmm_pollutant_set_units requires; any other
+    // code was stored as an out-of-range MassUnits value.
+    if (!id || units < 0 || units > 2)
         return SWMM_ERR_BADPARAM;
 
     auto& ctx = to_engine(engine)->context();

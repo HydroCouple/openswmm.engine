@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -2707,7 +2708,10 @@ TEST(GeoPackageMapAnnotations, LabelsBackdropAndProfilesSurviveAGpkgRoundTrip) {
     swmm_engine_destroy(b);
 }
 
-TEST(GeoPackagePollutantBasis, RawUnitCodesRetainDeclarationValidity) {
+// The writer stores units as 0, 1 or 2. Any other value is ERROR 205 (#96), as an unknown
+// [POLLUTANTS] unit is in an input file; the row keeps a valid MG/L placeholder with its
+// declaration marked invalid, so the exchange still refuses it, and opening the file fails.
+TEST(GeoPackagePollutantBasis, RawUnitCodesOtherThanTheWritersAreRefused) {
     const auto root = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                       "verification/component_species_bases_2026-11-07/geopackage";
     fs::create_directories(root);
@@ -2732,6 +2736,18 @@ TEST(GeoPackagePollutantBasis, RawUnitCodesRetainDeclarationValidity) {
         const bool recognized = index < 3;
         EXPECT_EQ(loaded.pollutants.unit_declaration_valid[0], recognized);
         EXPECT_EQ(static_cast<int>(loaded.pollutants.units[0]), recognized ? index : 0);
+        const bool refused =
+            std::any_of(loaded.errors.begin(), loaded.errors.end(), [&](const std::string& m) {
+                return m.find("ERROR 205") != std::string::npos &&
+                       m.find(code) != std::string::npos;
+            });
+        EXPECT_EQ(refused, !recognized);
+        SWMM_Engine e = swmm_engine_create();
+        ASSERT_NE(e, nullptr);
+        EXPECT_EQ(swmm_engine_open(e, file.c_str(), nullptr, nullptr, kGpkgPluginId) == SWMM_OK,
+                  recognized);
+        swmm_engine_close(e);
+        swmm_engine_destroy(e);
         if (!recognized) {
             quality::PassiveStorageExchange book;
             quality::PassiveStorageExchange::Row row;
