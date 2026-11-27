@@ -124,14 +124,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y graphviz wget tar
 
-      - name: Install Doxygen 1.13.2
+      - name: Install Doxygen 1.17.0
         run: |
-          DOXYGEN_VERSION=1.13.2
-          # Doxygen release TAGS use underscores (Release_1_13_2) while the
-          # asset filename uses dots (doxygen-1.13.2.linux.bin.tar.gz). Building
+          DOXYGEN_VERSION=1.17.0
+          DOXYGEN_SHA256=75419ef4f446fc1c24ef12514b574e66e898ee6f527c6ae2ad84f91a905823c2
+          # Doxygen release TAGS use underscores (Release_1_17_0) while the
+          # asset filename uses dots (doxygen-1.17.0.linux.bin.tar.gz). Building
           # the tag with dots 404s, so derive the underscore form explicitly.
           DOXYGEN_TAG="Release_${DOXYGEN_VERSION//./_}"
           wget -q "https://github.com/doxygen/doxygen/releases/download/${DOXYGEN_TAG}/doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz"
+          echo "${DOXYGEN_SHA256}  doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz" | sha256sum --check
           tar -xzf doxygen-${DOXYGEN_VERSION}.linux.bin.tar.gz
           sudo mv doxygen-${DOXYGEN_VERSION}/bin/doxygen /usr/local/bin/doxygen
           doxygen --version
