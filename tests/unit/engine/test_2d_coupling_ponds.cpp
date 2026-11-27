@@ -253,9 +253,12 @@ TEST(CouplingPonds, EqualisationReducesDrainSpillReversals) {
                 "+EQUALIZE %d, +TRACKING+EQUALIZE %d\n",
                 legacy.reversals, legacy_cap.reversals, law.reversals, pond_only.reversals,
                 cap_only.reversals, fine.reversals);
-    // The uncapped legacy run reversed 71 times while a spill was limited by dynamic wave's
-    // booked node volume; limited by the pond the node's depth holds it reverses 17 times.
-    EXPECT_LT(4 * fine.reversals, legacy.reversals) << "the fine-mesh churn did not settle";
+    // The gate is the full setup's own count: 3 reversals both before and after 6fb1fcdc, while
+    // the uncapped legacy run fell from 71 to 17 when its spill stopped being limited by dynamic
+    // wave's booked node volume, so a ratio to it moves for reasons the test is not about. The
+    // legacy run only has to churn, or the fixture shows nothing.
+    EXPECT_LE(fine.reversals, 5) << "the fine-mesh churn did not settle";
+    EXPECT_GT(legacy.reversals, 2 * 5) << "fixture: the legacy setup no longer churns";
     EXPECT_LE(fine.reversals, law.reversals);
 }
 
