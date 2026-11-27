@@ -2835,8 +2835,8 @@ SWMM_ENGINE_API int swmm_node_reset_2d_coupling(SWMM_Engine engine, int node_idx
  * @brief Read an authored coupling parameter as its section token, e.g.
  *         key "D" → "1.2", key "CREST" → "MESH_BED". Empty when not authored.
  *  Keys: D, PERIMETER, AREA, CHAMBER_AREA, LID_OPEN_FRACTION, CREST, COEFFS,
- *  CW, CSW, COI, COO, LAW, SPREAD, TAILWATER_RELAX. Lengths and areas are in
- *  project units, TAILWATER_RELAX in seconds.
+ *  CW, CSW, COI, COO, LAW, SPREAD, TAILWATER_RELAX, H_EPS. Lengths, areas and
+ *  H_EPS are in project units, TAILWATER_RELAX in seconds.
  *
  *
  *  @return SWMM_ERR_BADPARAM for an unknown key.

@@ -268,7 +268,10 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
       << "\n"
          "[2D_NODE_COUPLING]\nMH MANHOLE D="
       << rig.at("manhole_diameter_m")
-      << " COEFFS=RUBINATO2017\n\n"
+      // The law's regularization head at the 1/6 rig scale, as the law-only test uses; at the
+      // field default (0.02 m) the rig's 6-8 mm head differences sit below the knee of the
+      // regularized root and the submerged drains read a fifth low.
+      << " COEFFS=RUBINATO2017 H_EPS=0.0033333\n\n"
          "[2D_VERTICES]\n";
     for (int j = 0; j < ny; ++j)
         for (int i = 0; i < nx; ++i) {

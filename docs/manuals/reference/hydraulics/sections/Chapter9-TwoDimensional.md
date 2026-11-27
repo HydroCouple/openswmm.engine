@@ -1980,11 +1980,14 @@ surface depth hs = max(h2-z,0), crest perimeter L and opening area A:
 
 The free/submerged transition is smoothed over a submergence ratio of 0.1.
 The regularised root phi equals sqrt(x) above its head threshold and is
-quadratic below, with a finite derivative at zero. The routed implementation
-uses a 0.02 m threshold. That is a numerical regularisation scale, and is
-large relative to the heads of the Rubinato laboratory rig. A comparison
-using a smaller threshold only in the isolated law test does not validate
-the routed model at that scale.
+quadratic below, with a finite derivative at zero. The threshold is 0.02 m
+unless a node authors `H_EPS` (a length in project units). That is a
+numerical regularization scale at the field scale, and it is large relative
+to the heads of the Rubinato laboratory rig: at the rig's 7.7 mm head
+differences the default root reads 0.81 of sqrt(x), and the routed model's
+submerged-weir drains stood at 0.76 to 0.81 of the paper's equation at the
+model's own heads until the test decks set `H_EPS` to 0.02/6, the scale the
+isolated law test had always used.
 
 The dynamic-wave head sensitivity is a nonnegative damping approximation:
 blend-weight and availability-ramp derivatives are dropped. It should not
@@ -2090,6 +2093,7 @@ tailwater relaxation is in seconds.
 | `LAW` | `ORIFICE` or `WEIR_ORIFICE`; absent inherits global `COUPLING_LAW`. Orifice mode retains map/global Cd and area; the weir geometry/crest/preset inputs do not redefine it |
 | `COEFFS` | `DEFAULT`, `RUBINATO2017`, `RUBINATO2017_LOWER`, `RUBINATO2017_UPPER`; absent inherits the global preset, subject to the `OPEN` rule below |
 | `CW`, `CSW` | Positive overrides for free-weir and submerged-weir drainage coefficients |
+| `H_EPS` | Positive regularization head of the law's root, project length units; default 0.02 m. Scale it with the structure on a laboratory rig |
 | `COI`, `COO` | Positive overrides for surface-to-sewer and sewer-to-surface orifice coefficients |
 | `SPREAD` | Outfalls only: nonnegative discharge radius, default 0. Expands receivers to connected cells within the radius that are wet or below/equal to the highest original receiving bed; discharge is area weighted. Withdrawal uses original donor reservations |
 | `TAILWATER_RELAX` | Outfalls only: nonnegative relaxation time, default 0. Cached head updates by \f$h_{tw}\leftarrow h_{tw}+\min(1,\Delta t/\tau)(h_{2D}-h_{tw})\f$ for positive τ; zero applies the current surface head immediately. First initialization uses the surface head |

@@ -239,8 +239,30 @@ and moved the S4 spill rows 20% away from the measurements. With
 rows are steady, every other row moves by at most 0.005 L/s and S2_2 settles
 at -0.134 L/s (-0.1344 to -0.1344), the same bias as the other S2 rows.
 
-Over 300-900 s the shaft bias \f$100(|Q_{model}|/Q_e-1)\f$ is +4.4 to
-+9.2% for S1, -53.6 to +212.2% for S2, -6.5 to -0.2% for S3 and +6.5 to
+The S2 rows then stood at 0.46 to 0.54 of the measured rates, and that
+divides into three factors. The paper's own submerged-weir equation at the
+paper's measured heads gives 0.81 to 0.83 of the measurement. The model's
+surface head over the shaft is 0.86 to 0.88 of the measured sensor depth
+(the flume runs at the normal depth of the reconstructed inflow under its
+`NORMAL_FLOW` outlet, where the rig's depth was 12 to 15% higher), which
+takes the equation to 0.73 to 0.78 of itself. And the routed law was 0.76 to
+0.81 of the paper's equation at the model's own heads: the regularized root
+phi bends below a head of 0.02 m, a field scale, and the rig's 6.5 to 7.8 mm
+head differences sit below that knee (phi/sqrt = 0.81 at 7.7 mm). The
+law-only test has always scaled that head to the rig (0.02/6); the routed
+model could not until `[2D_NODE_COUPLING] H_EPS` authored it. The test decks
+now set `H_EPS=0.0033333`: S2_2 to S2_5 rise by 1.22 to 1.30 (S2_2 to
+-0.164 L/s) and the S2 bias is -34.5 to -39.9%, within a few points of the
+paper's equation at the model's heads. The S1 rows rise too, from +4.4 to
++9.2% to +15.1 to +26.0%: their free-weir root phi(h_s) was inside the same
+knee at 8 to 11 mm, and the paper's free-weir equation at the measured heads
+is itself +8.3 to +17.7%, so the earlier S1 fit was two biases cancelling.
+S3 and S4 are unchanged to four decimals. S2_1, with the sewer head at the
+crest, is still the free-weir form in the routed law (+212%); the paper
+classified that row as submerged.
+
+Over 300-900 s the shaft bias \f$100(|Q_{model}|/Q_e-1)\f$ is +15.1 to
++26.0% for S1, -39.9 to +212.2% for S2, -6.5 to -0.2% for S3 and +6.5 to
 +16.2% for S4. In S4_6 the settled rate is set by the head-equalization
 cap, not by the exchange equation alone: with `COUPLING_EQUALIZE NO` the
 uncorrected engine gave 6.76 L/s against a measured 3.82 L/s. The

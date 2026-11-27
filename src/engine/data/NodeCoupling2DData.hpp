@@ -59,6 +59,7 @@ enum class NodeCoupling2DKey : int {
     LAW,               ///< per-node exchange law (NodeCoupling2DLaw)
     SPREAD,            ///< outfall discharge spread radius (length)
     TAILWATER_RELAX,   ///< outfall tailwater relaxation time (s)
+    H_EPS,             ///< WEIR_ORIFICE regularization head of the law's square root (length)
     COUNT
 };
 

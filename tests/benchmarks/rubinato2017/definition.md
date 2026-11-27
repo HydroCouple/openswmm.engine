@@ -85,7 +85,11 @@ node head wandered across the band and S2_2 drained in bursts. The test decks
 set `HEAD_TOLERANCE 0.00001`, as the archived comparison did, and all 36 rows
 are steady; the other rows moved by at most 0.005 L/s and S2_2 settled at
 -0.134 L/s, the same bias as its S2 neighbors. `PhysicalShaftSensitivity` fails
-when any row is not steady. The other tests run 300 s.
+when any row is not steady. Since 27 November the decks also author
+`H_EPS=0.0033333` (0.02/6 m), the regularization head of the law's root at
+the rig scale that the law-only test has always used: the S2 rows rise by
+1.22 to 1.30 (S2_2 to -0.164 L/s) and the S1 rows by about a tenth, S3 and S4
+do not move. The other tests run 300 s.
 
 Review report and proposed publication text: `docs/validation/rubinato2017/`.
 The original junction representation is retained as evidence of its large

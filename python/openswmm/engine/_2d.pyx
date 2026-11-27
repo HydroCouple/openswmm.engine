@@ -1096,7 +1096,7 @@ cdef class Surface2D:
 
         Keys: C{D}, C{PERIMETER}, C{AREA}, C{CHAMBER_AREA},
         C{LID_OPEN_FRACTION}, C{CREST}, C{COEFFS}, C{CW}, C{CSW}, C{COI},
-        C{COO}, C{LAW}, C{SPREAD}, C{TAILWATER_RELAX}.
+        C{COO}, C{LAW}, C{SPREAD}, C{TAILWATER_RELAX}, C{H_EPS}.
 
         @param node_idx: Node index (0-based).
         @type node_idx: int

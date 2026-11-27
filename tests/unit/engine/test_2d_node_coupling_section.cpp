@@ -296,6 +296,8 @@ TEST(NodeCoupling2DSection, IllegalRowsRefuseTheModel) {
         "J1 MANHOLE D",        // not KEY=VALUE
         "J1 MANHOLE LID_OPEN_FRACTION=2",
         "J1 MANHOLE D=-1",
+        "J1 MANHOLE H_EPS=0",      // the regularization head must be positive
+        "O1 OUTFALL H_EPS=0.003",  // a law key; outfalls have no law
         "J1 MANHOLE CREST=TOP",
         "J1 MANHOLE D=1 D=2",   // duplicate key
         "J1 MANHOLE\nJ1 GRATE", // duplicate row
@@ -309,6 +311,32 @@ TEST(NodeCoupling2DSection, IllegalRowsRefuseTheModel) {
         EXPECT_NE(rc, SWMM_OK) << row;
         close(e);
     }
+}
+
+// H_EPS authors the WEIR_ORIFICE law's regularization head per node: read back as its
+// token, written by the INP writer and read again.
+TEST(NodeCoupling2DSection, RegularizationHeadIsAuthoredPerNode) {
+    SWMM_Engine e = open_text(
+        "h_eps", deck("[2D_NODE_COUPLING]\nJ1 MANHOLE LAW=WEIR_ORIFICE H_EPS=0.003\n"));
+    ASSERT_NE(e, nullptr);
+    const int j1 = swmm_node_index(e, "J1");
+    ASSERT_GE(j1, 0);
+    char buf[64] = {};
+    ASSERT_EQ(swmm_node_get_2d_coupling_param(e, j1, "H_EPS", buf, sizeof buf), SWMM_OK);
+    EXPECT_STREQ(buf, "0.003");
+    const fs::path out = kOut / "h_eps_written.inp";
+    ASSERT_EQ(swmm_model_write(e, out.string().c_str()), SWMM_OK);
+    close(e);
+    const std::string text = read_text(out);
+    EXPECT_NE(text.find("H_EPS=0.003"), std::string::npos) << text;
+    SWMM_Engine e2 = open_text("h_eps_reopened", text);
+    ASSERT_NE(e2, nullptr);
+    buf[0] = 0;
+    ASSERT_EQ(swmm_node_get_2d_coupling_param(e2, swmm_node_index(e2, "J1"), "H_EPS", buf,
+                                              sizeof buf),
+              SWMM_OK);
+    EXPECT_STREQ(buf, "0.003");
+    close(e2);
 }
 
 TEST(NodeCoupling2DSection, ApiEditsValidateAndDropInapplicableKeys) {

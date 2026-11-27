@@ -28,7 +28,7 @@ constexpr const char* kTypeTokens[] = {"NONE", "MANHOLE", "GRATE", "CURB", "OPEN
 
 constexpr const char* kKeyTokens[kNodeCoupling2DKeys] = {
     "D",   "PERIMETER", "AREA", "CHAMBER_AREA", "LID_OPEN_FRACTION", "CREST", "COEFFS", "CW", "CSW",
-    "COI", "COO",       "LAW",  "SPREAD",       "TAILWATER_RELAX"};
+    "COI", "COO",       "LAW",  "SPREAD",       "TAILWATER_RELAX",   "H_EPS"};
 
 constexpr const char* kCrestTokens[] = {"NODE_RIM", "MESH_BED", "MAX", "MIN"};
 constexpr const char* kCoeffsTokens[] = {"DEFAULT", "RUBINATO2017", "RUBINATO2017_LOWER",

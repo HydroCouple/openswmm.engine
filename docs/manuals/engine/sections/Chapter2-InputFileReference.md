@@ -2847,6 +2847,7 @@ Type    NONE, MANHOLE, GRATE, CURB, OPEN or OUTFALL.
 | LAW | ORIFICE / WEIR_ORIFICE | Local exchange law, overriding [2D_OPTIONS] COUPLING_LAW. |
 | SPREAD | >= 0, project length units | OUTFALL discharge spread radius. |
 | TAILWATER_RELAX | >= 0, seconds | OUTFALL tailwater relaxation time. |
+| H_EPS | > 0, project length units | Head below which the WEIR_ORIFICE law's regularized square root bends to a finite slope (Hydraulics §9.7). Default 0.02 m (0.066 ft), a field scale; a laboratory rig scales it with the structure, and the Rubinato tests use 0.02/6 m. Below it the law reads low: at a 7.7 mm head difference the default gives 0.81 of the plain root. |
 
 Remarks:
 NONE accepts no keys and suppresses that node's map rows. OUTFALL accepts

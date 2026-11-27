@@ -118,6 +118,11 @@ void resolveExchangeStructure(CouplingPoint& cp, const MeshData& mesh, const Sim
         c.c_oi = v;
     if (authored(Key::COO, v))
         c.c_oo = v;
+    // The regularized root's head: 0.02 m is a field scale, so a laboratory rig scales it with
+    // the structure (the Rubinato strip uses 0.02/6; at the default its millimeter heads sit
+    // below the knee and the submerged drains read a fifth low).
+    if (authored(Key::H_EPS, v))
+        c.h_eps = v * f;
     if (cp.cd_authored)
         c.c_oi = c.c_oo = cp.cd; // legacy map-row CD
 
