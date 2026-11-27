@@ -493,7 +493,7 @@ void handle_dividers(SimulationContext& ctx, const std::vector<std::string>& lin
         // the InitDepth column; and initDepth/surDepth/aPond were never read
         // at all, so every divider silently lost them on load — not just on
         // save, since the live model carried the zeros into the simulation.
-        int tail = 5; // CUTOFF, TABULAR
+        int tail = 5;   // CUTOFF, TABULAR
         if (dkind == 3) // OVERFLOW
             tail = 4;
         else if (dkind == 2) // WEIR
