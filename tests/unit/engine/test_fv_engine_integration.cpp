@@ -2867,17 +2867,27 @@ TEST(FvEngine, ReversingStageOutfallBalancesAcceptedWater) {
 // bed), run through the whole engine. Dynamic wave reproduces SWMM 5.2.4 on it,
 // lagging front and cell-to-cell oscillation included; the finite-volume
 // routing follows the exact solution: front within 3 cells of the exact 0.01 ft
-// depth contour and mean wet-depth error under 5 % of the reservoir depth.
+// depth contour and mean wet-depth error under 2 % of the reservoir depth.
 //
-// The depth at the dam station is reported and held to a recorded bound, not
-// the analytical 10 %: it reads 0.64 ft at 2 s and 0.51 ft at 8 s against
-// 4/9 ft, the same with second order or 1 ft cells, so it comes from the
-// junction every 5 ft rather than the in-conduit scheme.
+// The dam is a sharp step: the conduit that starts at the dam is 0.1 ft long.
+// A conduit starts at the mean of its end nodes' depths, so with every
+// conduit 5 ft the first one below the dam started half full, 12.6 ft3 of
+// water the Ritter problem does not have; the dam station then read 0.64 ft
+// at 2 s and 0.51 ft at 8 s against 4/9 ft, an excess that grew with conduit
+// length (0.73 ft at 2 s with 25 ft conduits) and not with cell size or
+// order. With the sharp step it reads 0.546 ft at 2 s falling to 0.473 ft at
+// 8 s, the first-order smearing of the sonic point.
 // ---------------------------------------------------------------------------
 TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
-    const int n = 50;
-    const double g = 32.2, h0 = 1.0, dx = 5.0, x_dam = 125.0, wet = 0.01;
+    const int n = 50, k_dam = 25; // conduit C25 starts at the dam (J25)
+    const double g = 32.2, h0 = 1.0, dx = 5.0, x_dam = 125.0, wet = 0.01, step = 0.1;
     const double c0 = std::sqrt(g * h0);
+    std::vector<double> len(static_cast<std::size_t>(n), dx),
+        x(static_cast<std::size_t>(n + 1), 0.0);
+    len[k_dam] = step;
+    for (int i = 0; i < n; ++i)
+        x[static_cast<std::size_t>(i + 1)] =
+            x[static_cast<std::size_t>(i)] + len[static_cast<std::size_t>(i)];
     const std::string base = outDir() + "/ritter_strip_fv";
     {
         std::ofstream os(base + ".inp");
@@ -2885,11 +2895,13 @@ TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
               "END_DATE 01/01/2026\nEND_TIME 00:00:08\nREPORT_STEP 0:00:01\nROUTING_STEP 0.5\n"
               "VARIABLE_STEP 0\nMIN_SURFAREA 0.01\nMIN_SLOPE 0\nTHREADS 1\n[JUNCTIONS]\n";
         for (int i = 1; i < n; ++i)
-            os << "J" << i << " 0 100 " << (i * dx <= x_dam ? h0 : 0.0) << " 0 0\n";
+            os << "J" << i << " 0 100 " << (x[static_cast<std::size_t>(i)] <= x_dam ? h0 : 0.0)
+               << " 0 0\n";
         os << "[OUTFALLS]\nUP 0 FIXED " << h0 << " NO\nDN 0 FREE NO\n[CONDUITS]\n";
         for (int i = 0; i < n; ++i)
             os << "C" << i << " " << (i == 0 ? "UP" : "J" + std::to_string(i)) << " "
-               << (i == n - 1 ? "DN" : "J" + std::to_string(i + 1)) << " " << dx << " 0.0001 0 0\n";
+               << (i == n - 1 ? "DN" : "J" + std::to_string(i + 1)) << " "
+               << len[static_cast<std::size_t>(i)] << " 0.0001 0 0\n";
         os << "[XSECTIONS]\n";
         for (int i = 0; i < n; ++i)
             os << "C" << i << " RECT_OPEN 4 5 0 0 1\n";
@@ -2907,8 +2919,8 @@ TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
                                                                          : "J" + std::to_string(i));
         ASSERT_GE(node[static_cast<std::size_t>(i)], 0);
     }
-    auto exact = [&](double x, double t) {
-        const double xi = x - x_dam;
+    auto exact = [&](double xs, double t) {
+        const double xi = xs - x_dam;
         if (xi <= -c0 * t)
             return h0;
         if (xi >= 2.0 * c0 * t)
@@ -2929,9 +2941,10 @@ TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
         int wet_nodes = 0;
         for (int i = 0; i <= n; ++i) {
             const double h = ctx.nodes.depth[node[static_cast<std::size_t>(i)]];
+            const auto ui = static_cast<std::size_t>(i);
             if (h > wet)
-                front = dx * (i + 0.5);
-            const double want = exact(i * dx, t);
+                front = i < n ? 0.5 * (x[ui] + x[ui + 1]) : x[ui];
+            const double want = exact(x[ui], t);
             if (want > wet) {
                 l1 += std::fabs(h - want);
                 ++wet_nodes;
@@ -2940,11 +2953,11 @@ TEST(FvEngine, RitterDryBedFrontOnAJunctionChain) {
         ASSERT_GT(wet_nodes, 0);
         l1 /= wet_nodes;
         const double front_exact = x_dam + (2.0 * c0 - 3.0 * std::sqrt(g * wet)) * t;
-        const double dam = ctx.nodes.depth[node[25]];
+        const double dam = ctx.nodes.depth[node[k_dam]];
         csv << t << "," << front << "," << front_exact << "," << l1 << "," << dam << "\n";
         EXPECT_NEAR(front, front_exact, 3.0 * dx) << "front at " << t << " s";
-        EXPECT_LT(l1, 0.05 * h0) << "mean wet-depth error at " << t << " s";
-        EXPECT_NEAR(dam, 4.0 * h0 / 9.0, 0.25) << "dam-station depth at " << t << " s";
+        EXPECT_LT(l1, 0.02 * h0) << "mean wet-depth error at " << t << " s";
+        EXPECT_NEAR(dam, 4.0 * h0 / 9.0, 0.12) << "dam-station depth at " << t << " s";
         ++checked;
         next += 2.0;
     } while (elapsed > 0.0);

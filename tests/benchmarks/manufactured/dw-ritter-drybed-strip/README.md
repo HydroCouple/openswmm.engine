@@ -25,7 +25,9 @@ decimals at every node at 8 s, for `INERTIAL_DAMPING NONE` and `PARTIAL`.
   4, 6 and 8 s against 163.6, 182.9 and 202.2 ft. A 25 times smaller time
   step does not move it toward the exact value.
 - **Dam station.** 0.80, 0.60, 0.60 and 0.57 ft at 2 to 8 s against
-  4h₀/9 = 0.444 ft.
+  4h₀/9 = 0.444 ft. Part of that excess is the strip's start, not the
+  solver: a conduit starts at the mean of its end nodes' depths, so the first
+  5 ft conduit below the dam starts half full (see below).
 - **Profile.** With `INERTIAL_DAMPING NONE` the full-engine profile behind
   the front is a cell-to-cell sawtooth (0.05 ft beside 1.38 ft at 8 s, above
   the 1 ft reservoir), in 5.2.4 as well.
@@ -35,8 +37,13 @@ decimals at every node at 8 s, for `INERTIAL_DAMPING NONE` and `PARTIAL`.
 `FLOW_ROUTING FV` follows the exact solution on the same strip: front within
 10.4 ft of the exact 0.01 ft position at all four times, mean wet-depth
 error 0.021 to 0.024 ft, no oscillation. Its dam-station depth reads 0.64 ft
-at 2 s and 0.51 ft at 8 s; that does not change with second order or 1 ft
-cells, so it comes from the junction every 5 ft, not the in-conduit scheme.
+at 2 s and 0.51 ft at 8 s. That excess is the half-full conduit below the
+dam, 12.6 ft³ of water the Ritter problem does not have: it grows with
+conduit length (0.73 ft at 2 s with 25 ft conduits, 0.58 ft with 2.5 ft
+ones) and does not change with cell size or second order. With that conduit
+shortened to 0.1 ft, a sharp step, the dam station reads 0.546 ft at 2 s
+falling to 0.473 ft at 8 s and the mean wet-depth error is 0.009 to 0.010 ft.
+The finite-volume test runs the strip with the sharp step.
 
 ### Test posture
 
@@ -46,5 +53,5 @@ cells, so it comes from the junction every 5 ft, not the in-conduit scheme.
   analytical targets as a record; an opt-in front treatment for dynamic wave
   would have to leave 5.2.4 parity when off.
 - `FvEngine.RitterDryBedFrontOnAJunctionChain`
-  (`test_fv_engine_integration.cpp`) gates the finite-volume front and depth
-  error and records the dam-station depth.
+  (`test_fv_engine_integration.cpp`) runs the strip with the sharp step and
+  gates the finite-volume front, mean depth error and dam-station depth.
