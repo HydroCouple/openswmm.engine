@@ -1171,7 +1171,8 @@ units or km/hour for metric units. The default monthly values are all 0.
 The NCDC has compiled average monthly wind speeds for various locations
 throughout the US which can be found at:
 
-[http://www.ncdc.noaa.gov/sites/default/files/attachments/wind1996.pdf](%20http:/www.ncdc.noaa.gov/sites/default/files/attachments/wind1996.pdf).
+[http://www.ncdc.noaa.gov/sites/default/files/attachments/wind1996.pdf](https://web.archive.org/web/20220420220420/https://www.ncdc.noaa.gov/sites/default/files/attachments/wind1996.pdf)
+(an Internet Archive copy; the NCDC site has been retired).
 
 For the NCDC GHCN-Daily climate file, one can request that records for
 the average daily wind speed data element AWND or the 24-hour wind
