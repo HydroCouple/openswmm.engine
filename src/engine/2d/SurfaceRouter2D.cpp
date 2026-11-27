@@ -2046,12 +2046,17 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         // at the start of a wet step.
         initializeFrozenGround(ctx);
         subsurface_.setFrozenGroundFactor(state_.frost_open.empty() ? nullptr : &state_.frost_open);
+        infil_.setAppliedMemory(options_.infil_memory != 0);
         infil_.updateRates(mesh_, state_, infil_.stepSeconds(),
                            surface::infiltrationFactors(ctx, 0.0), options_.num_threads,
                            state_.frost_open.empty() ? nullptr : &state_.frost_open);
         if (subsurface_.active())
             subsurface_.publishInfiltration(state_, infil_.stepSeconds(), 0.0);
         infil_cum_applied_.assign(static_cast<std::size_t>(mesh_.n_triangles()), 0.0);
+        const std::size_t n_memory = infil_.appliedMemory() ? infil_cum_applied_.size() : 0;
+        infil_offered_since_.assign(n_memory, 0.0);
+        infil_applied_since_.assign(n_memory, 0.0);
+        infil_span_since_ = 0.0;
     } else {
         // Left EMPTY (not zero-filled) so consumers can distinguish "no model"
         // exactly as they do for Infil2D::cumulative().
@@ -2747,6 +2752,15 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
             perf::ProcessTimer infil_timer(perf::ProcessPhase::surface_infil);
             if (options_.lazy_source_landing != 0 && solver_)
                 solver_->landLazySources(); // the held infiltration rate is about to change
+            // INFIL_MEMORY APPLIED: commit the histories to what the surface took over the
+            // span accounted so far, then let the refresh start the next offer.
+            if (infil_.appliedMemory() && !infil_applied_since_.empty()) {
+                infil_.commitApplied(infil_applied_since_, infil_offered_since_, infil_span_since_,
+                                     surface::infiltrationFactors(ctx, t), options_.num_threads);
+                std::fill(infil_offered_since_.begin(), infil_offered_since_.end(), 0.0);
+                std::fill(infil_applied_since_.begin(), infil_applied_since_.end(), 0.0);
+                infil_span_since_ = 0.0;
+            }
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
                                options_.num_threads,
                                state_.frost_open.empty() ? nullptr : &state_.frost_open);
@@ -4452,6 +4466,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     const bool route_aq = do_infil && cell_subcatch_.size() == static_cast<std::size_t>(nt) &&
                           !subcatch_recharge_.empty();
     const bool track_coupling = coupling_cum_applied_.size() == static_cast<std::size_t>(nt);
+    const bool track_memory =
+        do_infil && infil_applied_since_.size() == static_cast<std::size_t>(nt);
+    if (track_memory)
+        infil_span_since_ += dt;
     // Track 3D (2026-11-27): the cells are visited in fixed blocks. Each cell writes only its
     // own rows, so the blocks run in parallel; the four domain totals are formed as block
     // partials summed in cell order, then added in block order, so the result does not depend
@@ -4496,6 +4514,10 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
                 // routing step.
                 // A cell that applied nothing adds only zeros below: skip its writes.
                 const double applied = state_.infil_applied[ui];
+                if (track_memory) {
+                    infil_offered_since_[ui] += state_.infil_rate[ui] * dt;
+                    infil_applied_since_[ui] += applied;
+                }
                 if (applied != 0.0) {
                     state_.infil_applied[ui] = 0.0;
                     infil_b += applied * area;

@@ -325,6 +325,31 @@ public:
                      const std::vector<double>* open = nullptr);
 
     /**
+     * @brief [2D_OPTIONS] INFIL_MEMORY APPLIED: advance each cell's kernel history by what the
+     * surface took, not by what the held rate offered.
+     *
+     * When on, updateRates() snapshots every cell's history before advancing it by its offer,
+     * and commitApplied() re-advances a cell from that snapshot by the applied depth wherever
+     * the surface fell short of the offer over the span. Track 3C, 2026-11-27.
+     */
+    void setAppliedMemory(bool on) noexcept { applied_memory_ = on; }
+    bool appliedMemory() const noexcept { return applied_memory_; }
+    /**
+     * @brief Commit the kernel histories to the applied depths of the span just accounted.
+     * @param[in] applied Per-cell infiltrated depth (m) the surface applied over the span.
+     * @param[in] offered Per-cell held offer (m) over the same span (rate x accounted time).
+     * @param[in] elapsed The span (s), positive.
+     * @param[in] factors Pattern factors of the span.
+     * @param[in] num_threads Worker count for the per-cell loop.
+     * A cell whose applied depth reached its offer keeps the history the refresh produced; a
+     * cell that fell short is re-advanced from its snapshot with the applied depth as its
+     * supply. Call before the refresh that starts the next span. No-op unless applied memory
+     * is on and the model is active.
+     */
+    void commitApplied(const std::vector<double>& applied, const std::vector<double>& offered,
+                       double elapsed, surface::InfilBank::Factors factors, int num_threads);
+
+    /**
      * @brief Borrow the canonical mutable per-cell infiltration bank.
      * @return Object-owned InfilBank reference, valid until replacement/reset/destruction.
      * Caller must respect owner/cadence rules and serialize with resolve/updateRates; direct
@@ -420,6 +445,7 @@ private:
     Infil2DOptions options_;
 
     bool active_ = false;
+    bool applied_memory_ = false; ///< INFIL_MEMORY APPLIED
     double step_seconds_ = 0.0;
     /// G1: a `[2D_AQUIFER]` resolved, so AQUIFER_2D has a receiver. Set by
     /// SurfaceRouter2D before resolve(), and cleared by reset() with the rest

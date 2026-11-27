@@ -449,6 +449,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
             opts.front_rebuild = 0;
         else
             return "Unknown FRONT_REBUILD: " + val + " (expected AUTO|YES|NO)";
+    } else if (iequals(key, "INFIL_MEMORY")) {
+        if (iequals(val, "OFFER"))
+            opts.infil_memory = 0;
+        else if (iequals(val, "APPLIED"))
+            opts.infil_memory = 1;
+        else
+            return "Unknown INFIL_MEMORY: " + val + " (expected OFFER|APPLIED)";
     } else if (iequals(key, "LAZY_SOURCE_LANDING")) {
         if (iequals(val, "STEP"))
             opts.lazy_source_landing = 0;
@@ -844,6 +851,7 @@ std::span<const char* const> current2DOptionKeys() {
         "RECONSTRUCTION_ORDER",
         "FRONT_REBUILD",
         "LAZY_SOURCE_LANDING",
+        "INFIL_MEMORY",
         "THETA",
         "THETA_REFERENCE_STEP",
         "CFL_NUMBER",
@@ -1011,6 +1019,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
         return opts.front_rebuild < 0 ? "AUTO" : (opts.front_rebuild ? "YES" : "NO");
     if (iequals(key, "LAZY_SOURCE_LANDING"))
         return opts.lazy_source_landing ? "REBUILD" : "STEP";
+    if (iequals(key, "INFIL_MEMORY"))
+        return opts.infil_memory ? "APPLIED" : "OFFER";
     if (iequals(key, "THETA"))
         return fmt_g(opts.theta);
     if (iequals(key, "THETA_REFERENCE_STEP"))

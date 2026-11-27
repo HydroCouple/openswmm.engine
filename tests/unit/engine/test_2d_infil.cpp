@@ -975,3 +975,57 @@ TEST(Infil2DParallel, MixedMethodsAndOwnersRetainEverySerialHistoryBit) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Track 3C (2026-11-27): INFIL_MEMORY APPLIED — commitApplied() re-advances a cell's history
+// from its pre-refresh snapshot by the applied depth, so a cell that took half its offer
+// presents more capacity at the next refresh than one remembered as having taken it all,
+// while a cell that took the whole offer is left exactly as the refresh advanced it.
+// ---------------------------------------------------------------------------
+TEST(Infil2DAppliedMemoryTest, ShortfallIsReAdvancedByTheAppliedDepth) {
+    MeshData mesh = makeTaggedMesh();
+    constexpr double kDt = 300.0;
+    // Well above the 3 in/h initial capacity, so the presented rate IS the capacity.
+    const double rain = inhrToMs(10.0);
+    const int n = mesh.n_triangles();
+    auto refresh = [&](Infil2D& infil, SurfaceStateData& st) {
+        for (int i = 0; i < n; ++i) {
+            st.rainfall[i] = rain;
+            st.depth[i] = 0.0;
+        }
+        infil.updateRates(mesh, st, kDt, {1.0, 1.0}, 1);
+    };
+
+    // OFFER twin: two refreshes, memory advanced by the offer both times.
+    Infil2D offer =
+        resolvedWith(mesh, usOptions(), rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, 7.0, 0.0));
+    SurfaceStateData st_offer = makeState(mesh, 0.0, 0.0);
+    refresh(offer, st_offer);
+    const double offered_rate = st_offer.infil_rate[0];
+    refresh(offer, st_offer);
+
+    // APPLIED twin: the same first refresh; then the surface took half the offer on cell 0,
+    // the whole offer on cell 1, nothing on cell 2.
+    Infil2D applied =
+        resolvedWith(mesh, usOptions(), rowOf(InfilModel::HORTON, 3.0, 0.5, 4.14, 7.0, 0.0));
+    applied.setAppliedMemory(true);
+    SurfaceStateData st_applied = makeState(mesh, 0.0, 0.0);
+    refresh(applied, st_applied);
+    ASSERT_EQ(st_applied.infil_rate[0], offered_rate) << "the first offer is the same under both";
+    std::vector<double> took(static_cast<std::size_t>(n), offered_rate * kDt);
+    std::vector<double> offered_depth(static_cast<std::size_t>(n), offered_rate * kDt);
+    took[0] *= 0.5;
+    took[2] = 0.0;
+    applied.commitApplied(took, offered_depth, kDt, {1.0, 1.0}, 1);
+    const double cum_after_commit_0 = applied.cumulative()[0];
+    refresh(applied, st_applied);
+
+    EXPECT_NEAR(cum_after_commit_0, took[0], 1e-12 * took[0])
+        << "the committed cumulative is the applied depth";
+    EXPECT_GT(st_applied.infil_rate[0], st_offer.infil_rate[0])
+        << "half the offer taken: more capacity remains than the offer scheme remembers";
+    EXPECT_EQ(st_applied.infil_rate[1], st_offer.infil_rate[1])
+        << "the whole offer taken: the refresh's own advance stands, bit for bit";
+    EXPECT_GT(st_applied.infil_rate[2], st_applied.infil_rate[0])
+        << "nothing taken: the dry hold recovered capacity";
+}

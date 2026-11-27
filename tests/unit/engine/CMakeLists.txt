@@ -399,6 +399,8 @@ endif()
 add_gtest_unit(test_engine_runoff_ode_exact test_runoff_ode_exact.cpp)
 # [2D_OPTIONS] LAZY_SOURCE_LANDING (Track 3D): REBUILD closes continuity and matches STEP.
 add_gtest_unit(test_engine_2d_lazy_landing test_2d_lazy_landing.cpp)
+# [2D_OPTIONS] INFIL_MEMORY (Track 3C): APPLIED keeps the kernel history consistent with the ledger.
+add_gtest_unit(test_engine_2d_infil_memory test_2d_infil_memory.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 
 # Issue #158 — CUMULATIVE rain-gage format. The intensity is the rise since the
