@@ -212,7 +212,7 @@ steps, which is why a time-step change of 16 November moved the values.
 rate over 300-900 s, the smallest and largest one-minute rate in that span,
 and whether those rates stay within 2% of the mean. The 240-300 s and
 180-240 s columns keep their meaning. With the corrected limit **33/36**
-rows are steady: all 15 S1, 2 of 5 S2, all 8 S3 and all 8 S4. The four S4
+rows were steady: all 15 S1, 2 of 5 S2, all 8 S3 and all 8 S4. The four S4
 rows that were not:
 
 | Case | \f$Q_e\f$ (L/s) | Before: mean Q (one-minute range) (L/s) | After: mean Q (one-minute range) (L/s) |
@@ -224,13 +224,24 @@ rows that were not:
 
 Rates are positive to the surface. The other S3 and S4 means change by
 0.005 L/s or less and the S1 and S2 rows, which drain to the sewer, do not
-change. Three submerged-weir rows stay outside the 2% measure: S2_2
+change. Three submerged-weir rows stayed outside the 2% measure: S2_2
 (-0.337 to -0.190 L/s around -0.264), S2_3 (-0.163 to -0.142) and S2_5
-(-0.149 to -0.146).
+(-0.149 to -0.146). That was the decks, not the law: at the default head
+tolerance (0.005 ft, 1.5 mm) the node head wandered about 3 mm either way
+across the law's free/submerged band, 0.1 h_s or about 1 mm on this rig, so
+S2_2 drained a whole 0.5 s step at the free-weir rate (0.8 L/s) every few
+steps and the submerged rate (0.13 L/s) between. Two engine-side remedies
+were built and set aside (damping the node update, and an exchange solved at
+the head the step leaves the node at): the first passes the burst back and
+forth with the surface, the second ignores that the pipes pin the node head
+and moved the S4 spill rows 20% away from the measurements. With
+`HEAD_TOLERANCE 0.00001`, as the archived comparison below uses, **36/36**
+rows are steady, every other row moves by at most 0.005 L/s and S2_2 settles
+at -0.134 L/s (-0.1344 to -0.1344), the same bias as the other S2 rows.
 
 Over 300-900 s the shaft bias \f$100(|Q_{model}|/Q_e-1)\f$ is +4.4 to
-+9.2% for S1, -54.0 to +214.3% for S2, -6.5 to -0.2% for S3 and +6.5 to
-+16.3% for S4. In S4_6 the settled rate is set by the head-equalization
++9.2% for S1, -53.6 to +212.2% for S2, -6.5 to -0.2% for S3 and +6.5 to
++16.2% for S4. In S4_6 the settled rate is set by the head-equalization
 cap, not by the exchange equation alone: with `COUPLING_EQUALIZE NO` the
 uncorrected engine gave 6.76 L/s against a measured 3.82 L/s. The
 21 October tables and figures above remain a dated archive and are not

@@ -219,7 +219,14 @@ std::string deck(const Case& c, const std::map<std::string, double>& rig, const 
          "END_DATE 01/01/2026\nEND_TIME "
       << std::setfill('0') << std::setw(2) << end_s / 3600 << ":" << std::setw(2) << end_s / 60 % 60
       << ":" << std::setw(2) << end_s % 60 << std::setfill(' ')
-      << "\nREPORT_STEP 00:01:00\nROUTING_STEP " << routing_step << "\n\n";
+      << "\nREPORT_STEP 00:01:00\nROUTING_STEP "
+      << routing_step
+      // The rig's heads are millimeters and the WEIR_ORIFICE law switches regime over
+      // sigma_band * h_s, about 1 mm here; the default head tolerance (0.005 ft, 1.5 mm) let
+      // the node head wander +-3 mm across that band and the S2 drains burst between the free
+      // and submerged forms every few steps (S2_2 one-minute rates 0.19 to 0.34 L/s around
+      // 0.26). The archived steady comparison (manual, Rubinato section) used this tolerance.
+      << "\nHEAD_TOLERANCE 0.00001\n\n";
     if (physical_shaft) {
         const double d = rig.at("manhole_diameter_m"), a = 3.14159265358979323846 * d * d / 4.0;
         // A laboratory shaft has real storage below the rim. The default
@@ -597,6 +604,9 @@ TEST(RubinatoModel, PhysicalShaftSensitivity) {
         }
     }
     std::printf("%d of 36 shaft rows not steady over 300-900 s\n", unsteady);
+    // With the head tolerance below the law's regime band every row holds its rate; at the
+    // default tolerance S2_2 drains in bursts and S2_3 and S2_5 miss the 2 % measure.
+    EXPECT_EQ(unsteady, 0);
 }
 
 // A steady surcharge must spill at a steady rate. The spill is limited to the

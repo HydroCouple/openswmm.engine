@@ -78,8 +78,14 @@ S4_1, S4_4, S4_6, S4_7). The S4 rows dropped and recovered for minutes at a time
 because the spill limit read dynamic wave's booked node volume, which drifted
 away from the pond the node's depth holds; the limit uses that pond since
 24 November and all S4 rows are steady (`DryFloodplainSpillHoldsItsRate` guards
-S4_6). S2_2, S2_3 and S2_5 remain outside the 2 % measure. The other tests run
-300 s.
+S4_6). S2_2, S2_3 and S2_5 stayed outside the 2 % measure until 27 November:
+the deck's default head tolerance (0.005 ft, 1.5 mm) was wider than the
+`WEIR_ORIFICE` free/submerged band (0.1 h_s, about 1 mm on this rig), so the
+node head wandered across the band and S2_2 drained in bursts. The test decks
+set `HEAD_TOLERANCE 0.00001`, as the archived comparison did, and all 36 rows
+are steady; the other rows moved by at most 0.005 L/s and S2_2 settled at
+-0.134 L/s, the same bias as its S2 neighbors. `PhysicalShaftSensitivity` fails
+when any row is not steady. The other tests run 300 s.
 
 Review report and proposed publication text: `docs/validation/rubinato2017/`.
 The original junction representation is retained as evidence of its large
