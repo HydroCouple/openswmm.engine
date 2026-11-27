@@ -355,7 +355,13 @@ def option_keys() -> dict[str, dict[str, dict]]:
     i = ch.find("handle_report")
     rep = ch[i: ch.find("\n}", i)] if i >= 0 else ""
     sec = {}
-    for key in sorted(set(re.findall(r'"([A-Z][A-Z0-9_]+)"', rep))):
+    # The parser matches a legacy word as a prefix (kReportWords) and then reads the
+    # key that word names (kReportKeys): the keys are what the API must reach.
+    keys = set(re.findall(r'keyword\s*==\s*"([A-Z][A-Z0-9_]+)"', rep))
+    table = re.search(r"kReportKeys\[\]\s*=\s*\{([^}]*)\}", rep)
+    if table:
+        keys |= set(re.findall(r'"([A-Z][A-Z0-9_]+)"', table.group(1)))
+    for key in sorted(keys):
         ok, via = reach(key, set(), aliases=(f"RPT_{key}",))
         sec[key] = {"fields": [], "reachable": ok, "via": via}
     out["REPORT"] = sec
