@@ -1208,6 +1208,8 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
         std::fprintf(f, "%-22s %s\n", "FRONT_REBUILD", o.front_rebuild ? "YES" : "NO");
+    if (o.lazy_source_landing != 0)
+        std::fprintf(f, "%-22s %s\n", "LAZY_SOURCE_LANDING", "REBUILD");
     std::fprintf(f, "%-22s %.17g\n", "THETA", o.theta);
     if (o.theta_reference_step > 0.0)
         std::fprintf(f, "%-22s %.17g\n", "THETA_REFERENCE_STEP", o.theta_reference_step);

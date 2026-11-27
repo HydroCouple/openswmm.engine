@@ -2549,6 +2549,7 @@ Wetting and drying
 | DRY_DEPTH | number, metres | 0.001 | Depth below which a cell is dry. Also drives the coupling and outfall wet ramps and the evaporation taper. Always metres. |
 | H_MOVE | >= 0, metres | 0.003 | Flux-activation depth: a cell below it is source-only (rain accumulates, no face flux). The on/off hysteresis band is the smaller of 1 mm and half of H_MOVE. Always metres. |
 | FRONT_REBUILD | AUTO / YES / ON / NO / OFF | AUTO | Rebuild the flux-active set as soon as a wetting front reaches the edge of the active halo instead of waiting for the fixed rebuild cadence. AUTO is YES for FULL_SWE and DIFFUSIVE_WAVE and NO for LOCAL_INERTIAL. |
+| LAZY_SOURCE_LANDING | STEP / REBUILD | STEP | When cells outside the flux-active set receive their held rain, evaporation and infiltration. STEP applies them at the end of every advance, a pass over every cell per routing step. REBUILD applies them only when the active set is rebuilt (every few macro cycles), at report instants and at the end of the run, over the accumulated span: the same held rates in fewer, larger steps. Measured on a 19 602-cell rain-on-grid Horton deck at one thread: the 2D time halves; total infiltration moved by 0.04 %, the 2D-to-1D drain by 0.4 %. Inactive cells' depths lag between landings. Host marcher only; a run with an attached common source stage keeps STEP. |
 
 Coupling to the 1D network
 

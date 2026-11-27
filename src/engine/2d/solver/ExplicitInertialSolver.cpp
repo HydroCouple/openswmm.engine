@@ -1543,6 +1543,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // 4. Tier assignment from the local CFL step. Pinned to tier 0: cells with
     //    concentrated sources (coupling points) and boundary cells — their
     //    forcing changes fastest. dt0_ = the finest active requirement.
+    halo_timer.stop();
+    perf::ProcessTimer dt_timer(perf::ProcessPhase::surface_rebuild_dt);
     const int K = static_cast<int>(cells_by_tier_.size());
     const int na = static_cast<int>(active_cells_.size());
     if (mode_ == Momentum2D::DIFFUSIVE_WAVE)
@@ -1563,8 +1565,6 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 #else
         const int tid = 0;
 #endif
-    halo_timer.stop();
-    perf::ProcessTimer dt_timer(perf::ProcessPhase::surface_rebuild_dt);
         double local = 1.0e30;
 #pragma omp for schedule(static) nowait
         for (int k = 0; k < na; ++k) {
@@ -1611,6 +1611,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     if (dt0_ >= 1.0e30)
         dt0_ = opts_->max_timestep; // fully quiescent
 
+    dt_timer.stop();
+    perf::ProcessTimer lists_timer(perf::ProcessPhase::surface_rebuild_lists);
     const bool parallel_tier_lists = useParallelCompaction(na, nthr);
     for (auto& v : cells_by_tier_)
         v.clear();
@@ -1631,8 +1633,6 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                 tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
-    dt_timer.stop();
-    perf::ProcessTimer lists_timer(perf::ProcessPhase::surface_rebuild_lists);
         if (!front_rebuild_ && !parallel_tier_lists)
             cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
     }
@@ -1781,6 +1781,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 }
 
 void ExplicitInertialSolver::refreshDt0() {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_refresh_dt);
     // Between rebuilds the tier lists are frozen and depths keep evolving, so
     // a dt0_ computed up to kRebuildEveryCycles macro cycles ago can realize
     // an effective CFL well above the configured bound (measured: the
@@ -1801,7 +1802,6 @@ void ExplicitInertialSolver::refreshDt0() {
     rebuild_dt_partial_.assign(static_cast<std::size_t>(nthr) * stride, 1.0e30);
 #pragma omp parallel num_threads(nthr)
     {
-    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_refresh_dt);
 #if defined(SWMM_USE_OPENMP)
         const int tid = omp_get_thread_num();
 #else
@@ -4739,12 +4739,18 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
         settleAccumulators();
     }
     // Final lazy-source landing: cheap when nothing is pending — the full
-    // rebuild only runs on its own cadence.
+    // rebuild only runs on its own cadence. Under LAZY_SOURCE_LANDING REBUILD the
+    // landing waits for the rebuild cadence unless the router asked for it (report
+    // and final batches); a run with an attached source stage keeps the per-advance
+    // landing its checkpoint invariants assume.
+    const bool land_now = opts_->lazy_source_landing == 0 || lazy_landing_requested_ ||
+                          common_stage_ != nullptr || state_->snow.active();
+    lazy_landing_requested_ = false;
     if (t_target > t_last_sync_) {
         if (cycles_since_rebuild_ >= kRebuildEveryCycles) {
             syncAndRebuild(t_target);
             cycles_since_rebuild_ = 0;
-        } else {
+        } else if (land_now) {
             lazySourcesOnly(t_target);
         }
     }
@@ -4821,7 +4827,15 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     publish_timer.stop();
     refreshSourceResultBoundary();
     checkpoint_ready_ = true;
+    last_advance_end_ = t_target;
     return t_target;
+}
+
+void ExplicitInertialSolver::landLazySources() noexcept {
+    if (!initialized_ || !opts_ || opts_->lazy_source_landing == 0 || common_stage_ ||
+        last_advance_end_ <= t_last_sync_)
+        return;
+    lazySourcesOnly(last_advance_end_);
 }
 
 void ExplicitInertialSolver::refreshSourceResultBoundary() {

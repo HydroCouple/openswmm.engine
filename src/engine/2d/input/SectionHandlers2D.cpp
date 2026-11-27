@@ -449,6 +449,13 @@ std::string parse2DOptionsLine(const std::vector<std::string>& tokens, SolverOpt
             opts.front_rebuild = 0;
         else
             return "Unknown FRONT_REBUILD: " + val + " (expected AUTO|YES|NO)";
+    } else if (iequals(key, "LAZY_SOURCE_LANDING")) {
+        if (iequals(val, "STEP"))
+            opts.lazy_source_landing = 0;
+        else if (iequals(val, "REBUILD"))
+            opts.lazy_source_landing = 1;
+        else
+            return "Unknown LAZY_SOURCE_LANDING: " + val + " (expected STEP|REBUILD)";
     } else if (iequals(key, "RECONSTRUCTION_ORDER")) {
         const int k = tryParseInt(val, ok);
         if (!ok || (k != 1 && k != 2))
@@ -836,6 +843,7 @@ std::span<const char* const> current2DOptionKeys() {
         "MIXING_LENGTH_COEFFICIENT",
         "RECONSTRUCTION_ORDER",
         "FRONT_REBUILD",
+        "LAZY_SOURCE_LANDING",
         "THETA",
         "THETA_REFERENCE_STEP",
         "CFL_NUMBER",
@@ -1001,6 +1009,8 @@ std::string format2DOptionValue(const SolverOptions2D& opts, const std::string& 
         return std::to_string(opts.reconstruction_order);
     if (iequals(key, "FRONT_REBUILD"))
         return opts.front_rebuild < 0 ? "AUTO" : (opts.front_rebuild ? "YES" : "NO");
+    if (iequals(key, "LAZY_SOURCE_LANDING"))
+        return opts.lazy_source_landing ? "REBUILD" : "STEP";
     if (iequals(key, "THETA"))
         return fmt_g(opts.theta);
     if (iequals(key, "THETA_REFERENCE_STEP"))

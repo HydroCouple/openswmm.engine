@@ -132,6 +132,8 @@ public:
      * not update canonical 1D router state or engine calendar by itself.
      */
     double advance(double t_current, double t_target) override;
+    void requestLazyLanding() noexcept override { lazy_landing_requested_ = true; }
+    void landLazySources() noexcept override;
     /**
      * @brief Read the finest accepted source synchronization horizon.
      * @return t_last_sync_ in elapsed s while initialized, otherwise -1. Does not flush pending
@@ -1204,6 +1206,10 @@ private:
     EngineSourceResultHistory* engine_source_history_ = nullptr;
     class EngineSourceResultStream* engine_source_stream_ = nullptr;
     bool checkpoint_ready_ = false;
+    /// LAZY_SOURCE_LANDING REBUILD: the router asked this advance to land the lazy tier.
+    bool lazy_landing_requested_ = false;
+    /// End time of the last advance(): where landLazySources() lands.
+    double last_advance_end_ = 0.0;
     bool joint_checkpoint_ = false; // only SurfaceRouter2D may restore live 1D pairing
     /**
      * @brief Check accepted first-order source/CPU ownership, completed clocks and boundary

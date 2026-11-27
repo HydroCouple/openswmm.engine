@@ -2519,6 +2519,15 @@ void SurfaceRouter2D::advanceFrozenGround(const SimulationContext& ctx, double d
 }
 
 void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t, BatchPhase phase) {
+    // LAZY_SOURCE_LANDING REBUILD: a batch that publishes state (a report or final batch, or
+    // an advance batch that ends on a report instant or at the end of the run) must land the
+    // lazy tier at its end.
+    if (options_.lazy_source_landing != 0 && solver_) {
+        const double end_ms = 1000.0 * (sim_time_ + dt) + 0.5;
+        if (phase != BatchPhase::ADVANCE || end_ms >= ctx.next_report_ms ||
+            end_ms >= ctx.options.totalDurationMs())
+            solver_->requestLazyLanding();
+    }
     if (dt <= 0.0)
         return;
     if (peer_passive_exchange_) {
@@ -2632,6 +2641,10 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         gage_changed = rates[g] != rain_gage_last_[g];
     if (co_forcing_elapsed_ >= 30.0 || co_forcing_first_ || state_.forcing_dirty || gage_changed) {
         perf::ProcessTimer rain_timer(perf::ProcessPhase::surface_rain);
+        // LAZY_SOURCE_LANDING REBUILD: the deferred span integrates the rates that held over
+        // it, so land it before this refresh rewrites them.
+        if (options_.lazy_source_landing != 0 && solver_)
+            solver_->landLazySources();
         state_.forcing_dirty = false;
         state_.forcing_step_sync = false;
         updateRainfall(ctx);
@@ -2732,6 +2745,8 @@ void SurfaceRouter2D::coAdvanceStep(SimulationContext& ctx, double dt, double t,
         infil_elapsed_ += dt;
         if (infil_elapsed_ >= infil_.stepSeconds()) {
             perf::ProcessTimer infil_timer(perf::ProcessPhase::surface_infil);
+            if (options_.lazy_source_landing != 0 && solver_)
+                solver_->landLazySources(); // the held infiltration rate is about to change
             infil_.updateRates(mesh_, state_, infil_elapsed_, surface::infiltrationFactors(ctx, t),
                                options_.num_threads,
                                state_.frost_open.empty() ? nullptr : &state_.frost_open);
@@ -4497,18 +4512,6 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
                     }
                 }
             }
-        }
-        partials[4 * b] = rain_b;
-        partials[4 * b + 1] = infil_b;
-        partials[4 * b + 2] = storage_b;
-        partials[4 * b + 3] = snow_b;
-    }
-    for (int b = 0; b < nblocks; ++b) {
-        rain_vol += partials[4 * b];
-        infil_vol += partials[4 * b + 1];
-        storage += partials[4 * b + 2];
-        snow_rain_total += partials[4 * b + 3];
-    }
             // C1: signed per-cell coupling volume (m³), drained on the SAME
             // once-per-routing-step pass as infil_applied so the two series share
             // a cadence and can be compared. Positive = the cell received from
@@ -4522,6 +4525,18 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
                 state_.coupling_applied[ui] = 0.0;
             }
             storage_b += state_.volume[ui];
+        }
+        partials[4 * b] = rain_b;
+        partials[4 * b + 1] = infil_b;
+        partials[4 * b + 2] = storage_b;
+        partials[4 * b + 3] = snow_b;
+    }
+    for (int b = 0; b < nblocks; ++b) {
+        rain_vol += partials[4 * b];
+        infil_vol += partials[4 * b + 1];
+        storage += partials[4 * b + 2];
+        snow_rain_total += partials[4 * b + 3];
+    }
 
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
     if (split_snow)
