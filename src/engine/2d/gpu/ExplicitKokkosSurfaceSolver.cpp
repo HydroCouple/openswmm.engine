@@ -938,9 +938,19 @@ void ExplicitKokkosSurfaceSolver::initialize(MeshData& mesh, SurfaceStateData& s
         telemetry_path_ = p;
 #ifdef OPENSWMM_ENABLE_METAL_FACES
     if (metal_requested_) {
-        if (diffusive_ || second_order_ || opts.advection || species_)
-            throw std::invalid_argument(
-                "Metal face flow requires first-order water-only flow without advection");
+        if (diffusive_ || second_order_ || opts.advection || species_) {
+            std::string uses;
+            for (const auto& [on, what] :
+                 {std::pair{diffusive_, "MOMENTUM_EQUATION DIFFUSIVE_WAVE"},
+                  std::pair{second_order_, "RECONSTRUCTION_ORDER 2"},
+                  std::pair{opts.advection, "ADVECTION YES"},
+                  std::pair{species_, "pollutant transport rows"}})
+                if (on)
+                    uses += (uses.empty() ? "" : ", ") + std::string(what);
+            throw std::invalid_argument("Metal face flow requires first-order water-only flow "
+                                        "without advection; this model uses " +
+                                        uses);
+        }
         if (swe_)
             metal_swe_ = std::make_unique<metal::SurfaceClient>();
         else
