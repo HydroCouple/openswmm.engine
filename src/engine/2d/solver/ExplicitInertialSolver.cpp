@@ -1456,12 +1456,32 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     cell_active_ = next;
     const int n_seed = static_cast<int>(std::count(next.begin(), next.end(), uint8_t{1}));
     if (n_seed != 0 && n_seed != nt) {
-        for (int e = 0; e < edges_.ne; ++e) {
-            const int a = edges_.cL[e], b = edges_.cR[e];
-            if (next[a] && !next[b])
-                cell_active_[b] = 1;
-            else if (next[b] && !next[a])
-                cell_active_[a] = 1;
+        if (opts_->num_threads > 1) {
+            // Track 3D (2026-11-27): with a team, the one-ring halo in the cell-parallel Jacobi
+            // form the front rings below already use (each thread writes only its own cell,
+            // reading the seed copy): the same set the serial edge walk produces. One thread
+            // keeps the edge walk, which touches each pair once.
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+            for (int i = 0; i < nt; ++i) {
+                if (next[i])
+                    continue;
+                const int nvc = mesh_->cell_vertex_count(i);
+                for (int k2 = 0; k2 < nvc; ++k2) {
+                    const int j = mesh_->cell_neighbour(i, k2);
+                    if (j >= 0 && next[j]) {
+                        cell_active_[i] = 1;
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (int e = 0; e < edges_.ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                if (next[a] && !next[b])
+                    cell_active_[b] = 1;
+                else if (next[b] && !next[a])
+                    cell_active_[a] = 1;
+            }
         }
     }
     // FRONT_REBUILD: a dry-bed front travels ~2√(gh) — about one cell per

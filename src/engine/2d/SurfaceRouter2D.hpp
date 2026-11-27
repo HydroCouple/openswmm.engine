@@ -1629,6 +1629,9 @@ private:
     /// MassBalance2D::infil_out; empty when no [2D_INFILTRATION*] model
     /// resolved.
     std::vector<double> infil_cum_applied_;
+    /// accumulateMassBalance scratch: per-block partial sums (rain, infiltration, storage,
+    /// snow rain), four per block of kMassBalanceBlock cells.
+    std::vector<double> mb_block_partials_;
 
     /// [2D_FROZEN_GROUND]: the authored rows (`*` and mesh tags) and, per cell, the row it
     /// resolved to (-1 for none). The slab enthalpy and the factor handed to

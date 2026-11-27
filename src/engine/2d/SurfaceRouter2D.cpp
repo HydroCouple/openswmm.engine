@@ -4436,63 +4436,92 @@ void SurfaceRouter2D::accumulateMassBalance(SimulationContext& ctx, double dt) {
     double snow_rain_total = 0;
     const bool route_aq = do_infil && cell_subcatch_.size() == static_cast<std::size_t>(nt) &&
                           !subcatch_recharge_.empty();
-    for (int i = 0; i < nt; ++i) {
-        const auto ui = static_cast<std::size_t>(i);
-        const double area = mesh_.tri_area[ui];
-        const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
-        const double rain_rate =
-            common_stage_ ? std::max(0.0, state_.runtime_forcings.rate(1, i, state_.rainfall[ui]))
-                          : state_.rainfall[ui];
-        if (split_snow) {
-            rain_cum_[ui] += rain_rate * weather_area * dt;
-            snow_rain_total +=
-                state_.snow.owns(i) ? state_.snow.ledgers()[ui].liquid : rain_cum_[ui];
-        } else if (!state_.rk2_rain_pending.empty()) {
-            const double accepted = state_.rk2_rain_pending[ui];
-            rain_vol += accepted / dt;
-            rain_cum_[ui] += accepted;
-            state_.rk2_rain_pending[ui] = 0;
-        } else {
-            rain_vol += (state_.snow.owns(i) ? state_.liquidRainfall(i) : rain_rate) * weather_area;
-            rain_cum_[ui] += rain_rate * weather_area * dt;
-        }
-        if (do_infil) {
-            // APPLIED depth (m) the marcher actually removed since the last
-            // read — not a re-derivation at the accepted end-of-step depth.
-            // Consumed and zeroed here, so this must run exactly once per
-            // routing step.
-            // A cell that applied nothing adds only zeros below: skip its writes.
-            const double applied = state_.infil_applied[ui];
-            if (applied != 0.0) {
-                state_.infil_applied[ui] = 0.0;
-                infil_vol += applied * area;
-                if (track_cum)
-                    infil_cum_applied_[ui] += applied;
-                // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
-                // here, from the same applied depth, so the recharge and the
-                // 2D ledger can never disagree.
-                if (route_aq && cell_subcatch_[ui] >= 0) {
-                    const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
-                    if (us < subcatch_recharge_.size()) {
-                        subcatch_recharge_[us] += applied * area;
+    const bool track_coupling = coupling_cum_applied_.size() == static_cast<std::size_t>(nt);
+    // Track 3D (2026-11-27): the cells are visited in fixed blocks. Each cell writes only its
+    // own rows, so the blocks run in parallel; the four domain totals are formed as block
+    // partials summed in cell order, then added in block order, so the result does not depend
+    // on the thread count (it differs from the old single running sum in the last bits). The
+    // SUBCATCH_AQUIFER share scatters to subcatchments and keeps the blocks on one thread.
+    constexpr int kMassBalanceBlock = 4096;
+    const int nblocks = (nt + kMassBalanceBlock - 1) / kMassBalanceBlock;
+    mb_block_partials_.assign(static_cast<std::size_t>(nblocks) * 4, 0.0);
+    double* partials = mb_block_partials_.data();
+    const int mb_threads = route_aq ? 1 : std::max(1, std::min(options_.num_threads, nblocks));
+#if defined(SWMM_USE_OPENMP)
+#pragma omp parallel for schedule(static) num_threads(mb_threads) if (mb_threads > 1)
+#endif
+    for (int b = 0; b < nblocks; ++b) {
+        double rain_b = 0.0, infil_b = 0.0, storage_b = 0.0, snow_b = 0.0;
+        const int i_end = std::min(nt, (b + 1) * kMassBalanceBlock);
+        for (int i = b * kMassBalanceBlock; i < i_end; ++i) {
+            const auto ui = static_cast<std::size_t>(i);
+            const double area = mesh_.tri_area[ui];
+            const double weather_area = common_stage_ ? common_stage_->meshWeatherArea(i) : area;
+            const double rain_rate =
+                common_stage_
+                    ? std::max(0.0, state_.runtime_forcings.rate(1, i, state_.rainfall[ui]))
+                    : state_.rainfall[ui];
+            if (split_snow) {
+                rain_cum_[ui] += rain_rate * weather_area * dt;
+                snow_b += state_.snow.owns(i) ? state_.snow.ledgers()[ui].liquid : rain_cum_[ui];
+            } else if (!state_.rk2_rain_pending.empty()) {
+                const double accepted = state_.rk2_rain_pending[ui];
+                rain_b += accepted / dt;
+                rain_cum_[ui] += accepted;
+                state_.rk2_rain_pending[ui] = 0;
+            } else {
+                rain_b +=
+                    (state_.snow.owns(i) ? state_.liquidRainfall(i) : rain_rate) * weather_area;
+                rain_cum_[ui] += rain_rate * weather_area * dt;
+            }
+            if (do_infil) {
+                // APPLIED depth (m) the marcher actually removed since the last
+                // read — not a re-derivation at the accepted end-of-step depth.
+                // Consumed and zeroed here, so this must run exactly once per
+                // routing step.
+                // A cell that applied nothing adds only zeros below: skip its writes.
+                const double applied = state_.infil_applied[ui];
+                if (applied != 0.0) {
+                    state_.infil_applied[ui] = 0.0;
+                    infil_b += applied * area;
+                    if (track_cum)
+                        infil_cum_applied_[ui] += applied;
+                    // U3: the SUBCATCH_AQUIFER share is booked to its subcatchment
+                    // here, from the same applied depth, so the recharge and the
+                    // 2D ledger can never disagree.
+                    if (route_aq && cell_subcatch_[ui] >= 0) {
+                        const auto us = static_cast<std::size_t>(cell_subcatch_[ui]);
+                        if (us < subcatch_recharge_.size()) {
+                            subcatch_recharge_[us] += applied * area;
+                        }
                     }
                 }
             }
         }
-        // C1: signed per-cell coupling volume (m³), drained on the SAME
-        // once-per-routing-step pass as infil_applied so the two series share
-        // a cadence and can be compared. Positive = the cell received from
-        // the node; negative = the node abstracted from the cell. Kept
-        // per-cell and signed because the domain totals are two unsigned
-        // accumulators that cancel a flip-flopping point to nothing.
-        if (coupling_cum_applied_.size() == static_cast<std::size_t>(nt)) {
-            // Managed returns have their own aquifer ledger, not a 1D spill.
-            if (!common_stage_)
-                coupling_cum_applied_[ui] += state_.coupling_applied[ui];
-            state_.coupling_applied[ui] = 0.0;
-        }
-        storage += state_.volume[ui];
+        partials[4 * b] = rain_b;
+        partials[4 * b + 1] = infil_b;
+        partials[4 * b + 2] = storage_b;
+        partials[4 * b + 3] = snow_b;
     }
+    for (int b = 0; b < nblocks; ++b) {
+        rain_vol += partials[4 * b];
+        infil_vol += partials[4 * b + 1];
+        storage += partials[4 * b + 2];
+        snow_rain_total += partials[4 * b + 3];
+    }
+            // C1: signed per-cell coupling volume (m³), drained on the SAME
+            // once-per-routing-step pass as infil_applied so the two series share
+            // a cadence and can be compared. Positive = the cell received from
+            // the node; negative = the node abstracted from the cell. Kept
+            // per-cell and signed because the domain totals are two unsigned
+            // accumulators that cancel a flip-flopping point to nothing.
+            if (track_coupling) {
+                // Managed returns have their own aquifer ledger, not a 1D spill.
+                if (!common_stage_)
+                    coupling_cum_applied_[ui] += state_.coupling_applied[ui];
+                state_.coupling_applied[ui] = 0.0;
+            }
+            storage_b += state_.volume[ui];
 
     // Rainfall inflow (m³): rainfall is m/s after forcings are applied.
     if (split_snow)
