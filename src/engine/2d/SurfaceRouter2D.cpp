@@ -1345,7 +1345,13 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         const std::uint64_t required = requiredSurfaceCapabilities(
             options_, mesh_.n_quads() != 0, state_.transport.active(), groundwater_requested,
             porous_heat_requested, surface_heat_requested);
-        solver_ = makeSurfaceSolver(options_, &backend_name_, mesh_.n_triangles(), required);
+        std::vector<std::string> plugin_notes;
+        solver_ = makeSurfaceSolver(options_, &backend_name_, mesh_.n_triangles(), required,
+                                    &plugin_notes);
+        // A plugin the search found but could not use was visible on stderr only;
+        // a GUI user saw the run go to the next candidate without a word.
+        for (const auto& note : plugin_notes)
+            thread_warnings_.emplace_back("2D solver: " + note + "; " + backend_name_ + " used");
         // Say which solver this run is on. Rides the advisory-warning path
         // (code 0) with the thread notices, so it reaches the .rpt and the
         // GUI's warning callback — the backend choice used to be visible on
@@ -2009,6 +2015,14 @@ void SurfaceRouter2D::initialize(SimulationContext& ctx) {
         else
             backend.diagnostic = "No CLOSED_FORM cells; groundwater operators use CPU";
         subsurface_.setRechargeBackend(std::move(backend));
+        const auto& recharge = subsurface_.rechargeBackend();
+        // The label's first clause names the operator; the rest says what stays on the CPU.
+        const std::string label = recharge.capabilities.label;
+        const std::string recharge_used =
+            recharge.evaluate ? label.substr(0, label.find(';')) : std::string("CPU");
+        for (const auto& note : recharge.rejected)
+            ctx.warnings.push_back("Groundwater recharge: " + note + "; " + recharge_used +
+                                   " used");
         if (subsurface_.rechargeBackend().evaluate)
             ctx.warnings.push_back(
                 "Groundwater raw recharge: Kokkos OpenMP host operator available; water, receipts, transport, reactions and heat remain CPU-owned.");

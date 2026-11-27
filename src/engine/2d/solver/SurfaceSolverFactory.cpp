@@ -279,7 +279,8 @@ using HostThreadsFn = int (*)(void);
  * @note Invokes only the fingerprint export before any probe/factory. Rejection writes stderr.
  * The caller invokes this on the execution owner; plugin exceptions are handled by the caller.
  */
-bool compatible_plugin(void* handle, const std::string& path) {
+bool compatible_plugin(void* handle, const std::string& path,
+                       std::vector<std::string>* notes = nullptr) {
     using Contract = const char* (*)();
     auto query = reinterpret_cast<Contract>(platform_sym(handle, "openswmm_gpu_build_contract"));
 #ifdef OPENSWMM_GPU_BUILD_CONTRACT
@@ -291,6 +292,8 @@ bool compatible_plugin(void* handle, const std::string& path) {
     std::fprintf(stderr,
                  "[openswmm 2D] rejected incompatible plugin: %s (rebuild with this engine)\n",
                  path.c_str());
+    if (notes)
+        notes->push_back("rejected plugin " + path + ": built for a different engine");
     return false;
 }
 
@@ -318,7 +321,8 @@ bool compatible_plugin(void* handle, const std::string& path) {
  * count; no model arrays are initialized here.
  */
 std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, std::string* chosen,
-                                                    int requested_threads, std::uint64_t required) {
+                                                    int requested_threads, std::uint64_t required,
+                                                    std::vector<std::string>* notes) {
     for (const auto& dir : search_dirs()) {
         for (const auto& fname : plugin_filenames(backend)) {
             const fs::path path = fs::path(dir) / fname;
@@ -329,7 +333,7 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
             void* h = load_cached(path.string());
             if (!h)
                 continue;
-            if (!compatible_plugin(h, path.string()))
+            if (!compatible_plugin(h, path.string(), notes))
                 continue;
             auto destroy = reinterpret_cast<PluginSurfaceSolver::Destroy>(
                 platform_sym(h, "openswmm_destroy_gpu_explicit_solver"));
@@ -360,6 +364,9 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
             if (const std::uint64_t lacking = required & ~info.capabilities) {
                 std::fprintf(stderr, "[openswmm 2D] plugin %s does not implement: %s\n",
                              path.string().c_str(), surfaceCapabilityNames(lacking).c_str());
+                if (notes)
+                    notes->push_back("plugin " + path.string() + " does not implement " +
+                                     surfaceCapabilityNames(lacking));
                 continue;
             }
 
@@ -380,6 +387,9 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
                 const char* diagnostic = error ? error() : nullptr;
                 std::fprintf(stderr, "[openswmm 2D] plugin construction failed: %s: %s\n",
                              path.string().c_str(), diagnostic ? diagnostic : "no diagnostic");
+                if (notes)
+                    notes->push_back("plugin " + path.string() + " failed to construct: " +
+                                     (diagnostic ? diagnostic : "no diagnostic"));
                 continue;
             }
             auto* solver = static_cast<ISurfaceSolver*>(raw);
@@ -432,16 +442,21 @@ std::unique_ptr<ISurfaceSolver> try_plugin_on_owner(const std::string& backend, 
  * initialize model state or unload modules.
  */
 std::unique_ptr<ISurfaceSolver> try_plugin(const std::string& backend, std::string* chosen,
-                                           int threads, std::uint64_t required) {
+                                           int threads, std::uint64_t required,
+                                           std::vector<std::string>* notes) {
     try {
         return execution_owner()->invoke(
-            [&] { return try_plugin_on_owner(backend, chosen, threads, required); });
+            [&] { return try_plugin_on_owner(backend, chosen, threads, required, notes); });
     } catch (const std::exception& e) {
         std::fprintf(stderr, "[openswmm 2D] plugin %s failed before initialization: %s\n",
                      backend.c_str(), e.what());
+        if (notes)
+            notes->push_back("plugin " + backend + " failed before initialization: " + e.what());
     } catch (...) {
         std::fprintf(stderr, "[openswmm 2D] plugin %s failed before initialization\n",
                      backend.c_str());
+        if (notes)
+            notes->push_back("plugin " + backend + " failed before initialization");
     }
     return nullptr;
 }
@@ -478,7 +493,8 @@ std::string backend_name(Backend2D b) {
 } // anonymous namespace
 
 std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, std::string* chosen,
-                                                  int n_cells, std::uint64_t model_capabilities) {
+                                                  int n_cells, std::uint64_t model_capabilities,
+                                                  std::vector<std::string>* notes) {
     if (opts.momentumPhysics() && (opts.momentum != Momentum2D::FULL_SWE || opts.lts_tiers != 1))
         throw std::invalid_argument(
             "Coriolis/Smagorinsky/wall drag require FULL_SWE and LTS_TIERS 1.");
@@ -503,7 +519,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
             throw std::invalid_argument("Metal face flow does not support " +
                                         surfaceCapabilityNames(lacking));
         auto solver = try_plugin("omp", chosen, opts.requested_threads,
-                                 required | OPENSWMM_GPU_CAP_METAL_FACES);
+                                 required | OPENSWMM_GPU_CAP_METAL_FACES, notes);
         if (!solver)
             throw std::runtime_error("Metal face flow requires the Metal-enabled OpenSWMM plugin");
         if (chosen)
@@ -574,7 +590,7 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
     // Explicit backend request bypasses every mesh-size gate — the operator
     // asked for it by name (OPENSWMM_2D_BACKEND / BACKEND = omp|cuda|hip|sycl).
     if (mode == "omp" || mode == "cuda" || mode == "hip" || mode == "sycl") {
-        if (auto s = try_plugin(mode, chosen, opts.requested_threads, required))
+        if (auto s = try_plugin(mode, chosen, opts.requested_threads, required, notes))
             return s;
         std::fprintf(stderr,
                      "[openswmm 2D] backend '%s' requested but no usable plugin/device "
@@ -603,10 +619,10 @@ std::unique_ptr<ISurfaceSolver> makeSurfaceSolver(const SolverOptions2D& opts, s
 
     if (n_cells <= 0 || n_cells >= dev_floor)
         for (const char* b : {"cuda", "hip", "sycl"})
-            if (auto s = try_plugin(b, chosen, opts.requested_threads, required))
+            if (auto s = try_plugin(b, chosen, opts.requested_threads, required, notes))
                 return s;
     if (n_cells <= 0 || n_cells >= omp_floor)
-        if (auto s = try_plugin("omp", chosen, opts.requested_threads, required))
+        if (auto s = try_plugin("omp", chosen, opts.requested_threads, required, notes))
             return s;
 
     std::fprintf(stderr,
@@ -661,7 +677,7 @@ GwRechargeBackend makeGwRechargeBackend(const SolverOptions2D& opts, int n_cells
             try {
                 compatible = owner->invoke([&] {
                     handle = load_cached(path);
-                    return handle && compatible_plugin(handle, path);
+                    return handle && compatible_plugin(handle, path, &result.rejected);
                 });
             } catch (...) {
                 continue;

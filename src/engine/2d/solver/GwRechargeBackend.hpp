@@ -13,6 +13,7 @@
 #include "GwRechargePluginAbi.h"
 #include <string>
 #include <functional>
+#include <vector>
 namespace openswmm::twoD {
 struct GwRechargeBackend {
     using Evaluate = int (*)(const OpenSwmmGwRechargeInputV1*, int, double*, int);
@@ -21,5 +22,6 @@ struct GwRechargeBackend {
     std::function<int()> threads;
     OpenSwmmGwCapabilitiesV1 capabilities{};
     std::string diagnostic;
+    std::vector<std::string> rejected; ///< plugin modules the search found but could not use
 };
 }
