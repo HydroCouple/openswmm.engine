@@ -150,9 +150,10 @@ TEST(InfilMemory, AppliedMemoryClosesAndRemembersOnlyWhatInfiltrated) {
         << "APPLIED " << applied.infil_out << " m3, OFFER " << offer.infil_out << " m3 of "
         << offer.rainfall_in << " m3 of rain";
     EXPECT_LT(applied.final_storage, offer.final_storage);
-    EXPECT_EQ(offer.written.find("INFIL_MEMORY"), std::string::npos);
-    EXPECT_NE(applied.written.find("INFIL_MEMORY           APPLIED"), std::string::npos)
-        << applied.written.substr(0, 2500);
+    // APPLIED is the default and is not written; OFFER is.
+    EXPECT_EQ(applied.written.find("INFIL_MEMORY"), std::string::npos);
+    EXPECT_NE(offer.written.find("INFIL_MEMORY           OFFER"), std::string::npos)
+        << offer.written.substr(0, 2500);
 }
 
 TEST(InfilMemory, UnknownWordIsAnInputError) {

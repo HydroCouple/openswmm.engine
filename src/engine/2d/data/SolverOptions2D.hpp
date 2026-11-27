@@ -314,12 +314,12 @@ struct SolverOptions2D {
     /// source stage (checkpointable) keeps STEP. Track 3D, 2026-11-27.
     int lazy_source_landing = 0; ///< 0 STEP, 1 REBUILD
     /// [2D_OPTIONS] INFIL_MEMORY OFFER|APPLIED — what advances a cell's infiltration kernel
-    /// history. OFFER (default, legacy-shaped): the held rate times the step at each INFIL_STEP
-    /// refresh, whatever the surface then delivers. APPLIED: the depth the surface actually
-    /// infiltrated over the accounted span; a cell that dried mid-hold is re-advanced from its
-    /// pre-refresh snapshot by the applied depth, so its capacity memory agrees with the
-    /// mass-balance ledger. Track 3C, 2026-11-27.
-    int infil_memory = 0; ///< 0 OFFER, 1 APPLIED
+    /// history. APPLIED (default since 2026-11-27): the depth the surface actually infiltrated
+    /// over the accounted span; a cell that dried mid-hold is re-advanced from its pre-refresh
+    /// snapshot by the applied depth, so its capacity memory agrees with the mass-balance
+    /// ledger. OFFER (the scheme before, kept for comparison): the held rate times the step at
+    /// each INFIL_STEP refresh, whatever the surface then delivers. Track 3C.
+    int infil_memory = 1; ///< 0 OFFER, 1 APPLIED
     /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
     /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (eta, h, u, v)
     /// with limited Green-Gauss / wet-shoreline gradients + SSP-RK2
