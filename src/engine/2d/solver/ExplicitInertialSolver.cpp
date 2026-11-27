@@ -1362,6 +1362,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
     const double dt_lazy = t - t_last_sync_;
     if (dt_lazy <= 0.0)
         return;
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_lazy_sources);
     const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
@@ -1380,7 +1381,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     if (gw_ && gw_->independentClock())
         gw_->setProducerEnd(t);
     perf::ProcessTimer process_timer(perf::ProcessPhase::surface_rebuild);
-    settleAccumulators();
+    {
+        perf::ProcessTimer settle_timer(perf::ProcessPhase::surface_rebuild_settle);
+        settleAccumulators();
+    }
     const double dt_lazy = t - t_last_sync_;
     const int nt = mesh_->n_triangles();
 
@@ -1397,6 +1401,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     const double h_on = opts_->h_move + band;
     h_on_front_ = h_on;
     const double h_off = std::max(0.0, opts_->h_move - band);
+    perf::ProcessTimer seed_timer(perf::ProcessPhase::surface_rebuild_seed);
     rebuild_seed_.assign(static_cast<std::size_t>(nt), 0);
     std::vector<uint8_t>& next = rebuild_seed_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -1436,6 +1441,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             if (i >= 0 && i < nt)
                 next[static_cast<std::size_t>(i)] = 1;
     }
+    seed_timer.stop();
+    perf::ProcessTimer halo_timer(perf::ProcessPhase::surface_rebuild_halo);
 
     // 3. One-ring halo so fronts can enter their neighbours within a rebuild
     //    period, then compact the work lists. A face flows only when BOTH
@@ -1536,6 +1543,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 #else
         const int tid = 0;
 #endif
+    halo_timer.stop();
+    perf::ProcessTimer dt_timer(perf::ProcessPhase::surface_rebuild_dt);
         double local = 1.0e30;
 #pragma omp for schedule(static) nowait
         for (int k = 0; k < na; ++k) {
@@ -1602,6 +1611,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
                 tk = 0;
         }
         tier_[i] = static_cast<uint8_t>(tk);
+    dt_timer.stop();
+    perf::ProcessTimer lists_timer(perf::ProcessPhase::surface_rebuild_lists);
         if (!front_rebuild_ && !parallel_tier_lists)
             cells_by_tier_[static_cast<std::size_t>(tk)].push_back(i);
     }
@@ -1770,6 +1781,7 @@ void ExplicitInertialSolver::refreshDt0() {
     rebuild_dt_partial_.assign(static_cast<std::size_t>(nthr) * stride, 1.0e30);
 #pragma omp parallel num_threads(nthr)
     {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_refresh_dt);
 #if defined(SWMM_USE_OPENMP)
         const int tid = omp_get_thread_num();
 #else
@@ -4702,7 +4714,10 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
-    settleAccumulators();
+    {
+        perf::ProcessTimer settle_timer(perf::ProcessPhase::surface_settle);
+        settleAccumulators();
+    }
     // Final lazy-source landing: cheap when nothing is pending — the full
     // rebuild only runs on its own cadence.
     if (t_target > t_last_sync_) {

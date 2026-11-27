@@ -45,6 +45,18 @@ enum class ProcessPhase : std::size_t {
     surface_rain,
     surface_infil,
     surface_massbal,
+    // Sections of the rebuild (ExplicitInertialSolver::syncAndRebuild); the rebuild
+    // phase itself then holds what none of them claims.
+    surface_rebuild_settle,
+    surface_rebuild_seed,
+    surface_rebuild_halo,
+    surface_rebuild_dt,
+    surface_rebuild_lists,
+    // The lazy-tier source settlement between rebuilds, the base-step refresh and the
+    // accumulator settlement at the end of an advance.
+    surface_lazy_sources,
+    surface_refresh_dt,
+    surface_settle,
     runoff,
     groundwater,
     lid,
@@ -110,6 +122,14 @@ inline constexpr std::array<ProcessPhaseName, std::size_t(ProcessPhase::count)> 
      {"2D", "rain_forcing"},
      {"2D", "infil"},
      {"2D", "mass_balance"},
+     {"2D", "rebuild_settle"},
+     {"2D", "rebuild_seed"},
+     {"2D", "rebuild_halo"},
+     {"2D", "rebuild_dt"},
+     {"2D", "rebuild_lists"},
+     {"2D", "lazy_sources"},
+     {"2D", "refresh_dt"},
+     {"2D", "settle"},
      {"HYD", "runoff"},
      {"HYD", "groundwater"},
      {"HYD", "lid"},
