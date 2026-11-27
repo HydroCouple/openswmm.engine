@@ -41,8 +41,10 @@
 #include "core/ProcessPerf.hpp"
 #include "core/ThreadInfo.hpp"
 #include "Runoff.hpp"
+#include "PondedDepthExact.hpp"
 #include "Gage.hpp"
 #include "../core/Constants.hpp"
+#include "../core/RunoffProfile.hpp"
 #include "../core/SimulationContext.hpp"
 #include "../core/UnitConversion.hpp"
 #include "../math/OdeSolver.hpp"
@@ -77,6 +79,8 @@ void RunoffSoA::resize(int n) {
 
     alpha_imperv.assign(un, 0.0);
     alpha_perv.assign(un, 0.0);
+    alpha_imperv_scale.assign(un, 0.0);
+    alpha_perv_scale.assign(un, 0.0);
     ds_imperv.assign(un, 0.0);
     ds_perv.assign(un, 0.0);
     n_imperv.assign(un, 0.01);
@@ -129,6 +133,8 @@ void RunoffSoA::computeAlpha() {
             alpha_perv[ui] = (n_perv[ui] > 0.0 && area_perv > 0.0)
                                  ? constants::PHI * width[ui] / area_perv * sq_slope / n_perv[ui]
                                  : 0.0;
+            alpha_imperv_scale[ui] = ExactPondedDepth::alphaScale(alpha_imperv[ui]);
+            alpha_perv_scale[ui] = ExactPondedDepth::alphaScale(alpha_perv[ui]);
         }
     }
 }
@@ -138,6 +144,12 @@ void RunoffSoA::computeAlpha() {
 // Matches legacy subcatch.c updatePondedDepth() + odesolve_integrate()
 // ============================================================================
 
+namespace {
+/// RUNOFF_ODE_SOLVER EXACT: each thread's |net inflow|^(1/m) cache (see
+/// ExactPondedDepth::ScaleCache). Read and written only by the thread that owns it.
+thread_local ExactPondedDepth::ScaleCache t_exact_scale_cache;
+} // namespace
+
 void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha, double dStore,
                                      double dt, double& t_runoff) {
     double tx = dt;
@@ -145,6 +157,7 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha,
     // --- Check if not enough inflow to fill depression storage ---
     // Matches legacy subcatch.c line 1046
     if (depth + inflow * tx <= dStore) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_below_store);
         depth += inflow * tx;
     } else {
         // --- Fill depression storage first, reduce remaining time ---
@@ -169,11 +182,14 @@ void RunoffSolver::updatePondedDepth(double& depth, double inflow, double alpha,
                                  [captured_inflow, captured_alpha,
                                   captured_dStore](double /*t*/, const double* d, double* dddt) {
                                      double rx = *d - captured_dStore;
+                                     if (rx > 0.0)
+                                         OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_ode_pow);
                                      double outflow =
                                          (rx > 0.0) ? captured_alpha * std::pow(rx, MEXP) : 0.0;
                                      *dddt = captured_inflow - outflow;
                                  });
         } else {
+            OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_linear);
             tx = std::max(tx, 0.0);
             depth += inflow * tx;
         }
@@ -430,6 +446,8 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
     // Matches legacy subcatch_getRunoff() → getSubareaRunoff() chain exactly.
     // Infiltration and evaporation are computed INSIDE the per-subarea loop
     // to replicate the legacy's loss-limiting and inflow-subtraction order.
+    // RUNOFF_ODE_SOLVER EXACT replaces the RK45 step and the caller's outflow pow.
+    const bool exact_ode = ctx.options.runoff_ode_solver == RunoffOdeSolver::EXACT;
 #if defined(__GNUC__) || defined(__clang__)
 #define OPENSWMM_RUNOFF_CELL_INLINE __attribute__((always_inline))
 #else
@@ -479,15 +497,16 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         double Voutflow = 0.0; // Total runoff volume (ft³)
 
         // Helper: process one subarea following legacy getSubareaRunoff() exactly.
-        // Args: depth, alpha, dStore, subareaFrac, isPervious, runon
-        auto processSubarea = [&](double& depth, double alpha, double dStore, double frac,
-                                  bool isPervious, double runon_in, double subarea_n,
+        // Args: depth, alpha, alpha_scale (EXACT only), dStore, subareaFrac, isPervious, runon
+        auto processSubarea = [&](double& depth, double alpha, double alpha_scale, double dStore,
+                                  double frac, bool isPervious, double runon_in, double subarea_n,
                                   int pool) -> double {
             if (frac <= 0.0)
                 return 0.0;
             double subarea_area = total_area * frac;
             if (spatial_fractions && subarea_area <= 0.0)
                 return 0.0;
+            OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_subareas);
             const double initial_depth = depth;
 
             // Step 3.1: Available surface moisture (legacy line 923)
@@ -593,7 +612,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // all water is consumed — no runoff, depth goes to zero.
             double runoff_rate = 0.0;
             double t_runoff = dt; // legacy tRunoff
+            double exact_outflow = 0.0; // EXACT: alpha (depth - dStore)^m at the end of the step
+            bool have_exact_outflow = false;
             if (surfEvap + infil >= surfMoisture) {
+                OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_loss_shortcut);
                 depth = 0.0;
             } else {
                 // Step 3.7: Subtract losses from inflow before ODE. Legacy is
@@ -610,7 +632,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 // Step 3.8: Integrate ponded depth (legacy updatePondedDepth:
                 // with alpha 0 the depth simply accumulates), and keep the
                 // time it spent above storage for the no-routing case.
-                updatePondedDepth(depth, net_inflow, alpha, dStore, dt, t_runoff);
+                if (exact_ode) {
+                    depth =
+                        ExactPondedDepth::step(depth, net_inflow, alpha, alpha_scale, dStore, dt,
+                                               t_runoff, exact_outflow, t_exact_scale_cache);
+                    have_exact_outflow = true;
+                } else {
+                    updatePondedDepth(depth, net_inflow, alpha, dStore, dt, t_runoff);
+                }
             }
 
             // Step 3.9: legacy findSubareaRunoff, keyed on Manning's N — NOT
@@ -623,7 +652,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
                 const double xDepth = depth - dStore;
                 if (xDepth > 1.0e-10) { // legacy ZERO
                     if (subarea_n > 0.0) {
-                        runoff_rate = alpha * std::pow(xDepth, MEXP);
+                        if (have_exact_outflow) {
+                            runoff_rate = exact_outflow; // the step's own alpha x1^m
+                        } else {
+                            OPENSWMM_RUNOFF_PROFILE_COUNT(runoff_pow_outflow);
+                            runoff_rate = alpha * std::pow(xDepth, MEXP);
+                        }
                     } else {
                         runoff_rate = xDepth / t_runoff;
                         depth = dStore;
@@ -764,10 +798,12 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             evapRate = (*source_forcing)[slot].pet_imperv;
         // Process all 3 subareas (matching legacy loop: IMPERV0, IMPERV1, PERV)
         precip = precip_imperv;
-        double runoff0 = processSubarea(soa_.depth_imperv0[ui], alpha_i, 0.0, f0, false,
-                                        runon_imperv0, soa_.n_imperv[ui], 0);
-        double runoff1 = processSubarea(soa_.depth_imperv1[ui], alpha_i, soa_.ds_imperv[ui], f1,
-                                        false, runon_imperv1, soa_.n_imperv[ui], 1);
+        const double alpha_i_scale = soa_.alpha_imperv_scale[ui];
+        double runoff0 = processSubarea(soa_.depth_imperv0[ui], alpha_i, alpha_i_scale, 0.0, f0,
+                                        false, runon_imperv0, soa_.n_imperv[ui], 0);
+        double runoff1 =
+            processSubarea(soa_.depth_imperv1[ui], alpha_i, alpha_i_scale, soa_.ds_imperv[ui], f1,
+                           false, runon_imperv1, soa_.n_imperv[ui], 1);
         // legacy adjustSubareaParams (subcatch.c:1168-1200): the PERVIOUS
         // subarea's depression storage and runoff coefficient carry this
         // month's [ADJUSTMENTS] DSTORE / N-PERV pattern, re-applied to the
@@ -807,8 +843,14 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
         if (source_forcing && (*source_forcing)[slot].pet_perv >= 0)
             evapRate = (*source_forcing)[slot].pet_perv;
         precip = precip_perv;
-        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj, ds_perv_adj, fp, true,
-                                         runon_perv, soa_.n_perv[ui], 2);
+        // EXACT's per-subarea alpha^(-1/m) holds for the stored alpha; an N-PERV pattern
+        // month re-derives it (one pow, pattern decks only).
+        const double alpha_p_scale = !exact_ode ? 0.0
+                                     : (alpha_p_adj == alpha_p)
+                                         ? soa_.alpha_perv_scale[ui]
+                                         : ExactPondedDepth::alphaScale(alpha_p_adj);
+        double runoff_p = processSubarea(soa_.depth_perv[ui], alpha_p_adj, alpha_p_scale,
+                                         ds_perv_adj, fp, true, runon_perv, soa_.n_perv[ui], 2);
         precip = precip_[ui]; // restore for subsequent use
 
         // Save per-subarea runoff for next step's inter-subarea routing
@@ -930,8 +972,10 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
 #ifdef SWMM_USE_OPENMP
     // Ordinary native sources own disjoint reservoir/infiltration/report rows.
     // Weather preparation precedes this loop; downstream publication follows its join.
-    const bool ordinary = !source_forcing && !boundary && !spatial_fractions &&
-                          (ctx.options.ignore_snow_melt || ctx.snowpacks.plowable.empty());
+    // Snow does not gate the team (Track 1A, 2026-11-26): the kernel only reads the
+    // pack state (snow_net_*, the UEB fluxes, the plowable fraction), all written by
+    // the snow block that runs before this call in SWMMEngine::stepRunoff.
+    const bool ordinary = !source_forcing && !boundary && !spatial_fractions;
     const int threads =
         ordinary && count >= 512 && !omp_in_parallel()
             ? (ctx.options.num_threads > 0 ? ctx.options.num_threads : threadinfo::ompMaxThreads())

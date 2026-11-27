@@ -1362,6 +1362,7 @@ void ExplicitInertialSolver::lazySourcesOnly(double t) {
     const double dt_lazy = t - t_last_sync_;
     if (dt_lazy <= 0.0)
         return;
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_lazy_sources);
     const int nt = mesh_->n_triangles();
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
     for (int i = 0; i < nt; ++i) {
@@ -1380,7 +1381,10 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     if (gw_ && gw_->independentClock())
         gw_->setProducerEnd(t);
     perf::ProcessTimer process_timer(perf::ProcessPhase::surface_rebuild);
-    settleAccumulators();
+    {
+        perf::ProcessTimer settle_timer(perf::ProcessPhase::surface_rebuild_settle);
+        settleAccumulators();
+    }
     const double dt_lazy = t - t_last_sync_;
     const int nt = mesh_->n_triangles();
 
@@ -1397,6 +1401,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     const double h_on = opts_->h_move + band;
     h_on_front_ = h_on;
     const double h_off = std::max(0.0, opts_->h_move - band);
+    perf::ProcessTimer seed_timer(perf::ProcessPhase::surface_rebuild_seed);
     rebuild_seed_.assign(static_cast<std::size_t>(nt), 0);
     std::vector<uint8_t>& next = rebuild_seed_;
 #pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
@@ -1436,6 +1441,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
             if (i >= 0 && i < nt)
                 next[static_cast<std::size_t>(i)] = 1;
     }
+    seed_timer.stop();
+    perf::ProcessTimer halo_timer(perf::ProcessPhase::surface_rebuild_halo);
 
     // 3. One-ring halo so fronts can enter their neighbours within a rebuild
     //    period, then compact the work lists. A face flows only when BOTH
@@ -1449,12 +1456,32 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     cell_active_ = next;
     const int n_seed = static_cast<int>(std::count(next.begin(), next.end(), uint8_t{1}));
     if (n_seed != 0 && n_seed != nt) {
-        for (int e = 0; e < edges_.ne; ++e) {
-            const int a = edges_.cL[e], b = edges_.cR[e];
-            if (next[a] && !next[b])
-                cell_active_[b] = 1;
-            else if (next[b] && !next[a])
-                cell_active_[a] = 1;
+        if (opts_->num_threads > 1) {
+            // Track 3D (2026-11-27): with a team, the one-ring halo in the cell-parallel Jacobi
+            // form the front rings below already use (each thread writes only its own cell,
+            // reading the seed copy): the same set the serial edge walk produces. One thread
+            // keeps the edge walk, which touches each pair once.
+#pragma omp parallel for schedule(static) num_threads(opts_->num_threads)
+            for (int i = 0; i < nt; ++i) {
+                if (next[i])
+                    continue;
+                const int nvc = mesh_->cell_vertex_count(i);
+                for (int k2 = 0; k2 < nvc; ++k2) {
+                    const int j = mesh_->cell_neighbour(i, k2);
+                    if (j >= 0 && next[j]) {
+                        cell_active_[i] = 1;
+                        break;
+                    }
+                }
+            }
+        } else {
+            for (int e = 0; e < edges_.ne; ++e) {
+                const int a = edges_.cL[e], b = edges_.cR[e];
+                if (next[a] && !next[b])
+                    cell_active_[b] = 1;
+                else if (next[b] && !next[a])
+                    cell_active_[a] = 1;
+            }
         }
     }
     // FRONT_REBUILD: a dry-bed front travels ~2√(gh) — about one cell per
@@ -1516,6 +1543,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     // 4. Tier assignment from the local CFL step. Pinned to tier 0: cells with
     //    concentrated sources (coupling points) and boundary cells — their
     //    forcing changes fastest. dt0_ = the finest active requirement.
+    halo_timer.stop();
+    perf::ProcessTimer dt_timer(perf::ProcessPhase::surface_rebuild_dt);
     const int K = static_cast<int>(cells_by_tier_.size());
     const int na = static_cast<int>(active_cells_.size());
     if (mode_ == Momentum2D::DIFFUSIVE_WAVE)
@@ -1582,6 +1611,8 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
     if (dt0_ >= 1.0e30)
         dt0_ = opts_->max_timestep; // fully quiescent
 
+    dt_timer.stop();
+    perf::ProcessTimer lists_timer(perf::ProcessPhase::surface_rebuild_lists);
     const bool parallel_tier_lists = useParallelCompaction(na, nthr);
     for (auto& v : cells_by_tier_)
         v.clear();
@@ -1750,6 +1781,7 @@ void ExplicitInertialSolver::syncAndRebuild(double t) {
 }
 
 void ExplicitInertialSolver::refreshDt0() {
+    perf::ProcessTimer process_timer(perf::ProcessPhase::surface_refresh_dt);
     // Between rebuilds the tier lists are frozen and depths keep evolving, so
     // a dt0_ computed up to kRebuildEveryCycles macro cycles ago can realize
     // an effective CFL well above the configured bound (measured: the
@@ -4702,14 +4734,23 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     }
 
     cycles_since_rebuild_ = cycles_since_rebuild;
-    settleAccumulators();
+    {
+        perf::ProcessTimer settle_timer(perf::ProcessPhase::surface_settle);
+        settleAccumulators();
+    }
     // Final lazy-source landing: cheap when nothing is pending — the full
-    // rebuild only runs on its own cadence.
+    // rebuild only runs on its own cadence. Under LAZY_SOURCE_LANDING REBUILD the
+    // landing waits for the rebuild cadence unless the router asked for it (report
+    // and final batches); a run with an attached source stage keeps the per-advance
+    // landing its checkpoint invariants assume.
+    const bool land_now = opts_->lazy_source_landing == 0 || lazy_landing_requested_ ||
+                          common_stage_ != nullptr || state_->snow.active();
+    lazy_landing_requested_ = false;
     if (t_target > t_last_sync_) {
         if (cycles_since_rebuild_ >= kRebuildEveryCycles) {
             syncAndRebuild(t_target);
             cycles_since_rebuild_ = 0;
-        } else {
+        } else if (land_now) {
             lazySourcesOnly(t_target);
         }
     }
@@ -4786,7 +4827,15 @@ double ExplicitInertialSolver::advanceImpl(double t_current, double t_target) {
     publish_timer.stop();
     refreshSourceResultBoundary();
     checkpoint_ready_ = true;
+    last_advance_end_ = t_target;
     return t_target;
+}
+
+void ExplicitInertialSolver::landLazySources() noexcept {
+    if (!initialized_ || !opts_ || opts_->lazy_source_landing == 0 || common_stage_ ||
+        last_advance_end_ <= t_last_sync_)
+        return;
+    lazySourcesOnly(last_advance_end_);
 }
 
 void ExplicitInertialSolver::refreshSourceResultBoundary() {

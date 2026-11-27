@@ -127,6 +127,20 @@ enum class RunoffModel : int {
 };
 
 /**
+ * @brief Integrator for the subarea ponded-depth equation dd/dt = i - alpha (d - Ds)^(5/3).
+ *
+ * @details LEGACY is SWMM 5's adaptive Cash-Karp RK45 at tolerance 1e-4 and reproduces it bit
+ * for bit. EXACT evaluates the equation's exact solution from tabulated universal curves (no
+ * step control, error near 1e-10 relative) at about a fifth of the cost per solve; its results
+ * differ from LEGACY by LEGACY's own solver error (about 1e-4 relative). Option
+ * RUNOFF_ODE_SOLVER (Track 1C, 2026-11-26).
+ */
+enum class RunoffOdeSolver : int {
+    LEGACY = 0, ///< Adaptive Cash-Karp RK45, tolerance 1e-4 (default)
+    EXACT = 1   ///< Exact solution from tabulated universal curves
+};
+
+/**
  * @brief Node continuity formulation for depth update.
  *
  * @details Controls how node depths are updated in the dynamic wave solver:
@@ -433,6 +447,7 @@ struct SimulationOptions {
 
     /** @brief Runoff routing method. */
     RunoffModel runoff_model = RunoffModel::NL_POND;
+    RunoffOdeSolver runoff_ode_solver = RunoffOdeSolver::LEGACY; ///< RUNOFF_ODE_SOLVER
 
     // -----------------------------------------------------------------------
     // Solver settings

@@ -435,6 +435,8 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
             state.infil_rate[i] = 0.0; // fully frozen: no intake, model memory held
             return;
         }
+        if (applied_memory_)
+            bank_.snapshot(static_cast<int>(i)); // the history before this offer's advance
         state.infil_rate[i] =
             bank_.rate(static_cast<int>(i), state.liquidRainfall(static_cast<int>(i)), 0.0,
                        state.depth[i], dt, factors);
@@ -449,6 +451,34 @@ void Infil2D::updateRates(const MeshData& mesh, SurfaceStateData& state, double 
     } else
         for (std::size_t i = 0; i < n; ++i)
             update_cell(i);
+}
+
+void Infil2D::commitApplied(const std::vector<double>& applied, const std::vector<double>& offered,
+                            double elapsed, surface::InfilBank::Factors factors, int num_threads) {
+    if (!active_ || !applied_memory_ || elapsed <= 0.0)
+        return;
+    const std::size_t n = std::min({resolved_.size(), applied.size(), offered.size()});
+    const int threads = std::max(1, num_threads);
+    const auto commit_cell = [&](std::size_t i) {
+        const Infil2DRow& r = resolved_[i];
+        if (!r.has_method ||
+            bank_.owner(static_cast<int>(i)) == surface::InfilBank::Owner::EXTERNAL)
+            return;
+        if (!bank_.hasSnapshot(static_cast<int>(i)))
+            return;
+        // The surface took the whole offer: the refresh's advance was the right one.
+        if (applied[i] >= offered[i] * (1.0 - 1.0e-9))
+            return;
+        bank_.commitApplied(static_cast<int>(i), applied[i], elapsed, factors);
+    };
+    if (threads > 1 && n >= 512) {
+        const auto count = static_cast<std::ptrdiff_t>(n);
+#pragma omp parallel for schedule(static) num_threads(threads)
+        for (std::ptrdiff_t i = 0; i < count; ++i)
+            commit_cell(static_cast<std::size_t>(i));
+    } else
+        for (std::size_t i = 0; i < n; ++i)
+            commit_cell(i);
 }
 
 void Infil2D::reset() {

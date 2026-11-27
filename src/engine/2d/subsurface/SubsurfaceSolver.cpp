@@ -60,6 +60,7 @@
 
 #include "../../core/Constants.hpp"
 #include "core/ProcessPerf.hpp"
+#include "core/RunoffProfile.hpp"
 #include "SubsurfaceSolver.hpp"
 #include "../coupling/Rk2RuntimeSources.hpp"
 #include "GroundwaterDispersion.hpp"
@@ -564,7 +565,7 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
                 continue; // no-flow face
             const double Ke = harmonic(state_.Ks[u], state_.Ks[ju]);
             const double Te = std::max({state_.hg[u], state_.hg[ju], 0.01 * zs});
-            sumT += Ke * Te * edges.xi[eu] * edges.inv_dx[eu];
+            sumT += Ke * Te * edges.xi[eu] * edges.inv_dx_normal[eu];
         }
     }
     if (u < cell_boundaries_.size())
@@ -786,6 +787,11 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         threads = std::max(1, opts_->num_threads);
 #endif
     (void)threads;
+    if (threads > 1) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_faces_parallel);
+    } else {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_faces_serial);
+    }
     static thread_local std::vector<unsigned char> tls_touched, tls_bind, tls_mobile_ok;
     static thread_local std::vector<int> tls_cells, tls_donor;
     static thread_local std::vector<double> tls_q, tls_avail_w, tls_demand_w, tls_avail_m,
@@ -885,7 +891,7 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
         const std::size_t don = (dH > 0.0) ? l : r;
         const double T = state_.hg[don];
         const double K = harmonic(state_.Ks[l], state_.Ks[r]);
-        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH;
+        double Q = K * T * E.xi[eu] * E.inv_dx_normal[eu] * dH;
         const double Sy = std::max(face_yield[don], kSyFloor);
         const int nf = std::max(1, cell_nface_[don]);
         const double cap =
@@ -970,7 +976,7 @@ void SubsurfaceSolver::fireGwFaceListByRatio(std::span<const int> list, double s
                                                    gradient(int(r), s), ca, cb, B);
             if (porous_temperature) {
                 const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
-                dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+                dMd = alpha * std::abs(Q) * E.inv_dx_normal[eu] * dt * (ca - cb);
             }
             if (dMd == 0.0)
                 continue;
@@ -1275,7 +1281,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
 
         const double K = harmonic(state_.Ks[l], state_.Ks[r]);
 
-        double Q = K * T * E.xi[eu] * E.inv_dx[eu] * dH; // m³/s, + is L→R
+        double Q = K * T * E.xi[eu] * E.inv_dx_normal[eu] * dH; // m³/s, + is L→R
 
         // Positivity: no face may take more than its share of the donor's
         // drainable water in one step. The share is split across the donor's
@@ -1433,7 +1439,7 @@ void SubsurfaceSolver::fireGwFaceList(std::span<const int> list, double shared_d
                             // molecular phase heat, so only mechanical mixing
                             // rides this accepted water-temperature packet.
                             const double alpha = .5 * (tr_.alpha_L[l] + tr_.alpha_L[r]);
-                            dMd = alpha * std::abs(Q) * E.inv_dx[eu] * dt * (ca - cb);
+                            dMd = alpha * std::abs(Q) * E.inv_dx_normal[eu] * dt * (ca - cb);
                         }
                         if (dMd == 0.0)
                             continue;
@@ -5193,11 +5199,16 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
     // they fire serially after the parallel part, journaled like the rest.
     const int threads = opts_ ? opts_->num_threads : 1;
     const int count = static_cast<int>(cells.size());
-    if (threads < 2 || count < 512 || heat_.active() || tr_.n_layers > 0 || clock_state_ ||
-        independentClock() || lid_receipts_enabled_ ||
-        (opts_ && opts_->reconstruction_order == 2) || (reactions_ && !reactors_.empty()) ||
-        !runtime_sources_.rows.empty())
+    if (threads < 2 || count < 512) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_cells_serial_small);
         return false;
+    }
+    if (heat_.active() || tr_.n_layers > 0 || clock_state_ || independentClock() ||
+        lid_receipts_enabled_ || (opts_ && opts_->reconstruction_order == 2) ||
+        (reactions_ && !reactors_.empty()) || !runtime_sources_.rows.empty()) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_cells_serial_profile);
+        return false;
+    }
     std::vector<int> serial; // list positions fired by fireListedCell
     for (int k = 0; k < count; ++k) {
         const auto u = static_cast<std::size_t>(cells[static_cast<std::size_t>(k)]);
@@ -5205,8 +5216,11 @@ bool SubsurfaceSolver::fireGwCellsParallel(const std::vector<int>& cells, double
             (u < cell_boundaries_.size() && !cell_boundaries_[u].empty()))
             serial.push_back(k);
     }
-    if (count - static_cast<int>(serial.size()) < 512)
+    if (count - static_cast<int>(serial.size()) < 512) {
+        OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_cells_serial_small);
         return false;
+    }
+    OPENSWMM_RUNOFF_PROFILE_COUNT(gw2d_cells_parallel);
     std::vector<unsigned char> is_serial(static_cast<std::size_t>(count), 0);
     for (const int k : serial)
         is_serial[static_cast<std::size_t>(k)] = 1;

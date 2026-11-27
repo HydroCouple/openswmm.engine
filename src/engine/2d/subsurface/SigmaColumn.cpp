@@ -25,6 +25,7 @@
  */
 
 #include "SigmaColumn.hpp"
+#include "../../core/RunoffProfile.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -111,17 +112,6 @@ void settleLayerBounds(std::vector<double>& w, int m, double w_max, double w_min
     }
 }
 
-/**
- * @brief Suction derivative of a soil function by a centered difference.
- *
- * Used only for the Newton matrix: the residual is evaluated with the exact functions, so the
- * difference error changes how fast the solve converges, never what it converges to.
- */
-template <class F> double suctionSlope(F f, double psi) noexcept {
-    const double h = 1.0e-6 * std::max(std::fabs(psi), 1.0e-2);
-    return (f(psi + h) - f(psi - h)) / (2.0 * h);
-}
-
 /// Boundary rates of one S2 solve (m/s): the fixed top flux (accepted infiltration less ET)
 /// and the lower bound on the solved table flux.
 struct ImplicitForcing {
@@ -149,6 +139,9 @@ constexpr double kThinLayer = 1.0e-3;
 /// suction (Forsyth, Wu & Pruess 1995). Suction alone fails to wet a dry layer: retention is
 /// flat at its floor, so a suction step there is unbounded.
 constexpr double kSwitchSaturation = 0.5;
+/// Suction (m) at which a saturated layer's Newton slopes are taken: the dry side of the
+/// saturation kink, where the centered differences used before 2026-11-26 sampled it.
+constexpr double kSlopeOffset = 1.0e-8;
 
 /**
  * @brief One backward-Euler step of the physical fluxes on fixed layers (S2).
@@ -181,19 +174,73 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
     struct Work {
         std::vector<double> sat, psi, trial_sat, trial_psi, ph, k, flux, res, store, dk, chain, up,
             dn, diag, lower, upper, rhs, cp, step;
+        /// The law at the accepted state (dse) and at the trial state (trial_*): K, dK/dψ at
+        /// the capped suction the fluxes see, dSe/dψ at the suction itself.
+        std::vector<double> dse, trial_k, trial_dk, trial_dse;
+        /// Batch scratch: the curves of one state, its saturations, and the layers whose
+        /// suction the retention inverse must supply with their saturations in and out.
+        std::vector<soil::Curve> curves;
+        std::vector<double> se_out, batch_se, batch_psi;
+        std::vector<int> need;
         std::vector<char> by_suction;
     };
     static thread_local Work s;
     const auto n = static_cast<std::size_t>(m);
-    for (auto* v : {&s.sat, &s.psi, &s.trial_sat, &s.trial_psi, &s.ph, &s.k, &s.res, &s.store,
-                    &s.dk, &s.chain, &s.diag, &s.lower, &s.upper, &s.rhs, &s.cp, &s.step})
+    for (auto* v : {&s.sat,      &s.psi,       &s.trial_sat, &s.trial_psi, &s.ph,       &s.k,
+                    &s.res,      &s.store,     &s.dk,        &s.chain,     &s.diag,     &s.lower,
+                    &s.upper,    &s.rhs,       &s.cp,        &s.step,      &s.dse,      &s.trial_k,
+                    &s.trial_dk, &s.trial_dse, &s.se_out,    &s.batch_se,  &s.batch_psi})
         v->resize(n);
     for (auto* v : {&s.flux, &s.up, &s.dn})
         v->resize(n + 1);
+    s.curves.resize(n);
+    s.need.reserve(n);
     s.by_suction.resize(n);
 
     const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
     const double entry = p.law == SoilChar::BROOKS_COREY ? p.psi_b : 0.0;
+    // The dry-side slopes a saturated layer takes, and the conductivity at the suction cap: the
+    // same for every layer, so evaluated once per solve.
+    const soil::Curve slope_sat = soil::curve(p, kSlopeOffset);
+    const double k_cap = p.Ks * soil::curve(p, kSuctionCap).Kr;
+    // The law for all m layers of a state at once (soil::curveBatch: one transcendental pass per
+    // function, so the layers' calls are independent and pipeline): K and dK/dψ at the capped
+    // suction the fluxes see (dK/dψ = 0 when the cap hides the layer's suction), dSe/dψ, and Se
+    // at the suction itself, the Newton unknown. A saturated layer (ψ at or below the saturation
+    // threshold) can only dry, so its slopes are the dry side's, taken a hair into the
+    // unsaturated range (kSlopeOffset): the wet side's zeros would let the first Newton step
+    // overshoot into a conductivity drop the matrix never saw, which for van Genuchten with
+    // n < 2 is steep enough to exhaust the line search.
+    const auto lawBatch = [&](const std::vector<double>& psi, std::vector<double>& k,
+                              std::vector<double>& dk, std::vector<double>& dse,
+                              std::vector<double>& se) {
+        soil::curveBatch(p, psi.data(), m, s.curves.data());
+        for (int j = 0; j < m; ++j) {
+            const soil::Curve& c = s.curves[j];
+            se[j] = c.Se;
+            const soil::Curve& slope = psi[j] < kSlopeOffset ? slope_sat : c;
+            dse[j] = slope.dSe;
+            if (psi[j] < kSuctionCap) {
+                k[j] = p.Ks * c.Kr;
+                dk[j] = p.Ks * slope.dKr;
+            } else {
+                k[j] = k_cap;
+                dk[j] = 0.0;
+            }
+        }
+    };
+    // The retention inverse for the listed layers at once (soil::suctionAtSaturationBatch).
+    const auto invertListed = [&](const std::vector<double>& sat, std::vector<double>& psi) {
+        const int count = static_cast<int>(s.need.size());
+        if (count == 0)
+            return;
+        for (int i = 0; i < count; ++i)
+            s.batch_se[i] = sat[s.need[i]];
+        soil::suctionAtSaturationBatch(p, s.batch_se.data(), count, s.batch_psi.data());
+        for (int i = 0; i < count; ++i)
+            psi[s.need[i]] = s.batch_psi[i];
+    };
+    s.need.clear();
     for (int j = 0; j < m; ++j) {
         const double se = std::max((w[j] / dz - p.theta_r) / span, 0.0);
         if (se >= 1.0 - 1.0e-12) {
@@ -203,9 +250,11 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
             s.psi[j] = std::min(entry, dz * (static_cast<double>(m - j) - 0.5));
         } else {
             s.sat[j] = se;
-            s.psi[j] = soil::suctionAtSaturation(p, se);
+            s.need.push_back(j);
         }
     }
+    invertListed(s.sat, s.psi);
+    lawBatch(s.psi, s.k, s.dk, s.dse, s.se_out);
 
     bool converged = false;
     // The table face's bound is held on one branch through a Newton pass, chosen from the
@@ -217,15 +266,15 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
     const auto held = [&](const std::vector<double>& sat, int j) {
         return sat[j] <= 0.0 && s.res[j] > 0.0;
     };
-    const auto evaluate = [&](const std::vector<double>& sat, const std::vector<double>& psi) {
-        for (int j = 0; j < m; ++j) {
+    // The residual of a state whose conductivities `k` the law pass already holds.
+    const auto evaluate = [&](const std::vector<double>& sat, const std::vector<double>& psi,
+                              const std::vector<double>& k) {
+        for (int j = 0; j < m; ++j)
             s.ph[j] = std::min(psi[j], kSuctionCap);
-            s.k[j] = soil::conductivity(p, s.ph[j]);
-        }
         s.flux[0] = f.top;
         for (int j = 1; j < m; ++j)
-            s.flux[j] = 0.5 * (s.k[j - 1] + s.k[j]) * (1.0 + (s.ph[j] - s.ph[j - 1]) / dz);
-        darcy = 0.5 * (s.k[m - 1] + p.Ks) * (1.0 - 2.0 * s.ph[m - 1] / dz);
+            s.flux[j] = 0.5 * (k[j - 1] + k[j]) * (1.0 + (s.ph[j] - s.ph[j - 1]) / dz);
+        darcy = 0.5 * (k[m - 1] + p.Ks) * (1.0 - 2.0 * s.ph[m - 1] / dz);
         s.flux[n] = clamped ? f.q0_min : darcy;
         for (int j = 0; j < m; ++j)
             s.res[j] = (p.theta_r + span * sat[j]) * dz - w[j] - h * (s.flux[j] - s.flux[j + 1]);
@@ -246,22 +295,25 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
     const auto newtonStep = [&]() {
         for (int j = 0; j < m; ++j) {
             const bool free = s.psi[j] < kSuctionCap; // the fluxes see this layer's suction
-            s.dk[j] =
-                free ? suctionSlope([&](double x) { return soil::conductivity(p, x); }, s.ph[j])
-                     : 0.0;
+            // s.dk[j] is dK/dψ at the capped suction, already zero when the layer is not free.
             s.by_suction[j] = s.sat[j] >= kSwitchSaturation;
             if (s.by_suction[j]) {
-                s.store[j] =
-                    suctionSlope([&](double x) { return soil::waterContent(p, x); }, s.psi[j]) * dz;
+                s.store[j] = span * s.dse[j] * dz; // dθ/dψ · dz
                 s.chain[j] = free ? 1.0 : 0.0;
             } else {
-                // d psi / d Se by a relative difference of the inverse.
-                const double se = std::max(s.sat[j], 1.0e-8), d = 1.0e-4 * se;
+                // dψ/dSe: the reciprocal of the retention slope at this layer's suction, or,
+                // where that slope sits on a clamp, a relative difference of the inverse.
                 s.store[j] = span * dz;
-                s.chain[j] = free ? (soil::suctionAtSaturation(p, se + d) -
-                                     soil::suctionAtSaturation(p, se - d)) /
-                                        (2.0 * d)
-                                  : 0.0;
+                double dpsi_dse = 0.0;
+                if (s.dse[j] < -1.0e-300 && std::isfinite(1.0 / s.dse[j])) {
+                    dpsi_dse = 1.0 / s.dse[j];
+                } else {
+                    const double se = std::max(s.sat[j], 1.0e-8), d = 1.0e-4 * se;
+                    dpsi_dse = (soil::suctionAtSaturation(p, se + d) -
+                                soil::suctionAtSaturation(p, se - d)) /
+                               (2.0 * d);
+                }
+                s.chain[j] = free ? dpsi_dse : 0.0;
             }
         }
         s.dn[0] = 0.0; // the top flux is fixed
@@ -306,10 +358,12 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
     };
     // The state lambda along the last Newton step, in each layer's own unknown.
     const auto advance = [&](double lambda) {
+        // Suction-unknown layers step in ψ; saturation-unknown layers step in Se and take their
+        // ψ from the inverse, all of them in one batch, then the law for every layer at once.
+        s.need.clear();
         for (int j = 0; j < m; ++j) {
             if (s.by_suction[j]) {
                 s.trial_psi[j] = s.psi[j] + lambda * s.step[j];
-                s.trial_sat[j] = soil::effectiveSaturation(p, s.trial_psi[j]);
             } else {
                 const double se = s.sat[j] + lambda * s.step[j];
                 if (se >= 1.0) {
@@ -317,33 +371,44 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
                     s.trial_psi[j] = entry;
                 } else {
                     s.trial_sat[j] = std::max(se, 0.0);
-                    s.trial_psi[j] = soil::suctionAtSaturation(p, s.trial_sat[j]);
+                    s.need.push_back(j);
                 }
             }
         }
+        invertListed(s.trial_sat, s.trial_psi);
+        lawBatch(s.trial_psi, s.trial_k, s.trial_dk, s.trial_dse, s.se_out);
+        for (int j = 0; j < m; ++j)
+            if (s.by_suction[j])
+                s.trial_sat[j] = s.se_out[j];
+    };
+    // Accept the trial state with the law values that belong to it.
+    const auto accept = [&]() {
+        s.sat.swap(s.trial_sat);
+        s.psi.swap(s.trial_psi);
+        s.k.swap(s.trial_k);
+        s.dk.swap(s.trial_dk);
+        s.dse.swap(s.trial_dse);
     };
 
-    double merit = evaluate(s.sat, s.psi);
+    double merit = evaluate(s.sat, s.psi, s.k);
     if (!converged && dz < kThinLayer) {
         // In a column squeezed to a sliver the stored contents carry suction differences far
         // larger than its layers, and the faces would carry them as huge fluxes; the solution
         // there is near rest, so start from rest when that fits better.
-        for (int j = 0; j < m; ++j) {
+        for (int j = 0; j < m; ++j)
             s.trial_psi[j] = dz * (static_cast<double>(m - j) - 0.5);
-            s.trial_sat[j] = soil::effectiveSaturation(p, s.trial_psi[j]);
-        }
-        const double rest = evaluate(s.trial_sat, s.trial_psi);
+        lawBatch(s.trial_psi, s.trial_k, s.trial_dk, s.trial_dse, s.trial_sat);
+        const double rest = evaluate(s.trial_sat, s.trial_psi, s.trial_k);
         if (rest < merit) {
-            s.sat.swap(s.trial_sat);
-            s.psi.swap(s.trial_psi);
+            accept();
             merit = rest;
         } else {
-            merit = evaluate(s.sat, s.psi);
+            merit = evaluate(s.sat, s.psi, s.k);
         }
     }
     if (darcy < f.q0_min) {
         clamped = true;
-        merit = evaluate(s.sat, s.psi);
+        merit = evaluate(s.sat, s.psi, s.k);
     }
     bool ok = std::isfinite(merit);
     for (int pass = 0; ok && pass < 2; ++pass) {
@@ -361,19 +426,19 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
             double lambda = 1.0;
             for (int ls = 0; ls <= kLineSearchHalvings; ++ls, lambda *= 0.5) {
                 advance(lambda);
-                const double next = evaluate(s.trial_sat, s.trial_psi);
+                const double next = evaluate(s.trial_sat, s.trial_psi, s.trial_k);
                 if (next < merit) {
-                    s.sat.swap(s.trial_sat);
-                    s.psi.swap(s.trial_psi);
+                    accept();
                     merit = next;
                     moved = true;
+                    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_linesearch_halvings, ls);
                     break;
                 }
                 if (polishing)
                     break; // at roundoff: only a full step that still helps
             }
             if (!moved) {
-                merit = evaluate(s.sat, s.psi); // restore the fluxes of the kept state
+                merit = evaluate(s.sat, s.psi, s.k); // restore the fluxes of the kept state
                 ok = converged;
                 break;
             }
@@ -384,7 +449,7 @@ bool implicitSolve(const soil::Params& p, int m, double dz, double h, const Impl
         if (!ok || consistent)
             break;
         clamped = !clamped; // the other branch, once
-        merit = evaluate(s.sat, s.psi);
+        merit = evaluate(s.sat, s.psi, s.k);
         ok = pass == 0 && std::isfinite(merit);
     }
     if (ok && !clamped && darcy < f.q0_min - 1.0e-12 * p.Ks)
@@ -428,18 +493,28 @@ double columnDtLimit(const soil::Params& p, const double* theta, int m, int stri
     const double dsig = 1.0 / static_cast<double>(m);
     const double dz = Lc * dsig;
     double lim = 1.0e30;
+    // Celerity c(θ) = dK/dθ, by a centered difference through the retention inverse: the
+    // analytic form differs per law and per branch, and this runs once per rebuild, not per
+    // firing. The 2m inverses go through one batch and the 2m conductivities through one loop
+    // of independent calls, so they pipeline (see soil::curveBatch).
+    const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
+    static thread_local std::vector<double> se_pair, psi_pair, k_pair;
+    se_pair.resize(2 * static_cast<std::size_t>(m));
+    psi_pair.resize(se_pair.size());
+    k_pair.resize(se_pair.size());
     for (int j = 0; j < m; ++j) {
         const double th = std::clamp(at(theta, j, stride), p.theta_r, p.theta_s);
-        // Celerity c(θ) = dK/dθ, by a centred difference through the
-        // retention inverse: the analytic form differs per law and per
-        // branch, and this runs once per rebuild, not per firing.
-        const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
         const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
         const double dse = 1.0e-3;
-        const double se_hi = std::min(se + dse, 1.0);
-        const double se_lo = std::max(se - dse, 1.0e-8);
-        const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
-        const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
+        se_pair[2 * j] = std::min(se + dse, 1.0);
+        se_pair[2 * j + 1] = std::max(se - dse, 1.0e-8);
+    }
+    soil::suctionAtSaturationBatch(p, se_pair.data(), 2 * m, psi_pair.data());
+    for (int i = 0; i < 2 * m; ++i)
+        k_pair[i] = soil::conductivity(p, psi_pair[i]);
+    for (int j = 0; j < m; ++j) {
+        const double se_hi = se_pair[2 * j], se_lo = se_pair[2 * j + 1];
+        const double k_hi = k_pair[2 * j], k_lo = k_pair[2 * j + 1];
         const double c = std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
 
         const double sig = (static_cast<double>(j) + 0.5) * dsig;
@@ -479,18 +554,30 @@ void prepareColumn(const soil::Params& p, const double* theta, int m, int stride
     prepared.celerity.resize(m);
     const double dsig = 1.0 / static_cast<double>(m);
     const double dz = std::max(std::max(st.L_old, 0.0), kLMin) * dsig;
+    // Three inverses and three conductivities per layer (the celerity's pair and the layer's
+    // own), batched as in columnDtLimit so the calls pipeline.
+    const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
+    static thread_local std::vector<double> se_set, psi_set, k_set;
+    se_set.resize(3 * static_cast<std::size_t>(m));
+    psi_set.resize(se_set.size());
+    k_set.resize(se_set.size());
     for (int j = 0; j < m; ++j) {
         const double th = std::clamp(at(theta, j, stride), p.theta_r, p.theta_s);
-        const double span = std::max(p.theta_s - p.theta_r, 1.0e-9);
         const double se = std::clamp((th - p.theta_r) / span, 1.0e-8, 1.0);
         const double dse = 1.0e-3;
-        const double se_hi = std::min(se + dse, 1.0);
-        const double se_lo = std::max(se - dse, 1.0e-8);
-        const double k_hi = soil::conductivity(p, soil::suctionAtSaturation(p, se_hi));
-        const double k_lo = soil::conductivity(p, soil::suctionAtSaturation(p, se_lo));
-        prepared.celerity[j] = std::fabs(k_hi - k_lo) / std::max((se_hi - se_lo) * span, 1.0e-12);
-        prepared.psi[j] = soil::suctionAtSaturation(p, se);
-        prepared.conductivity[j] = soil::conductivity(p, prepared.psi[j]);
+        se_set[3 * j] = std::min(se + dse, 1.0);
+        se_set[3 * j + 1] = std::max(se - dse, 1.0e-8);
+        se_set[3 * j + 2] = se;
+    }
+    soil::suctionAtSaturationBatch(p, se_set.data(), 3 * m, psi_set.data());
+    for (int i = 0; i < 3 * m; ++i)
+        k_set[i] = soil::conductivity(p, psi_set[i]);
+    for (int j = 0; j < m; ++j) {
+        const double se_hi = se_set[3 * j], se_lo = se_set[3 * j + 1];
+        prepared.celerity[j] =
+            std::fabs(k_set[3 * j] - k_set[3 * j + 1]) / std::max((se_hi - se_lo) * span, 1.0e-12);
+        prepared.psi[j] = psi_set[3 * j + 2];
+        prepared.conductivity[j] = k_set[3 * j + 2];
     }
     prepared.fixed_velocity = st.forward_euler;
     if (prepared.fixed_velocity) {
@@ -558,6 +645,9 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
     ImplicitTotals totals;
     int solves = 0, iterations = 0;
     if (dz1 > 0.0) {
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+        int prof_level = -1; // the halving level that converged; -1 = none did
+#endif
         for (int level = 0; level <= kSubstepHalvings; ++level) {
             const int pieces = 1 << level;
             const double h = st.dt / static_cast<double>(pieces);
@@ -573,9 +663,19 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
                     if (level < kSubstepHalvings)
                         break;
                 }
-            if (ok)
+            if (ok) {
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+                prof_level = level;
+#endif
                 break;
+            }
         }
+#if defined(OPENSWMM_RUNOFF_PROFILE)
+        if (prof_level < 0)
+            OPENSWMM_RUNOFF_PROFILE_COUNT(sigma_column_failed);
+        else if (prof_level > 0)
+            OPENSWMM_RUNOFF_PROFILE_COUNT(sigma_substep_halved);
+#endif
     } else {
         // A collapsed column passes its top flux straight to the table: the limit of the solve
         // as its layers vanish.
@@ -595,6 +695,8 @@ static void advanceImplicitColumn(const soil::Params& p, double* theta, int m, i
     st.deficit_from_sat = (draw + draw_end) / st.dt;
     st.implicit_solves = solves + totals.solves;
     st.newton_iterations = iterations + totals.iterations;
+    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_solves, st.implicit_solves);
+    OPENSWMM_RUNOFF_PROFILE_COUNT_N(sigma_newton_iter, st.newton_iterations);
     if (st.transfers) {
         auto& r = *st.transfers;
         r.infiltration = st.f_top * st.dt;

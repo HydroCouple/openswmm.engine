@@ -303,6 +303,23 @@ struct SolverOptions2D {
     /// AUTO (default): YES for FULL_SWE / DIFFUSIVE_WAVE, NO for
     /// LOCAL_INERTIAL (which stays bit-identical to its pre-2026-09 results).
     int front_rebuild = -1; ///< -1 AUTO, 0 NO, 1 YES
+    /// [2D_OPTIONS] LAZY_SOURCE_LANDING STEP|REBUILD — when the cells outside the
+    /// flux-active set (the lazy tier) receive their held rain, evaporation and
+    /// infiltration. STEP (default): at the end of every advance, an O(cells) pass per
+    /// routing step. REBUILD: only when the active set is rebuilt (every
+    /// kRebuildEveryCycles macro cycles), at report instants and at the end of the run,
+    /// over the accumulated span; the same held rates are applied in fewer, larger
+    /// steps, so a cell's depth-dependent sinks differ slightly and inactive cells'
+    /// depths lag between landings. Host marcher only; a run with an attached common
+    /// source stage (checkpointable) keeps STEP. Track 3D, 2026-11-27.
+    int lazy_source_landing = 0; ///< 0 STEP, 1 REBUILD
+    /// [2D_OPTIONS] INFIL_MEMORY OFFER|APPLIED — what advances a cell's infiltration kernel
+    /// history. APPLIED (default since 2026-11-27): the depth the surface actually infiltrated
+    /// over the accounted span; a cell that dried mid-hold is re-advanced from its pre-refresh
+    /// snapshot by the applied depth, so its capacity memory agrees with the mass-balance
+    /// ledger. OFFER (the scheme before, kept for comparison): the held rate times the step at
+    /// each INFIL_STEP refresh, whatever the surface then delivers. Track 3C.
+    int infil_memory = 1; ///< 0 OFFER, 1 APPLIED
     /// [2D_OPTIONS] RECONSTRUCTION_ORDER 1|2 — FULL_SWE only: 1 = piecewise
     /// constant (first-order Godunov, forward Euler); 2 = MUSCL on (eta, h, u, v)
     /// with limited Green-Gauss / wet-shoreline gradients + SSP-RK2

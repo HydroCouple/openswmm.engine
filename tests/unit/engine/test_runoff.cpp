@@ -366,7 +366,7 @@ TEST(RunoffMassBalance, PondedDepthConservation) {
 TEST(RunoffParallel, OrdinaryAndGuardedHistoriesMatchEveryFrame) {
     for (const int n : {0, 127, 511, 512, 1031}) {
         for (const bool si : {false, true}) {
-            for (int kind = 0; kind < 7; ++kind) {
+            for (int kind = 0; kind < 8; ++kind) {
                 const auto serial = runoff_parallel_fixture::history(n, 1, si, kind);
                 for (const int threads : {4, 8, 0, -1}) {
                     SCOPED_TRACE(::testing::Message() << "n=" << n << " si=" << si << " kind="

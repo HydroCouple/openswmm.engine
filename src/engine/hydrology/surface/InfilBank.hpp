@@ -116,6 +116,22 @@ public:
      * infiltrated volume or a physical-store debit. Resizing/move/checkpoint may invalidate
      * elements; serialize reading and copy snapshots needed across mutation. */
     const std::vector<double>& cumulative() const noexcept { return cumulative_; }
+    /** @brief Save entry e's dynamic history and cumulative metres for commitApplied().
+     * Taken before a refresh advances the entry by its offer. Derived scratch: not part of
+     * any checkpoint; a restored bank has no snapshot until its next refresh. */
+    void snapshot(int e);
+    /** @brief True when snapshot(e) was taken since the last commitApplied(e) or clear(). */
+    bool hasSnapshot(int e) const noexcept;
+    /** @brief Re-advance entry e from its snapshot by what the surface actually took.
+     * @param e Valid bank-owned entry with a snapshot; otherwise a no-op returning 0.
+     * @param applied_m Infiltrated depth (m) the surface applied over the span.
+     * @param dt Span (s), positive.
+     * @param factors Pattern factors of the span.
+     * @return The depth (m) the kernel booked. The entry's history is restored to the
+     * snapshot and advanced once with the applied depth as its whole supply and no ponded
+     * water, so the kernel takes min(capacity, supply) and lands on the applied depth; the
+     * snapshot is consumed. */
+    double commitApplied(int e, double applied_m, double dt, Factors factors);
     /** @brief Release all method/owner/parameter/history/cumulative entries.
      * Invalidates all element borrows; no external solver/water store is reset. Safe
      * for an empty bank. Call init/setMethod before further indexed rate/owner access. */
@@ -147,6 +163,8 @@ private:
     std::vector<GreenAmptState> grnampt_;
     std::vector<CurveNumState> curvenum_;
     std::vector<double> constant_, cumulative_;
+    std::vector<double> saved_;              ///< snapshot(): 6 pack() slots + cumulative per entry
+    std::vector<unsigned char> saved_valid_; ///< snapshot() taken and not yet committed
     /** @brief Dispatch one native ft/s kernel with local pattern factors.
      * @param e Valid configured entry with compatible allocated per-method state; unchecked.
      * @param precip Finite nonnegative rainfall ft/s.

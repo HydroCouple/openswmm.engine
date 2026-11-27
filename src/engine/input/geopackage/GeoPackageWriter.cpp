@@ -393,6 +393,7 @@ static void write_options(sqlite3* db, const SimulationContext& ctx, const std::
     insert("NODE_CONTINUITY", std::to_string(static_cast<int>(opts.node_continuity)));
     insert("ANDERSON_ACCEL", std::to_string(opts.anderson_accel ? 1 : 0));
     insert("SURCHARGE_METHOD", std::to_string(opts.surcharge_method));
+    insert("RUNOFF_ODE_SOLVER", std::to_string(static_cast<int>(opts.runoff_ode_solver)));
     insert("UNSTEADY_FRICTION", std::to_string(opts.unsteady_friction)); // issue #156
     insert_d("UF_K3", opts.uf_k3);
     insert("FV_PRESSURE_CLOSURE", std::to_string(opts.fv.pressure_closure)); // issue #156

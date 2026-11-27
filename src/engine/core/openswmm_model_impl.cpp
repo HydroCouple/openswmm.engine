@@ -1152,6 +1152,7 @@ const char* const kStandardOptionKeys[] = {
     "SWEEP_START",
     "SWEEP_END",
     "INFILTRATION",
+    "RUNOFF_ODE_SOLVER",
     "ALLOW_PONDING",
     "SKIP_STEADY_STATE",
     "IGNORE_RAINFALL",
@@ -1464,6 +1465,9 @@ SWMM_ENGINE_API int swmm_options_get(SWMM_Engine engine, const char* key, char* 
         val = opt.ignore_routing ? "YES" : "NO";
     else if (k == "IGNORE_2D")
         val = opt.ignore_2d ? "YES" : "NO";
+
+    else if (k == "RUNOFF_ODE_SOLVER")
+        val = opt.runoff_ode_solver == openswmm::RunoffOdeSolver::EXACT ? "EXACT" : "LEGACY";
 
     // Routing & Hydraulics — enums + scalars.
     else if (k == "SURCHARGE_METHOD") {
@@ -2003,6 +2007,19 @@ SWMM_ENGINE_API int swmm_options_set(SWMM_Engine engine, const char* key, const 
                 opt.infiltration = openswmm::InfiltrationModel::MOD_GREEN_AMPT;
             else if (vu == "CURVE_NUMBER")
                 opt.infiltration = openswmm::InfiltrationModel::CURVE_NUMBER;
+            else
+                return SWMM_ERR_BADPARAM;
+        }
+
+        // Ponded-depth integrator — token (mirrors OptionsHandler).
+        else if (k == "RUNOFF_ODE_SOLVER") {
+            std::string vu(v);
+            for (auto& c : vu)
+                c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+            if (vu == "LEGACY")
+                opt.runoff_ode_solver = openswmm::RunoffOdeSolver::LEGACY;
+            else if (vu == "EXACT")
+                opt.runoff_ode_solver = openswmm::RunoffOdeSolver::EXACT;
             else
                 return SWMM_ERR_BADPARAM;
         }

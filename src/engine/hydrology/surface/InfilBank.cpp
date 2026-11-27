@@ -46,6 +46,8 @@ void InfilBank::clear() {
     curvenum_.clear();
     constant_.clear();
     cumulative_.clear();
+    saved_.clear();
+    saved_valid_.clear();
 }
 void InfilBank::setMethod(int e, InfilModel method, const double p[5],
                           const SimulationOptions& opts) {
@@ -82,6 +84,42 @@ double InfilBank::rateFeet(int e, double precip, double runon, double depth, dou
     cumulative_[e] += std::max(0.0, f * ucf::FT_TO_M) * dt;
     return f;
 }
+void InfilBank::snapshot(int e) {
+    const std::size_t n = methods_.size();
+    if (e < 0 || static_cast<std::size_t>(e) >= n)
+        return;
+    if (saved_.size() != 7 * n) {
+        saved_.assign(7 * n, 0.0);
+        saved_valid_.assign(n, 0);
+    }
+    const auto ue = static_cast<std::size_t>(e);
+    int model = 0;
+    pack(e, model, &saved_[7 * ue]);
+    saved_[7 * ue + 6] = ue < cumulative_.size() ? cumulative_[ue] : 0.0;
+    saved_valid_[ue] = 1;
+}
+
+bool InfilBank::hasSnapshot(int e) const noexcept {
+    return e >= 0 && static_cast<std::size_t>(e) < saved_valid_.size() &&
+           saved_valid_[static_cast<std::size_t>(e)] != 0;
+}
+
+double InfilBank::commitApplied(int e, double applied_m, double dt, Factors factors) {
+    if (!hasSnapshot(e) || dt <= 0.0)
+        return 0.0;
+    const auto ue = static_cast<std::size_t>(e);
+    saved_valid_[ue] = 0;
+    if (owners_[ue] == Owner::EXTERNAL)
+        return 0.0;
+    unpack(e, static_cast<int>(methods_[ue]), &saved_[7 * ue]);
+    if (ue < cumulative_.size())
+        cumulative_[ue] = saved_[7 * ue + 6];
+    // The applied depth as the whole supply over the span: the kernel takes
+    // min(capacity, supply) and advances its history by exactly what the surface took.
+    const double supply = std::max(0.0, applied_m) / dt;
+    return rate(e, supply, 0.0, 0.0, dt, factors) * dt;
+}
+
 double InfilBank::rate(int e, double precip, double runon, double depth, double dt,
                        Factors factors) {
     constexpr double feet_per_metre = 1.0 / ucf::FT_TO_M; // == 3.280839895013123 bit for bit

@@ -186,6 +186,24 @@ public:
     virtual void finalize() = 0;
 
     /**
+     * @brief Ask the next advance() to land the lazy tier's held sources at its end.
+     *
+     * Only the host marcher under [2D_OPTIONS] LAZY_SOURCE_LANDING REBUILD defers that landing;
+     * the router calls this before a report or final batch so the published state is current.
+     * Other solvers land every advance and ignore the request.
+     */
+    virtual void requestLazyLanding() noexcept {}
+
+    /**
+     * @brief Land the lazy tier's held sources now, up to the end of the last advance.
+     *
+     * Under LAZY_SOURCE_LANDING REBUILD the router calls this before it rewrites a held rate
+     * (the rain and evaporation refresh, the infiltration refresh), so a deferred span is
+     * always integrated with the rates that held over it. Other solvers have nothing pending.
+     */
+    virtual void landLazySources() noexcept {}
+
+    /**
      * @brief Number of internal integrator steps in the last advance() call.
      *
      * @return Number of internal substeps from the last advance, as a value copy.

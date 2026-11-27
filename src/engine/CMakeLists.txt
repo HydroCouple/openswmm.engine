@@ -186,6 +186,16 @@ else()
     message(STATUS "OpenSWMM Engine: OpenMP not found — single-threaded solver")
 endif()
 
+# ---- Runoff / infiltration / 2D subsurface event counters ----
+# core/RunoffProfile.hpp: per-subarea and per-layer counters printed on the
+# [PERF-PROCESS-COUNTS] line under OPENSWMM_PERF=1. They sit in the hot kernels,
+# so a shipping build compiles them out.
+option(OPENSWMM_RUNOFF_PROFILE "Compile the runoff / infiltration / ODE / 2D subsurface event counters (profiling builds only)" OFF)
+if(OPENSWMM_RUNOFF_PROFILE)
+    target_compile_definitions(openswmm_engine PRIVATE OPENSWMM_RUNOFF_PROFILE)
+    message(STATUS "OpenSWMM Engine: runoff profile counters compiled in")
+endif()
+
 # ---- Platform-specific DLL loading ----
 # Emscripten: dlopen() is in libc (returns NULL without -sMAIN_MODULE), no -ldl.
 if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)

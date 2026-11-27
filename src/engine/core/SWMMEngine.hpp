@@ -1494,6 +1494,12 @@ private:
     /// to Node.newLatFlow individually; adding the per-node sum rounds
     /// differently once two units drain to one node.
     std::vector<std::pair<int, double>> lid_drain_q_units_;
+    /// Per-node forced lateral inflow of this routing step (cfs), kept by the parallel pass of
+    /// assembleLateralInflows for the serial accumulation that follows it (Track 1A).
+    std::vector<double> lat_user_q_;
+    /// Per-object terms of computeFinalStorage's sums (ft³), formed in parallel and summed in
+    /// index order (Track 1A).
+    std::vector<double> final_store_terms_;
     std::vector<double> gw_q_interp_; ///< per-subcatch interpolated GW flow (cfs)
     std::vector<int> gw_q_node_;      ///< receiving node for gw_q_interp_ (-1 = skip)
     // Legacy lid_getRunoff volume accumulators, per subcatchment per runoff

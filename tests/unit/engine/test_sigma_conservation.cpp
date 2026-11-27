@@ -831,7 +831,19 @@ TEST(SigmaImplicitColumn, MovingColumnsConserveWaterAndBalanceTheirReceipts) {
                     const double replay = r.old_water[j] + r.contacts[j] + r.faces[j] -
                                           r.faces[j + 1] + r.compression[j] - r.compression[j + 1] +
                                           r.support[j] - r.support[j + 1];
-                    EXPECT_NEAR(r.new_water[j], replay, 1e-14 * (1 + std::abs(replay)));
+                    // To the roundoff of the terms summed: a column started from zero thickness
+                    // books face and compression receipts of tens of metres that cancel.
+                    const double terms = std::abs(r.old_water[j]) + std::abs(r.contacts[j]) +
+                                         std::abs(r.faces[j]) + std::abs(r.faces[j + 1]) +
+                                         std::abs(r.compression[j]) +
+                                         std::abs(r.compression[j + 1]) + std::abs(r.support[j]) +
+                                         std::abs(r.support[j + 1]);
+                    EXPECT_NEAR(r.new_water[j], replay, 1e-14 * (1 + std::abs(replay) + terms))
+                        << "faces " << r.faces[j] << " / " << r.faces[j + 1] << " compression "
+                        << r.compression[j] << " / " << r.compression[j + 1] << " support "
+                        << r.support[j] << " / " << r.support[j + 1] << " L " << st.L_old << " -> "
+                        << st.L_new << " dt " << st.dt << " solves " << st.implicit_solves
+                        << " iterations " << st.newton_iterations;
                 }
                 const double through =
                     (st.f_top - st.et_taken - st.f_bot - st.overflow_to_sat + st.deficit_from_sat) *

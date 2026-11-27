@@ -195,5 +195,17 @@ int twoDThreads(int requested, int n_triangles, std::vector<std::string>* warnin
     return nt;
 }
 
+int perObjectThreads(int option_threads, int n) noexcept {
+#if defined(SWMM_USE_OPENMP)
+    if (n < kMinObjectsPerParallelPass || omp_in_parallel())
+        return 1;
+    return option_threads > 0 ? option_threads : ompMaxThreads();
+#else
+    (void)option_threads;
+    (void)n;
+    return 1;
+#endif
+}
+
 } // namespace threadinfo
 } // namespace openswmm

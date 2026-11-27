@@ -1208,6 +1208,10 @@ static bool write2DSections(FILE* f, const SimulationContext& ctx, const std::st
         std::fprintf(f, "%-22s %d\n", "RECONSTRUCTION_ORDER", o.reconstruction_order);
     if (o.front_rebuild >= 0)
         std::fprintf(f, "%-22s %s\n", "FRONT_REBUILD", o.front_rebuild ? "YES" : "NO");
+    if (o.lazy_source_landing != 0)
+        std::fprintf(f, "%-22s %s\n", "LAZY_SOURCE_LANDING", "REBUILD");
+    if (o.infil_memory == 0)
+        std::fprintf(f, "%-22s %s\n", "INFIL_MEMORY", "OFFER"); // APPLIED is the default
     std::fprintf(f, "%-22s %.17g\n", "THETA", o.theta);
     if (o.theta_reference_step > 0.0)
         std::fprintf(f, "%-22s %.17g\n", "THETA_REFERENCE_STEP", o.theta_reference_step);
@@ -2051,6 +2055,14 @@ int writeInpFile(const SimulationContext& ctx_internal, const std::string& path,
         std::fprintf(f, "%-20s %s\n", "FLOW_UNITS", (fu >= 0 && fu <= 5) ? sFlowUnits[fu] : "CFS");
         std::fprintf(f, "%-20s %s\n", "INFILTRATION",
                      (inf >= 0 && inf <= 4) ? sInfilt[inf] : "HORTON");
+        // v6-only ponded-depth integrator: written only when changed from LEGACY, so a
+        // default model's [OPTIONS] round-trips unchanged; 5.x knows only LEGACY.
+        if (o.runoff_ode_solver == RunoffOdeSolver::EXACT) {
+            if (swmm5)
+                note("[OPTIONS] RUNOFF_ODE_SOLVER EXACT dropped (SWMM 5.x profile)");
+            else
+                std::fprintf(f, "%-20s %s\n", "RUNOFF_ODE_SOLVER", "EXACT");
+        }
         {
             const char* routing_word = (rm >= 0 && rm <= 3) ? sRouting[rm] : "DYNWAVE";
             if (swmm5 && rm == 3) { // FV has no 5.x counterpart

@@ -894,6 +894,9 @@ void DefaultReportPlugin::write_preamble(std::FILE* f, const SimulationContext& 
         if (im < 0 || im > 4)
             im = 0;
         std::fprintf(f, "\n  Infiltration Method ...... %s", InfilModelWords[im]);
+        // v6-only ponded-depth integrator, shown only when changed from the default.
+        if (opt.runoff_ode_solver == RunoffOdeSolver::EXACT)
+            std::fprintf(f, "\n  Runoff ODE Solver ........ EXACT");
     }
 
     if (ctx.n_links() > 0) {

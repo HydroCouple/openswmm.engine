@@ -586,6 +586,8 @@ static void read_options(sqlite3* db, SimulationContext& ctx, const std::string&
             ctx.options.anderson_accel = (std::stoi(val) != 0);
         else if (key == "SURCHARGE_METHOD")
             ctx.options.surcharge_method = std::stoi(val);
+        else if (key == "RUNOFF_ODE_SOLVER")
+            ctx.options.runoff_ode_solver = static_cast<RunoffOdeSolver>(std::stoi(val));
         else if (key == "UNSTEADY_FRICTION")
             ctx.options.unsteady_friction = std::stoi(val); // issue #156
         else if (key == "UF_K3")

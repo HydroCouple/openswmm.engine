@@ -183,6 +183,7 @@ static const char* const kOptionWords[] = {"FLOW_UNITS",
                                            "MINIMUM_STEP",
                                            "THREADS",
                                            "SURCHARGE_METHOD",
+                                           "RUNOFF_ODE_SOLVER",
                                            "OUTFALL_BACKFLOW_QUALITY"};
 
 /**
@@ -786,6 +787,15 @@ void handle_options(SimulationContext& ctx, const std::vector<std::string>& line
                 opt.surcharge_method = 3; // issue #156
             else if (const int m = legacyFindmatch(sv, kSurchargeWords); m >= 0)
                 opt.surcharge_method = m;
+            else
+                ctx.errors.push_back(format_error(ERR_KEYWORD, val));
+
+        } else if (key == "RUNOFF_ODE_SOLVER") {
+            const std::string sv = norm(val);
+            if (sv == "LEGACY")
+                opt.runoff_ode_solver = RunoffOdeSolver::LEGACY;
+            else if (sv == "EXACT")
+                opt.runoff_ode_solver = RunoffOdeSolver::EXACT;
             else
                 ctx.errors.push_back(format_error(ERR_KEYWORD, val));
 
