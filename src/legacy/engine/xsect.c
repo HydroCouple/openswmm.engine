@@ -82,13 +82,13 @@ double Amax[] = {1.0,    //  DUMMY
                  0.96,   //  HORIZ_ELLIPSE
                  0.96,   //  VERT_ELLIPSE
                  0.92,   //  ARCH
-                 0.96,   //  EGGSHAPED
-                 0.96,   //  HORSESHOE
-                 0.96,   //  GOTHIC
-                 0.98,   //  CATENARY
-                 0.98,   //  SEMIELLIPTICAL
-                 0.96,   //  BASKETHANDLE
-                 0.96,   //  SEMICIRCULAR
+                 0.9787, //  EGGSHAPED
+                 0.9754, //  HORSESHOE
+                 0.9801, //  GOTHIC
+                 0.9890, //  CATENARY
+                 0.9890, //  SEMIELLIPTICAL
+                 0.9816, //  BASKETHANDLE
+                 0.9752, //  SEMICIRCULAR
                  1.0,    //  IRREGULAR
                  0.96,   //  CUSTOM
                  0.9756, //  FORCE_MAIN
@@ -307,20 +307,20 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
 
     case EGGSHAPED:
         xsect->yFull = p[0] / ucf;
-        xsect->aFull = 0.5105 * xsect->yFull * xsect->yFull;
-        xsect->rFull = 0.1931 * xsect->yFull;
+        xsect->aFull = 0.51046 * xsect->yFull * xsect->yFull;
+        xsect->rFull = 0.19311 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.065 * xsect->sFull;
+        xsect->sMax = 1.06321 * xsect->sFull;
         xsect->wMax = 2. / 3. * xsect->yFull;
-        xsect->ywMax = 0.64 * xsect->yFull;
+        xsect->ywMax = 2. / 3. * xsect->yFull;
         break;
 
     case HORSESHOE:
         xsect->yFull = p[0] / ucf;
-        xsect->aFull = 0.8293 * xsect->yFull * xsect->yFull;
-        xsect->rFull = 0.2538 * xsect->yFull;
+        xsect->aFull = 0.82932 * xsect->yFull * xsect->yFull;
+        xsect->rFull = 0.25385 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.077 * xsect->sFull;
+        xsect->sMax = 1.07299 * xsect->sFull;
         xsect->wMax = 1.0 * xsect->yFull;
         xsect->ywMax = 0.5 * xsect->yFull;
         break;
@@ -330,7 +330,7 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->aFull = 0.6554 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.2269 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.065 * xsect->sFull;
+        xsect->sMax = 1.06058 * xsect->sFull;
         xsect->wMax = 0.84 * xsect->yFull;
         xsect->ywMax = 0.45 * xsect->yFull;
         break;
@@ -340,7 +340,7 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->aFull = 0.70277 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.23172 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.05 * xsect->sFull;
+        xsect->sMax = 1.05712 * xsect->sFull;
         xsect->wMax = 0.9 * xsect->yFull;
         xsect->ywMax = 0.25 * xsect->yFull;
         break;
@@ -350,7 +350,7 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->aFull = 0.785 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.242 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.045 * xsect->sFull;
+        xsect->sMax = 1.06010 * xsect->sFull;
         xsect->wMax = 1.0 * xsect->yFull;
         xsect->ywMax = 0.15 * xsect->yFull;
         break;
@@ -360,7 +360,7 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->aFull = 0.7862 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.2464 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.06078 * xsect->sFull;
+        xsect->sMax = 1.06396 * xsect->sFull;
         xsect->wMax = 0.944 * xsect->yFull;
         xsect->ywMax = 0.2 * xsect->yFull;
         break;
@@ -370,7 +370,7 @@ int xsect_setParams(TXsect* xsect, int type, double p[], double ucf) {
         xsect->aFull = 1.2697 * xsect->yFull * xsect->yFull;
         xsect->rFull = 0.2946 * xsect->yFull;
         xsect->sFull = xsect->aFull * pow(xsect->rFull, 2. / 3.);
-        xsect->sMax = 1.06637 * xsect->sFull;
+        xsect->sMax = 1.07951 * xsect->sFull;
         xsect->wMax = 1.64 * xsect->yFull;
         xsect->ywMax = 0.15 * xsect->yFull;
         break;

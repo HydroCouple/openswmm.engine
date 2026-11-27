@@ -1445,6 +1445,55 @@ add_test(
 )
 set_tests_properties(test_engine_xsect_parity PROPERTIES LABELS "unit")
 
+# Issue #27 (USEPA #160): the masonry shape tables of both engines agree with one
+# another and the egg and horseshoe with their geometry. Built like
+# test_engine_xsect_parity above: legacy xsect.c compiled in, with the stub globals.
+add_executable(test_engine_xsect_masonry_tables
+    test_xsect_masonry_tables.cpp
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/xsect.c
+    ${PROJECT_SOURCE_DIR}/src/legacy/engine/findroot.c
+    legacy_xsect_stubs.c
+)
+target_link_libraries(test_engine_xsect_masonry_tables
+    PRIVATE
+        GTest::gtest GTest::gtest_main GTest::gmock
+        $<IF:$<BOOL:${MSVC}>,openswmm_engine_internal,openswmm_engine>
+)
+target_include_directories(test_engine_xsect_masonry_tables
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src/engine
+        ${PROJECT_SOURCE_DIR}/src/legacy/engine
+        ${PROJECT_BINARY_DIR}/src/legacy/engine   # generated legacy_version.h
+)
+if(MSVC)
+    target_compile_options(test_engine_xsect_masonry_tables PRIVATE /EHsc)
+endif()
+if(OPENSWMM_FAST_XSECT_LOOKUP)
+    target_compile_definitions(test_engine_xsect_masonry_tables PRIVATE SWMM_XSECT_FAST_LOOKUP)
+endif()
+set_target_properties(test_engine_xsect_masonry_tables PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    RUNTIME_OUTPUT_DIRECTORY ${TEST_BIN_DIRECTORY}
+    INSTALL_RPATH "${LIB_ROOT}"
+)
+openswmm_stage_test_runtime_deps(test_engine_xsect_masonry_tables)
+add_test(
+    NAME    test_engine_xsect_masonry_tables
+    COMMAND $<TARGET_FILE:test_engine_xsect_masonry_tables>
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+set_tests_properties(test_engine_xsect_masonry_tables PROPERTIES LABELS "unit")
+# The generator's check mode: both engines' masonry tables, their constants and the
+# manual's Appendix F are what the script writes (about 2 s).
+find_package(Python3 QUIET COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME test_engine_xsect_masonry_tables_generated
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/gen_xsect_masonry_tables.py --check)
+    set_tests_properties(test_engine_xsect_masonry_tables_generated PROPERTIES LABELS "unit")
+endif()
+
 # HDF5 model writer (only when the format is built). Links the HDF5 headers
 # directly: the engine keeps them PRIVATE, because a consumer with its own
 # HDF5 otherwise dies in H5_term_library on foreign global state.

@@ -427,21 +427,21 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
     // --- Fixed-geometry tabulated shapes (full props from constants) ---
     case XSectShape::EGGSHAPED:
         xs.y_full = p[0] / ucf;
-        xs.a_full = 0.5105 * xs.y_full * xs.y_full;
-        xs.r_full = 0.1931 * xs.y_full;
+        xs.a_full = 0.51046 * xs.y_full * xs.y_full;
+        xs.r_full = 0.19311 * xs.y_full;
         xs.w_max = 2.0 / 3.0 * xs.y_full;
-        xs.yw_max = 0.64 * xs.y_full;
+        xs.yw_max = 2.0 / 3.0 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.065 * xs.s_full;
+        xs.s_max = 1.06321 * xs.s_full;
         return 0;
     case XSectShape::HORSESHOE:
         xs.y_full = p[0] / ucf;
-        xs.a_full = 0.8293 * xs.y_full * xs.y_full;
-        xs.r_full = 0.2538 * xs.y_full;
+        xs.a_full = 0.82932 * xs.y_full * xs.y_full;
+        xs.r_full = 0.25385 * xs.y_full;
         xs.w_max = 1.0 * xs.y_full;
         xs.yw_max = 0.5 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.077 * xs.s_full;
+        xs.s_max = 1.07299 * xs.s_full;
         return 0;
     case XSectShape::GOTHIC:
         xs.y_full = p[0] / ucf;
@@ -450,7 +450,7 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.w_max = 0.84 * xs.y_full;
         xs.yw_max = 0.45 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.065 * xs.s_full;
+        xs.s_max = 1.06058 * xs.s_full;
         return 0;
     case XSectShape::CATENARY:
         xs.y_full = p[0] / ucf;
@@ -459,7 +459,7 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.w_max = 0.9 * xs.y_full;
         xs.yw_max = 0.25 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.05 * xs.s_full;
+        xs.s_max = 1.05712 * xs.s_full;
         return 0;
     case XSectShape::SEMIELLIPTICAL:
         xs.y_full = p[0] / ucf;
@@ -468,7 +468,7 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.w_max = 1.0 * xs.y_full;
         xs.yw_max = 0.15 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.045 * xs.s_full;
+        xs.s_max = 1.06010 * xs.s_full;
         return 0;
     case XSectShape::BASKETHANDLE:
         xs.y_full = p[0] / ucf;
@@ -477,7 +477,7 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.w_max = 0.944 * xs.y_full;
         xs.yw_max = 0.2 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.06078 * xs.s_full;
+        xs.s_max = 1.06396 * xs.s_full;
         return 0;
     case XSectShape::SEMICIRCULAR:
         xs.y_full = p[0] / ucf;
@@ -486,7 +486,7 @@ int setParams(XSectParams& xs, int type, const double p[], double ucf) {
         xs.w_max = 1.64 * xs.y_full;
         xs.yw_max = 0.15 * xs.y_full;
         xs.s_full = xs.a_full * std::pow(xs.r_full, 2.0 / 3.0);
-        xs.s_max = 1.06637 * xs.s_full;
+        xs.s_max = 1.07951 * xs.s_full;
         return 0;
 
     case XSectShape::RECT_TRIANG: {

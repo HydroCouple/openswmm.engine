@@ -358,24 +358,32 @@ table using the following expression with *N* = 26:
 
 SWMM contains seven pre-defined closed conduit shapes shown in Figure
 5-5 that were used primarily in older masonry sewers built over a
-century ago. Their geometric properties have been derived from
-information and drawings found in Metcalf and Eddy (1914) and Davis
-(1952). These properties are represented using the same type of lookup
-tables discussed previously for circular cross sections (see section
-5.2.3). The number of entries *N* in each table for each shape is listed
-in Table 5-6. The full tables are provided in Appendix F. The values of
-*A*<sub>full</sub>, *R*<sub>full</sub>, and *W*<sub>max</sub> used to normalize the entries in the
-tables for each shape are listed in Table 5-7. The full section factor
-*Ψ*<sub>full</sub> used to normalize the section factor table is computed as
-\f$A_{full}R_{full}^{2/3}\f$ .
+century ago. EPA SWMM's properties were digitized from drawings and charts
+in Metcalf and Eddy (1914) and Davis (1952), and the tables of one shape did
+not agree with one another: the area table was not the integral of the width
+table. OpenSWMM derives every table of a shape from one description of its
+geometry (`scripts/gen_xsect_masonry_tables.py`). The egg and horseshoe
+sections have exact circular-arc constructions, which reproduce EPA SWMM's
+full-section constants to four digits, and their tables and constants come
+from that geometry (the egg's maximum width lies at 2/3 of its height). The
+other five shapes keep EPA SWMM's width tables and full-section constants,
+and their remaining tables are derived from the width table. These
+properties are represented using the same type of lookup tables discussed
+previously for circular cross sections (see section 5.2.3). The number of
+entries *N* in each table for each shape is listed in Table 5-6. The full
+tables are provided in Appendix F. The values of *A*<sub>full</sub>,
+*R*<sub>full</sub>, and *W*<sub>max</sub> used to normalize the entries in the tables for
+each shape are listed in Table 5-7. The full section factor *Ψ*<sub>full</sub> used
+to normalize the section factor table is computed as \f$A_{full}R_{full}^{2/3}\f$ ;
+*Ψ*<sub>max</sub> is the largest value of the regenerated section factor table.
 
 **Table 5-6 Number of entries in geometric property tables for masonry sewer shapes**
 
 | Shape | *A*<sub>tbl</sub> | *R*<sub>tbl</sub> | *W*<sub>tbl</sub> | *Y*<sub>tbl</sub> | *Ψ*<sub>tbl</sub> |
 |-------|-------------------|-------------------|-------------------|-------------------|-------------------|
-| Basket Handle | 26 | 26 | 26 | 51 | 51 |
-| Egg | 26 | 26 | 26 | 51 | 51 |
-| Horseshoe | 26 | 26 | 26 | 51 | 51 |
+| Basket Handle | 51 | 51 | 26 | 51 | 51 |
+| Egg | 51 | 51 | 51 | 51 | 51 |
+| Horseshoe | 51 | 51 | 51 | 51 | 51 |
 | Catenary | — | — | 21 | 51 | 51 |
 | Gothic | — | — | 21 | 51 | 51 |
 | Semi-Circular | — | — | 21 | 51 | 51 |
@@ -385,13 +393,13 @@ tables for each shape are listed in Table 5-7. The full section factor
 
 | Shape | *A*<sub>full</sub> | *R*<sub>full</sub> | *W*<sub>max</sub> | *Ψ*<sub>max</sub> |
 |-------|-------------------|-------------------|-------------------|-------------------|
-| Basket Handle | \f[0.7862Y_{full}^{2}\f] | \f[0.2464Y_{full}\f] | \f[0.944Y_{full}\f] | \f[1.06078\Psi_{full}\f] |
-| Egg | \f[0.5105Y_{full}^{2}\f] | \f[0.1931Y_{full}\f] | \f[0.667Y_{full}\f] | \f[1.065\Psi_{full}\f] |
-| Horseshoe | \f[0.8293Y_{full}^{2}\f] | \f[0.2538Y_{full}\f] | \f[Y_{full}\f] | \f[1.077\Psi_{full}\f] |
-| Catenary | \f[0.70277Y_{full}^{2}\f] | \f[0.23172Y_{full}\f] | \f[0.9Y_{full}\f] | \f[1.05\Psi_{full}\f] |
-| Gothic | \f[0.6554Y_{full}^{2}\f] | \f[0.2269Y_{full}\f] | \f[0.84Y_{full}\f] | \f[1.065\Psi_{full}\f] |
-| Semi-Circular | \f[1.2697Y_{full}^{2}\f] | \f[0.2946Y_{full}\f] | \f[1.64Y_{full}\f] | \f[1.06637\Psi_{full}\f] |
-| Semi-Elliptical | \f[0.785Y_{full}^{2}\f] | \f[0.242Y_{full}\f] | \f[Y_{full}\f] | \f[1.045\Psi_{full}\f] |
+| Basket Handle | \f[0.7862Y_{full}^{2}\f] | \f[0.2464Y_{full}\f] | \f[0.944Y_{full}\f] | \f[1.06396\Psi_{full}\f] |
+| Egg | \f[0.51046Y_{full}^{2}\f] | \f[0.19311Y_{full}\f] | \f[0.66667Y_{full}\f] | \f[1.06321\Psi_{full}\f] |
+| Horseshoe | \f[0.82932Y_{full}^{2}\f] | \f[0.25385Y_{full}\f] | \f[Y_{full}\f] | \f[1.07299\Psi_{full}\f] |
+| Catenary | \f[0.70277Y_{full}^{2}\f] | \f[0.23172Y_{full}\f] | \f[0.9Y_{full}\f] | \f[1.05712\Psi_{full}\f] |
+| Gothic | \f[0.6554Y_{full}^{2}\f] | \f[0.2269Y_{full}\f] | \f[0.84Y_{full}\f] | \f[1.06058\Psi_{full}\f] |
+| Semi-Circular | \f[1.2697Y_{full}^{2}\f] | \f[0.2946Y_{full}\f] | \f[1.64Y_{full}\f] | \f[1.07951\Psi_{full}\f] |
+| Semi-Elliptical | \f[0.785Y_{full}^{2}\f] | \f[0.242Y_{full}\f] | \f[Y_{full}\f] | \f[1.06010\Psi_{full}\f] |
 
 The tables are used in the same manner as the ones for a circular shape
 to directly evaluate *A(Y), W(Y), R(Y), Y(A), Ψ(A),* and *Ψ'(A).* For
