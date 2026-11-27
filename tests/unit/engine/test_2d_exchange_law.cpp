@@ -197,8 +197,10 @@ TEST(ExchangeLaw, ContinuousWithContinuousSlopeAcrossRegimeBoundaries) {
         };
         for (double hs : {0.03, 0.12, 0.3}) {
             const double h2 = kZ + hs;
-            expect_c1("sewer head at the crest (free/submerged)", h2, kZ, 1);
-            expect_c1("submergence band edge", h2, kZ + 0.1 * hs, 1);
+            expect_c1("sewer head at the crest (drowned from here up)", h2, kZ, 1);
+            expect_c1("band edge (free from here down)", h2, kZ - p.c.h_eps, 1);
+            expect_c1("clip edge (the plain submerged form from here up)", h2,
+                      kZ + 0.25 * p.c.h_eps, 1);
             expect_c1("surface head over a free sewer", h2, kZ - 0.3, 2);
         }
         for (double hp : {0.05, 0.3}) {
@@ -215,6 +217,53 @@ TEST(ExchangeLaw, ContinuousWithContinuousSlopeAcrossRegimeBoundaries) {
         ASSERT_GT(kink_coarse, 1e-3) << p.name;
         EXPECT_GT(std::fabs(kf.slope_right - kf.slope_left), 0.5 * kink_coarse)
             << p.name << ": the slope-gap test cannot see a kink";
+    }
+}
+
+// A manhole full to its rim passes no free nappe: the weir is drowned once the
+// sewer head reaches the crest and free once it stands ε below it, with the
+// drain falling monotonically across the band and the plain submerged form
+// from ε/4 above the crest. Rubinato et al. (2017) measured their h_p = Z_crest
+// row as a submerged weir, a third of the free rate; with the band above the
+// crest the law gave the free rate there.
+TEST(ExchangeLaw, DrownsTheWeirAtTheCrest) {
+    const auto g = manhole();
+    const Coefficients c = presets()[1].c; // RUBINATO2017: C_sw is a sixth of 2/3 C_w
+    ASSERT_LT(c.c_sw, 0.2 * (2.0 / 3.0) * c.c_w);
+    const double s2g = std::sqrt(2.0 * openswmm::constants::GRAVITY_SI);
+    // The law blends its weir and orifice forms through the p-norm minimum; the expectations
+    // go through the same blend so the test reads the regime placement, not the blend.
+    auto blend = [](double weir, double orif) {
+        double ww = 0.0, wo = 0.0;
+        return softmin(weir, orif, ww, wo);
+    };
+    for (double hs : {0.03, 0.12, 0.3}) {
+        const double h2 = kZ + hs;
+        const double e = c.h_eps;
+        const double orif_free = c.c_oi * g.a_orif * s2g * phi(hs, e);
+        const double weir_free = 2.0 / 3.0 * c.c_w * g.l_weir * s2g * hs * phi(hs, e);
+        const double weir_drowned = c.c_sw * g.l_weir * s2g * hs * phi(hs, e);
+        ASSERT_LT(weir_drowned, 0.2 * weir_free) << "hs=" << hs << ": the forms must differ";
+        const double free = blend(weir_free, orif_free);
+        const double drowned =
+            blend(weir_drowned, orif_free); // the orifice forms meet at the crest
+        ASSERT_LT(drowned, 0.5 * free) << "hs=" << hs << ": the law must tell the regimes apart";
+        EXPECT_NEAR(Q(g, c, h2, kZ), drowned, 1e-12 * drowned) << "hs=" << hs << ": at the crest";
+        const double up = 0.25 * e; // the C1 clip's width above the crest
+        EXPECT_NEAR(Q(g, c, h2, kZ + up),
+                    blend(c.c_sw * g.l_weir * s2g * hs * phi(hs - up, e),
+                          c.c_oi * g.a_orif * s2g * phi(hs - up, e)),
+                    1e-12 * drowned)
+            << "hs=" << hs << ": from eps/4 above the crest the plain submerged forms";
+        EXPECT_NEAR(Q(g, c, h2, kZ - e), free, 1e-12 * free)
+            << "hs=" << hs << ": eps below the crest the free forms alone";
+        EXPECT_NEAR(Q(g, c, h2, kZ - 3 * e), free, 1e-12 * free) << "hs=" << hs << ": free below";
+        double last = Q(g, c, h2, kZ - e);
+        for (int i = 1; i <= 20; ++i) {
+            const double q = Q(g, c, h2, kZ - e + 0.1 * e * i);
+            EXPECT_LE(q, last * (1 + 1e-12)) << "hs=" << hs << ": not monotone at step " << i;
+            last = q;
+        }
     }
 }
 

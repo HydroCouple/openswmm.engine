@@ -1847,12 +1847,17 @@ fn weirOrifice(k: u32, h2: f32, h1: f32) -> f32 {
   if (h2 > h1) {
     let hs = h2 - z;
     if (!(hs > 0.0)) { return 0.0; }
-    let dh = h2 - h1;
-    var s = 0.0; if (h1 > z) { s = smooth01((h1 - z) / (0.1 * hs)); }
+    // Drowned at the crest, free eps below it; the submerged forms see the crest as their
+    // downstream level up to the crest and ease onto the sewer head over the eps/4 above it.
+    let s = smooth01(1.0 + (h1 - z) / eps);
+    let cw = 0.25 * eps;
+    var x = h1 - z; var clip = 0.0;
+    if (x >= cw) { clip = x; } else if (x > 0.0) { clip = x * smooth01(x / cw); }
+    let dhs = hs - clip;
     let weirFree = (2.0 / 3.0) * cpG(5u, k) * lw * s2g * hs * phiReg(hs, eps);
-    let weirSub = cpG(6u, k) * lw * s2g * hs * phiReg(dh, eps);
+    let weirSub = cpG(6u, k) * lw * s2g * hs * phiReg(dhs, eps);
     let orifFree = cpG(7u, k) * ao * s2g * phiReg(hs, eps);
-    let orifSub = cpG(7u, k) * ao * s2g * phiReg(dh, eps);
+    let orifSub = cpG(7u, k) * ao * s2g * phiReg(dhs, eps);
     return softmin2((1.0 - s) * weirFree + s * weirSub, (1.0 - s) * orifFree + s * orifSub);
   }
   if (h1 > h2 && h1 > z) {

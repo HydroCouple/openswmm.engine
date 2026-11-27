@@ -89,7 +89,11 @@ when any row is not steady. Since 27 November the decks also author
 `H_EPS=0.0033333` (0.02/6 m), the regularization head of the law's root at
 the rig scale that the law-only test has always used: the S2 rows rise by
 1.22 to 1.30 (S2_2 to -0.164 L/s) and the S1 rows by about a tenth, S3 and S4
-do not move. The other tests run 300 s.
+do not move. Also since 27 November the law drowns the weir once the sewer head
+reaches the crest (the blend band sits below the crest, see the hydraulics
+manual), so S2_1, whose sewer head is at the crest, drains at -0.154 L/s
+(-36 %) instead of the free-weir 0.75 L/s (+212 %); it is the only row that
+moves. The other tests run 300 s.
 
 Review report and proposed publication text: `docs/validation/rubinato2017/`.
 The original junction representation is retained as evidence of its large

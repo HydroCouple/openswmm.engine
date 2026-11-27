@@ -19,11 +19,20 @@
  *            submerged weir   Qs =   C_sw L_w √(2g) h_s φ(h2 − h1)      (h1 > z)
  *            orifice          free Of = C_oi A_o √(2g) φ(h_s), submerged
  *                             Os = C_oi A_o √(2g) φ(h2 − h1)
- *          The free and submerged forms blend over the submergence band
- *          σ = (h1 − z)/h_s ∈ [0, σ_band] with the Hermite smoothstep, so the
- *          law is C¹ across h1 = z whatever C_sw is (Rubinato et al. 2017
- *          give C_sw per regime; with C_sw = ⅔ C_w the two weir forms already
- *          agree at h1 = z). The weir and the orifice then combine through
+ *          The free and submerged forms blend over the band of sewer heads
+ *          h1 ∈ [z − ε, z] with the Hermite smoothstep, ε the regularization
+ *          head below: the weir is drowned once the sewer head reaches the
+ *          crest, since a manhole full to its rim passes no free nappe
+ *          (Rubinato et al. 2017 measured their h_p = Z_crest row as a
+ *          submerged weir, a third of the free rate), and it is free once the
+ *          sewer head stands ε below the crest. Up to the crest the submerged
+ *          forms take the crest as their downstream level, h2 − z, and over
+ *          the ε/4 above it they ease onto the sewer head through the C¹ clip
+ *          c(x) = x·S(4x/ε) of x = h1 − z, so Q never rises with the sewer
+ *          head, never falls with the surface head, and is C¹ at the crest
+ *          and at both band edges whatever C_sw is (the paper gives C_sw per
+ *          regime; with C_sw = ⅔ C_w the two weir forms agree at h1 = z).
+ *          The weir and the orifice then combine through
  *          the p-norm minimum (the limiting control governs):
  *            Q = (Qw^−p + Qo^−p)^(−1/p),  p = 16  (≤ min, 4.3 % under at Qw = Qo)
  *
@@ -128,6 +137,39 @@ OPENSWMM_EXCHANGE_HD double smoothstep(double t) {
 }
 
 /**
+ * @brief C¹ clip of x at zero from below: 0 for x ≤ 0, x·smoothstep(x/eps) over (0, eps), x beyond.
+ *
+ * @param[in] x Finite head above the crest, m.
+ * @param[in] eps Strictly positive clip width, m.
+ * @return Nondecreasing value in [0, x], with zero slope at 0 and unit slope from eps on.
+ * @note Pure host/device calculation with no retained state.
+ */
+OPENSWMM_EXCHANGE_HD double softclip(double x, double eps) {
+    if (!(x > 0.0))
+        return 0.0;
+    if (x >= eps)
+        return x;
+    return x * smoothstep(x / eps);
+}
+
+/**
+ * @brief Slope of softclip: 0 for x ≤ 0, smoothstep(u) + 3u²(1 − u)·2 for u = x/eps in (0, 1), 1 beyond.
+ *
+ * @param[in] x Finite head above the crest, m.
+ * @param[in] eps Strictly positive clip width, m.
+ * @return d(softclip)/dx in [0, 1.5].
+ * @note Pure host/device calculation with no retained state.
+ */
+OPENSWMM_EXCHANGE_HD double dsoftclip(double x, double eps) {
+    if (!(x > 0.0))
+        return 0.0;
+    if (x >= eps)
+        return 1.0;
+    const double u = x / eps;
+    return smoothstep(u) + 6.0 * u * u * (1.0 - u);
+}
+
+/**
  * @brief p-norm minimum, p = 16: (a^−16 + b^−16)^(−1/16) for a, b > 0, else 0. Evaluated as min
  * / (1 + r^16)^(1/16), r = min/max ∈ (0, 1], with four square roots — no overflow, no pow.
  * Weights ∂Q/∂a, ∂Q/∂b go to wa, wb.
@@ -207,21 +249,25 @@ OPENSWMM_EXCHANGE_HD Result exchange(const Geometry& geo, const Coefficients& c,
         const double hs = h2 - z;
         if (!(hs > 0.0))
             return r;
-        const double dh = h2 - h1;
-        const double S = (h1 > z) ? smoothstep((h1 - z) / (kSigmaBand * hs)) : 0.0;
+        // Drowned at the crest, free ε below it; up to the crest the submerged forms see the
+        // crest as their downstream level and over the ε above it ease onto the sewer head.
+        const double S = smoothstep(1.0 + (h1 - z) / eps);
+        const double clip = 0.25 * eps;                  // a numerical smoothing, kept narrow
+        const double dh_s = hs - softclip(h1 - z, clip); // ≥ h2 − h1 > 0
 
         const double weir_free = (2.0 / 3.0) * c.c_w * geo.l_weir * s2g * hs * phi(hs, eps);
-        const double weir_sub = c.c_sw * geo.l_weir * s2g * hs * phi(dh, eps);
+        const double weir_sub = c.c_sw * geo.l_weir * s2g * hs * phi(dh_s, eps);
         const double orif_free = c.c_oi * geo.a_orif * s2g * phi(hs, eps);
-        const double orif_sub = c.c_oi * geo.a_orif * s2g * phi(dh, eps);
+        const double orif_sub = c.c_oi * geo.a_orif * s2g * phi(dh_s, eps);
         const double qw = (1.0 - S) * weir_free + S * weir_sub;
         const double qo = (1.0 - S) * orif_free + S * orif_sub;
 
         double ww = 0.0, wo = 0.0;
         r.q = softmin(qw, qo, ww, wo);
-        // Only the submerged forms depend on h1.
-        const double dqw = S * c.c_sw * geo.l_weir * s2g * hs * dphi(dh, eps);
-        const double dqo = S * c.c_oi * geo.a_orif * s2g * dphi(dh, eps);
+        // Only the submerged forms depend on h1, and only above the crest.
+        const double dc = dsoftclip(h1 - z, clip);
+        const double dqw = S * c.c_sw * geo.l_weir * s2g * hs * dphi(dh_s, eps) * dc;
+        const double dqo = S * c.c_oi * geo.a_orif * s2g * dphi(dh_s, eps) * dc;
         r.g = ww * dqw + wo * dqo;
         return r;
     }

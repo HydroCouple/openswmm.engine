@@ -1978,7 +1978,17 @@ surface depth hs = max(h2-z,0), crest perimeter L and opening area A:
 - Outward flow uses an orifice rate with coefficient Coo and blends the
   dry-surface head h1-z into the wet-surface difference h1-h2.
 
-The free/submerged transition is smoothed over a submergence ratio of 0.1.
+The free/submerged transition is smoothed over the band of sewer heads from
+ε below the crest to the crest, ε the regularization head below (`H_EPS`): a
+manhole full to its rim passes no free nappe, so the weir is drowned once the
+sewer head reaches the crest (Rubinato et al. measured their h_p = Z_crest row
+as a submerged weir, a third of the free rate) and free once that head stands
+ε lower. Up to the crest the submerged forms take the crest as their
+downstream level, and over the ε/4 above it they ease onto the sewer head
+through a C¹ clip, so the drain never rises with the sewer head nor falls with
+the surface head. Before 27 November 2026 the band sat above the crest, over
+a tenth of the surface depth, and a sewer head at the crest drained at the
+free rate.
 The regularised root phi equals sqrt(x) above its head threshold and is
 quadratic below, with a finite derivative at zero. The threshold is 0.02 m
 unless a node authors `H_EPS` (a length in project units). That is a

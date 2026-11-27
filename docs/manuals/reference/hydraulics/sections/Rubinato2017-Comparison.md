@@ -258,11 +258,16 @@ paper's equation at the model's heads. The S1 rows rise too, from +4.4 to
 knee at 8 to 11 mm, and the paper's free-weir equation at the measured heads
 is itself +8.3 to +17.7%, so the earlier S1 fit was two biases cancelling.
 S3 and S4 are unchanged to four decimals. S2_1, with the sewer head at the
-crest, is still the free-weir form in the routed law (+212%); the paper
-classified that row as submerged.
+crest, was still the free-weir form in the routed law (+212%), where the
+paper classified that row as submerged: the free-to-submerged blend ran
+from the crest to a tenth of the surface depth above it. A manhole full to
+its rim passes no free nappe, so since 27 November the blend runs from the
+regularization head below the crest to the crest and the weir is drowned at
+the crest (§9.7.1); S2_1 then drains at -0.154 L/s (-36.0%), the same bias
+as the other S2 rows, and no other row moves.
 
 Over 300-900 s the shaft bias \f$100(|Q_{model}|/Q_e-1)\f$ is +15.1 to
-+26.0% for S1, -39.9 to +212.2% for S2, -6.5 to -0.2% for S3 and +6.5 to
++26.0% for S1, -39.9 to -34.5% for S2, -6.5 to -0.2% for S3 and +6.5 to
 +16.2% for S4. In S4_6 the settled rate is set by the head-equalization
 cap, not by the exchange equation alone: with `COUPLING_EQUALIZE NO` the
 uncorrected engine gave 6.76 L/s against a measured 3.82 L/s. The
