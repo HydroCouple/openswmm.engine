@@ -394,6 +394,9 @@ if(TARGET OpenMP::OpenMP_CXX)
     target_link_libraries(test_engine_snow PRIVATE OpenMP::OpenMP_CXX)
     target_compile_definitions(test_engine_snow PRIVATE SWMM_USE_OPENMP)
 endif()
+# RUNOFF_ODE_SOLVER EXACT (Track 1C): the exact ponded-depth step against a tight reference,
+# the drain-through branch, and the option through the input file and the C API.
+add_gtest_unit(test_engine_runoff_ode_exact test_runoff_ode_exact.cpp)
 add_gtest_unit(test_engine_subcatch_scale_factors test_subcatch_scale_factors.cpp)
 
 # Issue #158 — CUMULATIVE rain-gage format. The intensity is the rise since the

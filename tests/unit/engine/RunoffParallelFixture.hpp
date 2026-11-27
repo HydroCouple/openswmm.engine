@@ -22,7 +22,7 @@ struct Case {
     std::vector<int> callbacks;
     int kind;
     // kind: ordinary, owner map, nested, configured inactive snow,
-    // completed forcing, declining boundary, throwing boundary.
+    // completed forcing, declining boundary, throwing boundary, exact ODE solver.
     Case(int n, int threads, bool si, int mode = 0) : kind(mode) {
         ctx.options.flow_units = si ? FlowUnits::CMS : FlowUnits::CFS;
         ctx.options.num_threads = threads;
@@ -30,6 +30,8 @@ struct Case {
         ctx.options.evap_dry_only = true;
         if (mode == 3)
             ctx.snowpacks.plowable.resize(1);
+        if (mode == 7)
+            ctx.options.runoff_ode_solver = RunoffOdeSolver::EXACT;
         for (int i = 0; i < n; ++i)
             ctx.subcatch_names.add("R" + std::to_string(i));
         ctx.subcatches.resize(n);
@@ -116,9 +118,9 @@ struct Case {
             return false;
         };
         const auto call = [&] {
-            solver.execute(ctx, dt, 2e-7, .9, .85, step % 4, kind >= 5 ? &boundary : nullptr,
-                           kind == 4 ? &completed : nullptr, nullptr,
-                           kind == 1 ? &owners : nullptr);
+            solver.execute(
+                ctx, dt, 2e-7, .9, .85, step % 4, (kind == 5 || kind == 6) ? &boundary : nullptr,
+                kind == 4 ? &completed : nullptr, nullptr, kind == 1 ? &owners : nullptr);
         };
 #ifdef SWMM_USE_OPENMP
         if (kind == 2) {

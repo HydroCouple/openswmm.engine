@@ -227,6 +227,8 @@ b. Use a standard fifth-order Runge-Kutta integration routine with adaptive step
 
 c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*<sup>5/3</sup> where *α* and *d_x* are defined as above.
 
+With the option `RUNOFF_ODE_SOLVER EXACT`, steps b and c use the equation's exact solution instead of the Runge-Kutta routine. Because *i_x*, *α* and *d_s* are constant over the step, scaling the excess depth by the equilibrium value *x_e* = (|*i_x*|/*α*)<sup>3/5</sup> and time by *x_e*/|*i_x*| turns Equation 3-5 into *du*/*dτ* = ±1 − *u*<sup>5/3</sup>, which has one universal solution per sign; the engine tabulates those solutions once and evaluates each step as two table lookups, with the outflow *q* following from the slope. The result is within about 10<sup>-10</sup> of the exact solution at roughly a fifth of the Runge-Kutta cost; the Runge-Kutta routine at its tolerance of 10<sup>-4</sup> differs from the exact solution by about 10<sup>-4</sup> relative, which is also the difference between the two options' results. The default, `LEGACY`, keeps the Runge-Kutta routine and reproduces SWMM 5 bit for bit.
+
 Recall that the depression storage *d_s* can have different user-supplied values for subareas A1 (pervious) and A2 (impervious) while it is zero by definition for subarea A3. Also note that initially at time zero the ponded depth *d* on each subarea of each subcatchment is zero.
 
 

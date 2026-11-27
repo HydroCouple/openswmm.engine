@@ -118,6 +118,10 @@ struct RunoffSoA {
     // Per-subarea SoA: alpha = runoff coefficient
     std::vector<double> alpha_imperv; ///< Alpha for impervious subareas
     std::vector<double> alpha_perv;   ///< Alpha for pervious subarea
+    /// alpha^(-3/5) per subarea for RUNOFF_ODE_SOLVER EXACT: the equilibrium excess depth is
+    /// |net inflow|^(3/5) times this. 0 where alpha is 0. Unused by LEGACY.
+    std::vector<double> alpha_imperv_scale;
+    std::vector<double> alpha_perv_scale;
 
     // Per-subarea SoA: depression storage (ft)
     std::vector<double> ds_imperv; ///< Depression storage for IMPERV1
