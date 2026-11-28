@@ -714,18 +714,22 @@ OPENSWMM_SOURCE_INLINE bool ExplicitInertialSolver::prepareCellSources(int i, do
         donor_water = std::min(available, std::max(0., rk_stage_volume_[i] - exported));
     }
     const double scale = requested > donor_water && requested > 0.0 ? donor_water / requested : 1.0;
-    // Proportional sharing gives all held sinks the same satisfaction ratio.
+    // Proportional sharing gives all held sinks the same satisfaction ratio. The aquifer
+    // accepts water only for the cells it covers; a cell running its own infiltration kernel
+    // beside it keeps the kernel's intake (the aquifer refuses uncovered cells, which left such
+    // cells unable to infiltrate at all).
+    const bool aquifer_cell = gw_ && gw_->covers(i);
     const double infil =
-        gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale,
-                                             state_->runtime_forcings.get(3, i) != nullptr)
-            : requested_infil * scale;
+        aquifer_cell ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale,
+                                                      state_->runtime_forcings.get(3, i) != nullptr)
+                     : requested_infil * scale;
     const double evap = requested_evap * scale;
     if (rk_transport_stage_ && state_->heat.enabled)
         state_->heat.evaporated_m3[i] += evap;
     if (gw_)
         gw_->bookSurfaceEt(i, dt, evap_demand, evap);
     const double out = requested_out * scale;
-    if (gw_ && gw_->heat().active() && state_->transport.temp_row < 0) {
+    if (aquifer_cell && gw_->heat().active() && state_->transport.temp_row < 0) {
         // Without a surface temperature state, surface water is an external
         // prescribed-temperature reservoir. Use the existing rainfall/source
         // temperature rather than inventing zero-degree infiltration. Return

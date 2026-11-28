@@ -2441,7 +2441,9 @@ void SubsurfaceSolver::publishCellInfiltration(int i, SurfaceStateData& surf, do
     state_.infil_capacity[u] = rate;
     state_.infil_refresh[u] = time;
     state_.infil_interval[u] = interval;
-    if (u < surf.infil_rate.size())
+    // Only the cells this aquifer covers take its rate: a cell that runs its own
+    // infiltration kernel keeps the rate the kernel refresh just published.
+    if (covers(i) && u < surf.infil_rate.size())
         surf.infil_rate[u] = rate;
 }
 
