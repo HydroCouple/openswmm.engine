@@ -1813,6 +1813,11 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
               .01);
     const double centroid_distance =
         std::hypot(mesh.tri_cx[0] - mesh.tri_cx[1], mesh.tri_cy[0] - mesh.tri_cy[1]);
+    // The Darcy flux and the dispersive flux take the face-normal gradient arm (the chord's
+    // projection on the face normal, 2026-11-26): on this skewed pair the centroid chord itself
+    // would over-estimate both gradients by chord / (chord . n).
+    const double gradient_arm = 1.0 / edges.inv_dx_normal[0];
+    EXPECT_LT(gradient_arm, centroid_distance);
     const double head_left = gw.state().z_bed[0] + gw.state().hg[0];
     const double head_right = gw.state().z_bed[1] + gw.state().hg[1];
     ASSERT_GT(head_left, head_right);
@@ -1821,8 +1826,8 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
     constexpr double dt = .01;
     gw.state().dt_cell[0] = gw.state().dt_cell[1] = dt;
     gw.assignTiers(dt, 1);
-    const double expected_volume = conductivity * gw.state().hg[0] * edges.xi[0] /
-                                   centroid_distance * (head_left - head_right) * dt;
+    const double expected_volume = conductivity * gw.state().hg[0] * edges.xi[0] / gradient_arm *
+                                   (head_left - head_right) * dt;
     const double initial_water = gw.state().storage(), initial_energy = energy(gw.heat());
     gw.fireGwFaces(0, dt);
     EXPECT_NEAR(-gw.state().eacc_L[0], expected_volume, 1e-12);
@@ -1831,7 +1836,7 @@ TEST(GroundHeat, SkewedHeterogeneousFaceCarriesAdvectionAndDispersiveHeatConserv
     const double alpha = .5 * (tr.alpha_L[0] + tr.alpha_L[1]);
     const double expected_temperature_volume =
         expected_volume * temp_left +
-        alpha * expected_volume / centroid_distance * (temp_left - temp_right);
+        alpha * expected_volume / gradient_arm * (temp_left - temp_right);
     const std::size_t mass_index = gwPacketIndex(tr, tr.temp_row, 0, std::size_t(edges.ne));
     EXPECT_NEAR(-tr.sacc_L[mass_index], expected_temperature_volume, 1e-12);
     gw.fireGwCells(0, dt, router.state(), dt);
