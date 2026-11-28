@@ -17,11 +17,11 @@ name: Native assurance
 # baseline is reviewed; fuzz gates from the start, because a crash on an
 # input file is a defect whatever the baseline.
 
+# Nightly and manual only, to keep these long jobs off every pull request.
+# GitHub runs scheduled and workflow_dispatch workflows from the copy of this
+# file on the repository's default branch, so neither trigger fires until the
+# file is there.
 on:
-  pull_request:
-    branches: [swmm6_rel]
-    paths: ['src/**', 'include/**', 'tests/**', 'CMakeLists.txt', 'cmake/**',
-            '.github/workflows/native_assurance.yml']
   schedule:
     - cron: '0 5 * * *'
   workflow_dispatch:
@@ -84,6 +84,9 @@ jobs:
           --output-on-failure
           -E "^(test_engine_checkpoint|test_engine_2d_exchange_rubinato_model)$"
 
+  # Possibly droppable: coverage reports which lines the unit tests reach but
+  # gates nothing and finds no bugs by itself (report-only below). Keep it only
+  # if someone reads the numbers; deleting this job does not affect tsan/fuzz.
   coverage:
     name: Coverage
     runs-on: ubuntu-24.04
@@ -178,7 +181,7 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-          SECONDS_PER_TARGET: ${{ github.event.inputs.fuzz_seconds || (github.event_name == 'pull_request' && '300') || '1800' }}
+          SECONDS_PER_TARGET: ${{ github.event.inputs.fuzz_seconds || '1800' }}
         run: >-
           build/fuzz/tests/fuzz/fuzz_inp_open fuzz/corpus fuzz/seeds
           -max_total_time="$SECONDS_PER_TARGET" -timeout=20 -rss_limit_mb=4096
