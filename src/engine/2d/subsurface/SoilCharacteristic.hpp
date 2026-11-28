@@ -285,6 +285,17 @@ double rechargeQ0(const Params& p, double L, double hu) noexcept;
 double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept;
 
 /**
+ * @brief The recharge law's rate `C = ∂q₀/∂hᵤ` (1/s): the relaxation rate of the closed-form
+ * column, shared by rechargeQ0() and rechargeQ0AtLength().
+ * @param[in] p Validated retention/conductivity parameters in SI.
+ * @param[in] L Column thickness, m; the rate uses `max(L, kRechargeLengthFloor)` as both laws do.
+ * @return Gardner `Ks / (L (1 − e^{−αL}) (θ_s − θ_r))`, other laws `K̄(L/2) / (hᵤ*(L) (θ_s − θ_r))`;
+ * zero for a collapsed column or a nonfinite rate. The closed form is linear in `hᵤ`, so this is
+ * exact, not a tangent.
+ */
+double rechargeRate(const Params& p, double L) noexcept;
+
+/**
  * @brief The ENSLAVED reduction: `hᵤ` algebraic in `h_g` — the storage at which `rechargeQ0`
  * vanishes. For Gardner this is eq. 39.
  *

@@ -1377,8 +1377,16 @@ std::string CommonSourceStage::advance(double start, double end) {
         addWater(mesh_evap_, m.evap, ledger_roundoff_[1]);
         auto& tr = surface_->transport;
         for (int p = 0; p < ntransport; ++p) {
-            const double taken = mesh_mass[mesh_index[m.cell]][p];
-            tr.cell_mass[tr.idx(p, m.cell)] = m.mass[p] - taken;
+            double taken = mesh_mass[mesh_index[m.cell]][p];
+            double left = m.mass[p] - taken;
+            // The mass that leaves with the last of the water can exceed the cell's by
+            // roundoff (a few 1e-18); the water above is clamped the same way. A real
+            // over-draw stays negative for the checkpoint validator to refuse.
+            if (left < 0 && left > -1e-12 * std::max(m.mass[p], taken)) {
+                taken = m.mass[p];
+                left = 0;
+            }
+            tr.cell_mass[tr.idx(p, m.cell)] = left;
             tr.gained_rainfall[p] += m.rain_mass[p];
             tr.lost_infiltration[p] += taken;
             tr.gained_exfiltration[p] += mesh_return_mass[m.cell][p];

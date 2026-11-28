@@ -2723,8 +2723,13 @@ TEST(EngineCheckpoint, MeshThermalRejectedIntakeRefundConservesEnergyAcrossLtsSo
                                 << " cell tiers=" << int(gw.state().tier[0]) << ","
                                 << int(gw.state().tier[1]);
     ASSERT_GT(returned_temperature_volume, 0);
-    EXPECT_NEAR(refund_volume, cell0_intake_volume, 1e-12);
-    EXPECT_NEAR(refund_temperature_volume, cell0_temperature_volume, 1e-12);
+    // The closed-form column's exact relaxation step (2026-11-27) lets a sliver of the
+    // intake (~1e-8 of it) reach the table within the firing; a table already at the
+    // ground returns it as saturation excess, not as the tagged refund. The energy
+    // residual below counts both.
+    EXPECT_NEAR(refund_volume, cell0_intake_volume, 1e-7 * cell0_intake_volume);
+    EXPECT_NEAR(refund_temperature_volume, cell0_temperature_volume,
+                1e-7 * cell0_temperature_volume);
     const double energy_after = initial_energy();
     const double external = cp * (intake_temperature_volume + link_volume * link_temperature);
     const double residual =

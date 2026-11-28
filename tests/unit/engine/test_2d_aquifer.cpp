@@ -1462,6 +1462,28 @@ TEST(Aquifer2D, ThinRechargePreservesActualEquilibriumAndLegacyRatesAboveTheFloo
     }
 }
 
+// The closed form is linear in hu, so its rate is the law's slope in storage exactly,
+// below the length floor as well as above it; fireCell's exact relaxation step rests on it.
+TEST(Aquifer2D, RechargeRateIsTheLawsSlopeInStorage) {
+    using namespace openswmm::twoD;
+    for (auto law :
+         {SoilChar::GARDNER, SoilChar::RUSSO, SoilChar::BROOKS_COREY, SoilChar::VAN_GENUCHTEN}) {
+        soil::Params p;
+        p.law = law;
+        for (double length : {1e-4, .001, .01, .1, 1.}) {
+            const double hu = soil::equilibriumStorage(p, length);
+            const double d = 1e-7 * std::max(length, .001);
+            const double slope = (soil::rechargeQ0AtLength(p, length, hu + d) -
+                                  soil::rechargeQ0AtLength(p, length, hu - d)) /
+                                 (2 * d);
+            EXPECT_GT(slope, 0.);
+            EXPECT_NEAR(soil::rechargeRate(p, length), slope, 1e-6 * slope)
+                << "law " << int(law) << " L " << length;
+        }
+        EXPECT_EQ(soil::rechargeRate(p, 0.), 0.);
+    }
+}
+
 TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
     for (const char* law : {"GARDNER", "RUSSO", "BROOKS_COREY", "VAN_GENUCHTEN"})
         for (double length : {.00075, .0000005}) {
@@ -1505,7 +1527,9 @@ TEST(Aquifer2D, IndependentThinFullColumnDoesNotDrainIntoAnInventedMillimetre) {
             // Roundoff allowance: 1e-12 of the column's own storage.
             EXPECT_LE(state.led_recharge, excess + 1e-12 * column * state.area[0]);
             EXPECT_DOUBLE_EQ(state.dunne_cumulative[0], 0.);
-            EXPECT_DOUBLE_EQ(state.reject_cumulative[0], 0.);
+            // The exact relaxation step lands a full column on θ_s·L to within roundoff
+            // (a few 1e-18 m); the same allowance as the recharge above.
+            EXPECT_NEAR(state.reject_cumulative[0], 0., 1e-12 * column);
             EXPECT_NEAR(state.liveStorage(), water, 1e-12);
             finish(r);
         }

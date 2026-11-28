@@ -532,6 +532,20 @@ double rechargeQ0AtLength(const Params& p, double L, double hu) noexcept {
     return std::isfinite(q) ? q : 0.;
 }
 
+double rechargeRate(const Params& p, double L) noexcept {
+    if (!(L > 0.0))
+        return 0.;
+    const double Lc = std::max(L, kLMin);
+    const double span = std::max(p.theta_s - p.theta_r, 1e-12);
+    // The same rate coefficient rechargeQ0() and rechargeQ0AtLength() apply to the
+    // saturation-scale disequilibrium, divided by the scale: dq₀/dhᵤ.
+    const double rate = p.law == SoilChar::GARDNER
+                            ? p.Ks / (Lc * -std::expm1(-p.alpha * Lc))
+                            : conductivity(p, .5 * Lc) / saturationIntegral(p, Lc);
+    const double C = rate / span;
+    return std::isfinite(C) && C > 0. ? C : 0.;
+}
+
 double alphaL(const Params& p, double L) noexcept {
     const double Lc = std::max(L, kLMin);
     switch (p.law) {

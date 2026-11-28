@@ -656,8 +656,17 @@ is the kinematic column's stability bound and the capillary column's accuracy
 bound: the implicit column has no stability bound, so the diffusive time scale
 \f$\Delta z^2/2D\f$ that bounded the explicit capillary sweep it replaced no
 longer limits the step.
-Closure A is a relaxation whose stiffness \f$C = -\partial q_0/\partial h_u\f$
-is taken numerically, so \f$\Delta t_u \le C_{col}/C\f$ covers every soil law;
+Closure A is a linear relaxation with rate \f$C = \partial q_0/\partial h_u\f$
+(Gardner: \f$K_s/(L(1-e^{-\alpha L})(\theta_s-\theta_r))\f$, growing as
+\f$K_s/(\alpha L^2)\f$ as the column thins), and each firing integrates it
+exactly: with \f$s = q_{in} - q_{ET}\f$ the firing's mean recharge is
+\f$q_0\,\varphi + s\,(1-\varphi)\f$, \f$\varphi = (1-e^{-C\Delta t})/(C\Delta t)\f$,
+so the column sets no step bound. For \f$C\Delta t \ll 1\f$ this is the explicit
+flux; a thin permeable column (\f$C\Delta t \gg 1\f$) passes its intake straight
+to the table instead of forcing the step down to \f$C_{col}/C\f$, which reached
+\f$10^{-4}\f$ s at the 1 mm length floor and \f$K_s = 10^{-2}\f$ m/s. The RK2
+coupled profile (`RECONSTRUCTION_ORDER 2`) averages two stage fluxes itself and
+keeps the explicit flux with the bound \f$\Delta t_u \le C_{col}/C\f$.
 `ENSLAVED` has no unsaturated bound. `C_COL` defaults to 0.9.
 
 **Tiers and ordering.** A cell's rung is

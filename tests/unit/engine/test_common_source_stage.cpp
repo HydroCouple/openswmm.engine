@@ -4008,13 +4008,10 @@ TEST(CommonSourceStage, RouterCheckpointPreservesPartialBatchWeatherReportFrames
     for (auto momentum :
          {Momentum2D::LOCAL_INERTIAL, Momentum2D::DIFFUSIVE_WAVE, Momentum2D::FULL_SWE})
         for (auto closure : {GwClosure::CLOSED_FORM, GwClosure::SIGMA}) {
-            // At Ks 0.01 m/s the aquifer drains (drainage sign, 2026-11-18), the table
-            // reaches the ground and the thin-column bound turned this case into minutes.
-            // Of 1e-5 to 3e-3 m/s, 1e-3 is the lowest that returns aquifer water before the
-            // checkpoint, where the ledgers are compared; below it they compare zeros.
-            const double ks = 1e-3;
+            // The fixture's 0.01 m/s aquifer drains to a table at the ground and returns
+            // water before the checkpoint, where the ledgers are compared; with the
+            // closed-form column's exact relaxation step (2026-11-27) that costs nothing.
             RouterSourceModel continuous;
-            continuous.aquifer_conductivity = ks;
             continuous.setup(momentum, closure, true);
             for (int i = 0; i < 6; ++i) {
                 if (i == 2)
@@ -4038,7 +4035,6 @@ TEST(CommonSourceStage, RouterCheckpointPreservesPartialBatchWeatherReportFrames
             ASSERT_EQ(continuous.router.saveCheckpoint(continuous.source.context, file.string()),
                       "");
             RouterSourceModel resumed;
-            resumed.aquifer_conductivity = ks;
             resumed.setup(momentum, closure, true);
             ASSERT_EQ(resumed.router.loadCheckpoint(resumed.source.context, file.string()), "");
             routerEqual(continuous, resumed, "router-initial");

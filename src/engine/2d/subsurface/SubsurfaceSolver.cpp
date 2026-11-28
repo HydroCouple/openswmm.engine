@@ -618,14 +618,17 @@ void SubsurfaceSolver::refreshCellBound(int i, const MeshData& mesh, const Inert
         dt_u = sigma::columnDtLimit(p, &state_.theta_sigma[u], state_.m_layers, n, L, Ldot,
                                     options_.c_col);
     } else if (cl == GwClosure::CLOSED_FORM) {
-        // The closed form is a relaxation ẏ = −C·(y − y*); its stiffness
-        // is C = ∂q₀/∂hᵤ (dhᵤ/dt = … − q₀). Taken numerically so every soil
-        // law is covered by one expression rather than four differentiations.
-        const double hu = state_.hu[u];
-        const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
-        const double C = (soil::rechargeQ0(p, L, hu + d) - soil::rechargeQ0(p, L, hu)) / d;
-        if (C > kTiny)
-            dt_u = options_.c_col / C;
+        // The closed form is a relaxation ẏ = −C·(y − y*). fireCell integrates it
+        // exactly over the firing (2026-11-27), so the column sets no step bound; the
+        // forward-Euler bound c_col/C it used to set reached ~1e-4 s for a 1 mm column
+        // at Ks 1e-2 m/s. The RK2 profile still steps the flux explicitly and keeps it.
+        if (opts_ && opts_->reconstruction_order == 2) {
+            const double hu = state_.hu[u];
+            const double d = std::max(1.0e-6 * std::max(hu, 1.0e-3), 1.0e-9);
+            const double C = (soil::rechargeQ0(p, L, hu + d) - soil::rechargeQ0(p, L, hu)) / d;
+            if (C > kTiny)
+                dt_u = options_.c_col / C;
+        }
     }
     // ENSLAVED has no unsaturated state, so no unsaturated step bound —
     // that is the whole point of the reduction.
@@ -2883,6 +2886,20 @@ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double
         q0 = q_in - q_et;
     } else if (L0 > 0.0) {
         q0 = rawRecharge(i, p, std::max(L0, kTiny));
+        // Exact relaxation over the firing (2026-11-27). q0 is C·(hᵤ − hᵤ*) at the old
+        // state; with s = q_in − q_et the column ODE is linear in hᵤ, so its mean flux
+        // over dt is q0·φ + s·(1 − φ), φ = (1 − e^{−C dt})/(C dt). A column whose
+        // relaxation is far shorter than dt (thin and permeable) passes its intake
+        // straight through instead of forcing the step down to c_col/C. The RK2
+        // profile averages two stage fluxes itself; a flux already integrated over
+        // dt would take it to first order, so it keeps the explicit flux and its bound.
+        if (!(opts_ && opts_->reconstruction_order == 2)) {
+            const double x = soil::rechargeRate(p, L0) * dt;
+            if (x > 0.0) {
+                const double phi = x > 1.0e-6 ? -std::expm1(-x) / x : 1.0 - 0.5 * x;
+                q0 = q0 * phi + (q_in - q_et) * (1.0 - phi);
+            }
+        }
         // G-X4 (2026-09-20): …and when the FLOOR binds, the pairing above is
         // the floored number, not the raw content. A column already at θ_s
         // just under the table (θ_s − θ_bot → 0) otherwise loses
