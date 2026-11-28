@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file ExplicitKokkosSurfaceSolver.hpp
- * @brief Kokkos (OpenMP/CUDA/HIP/SYCL) port of the explicit local-inertial
+ * @file      ExplicitKokkosSurfaceSolver.hpp
+ * @brief     Kokkos (OpenMP/CUDA/HIP/SYCL) port of the explicit local-inertial
  *        FV marcher with tiered local timestepping.
  *
  * @details P5 of the 2026-07-29 2D reimplementation plan. Same numerical
@@ -21,16 +37,16 @@
  *          {volume, head, depth, edge_flux, ∫Q dt} out. All marching state
  *          (V, η, h, q, accumulators, tiers, active sets) is device-resident.
  *
- *          Determinism: every kernel writes disjoint outputs in fixed CSR
- *          order and the only reductions are min (FP-exact) — on the OpenMP
- *          backend results are bit-identical to the serial marcher for any
- *          thread count (gated by test_2d_omp_explicit).
+ *          Determinism: face/cell kernels write disjoint outputs in fixed CSR
+ *          order. Evaporation drains in fixed host cell order. CPU/OpenMP
+ *          parity is tested with explicit tolerances; no cross-device bitwise
+ *          equivalence or GPU validation is implied.
  *
  * @ingroup engine_2d_gpu
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_2D_GPU_EXPLICIT_KOKKOS_SURFACE_SOLVER_HPP
@@ -43,84 +59,365 @@
 
 #include "../solver/ISurfaceSolver.hpp"
 #include "../solver/InertialEdges.hpp"
+#include "../../data/ReactionTokens.hpp"
 #include "KokkosTypes.hpp"
+#include "KokkosPerfCounters.hpp"
 
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+#include "metal/FaceClient.hpp"
+#include <memory>
+#endif
+
+namespace openswmm::twoD::gpu {
+
+struct CellClosure; // device copy of the volume/free-surface closure inputs (defined in the .cpp)
+struct SpeciesRows; // device transport rows and their kernels (KokkosSpeciesKernels.hpp)
+} // namespace openswmm::twoD::gpu
+namespace openswmm {
+struct ReactionData;
+}
 namespace openswmm::twoD::gpu {
 
 class ExplicitKokkosSurfaceSolver final : public ISurfaceSolver {
 public:
-    ExplicitKokkosSurfaceSolver() = default;
+    /**
+     * @brief Construct an inactive marcher with empty device views and no borrowed host owners.
+     * @note Does not initialize process-wide Kokkos; the plugin/host does that before
+     * initialize(). Default counters/flags do not prove runtime availability or allocate mesh
+     * state.
+     */
+    explicit ExplicitKokkosSurfaceSolver(bool metal = false)
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+        : metal_requested_(metal)
+#endif
+    {
+        (void)metal;
+    }
+    /**
+     * @brief Retire optional telemetry through finalize() then release owned Kokkos view
+     * handles.
+     * @note Caller first stops/fences work and preserves process-wide Kokkos through view
+     * destruction. Does not publish unfinished device physics or finalize the global Kokkos
+     * runtime. Borrowed host owners are not destroyed. Unexpected failure from finalize during
+     * destruction terminates.
+     */
     ~ExplicitKokkosSurfaceSolver() override { finalize(); }
 
-    void   initialize(MeshData& mesh, SurfaceStateData& state,
-                      SolverOptions2D& opts) override;
+    /**
+     * @brief Initialize device geometry, canonical water and publication receipt views.
+     * @param[in,out] mesh Prepared SI all-triangle mesh with complete geometry/stencils/coupling
+     * data. Borrowed for lifetime; device geometry is copied once and must remain compatible.
+     * @param[in,out] state Prepared matching water-only state and optional borrowed
+     * boundary/node arrays. Copies initial water/forcings, allocates publication receipt arrays
+     * and borrows the owner for later copyback; canonical owner and all optional dependencies
+     * outlive the marcher.
+     * @param[in,out] opts Stable local-inertial controls, borrowed; lts_tiers is clamped
+     * internally to 1..8.
+     * @throws std::invalid_argument Nonlocal-inertial momentum, active transport or nontriangle
+     * mesh.
+     * @note Requires initialized Kokkos and exclusive owner access. Builds device/host views,
+     * seeds momentum/reconstruction, resets counters/telemetry and marks initialized. Empty mesh
+     * returns before activation after borrowing pointers. Allocation/runtime failures can leave
+     * partial views/bindings; no rollback. This routine neither initializes nor finalizes the
+     * process-wide Kokkos runtime.
+     */
+    void initialize(MeshData& mesh, SurfaceStateData& state, SolverOptions2D& opts) override;
+    /**
+     * @brief Advance the accepted surface window and publish additive host receipts.
+     * @param[in] t_current Finite elapsed start s, consistent with accepted owner state.
+     * @param[in] t_target Finite target s, at least t_current; no general finite validation is
+     * performed.
+     * @return t_target, including uninitialized/nonforward no-op paths. Successful forward work
+     * uploads held forcing/frozen nodes, runs local tiers and exact-landing global tails,
+     * settles accumulators, then copies canonical water/head/depth/flux and additive receipts to
+     * host.
+     * @note Requires initialized stable borrowed owners/options and exclusive solver/device
+     * access. Device state remains authoritative inside a window; no native species/heat is
+     * supported. Allocation or Kokkos failure is not caught and can leave partial device
+     * progress; not an atomic window. Does not advance 1D node canonical state or engine
+     * calendar. Runtime launch/copy synchronization follows Kokkos.
+     */
     double advance(double t_current, double t_target) override;
-    void   reinitialize(double t0) override;
-    void   resyncFromVolumes(double t0) override;
-    void   finalize() override;
+    /**
+     * @brief Upload externally edited host volumes and reset stale device momentum.
+     * @param[in] t0 Retained interface time, ignored by this implementation.
+     * @note If initialized, uploads authoritative host volumes and clears interior/boundary
+     * momentum and side accumulators, reconstructs device head/depth and forces an
+     * active-set/tier rebuild on the next advance. Does not immediately copy reconstructed
+     * fields back or reset producer ledgers/cumulative counters. Requires compatible shapes,
+     * initialized Kokkos and exclusive solver/host access; copy/kernel failures are not rolled
+     * back.
+     */
+    void reinitialize(double t0) override;
+    /**
+     * @brief Upload authoritative host volumes while retaining device momentum.
+     * @param[in] t0 Retained interface time, ignored by this implementation.
+     * @note If initialized, uploads authoritative host volumes while preserving
+     * interior/boundary momentum and side accumulators, reconstructs head/depth on the device
+     * and the host, and rebuilds the active set and tiers at the next advance, as the CPU
+     * marcher does. Does not reset producer ledgers/cumulative counters. Requires compatible
+     * shapes, initialized Kokkos and exclusive solver/host access; copy/kernel failures are not
+     * rolled back.
+     */
+    void resyncFromVolumes(double t0) override;
+    /**
+     * @brief Upload host volume edits that touch only pinned cells, keeping the active set.
+     * @param[in] t0 Retained interface time, ignored by this implementation.
+     * @note As resyncFromVolumes() without the rebuild: the router's outfall transfers land in
+     * cells pinned by pinExternalSourceCells(), which are always active on tier zero, and a
+     * rebuild after every transfer would change the step schedule the CPU marcher takes.
+     */
+    void syncPinnedVolumes(double t0) override;
+    /**
+     * @brief Publish FULL_SWE cell velocity from the momentum of the last publication.
+     * @return True under FULL_SWE after writing state.face_vx/face_vy; false otherwise.
+     * @note Host arithmetic on the momentum copied back at the last publication and the
+     * state's current depth, as ExplicitInertialSolver::publishMomentumVelocity.
+     */
+    bool publishMomentumVelocity() override;
+    /**
+     * @brief Keep cells that receive external transfers (outfalls) active on tier zero.
+     * @param[in] cells Valid zero-based surface cells; duplicates are harmless.
+     * @throws std::out_of_range A cell outside the mesh; no pin is written then.
+     * @note If initialized, sets the device pin flags and forces an active-set/tier rebuild on
+     * the next advance, matching ExplicitInertialSolver::pinExternalSourceCells.
+     */
+    void pinExternalSourceCells(const std::vector<int>& cells) override;
+    /**
+     * @brief Write optional telemetry and retire the marcher activation flag.
+     * @note If initialized, dumps performance counters and optionally overwrites the configured
+     * telemetry CSV, clears telemetry and marks uninitialized. Failure to open telemetry is
+     * silently ignored. Does not release every Kokkos view, clear borrowed pointers, copy
+     * unfinished device state to host or finalize process Kokkos. Caller first finishes/fences
+     * work and serializes owner lifetime. Destructor calls this method; unexpected
+     * runtime/mutex/allocation exceptions there terminate destruction.
+     */
+    void finalize() override;
 
-    long   last_num_steps() const noexcept override { return last_steps_; }
+    /**
+     * @brief Read the most recent advance base-substep count.
+     * @return Base substeps executed in the most recent forward advance;
+     * uninitialized/nonforward advance leaves the prior value. Reset by initialize(); no
+     * synchronization or state change occurs.
+     */
+    long last_num_steps() const noexcept override { return last_steps_; }
+    /**
+     * @brief Read the most recent accepted base or tail duration.
+     * @return Last base or equal-tail duration s, or remaining idle span when no active cells.
+     * Zero after initialization. No device reduction or synchronization; caller reads stable
+     * owner telemetry.
+     */
     double last_step_size() const noexcept override { return last_dt_; }
-    const std::vector<double>& last_coupling_exchange()
-        const noexcept override { return exch_host_; }
+    /**
+     * @brief Borrow the published integrated live junction exchange.
+     * @return Borrowed host vector of integrated live junction exchange m3 in non-outfall
+     * coupling order, positive surface-to-node. Replaced by publication/initialization; requires
+     * stable owner. No new copy, node mutation, receipt consumption or device synchronization
+     * occurs.
+     */
+    const std::vector<double>& last_coupling_exchange() const noexcept override {
+        return exch_host_;
+    }
+    /**
+     * @brief Span of the advance whose exchange last_coupling_exchange() holds.
+     * @return Seconds, set when the exchange is copied back at publication; zero before.
+     */
+    double last_coupling_interval() const noexcept override { return exch_span_; }
+    /**
+     * @brief Snapshot accumulated Kokkos marcher work and active-tier telemetry.
+     * @return Value snapshot of cumulative substeps/face work, last duration, telemetry-sample
+     * active fraction statistics and stored tier occupancy. Not a live device query; mean
+     * weights rebuild samples, not elapsed time. No allocation or reset; caller serializes with
+     * advances/finalization.
+     */
     RunStats run_stats() const noexcept override;
+    /**
+     * @brief Read whether nonempty device initialization completed.
+     * @return Stored activation flag, true only after successful nonempty initialization and
+     * before finalize. Does not probe Kokkos runtime health, validate borrowed arrays or
+     * synchronize device work.
+     */
     bool is_initialized() const noexcept override { return initialized_; }
 
 private:
+#ifdef OPENSWMM_ENABLE_METAL_FACES
+    bool metal_requested_;
+    std::unique_ptr<metal::SurfaceClient> metal_swe_;
+    std::unique_ptr<metal::FaceClient> metal_faces_;
+#endif
+    friend struct ExplicitKokkosSurfaceSolverTestAccess;
+    kperf::Counters perf_counters_;
     // Host-side handles (owned by SurfaceRouter2D; outlive the solver).
-    MeshData*         mesh_  = nullptr;
+    MeshData* mesh_ = nullptr;
     SurfaceStateData* state_ = nullptr;
-    SolverOptions2D*  opts_  = nullptr;
-    InertialEdges     edges_;          ///< host CSR build; mirrored below
+    SolverOptions2D* opts_ = nullptr;
+    InertialEdges edges_; ///< host CSR build; mirrored below
+    DView d_conveyance_;  ///< mutable ψ, separate from immutable edge geometry
 
     // ---- device geometry (const after initialize) -------------------------
     DView d_tri_area_, d_tri_cz_, d_tri_cx_, d_tri_cy_, d_vz_, d_vx_, d_vy_;
-    IView d_tri_v0_, d_tri_v1_, d_tri_v2_;
-    DView d_vs_wt_;                    ///< vertex-stencil weights
-    IView d_vs_ptr_, d_vs_idx_;        ///< vertex-stencil CSR
+    IView d_cell_v_;            ///< padded [cell*kMaxCellVerts + k] connectivity
+    DView d_vs_wt_;             ///< vertex-stencil weights
+    IView d_vs_ptr_, d_vs_idx_; ///< vertex-stencil CSR
     DView d_edge_length_, d_mannings_n_;
     // InertialEdges mirror
     IView d_cL_, d_cR_, d_slotL_, d_slotR_, d_cell_ptr_, d_cell_edge_;
     DView d_xi_, d_inv_dx_, d_zface_, d_ze_lo_, d_ze_hi_, d_nx_, d_ny_, d_mx_, d_my_;
     DView d_n2_, d_sign_, d_lchar_;
+    DView d_n_face_; ///< ½(n_L+n_R) per face (DIFFUSIVE_WAVE)
+    // Mixed meshes: vertex count per cell, the quad two-plane closure tables (six elevations
+    // and two sub-triangle areas per cell) and the centroid-to-edge distance per slot. The
+    // last three are empty on an all-triangle mesh.
+    IView d_nv_;
+    DView d_quad_z_, d_quad_a_, d_slot_dist_;
+    // FULL_SWE: momentum side accumulators (m⁴/s), the positivity length, per-slot outward
+    // normals, WALL slots per cell (CSR), the halo's outer ring and per-boundary conveyance.
+    DView d_fmxL_, d_fmxR_, d_fmyL_, d_fmyR_;
+    DView d_lpos_, d_slot_nx_, d_slot_ny_, d_bc_conv_;
+    IView d_wall_ptr_, d_wall_slot_, d_frontier_;
+    // FULL_SWE second order: limited gradients (eta and depth share d_gex_/d_gey_, depth in the
+    // second half), per-vertex velocity bounds, CSR arms, slot midpoints, and the state the
+    // two-stage step blends with.
+    DView d_gex_, d_gey_, d_gux_, d_guy_, d_gvx_, d_gvy_, d_vbounds_;
+    DView d_arm_x_, d_arm_y_, d_slot_mx_, d_slot_my_;
+    DView d_rk_v0_, d_rk_qx0_, d_rk_qy0_, d_rk_inf0_, d_rk_cpl0_, d_rk_evap0_;
+    DView d_rk_bc_accum0_, d_rk_bc_in0_, d_rk_bc_out0_, d_rk_bc_req0_;
+    /// Junction rates a second-order stage evaluated at its starting state (one per point).
+    DView d_rk_exq_;
+    /// Node draw of the step so far, accumulated at half weight per stage.
+    DView d_rk_drawn_half_;
+    bool rk_exchange_stage_ = false;
+    // Optional momentum physics (Coriolis, turbulence, wall drag). Stress work arrays, the
+    // least-squares stencil of each cell (five entries), the cells whose stencil must be
+    // borrowed from a neighbor, each cell's edges in ascending edge order, the wall-drag slots
+    // grouped by cell, and the state held for the boundary edges of one cell firing.
+    DView d_ph_rx_, d_ph_ry_, d_ph_sx_, d_ph_sy_, d_ph_tx_, d_ph_ty_, d_ph_x0_, d_ph_y0_;
+    DView d_ph_oldx_, d_ph_oldy_, d_ph_visc_, d_ph_bx_, d_ph_by_, d_ph_term_, d_ph_walld_;
+    DView d_ph_etx_, d_ph_ety_, d_ph_ebx_, d_ph_eby_, d_ph_stgx_, d_ph_stgy_;
+    IView d_ph_conn_, d_ph_stid_, d_ph_stn_, d_ph_single_, d_ph_sedge_;
+    IView d_wd_slot_, d_wd_group_;
+    DView d_wd_cw_, d_wd_removed_;
+    DView d_held_vol_, d_held_qx_, d_held_qy_;
+    DView d_dw_slope_; ///< largest face |Δη|/Δx per cell (DIFFUSIVE_WAVE step bound)
 
     // ---- device state -----------------------------------------------------
     DView d_volume_, d_head_, d_depth_;
     DView d_q_, d_faccL_, d_faccR_, d_qcx_, d_qcy_;
-    DView d_rain_, d_coup_, d_evap_;
-    DView d_edge_flux_;                ///< 3·nt flat slots (published)
+    DView d_rain_, d_coup_, d_evap_, d_infil_;
+
+    /// Infiltration APPLIED depth (m) accumulated on device since the last
+    /// publish, then drained ADDITIVELY into state_->infil_applied and zeroed.
+    /// Additive because the host array is consumed on the routing-step cadence
+    /// while this one drains on the publish cadence — a plain overwrite would
+    /// lose or double-count whatever fell between the two.
+    DView d_infil_applied_;
+    DView d_evap_applied_;
+    std::vector<double> evap_applied_host_;
+    /// Signed per-cell coupling exchange volume (m³), mirroring
+    /// SurfaceStateData::coupling_applied. Kept on device beside
+    /// d_infil_applied_ and drained by the same host pass — a GPU run that
+    /// left it zero would report "no coupling" on exactly the decks the
+    /// plugin is chosen for.
+    DView d_coupling_applied_;
+    /// C3: node full_volume (1D ft³) on device, so the spill cap can use the
+    /// PONDED share (volume − full_volume) rather than total node storage.
+    /// Static for the run, uploaded once beside d_node_invert_.
+    DView d_node_fullvol_;
+    std::vector<double> infil_applied_host_;    ///< drain scratch (nt)
+    std::vector<double> coupling_applied_host_; ///< drain scratch (nt)
+    DView d_edge_flux_;                         ///< kMaxCellVerts·nt flat slots (published)
     IView d_active_, d_pin_t0_, d_tier_, d_face_tier_;
-    IView d_cells_compact_, d_edges_compact_;  ///< per-tier segments
-    IView d_scratch_;                  ///< seed flags scratch (nt)
-    DView d_dtcell_;                   ///< per-cell CFL dt (rebuild scratch)
+    IView d_cells_compact_, d_edges_compact_; ///< per-tier segments
+    IView d_scratch_;                         ///< seed flags scratch (nt)
+    DView d_dtcell_;                          ///< per-cell CFL dt (rebuild scratch)
 
     // Boundary edges (non-WALL): built host-side at initialize.
     IView d_bc_cell_, d_bc_slot_, d_bc_type_;
     DView d_bc_accum_, d_bc_slope_, d_bc_head_, d_bc_flow_;
-    DView d_bc_q_;   ///< prognostic boundary-edge discharge (m²/s, inflow-
-                     ///< positive) — mirrors ExplicitInertialSolver::bc_q_
+    DView d_bc_in_, d_bc_out_; ///< gross applied volumes since publication
+    std::vector<double> bc_in_host_, bc_out_host_;
+    DView d_bc_requested_, d_bc_last_flow_, d_bc_last_dt_;
+    std::vector<double> bc_requested_host_, bc_last_flow_host_, bc_last_dt_host_;
+    DView d_bc_q_; ///< prognostic boundary-edge discharge (m²/s, inflow-
+                   ///< positive) — mirrors ExplicitInertialSolver::bc_q_
     std::vector<int> bc_cell_host_, bc_slot_host_;
+    IView d_bc_run_ptr_; ///< CSR over boundary entries: one run per boundary cell
+    int n_bc_runs_ = 0;
+    int bc_run_max_ = 0; ///< longest run (OPENSWMM_PERF report)
 
     // Live junction exchange (windowless coupling).
     IView d_cp_cell_, d_cp_vertex_, d_cp_node_;
     DView d_cp_cd_, d_cp_area_;
+    // WEIR_ORIFICE per point: law, structure {z_crest, l_weir, a_orif} and
+    // coefficients {c_w, c_sw, c_oi, c_oo, h_eps}; COUPLING_HEAD cell runs.
+    IView d_cp_law_, d_cp_head_b_, d_cp_head_e_, d_head_cells_, d_cp_eq_;
+    DView d_cp_geo_, d_cp_coef_;
+    /// Independent exchange-point groups (CSR): points sharing a cell or a
+    /// node stay in one group, in ascending point order.
+    IView d_cp_group_ptr_, d_cp_group_item_;
+    int n_cp_groups_ = 0;
+    int cp_group_max_ = 0;   ///< largest group (OPENSWMM_PERF report)
+    DView d_node_pond_area_; ///< COUPLING_EQUALIZE 1D area per node (m²)
     DView d_exch_, d_node_drawn_;
     DView d_node_head_, d_node_depth_, d_node_volume_;
     DView d_node_invert_, d_node_fulldepth_;
     std::vector<double> exch_host_;
+    double exch_span_ = 0.0; ///< advance span exch_host_ covers (s)
+
+    // ---- transport rows (species, age, temperature) -------------------------
+    // Empty for a water-only model. Layouts follow SurfaceTransportState: cell mass is
+    // [row * nt + cell], face accumulators [face * ns + row], per-entry arrays [entry * ns + row].
+    bool species_ = false; ///< the model carries transport rows
+    int ns_ = 0;           ///< rows carried
+    DView d_cmass_, d_saccL_, d_saccR_, d_rain_conc_, d_csrc_, d_runoff_;
+    DView d_species_ledger_; ///< per-cell rain, coupling and infiltration mass since publication
+    DView d_species_ledger_runs_; ///< d_species_ledger_ summed over runs of cells
+    IView d_binds_;               ///< per-face dispersion limiter binds since publication
+    DView d_bc_conc_, d_bc_gain_, d_bc_loss_, d_bc_req_mass_, d_bc_app_mass_;
+    DView d_exch_mass_, d_exch_spill_, d_cp_gain_, d_node_conc_;
+    bool has_csrc_ = false, has_runoff_ = false, has_node_conc_ = false;
+    // What the two-stage step blends the rows and their totals with.
+    DView d_rk_cmass0_, d_rk_runoff0_, d_rk_exm0_, d_rk_exs0_, d_rk_led0_;
+    DView d_rk_bcg0_, d_rk_bcl0_, d_rk_bcrm0_, d_rk_bcam0_, d_rk_cpg0_;
+    std::vector<double> species_host_; ///< drain scratch
+
+    // The reaction stage on the device (SurfaceReactionStage): the compiled reaction system
+    // as device arrays, decided once, plus per-cell results the host folds.
+    bool rx_checked_ = false; ///< the reaction system was examined
+    bool rx_device_ = false;  ///< it is within the device subset and uploaded
+    Kokkos::View<RxToken*, MemSpace> d_rx_pool_;
+    Kokkos::View<RxExprSpan*, MemSpace> d_rx_term_, d_rx_expr_;
+    Kokkos::View<unsigned char*, MemSpace> d_rx_needed_;
+    IView d_rx_rate_, d_rx_formula_, d_rx_status_;
+    DView d_rx_atol_, d_rx_rtol_, d_rx_coef_, d_rx_decay_, d_rx_removed_;
 
     // ---- host mirrors / control -------------------------------------------
-    std::array<int, 9>  tier_off_{};   ///< cells_compact_ segment offsets
-    std::array<int, 9>  ftier_off_{};  ///< edges_compact_ segment offsets
-    int    n_active_ = 0;
+    std::array<int, 9> tier_off_{};  ///< cells_compact_ segment offsets
+    std::array<int, 9> ftier_off_{}; ///< edges_compact_ segment offsets
+    int n_active_ = 0;
     double dt0_ = 0.0;
-    int    K_ = 1;
-    bool   have_perot_ = false;
+    int K_ = 1;
+    bool have_perot_ = false;
+    bool diffusive_ = false;    ///< MOMENTUM_EQUATION DIFFUSIVE_WAVE
+    bool has_quads_ = false;    ///< the mesh holds at least one quadrilateral cell
+    bool swe_ = false;          ///< MOMENTUM_EQUATION FULL_SWE
+    bool second_order_ = false; ///< RECONSTRUCTION_ORDER 2 (MUSCL faces, SSP-RK2 step)
+    bool physics_ = false;      ///< Coriolis, turbulence or wall drag is enabled
+    int n_wall_drag_ = 0, n_wall_groups_ = 0;
+    double wall_drag_energy_ = 0.0; ///< kinetic energy removed by wall drag, per unit density
+    double ph_last_limit_ = 0.0;    ///< last diffusion step bound, seconds
+    unsigned long long ph_substeps_ = 0, ph_retries_ = 0;
+    bool muscl_ = false;         ///< second order with the MUSCL reconstruction enabled
+    bool front_rebuild_ = false; ///< widened halo and breach-triggered rebuild
+    bool front_breach_ = false;  ///< a wetting front reached the halo's outer ring
+    double h_on_front_ = 0.0;    ///< activation depth the breach test uses, m
+    std::vector<double> qcx_host_, qcy_host_; ///< FULL_SWE cell momentum at publication
+    std::vector<double> bc_conv_host_;        ///< per-boundary edge conveyance
     double t_last_sync_ = 0.0;
-    int    cycles_since_rebuild_ = 1000;
+    int cycles_since_rebuild_ = 1000;
     double last_dt_ = 0.0;
-    long   last_steps_ = 0, substeps_run_ = 0, face_passes_ = 0;
-    bool   initialized_ = false;
+    long last_steps_ = 0, substeps_run_ = 0, face_passes_ = 0;
+    bool initialized_ = false;
 
     std::array<long, 8> tier_occupancy_{};
     std::vector<std::pair<double, int>> telemetry_;
@@ -128,17 +425,269 @@ private:
 
     // ---- internals (public for nvcc extended-lambda access) ----------------
 public:
+    void refreshConveyance(); ///< Upload changed face factors and refresh LI cell discharge.
+    /**
+     * @brief Launch reconstruction of every device cell head/depth from canonical device volume.
+     * @note Uses prepared triangle geometry and selected FLAT/VFR closure. Changes only device
+     * head/depth; no host copyback, forcing, receipts or clock updates. Requires initialized
+     * compatible views and exclusive launch ordering in a live Kokkos execution space; no local
+     * fence is added.
+     */
     void reconstructAllDev();
+    /**
+     * @brief Gather and zero every cell's own pending lateral side packets on device.
+     * @note Adds signed m3 to device volume with a zero floor, reconstructs changed head/depth
+     * and clears only that side's accumulator. No held sources, boundary/node receipts or host
+     * arrays are processed. Must run before re-tiering/active-set changes; requires matching CSR
+     * and serialized launch ordering.
+     */
     void settleAccumulatorsDev();
+    /**
+     * @brief Apply held cell sources to currently inactive cells through a synchronization
+     * horizon.
+     * @param[in] t Finite elapsed horizon s. Nonpositive t-t_last_sync_ returns without changes.
+     * @note Applies sourceBudget over the gap using frozen
+     * rain/coupling/infiltration/evaporation rates, updates device volume/head/depth and applied
+     * depth/volume ledgers, then advances t_last_sync_. Active cells are skipped because their
+     * firing already owns source time. No host/node copyback; requires initialized views,
+     * positive geometry and exclusive ordered launches. No local fence.
+     */
     void lazySourcesDev(double t);
+    /**
+     * @brief Settle device receipts/sources and rebuild active halos, CFL tiers and compact
+     * lists.
+     * @param[in] t Finite elapsed synchronization time s; consistent with last completed
+     * cell/source work.
+     * @note Consumes side accumulators, lazily advances inactive source cells, applies
+     * activation hysteresis and forced tier-zero pins, reduces dt0 and compacts cell/face lists
+     * in deterministic index order. Appends (t,active-count) telemetry and updates occupancy.
+     * Allocates telemetry and can throw after partial device work; no host publication or
+     * rollback. Requires exclusive initialized views.
+     */
     void syncAndRebuild(double t);
-    void refreshDt0();   ///< tighten-only dt0_ between rebuilds (== serial)
-    void collapseToGlobalDt();         ///< tail: everything to tier 0
-    void fireFaces(int tier, double dt_f);
-    void fireCells(int tier, double dt_c);
+    /**
+     * @brief Tighten the current base duration against active-cell CFL limits.
+     * @note Reads active device depths/optional Perot speed with existing tiers, min-reduces the
+     * current CFL requirement divided by 2^tier, and only decreases dt0_. No active cells
+     * returns. Does not change tiers, settle receipts or allow growth. Reduction synchronizes
+     * its scalar result; requires stable initialized views, finite positive geometry/CFL
+     * controls and exclusive launch ordering.
+     */
+    void refreshDt0();         /**
+     * @brief < tighten-only dt0_ between rebuilds (== serial)
+     *
+     * @note Settles pending side packets first, sets every active cell to tier zero and only
+     * active- active faces to tier zero, recompacts lists and replaces offsets/count. Inactive
+     * topology remains excluded. Does not apply lazy sources, alter dt0_, fire physics or copy
+     * host fields. Requires valid prepared views and exclusive launch ordering; scan reductions
+     * return compact counts.
+     */
+    void collapseToGlobalDt(); /**
+     * @brief < tail: everything to tier 0
+     *
+     * @details Fire one device face tier or a global tail selection.
+     * @param[in] tier Valid tier index [0,K_), called k in the definition; unchecked.
+     * @param[in] dt_f Finite positive accepted firing duration s.
+     * @param[in] global_step True selects every compact tier segment with global positivity
+     * refire count; false selects only the indicated tier range.
+     * @note Update selected interior momentum, apply Froude/positivity budgets and book
+     * equal-opposite side m3. Updates cumulative face-work count on host; dry faces reset
+     * momentum and do not transfer water. Requires initialized views, fresh compact lists and
+     * ordered nonconcurrent owner access. Kernels do not validate all shapes or expose rollback;
+     * host fields remain unchanged until publication.
+     */
+    void fireFaces(int tier, double dt_f, bool global_step = false);
+    /**
+     * @brief DIFFUSIVE_WAVE face kernel: Manning quasi-steady discharge with the positivity share.
+     * @param[in] lo First index into the compact edge list.
+     * @param[in] hi One past the last index into the compact edge list.
+     * @param[in] dt_f Finite positive face step, seconds.
+     * @param[in] global_step True for a tail step, where every face fires once.
+     * @note Mirrors ExplicitInertialSolver::fireFacesDiffusive face for face; each face writes
+     * only its own discharge and side accumulators. Called by fireFaces().
+     */
+    void fireFacesDiffusive(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief Bundle the views and flags of the cell volume/free-surface closure for a kernel.
+     * @return A device-copyable value; capture it by value in a kernel lambda.
+     */
+    CellClosure closure() const;
+    /**
+     * @brief Bundle the transport-row views and constants for a kernel.
+     * @return A device-copyable value; capture it by value in a kernel lambda. Its views are
+     * empty for a water-only model.
+     */
+    SpeciesRows speciesRows() const;
+    /**
+     * @brief Upload the transport rows and their source concentrations for one advance.
+     * @throws std::runtime_error Surface heat exchange or a live passive exchange is attached;
+     * both need the CPU marcher.
+     * @note Uploads cell mass (the host edits it between advances: aging, reactions, washoff),
+     * rain, coupling, boundary and node concentrations and the runoff volumes, and zeroes the
+     * per-advance exchange totals. No-op for a water-only model.
+     */
+    void pushSpecies();
+    /**
+     * @brief Copy the transport rows back and fold their per-slot totals into the host ledgers.
+     * @note Cell mass, runoff volume and the per-point exchange totals are copied; rainfall,
+     * coupling and infiltration totals are summed on the device over fixed runs of cells
+     * (kSpeciesLedgerRun) and the run sums folded here in run order; boundary totals are folded
+     * in entry order. All are added to the cumulative ledgers; boundary receipts stay additive until the router drains
+     * them. No-op for a water-only model.
+     */
+    void publishSpecies();
+    /**
+     * @brief Run the stage the router requested for the end of this advance on the device rows:
+     * aging, first-order decay and, for a reaction system within the device subset, its
+     * reactions.
+     * @note Follows SurfaceRouter2D::applyAgingAndReactions and transport::reactArdStage cell
+     * for cell: wet cells react on concentrations and write mass back; the decayed mass is
+     * written per cell and summed on the host in cell order. Sets the stage's @c done flag, or
+     * leaves it false so the host runs the stage (a reaction system outside the subset). Dry
+     * cells are skipped, so a failure the host would report for a dry cell is not reported.
+     */
+    void runReactionStage();
+    /**
+     * @brief Examine the reaction system once and upload it when the device can integrate it.
+     * @param[in] rx Compiled reaction system whose species are the rows after the pollutants.
+     * @note Device subset: RATE and FORMULA species under the EUL or RK5 solver, within the
+     * kDeviceMax* sizes. Prints which side runs the reactions.
+     */
+    void buildReactionProgram(const ReactionData& rx);
+    /**
+     * @brief FULL_SWE face kernel: first-order Godunov flux with hydrostatic reconstruction.
+     * @param[in] lo First index into the compact edge list.
+     * @param[in] hi One past the last index into the compact edge list.
+     * @param[in] dt_f Finite positive face step, seconds.
+     * @param[in] global_step True for a tail step, where every face fires once.
+     * @throws std::runtime_error An active cell's pressure or momentum flux is not finite;
+     * nothing is booked.
+     * @note Mirrors ExplicitInertialSolver::fireFacesSwe face for face; each face writes only
+     * its own mass flux and its mass and momentum side accumulators. Called by fireFaces().
+     */
+    void fireFacesSwe(int lo, int hi, double dt_f, bool global_step);
+    /**
+     * @brief Limited gradients of free surface, velocity and depth for the active cells.
+     * @note Mirrors ExplicitInertialSolver::computeLimitedGradientsSwe: inverse-distance least
+     * squares over connected wet neighbors, Barth-Jespersen limiting at the faces, vertex bounds
+     * on the velocity and a positivity limit on the depth. Each cell writes only its own
+     * gradients.
+     */
+    void computeLimitedGradientsSwe();
+    /**
+     * @brief One SSP-RK2 (Heun) step of the whole active set: two global Euler stages, then the
+     * average with the beginning state.
+     * @param[in] dt Finite positive step, seconds.
+     * @note Mirrors the surface-only path of ExplicitInertialSolver::runRk2Step. Averages
+     * volume, momentum, the applied-source ledgers, boundary accumulators and exchange volumes,
+     * and counts two steps.
+     */
+    void runRk2Step(double dt);
+    /**
+     * @brief One globally stepped interval with the optional momentum physics split around it.
+     * @param[in] limit Largest admissible interval, seconds.
+     * @return The interval taken, at most @p limit.
+     * @throws std::runtime_error A coupled source owner is present, or no interval satisfies the
+     * wave CFL after the first physics half.
+     * @note Mirrors ExplicitInertialSolver::runMomentumStep.
+     */
+    double runMomentumStep(double limit);
+    /// Wall drag, half a rotation, turbulent mixing, half a rotation, wall drag over @p seconds.
+    void applyMomentumPhysics(double seconds);
+    /// Rotate every cell's momentum by @p angle radians (Coriolis).
+    void physicsRotate(double angle);
+    /// Quadratic wall drag over @p seconds; returns the kinetic energy removed per unit density.
+    double physicsWallDrag(double seconds);
+    /**
+     * @brief Eddy-viscosity stress divergence of a momentum field and its diffusion step bound.
+     * @param[in] qx X unit discharge per cell.
+     * @param[in] qy Y unit discharge per cell.
+     * @param[out] rx X momentum tendency per cell.
+     * @param[out] ry Y momentum tendency per cell.
+     * @param[in] cs Smagorinsky coefficient, or zero.
+     * @param[in] background Background eddy viscosity, m²/s.
+     * @param[in] depth_coefficient Depth mixing-length coefficient, or zero.
+     * @return Diffusion step bound, seconds (infinite when nothing mixes).
+     * @note Mirrors MomentumPhysics2D::evaluate, keeping its summation orders.
+     */
+    double physicsEvaluate(const DView& qx, const DView& qy, const DView& rx, const DView& ry,
+                           double cs, double background, double depth_coefficient);
+    /// Heun sub-steps of turbulent mixing over @p seconds (MomentumPhysics2D::advance).
+    void physicsAdvance(double cs, double seconds, double background, double depth_coefficient);
+    /// Kinetic energy per unit density of a momentum field, summed in cell order on the host.
+    double physicsEnergy(const DView& qx, const DView& qy);
+    /**
+     * @brief Refresh each active cell's largest face surface slope for the DIFFUSIVE_WAVE step
+     * bound.
+     * @note Mirrors ExplicitInertialSolver::refreshDiffusiveSlopes; inactive cells keep their
+     * previous value, which no reduction reads.
+     */
+    void refreshDiffusiveSlopes();
+    /**
+     * @brief Fire one device cell tier or a global tail selection.
+     * @param[in] tier Valid tier index [0,K_), called k in the definition; unchecked.
+     * @param[in] dt_c Finite positive accepted firing duration s.
+     * @param[in] global_step True selects every compact tier segment with global positivity
+     * refire count; false selects only the indicated tier range.
+     * @note Gather selected cell packets, apply held source budgets and reconstruct
+     * volume/head/depth/Perot vectors. At tier zero also runs boundary and live junction
+     * exchange serially on device to preserve shared donor ordering; books gross receipts and
+     * integrated junction m3. Requires initialized views, fresh compact lists and ordered
+     * nonconcurrent owner access. Kernels do not validate all shapes or expose rollback; host
+     * fields remain unchanged until publication.
+     */
+    void fireCells(int tier, double dt_c, bool global_step = false);
+    /**
+     * @brief Junction exchange of one tier-0 pass, serial within a point group on device.
+     * @param[in] dt_c Finite positive duration s of the pass.
+     * @param[in] pass 0 evaluates the law on the current state and applies it; 1 only keeps
+     * each point's rate; 2 applies the kept rates and books half of what moves. A second-order
+     * stage runs pass 1 before its faces and pass 2 after its cells.
+     */
+    void fireExchange(double dt_c, int pass);
+    /**
+     * @brief Execute accepted binary local-time substeps using the current compact tier lists.
+     * @param[in] dt0 Finite positive base duration s, already bounded by CFL.
+     * @param[in] nsub Nonnegative number of base substeps; caller aligns it with scheduled tier
+     * horizons.
+     * @note Faces fire at multiples of 2^tier before due cell gathers; increments total/last
+     * substep counters for every base substep. Does not rebuild, publish, apply inactive lazy
+     * time or change an external time argument. Requires initialized ordered device work and
+     * valid tier views.
+     */
     void runMacroCycle(double dt0, int nsub);
+    /**
+     * @brief Upload current held surface/boundary forcing to existing device views.
+     * @note Copies m/s rain, coupling, evaporation and infiltration; active snow substitutes
+     * liquid rain and exposed evaporation. Packs configured boundary type/slope/head m/flow m3/s
+     * by prepared slots. Host shapes must match device extents and borrowed boundary owner
+     * remain alive. Allocates temporary snow/boundary vectors; may fail after partial uploads.
+     * Does not update device water or sample project series. Requires initialized Kokkos and
+     * exclusive stable host/device access.
+     */
     void pushForcings();
+    /**
+     * @brief Upload frozen live-junction node state for one surface window.
+     * @note No-op without borrowed nodes/device node slots. Copies native node head/depth/volume
+     * arrays to existing matching extents; optional pond area copies only for exact size match.
+     * Does not modify canonical 1D state or reset integrated exchanges. Requires stable borrowed
+     * arrays, initialized Kokkos and serialized copy/launch ordering; failures are not rolled
+     * back.
+     */
     void pushNodeState();
+    /**
+     * @brief Publish device water/flux and drain applied receipts additively into host owners.
+     * @param[in] t_current Finite elapsed publication interval start s.
+     * @param[in] t_target Finite elapsed end s; positive span converts integrated boundary m3 to
+     * mean m3/s.
+     * @note Rebuilds interior outward-sign edge flux, writes mean boundary flux, fences, copies
+     * volume/ head/depth/flux and integrated coupling m3, folds gross boundary and evaporation
+     * receipts, then zeros device receipts after adoption. Infiltration depth and coupling m3
+     * drain together only when the host infiltration vector matches prepared scratch size.
+     * Native species/quality maps are owned elsewhere. Requires exact prepared host/device
+     * shapes and exclusive access; partial copies/receipts can survive runtime failure. Does not
+     * advance engine calendar or 1D node state, and does not rebuild tiers.
+     */
     void publishAndCopyBack(double t_current, double t_target);
 };
 

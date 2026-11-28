@@ -351,6 +351,9 @@ Jensen, M.E., Burman, R.D. and R.G. Allen, eds., *Evapotranspiration and
 Irrigation Water Requirements*, ASCE Manuals and Reports on Engineering
 Practice No. 70, American Society of Civil Engineers, Reston, VA, 1990.
 
+Kane, D.L. and J. Stein, "Water Movement into Seasonally Frozen Soils",
+*Water Resources Research*, Vol. 19, No. 6, 1983, pp. 1547-1557.
+
 Kidd, C.H.R., "A Calibrated Model for the Simulation of the Inlet
 Hydrograph for Fully Sewered Catchments," in *Urban Storm Drainage*,
 Proceedings InternaÂ­tional Conference on Urban Storm Drainage, University
@@ -369,6 +372,15 @@ Kluitenberg, E., "Determination of Impervious Area and Directly
 Connected Impervious Area", Supplemental Report, Rouge River National
 Wet Weather Demonstration Project, August 1994
 (http://www.rougeriver.com/pdfs/modeling/RPO-MOD-SR35.pdf).
+
+Koren, V., J. Schaake, K. Mitchell, Q.-Y. Duan, F. Chen and J.M. Baker,
+"A Parameterization of Snowpack and Frozen Ground Intended for NCEP Weather
+and Climate Models", *Journal of Geophysical Research*, Vol. 104, No. D16,
+1999, pp. 19569-19585.
+
+Kurylyk, B.L. and K. Watanabe, "The Mathematical Representation of
+Freezing and Thawing Processes in Variably-Saturated, Non-Deformable
+Soils", *Advances in Water Resources*, Vol. 60, 2013, pp. 160-177.
 
 Lai, F-h., "Review of Sewer Design Criteria and RDII Prediction
 Methods", EPA/600/R-08/010,
@@ -407,6 +419,9 @@ Model," *Journal of Hydrology*, Vol. 201, 1997, pp. 272-288.
 
 List, R.J., ed., *Smithsonian Meteorological Tables*, Smithsonian
 Institution, Washington, DC, Sixth Revised Edition, 1966.
+
+Lundin, L.-C., "Hydraulic Properties in an Operational Model of Frozen
+Soil", *Journal of Hydrology*, Vol. 118, 1990.
 
 Maidment, D.R., ed., *Handbook of Hydrology*, McGraw-Hill, New York,
 1993.
@@ -495,6 +510,10 @@ Agriculture, Washington, DC, January, 2009.
 Natural Resource Conservation Service (NRCS), "Time of Concentration",
 *National Engineering Handbook*, Part 630, Chapter 15, U.S. Dept. of
 Agriculture, Washington, DC, May, 2010.
+
+Niu, G.-Y. and Z.-L. Yang, "Effects of Frozen Soil on Snowmelt Runoff and
+Soil Water Storage at a Continental Scale", *Journal of Hydrometeorology*,
+Vol. 7, 2006, pp. 937-952.
 
 Overton, D.E. and Meadows, M.E., *Stormwater Modeling*, Academic Press,
 New York, 1976.
@@ -631,6 +650,10 @@ Southerland, R.C., "Methods for Estimating Effective Impervious Cover"
 Article 32 in *The Practice of Watershed Protection*, Center for
 Watershed Protection, Ellicott City, MD, 2000.
 
+Sturm, M., J. Holmgren, M. König and K. Morris, "The Thermal Conductivity
+of Seasonal Snow", *Journal of Glaciology*, Vol. 43, No. 143, 1997, pp.
+26-41.
+
 Surkan, A.J., "Simulation of Storm Velocity Effects of Flow from
 Distributed Channel Networks," *Water Resources Research*, Vol. 10, No.
 6, December 1974, pp. 1149-1160.
@@ -685,6 +708,10 @@ No. 17, American Society of Agronomy, Madison, WI, 1974.
 Viessman, W., Jr. and G.L. Lewis, *Introduction to Hydrology*,
 Prentice-Hall, Upper Saddle River, NJ, Fifth Edition, 2003.
 
+Voller, V. and M. Cross, "Accurate Solutions of Moving Boundary Problems
+Using the Enthalpy Method", *International Journal of Heat and Mass
+Transfer*, Vol. 24, No. 3, 1981, pp. 545-556.
+
 Wanielista, M.P., *Stormwater Management - Quantity and Quality*, Ann
 Arbor SciÂ­ence Publishers, Ann Arbor, MI, 1978.
 
@@ -714,5 +741,6 @@ Yen, B.C. and Chow, V.T., "A Study of Surface Runoff Due to Moving
 RainÂ­storms," Hydraulic Engineering Series Report No. 17, Dept. of Civil
 EngineerÂ­ing, University of Illinois, Urbana, June 1968.
 
-
-
+Zhang, T., "Influence of the Seasonal Snow Cover on the Ground Thermal
+Regime: An Overview", *Reviews of Geophysics*, Vol. 43, 2005,
+doi:10.1029/2004RG000157.

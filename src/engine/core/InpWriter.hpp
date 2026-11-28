@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file InpWriter.hpp
- * @brief Write a SimulationContext to a SWMM .inp file.
+ * @file      InpWriter.hpp
+ * @brief     Write a SimulationContext to a SWMM .inp file.
  *
  * @details Serialises all model data from SoA arrays into standard SWMM
  *          input file format. Supports all sections from the legacy format
@@ -8,14 +24,16 @@
  *
  * @ingroup engine_core
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_INP_WRITER_HPP
 #define OPENSWMM_INP_WRITER_HPP
 
+#include <cstdio>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -24,6 +42,19 @@ namespace openswmm {
 struct SimulationContext;
 
 namespace inp_writer {
+
+/**
+ * @brief Render the authored groundwater chemistry/aquifer reactor sections as text.
+ *
+ * Uses a temporary FILE to reuse emitGwTransportSections; runtime_error on
+ * temporary-file/write/read failure. Does not install output, advance state or rebase the retained
+ * FILE reference; allocation can throw.
+ *
+ * @param[in] ctx Borrowed model with live optional twod_io groundwater attachment and coherent
+ *     authored rows.
+ * @return Owned serialized section text; empty without a 2D build or configured data.
+ */
+std::string groundwaterSections(const SimulationContext& ctx);
 
 /**
  * @brief Write the full model to a SWMM .inp file.
@@ -54,11 +85,63 @@ namespace inp_writer {
  * @param path      Output file path.
  * @param warnings  Optional sink for non-fatal portability warnings
  *                  (cross-volume slots, etc.). Pass nullptr to discard.
+ * @details Main INP, engine-owned mesh and written component configs use adjacent temporary files,
+ *          checked write/flush/sync/close, and individual atomic replacement.
+ *          Errors are returned and described in warnings when supplied.
+ *          This is not a multi-file transaction: a later main-file failure
+ *          does not roll back an already-published mesh or component
+ *          configuration. Output redirection/recovery remain caller concerns.
  * @returns 0 on success, -1 on file error.
  */
-int writeInpFile(const SimulationContext& ctx,
-                 const std::string&       path,
+int writeInpFile(const SimulationContext& ctx, const std::string& path,
                  std::vector<std::string>* warnings = nullptr);
+
+/**
+ * @brief Write profile: which engine the file is written for.
+ *
+ * @details `Full` is the native format. `Swmm5` writes a file a SWMM 5.x
+ *          engine can read (MULTI_ENGINE plan V2 Phase 4): the v6-only
+ *          sections are omitted ([2D_*], [PLUGINS], [PROCESS_COMPONENTS],
+ *          [USER_FLAGS], [USER_FLAG_VALUES], [RDII_DECAY]), v6-only option
+ *          keys are omitted and incompatible values mapped (FLOW_ROUTING FV →
+ *          DYNWAVE, SURCHARGE_METHOD DYNAMIC_SLOT/TPA → SLOT), a virtual
+ *          junction becomes an ordinary junction, and an inlet junction
+ *          becomes an ordinary junction plus an [INLET_USAGE] row on its
+ *          approach conduit with the same capture node (the legacy-equivalent
+ *          model). Every substitution is reported through `warnings`; the
+ *          file starts with a comment naming the profile.
+ *
+ *          `Swmm5Stock` is `Swmm5` for a STOCK EPA SWMM 5 engine (5.2.4 as
+ *          built for SWMMVis): it additionally drops the positional grammar
+ *          extensions the in-tree legacy 5.3.0 engine added — the
+ *          [SUBCATCHMENTS] Snowpack `*` placeholder with the RainScale /
+ *          SnowScale columns behind it, and the [RAINGAGES] scale-factor
+ *          column — which a stock parser reads as an object name or a
+ *          malformed row (ERROR 209 / 200). A dropped factor that is not 1.0
+ *          is reported through `warnings`, since it is real model content.
+ */
+struct InpWriteOptions {
+    enum class Profile { Full, Swmm5, Swmm5Stock };
+    Profile profile = Profile::Full;
+    // Internal container serialization: borrowed stream, no mesh sidecar writes.
+    FILE* stream = nullptr;
+    bool internal_units = false;
+    bool inline_mesh = false;
+    bool skip_component_files = false;
+    enum class OutputKind { Model = 0, Mesh = 1, Component = 2 };
+    // Final paths remain the reference anchor. Every actual output is sent
+    // here before opening; an empty mapped path refuses that output.
+    // The caller owns staging cleanup, validation and publication.
+    std::function<std::string(const std::string&, OutputKind)> map_output;
+};
+
+int writeInpFile(const SimulationContext& ctx, const std::string& path,
+                 std::vector<std::string>* warnings, const InpWriteOptions& opts);
+
+// Complete native text, anchored at a container destination. No model/mesh files
+// are created. internal_units is used only for GeoPackage supplemental sections.
+std::string modelText(const SimulationContext& ctx, const std::string& anchor,
+                      bool internal_units = false);
 
 } // namespace inp_writer
 } // namespace openswmm

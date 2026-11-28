@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="608.195455pt" height="317.098962pt" viewBox="0 0 608.195455 317.098962" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 317.098962 
+L 608.195455 317.098962 
+L 608.195455 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 11.820537 172.433664 
+L 248.23127 172.433664 
+L 248.23127 160.7112 
+L 11.820537 160.7112 
+z
+" clip-path="url(#p4cf102791f)" style="fill: #eb6834; opacity: 0.06"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 11.820537 191.340864 
+L 248.23127 191.340864 
+L 248.23127 179.6184 
+L 11.820537 179.6184 
+z
+" clip-path="url(#p4cf102791f)" style="fill: #eb6834; opacity: 0.16"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 11.820537 254.30184 
+L 244.853974 254.30184 
+" clip-path="url(#p4cf102791f)" style="fill: none; stroke: #898781; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="10.39896" transform="rotate(-0 16.886481 10.39896)">COUPLING_IN_FLOODING NO   (default)</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="16.886481" y="19.85256" transform="rotate(-0 16.886481 19.85256)">the spill is its own row; Flooding Loss holds only water lost from the model</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="33.0876" transform="rotate(-0 16.886481 33.0876)">Flow Routing Continuity</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #898781" x="244.853974" y="33.0876" transform="rotate(-0 244.853974 33.0876)">Volume (10⁶ gal)</text>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="55.415429" transform="rotate(-0 16.886481 55.415429)">Dry Weather Inflow</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="55.415429" transform="rotate(-0 242.743163 55.415429)">0.000</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="74.322629" transform="rotate(-0 16.886481 74.322629)">Wet Weather Inflow</text>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="74.322629" transform="rotate(-0 242.743163 74.322629)">12.480</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="93.229829" transform="rotate(-0 16.886481 93.229829)">Groundwater Inflow</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="93.229829" transform="rotate(-0 242.743163 93.229829)">0.000</text>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="112.137029" transform="rotate(-0 16.886481 112.137029)">RDII Inflow</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="112.137029" transform="rotate(-0 242.743163 112.137029)">0.000</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="131.044229" transform="rotate(-0 16.886481 131.044229)">External Inflow</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="131.044229" transform="rotate(-0 242.743163 131.044229)">0.000</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="149.951429" transform="rotate(-0 16.886481 149.951429)">External Outflow</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="149.951429" transform="rotate(-0 242.743163 149.951429)">9.120</text>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="16.886481" y="168.858629" transform="rotate(-0 16.886481 168.858629)">Flooding Loss</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #898781" x="242.743163" y="168.858629" transform="rotate(-0 242.743163 168.858629)">0.000</text>
+   </g>
+   <g id="text_19">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #eb6834" x="16.886481" y="187.765829" transform="rotate(-0 16.886481 187.765829)">2D Coupling Outflow</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #eb6834" x="242.743163" y="187.765829" transform="rotate(-0 242.743163 187.765829)">3.210</text>
+   </g>
+   <g id="text_21">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="206.673029" transform="rotate(-0 16.886481 206.673029)">Evaporation Loss</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="206.673029" transform="rotate(-0 242.743163 206.673029)">0.040</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="225.580229" transform="rotate(-0 16.886481 225.580229)">Initial Stored Volume</text>
+   </g>
+   <g id="text_24">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="225.580229" transform="rotate(-0 242.743163 225.580229)">0.310</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="244.487429" transform="rotate(-0 16.886481 244.487429)">Final Stored Volume</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="244.487429" transform="rotate(-0 242.743163 244.487429)">0.418</text>
+   </g>
+   <g id="text_27">
+    <text style="font-weight: 700; font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="16.886481" y="263.75544" transform="rotate(-0 16.886481 263.75544)">Continuity Error (%)</text>
+   </g>
+   <g id="text_28">
+    <text style="font-weight: 700; font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="242.743163" y="263.75544" transform="rotate(-0 242.743163 263.75544)">-0.002</text>
+   </g>
+  </g>
+  <g id="axes_2">
+   <g id="patch_4">
+    <path d="M 358.275537 172.433664 
+L 594.68627 172.433664 
+L 594.68627 160.7112 
+L 358.275537 160.7112 
+z
+" clip-path="url(#p568edd058d)" style="fill: #eb6834; opacity: 0.16"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 358.275537 191.340864 
+L 594.68627 191.340864 
+L 594.68627 179.6184 
+L 358.275537 179.6184 
+z
+" clip-path="url(#p568edd058d)" style="fill: #eb6834; opacity: 0.06"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 358.275537 254.30184 
+L 591.308974 254.30184 
+" clip-path="url(#p568edd058d)" style="fill: none; stroke: #898781; stroke-width: 0.9; stroke-linecap: square"/>
+   </g>
+   <g id="text_29">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="10.39896" transform="rotate(-0 363.341481 10.39896)">COUPLING_IN_FLOODING YES</text>
+   </g>
+   <g id="text_30">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="363.341481" y="19.85256" transform="rotate(-0 363.341481 19.85256)">the spill is folded into Flooding Loss, as a 1D-only run reports it</text>
+   </g>
+   <g id="text_31">
+    <text style="font-weight: 700; font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="33.0876" transform="rotate(-0 363.341481 33.0876)">Flow Routing Continuity</text>
+   </g>
+   <g id="text_32">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #898781" x="591.308974" y="33.0876" transform="rotate(-0 591.308974 33.0876)">Volume (10⁶ gal)</text>
+   </g>
+   <g id="text_33">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="55.415429" transform="rotate(-0 363.341481 55.415429)">Dry Weather Inflow</text>
+   </g>
+   <g id="text_34">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="55.415429" transform="rotate(-0 589.198163 55.415429)">0.000</text>
+   </g>
+   <g id="text_35">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="74.322629" transform="rotate(-0 363.341481 74.322629)">Wet Weather Inflow</text>
+   </g>
+   <g id="text_36">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="74.322629" transform="rotate(-0 589.198163 74.322629)">12.480</text>
+   </g>
+   <g id="text_37">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="93.229829" transform="rotate(-0 363.341481 93.229829)">Groundwater Inflow</text>
+   </g>
+   <g id="text_38">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="93.229829" transform="rotate(-0 589.198163 93.229829)">0.000</text>
+   </g>
+   <g id="text_39">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="112.137029" transform="rotate(-0 363.341481 112.137029)">RDII Inflow</text>
+   </g>
+   <g id="text_40">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="112.137029" transform="rotate(-0 589.198163 112.137029)">0.000</text>
+   </g>
+   <g id="text_41">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="131.044229" transform="rotate(-0 363.341481 131.044229)">External Inflow</text>
+   </g>
+   <g id="text_42">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="131.044229" transform="rotate(-0 589.198163 131.044229)">0.000</text>
+   </g>
+   <g id="text_43">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="149.951429" transform="rotate(-0 363.341481 149.951429)">External Outflow</text>
+   </g>
+   <g id="text_44">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="149.951429" transform="rotate(-0 589.198163 149.951429)">9.120</text>
+   </g>
+   <g id="text_45">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #eb6834" x="363.341481" y="168.858629" transform="rotate(-0 363.341481 168.858629)">Flooding Loss</text>
+   </g>
+   <g id="text_46">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #eb6834" x="589.198163" y="168.858629" transform="rotate(-0 589.198163 168.858629)">3.210</text>
+   </g>
+   <g id="text_47">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="363.341481" y="187.765829" transform="rotate(-0 363.341481 187.765829)">2D Coupling Outflow</text>
+   </g>
+   <g id="text_48">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #898781" x="589.198163" y="187.765829" transform="rotate(-0 589.198163 187.765829)">0.000</text>
+   </g>
+   <g id="text_49">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="206.673029" transform="rotate(-0 363.341481 206.673029)">Evaporation Loss</text>
+   </g>
+   <g id="text_50">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="206.673029" transform="rotate(-0 589.198163 206.673029)">0.040</text>
+   </g>
+   <g id="text_51">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="225.580229" transform="rotate(-0 363.341481 225.580229)">Initial Stored Volume</text>
+   </g>
+   <g id="text_52">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="225.580229" transform="rotate(-0 589.198163 225.580229)">0.310</text>
+   </g>
+   <g id="text_53">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="244.487429" transform="rotate(-0 363.341481 244.487429)">Final Stored Volume</text>
+   </g>
+   <g id="text_54">
+    <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="244.487429" transform="rotate(-0 589.198163 244.487429)">0.418</text>
+   </g>
+   <g id="text_55">
+    <text style="font-weight: 700; font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="363.341481" y="263.75544" transform="rotate(-0 363.341481 263.75544)">Continuity Error (%)</text>
+   </g>
+   <g id="text_56">
+    <text style="font-weight: 700; font-size: 7.8px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #0b0b0b" x="589.198163" y="263.75544" transform="rotate(-0 589.198163 263.75544)">-0.002</text>
+   </g>
+  </g>
+  <g id="text_57">
+   <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #898781" x="314.28" y="303.264" transform="rotate(-0 314.28 303.264)">One number moves between two rows. The totals, the ledger and the continuity error are identical, and the 2D block of §9.9 is unchanged.</text>
+  </g>
+  <g id="text_58">
+   <text style="font-size: 7.6px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="314.28" y="315.5184" transform="rotate(-0 314.28 315.5184)">The key changes reporting only: it never changes what the solvers exchange.</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p4cf102791f">
+   <rect x="0" y="-0" width="261.740455" height="283.608"/>
+  </clipPath>
+  <clipPath id="p568edd058d">
+   <rect x="346.455" y="-0" width="261.740455" height="283.608"/>
+  </clipPath>
+ </defs>
+</svg>

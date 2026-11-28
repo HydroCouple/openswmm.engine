@@ -1,0 +1,84 @@
+[TITLE]
+Keyword prefix gate: node types
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+REPORT_START_DATE    01/01/2020
+REPORT_START_TIME    00:00:00
+END_DATE             01/01/2020
+END_TIME             06:00:00
+REPORT_STEP          00:05:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:10
+
+[JUNCTIONS]
+J1   100   10   0   0   0
+
+[DIVIDERS]
+DC   98   C3   CUTOFF     2              10   0   0   0
+DT   97   C5   TABULAR    DVC            10   0   0   0
+DW   96   C7   WEIR       1   2   3.3    10   0   0   0
+DO   95   C9   OVERFLOW                  10   0   0   0
+
+[OUTFALLS]
+OFIX    85   FIXED        86     NO
+OTID    85   TIDAL        TC1    NO
+OTS     85   TIMESERIES   TSS    NO
+ONORM   85   NORMAL       NO
+OFREE   85   FREE         NO
+
+[STORAGE]
+SU1   93   8   0   FUNCTIONAL    100   0   50   0   0
+SU2   91   8   0   CYLINDRICAL   20    10   0   0   0
+
+[CONDUITS]
+C1    J1    DC      200   0.013   0   0   0   0
+C2    DC    DT      200   0.013   0   0   0   0
+C3    DC    OFIX    200   0.013   0   0   0   0
+C4    DT    DW      200   0.013   0   0   0   0
+C5    DT    OTID    200   0.013   0   0   0   0
+C6    DW    DO      200   0.013   0   0   0   0
+C7    DW    OTS     200   0.013   0   0   0   0
+C8    DO    ONORM   200   0.013   0   0   0   0
+C9    DO    SU1     200   0.013   0   0   0   0
+C10   SU1   SU2     200   0.013   0   0   0   0
+C11   SU2   OFREE   200   0.013   0   0   0   0
+
+[XSECTIONS]
+C1    CIRCULAR   1.5   0   0   0   1
+C2    CIRCULAR   1.5   0   0   0   1
+C3    CIRCULAR   1.5   0   0   0   1
+C4    CIRCULAR   1.5   0   0   0   1
+C5    CIRCULAR   1.5   0   0   0   1
+C6    CIRCULAR   1.5   0   0   0   1
+C7    CIRCULAR   1.5   0   0   0   1
+C8    CIRCULAR   1.5   0   0   0   1
+C9    CIRCULAR   1.5   0   0   0   1
+C10   CIRCULAR   1.5   0   0   0   1
+C11   CIRCULAR   1.5   0   0   0   1
+
+[INFLOWS]
+J1   FLOW   TSI   FLOW   1.0   1.0
+
+[CURVES]
+DVC   DIVERSION   0    0
+DVC               10   5
+TC1   TIDAL       0    86
+TC1               12   86.5
+TC1               24   86
+
+[TIMESERIES]
+TSI   0:00   0
+TSI   1:00   5
+TSI   3:00   0
+TSS   0:00   86
+TSS   6:00   86.5
+
+[REPORT]
+INPUT      NO
+NODES      ALL
+LINKS      ALL

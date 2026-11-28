@@ -1,0 +1,892 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from SigmaConservation
+[ RUN      ] SigmaConservation.ClosedHighConductivityCannotCreateWaterOrSaturationExcess
+[       OK ] SigmaConservation.ClosedHighConductivityCannotCreateWaterOrSaturationExcess (11 ms)
+[ RUN      ] SigmaConservation.ClosedMovingTableAndEtSpendOnlyTheSameInitialWater
+[       OK ] SigmaConservation.ClosedMovingTableAndEtSpendOnlyTheSameInitialWater (6 ms)
+[ RUN      ] SigmaConservation.IntakeEtAndNumericalRejectionRemainPaired
+[       OK ] SigmaConservation.IntakeEtAndNumericalRejectionRemainPaired (8 ms)
+[ RUN      ] SigmaConservation.SignedNodeAndLinkReceiptsShareMovingTableStorage
+[       OK ] SigmaConservation.SignedNodeAndLinkReceiptsShareMovingTableStorage (69 ms)
+[ RUN      ] SigmaConservation.DeepLossCannotSpendWaterNeededForResidualStorage
+[       OK ] SigmaConservation.DeepLossCannotSpendWaterNeededForResidualStorage (0 ms)
+[ RUN      ] SigmaConservation.UsAndSiInputsGiveTheSamePhysicalMovingTable
+[       OK ] SigmaConservation.UsAndSiInputsGiveTheSamePhysicalMovingTable (6 ms)
+[ RUN      ] SigmaConservation.CapillarySweepAndLayerCountsRetainTheSameWaterBudget
+[       OK ] SigmaConservation.CapillarySweepAndLayerCountsRetainTheSameWaterBudget (105 ms)
+[ RUN      ] SigmaConservation.SignedWellsAndPairedInertMassCloseAtMovingAndFullTables
+[       OK ] SigmaConservation.SignedWellsAndPairedInertMassCloseAtMovingAndFullTables (24 ms)
+[ RUN      ] SigmaConservation.LateralWaterAndMassRemainConservativeAcrossDifferentTiers
+[       OK ] SigmaConservation.LateralWaterAndMassRemainConservativeAcrossDifferentTiers (11 ms)
+[ RUN      ] SigmaConservation.ForcedMovingProfileConvergesWithTimestepRefinement
+[       OK ] SigmaConservation.ForcedMovingProfileConvergesWithTimestepRefinement (37 ms)
+[ RUN      ] SigmaConservation.PumpingAtLowTablesCannotOverdrawResidualStorage
+[       OK ] SigmaConservation.PumpingAtLowTablesCannotOverdrawResidualStorage (6 ms)
+[----------] 11 tests from SigmaConservation (289 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (289 ms total)
+[  PASSED  ] 11 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 25 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 25 tests from CommonSourceStage
+[ RUN      ] CommonSourceStage.MeshAndTwoIndependentSourcesShareScarceReceiverBeforeDebits
+[       OK ] CommonSourceStage.MeshAndTwoIndependentSourcesShareScarceReceiverBeforeDebits (1 ms)
+[ RUN      ] CommonSourceStage.UnusedIntervalAwardsReturnToReceiverWithoutExtraDonorWithdrawal
+[       OK ] CommonSourceStage.UnusedIntervalAwardsReturnToReceiverWithoutExtraDonorWithdrawal (0 ms)
+[ RUN      ] CommonSourceStage.SaturatedReceiverKeepsDeniedWaterInMeshAndBothSources
+[       OK ] CommonSourceStage.SaturatedReceiverKeepsDeniedWaterInMeshAndBothSources (0 ms)
+[ RUN      ] CommonSourceStage.StableNamesGiveTheSameAwardsAfterSourceOrderChanges
+[       OK ] CommonSourceStage.StableNamesGiveTheSameAwardsAfterSourceOrderChanges (0 ms)
+[ RUN      ] CommonSourceStage.NativeLidBottomAndNonLidCompeteWithMeshAndRemainPaired
+[       OK ] CommonSourceStage.NativeLidBottomAndNonLidCompeteWithMeshAndRemainPaired (0 ms)
+[ RUN      ] CommonSourceStage.DeniedCellShareNeverMigratesToAnotherReceiver
+[       OK ] CommonSourceStage.DeniedCellShareNeverMigratesToAnotherReceiver (0 ms)
+[ RUN      ] CommonSourceStage.PendingNodeArrivalReducesHeadroomAndFutureExtractionDoesNotAddIt
+[       OK ] CommonSourceStage.PendingNodeArrivalReducesHeadroomAndFutureExtractionDoesNotAddIt (0 ms)
+[ RUN      ] CommonSourceStage.MeshWeatherUsesOnlyRemainingAreaAndKeepsExistingEvaporationGate
+[       OK ] CommonSourceStage.MeshWeatherUsesOnlyRemainingAreaAndKeepsExistingEvaporationGate (0 ms)
+[ RUN      ] CommonSourceStage.ProfileFailureDoesNotInstallWaterOrAdvanceAnyClock
+[       OK ] CommonSourceStage.ProfileFailureDoesNotInstallWaterOrAdvanceAnyClock (0 ms)
+[ RUN      ] CommonSourceStage.UnsupportedOrIncompleteReviewedGroupsCannotAttach
+[       OK ] CommonSourceStage.UnsupportedOrIncompleteReviewedGroupsCannotAttach (0 ms)
+[ RUN      ] CommonSourceStage.ActualMarcherSourcePhaseAdvancesDryPinnedSourcesAndTailTogether
+[       OK ] CommonSourceStage.ActualMarcherSourcePhaseAdvancesDryPinnedSourcesAndTailTogether (3 ms)
+[ RUN      ] CommonSourceStage.RegistrationRequiresMatchingInitialFirstOrderMesh
+[openswmm 2D] MOMENTUM_EQUATION FULL_SWE: CFL_NUMBER 0.7 reduced to 0.5 (positivity bound of the Godunov update).
+[       OK ] CommonSourceStage.RegistrationRequiresMatchingInitialFirstOrderMesh (0 ms)
+[ RUN      ] CommonSourceStage.IncomingFaceWaterLandsBeforeDryMeshDonorRequestsAreGathered
+[       OK ] CommonSourceStage.IncomingFaceWaterLandsBeforeDryMeshDonorRequestsAreGathered (0 ms)
+[ RUN      ] CommonSourceStage.DryOwnerDemandUsesReviewedAreasAndOneSoilStressForQualifiedClosuresAndAllLaws
+[       OK ] CommonSourceStage.DryOwnerDemandUsesReviewedAreasAndOneSoilStressForQualifiedClosuresAndAllLaws (0 ms)
+[ RUN      ] CommonSourceStage.WetImperviousEvaporationCannotConsumeDryPerviousDemand
+[       OK ] CommonSourceStage.WetImperviousEvaporationCannotConsumeDryPerviousDemand (0 ms)
+[ RUN      ] CommonSourceStage.MixedSourceDoesNotUseLegacyImperviousCarryInAsPerviousEvaporation
+[       OK ] CommonSourceStage.MixedSourceDoesNotUseLegacyImperviousCarryInAsPerviousEvaporation (0 ms)
+[ RUN      ] CommonSourceStage.OpenAndSealedLidStoresPayTheirOwnDemandBeforeSoil
+[       OK ] CommonSourceStage.OpenAndSealedLidStoresPayTheirOwnDemandBeforeSoil (0 ms)
+[ RUN      ] CommonSourceStage.FullLidFootprintDoesNotAddAnExtraNonLidAtmosphericBudget
+[       OK ] CommonSourceStage.FullLidFootprintDoesNotAddAnExtraNonLidAtmosphericBudget (0 ms)
+[ RUN      ] CommonSourceStage.CoveredAndUncoveredBarrelRemaindersExpireOnTheirOwnFootprint
+[       OK ] CommonSourceStage.CoveredAndUncoveredBarrelRemaindersExpireOnTheirOwnFootprint (0 ms)
+[ RUN      ] CommonSourceStage.FailedIntervalCannotInstallAnyAtmosphericReceiptOrFutureDemand
+[       OK ] CommonSourceStage.FailedIntervalCannotInstallAnyAtmosphericReceiptOrFutureDemand (0 ms)
+[ RUN      ] CommonSourceStage.OwnerSpecificDemandKeepsCellProvenanceAcrossSourceOrderAndCadence
+[       OK ] CommonSourceStage.OwnerSpecificDemandKeepsCellProvenanceAcrossSourceOrderAndCadence (0 ms)
+[ RUN      ] CommonSourceStage.MarcherConsumesPastSoilDemandWithoutDuplicatingMeshOrSourceEvaporation
+[       OK ] CommonSourceStage.MarcherConsumesPastSoilDemandWithoutDuplicatingMeshOrSourceEvaporation (0 ms)
+[ RUN      ] CommonSourceStage.ExistingEtModesConsumeOnlyEligibleCompletedDemand
+[       OK ] CommonSourceStage.ExistingEtModesConsumeOnlyEligibleCompletedDemand (0 ms)
+[ RUN      ] CommonSourceStage.ComponentAreasMustCloseEvenWhenTotalWeatherCoverageCloses
+[       OK ] CommonSourceStage.ComponentAreasMustCloseEvenWhenTotalWeatherCoverageCloses (0 ms)
+[ RUN      ] CommonSourceStage.QualifiedSigmaMarchesCompletedOwnerEtWithMovingTable
+[       OK ] CommonSourceStage.QualifiedSigmaMarchesCompletedOwnerEtWithMovingTable (6 ms)
+[----------] 25 tests from CommonSourceStage (15 ms total)
+
+[----------] Global test environment tear-down
+[==========] 25 tests from 1 test suite ran. (15 ms total)
+[  PASSED  ] 25 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 20 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 20 tests from SourceWaterDriver
+[ RUN      ] SourceWaterDriver.PrivateTrialsCancelRetryAndKeepUnselectedSourcesUntouched
+[       OK ] SourceWaterDriver.PrivateTrialsCancelRetryAndKeepUnselectedSourcesUntouched (0 ms)
+[ RUN      ] SourceWaterDriver.ComponentAtmosphereIsPrivateAndClosesThePhysicalFootprint
+[       OK ] SourceWaterDriver.ComponentAtmosphereIsPrivateAndClosesThePhysicalFootprint (0 ms)
+[ RUN      ] SourceWaterDriver.StepPetVolumesArePastOnlyAndEquivalentInUsAndSi
+[       OK ] SourceWaterDriver.StepPetVolumesArePastOnlyAndEquivalentInUsAndSi (0 ms)
+[ RUN      ] SourceWaterDriver.VariableCadencesPreserveRunoffRunonAndCyclicHistories
+[       OK ] SourceWaterDriver.VariableCadencesPreserveRunoffRunonAndCyclicHistories (0 ms)
+[ RUN      ] SourceWaterDriver.InterSubareaTransfersKeepTheirOriginalVolumeWhenStepChanges
+[       OK ] SourceWaterDriver.InterSubareaTransfersKeepTheirOriginalVolumeWhenStepChanges (0 ms)
+[ RUN      ] SourceWaterDriver.PartialLidRunonCountsFullPhysicalAreaOnlyOnce
+[       OK ] SourceWaterDriver.PartialLidRunonCountsFullPhysicalAreaOnlyOnce (0 ms)
+[ RUN      ] SourceWaterDriver.CaptureDrainsAndPerviousReturnsArePrivatePendingVolumes
+[       OK ] SourceWaterDriver.CaptureDrainsAndPerviousReturnsArePrivatePendingVolumes (0 ms)
+[ RUN      ] SourceWaterDriver.ExplicitLidDrainsConnectAndDeliverToTargetSubcatchment
+[       OK ] SourceWaterDriver.ExplicitLidDrainsConnectAndDeliverToTargetSubcatchment (0 ms)
+[ RUN      ] SourceWaterDriver.NodeNamePrecedenceAndSelfDrainsResolveToOwnOutlet
+[       OK ] SourceWaterDriver.NodeNamePrecedenceAndSelfDrainsResolveToOwnOutlet (0 ms)
+[ RUN      ] SourceWaterDriver.MultipleCoveredBarrelsReturnOnlyTheirOwnRainArea
+[       OK ] SourceWaterDriver.MultipleCoveredBarrelsReturnOnlyTheirOwnRainArea (0 ms)
+[ RUN      ] SourceWaterDriver.FullLidCoverageAndIndividualBottomCeilingsConserveWater
+[       OK ] SourceWaterDriver.FullLidCoverageAndIndividualBottomCeilingsConserveWater (0 ms)
+[ RUN      ] SourceWaterDriver.BadBottomBatchCannotPartiallyInstallAnyWaterOrClock
+[       OK ] SourceWaterDriver.BadBottomBatchCannotPartiallyInstallAnyWaterOrClock (0 ms)
+[ RUN      ] SourceWaterDriver.ResolvedPetIsAppliedOnceAndTrialsNeverWriteLidReports
+[       OK ] SourceWaterDriver.ResolvedPetIsAppliedOnceAndTrialsNeverWriteLidReports (0 ms)
+[ RUN      ] SourceWaterDriver.UnsupportedProfilesRefuseWithSpecificReasons
+[       OK ] SourceWaterDriver.UnsupportedProfilesRefuseWithSpecificReasons (0 ms)
+[ RUN      ] SourceWaterDriver.IndependentGroupsKeepTheirOwnClockAndPendingState
+[       OK ] SourceWaterDriver.IndependentGroupsKeepTheirOwnClockAndPendingState (0 ms)
+[ RUN      ] SourceWaterDriver.OverCaptureRefusesBeforeAdoptingPrivateStores
+[       OK ] SourceWaterDriver.OverCaptureRefusesBeforeAdoptingPrivateStores (0 ms)
+[ RUN      ] SourceWaterDriver.ResolvedLidBatchValidatesAllUnitsBeforeAnyMutation
+[       OK ] SourceWaterDriver.ResolvedLidBatchValidatesAllUnitsBeforeAnyMutation (0 ms)
+[ RUN      ] SourceWaterDriver.CompletedMeshHorizonIncludesWetLazySourcesAcrossAdvances
+[       OK ] SourceWaterDriver.CompletedMeshHorizonIncludesWetLazySourcesAcrossAdvances (0 ms)
+[ RUN      ] SourceWaterDriver.GroupWaterRefinementConvergesWithPendingTransfersInBalance
+[       OK ] SourceWaterDriver.GroupWaterRefinementConvergesWithPendingTransfersInBalance (3 ms)
+[ RUN      ] SourceWaterDriver.RealMarcherCompletionSupportsOneCellTwoSourceSettlement
+[       OK ] SourceWaterDriver.RealMarcherCompletionSupportsOneCellTwoSourceSettlement (0 ms)
+[----------] 20 tests from SourceWaterDriver (7 ms total)
+
+[----------] Global test environment tear-down
+[==========] 20 tests from 1 test suite ran. (7 ms total)
+[  PASSED  ] 20 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 16 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 16 tests from SourceClockGroups
+[ RUN      ] SourceClockGroups.WholeRunoffAndLidDrainGraphsIncludeUpstreamCyclesAndReturns
+[       OK ] SourceClockGroups.WholeRunoffAndLidDrainGraphsIncludeUpstreamCyclesAndReturns (0 ms)
+[ RUN      ] SourceClockGroups.DrainNodePrecedenceAndInvalidTopologyAreExplicit
+[       OK ] SourceClockGroups.DrainNodePrecedenceAndInvalidTopologyAreExplicit (0 ms)
+[ RUN      ] SourceClockGroups.IndependentCompletedClocksCancelRetryAndNoReplay
+[       OK ] SourceClockGroups.IndependentCompletedClocksCancelRetryAndNoReplay (0 ms)
+[ RUN      ] SourceClockGroups.SubsecondRainCannotBorrowFutureGlobalCursorOrRecord
+[       OK ] SourceClockGroups.SubsecondRainCannotBorrowFutureGlobalCursorOrRecord (0 ms)
+[ RUN      ] SourceClockGroups.RainIntensityVolumeCumulativeResetAndDryGapsInUsAndSi
+[       OK ] SourceClockGroups.RainIntensityVolumeCumulativeResetAndDryGapsInUsAndSi (0 ms)
+[ RUN      ] SourceClockGroups.RainFileUnitsScaleMonthlyFactorsAndPersistentPrescriptions
+[       OK ] SourceClockGroups.RainFileUnitsScaleMonthlyFactorsAndPersistentPrescriptions (0 ms)
+[ RUN      ] SourceClockGroups.StepPetIsPastOnlyAndOverridesRespectDryOnly
+[       OK ] SourceClockGroups.StepPetIsPastOnlyAndOverridesRespectDryOnly (0 ms)
+[ RUN      ] SourceClockGroups.MonthBoundaryChangesPetRainInfiltrationAndRecoveryTogether
+[       OK ] SourceClockGroups.MonthBoundaryChangesPetRainInfiltrationAndRecoveryTogether (0 ms)
+[ RUN      ] SourceClockGroups.UnsupportedHistoriesHaveNamedRefusalsAndNoPartialInitialization
+[       OK ] SourceClockGroups.UnsupportedHistoriesHaveNamedRefusalsAndNoPartialInitialization (0 ms)
+[ RUN      ] SourceClockGroups.SelectedRunoffMatchesNativeBatchAndLeavesPeerStatesUntouched
+[       OK ] SourceClockGroups.SelectedRunoffMatchesNativeBatchAndLeavesPeerStatesUntouched (0 ms)
+[ RUN      ] SourceClockGroups.BadSelectedBatchesCannotPartiallyAdvanceSources
+[       OK ] SourceClockGroups.BadSelectedBatchesCannotPartiallyAdvanceSources (0 ms)
+[ RUN      ] SourceClockGroups.RealRunoffTrialsConserveRainStorageAndActualSurfaceEvaporation
+[       OK ] SourceClockGroups.RealRunoffTrialsConserveRainStorageAndActualSurfaceEvaporation (0 ms)
+[ RUN      ] SourceClockGroups.RealEngineFutureRunoffCursorCannotAdvanceCompletedSourceForcing
+[       OK ] SourceClockGroups.RealEngineFutureRunoffCursorCannotAdvanceCompletedSourceForcing (3 ms)
+[ RUN      ] SourceClockGroups.TimingRefinementConvergesWithoutAdvancingAnUnselectedControl
+[       OK ] SourceClockGroups.TimingRefinementConvergesWithoutAdvancingAnUnselectedControl (0 ms)
+[ RUN      ] SourceClockGroups.StorageLidUsesItsGroupsCompletedRainProfile
+[       OK ] SourceClockGroups.StorageLidUsesItsGroupsCompletedRainProfile (0 ms)
+[ RUN      ] SourceClockGroups.CompletedRunoffVolumeClosesForMixedSubareasAndInstantDrainage
+[       OK ] SourceClockGroups.CompletedRunoffVolumeClosesForMixedSubareasAndInstantDrainage (0 ms)
+[----------] 16 tests from SourceClockGroups (5 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 1 test suite ran. (5 ms total)
+[  PASSED  ] 16 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 15 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 15 tests from SurfaceExchange
+[ RUN      ] SurfaceExchange.CompletedContiguousIntervalsOnlyAndNoReplay
+[       OK ] SurfaceExchange.CompletedContiguousIntervalsOnlyAndNoReplay (0 ms)
+[ RUN      ] SurfaceExchange.DonorHeadCapacityIsReadOnlyAcrossClosuresAndSoils
+[       OK ] SurfaceExchange.DonorHeadCapacityIsReadOnlyAcrossClosuresAndSoils (0 ms)
+[ RUN      ] SurfaceExchange.SharedHeadroomProportionalDryAndPermutationInvariant
+[       OK ] SurfaceExchange.SharedHeadroomProportionalDryAndPermutationInvariant (0 ms)
+[ RUN      ] SurfaceExchange.ProportionsUseWaterLimitedCandidatesRatherThanUnboundedCapacity
+[       OK ] SurfaceExchange.ProportionsUseWaterLimitedCandidatesRatherThanUnboundedCapacity (0 ms)
+[ RUN      ] SurfaceExchange.OneDonorWaterCeilingAcrossCellsAndNoDenialRedistribution
+[       OK ] SurfaceExchange.OneDonorWaterCeilingAcrossCellsAndNoDenialRedistribution (0 ms)
+[ RUN      ] SurfaceExchange.SettlementRevalidatesAtomicallyAndExpiresUnusedAwards
+[       OK ] SurfaceExchange.SettlementRevalidatesAtomicallyAndExpiresUnusedAwards (0 ms)
+[ RUN      ] SurfaceExchange.InvalidInputsAndChangedConductivityBookNothing
+[       OK ] SurfaceExchange.InvalidInputsAndChangedConductivityBookNothing (0 ms)
+[ RUN      ] SurfaceExchange.ActualDonorMassAndWaterStayPairedInPendingReceipts
+[       OK ] SurfaceExchange.ActualDonorMassAndWaterStayPairedInPendingReceipts (0 ms)
+[ RUN      ] SurfaceExchange.ClosedSaturationAndActualFiringConserveAcrossClosures
+[       OK ] SurfaceExchange.ClosedSaturationAndActualFiringConserveAcrossClosures (0 ms)
+[ RUN      ] SurfaceExchange.TwoRealRunoffKernelsApplyAwardsBeforeWithdrawal
+[       OK ] SurfaceExchange.TwoRealRunoffKernelsApplyAwardsBeforeWithdrawal (0 ms)
+[ RUN      ] SurfaceExchange.NullBoundaryRetainsNativeTrajectoryAndActualPerviousEvapIsSeparate
+[       OK ] SurfaceExchange.NullBoundaryRetainsNativeTrajectoryAndActualPerviousEvapIsSeparate (0 ms)
+[ RUN      ] SurfaceExchange.RealStorageLidBottomConsumesOnlyItsBoundedAward
+[       OK ] SurfaceExchange.RealStorageLidBottomConsumesOnlyItsBoundedAward (0 ms)
+[ RUN      ] SurfaceExchange.ReviewedAreasAvoidLegacyRoundingInUsAndSiAndRejectBadOverrides
+[       OK ] SurfaceExchange.ReviewedAreasAvoidLegacyRoundingInUsAndSiAndRejectBadOverrides (0 ms)
+[ RUN      ] SurfaceExchange.ExistingEngineRunoffClockActuallyLeadsTheFirstRoutingStep
+[       OK ] SurfaceExchange.ExistingEngineRunoffClockActuallyLeadsTheFirstRoutingStep (1 ms)
+[ RUN      ] SurfaceExchange.SourceCadenceProbeRecordsWorkCountWithoutClaimingWholeModelCost
+[       OK ] SurfaceExchange.SourceCadenceProbeRecordsWorkCountWithoutClaimingWholeModelCost (9 ms)
+[----------] 15 tests from SurfaceExchange (15 ms total)
+
+[----------] Global test environment tear-down
+[==========] 15 tests from 1 test suite ran. (15 ms total)
+[  PASSED  ] 15 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 9 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 9 tests from SurfaceOwnership
+[ RUN      ] SurfaceOwnership.ReconcilesFootprintLidFirstAndExactHalfOutside
+[       OK ] SurfaceOwnership.ReconcilesFootprintLidFirstAndExactHalfOutside (1 ms)
+[ RUN      ] SurfaceOwnership.UsAndSiGeometryResolveTheSamePhysicalArea
+[       OK ] SurfaceOwnership.UsAndSiGeometryResolveTheSamePhysicalArea (0 ms)
+[ RUN      ] SurfaceOwnership.RejectsMismatchMissingGeometryAndOverbookedLid
+[       OK ] SurfaceOwnership.RejectsMismatchMissingGeometryAndOverbookedLid (0 ms)
+[ RUN      ] SurfaceOwnership.ConcaveDisconnectedClipClosingVertexAndLargeCoordinates
+[       OK ] SurfaceOwnership.ConcaveDisconnectedClipClosingVertexAndLargeCoordinates (0 ms)
+[ RUN      ] SurfaceOwnership.RejectsSelfIntersectionAndInvalidCellWithoutSkipping
+[       OK ] SurfaceOwnership.RejectsSelfIntersectionAndInvalidCellWithoutSkipping (0 ms)
+[ RUN      ] SurfaceOwnership.ConflictingPeersBlockEvenOutsideEditScope
+[       OK ] SurfaceOwnership.ConflictingPeersBlockEvenOutsideEditScope (0 ms)
+[ RUN      ] SurfaceOwnership.StaleTokenAtomicityAbsenceAndLumpedWeather
+[       OK ] SurfaceOwnership.StaleTokenAtomicityAbsenceAndLumpedWeather (0 ms)
+[ RUN      ] SurfaceOwnership.PublicPreviewDoesNotMutateAndCanCancel
+[       OK ] SurfaceOwnership.PublicPreviewDoesNotMutateAndCanCancel (0 ms)
+[ RUN      ] SurfaceOwnership.InpAndGeoPackagePreserveAuthoredReviewAndAquifer
+[       OK ] SurfaceOwnership.InpAndGeoPackagePreserveAuthoredReviewAndAquifer (45 ms)
+[----------] 9 tests from SurfaceOwnership (50 ms total)
+
+[----------] Global test environment tear-down
+[==========] 9 tests from 1 test suite ran. (50 ms total)
+[  PASSED  ] 9 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 16 tests from 2 test suites.
+[----------] Global test environment set-up.
+[----------] 13 tests from AquiferReceiving
+[ RUN      ] AquiferReceiving.SaturatedAndSealedPublishValidZero
+[       OK ] AquiferReceiving.SaturatedAndSealedPublishValidZero (0 ms)
+[ RUN      ] AquiferReceiving.PendingReservationsCannotBeSpentTwiceOrResetByRefresh
+[       OK ] AquiferReceiving.PendingReservationsCannotBeSpentTwiceOrResetByRefresh (0 ms)
+[ RUN      ] AquiferReceiving.PendingPositiveLinkReceiptReducesAllowance
+[       OK ] AquiferReceiving.PendingPositiveLinkReceiptReducesAllowance (0 ms)
+[ RUN      ] AquiferReceiving.AcceptedDrainageCreatesCapacityAfterFiring
+[       OK ] AquiferReceiving.AcceptedDrainageCreatesCapacityAfterFiring (0 ms)
+[ RUN      ] AquiferReceiving.AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection
+[       OK ] AquiferReceiving.AcceptedDeliveryClosesEachSoilAndClosureWithoutRejection (0 ms)
+[ RUN      ] AquiferReceiving.RestartRetainsPendingReservationAndHeldCapacity
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.RestartRetainsPendingReservationAndHeldCapacity (4 ms)
+[ RUN      ] AquiferReceiving.ZeroColumnRemainsEmptyThroughFirings
+[       OK ] AquiferReceiving.ZeroColumnRemainsEmptyThroughFirings (0 ms)
+[ RUN      ] AquiferReceiving.ProjectUnitsProduceTheSamePhysicalCapacity
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.ProjectUnitsProduceTheSamePhysicalCapacity (16 ms)
+[ RUN      ] AquiferReceiving.SealedUnsaturatedColumnCannotAcceptSurfaceDelivery
+[       OK ] AquiferReceiving.SealedUnsaturatedColumnCannotAcceptSurfaceDelivery (0 ms)
+[ RUN      ] AquiferReceiving.ExternalOnlyRunWritesCapacityAndOffIsUnavailable
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferReceiving.ExternalOnlyRunWritesCapacityAndOffIsUnavailable (12 ms)
+[ RUN      ] AquiferReceiving.DeepBulkColumnApproachesAnalyticGreenAmptIntake
+[       OK ] AquiferReceiving.DeepBulkColumnApproachesAnalyticGreenAmptIntake (2 ms)
+[ RUN      ] AquiferReceiving.TopLayerWettingAndRisingTableReduceCapacity
+[       OK ] AquiferReceiving.TopLayerWettingAndRisingTableReduceCapacity (0 ms)
+[ RUN      ] AquiferReceiving.ZeroFrontHasFiniteAnalyticFirstIntervalIntake
+[       OK ] AquiferReceiving.ZeroFrontHasFiniteAnalyticFirstIntervalIntake (0 ms)
+[----------] 13 tests from AquiferReceiving (37 ms total)
+
+[----------] 3 tests from AquiferOwnership
+[ RUN      ] AquiferOwnership.MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic
+[       OK ] AquiferOwnership.MixedDefaultsSkipCoveredCellsAndExplicitConflictIsAtomic (0 ms)
+[ RUN      ] AquiferOwnership.ExternalOnlyBankHasNoOrdinaryKernelState
+[       OK ] AquiferOwnership.ExternalOnlyBankHasNoOrdinaryKernelState (0 ms)
+[ RUN      ] AquiferOwnership.BulkPreviewAndAtomicAuthoredReplacementPreserveOrderingAndPresence
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] AquiferOwnership.BulkPreviewAndAtomicAuthoredReplacementPreserveOrderingAndPresence (1 ms)
+[----------] 3 tests from AquiferOwnership (1 ms total)
+
+[----------] Global test environment tear-down
+[==========] 16 tests from 2 test suites ran. (38 ms total)
+[  PASSED  ] 16 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 12 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 12 tests from SurfaceEt
+[ RUN      ] SurfaceEt.PondedSurfaceConsumesOneWholeDemandBeforeAllClosures
+[       OK ] SurfaceEt.PondedSurfaceConsumesOneWholeDemandBeforeAllClosures (0 ms)
+[ RUN      ] SurfaceEt.AreaBudgetsExpireIneligibleDemandAndUseOneExtractionStress
+[       OK ] SurfaceEt.AreaBudgetsExpireIneligibleDemandAndUseOneExtractionStress (0 ms)
+[ RUN      ] SurfaceEt.InvalidAreaBudgetCannotPartiallyBookDemand
+[       OK ] SurfaceEt.InvalidAreaBudgetCannotPartiallyBookDemand (0 ms)
+[ RUN      ] SurfaceEt.DryAndPartialPondDemandUsesExactlyOneStressAtExtraction
+[       OK ] SurfaceEt.DryAndPartialPondDemandUsesExactlyOneStressAtExtraction (0 ms)
+[ RUN      ] SurfaceEt.CadenceAndRateRefreshCannotResetOrBorrowDemand
+[       OK ] SurfaceEt.CadenceAndRateRefreshCannotResetOrBorrowDemand (0 ms)
+[ RUN      ] SurfaceEt.StressAndDonorCapsStopWithdrawalAtWilting
+[       OK ] SurfaceEt.StressAndDonorCapsStopWithdrawalAtWilting (0 ms)
+[ RUN      ] SurfaceEt.USAndSIWiltingSuctionAreTheSamePhysicalParameter
+[       OK ] SurfaceEt.USAndSIWiltingSuctionAreTheSamePhysicalParameter (1 ms)
+[ RUN      ] SurfaceEt.AutomaticDefaultsAndExplicitOptOutsRemainDistinct
+[       OK ] SurfaceEt.AutomaticDefaultsAndExplicitOptOutsRemainDistinct (0 ms)
+[ RUN      ] SurfaceEt.EquilibriumEtCannotSpendAnAlreadyCommittedNodeWithdrawal
+[       OK ] SurfaceEt.EquilibriumEtCannotSpendAnAlreadyCommittedNodeWithdrawal (0 ms)
+[ RUN      ] SurfaceEt.ProcessOptionsValidateAtomicallyAndPreserveExplicitDefaults
+[       OK ] SurfaceEt.ProcessOptionsValidateAtomicallyAndPreserveExplicitDefaults (0 ms)
+[ RUN      ] SurfaceEt.ActualModelIntegratesOneAreaDemandAndWritesTheBudget
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] SurfaceEt.ActualModelIntegratesOneAreaDemandAndWritesTheBudget (38 ms)
+[ RUN      ] SurfaceEt.RestartPreservesUnspentPastDemandWithoutReplay
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=1, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] SurfaceEt.RestartPreservesUnspentPastDemandWithoutReplay (1 ms)
+[----------] 12 tests from SurfaceEt (43 ms total)
+
+[----------] Global test environment tear-down
+[==========] 12 tests from 1 test suite ran. (43 ms total)
+[  PASSED  ] 12 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 17 tests from 5 test suites.
+[----------] Global test environment set-up.
+[----------] 5 tests from RunoffAlpha
+[ RUN      ] RunoffAlpha.BasicComputation
+[       OK ] RunoffAlpha.BasicComputation (0 ms)
+[ RUN      ] RunoffAlpha.ZeroAreaGivesZeroAlpha
+[       OK ] RunoffAlpha.ZeroAreaGivesZeroAlpha (0 ms)
+[ RUN      ] RunoffAlpha.ZeroManningsNGivesZeroAlpha
+[       OK ] RunoffAlpha.ZeroManningsNGivesZeroAlpha (0 ms)
+[ RUN      ] RunoffAlpha.FullyImperviousNoPerviousAlpha
+[       OK ] RunoffAlpha.FullyImperviousNoPerviousAlpha (0 ms)
+[ RUN      ] RunoffAlpha.MultipleSubcatchments
+[       OK ] RunoffAlpha.MultipleSubcatchments (0 ms)
+[----------] 5 tests from RunoffAlpha (0 ms total)
+
+[----------] 5 tests from PondedDepth
+[ RUN      ] PondedDepth.FillsDepressionStorageFirst
+[       OK ] PondedDepth.FillsDepressionStorageFirst (0 ms)
+[ RUN      ] PondedDepth.OverflowsAfterDepressionStorage
+[       OK ] PondedDepth.OverflowsAfterDepressionStorage (0 ms)
+[ RUN      ] PondedDepth.NoInflowNoChange
+[       OK ] PondedDepth.NoInflowNoChange (0 ms)
+[ RUN      ] PondedDepth.SteadyStateBalance
+[       OK ] PondedDepth.SteadyStateBalance (0 ms)
+[ RUN      ] PondedDepth.NeverGoesNegative
+[       OK ] PondedDepth.NeverGoesNegative (0 ms)
+[----------] 5 tests from PondedDepth (0 ms total)
+
+[----------] 4 tests from RunoffRate
+[ RUN      ] RunoffRate.ZeroExcessGivesZeroRunoff
+[       OK ] RunoffRate.ZeroExcessGivesZeroRunoff (0 ms)
+[ RUN      ] RunoffRate.PositiveExcessGivesPositiveRunoff
+[       OK ] RunoffRate.PositiveExcessGivesPositiveRunoff (0 ms)
+[ RUN      ] RunoffRate.ManningsFormula
+[       OK ] RunoffRate.ManningsFormula (0 ms)
+[ RUN      ] RunoffRate.ZeroAlphaGivesZeroRunoff
+[       OK ] RunoffRate.ZeroAlphaGivesZeroRunoff (0 ms)
+[----------] 4 tests from RunoffRate (0 ms total)
+
+[----------] 2 tests from RunoffSoA
+[ RUN      ] RunoffSoA.ResizeSetsCorrectSize
+[       OK ] RunoffSoA.ResizeSetsCorrectSize (0 ms)
+[ RUN      ] RunoffSoA.ResizeInitializesToZero
+[       OK ] RunoffSoA.ResizeInitializesToZero (0 ms)
+[----------] 2 tests from RunoffSoA (0 ms total)
+
+[----------] 1 test from RunoffMassBalance
+[ RUN      ] RunoffMassBalance.PondedDepthConservation
+[       OK ] RunoffMassBalance.PondedDepthConservation (0 ms)
+[----------] 1 test from RunoffMassBalance (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 17 tests from 5 test suites ran. (0 ms total)
+[  PASSED  ] 17 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 55 tests from 20 test suites.
+[----------] Global test environment set-up.
+[----------] 3 tests from LIDGroupSoA
+[ RUN      ] LIDGroupSoA.ResizeSetsCorrectSizes
+[       OK ] LIDGroupSoA.ResizeSetsCorrectSizes (0 ms)
+[ RUN      ] LIDGroupSoA.ResizeZeroIsEmpty
+[       OK ] LIDGroupSoA.ResizeZeroIsEmpty (0 ms)
+[ RUN      ] LIDGroupSoA.DefaultValuesReasonable
+[       OK ] LIDGroupSoA.DefaultValuesReasonable (0 ms)
+[----------] 3 tests from LIDGroupSoA (0 ms total)
+
+[----------] 12 tests from LIDModelBuilder
+[ RUN      ] LIDModelBuilder.EmptyUsageProducesEmptyGroups
+[       OK ] LIDModelBuilder.EmptyUsageProducesEmptyGroups (0 ms)
+[ RUN      ] LIDModelBuilder.SingleBioCellPopulated
+[       OK ] LIDModelBuilder.SingleBioCellPopulated (0 ms)
+[ RUN      ] LIDModelBuilder.InitialSaturationSetsState
+[       OK ] LIDModelBuilder.InitialSaturationSetsState (0 ms)
+[ RUN      ] LIDModelBuilder.MultipleTypesDistributed
+[       OK ] LIDModelBuilder.MultipleTypesDistributed (0 ms)
+[ RUN      ] LIDModelBuilder.ReplicateNumberScalesAreaAndWidth
+[       OK ] LIDModelBuilder.ReplicateNumberScalesAreaAndWidth (0 ms)
+[ RUN      ] LIDModelBuilder.MetricUsageAreaAndWidthConvertToInternalFeet
+[       OK ] LIDModelBuilder.MetricUsageAreaAndWidthConvertToInternalFeet (0 ms)
+[ RUN      ] LIDModelBuilder.ManningAlphaComputed
+[       OK ] LIDModelBuilder.ManningAlphaComputed (0 ms)
+[ RUN      ] LIDModelBuilder.FromImpervConvertedToFraction
+[       OK ] LIDModelBuilder.FromImpervConvertedToFraction (0 ms)
+[ RUN      ] LIDModelBuilder.StorageVoidRatioAboveOneIsLegal
+[       OK ] LIDModelBuilder.StorageVoidRatioAboveOneIsLegal (1 ms)
+[ RUN      ] LIDModelBuilder.DrainToNodeResolved
+[       OK ] LIDModelBuilder.DrainToNodeResolved (0 ms)
+[ RUN      ] LIDModelBuilder.DrainToSubcatchResolved
+[       OK ] LIDModelBuilder.DrainToSubcatchResolved (0 ms)
+[ RUN      ] LIDModelBuilder.ToPerFlagPreserved
+[       OK ] LIDModelBuilder.ToPerFlagPreserved (0 ms)
+[----------] 12 tests from LIDModelBuilder (2 ms total)
+
+[----------] 6 tests from LIDBioCell
+[ RUN      ] LIDBioCell.RainfallFillsSurface
+[       OK ] LIDBioCell.RainfallFillsSurface (0 ms)
+[ RUN      ] LIDBioCell.SoilPercolationOccurs
+[       OK ] LIDBioCell.SoilPercolationOccurs (0 ms)
+[ RUN      ] LIDBioCell.DrainActivatesAboveOffset
+[       OK ] LIDBioCell.DrainActivatesAboveOffset (0 ms)
+[ RUN      ] LIDBioCell.DrainInactiveWhenBelowOffset
+[       OK ] LIDBioCell.DrainInactiveWhenBelowOffset (0 ms)
+[ RUN      ] LIDBioCell.WaterBalanceConserved
+[       OK ] LIDBioCell.WaterBalanceConserved (0 ms)
+[ RUN      ] LIDBioCell.EvaporationReducesSurfaceDepth
+[       OK ] LIDBioCell.EvaporationReducesSurfaceDepth (0 ms)
+[----------] 6 tests from LIDBioCell (0 ms total)
+
+[----------] 3 tests from LIDBarrel
+[ RUN      ] LIDBarrel.FillsAndOverflows
+[       OK ] LIDBarrel.FillsAndOverflows (0 ms)
+[ RUN      ] LIDBarrel.DrainReducesStorage
+[       OK ] LIDBarrel.DrainReducesStorage (0 ms)
+[ RUN      ] LIDBarrel.WaterBalanceConserved
+[       OK ] LIDBarrel.WaterBalanceConserved (0 ms)
+[----------] 3 tests from LIDBarrel (0 ms total)
+
+[----------] 1 test from LIDSwale
+[ RUN      ] LIDSwale.ManningsOutflowOccurs
+[       OK ] LIDSwale.ManningsOutflowOccurs (0 ms)
+[----------] 1 test from LIDSwale (0 ms total)
+
+[----------] 1 test from LIDGreenRoof
+[ RUN      ] LIDGreenRoof.SoilPercolationToDrainMat
+[       OK ] LIDGreenRoof.SoilPercolationToDrainMat (0 ms)
+[----------] 1 test from LIDGreenRoof (0 ms total)
+
+[----------] 2 tests from LIDPavement
+[ RUN      ] LIDPavement.PavementPercolation
+[       OK ] LIDPavement.PavementPercolation (0 ms)
+[ RUN      ] LIDPavement.CloggingReducesPermeability
+[       OK ] LIDPavement.CloggingReducesPermeability (0 ms)
+[----------] 2 tests from LIDPavement (0 ms total)
+
+[----------] 1 test from LIDRoof
+[ RUN      ] LIDRoof.SplitsBetweenOverflowAndDrain
+[       OK ] LIDRoof.SplitsBetweenOverflowAndDrain (0 ms)
+[----------] 1 test from LIDRoof (0 ms total)
+
+[----------] 1 test from LIDBatch
+[ RUN      ] LIDBatch.MultipleBarrelsProcessedCorrectly
+[       OK ] LIDBatch.MultipleBarrelsProcessedCorrectly (0 ms)
+[----------] 1 test from LIDBatch (0 ms total)
+
+[----------] 2 tests from LIDEdge
+[ RUN      ] LIDEdge.ZeroRainfallNoChange
+[       OK ] LIDEdge.ZeroRainfallNoChange (0 ms)
+[ RUN      ] LIDEdge.NegativeDepthsClamped
+[       OK ] LIDEdge.NegativeDepthsClamped (0 ms)
+[----------] 2 tests from LIDEdge (0 ms total)
+
+[----------] 2 tests from LIDInflow
+[ RUN      ] LIDInflow.PerUnitInflowUsedOverRainfall
+[       OK ] LIDInflow.PerUnitInflowUsedOverRainfall (0 ms)
+[ RUN      ] LIDInflow.ZeroInflowFallsBackToRainfall
+[       OK ] LIDInflow.ZeroInflowFallsBackToRainfall (0 ms)
+[----------] 2 tests from LIDInflow (0 ms total)
+
+[----------] 4 tests from LIDModPuls
+[ RUN      ] LIDModPuls.SwaleConvergesToSteadyState
+[       OK ] LIDModPuls.SwaleConvergesToSteadyState (0 ms)
+[ RUN      ] LIDModPuls.SwaleModPulsMoreStableThanEuler
+[       OK ] LIDModPuls.SwaleModPulsMoreStableThanEuler (0 ms)
+[ RUN      ] LIDModPuls.SwalePreservesFOldBetweenTimesteps
+[       OK ] LIDModPuls.SwalePreservesFOldBetweenTimesteps (0 ms)
+[ RUN      ] LIDModPuls.SwaleWaterBalanceWithModPuls
+[       OK ] LIDModPuls.SwaleWaterBalanceWithModPuls (0 ms)
+[----------] 4 tests from LIDModPuls (0 ms total)
+
+[----------] 3 tests from LIDDrainHysteresis
+[ RUN      ] LIDDrainHysteresis.DrainOpensAtHOpen
+[       OK ] LIDDrainHysteresis.DrainOpensAtHOpen (0 ms)
+[ RUN      ] LIDDrainHysteresis.DrainStaysOpenAboveHClose
+[       OK ] LIDDrainHysteresis.DrainStaysOpenAboveHClose (0 ms)
+[ RUN      ] LIDDrainHysteresis.DrainClosesBelow
+[       OK ] LIDDrainHysteresis.DrainClosesBelow (0 ms)
+[----------] 3 tests from LIDDrainHysteresis (0 ms total)
+
+[----------] 2 tests from LIDBarrelCovered
+[ RUN      ] LIDBarrelCovered.CoveredBlocksRainfall
+[       OK ] LIDBarrelCovered.CoveredBlocksRainfall (0 ms)
+[ RUN      ] LIDBarrelCovered.UncoveredReceivesRainfall
+[       OK ] LIDBarrelCovered.UncoveredReceivesRainfall (0 ms)
+[----------] 2 tests from LIDBarrelCovered (0 ms total)
+
+[----------] 2 tests from LIDBarrelDelay
+[ RUN      ] LIDBarrelDelay.DrainBlockedDuringRain
+[       OK ] LIDBarrelDelay.DrainBlockedDuringRain (0 ms)
+[ RUN      ] LIDBarrelDelay.DrainActivatesAfterDelay
+[       OK ] LIDBarrelDelay.DrainActivatesAfterDelay (0 ms)
+[----------] 2 tests from LIDBarrelDelay (0 ms total)
+
+[----------] 1 test from LIDStorageClog
+[ RUN      ] LIDStorageClog.CloggingReducesExfiltration
+[       OK ] LIDStorageClog.CloggingReducesExfiltration (0 ms)
+[----------] 1 test from LIDStorageClog (0 ms total)
+
+[----------] 1 test from LIDPavementRegen
+[ RUN      ] LIDPavementRegen.RegenerationReducesClogging
+[       OK ] LIDPavementRegen.RegenerationReducesClogging (0 ms)
+[----------] 1 test from LIDPavementRegen (0 ms total)
+
+[----------] 3 tests from LIDPollutantRemoval
+[ RUN      ] LIDPollutantRemoval.RemovalFractionsPopulatedFromContext
+[       OK ] LIDPollutantRemoval.RemovalFractionsPopulatedFromContext (0 ms)
+[ RUN      ] LIDPollutantRemoval.NoRemovalsByDefault
+[       OK ] LIDPollutantRemoval.NoRemovalsByDefault (0 ms)
+[ RUN      ] LIDPollutantRemoval.RemovalsStoreParsedCorrectly
+[       OK ] LIDPollutantRemoval.RemovalsStoreParsedCorrectly (0 ms)
+[----------] 3 tests from LIDPollutantRemoval (0 ms total)
+
+[----------] 2 tests from LIDStorageExfil
+[ RUN      ] LIDStorageExfil.TrajectoryMatchesBenchmark
+[       OK ] LIDStorageExfil.TrajectoryMatchesBenchmark (0 ms)
+[ RUN      ] LIDStorageExfil.CloggingTrajectoryMatchesBenchmark
+[       OK ] LIDStorageExfil.CloggingTrajectoryMatchesBenchmark (0 ms)
+[----------] 2 tests from LIDStorageExfil (0 ms total)
+
+[----------] 3 tests from LidRunoffAreaTest
+[ RUN      ] LidRunoffAreaTest.LidFootprintExcludedFromRunoffArea
+[       OK ] LidRunoffAreaTest.LidFootprintExcludedFromRunoffArea (1 ms)
+[ RUN      ] LidRunoffAreaTest.CapturedRunoffLeavesTheSubcatchmentOutlet
+[       OK ] LidRunoffAreaTest.CapturedRunoffLeavesTheSubcatchmentOutlet (1 ms)
+[ RUN      ] LidRunoffAreaTest.FullCoverageByReplicateUnitsShedsNothing
+[       OK ] LidRunoffAreaTest.FullCoverageByReplicateUnitsShedsNothing (1 ms)
+[----------] 3 tests from LidRunoffAreaTest (5 ms total)
+
+[----------] Global test environment tear-down
+[==========] 55 tests from 20 test suites ran. (9 ms total)
+[  PASSED  ] 55 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 53 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 53 tests from LidNodes
+[ RUN      ] LidNodes.ArbitraryOrderedLayersAndValidation
+[       OK ] LidNodes.ArbitraryOrderedLayersAndValidation (0 ms)
+[ RUN      ] LidNodes.RejectsDepthMismatchAndDuplicateAssignment
+[       OK ] LidNodes.RejectsDepthMismatchAndDuplicateAssignment (0 ms)
+[ RUN      ] LidNodes.InputRoundTripPreservesRepeatedLayers
+[       OK ] LidNodes.InputRoundTripPreservesRepeatedLayers (1 ms)
+[ RUN      ] LidNodes.AtomicApiStackAndStorageAssignment
+[       OK ] LidNodes.AtomicApiStackAndStorageAssignment (0 ms)
+[ RUN      ] LidNodes.RetainedAndMobileStorageConserveWater
+[       OK ] LidNodes.RetainedAndMobileStorageConserveWater (0 ms)
+[ RUN      ] LidNodes.MobileDepthVolumeInverseAcrossEveryLayer
+[       OK ] LidNodes.MobileDepthVolumeInverseAcrossEveryLayer (0 ms)
+[ RUN      ] LidNodes.RoutedBucketConservation
+[       OK ] LidNodes.RoutedBucketConservation (2 ms)
+[ RUN      ] LidNodes.HotstartRetainsMoistureAndCloggingHistory
+[       OK ] LidNodes.HotstartRetainsMoistureAndCloggingHistory (0 ms)
+[ RUN      ] LidNodes.GeoPackagePreservesOrderedLayersAndAssignment
+[       OK ] LidNodes.GeoPackagePreservesOrderedLayersAndAssignment (12 ms)
+[ RUN      ] LidNodes.OrdinaryLinksAreNumericallyUnchanged
+[       OK ] LidNodes.OrdinaryLinksAreNumericallyUnchanged (0 ms)
+[ RUN      ] LidNodes.PortsRespectAvailableWaterAndBackflowCapacity
+[       OK ] LidNodes.PortsRespectAvailableWaterAndBackflowCapacity (0 ms)
+[ RUN      ] LidNodes.PartlySubmergedAggregateStillDrainsRetainedWater
+[       OK ] LidNodes.PartlySubmergedAggregateStillDrainsRetainedWater (0 ms)
+[ RUN      ] LidNodes.ElevatedInletInConnectedCellCannotFillRetainedStoreToPorosity
+[       OK ] LidNodes.ElevatedInletInConnectedCellCannotFillRetainedStoreToPorosity (0 ms)
+[ RUN      ] LidNodes.ChainedFreeOutletAndBackwaterHaveContinuousStorageHead
+[       OK ] LidNodes.ChainedFreeOutletAndBackwaterHaveContinuousStorageHead (2298 ms)
+[ RUN      ] LidNodes.ElevatedPortsConserveAcrossPondingAndSurcharge
+[       OK ] LidNodes.ElevatedPortsConserveAcrossPondingAndSurcharge (6 ms)
+[ RUN      ] LidNodes.FullySaturatedInitialProfileHasConnectedWaterTable
+[       OK ] LidNodes.FullySaturatedInitialProfileHasConnectedWaterTable (0 ms)
+[ RUN      ] LidNodes.ConvertingStorageClearsOutletAnchors
+[       OK ] LidNodes.ConvertingStorageClearsOutletAnchors (0 ms)
+[ RUN      ] LidNodes.UndoingAddedOutletClearsItsAnchor
+[       OK ] LidNodes.UndoingAddedOutletClearsItsAnchor (0 ms)
+[ RUN      ] LidNodes.SurchargeWetsMediaToFieldCapacityConservatively
+[       OK ] LidNodes.SurchargeWetsMediaToFieldCapacityConservatively (0 ms)
+[ RUN      ] LidNodes.LayerTreatmentApiIsAtomicAndPreservedByPhysicalEdits
+[       OK ] LidNodes.LayerTreatmentApiIsAtomicAndPreservedByPhysicalEdits (0 ms)
+[ RUN      ] LidNodes.LayerRatesExpressionsAndTransfersConservePollutantMass
+[       OK ] LidNodes.LayerRatesExpressionsAndTransfersConservePollutantMass (0 ms)
+[ RUN      ] LidNodes.LayerTreatmentInputRoundTrip
+[       OK ] LidNodes.LayerTreatmentInputRoundTrip (0 ms)
+[ RUN      ] LidNodes.RoutedLayerTreatmentMassBalance
+[       OK ] LidNodes.RoutedLayerTreatmentMassBalance (35 ms)
+[ RUN      ] LidNodes.SaturatedAggregateDecayConservesMass
+[       OK ] LidNodes.SaturatedAggregateDecayConservesMass (0 ms)
+[ RUN      ] LidNodes.PollutantRenameAndDeleteFollowLayerTreatment
+[       OK ] LidNodes.PollutantRenameAndDeleteFollowLayerTreatment (0 ms)
+[ RUN      ] LidNodes.ChainedDrainageAndBackflowConservePollutantMass
+[       OK ] LidNodes.ChainedDrainageAndBackflowConservePollutantMass (8458 ms)
+[ RUN      ] LidNodes.PercolationCanDrainBelowOneLitreWithoutLosingItsLoad
+[       OK ] LidNodes.PercolationCanDrainBelowOneLitreWithoutLosingItsLoad (0 ms)
+[ RUN      ] LidNodes.WeirAnchorUsesItsPhysicalCrestAndTracksStackEdits
+[       OK ] LidNodes.WeirAnchorUsesItsPhysicalCrestAndTracksStackEdits (0 ms)
+[ RUN      ] LidNodes.PondedWeirAtNonzeroInvertDrawsSurfaceWater
+[       OK ] LidNodes.PondedWeirAtNonzeroInvertDrawsSurfaceWater (0 ms)
+[ RUN      ] LidNodes.PortInterfacesAllowRoundoffButPreservePhysicalOffsets
+[       OK ] LidNodes.PortInterfacesAllowRoundoffButPreservePhysicalOffsets (0 ms)
+[ RUN      ] LidNodes.MobileOutletTreatmentUsesTheSameInterfaceOwnerAsHydraulics
+[       OK ] LidNodes.MobileOutletTreatmentUsesTheSameInterfaceOwnerAsHydraulics (0 ms)
+[ RUN      ] LidNodes.MediaDrainageUsesLegacyConductivitySlope
+[       OK ] LidNodes.MediaDrainageUsesLegacyConductivitySlope (0 ms)
+[ RUN      ] LidNodes.SurfaceEntryReusesModifiedGreenAmptAndRespondsToPonding
+[       OK ] LidNodes.SurfaceEntryReusesModifiedGreenAmptAndRespondsToPonding (0 ms)
+[ RUN      ] LidNodes.CapacityLimitAdvancesOnlyAcceptedInfiltrationHistory
+[       OK ] LidNodes.CapacityLimitAdvancesOnlyAcceptedInfiltrationHistory (0 ms)
+[ RUN      ] LidNodes.ZeroConductivityIsAnImpermeableSurfaceReceiver
+[       OK ] LidNodes.ZeroConductivityIsAnImpermeableSurfaceReceiver (0 ms)
+[ RUN      ] LidNodes.DrySurfaceRecoversHistoryWithoutDryingPhysicalMoisture
+[       OK ] LidNodes.DrySurfaceRecoversHistoryWithoutDryingPhysicalMoisture (0 ms)
+[ RUN      ] LidNodes.ZeroClimateConductivityMultiplierDoesNotAdvanceInfiltration
+[       OK ] LidNodes.ZeroClimateConductivityMultiplierDoesNotAdvanceInfiltration (0 ms)
+[ RUN      ] LidNodes.ReversedMediaPortWettingDoesNotCountAsSurfaceInfiltration
+[       OK ] LidNodes.ReversedMediaPortWettingDoesNotCountAsSurfaceInfiltration (0 ms)
+[ RUN      ] LidNodes.PartialBackwaterReconcilesDeficitAndSuppressesDryRecovery
+[       OK ] LidNodes.PartialBackwaterReconcilesDeficitAndSuppressesDryRecovery (0 ms)
+[ RUN      ] LidNodes.FullResaturationAndRecessionStartFromRemainingMoisture
+[       OK ] LidNodes.FullResaturationAndRecessionStartFromRemainingMoisture (0 ms)
+[ RUN      ] LidNodes.V10HotstartExactlyContinuesInfiltrationAndMoisture
+[       OK ] LidNodes.V10HotstartExactlyContinuesInfiltrationAndMoisture (0 ms)
+[ RUN      ] LidNodes.OlderHotstartExplicitlyReconstructsMissingInfiltrationHistory
+[       OK ] LidNodes.OlderHotstartExplicitlyReconstructsMissingInfiltrationHistory (0 ms)
+[ RUN      ] LidNodes.RoutedReversalResaturationRecessionAndSecondEventConserve
+[       OK ] LidNodes.RoutedReversalResaturationRecessionAndSecondEventConserve (11 ms)
+[ RUN      ] LidNodes.RichardsOwnsPorousStorageAndConservesCapturedSupply
+[       OK ] LidNodes.RichardsOwnsPorousStorageAndConservesCapturedSupply (62 ms)
+[ RUN      ] LidNodes.RichardsHydrostaticPortsHaveOneDonorBudgetAcrossTrials
+[       OK ] LidNodes.RichardsHydrostaticPortsHaveOneDonorBudgetAcrossTrials (0 ms)
+[ RUN      ] LidNodes.RichardsFailureDoesNotConsumeLateralWaterOrQuality
+[       OK ] LidNodes.RichardsFailureDoesNotConsumeLateralWaterOrQuality (0 ms)
+[ RUN      ] LidNodes.RichardsInpRoundTripAndMissingRetentionValidation
+[       OK ] LidNodes.RichardsInpRoundTripAndMissingRetentionValidation (1 ms)
+[ RUN      ] LidNodes.RichardsAtomicApiKeepsMaterialAndGeometryOnInvalidEdit
+[       OK ] LidNodes.RichardsAtomicApiKeepsMaterialAndGeometryOnInvalidEdit (0 ms)
+[ RUN      ] LidNodes.RichardsInactiveMaterialsPersistAndUnsupportedTransportFails
+[       OK ] LidNodes.RichardsInactiveMaterialsPersistAndUnsupportedTransportFails (0 ms)
+[ RUN      ] LidNodes.RichardsPhysicalStateIsConsistentAcrossInputUnits
+[       OK ] LidNodes.RichardsPhysicalStateIsConsistentAcrossInputUnits (0 ms)
+[ RUN      ] LidNodes.RichardsV11RestartRestoresCompleteStorageAndRejectsChangedMaterial
+[       OK ] LidNodes.RichardsV11RestartRestoresCompleteStorageAndRejectsChangedMaterial (24 ms)
+[ RUN      ] LidNodes.RichardsGeoPackageRetainsSolverAndPorousLaws
+[       OK ] LidNodes.RichardsGeoPackageRetainsSolverAndPorousLaws (10 ms)
+[ RUN      ] LidNodes.RichardsRoutedBackwaterSupplySeepageAndQualityConserve
+[       OK ] LidNodes.RichardsRoutedBackwaterSupplySeepageAndQualityConserve (752 ms)
+[----------] 53 tests from LidNodes (11684 ms total)
+
+[----------] Global test environment tear-down
+[==========] 53 tests from 1 test suite ran. (11684 ms total)
+[  PASSED  ] 53 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from InertialMarcher
+[ RUN      ] InertialMarcher.LakeAtRestExactFlatAndVfr
+[       OK ] InertialMarcher.LakeAtRestExactFlatAndVfr (19 ms)
+[ RUN      ] InertialMarcher.DryNeighbourWallNoCreep
+[       OK ] InertialMarcher.DryNeighbourWallNoCreep (4 ms)
+[ RUN      ] InertialMarcher.ClosedBasinConservationAndPositivity
+[       OK ] InertialMarcher.ClosedBasinConservationAndPositivity (14 ms)
+[ RUN      ] InertialMarcher.ManningSteadySlopeRainOutflow
+[       OK ] InertialMarcher.ManningSteadySlopeRainOutflow (360 ms)
+[ RUN      ] InertialMarcher.SteadySlopeNoCheckerboard
+[       OK ] InertialMarcher.SteadySlopeNoCheckerboard (654 ms)
+[ RUN      ] InertialMarcher.SpecifiedStageFillAndDrawdownLedger
+[       OK ] InertialMarcher.SpecifiedStageFillAndDrawdownLedger (346 ms)
+[ RUN      ] InertialMarcher.FroudeClampSteepFace
+[       OK ] InertialMarcher.FroudeClampSteepFace (4 ms)
+[ RUN      ] InertialMarcher.FaceDepthFromEtaLimitsAndC1
+[       OK ] InertialMarcher.FaceDepthFromEtaLimitsAndC1 (0 ms)
+[ RUN      ] InertialMarcher.LakeAtRestExactVfrFace
+[       OK ] InertialMarcher.LakeAtRestExactVfrFace (19 ms)
+[ RUN      ] InertialMarcher.DryNeighbourWallNoCreepVfrFace
+[       OK ] InertialMarcher.DryNeighbourWallNoCreepVfrFace (5 ms)
+[ RUN      ] InertialMarcher.ThinCrestRetentionVfrFace
+[       OK ] InertialMarcher.ThinCrestRetentionVfrFace (14 ms)
+[----------] 11 tests from InertialMarcher (1443 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (1443 ms total)
+[  PASSED  ] 11 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 4 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 4 tests from RuntimeCouplingApi
+[ RUN      ] RuntimeCouplingApi.ScalarCopiesBuffersAndClearPreservesReceipt
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] RuntimeCouplingApi.ScalarCopiesBuffersAndClearPreservesReceipt (2 ms)
+[ RUN      ] RuntimeCouplingApi.InvalidBatchLeavesPriorRateAndClockUnchanged
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] RuntimeCouplingApi.InvalidBatchLeavesPriorRateAndClockUnchanged (0 ms)
+[ RUN      ] RuntimeCouplingApi.ExpiryAndIndependentSpeciesSinkAreConservative
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] RuntimeCouplingApi.ExpiryAndIndependentSpeciesSinkAreConservative (1 ms)
+[ RUN      ] RuntimeCouplingApi.DirectBoundaryUsesTotalFlowAndRejectsDisabledHeat
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] RuntimeCouplingApi.DirectBoundaryUsesTotalFlowAndRejectsDisabledHeat (0 ms)
+[----------] 4 tests from RuntimeCouplingApi (4 ms total)
+
+[----------] Global test environment tear-down
+[==========] 4 tests from 1 test suite ran. (4 ms total)
+[  PASSED  ] 4 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 4 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 4 tests from GwSourceForcing
+[ RUN      ] GwSourceForcing.IntegratesFlowConcentrationProductAcrossKnotsAndCadences
+[       OK ] GwSourceForcing.IntegratesFlowConcentrationProductAcrossKnotsAndCadences (0 ms)
+[ RUN      ] GwSourceForcing.SplitsSignedFlowAndScalesTotalWithoutScalingConcentrationTwice
+[       OK ] GwSourceForcing.SplitsSignedFlowAndScalesTotalWithoutScalingConcentrationTwice (0 ms)
+[ RUN      ] GwSourceForcing.NativeMassRateConvertsToConcentrationTimesCubicMetres
+[       OK ] GwSourceForcing.NativeMassRateConvertsToConcentrationTimesCubicMetres (0 ms)
+[ RUN      ] GwSourceForcing.ResolvedSeriesBackingIsSharedAndIntervalLookupKeepsExactEndpoints
+[       OK ] GwSourceForcing.ResolvedSeriesBackingIsSharedAndIntervalLookupKeepsExactEndpoints (0 ms)
+[----------] 4 tests from GwSourceForcing (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 4 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 4 tests.
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+[==========] Running 30 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 30 tests from GwTransportKernel
+[ RUN      ] GwTransportKernel.TupleConservesOnEveryMeshFlavour
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.TupleConservesOnEveryMeshFlavour (8 ms)
+[ RUN      ] GwTransportKernel.InfiltrationHandsMassToTheAquiferAndExcessBringsItBack
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.InfiltrationHandsMassToTheAquiferAndExcessBringsItBack (2 ms)
+[ RUN      ] GwTransportKernel.SubsurfaceEtLeavesTheSolutesBehind
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SubsurfaceEtLeavesTheSolutesBehind (2 ms)
+[ RUN      ] GwTransportKernel.EtCarriesTheAgeRowOutWithTheWaterD_A20
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.EtCarriesTheAgeRowOutWithTheWaterD_A20 (2 ms)
+[ RUN      ] GwTransportKernel.MatrixReportsTheGroundwaterRowAndTheWarningIsScoped
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.MatrixReportsTheGroundwaterRowAndTheWarningIsScoped (1 ms)
+[ RUN      ] GwTransportKernel.DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DispersionMixesTheNeighboursAndRespectsTheMaxPrinciple (4 ms)
+[ RUN      ] GwTransportKernel.RetardationHoldsMassBackAndStillConserves
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.RetardationHoldsMassBackAndStillConserves (3 ms)
+[ RUN      ] GwTransportKernel.DecayRemovesTheAnalyticFractionAndIsLedgered
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DecayRemovesTheAnalyticFractionAndIsLedgered (4 ms)
+[ RUN      ] GwTransportKernel.CApiReportsTheSpeciesRowsConcentrationsAndLedger
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.CApiReportsTheSpeciesRowsConcentrationsAndLedger (2 ms)
+[ RUN      ] GwTransportKernel.ReportCarriesTheAquiferQualityContinuity
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ReportCarriesTheAquiferQualityContinuity (13 ms)
+[ RUN      ] GwTransportKernel.HotStartCarriesTheAquiferSpeciesAcrossARestart
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.HotStartCarriesTheAquiferSpeciesAcrossARestart (9 ms)
+[ RUN      ] GwTransportKernel.ResultsFileCarriesTheSpeciesFieldsAndLedger
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ResultsFileCarriesTheSpeciesFieldsAndLedger (44 ms)
+[ RUN      ] GwTransportKernel.DrainingBedAgreesWithTheNodeInVolume
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[G-W1] 1D flow continuity, gw1_bed_only: 0.549561 % (clamped 235 firings; undelivered tail 2.53206e-20 m3 of 0.0472374 m3 exchanged)
+[       OK ] GwTransportKernel.DrainingBedAgreesWithTheNodeInVolume (3 ms)
+[ RUN      ] GwTransportKernel.DrainingBedAgreesWithTheNodeUnderEnslavedClosure
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[G-W1] 1D flow continuity, gw1_bed_enslaved: 0.528045 % (clamped 228 firings; undelivered tail 1.874e-05 m3 of 0.234981 m3 exchanged)
+[       OK ] GwTransportKernel.DrainingBedAgreesWithTheNodeUnderEnslavedClosure (4 ms)
+[ RUN      ] GwTransportKernel.LeakingConduitCarriesItsQualityIntoTheAquifer
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.LeakingConduitCarriesItsQualityIntoTheAquifer (2 ms)
+[ RUN      ] GwTransportKernel.RechargingNodeSendsItsQualityDownTheBedAndIsLedgered
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.RechargingNodeSendsItsQualityDownTheBedAndIsLedgered (2 ms)
+[ RUN      ] GwTransportKernel.DrainingAquiferHandsItsMassToTheNodeQueue
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.DrainingAquiferHandsItsMassToTheNodeQueue (2 ms)
+[ RUN      ] GwTransportKernel.ContinuityDenominatorNamesEveryInflowRoute
+[       OK ] GwTransportKernel.ContinuityDenominatorNamesEveryInflowRoute (0 ms)
+[ RUN      ] GwTransportKernel.ReportSaysNaWhenThereIsNoScaleToDivideBy
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ReportSaysNaWhenThereIsNoScaleToDivideBy (2 ms)
+[ RUN      ] GwTransportKernel.NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.NamedSourcesApplyTotalFlowScaleAndNativeMassOnActualCells (6 ms)
+[ RUN      ] GwTransportKernel.ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.ExtractionIsAvailabilityLimitedAndRemovesDissolvedSpecies (2 ms)
+[ RUN      ] GwTransportKernel.SourceSeriesUsesNonMidnightStartAndFileValues
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SourceSeriesUsesNonMidnightStartAndFileValues (2 ms)
+[ RUN      ] GwTransportKernel.UnsupportedGroundwaterForcingFailsRatherThanRunningInertly
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.UnsupportedGroundwaterForcingFailsRatherThanRunningInertly (2 ms)
+[ RUN      ] GwTransportKernel.InitialCellQualityOverridesLaterGlobalRows
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.InitialCellQualityOverridesLaterGlobalRows (0 ms)
+[ RUN      ] GwTransportKernel.SourceLedgersResumeThroughNativeHotstart
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.SourceLedgersResumeThroughNativeHotstart (3 ms)
+[ RUN      ] GwTransportKernel.FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.FlowReversalCannotWithdrawFutureInjectionAndClosesAcrossCadences (11 ms)
+[ RUN      ] GwTransportKernel.CoupledGroundwaterRejectsUnsupportedRk2Route
+[openswmm 2D] backend 'auto': the GPU/Kokkos plugin serves only all-triangle meshes under MOMENTUM_EQUATION LOCAL_INERTIAL with no transport rows (species / age / temperature); using the CPU marcher for this model.
+[       OK ] GwTransportKernel.CoupledGroundwaterRejectsUnsupportedRk2Route (0 ms)
+[ RUN      ] GwTransportKernel.AquiferOptionSnapshotsPreserveFullDoublePrecision
+[       OK ] GwTransportKernel.AquiferOptionSnapshotsPreserveFullDoublePrecision (0 ms)
+[ RUN      ] GwTransportKernel.AuthoringTagGettersWorkBeforeRuntimeInitialization
+[       OK ] GwTransportKernel.AuthoringTagGettersWorkBeforeRuntimeInitialization (0 ms)
+[ RUN      ] GwTransportKernel.GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[openswmm 2D] using CPU marcher (no GPU device selected; n_cells=2, device floor=10000 cells). Set [2D_OPTIONS] BACKEND CUDA (or OPENSWMM_2D_BACKEND=cuda) to force the GPU, or lower OPENSWMM_2D_MIN_PARALLEL_CELLS_DEVICE.
+[       OK ] GwTransportKernel.GroundwaterHdfUnitsFollowNativeSpeciesEvenWhenSurfaceTransportIsOff (27 ms)
+[----------] 30 tests from GwTransportKernel (178 ms total)
+
+[----------] Global test environment tear-down
+[==========] 30 tests from 1 test suite ran. (178 ms total)
+[  PASSED  ] 30 tests.

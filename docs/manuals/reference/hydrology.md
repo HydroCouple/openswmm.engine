@@ -150,12 +150,15 @@ WE water equivalent
 
 ## List of Figures
 
-- **Figure 1-1** Elements of a typical urban drainage system.
-- **Figure 1-2** SWMM's conceptual model of a stormwater drainage system.
-- **Figure 1-3** Processes modeled by SWMM.
-- **Figure 1-4** Block diagram of SWMM's state transition process.
-- **Figure 1-5** Flow chart of SWMM's simulation procedure.
-- **Figure 1-6** Interpolation of reported values from computed values.
+<!-- BEGIN GENERATED: list-of-figures style=bullet -->
+
+- **Figure 1-1** Elements of a typical urban drainage system
+- **Figure 1-2** Objects of an OpenSWMM model
+- **Figure 1-3** Processes modelled by OpenSWMM
+- **Figure 1-4** Block diagram of SWMM's state transition process
+- **Figure 1-5** Flow chart of SWMM's simulation procedure
+- **Figure 1-6** Interpolation of reported values from computed values
+- **Figure 1-7** The hydrology of this manual: atmosphere, land surface and subsurface representations
 
 - **Figure 2-1** Sinusoidal interpolation of hourly temperatures.
 
@@ -163,41 +166,42 @@ WE water equivalent
 - **Figure 3-2** Nonlinear reservoir model of a subcatchment.
 - **Figure 3-3** Types of subareas within a subcatchment.
 - **Figure 3-4** Idealized subcatchment partitioning for overland flow.
-- **Figure 3-5** Re-routing of overland flow.
-- **Figure 3-6** Fisk B catchment, Portland, Oregon.
-- **Figure 3-7** Detailed view of two Fisk B subcatchments.
+- **Figure 3-5** Re-routing of overland flow (Huber, 2001).
+- **Figure 3-6** Fisk B catchment, Portland, Oregon (Portland BES, 1996).
+- **Figure 3-7** Detailed view of two Fisk B subcatchments (Portland BES, 1996).
 - **Figure 3-8** Idealized representation of a subcatchment.
 - **Figure 3-9** Rectangular subcatchments for illustration of shape and width effects.
 - **Figure 3-10** Subcatchment hydrographs for different shapes of Figure 3-9.
-- **Figure 3-11** Irregular subcatchment shape for width calculations.
+- **Figure 3-11** Irregular subcatchment shape for width calculations (DiGiano et al., 1977, p. 165).
 - **Figure 3-12** Runoff results for illustrative example.
-- **Figure 3-13** SCS (NRCS) triangular unit hydrograph.
+- **Figure 3-13** SCS (NRCS) triangular unit hydrograph (NRCS, 2007).
 
 - **Figure 4-1** Physical properties for Woodburn silt loam, Benton County, Oregon.
-- **Figure 4-2** The Horton infiltration curve.
-- **Figure 4-3** Cumulative infiltration F as the area under the Horton curve.
-- **Figure 4-4** Regeneration (recovery) of infiltration capacity during dry time steps.
-- **Figure 4-5** Two-zone representation of the Green-Ampt infiltration model.
-- **Figure 4-6** Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method.
-- **Figure 4-7** Green-Ampt recovery parameters as functions of hydraulic conductivity.
+- **Figure 4-2** The Horton infiltration curve
+- **Figure 4-3** Cumulative infiltration F as the area under the Horton curve
+- **Figure 4-4** Regeneration (recovery) of infiltration capacity during dry time steps
+- **Figure 4-5** Two-zone representation of the Green-Ampt infiltration model (after Nicklow et al., 2006): (a) the wetted zone at θs above the wetting front and the unwetted zone at θi below it; (b) the moisture profile, whose shaded area is the cumulative infiltration F = Lsθd (synthetic, the example of Figure 4-6 at F = 1.0 in, so Ls = 5.0 in)
+- **Figure 4-6** Illustration of infiltration capacity as function of cumulative infiltration for the Green-Ampt method
+- **Figure 4-7** Green-Ampt recovery parameters as functions of hydraulic conductivity
 - **Figure 4-8** Infiltration rates produced by different methods for a 2-inch rainfall event.
+- **Figure 4-9** The frozen-ground slab at its defaults: (a) temperature T (°C) and frozen fraction φ against the enthalpy H (MJ/m²), with the 0 °C plateau of width Hf = 15.0 MJ/m²; (b) the infiltration factor Fo = (1 − φ)m for m = 2, 11 and 25; (c) the four heat contacts, with conductances in W/m²·K for a 50 mm snow pack and 5 mm/h of infiltration (synthetic, from the engine's slab functions)
 
 - **Figure 5-1** Definitional sketch of the two-zone groundwater model.
 - **Figure 5-2** Heights used to compute lateral groundwater flow rate.
-- **Figure 5-3** Relation between soil moisture limits and soil texture class.
-- **Figure 5-4** SPAW's soil water characteristics calculator.
+- **Figure 5-3** Relation between soil moisture limits and soil texture class (Schroeder et al., 1994).
+- **Figure 5-4** SPAW\'s soil water characteristics calculator.
 - **Figure 5-5** Measured hydraulic conductivity for three soils.
 - **Figure 5-6** Fitting SWMM's hydraulic conductivity equation to a power law equation.
 - **Figure 5-7** Definition sketch for Dupuit-Forcheimer seepage to an adjacent channel.
 - **Figure 5-8** Definition sketch for Hooghoudt's method for flow to circular drains.
 - **Figure 5-9** Surface runoff and groundwater flow for the illustrative groundwater example.
 
-- **Figure 6-1** Typical gage catch deficiency correction.
+- **Figure 6-1** Typical gage catch deficiency correction (Anderson, 2006, p. 8).
 - **Figure 6-2** Subcatchment partitionings used for snowmelt and runoff.
 - **Figure 6-3** Seasonal variation of melt coefficients.
-- **Figure 6-4** Typical areal depletion curve for natural area and temporary curve for new snow.
-- **Figure 6-5** Effect of snow cover on areal depletion curves.
-- **Figure 6-6** Schematic of liquid water routing through snow pack.
+- **Figure 6-4** Typical areal depletion curve for natural area (Anderson, 1973, p. 3-15) and temporary curve for new snow.
+- **Figure 6-5** Effect of snow cover on areal depletion curves: (a) five curves A to E, (b) the definition sketch, (c)–(g) the pack under each curve at AWESI = 1.0, 0.8, 0.6 and 0.3, with its cover ASC and actual depth WS in multiples of SI (synthetic; ASC from the engine's ten-point curve interpolation, curve B being the natural-area curve of Figure 6-4).
+- **Figure 6-6** Schematic of liquid water routing through snow pack: (a) the pack and its free water; (b) melt entering and runoff leaving one pack, in in/hr; (c) its free water FW against the capacity FWFRAC × WSNOW, in inches (synthetic; a prescribed melt routed with the engine's free-water steps, WSNOW = 1 in at the start, FWFRAC = 0.10, no rain).
 - **Figure 6-7** Continuous air temperature for illustrative snowmelt example.
 - **Figure 6-8** Precipitation amounts for illustrative snowmelt example.
 - **Figure 6-9** Snow pack depth for illustrative snowmelt example.
@@ -206,16 +210,31 @@ WE water equivalent
 - **Figure 7-1** Components of wet-weather wastewater flow.
 - **Figure 7-2** Example of an RDII triangular unit hydrograph.
 - **Figure 7-3** Application of a unit hydrograph to a storm event.
-- **Figure 7-4** Use of three unit hydrographs to represent RDII.
-- **Figure 7-5** Sewershed delineation.
-- **Figure 7-6** Extracting RDII flow from a continuous flow monitor.
-- **Figure 7-7** Fitting unit hydrographs to an RDII flow record.
+- **Figure 7-4** Use of three unit hydrographs to represent RDII (Vallabhaneni et al., 2007).
+- **Figure 7-5** Sewershed delineation (Vallabhaneni et al., 2007).
+- **Figure 7-6** Extracting RDII flow from a continuous flow monitor (Vallabhaneni et al., 2007).
+- **Figure 7-7** Fitting unit hydrographs to an RDII flow record (Vallabhaneni et al., 2007).
 - **Figure 7-8** Unit hydrographs used for the illustrative RDII example.
 - **Figure 7-9** Time series of RDII flows for the illustrative RDII example.
 - **Figure 7-10** Excerpt from the RDII interface file for the illustrative RDII example.
-- **Figure 7-11** Emergent seasonal behavior of the exponential-decay initial abstraction model.
+- **Figure 7-11** Emergent seasonal behavior of the exponential-decay initial abstraction model (schematic, synthetic forcing): available initial abstraction depletes during storms, recovery is suspended on frozen ground and accelerates in warm months, and a single R-T-K set produces a seasonally varying RDII response.
+
+- **Figure 8-1** The water balance of one mesh cell: rainfall, evaporation, infiltration, network exchange and the lateral face fluxes
+- **Figure 8-2** Natural-neighbour rainfall weights inside the gage hull, and inverse-distance weighting outside it
+- **Figure 8-3** Per-cell infiltration: how a cell resolves its method and parameters, and the rate held across an infiltration step
+
+- **Figure 9-1** One aquifer column and its fluxes, with the unsaturated zone held as a bulk store (closure A) and as sigma layers (closure B)
+- **Figure 9-2** Retention and relative conductivity of the four soil-characteristic laws at their default parameters
+- **Figure 9-3** The capillary (`CAPILLARY_DIFF YES`) and kinematic (`NO`) σ columns under the same hour of rain: θ in each of eight layers against depth below the ground at the start, 1 h and 6 h, with the water table (dashed), and the rise of the table in mm (simulated, `mesh_hydrology/mesh_hydrology.inp` with every cell on `CLOSURE SIGMA`, `HG0` 3.0 m and a 6 h run; cell 4, `WOODS`)
+- **Figure 9-4** How `GW_FACE_CAP` shares a short donor's unreserved water among its three faces: each face's share-capped demand, and what `RATIO` and `SEQUENTIAL` (in two face orders) let through, in m³ per face pass (synthetic, from the engine's face-cap rules)
+- **Figure 9-5** Node-aquifer exchange through a semi-confining bed, in both directions, with the caps that bound it
+- **Figure 9-6** When three aquifer cells fire under `GW_CLOCK INDEPENDENT` (stiff cell A subcycling at 0.25 s, B at 8 s, C at 32 s with a budget-triggered early update), against the surface's tiers and against the shared ladder; and the receipts waiting at cell C, in m³, against its budget (synthetic, from a replica of the engine's clock with `GW_BASE_STEP AUTO` = 1 s and the default budget keys)
+
+<!-- END GENERATED -->
 
 ## List of Tables
+
+<!-- BEGIN GENERATED: list-of-tables style=bullet -->
 
 - **Table 1-1** Development history of SWMM
 - **Table 1-2** SWMM's modeling objects
@@ -247,30 +266,30 @@ WE water equivalent
 - **Table 3-7** Parameters used for illustrative runoff example
 - **Table 3-8** Contents of a typical Routing Interface file
 
-- **Table 4-1** Hydrologic soil group meanings
-- **Table 4-2** Horton parameters for selected Georgia soils
-- **Table 4-3** Horton parameters provided by Horton
-- **Table 4-4** Values of f~∞~ for Hydrologic Soil Groups
-- **Table 4-5** Rate of decay of infiltration capacity for different values of k~d~
-- **Table 4-6** Representative values for f~0~
-- **Table 4-7** Green-Ampt parameters for different soil classes
-- **Table 4-8** Typical values of *θ*~dmax~ for various soil types.
-- **Table 4-9** Runoff curve numbers for selected land uses
+- **Table 4-1** Hydrologic soil group meanings (NRCS, 2009, @ref hydrology_ref_ch7_rdii "Chapter 7")
+- **Table 4-2** Horton parameters for selected Georgia soils (Rawls et al., 1976)
+- **Table 4-3** Horton parameters provided by Horton (1940)
+- **Table 4-4** Values of f∞ for Hydrologic Soil Groups (Musgrave, 1955)
+- **Table 4-5** Rate of decay of infiltration capacity for different values of kd
+- **Table 4-6** Representative values for f₀
+- **Table 4-7** Green-Ampt parameters for different soil classes (Rawls et al., 1983)
+- **Table 4-8** Typical values of θdmax for various soil types.
+- **Table 4-9** Runoff curve numbers for selected land uses (NRCS, 2004a)
 - **Table 4-10** Parameters used in example comparison of infiltration methods
 
-- **Table 5-1** Volumetric moisture content at field capacity and wilting point
-- **Table 5-2** Volumetric moisture content at field capacity and wilting point
-- **Table 5-3** Average moisture limits and saturated hydraulic conductivity for different soil types
-- **Table 5-4** Default properties of low-density soils used in the EPA HELP model
-- **Table 5-5** Default properties of moderate-density soils used in the EPA HELP model
+- **Table 5-1** Volumetric moisture content at field capacity and wilting point (derived from Linsley et al., 1982)
+- **Table 5-2** Volumetric moisture content at field capacity and wilting point (U.S. Army Corps of Engineers, 1956)
+- **Table 5-3** Average moisture limits and saturated hydraulic conductivity for different soil types (Rawls et al., 1983)
+- **Table 5-4** Default properties of low-density soils used in the EPA HELP model (from Rawls et al. (1982) as reported in Schroeder et al. (1994))
+- **Table 5-5** Default properties of moderate-density soils used in the EPA HELP model (Schroeder et al. (1994))
 - **Table 5-6** Soil texture abbreviations
-- **Table 5-7** Regression equations for soil moisture limits
-- **Table 5-8** Regression estimates of soil moisture limits from the SPAW calculator*
+- **Table 5-7** Regression equations for soil moisture limits (Saxton and Rawls, 2006)
+- **Table 5-8** Regression estimates of soil moisture limits from the SPAW calculator
 - **Table 5-9** Estimated HCO for different soil types
-- **Table 5-10** DET (in feet) for different soil types and land cover
+- **Table 5-10** DET (in feet) for different soil types and land cover (Shah et al., 2007)
 - **Table 5-11** Parameters used in groundwater example
 
-- **Table 6-1** Guidelines for level of service in snow and ice control
+- **Table 6-1** Guidelines for level of service in snow and ice control (Richardson et al., 1974)
 - **Table 6-2** Summary of snowmelt parameters (in US customary units)
 - **Table 6-3** Typical areal depletion curve for natural areas
 - **Table 6-4** Subcatchment and snow pack parameters for illustrative snowmelt example
@@ -281,6 +300,10 @@ WE water equivalent
 - **Table 7-2** Parameters of the `[RDII_DECAY]` section
 - **Table 7-3** Typical parameter ranges for the exponential-decay model
 
+- **Table 10-1** Formulations recorded in this chapter
+
+<!-- END GENERATED -->
+
 ## Manual Contents
 
 - @subpage hydrology_ref_ch1_overview — Chapter 1: Overview
@@ -290,5 +313,8 @@ WE water equivalent
 - @subpage hydrology_ref_ch5_groundwater — Chapter 5: Groundwater
 - @subpage hydrology_ref_ch6_snowmelt — Chapter 6: Snowmelt
 - @subpage hydrology_ref_ch7_rdii — Chapter 7: Rainfall Dependent Inflow and Infiltration
+- @subpage hydrology_ref_ch8_mesh_surface — Chapter 8: Distributed Surface Processes on the 2D Mesh
+- @subpage hydrology_ref_ch9_mesh_groundwater — Chapter 9: Spatially Explicit Groundwater on the 2D Mesh
+- @subpage hydrology_ref_ch10_planned — Chapter 10: Planned Formulations
 - @subpage hydrology_ref_glossary — Glossary
 - @subpage hydrology_ref_references — References

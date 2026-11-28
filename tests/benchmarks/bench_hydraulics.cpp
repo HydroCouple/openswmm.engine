@@ -1,9 +1,13 @@
 /**
- * @file bench_hydraulics.cpp
- * @brief Benchmark: SIMD vs scalar hydraulic routing kernels.
+ * @file      bench_hydraulics.cpp
+ * @brief     Benchmark: SIMD vs scalar hydraulic routing kernels.
  *
  * @see src/engine/math/SIMD.hpp (Phase 2)
  * @see src/engine/hydraulics/DynamicWave.hpp (Phase 2)
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <benchmark/benchmark.h>
@@ -13,6 +17,16 @@
 
 static constexpr int N_LINKS = 1024;
 
+/**
+ * @brief Time scalar depth-times-area assignments across 1024 synthetic links.
+ *
+ * Allocates/initializes three vectors before the state loop, writes each flow every iteration and
+ * prevents optimization. Uses fixed dimensionless synthetic values and sets the scalar label; no
+ * routing simulation is run.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
+ */
 static void BM_ScalarFlowUpdate(benchmark::State& state) {
     std::vector<double> flows(N_LINKS, 1.0);
     std::vector<double> depths(N_LINKS, 0.5);
@@ -27,6 +41,15 @@ static void BM_ScalarFlowUpdate(benchmark::State& state) {
 }
 BENCHMARK(BM_ScalarFlowUpdate)->Unit(benchmark::kNanosecond);
 
+/**
+ * @brief Measure the current SIMD-benchmark placeholder loop.
+ *
+ * Allocates the synthetic vectors, then only protects flows[0] against optimization. The SIMD
+ * multiply call remains commented out, so this timing does not measure a SIMD hydraulic kernel.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
+ */
 static void BM_SimdFlowUpdate(benchmark::State& state) {
     std::vector<double> flows(N_LINKS, 1.0);
     std::vector<double> depths(N_LINKS, 0.5);

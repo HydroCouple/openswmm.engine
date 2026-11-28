@@ -1,0 +1,28 @@
+{
+  "head": "389fbf484c2c151fe75f5bf664448ac419ce55c3",
+  "task_source_tree": "89b901ad43c6ab11cbaafca92f4c326c70777a9d",
+  "working_file_sha256": {
+    "src/engine/2d/subsurface/SubsurfaceSolver.hpp": "9a58575894cc17ce8e2f10097d3db87757da7157c5acbaca6fe1a430a98dfd66",
+    "src/engine/2d/subsurface/SubsurfaceSolver.cpp": "08d49fa215a633765d1665d8408aad00a4a41bd87d38cee29c0816e776b63806",
+    "src/engine/hydrology/Runoff.hpp": "ce1ec9e0fd44b584671d7bde1fe74fbb60ca18f09859d34349145529ebb0cfbb",
+    "src/engine/hydrology/Runoff.cpp": "bef5143590d7922eec6073e21ad6520243575e9f022702079f184e87ba2fc7c1",
+    "tests/unit/engine/CMakeLists.txt": "2a3bd1605dd51c4303095874eba6458c9874330aa8d24e4fb714783e528160f9",
+    "src/engine/2d/subsurface/SurfaceExchange.hpp": "6e7963f5026be45c3a84f362ade9b7a0e2b02ecd6c8c47b4fc1b5ecb89e29e65",
+    "src/engine/2d/subsurface/SurfaceExchange.cpp": "8bb57905a1fe887f25c2f468ceeffcee271c76a575ebc1cbf8d278ceddac338f",
+    "tests/unit/engine/test_surface_exchange.cpp": "c386f7a6273eff44b860431904aae664d186e5935967283d8513428c9dd7c284",
+    "plans/SURFACE_PROCESS_R4_SOURCE_QUALIFICATION_2026-10-05.md": "7cc300b700283f1f212fd65b61ac6b6dfd3e172cfde489173e14e89673a298cf"
+  },
+  "isolated_file_sha256": {
+    "src/engine/2d/subsurface/SubsurfaceSolver.hpp": "9a58575894cc17ce8e2f10097d3db87757da7157c5acbaca6fe1a430a98dfd66",
+    "src/engine/2d/subsurface/SubsurfaceSolver.cpp": "08d49fa215a633765d1665d8408aad00a4a41bd87d38cee29c0816e776b63806",
+    "src/engine/hydrology/Runoff.hpp": "ce1ec9e0fd44b584671d7bde1fe74fbb60ca18f09859d34349145529ebb0cfbb",
+    "src/engine/hydrology/Runoff.cpp": "bef5143590d7922eec6073e21ad6520243575e9f022702079f184e87ba2fc7c1",
+    "tests/unit/engine/CMakeLists.txt": "ed954136c67cfee71716d5165fad1fe7cc0c2e9560bbde652f0aad212e2411ad",
+    "src/engine/2d/subsurface/SurfaceExchange.hpp": "6e7963f5026be45c3a84f362ade9b7a0e2b02ecd6c8c47b4fc1b5ecb89e29e65",
+    "src/engine/2d/subsurface/SurfaceExchange.cpp": "8bb57905a1fe887f25c2f468ceeffcee271c76a575ebc1cbf8d278ceddac338f",
+    "tests/unit/engine/test_surface_exchange.cpp": "c386f7a6273eff44b860431904aae664d186e5935967283d8513428c9dd7c284",
+    "plans/SURFACE_PROCESS_R4_SOURCE_QUALIFICATION_2026-10-05.md": "7cc300b700283f1f212fd65b61ac6b6dfd3e172cfde489173e14e89673a298cf"
+  },
+  "build_source_path": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine",
+  "build_source_matches_archived_code_and_cmake": true
+}

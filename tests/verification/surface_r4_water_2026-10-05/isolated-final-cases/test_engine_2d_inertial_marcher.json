@@ -1,0 +1,132 @@
+{
+  "tests": 11,
+  "failures": 0,
+  "disabled": 0,
+  "errors": 0,
+  "timestamp": "2026-10-05T17:41:31Z",
+  "time": "1.599s",
+  "name": "AllTests",
+  "testsuites": [
+    {
+      "name": "InertialMarcher",
+      "tests": 11,
+      "failures": 0,
+      "disabled": 0,
+      "errors": 0,
+      "timestamp": "2026-10-05T17:41:31Z",
+      "time": "1.599s",
+      "testsuite": [
+        {
+          "name": "LakeAtRestExactFlatAndVfr",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 128,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:31Z",
+          "time": "0.02s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "DryNeighbourWallNoCreep",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 165,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:31Z",
+          "time": "0.006s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "ClosedBasinConservationAndPositivity",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 196,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:31Z",
+          "time": "0.017s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "ManningSteadySlopeRainOutflow",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 233,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:31Z",
+          "time": "0.383s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "SteadySlopeNoCheckerboard",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 334,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:32Z",
+          "time": "0.814s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "SpecifiedStageFillAndDrawdownLedger",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 415,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0.319s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "FroudeClampSteepFace",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 509,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0.003s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "FaceDepthFromEtaLimitsAndC1",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 558,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "LakeAtRestExactVfrFace",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 580,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0.017s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "DryNeighbourWallNoCreepVfrFace",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 607,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0.004s",
+          "classname": "InertialMarcher"
+        },
+        {
+          "name": "ThinCrestRetentionVfrFace",
+          "file": "\/Users\/calebbuahin\/Documents\/Projects\/cbuahin_github\/openswmm.gui\/tests\/verification\/surface_r4_2026-10-05\/isolated\/openswmm.engine\/tests\/unit\/engine\/test_2d_inertial_marcher.cpp",
+          "line": 641,
+          "status": "RUN",
+          "result": "COMPLETED",
+          "timestamp": "2026-10-05T17:41:33Z",
+          "time": "0.012s",
+          "classname": "InertialMarcher"
+        }
+      ]
+    }
+  ]
+}

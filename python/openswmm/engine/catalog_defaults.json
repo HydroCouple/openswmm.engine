@@ -1,0 +1,2205 @@
+{
+ "schema": 1,
+ "catalog_revision": 2,
+ "engine_version": "6.0.0a4.dev2",
+ "model_units": "CMS",
+ "properties": {
+  "builder.end_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "ModelBuilder.end_datetime"
+  },
+  "builder.report_start_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "ModelBuilder.report_start_datetime"
+  },
+  "builder.start_datetime": {
+   "default": "2004-01-01T00:00:00",
+   "enum": null,
+   "probe": "ModelBuilder.start_datetime"
+  },
+  "climate.adc_impervious": {
+   "default": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "enum": null,
+   "probe": "Climate.adc_impervious"
+  },
+  "climate.adc_pervious": {
+   "default": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "enum": null,
+   "probe": "Climate.adc_pervious"
+  },
+  "climate.adjust_conductivity": {
+   "default": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "enum": null,
+   "probe": "Climate.adjust_conductivity"
+  },
+  "climate.adjust_evaporation": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Climate.adjust_evaporation"
+  },
+  "climate.adjust_rainfall": {
+   "default": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "enum": null,
+   "probe": "Climate.adjust_rainfall"
+  },
+  "climate.adjust_temperature": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Climate.adjust_temperature"
+  },
+  "climate.ati_weight": {
+   "default": 0.5,
+   "enum": null,
+   "probe": "Climate.ati_weight",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.elevation": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Climate.elevation",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.evap_monthly": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Climate.evap_monthly"
+  },
+  "climate.evap_recovery": {
+   "default": "",
+   "enum": null,
+   "probe": "Climate.evap_recovery"
+  },
+  "climate.evap_timeseries": {
+   "default": "",
+   "enum": null,
+   "probe": "Climate.evap_timeseries"
+  },
+  "climate.evap_type": {
+   "default": 0,
+   "enum": null,
+   "probe": "Climate.evap_type",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.humidity_monthly": {
+   "default": [
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0,
+    50.0
+   ],
+   "enum": null,
+   "probe": "Climate.humidity_monthly"
+  },
+  "climate.humidity_timeseries": {
+   "default": "",
+   "enum": null,
+   "probe": "Climate.humidity_timeseries"
+  },
+  "climate.humidity_type": {
+   "default": 0,
+   "enum": null,
+   "probe": "Climate.humidity_type",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.humidity_variable": {
+   "default": 0,
+   "enum": null,
+   "probe": "Climate.humidity_variable",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.latitude": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Climate.latitude",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.longitude_correction": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Climate.longitude_correction",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.neg_melt_ratio": {
+   "default": 0.6,
+   "enum": null,
+   "probe": "Climate.neg_melt_ratio",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.pan_coeff": {
+   "default": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "enum": null,
+   "probe": "Climate.pan_coeff"
+  },
+  "climate.snow_temp": {
+   "default": 34.0,
+   "enum": null,
+   "probe": "Climate.snow_temp",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.temp_file_start": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Climate.temp_file_start",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.temp_source": {
+   "default": 0,
+   "enum": null,
+   "probe": "Climate.temp_source",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "climate.temp_timeseries": {
+   "default": "",
+   "enum": null,
+   "probe": "Climate.temp_timeseries"
+  },
+  "climate.temp_units": {
+   "default": -1,
+   "enum": null,
+   "probe": "Climate.temp_units",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "climate.wind_monthly": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Climate.wind_monthly"
+  },
+  "climate.wind_type": {
+   "default": 0,
+   "enum": null,
+   "probe": "Climate.wind_type",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "coefficient.value": {
+   "default": null,
+   "enum": null,
+   "probe": "ReactionCoefficient.value",
+   "missing": "ValueError: 'coefficient' is an element target; pass its id or index"
+  },
+  "editor.end_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "ModelEditor.end_datetime"
+  },
+  "editor.report_start_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "ModelEditor.report_start_datetime"
+  },
+  "editor.start_datetime": {
+   "default": "2004-01-01T00:00:00",
+   "enum": null,
+   "probe": "ModelEditor.start_datetime"
+  },
+  "end_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "Solver.end_datetime"
+  },
+  "gage.data_source": {
+   "default": "TIMESERIES",
+   "enum": "GageDataSource",
+   "probe": "Gage.data_source"
+  },
+  "gage.file_column": {
+   "default": "",
+   "enum": null,
+   "probe": "Gage.file_column"
+  },
+  "gage.file_format": {
+   "default": -1,
+   "enum": null,
+   "probe": "Gage.file_format",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "gage.rain_interval": {
+   "default": 3600.0,
+   "enum": null,
+   "probe": "Gage.rain_interval",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "gage.rain_type": {
+   "default": "INTENSITY",
+   "enum": "GageRainType",
+   "probe": "Gage.rain_type"
+  },
+  "gage.rain_units": {
+   "default": 0,
+   "enum": null,
+   "probe": "Gage.rain_units",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "gage.rainfall": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Gage.rainfall",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "gage.scale_factor": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Gage.scale_factor",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "gage.snow_factor": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Gage.snow_factor",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "gage.station_id": {
+   "default": "",
+   "enum": null,
+   "probe": "Gage.station_id"
+  },
+  "groundwater2d.transport.initial_quality_file": {
+   "default": "",
+   "enum": null,
+   "probe": "GroundwaterTransport.initial_quality_file"
+  },
+  "heat.dry_policy": {
+   "default": 0,
+   "enum": null,
+   "probe": "Heat.dry_policy",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "heat.sediment.ground_timeseries": {
+   "default": "",
+   "enum": null,
+   "probe": "_HeatSediment.ground_timeseries"
+  },
+  "heat.shortwave_mode": {
+   "default": "CONSTANT",
+   "enum": "HeatShortwaveMode",
+   "probe": "Heat.shortwave_mode"
+  },
+  "initial_quality.file_path": {
+   "default": "",
+   "enum": null,
+   "probe": "InitialQuality.file_path"
+  },
+  "landuse.sweep_interval": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Landuse.sweep_interval",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "landuse.sweep_removal": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Landuse.sweep_removal",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.barrels": {
+   "default": 1,
+   "enum": null,
+   "probe": "Link.barrels",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.closed": {
+   "default": false,
+   "enum": null,
+   "probe": "Link.closed",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "link.control_setting": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Link.control_setting",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "link.culvert_code": {
+   "default": 0,
+   "enum": null,
+   "probe": "Link.culvert_code",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.flap_gate": {
+   "default": false,
+   "enum": null,
+   "probe": "Link.flap_gate",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.flow": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.flow",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "link.initial_flow": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.initial_flow",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.length": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.length",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.loss_coeff": {
+   "default": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Link.loss_coeff"
+  },
+  "link.max_flow": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.max_flow",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.offset_dn": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.offset_dn",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.offset_up": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.offset_up",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.orifice.open_close_rate": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "OrificeView.open_close_rate",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.orifice.type": {
+   "default": "BOTTOM",
+   "enum": "OrificeType",
+   "probe": "OrificeView.type"
+  },
+  "link.outlet.expon": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "OutletView.expon",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.outlet.rating_type": {
+   "default": "FUNCTIONAL_HEAD",
+   "enum": "OutletRatingType",
+   "probe": "OutletView.rating_type"
+  },
+  "link.pump.curve": {
+   "default": -1,
+   "enum": null,
+   "probe": "PumpView.curve",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.pump.init_state": {
+   "default": false,
+   "enum": null,
+   "probe": "PumpView.init_state",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.pump.shutoff_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "PumpView.shutoff_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.pump.startup_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "PumpView.startup_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.roughness": {
+   "default": 0.01,
+   "enum": null,
+   "probe": "Link.roughness",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.seep_rate": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Link.seep_rate",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.tag": {
+   "default": "",
+   "enum": null,
+   "probe": "Link.tag"
+  },
+  "link.target_setting": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Link.target_setting",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "link.weir.crest_height": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "WeirView.crest_height",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.weir.discharge_coeff": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "WeirView.discharge_coeff",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.weir.end_contractions": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "WeirView.end_contractions",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "link.weir.type": {
+   "default": "TRANSVERSE",
+   "enum": "WeirType",
+   "probe": "WeirView.type"
+  },
+  "link.xsect": {
+   "default": "<XSection shape=CIRCULAR g=(0.0, 0.0, 0.0, 0.0)>",
+   "enum": null,
+   "probe": "Link.xsect"
+  },
+  "links.flows": {
+   "default": "array([0., 0., 0., 0., 0.])",
+   "enum": null,
+   "probe": "Links.flows"
+  },
+  "node.depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.depth",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "node.divider.params": {
+   "default": "{'method': 0, 'diversion_link': -1, 'curve': -1, 'cutoff_flow': 0.0, 'weir_height': 0.0, 'weir_coefficient': 0.0}",
+   "enum": null,
+   "probe": "DividerView.params",
+   "rejects": {
+    "-1": "TypeError: 'int' object is not subscriptable",
+    "0": "TypeError: 'int' object is not subscriptable"
+   }
+  },
+  "node.divider.type": {
+   "default": 0,
+   "enum": null,
+   "probe": "DividerView.type",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "node.initial_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.initial_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.invert_elev": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.invert_elev",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.is_inlet": {
+   "default": false,
+   "enum": null,
+   "probe": "Node.is_inlet",
+   "rejects": {
+    "-1": "EngineError: Inlet junction must connect two STREET conduits (RECT_OPEN or TRAPEZOIDAL for drop inlets)",
+    "0": null
+   }
+  },
+  "node.is_virtual": {
+   "default": false,
+   "enum": null,
+   "probe": "Node.is_virtual",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.lateral_inflow": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.lateral_inflow",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "node.max_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.max_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.outfall.flap_gate": {
+   "default": false,
+   "enum": null,
+   "probe": "OutfallView.flap_gate",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.outfall.route_to": {
+   "default": -1,
+   "enum": null,
+   "probe": "OutfallView.route_to",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.outfall.type": {
+   "default": "FREE",
+   "enum": "OutfallType",
+   "probe": "OutfallView.type"
+  },
+  "node.ponded_area": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.ponded_area",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.rim_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.rim_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.storage.curve": {
+   "default": -1,
+   "enum": null,
+   "probe": "StorageView.curve",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.storage.exfil_params": {
+   "default": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "StorageView.exfil_params"
+  },
+  "node.storage.functional": {
+   "default": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "StorageView.functional"
+  },
+  "node.storage.geometry": {
+   "default": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "StorageView.geometry"
+  },
+  "node.storage.seep_rate": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "StorageView.seep_rate",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "node.storage.shape": {
+   "default": "FUNCTIONAL",
+   "enum": "StorageShape",
+   "probe": "StorageView.shape"
+  },
+  "node.storage_area": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.storage_area",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "node.surcharge_depth": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Node.surcharge_depth",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "node.tag": {
+   "default": "",
+   "enum": null,
+   "probe": "Node.tag"
+  },
+  "nodes.depths": {
+   "default": "array([0., 0., 0., 0., 0.])",
+   "enum": null,
+   "probe": "Nodes.depths"
+  },
+  "options.end_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "SimulationOptions.end_datetime"
+  },
+  "options.report_start_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "SimulationOptions.report_start_datetime"
+  },
+  "options.start_datetime": {
+   "default": "2004-01-01T00:00:00",
+   "enum": null,
+   "probe": "SimulationOptions.start_datetime"
+  },
+  "pollutant.dwf_conc": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.dwf_conc",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.gw_conc": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.gw_conc",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.init_conc": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.init_conc",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.kdecay": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.kdecay",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.mwt": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Pollutant.mwt",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "pollutant.rain_conc": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.rain_conc",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.rdii_conc": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Pollutant.rdii_conc",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.snow_only": {
+   "default": false,
+   "enum": null,
+   "probe": "Pollutant.snow_only",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "pollutant.units": {
+   "default": "MG_PER_L",
+   "enum": "ConcentrationUnits",
+   "probe": "Pollutant.units"
+  },
+  "report_start_datetime": {
+   "default": "1899-12-30T00:00:00",
+   "enum": null,
+   "probe": "Solver.report_start_datetime"
+  },
+  "restart.record_at": {
+   "default": [],
+   "enum": null,
+   "probe": "RestartSettings.record_at"
+  },
+  "snow.model": {
+   "default": "DEGREE_DAY",
+   "enum": null,
+   "probe": "Snow.model"
+  },
+  "snow.monthly_ranges": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Snow.monthly_ranges",
+   "rejects": {
+    "-1": "TypeError: 'int' object is not iterable",
+    "0": "TypeError: 'int' object is not iterable"
+   }
+  },
+  "snow.radiation": {
+   "default": "{'explicit_site': 0, 'latitude': 0.0, 'longitude': -0.0, 'timezone': 0.0, 'elevation_m': 0.0, 'shortwave_mode': 0, 'longwave_mode': 0, 'shortwave_authored': 0, 'longwave_authored': 0}",
+   "enum": null,
+   "probe": "Snow.radiation",
+   "rejects": {
+    "-1": "TypeError: 'int' object is not subscriptable",
+    "0": "TypeError: 'int' object is not subscriptable"
+   }
+  },
+  "snow.step_seconds": {
+   "default": 3600.0,
+   "enum": null,
+   "probe": "Snow.step_seconds",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "spatial.crs": {
+   "default": "",
+   "enum": null,
+   "probe": "Spatial.crs"
+  },
+  "spatial.map_dimensions": {
+   "default": [
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "enum": null,
+   "probe": "Spatial.map_dimensions"
+  },
+  "spatial.map_units": {
+   "default": "",
+   "enum": null,
+   "probe": "Spatial.map_units"
+  },
+  "species.initial": {
+   "default": null,
+   "enum": null,
+   "probe": "ReactionSpecies.initial",
+   "missing": "ValueError: 'species' is an element target; pass its id or index"
+  },
+  "species.rain_conc": {
+   "default": null,
+   "enum": null,
+   "probe": "ReactionSpecies.rain_conc",
+   "missing": "ValueError: 'species' is an element target; pass its id or index"
+  },
+  "start_datetime": {
+   "default": "2004-01-01T00:00:00",
+   "enum": null,
+   "probe": "Solver.start_datetime"
+  },
+  "steady_state_skip": {
+   "default": false,
+   "enum": null,
+   "probe": "Solver.steady_state_skip",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.aquifer": {
+   "default": null,
+   "enum": null,
+   "probe": "Subcatchment.aquifer",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.area": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.area",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.ds_imperv": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.ds_imperv",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.ds_perv": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.ds_perv",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.gage": {
+   "default": "<Gage id='' index=-1>",
+   "enum": null,
+   "probe": "Subcatchment.gage",
+   "rejects": {
+    "-1": "IndexError: Gage index -1 out of range [0, 1)",
+    "0": null
+   }
+  },
+  "subcatchment.gw_node": {
+   "default": null,
+   "enum": null,
+   "probe": "Subcatchment.gw_node",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.imperv_pct": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.imperv_pct",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.infiltration.model": {
+   "default": null,
+   "enum": "InfilModel",
+   "probe": "InfiltrationView.model",
+   "missing": "ValueError: 'subcatchment.infiltration' is an element target; pass its id or index"
+  },
+  "subcatchment.n_imperv": {
+   "default": 0.013,
+   "enum": null,
+   "probe": "Subcatchment.n_imperv",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.n_perv": {
+   "default": 0.1,
+   "enum": null,
+   "probe": "Subcatchment.n_perv",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.rain_scale_factor": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Subcatchment.rain_scale_factor",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "subcatchment.rainfall": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.rainfall",
+   "rejects": {
+    "-1": "LifecycleError: Function called in wrong lifecycle state",
+    "0": "LifecycleError: Function called in wrong lifecycle state"
+   }
+  },
+  "subcatchment.slope": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.slope",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.snow_scale_factor": {
+   "default": 1.0,
+   "enum": null,
+   "probe": "Subcatchment.snow_scale_factor",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": "BadParamError: Invalid parameter value"
+   }
+  },
+  "subcatchment.snowpack": {
+   "default": "",
+   "enum": null,
+   "probe": "Subcatchment.snowpack"
+  },
+  "subcatchment.tag": {
+   "default": "",
+   "enum": null,
+   "probe": "Subcatchment.tag"
+  },
+  "subcatchment.width": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.width",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "subcatchment.zero_imperv_pct": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Subcatchment.zero_imperv_pct",
+   "rejects": {
+    "-1": null,
+    "0": null
+   }
+  },
+  "surface2d.dry_depth": {
+   "default": null,
+   "enum": null,
+   "probe": "Surface2D.dry_depth",
+   "missing": "BadParamError: Invalid parameter value"
+  },
+  "surface2d.infiltration.infil_step": {
+   "default": null,
+   "enum": null,
+   "probe": "Infiltration2DView.infil_step",
+   "missing": "BadParamError: Invalid parameter value"
+  },
+  "term.expression": {
+   "default": null,
+   "enum": null,
+   "probe": "ReactionTerm.expression",
+   "missing": "ValueError: 'term' is an element target; pass its id or index"
+  },
+  "transport.detailed_output": {
+   "default": "",
+   "enum": null,
+   "probe": "Transport.detailed_output"
+  },
+  "transport.dispersion_mode": {
+   "default": "OFF",
+   "enum": "TransportDispersionMode",
+   "probe": "Transport.dispersion_mode"
+  },
+  "transport.dispersion_value": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Transport.dispersion_value",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  },
+  "transport.target_dx": {
+   "default": 0.0,
+   "enum": null,
+   "probe": "Transport.target_dx",
+   "rejects": {
+    "-1": "BadParamError: Invalid parameter value",
+    "0": null
+   }
+  }
+ },
+ "enums": {
+  "AquiferParam": {
+   "POROSITY": 0,
+   "WILTING_POINT": 1,
+   "FIELD_CAPACITY": 2,
+   "CONDUCTIVITY": 3,
+   "CONDUCT_SLOPE": 4,
+   "TENSION_SLOPE": 5,
+   "UPPER_EVAP_FRAC": 6,
+   "LOWER_EVAP_DEPTH": 7,
+   "LOWER_LOSS_COEFF": 8,
+   "BOTTOM_ELEV": 9,
+   "WATER_TABLE_ELEV": 10,
+   "UPPER_MOISTURE": 11
+  },
+  "BackendSolver": {
+   "FV_NETWORK": 0,
+   "SURFACE_2D": 1
+  },
+  "BuildupFunc": {
+   "NONE": 0,
+   "POW": 1,
+   "EXP": 2,
+   "SAT": 3,
+   "EXT": 4
+  },
+  "CellScope": {
+   "GLOBAL": 0,
+   "TAG": 1,
+   "CELL": 2
+  },
+  "ChannelGroundValue": {
+   "BED_TEMPERATURE": 0,
+   "ATMOSPHERIC_ENERGY": 1,
+   "TO_SOIL_ENERGY": 2,
+   "WATER_INCREMENT": 3,
+   "INTERVAL_COUNT": 4
+  },
+  "ConcentrationUnits": {
+   "MG_PER_L": 0,
+   "UG_PER_L": 1,
+   "COUNT_PER_L": 2
+  },
+  "DividerType": {
+   "CUTOFF": 0,
+   "OVERFLOW": 1,
+   "TABULAR": 2,
+   "WEIR": 3
+  },
+  "EngineState": {
+   "NONE": 0,
+   "CREATED": 1,
+   "OPENED": 2,
+   "INITIALIZED": 3,
+   "STARTED": 4,
+   "RUNNING": 5,
+   "ENDED": 6,
+   "CLOSED": 7,
+   "BUILDING": 8
+  },
+  "ErrorCode": {
+   "OK": 0,
+   "NOMEM": 1,
+   "INPFILE": 2,
+   "RPTFILE": 3,
+   "OUTFILE": 4,
+   "PARSE": 5,
+   "LIFECYCLE": 6,
+   "BADHANDLE": 7,
+   "BADINDEX": 8,
+   "BADPARAM": 9,
+   "PLUGIN": 10,
+   "IO": 11,
+   "HOTSTART": 12,
+   "CRS": 13,
+   "NUMERICAL": 14,
+   "DEPENDENCY": 15,
+   "CANCELLED": 16,
+   "BUFSIZE": 17,
+   "INTERNAL": 99
+  },
+  "EvapPreviewStatus": {
+   "AVAILABLE": 0,
+   "HELD": 1,
+   "MISSING": 2,
+   "ESTIMATED": 3
+  },
+  "EvapType": {
+   "CONSTANT": 0,
+   "MONTHLY": 1,
+   "TIMESERIES": 2,
+   "TEMPERATURE": 3,
+   "FILE": 4
+  },
+  "FilePathRole": {
+   "RAINFALL": 1,
+   "RUNOFF": 2,
+   "RDII": 3,
+   "INFLOWS": 4,
+   "OUTFLOWS": 5,
+   "HOTSTART_USE": 6,
+   "CLIMATE_TEMP": 7,
+   "HOTSTART_SAVE": 8,
+   "RAINGAGE_DATA": 9,
+   "TIMESERIES_DATA": 10,
+   "MESH_2D": 11,
+   "OUTPUT_2D": 12,
+   "LID_REPORT": 13
+  },
+  "FlowUnits": {
+   "CFS": 0,
+   "GPM": 1,
+   "MGD": 2,
+   "CMS": 3,
+   "LPS": 4,
+   "MLD": 5
+  },
+  "ForcingMode": {
+   "REPLACE": 1,
+   "ADD": 2
+  },
+  "ForcingPersist": {
+   "RESET": 0,
+   "PERSIST": 1
+  },
+  "ForcingTarget": {
+   "NODE": 0,
+   "LINK": 1,
+   "SUBCATCH": 2,
+   "GAGE": 3,
+   "CLIMATE": 4
+  },
+  "ForcingType": {
+   "NODE_LAT_INFLOW": 0,
+   "NODE_HEAD_BOUNDARY": 1,
+   "NODE_QUALITY": 2,
+   "LINK_FLOW": 3,
+   "LINK_SETTING": 4,
+   "SUBCATCH_RAINFALL": 5,
+   "SUBCATCH_EVAP": 6,
+   "GAGE_RAINFALL": 7,
+   "CLIMATE_TEMPERATURE": 8,
+   "CLIMATE_WIND": 9,
+   "SUBCATCH_SNOWFALL": 10,
+   "CLIMATE_EVAP": 11,
+   "LINK_QUALITY": 12,
+   "ELEM_AIR_TEMPERATURE": 13,
+   "ELEM_HUMIDITY": 14,
+   "ELEM_WIND_SPEED": 15,
+   "ELEM_SHORTWAVE": 16,
+   "LINK_SEEPAGE": 17
+  },
+  "GageDataSource": {
+   "TIMESERIES": 0,
+   "FILE": 1
+  },
+  "GageRainType": {
+   "INTENSITY": 0,
+   "VOLUME": 1,
+   "CUMULATIVE": 2
+  },
+  "GrateType": {
+   "P_BAR_50": 0,
+   "P_BAR_50x100": 1,
+   "P_BAR_30": 2,
+   "CURVED_VANE": 3,
+   "TILT_BAR_45": 4,
+   "TILT_BAR_30": 5,
+   "RETICULINE": 6,
+   "GENERIC": 7
+  },
+  "GroundHeatLayerValue": {
+   "TOP": 0,
+   "BOTTOM": 1,
+   "TEMPERATURE": 2,
+   "ENERGY": 3,
+   "CAPACITY": 4,
+   "MOISTURE": 5,
+   "CONDUCTIVITY": 6,
+   "SATURATED_WATER": 7
+  },
+  "GroundHeatValue": {
+   "ENERGY": 0,
+   "CAPACITY": 1,
+   "TEMPERATURE": 2,
+   "INITIAL_ENERGY": 3,
+   "ADVECTIVE_ENERGY": 4,
+   "SOURCE_ENERGY": 5,
+   "SURFACE_ENERGY": 6,
+   "DEEP_ENERGY": 7,
+   "LATENT_ENERGY": 8,
+   "LATERAL_ENERGY": 9,
+   "WATER_CONTACT_ENERGY": 10,
+   "RESIDUAL": 11,
+   "NORMALIZED_RESIDUAL": 12,
+   "PENDING_LATERAL": 13,
+   "CHANNEL_CONTACT": 14,
+   "LID_CONTACT": 15
+  },
+  "GroundwaterClosure": {
+   "AUTO": -1,
+   "CLOSED_FORM": 0,
+   "ENSLAVED": 1,
+   "SIGMA": 2
+  },
+  "GroundwaterLedger": {
+   "RECHARGE": 0,
+   "LATERAL": 1,
+   "DEEP": 2,
+   "NODE": 3,
+   "DUNNE": 4,
+   "CAPRISE": 5,
+   "ET": 6,
+   "INFIL_IN": 7,
+   "INIT_STORAGE": 8,
+   "STORAGE": 9,
+   "LINK": 10,
+   "SOURCE_IN": 11,
+   "SOURCE_OUT": 12,
+   "REJECT": 13,
+   "BOUNDARY_IN": 14,
+   "BOUNDARY_OUT": 15
+  },
+  "GroundwaterSoil": {
+   "RUSSO": 0,
+   "GARDNER": 1,
+   "BROOKS_COREY": 2,
+   "VAN_GENUCHTEN": 3
+  },
+  "GroundwaterSpeciesLedger": {
+   "INIT": 0,
+   "STORAGE": 1,
+   "INFIL_IN": 2,
+   "NODE_IN": 3,
+   "LINK_IN": 4,
+   "LATERAL_NET": 5,
+   "DEEP_OUT": 6,
+   "NODE_OUT": 7,
+   "LINK_OUT": 8,
+   "DUNNE_OUT": 9,
+   "ET_OUT": 10,
+   "REACTED": 11,
+   "RESIDUAL": 12,
+   "SOURCE_IN": 13,
+   "SOURCE_OUT": 14,
+   "BOUNDARY_IN": 15,
+   "BOUNDARY_OUT": 16,
+   "BOUNDARY_FLUX_IN": 17,
+   "BOUNDARY_FLUX_OUT": 18,
+   "AGE_GENERATED": 19
+  },
+  "GroundwaterTransportZone": {
+   "SAT": 0,
+   "UNSAT": 1,
+   "LAYER": 2
+  },
+  "GroundwaterVariable": {
+   "HG": 0,
+   "HU": 1,
+   "TABLE_EL": 2,
+   "Q0": 3,
+   "QLAT": 4,
+   "QNODE": 5,
+   "QDEEP": 6,
+   "QET": 7,
+   "DUNNE": 8,
+   "QPLUS": 9,
+   "DT_CELL": 10,
+   "TIER": 11,
+   "CLOSURE": 12,
+   "QLINK": 13,
+   "INFIL_CAPACITY": 14,
+   "INFIL_REMAINING": 15,
+   "INFIL_REFRESH": 16,
+   "INFIL_PENDING": 17,
+   "REJECT": 18,
+   "REJECT_CUM": 19,
+   "DUNNE_CUM": 20,
+   "ET_PENDING": 21,
+   "ET_POTENTIAL_CUM": 22,
+   "ET_SURFACE_CUM": 23,
+   "ET_SOIL_CUM": 24,
+   "ET_UNUSED_CUM": 25,
+   "ET_SURFACE": 26,
+   "ET_POTENTIAL": 27,
+   "ET_STRESS": 28,
+   "ET_REFRESH": 29,
+   "COMPLETED_TIME": 30,
+   "PENDING_IN": 31,
+   "PENDING_OUT": 32,
+   "QX": 33,
+   "QY": 34
+  },
+  "GroundwaterZone": {
+   "SAT": 0,
+   "UNSAT": 1
+  },
+  "GwfType": {
+   "LATERAL": 0,
+   "DEEP": 1
+  },
+  "Heat2DValue": {
+   "WATER_TEMPERATURE": 0,
+   "BED_TEMPERATURE": 1,
+   "BED_ENERGY": 2,
+   "BED_CAPACITY": 3,
+   "ATMOSPHERIC_ENERGY": 4,
+   "RADIATIVE_ENERGY": 5,
+   "SENSIBLE_ENERGY": 6,
+   "LATENT_ENERGY": 7,
+   "DEEP_ENERGY": 8,
+   "WATER_TO_BED_ENERGY": 9,
+   "WATER_THERMAL_INCREMENT": 10,
+   "ACCEPTED_EVAPORATION": 11,
+   "THERMAL_RESIDUAL": 12
+  },
+  "HeatAttr": {
+   "ALBEDO": 0,
+   "SHADE_FACTOR": 1,
+   "SKY_VIEW": 2,
+   "EMISS_WATER": 3,
+   "EMISS_LANDCOVER": 4,
+   "LANDCOVER_TEMPERATURE": 5,
+   "THERMAL_DIFFUSIVITY": 6,
+   "SOLUTE_DIFFUSIVITY": 7,
+   "BED_THICKNESS": 8,
+   "GROUND_DEPTH": 9,
+   "GROUND_TEMPERATURE": 10,
+   "HYPORHEIC_VELOCITY": 11,
+   "SEDIMENT_DENSITY": 12,
+   "SEDIMENT_SPECIFIC_HEAT": 13,
+   "MESH_POROSITY": 14,
+   "GROUND_SOURCE": 15
+  },
+  "HeatCloudParam": {
+   "FRACTION": 0,
+   "SW_ATTEN_K": 1,
+   "SW_ATTEN_N": 2,
+   "LW_CLOUD_K": 3
+  },
+  "HeatElemKind": {
+   "NODE": 0,
+   "LINK": 1
+  },
+  "HeatFluxModule": {
+   "SURFACE_EXCHANGE": 0,
+   "RADIATIVE_EXCHANGE": 1,
+   "LAYER_CONDUCTION": 2,
+   "SEDIMENT_EXCHANGE": 3
+  },
+  "HeatOverrideScope": {
+   "TAG": 1,
+   "NODE": 2,
+   "LINK": 3,
+   "CELL2D": 6,
+   "MESH_TAG": 7
+  },
+  "HeatRadiativeParam": {
+   "SHORTWAVE": 0,
+   "ALBEDO": 1,
+   "SHADE_FACTOR": 2,
+   "SKY_VIEW": 3,
+   "EMISS_WATER": 4,
+   "EMISS_LANDCOVER": 5,
+   "ATM_EMISS_COEFF": 6,
+   "LW_REFLECTION": 7,
+   "LANDCOVER_TEMPERATURE": 8
+  },
+  "HeatSedimentParam": {
+   "THERMAL_DIFFUSIVITY": 0,
+   "SOLUTE_DIFFUSIVITY": 1,
+   "BED_THICKNESS": 2,
+   "GROUND_DEPTH": 3,
+   "GROUND_TEMPERATURE": 4,
+   "HYPORHEIC_VELOCITY": 5,
+   "DENSITY": 6,
+   "SPECIFIC_HEAT": 7,
+   "INITIAL_TEMPERATURE": 8,
+   "MESH_POROSITY": 9,
+   "GROUND_SOURCE": 10
+  },
+  "HeatShortwaveMode": {
+   "CONSTANT": 0,
+   "TIMESERIES": 1,
+   "COMPUTED": 2
+  },
+  "HeatSolarParam": {
+   "LATITUDE": 0,
+   "LONGITUDE": 1,
+   "TIMEZONE": 2,
+   "ELEVATION": 3,
+   "TURBIDITY_380": 4,
+   "TURBIDITY_500": 5,
+   "PRECIP_WATER": 6,
+   "OZONE": 7,
+   "GROUND_ALBEDO": 8
+  },
+  "HeatSourceKind": {
+   "RAINFALL": 0,
+   "DWF": 1,
+   "GW": 2,
+   "RDII": 3,
+   "EXTERNAL_INFLOW": 4,
+   "IFACE": 5,
+   "INITIAL_STATE": 6
+  },
+  "HumidityType": {
+   "CONSTANT": 0,
+   "MONTHLY": 1,
+   "TIMESERIES": 2
+  },
+  "HumidityVar": {
+   "RELATIVE": 0,
+   "DEWPOINT": 1
+  },
+  "InfilModel": {
+   "HORTON": 0,
+   "MOD_HORTON": 1,
+   "GREEN_AMPT": 2,
+   "MOD_GREEN_AMPT": 3,
+   "CURVE_NUMBER": 4
+  },
+  "InletCurveKind": {
+   "NONE": 0,
+   "DIVERSION": 1,
+   "RATING": 2
+  },
+  "InletHostKind": {
+   "LINK": 0,
+   "NODE": 1
+  },
+  "InletPlacement": {
+   "AUTOMATIC": 0,
+   "ON_GRADE": 1,
+   "ON_SAG": 2
+  },
+  "InletType": {
+   "GRATE": 0,
+   "CURB": 1,
+   "COMBO": 2,
+   "SLOTTED": 3,
+   "DROP_GRATE": 4,
+   "DROP_CURB": 5,
+   "CUSTOM": 6
+  },
+  "InpProfile": {
+   "FULL": 0,
+   "SWMM5": 1,
+   "SWMM5_STOCK": 2
+  },
+  "IntEnum": {},
+  "IntFlag": {},
+  "LidExtraField": {
+   "SURFACE_VEGETATION": 0,
+   "SURFACE_SIDE_SLOPE": 1,
+   "SOIL_SUCTION": 2,
+   "STORAGE_CLOGGING": 3,
+   "DRAIN_DELAY": 4,
+   "DRAIN_OPEN": 5,
+   "DRAIN_CLOSE": 6,
+   "STORAGE_COVERED": 7
+  },
+  "LidNodeLayerKind": {
+   "SURFACE": 0,
+   "MEDIA": 1,
+   "AGGREGATE": 2,
+   "BOTTOM": 3
+  },
+  "LidType": {
+   "BIO_CELL": 0,
+   "RAIN_GARDEN": 1,
+   "GREEN_ROOF": 2,
+   "INFIL_TRENCH": 3,
+   "PERM_PAVEMENT": 4,
+   "RAIN_BARREL": 5,
+   "ROOFTOP_DISCONN": 6,
+   "VEGETATIVE_SWALE": 7,
+   "NODE": 8
+  },
+  "LinkType": {
+   "CONDUIT": 0,
+   "PUMP": 1,
+   "ORIFICE": 2,
+   "WEIR": 3,
+   "OUTLET": 4
+  },
+  "NodeCoupling2DType": {
+   "NONE": 0,
+   "MANHOLE": 1,
+   "GRATE": 2,
+   "CURB": 3,
+   "OPEN": 4,
+   "OUTFALL": 5
+  },
+  "NodeType": {
+   "JUNCTION": 0,
+   "OUTFALL": 1,
+   "STORAGE": 2,
+   "DIVIDER": 3
+  },
+  "ObjectType": {
+   "GAGE": 0,
+   "SUBCATCH": 1,
+   "NODE": 2,
+   "LINK": 3,
+   "POLLUT": 4,
+   "LANDUSE": 5,
+   "TIMESER": 6,
+   "TABLE": 7,
+   "RDII": 8,
+   "UNITHYD": 9,
+   "SNOWMELT": 10,
+   "SHAPE": 11,
+   "LID": 12
+  },
+  "OrificeType": {
+   "SIDE": 0,
+   "BOTTOM": 1
+  },
+  "OutLinkVar": {
+   "FLOW": 0,
+   "DEPTH": 1,
+   "VELOCITY": 2,
+   "VOLUME": 3,
+   "CAPACITY": 4,
+   "POLLUT_BASE": 5
+  },
+  "OutNodeVar": {
+   "DEPTH": 0,
+   "HEAD": 1,
+   "VOLUME": 2,
+   "LATERAL_INFLOW": 3,
+   "TOTAL_INFLOW": 4,
+   "OVERFLOW": 5,
+   "POLLUT_BASE": 6
+  },
+  "OutSubcatchVar": {
+   "RAINFALL": 0,
+   "SNOW_DEPTH": 1,
+   "EVAP": 2,
+   "INFIL": 3,
+   "RUNOFF": 4,
+   "GW_FLOW": 5,
+   "GW_ELEV": 6,
+   "SOIL_MOIST": 7,
+   "POLLUT_BASE": 8,
+   "SNOW_SWE": 65536,
+   "SNOW_ENERGY": 65537,
+   "SNOW_SURFACE_TEMP": 65538,
+   "SNOW_BULK_TEMP": 65539,
+   "SNOW_ALBEDO": 65540,
+   "SNOW_COVER": 65541,
+   "SNOW_MELT": 65542,
+   "SNOW_INPUT": 65543,
+   "SNOW_SUBLIMATION": 65544,
+   "SNOW_TIME": 65545
+  },
+  "OutSystemVar": {
+   "TEMPERATURE": 0,
+   "RAINFALL": 1,
+   "SNOW_DEPTH": 2,
+   "INFIL": 3,
+   "RUNOFF": 4,
+   "DW_INFLOW": 5,
+   "GW_INFLOW": 6,
+   "RDII_INFLOW": 7,
+   "EXT_INFLOW": 8,
+   "TOTAL_INFLOW": 9,
+   "FLOODING": 10,
+   "OUTFLOW": 11,
+   "STORAGE": 12,
+   "EVAP": 13,
+   "PET": 14
+  },
+  "OutfallType": {
+   "FREE": 0,
+   "NORMAL": 1,
+   "FIXED": 2,
+   "TIDAL": 3,
+   "TIMESERIES": 4
+  },
+  "OutletRatingType": {
+   "FUNCTIONAL_HEAD": 0,
+   "FUNCTIONAL_DEPTH": 1,
+   "TABULAR_HEAD": 2,
+   "TABULAR_DEPTH": 3
+  },
+  "PatternType": {
+   "MONTHLY": 0,
+   "DAILY": 1,
+   "HOURLY": 2,
+   "WEEKEND": 3
+  },
+  "ReactionExprForm": {
+   "NONE": 0,
+   "RATE": 1,
+   "EQUIL": 2,
+   "FORMULA": 3
+  },
+  "ReactionScope": {
+   "TERM": 0,
+   "PIPE": 1,
+   "TANK": 2,
+   "SUBSURFACE": 3,
+   "SUBCATCHMENT": 4
+  },
+  "RefType": {
+   "NODE": 0,
+   "LINK": 1,
+   "SUBCATCH": 2,
+   "GAGE": 3,
+   "TABLE": 4,
+   "TRANSECT": 5,
+   "INLET_USAGE": 6,
+   "EXT_INFLOW": 7,
+   "DWF_INFLOW": 8,
+   "RDII_ASSIGN": 9,
+   "TREATMENT": 10,
+   "LID_USAGE": 11,
+   "SNOWPACK": 12,
+   "HYDROGRAPH": 13,
+   "POLLUTANT": 14,
+   "PATTERN": 15,
+   "AQUIFER": 16,
+   "LID_CONTROL": 17,
+   "STREET": 18,
+   "INLET_DESIGN": 19,
+   "LANDUSE": 20,
+   "CONTROL_RULE": 21
+  },
+  "RouteModel": {
+   "STEADY": 0,
+   "KINWAVE": 1,
+   "DYNWAVE": 2,
+   "FV": 3
+  },
+  "RoutingTotal": {
+   "DRY_WEATHER": 0,
+   "WET_WEATHER": 1,
+   "GW_INFLOW": 2,
+   "RDII": 3,
+   "EXTERNAL": 4,
+   "FLOODING": 5,
+   "OUTFLOW": 6,
+   "EVAP_LOSS": 7,
+   "SEEP_LOSS": 8,
+   "INIT_STORAGE": 9,
+   "FINAL_STORAGE": 10,
+   "FORCING_INFLOW": 11,
+   "LINK_GW_INFLOW": 13,
+   "COUPLING_OUT": 12
+  },
+  "RunoffTotal": {
+   "RAINFALL": 0,
+   "EVAP": 1,
+   "INFIL": 2,
+   "RUNOFF": 3,
+   "SNOWREMOV": 4,
+   "INITSTORE": 5,
+   "FINALSTORE": 6,
+   "INITSNOW": 7,
+   "FINALSNOW": 8
+  },
+  "SplitPhase": {
+   "CONDUCTANCE": 1,
+   "ADVANCE": 2,
+   "FINISH": 3,
+   "OUTFALL_PREPARE": 4,
+   "SOURCE_PREPARE": 5,
+   "LID_TRIAL": 6,
+   "LID_ACCEPT": 7,
+   "MATERIAL_REPORT": 8
+  },
+  "SplitRole": {
+   "NETWORK": 1,
+   "SURFACE": 2
+  },
+  "StorageShape": {
+   "TABULAR": 0,
+   "FUNCTIONAL": 1,
+   "CYLINDRICAL": 2,
+   "CONICAL": 3,
+   "PARABOLOID": 4,
+   "PYRAMIDAL": 5
+  },
+  "SummaryObject": {
+   "SYSTEM": -1,
+   "NODE": 0,
+   "LINK": 1,
+   "SUBCATCHMENT": 2
+  },
+  "SummaryTable": {
+   "NODE_DEPTH": 0,
+   "NODE_INFLOW": 1,
+   "NODE_SURCHARGE": 2,
+   "NODE_FLOODING": 3,
+   "STORAGE_VOLUME": 4,
+   "OUTFALL_LOADING": 5,
+   "LINK_FLOW": 6,
+   "FLOW_CLASSIFICATION": 7,
+   "CONDUIT_SURCHARGE": 8,
+   "PUMPING": 9,
+   "LID_PERFORMANCE": 10
+  },
+  "SurfaceBoundaryType": {
+   "WALL": 0,
+   "NORMAL_FLOW": 1,
+   "SPECIFIED_STAGE": 2,
+   "SPECIFIED_FLOW": 3,
+   "RATING_CURVE": 4
+  },
+  "SurfaceForcingMode": {
+   "NONE": 0,
+   "OVERRIDE": 1,
+   "ADD": 2
+  },
+  "SurfaceInfilDest": {
+   "LOST": 0,
+   "SUBCATCH_AQUIFER": 1,
+   "AQUIFER_2D": 2
+  },
+  "SurfaceInfilMethod": {
+   "HORTON": 0,
+   "MOD_HORTON": 1,
+   "GREEN_AMPT": 2,
+   "MOD_GREEN_AMPT": 3,
+   "CURVE_NUMBER": 4,
+   "CONSTANT": 5
+  },
+  "TableType": {
+   "TIMESERIES": 0,
+   "CURVE_STORAGE": 1,
+   "CURVE_DIVERSION": 2,
+   "CURVE_RATING": 3,
+   "CURVE_SHAPE": 4,
+   "CURVE_CONTROL": 5,
+   "CURVE_TIDAL": 6,
+   "CURVE_PUMP1": 7,
+   "CURVE_PUMP2": 8,
+   "CURVE_PUMP3": 9,
+   "CURVE_PUMP4": 10,
+   "CURVE_PUMP5": 11
+  },
+  "TempSource": {
+   "NONE": 0,
+   "TIMESERIES": 1,
+   "FILE": 2
+  },
+  "ThroatType": {
+   "HORIZONTAL": 0,
+   "INCLINED": 1,
+   "VERTICAL": 2
+  },
+  "TraceDirection": {
+   "DOWNSTREAM": 0,
+   "UPSTREAM": 1
+  },
+  "TraceFlags": {
+   "UNREACHABLE": 1,
+   "NO_DIRECTION": 2,
+   "REVERSAL": 4,
+   "UNKNOWN_TIME": 8,
+   "PARTIAL_TIME": 16,
+   "TRAPPED": 32,
+   "APPROXIMATE": 64
+  },
+  "TraceNodeFlags": {
+   "PONDING": 1,
+   "EXTERNAL_EXCHANGE": 2,
+   "ROUTED_OUTFALL": 4,
+   "UNKNOWN_LOSSES": 8
+  },
+  "TraceStatus": {
+   "OK": 0,
+   "INVALID": -1,
+   "IO": -2,
+   "MISMATCH": -3,
+   "CANCELLED": -4,
+   "SOLVER": -5,
+   "NO_HDF5": -6
+  },
+  "TraceTerminal": {
+   "OUTFALL": 0,
+   "LOSS": 1,
+   "SOURCE": 2,
+   "RETAINED": 3,
+   "UNRESOLVED": 4,
+   "CIRCULATION": 5
+  },
+  "TransportClass": {
+   "POLLUTANTS": 0,
+   "MSX": 1,
+   "AGE": 2,
+   "TEMPERATURE": 3
+  },
+  "TransportDispersionMode": {
+   "OFF": 0,
+   "FISCHER": 1,
+   "VALUE": 2
+  },
+  "TransportDomain": {
+   "RUNOFF": 0,
+   "GROUNDWATER": 1,
+   "NETWORK_1D": 2,
+   "SURFACE_2D": 3
+  },
+  "TransportState": {
+   "ENABLED": 0,
+   "DISABLED_BY_USER": 1,
+   "UNAVAILABLE": 2
+  },
+  "UnitSystem": {
+   "UNITS_US": 0,
+   "UNITS_SI": 1
+  },
+  "UserFlagType": {
+   "BOOLEAN": 0,
+   "INTEGER": 1,
+   "REAL": 2,
+   "STRING": 3
+  },
+  "WarnCode": {
+   "NONE": 0,
+   "HOTSTART_MISSING": 1,
+   "UNKNOWN_SECTION": 2,
+   "UNKNOWN_OPTION": 3,
+   "DEPRECATED_KW": 4,
+   "PLUGIN_INIT": 5,
+   "NUMERICAL": 6,
+   "STABILITY_LIMIT": 7
+  },
+  "WashoffFunc": {
+   "NONE": 0,
+   "EXP": 1,
+   "RC": 2,
+   "EMC": 3
+  },
+  "WaterAgeSource": {
+   "RAINFALL": 0,
+   "DWF": 1,
+   "GW": 2,
+   "RDII": 3,
+   "EXTERNAL_INFLOW": 4,
+   "IFACE": 5,
+   "INITIAL_STATE": 6
+  },
+  "WeirType": {
+   "TRANSVERSE": 0,
+   "SIDEFLOW": 1,
+   "VNOTCH": 2,
+   "TRAPEZOIDAL": 3,
+   "ROADWAY": 4
+  },
+  "WindType": {
+   "MONTHLY": 0,
+   "FILE": 1
+  },
+  "XSectShape": {
+   "CIRCULAR": 0,
+   "FILLED_CIRCULAR": 1,
+   "RECT_CLOSED": 2,
+   "RECT_OPEN": 3,
+   "TRAPEZOIDAL": 4,
+   "TRIANGULAR": 5,
+   "PARABOLIC": 6,
+   "POWER": 7,
+   "MODBASKETHANDLE": 8,
+   "EGGSHAPED": 9,
+   "HORSESHOE": 10,
+   "GOTHIC": 11,
+   "CATENARY": 12,
+   "SEMIELLIPTICAL": 13,
+   "BASKETHANDLE": 14,
+   "SEMICIRCULAR": 15,
+   "RECT_TRIANG": 16,
+   "RECT_ROUND": 17,
+   "HORIZ_ELLIPSE": 18,
+   "VERT_ELLIPSE": 19,
+   "ARCH": 20,
+   "IRREGULAR": 21,
+   "CUSTOM": 22,
+   "FORCE_MAIN": 23,
+   "STREET_XSECT": 24,
+   "DUMMY": 25
+  }
+ }
+}

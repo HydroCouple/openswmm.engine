@@ -1,0 +1,105 @@
+{
+  "base_commit": "35547cd082944622b5da459e56967e0e1c7d677c",
+  "sources": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "0e70ec547f70af5ed0d17940f97e4082ef79755def9215532d38c9f61fa506c3"
+    },
+    {
+      "path": "include/openswmm/engine/openswmm_gw2d.h",
+      "sha256": "65beca17dd31fc3ac4588e405bbe2f1227744066ea4929d4ad899aa5ce84b674"
+    },
+    {
+      "path": "include/openswmm/plugin_sdk/SimulationSnapshot.hpp",
+      "sha256": "ec446f07f7ee4395d5b79fa5d71c0d39562044ef9921d5030de5de8d64f24a55"
+    },
+    {
+      "path": "src/engine/2d/api/ApiGw2D.cpp",
+      "sha256": "05e832b637240586241216ca0d00cd6111fc4c98601bd817c379f0f00a3e4d87"
+    },
+    {
+      "path": "src/engine/2d/input/SectionHandlers2D.cpp",
+      "sha256": "30fd61289990d2bff7c3f50178e4ee0490ccb5112a6c3c310f7770d21b9c88dd"
+    },
+    {
+      "path": "src/engine/2d/output/Default2DOutputPlugin.cpp",
+      "sha256": "0c017e10524896623a928e593a83c28bf77d8e45a4960ad0d952cf3123dda424"
+    },
+    {
+      "path": "src/engine/2d/output/Default2DOutputPlugin.hpp",
+      "sha256": "d5495bb4990843a7066281dbbf6d6cb2fd8057f14f781bcbfd15d05e72e90ca5"
+    },
+    {
+      "path": "src/engine/2d/solver/ExplicitInertialSolver.cpp",
+      "sha256": "031dc81e6a50a740c4decea4afe46e8e2385c2679b1d704f42fb6512047cc14a"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SigmaColumn.cpp",
+      "sha256": "9fb1e5373cef6bc853ebaa00a3cb4b0d1eb48c7e7ba1f8b967e94a910b8cb6d1"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SigmaColumn.hpp",
+      "sha256": "f198a97c3d0d886e328f72af04657233c3f1d27fba87c719eb67771e6c9e4731"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceData.cpp",
+      "sha256": "127e990e384f6a704eeacb60bf29f81d47787a48d55be14b3aeec1902e3d27dd"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceData.hpp",
+      "sha256": "e8ed05c908d9cd65bf6b62cac08e90face1197ae506d901d896997936da813a8"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSections.cpp",
+      "sha256": "b7e5baaa4839c4d789d196685c5ed1a543071c1c59f0b0c9a057030ef2aa0564"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSections.hpp",
+      "sha256": "a4d389251e4947d5eb5fe93b99ec452d3dea7f8d28ff316c220e3ee1230f8dcc"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSolver.cpp",
+      "sha256": "2ba12fa4344147c7303349245c85fbc5d7d68edb001dad5fca8cb3e4139a481d"
+    },
+    {
+      "path": "src/engine/2d/subsurface/SubsurfaceSolver.hpp",
+      "sha256": "f2d8d2d2286b000bb10c34e7cdf84863d27344649c879436635098d2f0e99f32"
+    },
+    {
+      "path": "src/engine/core/HotStartManager.cpp",
+      "sha256": "8b5d2bbc073f8fcdc80ec16706d5a4a3e01c532a8a94dfbe6cfd129578d9e71c"
+    },
+    {
+      "path": "src/engine/core/HotStartManager.hpp",
+      "sha256": "1bca3097cd37f44761c43c5e21d23703135a364090cbc808d11ad99b395986fe"
+    },
+    {
+      "path": "src/engine/core/SWMMEngine.cpp",
+      "sha256": "25dbb7d1e771d3db58c74a4b200319e120186c313ff1c73b6c400dbbcfb0279c"
+    },
+    {
+      "path": "src/engine/input/geopackage/GeoPackageReader.cpp",
+      "sha256": "69a30832fb8cc5cc61e6bbd9eb4221b5fc7000666103d1ea230ba91e13c86b06"
+    },
+    {
+      "path": "tests/unit/engine/CMakeLists.txt",
+      "sha256": "950932613e3975f26b590a0f60b8630967e72d0505d8ff1611501d492144909d"
+    },
+    {
+      "path": "tests/unit/engine/test_2d_aquifer.cpp",
+      "sha256": "6722c8cc4ca15d2b9bcc655bad48f1e8a4220e93e5a7b1f13128360ed7c06982"
+    },
+    {
+      "path": "tests/unit/engine/test_gw_transport_kernel.cpp",
+      "sha256": "b4a013a8b799a03aa92e3294eb9ad9a0105de352a6871011ea8c749351806675"
+    },
+    {
+      "path": "tests/unit/engine/test_surface_aquifer_receiving.cpp",
+      "sha256": "621a0cb2c3cc90f187cdd97ff9e252f3c561b5b558dff3fac2cb92058551921d"
+    },
+    {
+      "path": "tests/unit/engine/test_surface_et_budget.cpp",
+      "sha256": "06b7bff6e46287e250f9605929535293ec2fb9006f6e774674ee16a964a735c1"
+    }
+  ]
+}

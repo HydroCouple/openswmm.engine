@@ -22,7 +22,7 @@ try:
 except ImportError as _exc:  # pragma: no cover - environment dependent
     raise unittest.SkipTest(f"requires compiled engine: {_exc}")
 
-from openswmm.engine import EngineError, ModelBuilder, UserFlagType
+from openswmm.engine import EngineError, ModelBuilder, UserFlagType, XSectShape
 
 from tests._paths import artifact_dir
 from tests.engine._solver_cases import EngineSolverCase
@@ -225,6 +225,7 @@ class TestInpPersistence(unittest.TestCase):
         m.set_link_nodes(0, 0, 1)
         m.set_link_length(0, 300.0)
         m.set_link_roughness(0, 0.013)
+        m.set_link_xsect(0, XSectShape.CIRCULAR, 1.5)
         m.define_userflag("priority", UserFlagType.INTEGER, "Asset priority")
         m.define_userflag("note", UserFlagType.STRING)
         m.set_userflag_value("NODE", "J1", "priority", "2")

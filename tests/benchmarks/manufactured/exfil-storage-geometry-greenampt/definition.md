@@ -18,7 +18,7 @@ At `d = 2.0 ft` this gives:
 
 ```text
 bottom area = 50 ft^2
-bank area   = A(2.0) = 250 ft^2
+bank area   = A(2.0) - A_bottom = 250 - 50 = 200 ft^2
 bank depth  = d / 2 = 1.0 ft
 ```
 
@@ -47,7 +47,7 @@ c1_bank   = (0.5 + 1.0) * 0.2 = 0.3 ft
 The exact cumulative exfiltration volume is therefore:
 
 ```text
-E(t) = 50 F_bottom(t) + 250 F_bank(t)
+E(t) = 50 F_bottom(t) + 200 F_bank(t)
 ```
 
 This is a true storage-geometry benchmark because the total seepage combines
@@ -60,7 +60,7 @@ the analytically defined bottom area and the analytically defined bank area.
 | `A(d)` | `50 + 100 d` | ft^2 | analytical storage surface area |
 | `d` | 2.0 | ft | fixed storage stage |
 | `A_bottom` | 50.0 | ft^2 | bottom seepage area |
-| `A_bank` | 250.0 | ft^2 | bank seepage area at `d = 2 ft` |
+| `A_bank` | 200.0 | ft^2 | bank seepage area at `d = 2 ft` (`A(d) - A_bottom`, the wetted side area — SWMM 5 exfil.c convention) |
 | `d_bank` | 1.0 | ft | bank seepage depth argument |
 | `K_s` | 4.32 | in/hr | Green-Ampt saturated conductivity |
 | `S` | 0.5 | ft | suction head |
@@ -74,7 +74,7 @@ For each component, solve the implicit saturated Green-Ampt equation for
 `F_bottom(t)` and `F_bank(t)` with the appropriate `c1`, then compute:
 
 ```text
-E(t) = 50 F_bottom(t) + 250 F_bank(t)
+E(t) = 50 F_bottom(t) + 200 F_bank(t)
 q(t_n) = [E(t_n) - E(t_{n-1})] / dt
 ```
 

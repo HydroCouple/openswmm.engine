@@ -1,10 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright 2026 Caleb Buahin
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Tables, curves, patterns (Pythonic v1 surface)
 ==============================================
 
 :author: Caleb Buahin
 :copyright: Copyright (c) 2026 Caleb Buahin
-:license: MIT
+:license: Apache-2.0
 
 Three collections live on the engine — time series, curves, and
 patterns — and the C side stores time series and curves in a single
@@ -114,6 +130,45 @@ cdef class _PointTable:
         """Remove all points."""
         _check(swmm_table_clear(_h(self._solver), self._index))
 
+    def validate_points(self, points, *, int relative_count=0, double anchor=0):
+        """Preflight raw (x, y) rows; x and anchor use native OADate days for series."""
+        self._replace_points(points, relative_count, anchor, None, False)
+
+    def replace_points(self, points, *, int relative_count=0, double anchor=0, file_token=None):
+        """Atomically replace raw rows and relative metadata; None preserves FILE, '' detaches."""
+        self._replace_points(points, relative_count, anchor, file_token, True)
+
+    def _replace_points(self, points, int relative_count, double anchor, file_token, bint publish):
+        cdef np.ndarray[double, ndim=2] rows
+        cdef np.ndarray[double, ndim=1] x, y
+        cdef bytes token
+        cdef const char* raw_token = NULL
+        cdef int count
+        with self._solver._operation():
+            values = list(points)
+            rows = np.array(values, dtype=np.float64, order='C') if values else np.empty((0, 2))
+            if rows.shape[1] != 2:
+                raise ValueError("points must contain (x, y) rows")
+            x = np.ascontiguousarray(rows[:, 0])
+            y = np.ascontiguousarray(rows[:, 1])
+            count = len(values)
+            if file_token is not None:
+                token = str(file_token).encode('utf-8')
+                if b'\0' in token:
+                    raise ValueError("file_token must not contain NUL")
+                raw_token = token
+            if self.id != self._captured_id:
+                from ._exceptions import StaleObjectError
+                raise StaleObjectError("Table changed; reacquire it before replacing points")
+            if publish:
+                _check(swmm_table_replace_points(_h(self._solver), self._index,
+                    &x[0] if count else NULL, &y[0] if count else NULL,
+                    count, relative_count, anchor, raw_token))
+            else:
+                _check(swmm_table_validate_points(_h(self._solver), self._index,
+                    &x[0] if count else NULL, &y[0] if count else NULL,
+                    count, relative_count, anchor))
+
     def lookup(self, double x) -> float:
         """Interpolate y at x using the underlying SWMM lookup."""
         cdef double v = 0.0
@@ -151,6 +206,25 @@ cdef class _PointTable:
 cdef class TimeSeries(_PointTable):
     """A SWMM time series — x is a SWMM DateTime double; we surface it as
     ``datetime64[s]``."""
+
+    @property
+    def relative_info(self):
+        """(number of leading relative rows, OADate anchor in days).
+
+        Stored x values are absolute. Subtract the anchor to recover authored
+        elapsed days. This metadata controls time-only INP serialization.
+        """
+        cdef int count = 0
+        cdef double anchor = 0
+        _check(swmm_timeseries_get_relative_info(_h(self._solver), self._index, &count, &anchor))
+        return (count, anchor)
+
+    def set_relative_info(self, int count, double anchor):
+        """Mark leading rows as relative without changing stored x values.
+
+        Call after rebuilding points. Count zero marks all rows explicitly dated.
+        """
+        _check(swmm_timeseries_set_relative_info(_h(self._solver), self._index, count, anchor))
 
     @property
     def points(self):
@@ -259,6 +333,29 @@ cdef class Tables:
         cdef int v = 0
         _check(swmm_table_get_type(_h(self._solver), i, &v))
         return TableType(v)
+
+    def rename(self, key, str new_id) -> None:
+        """Rename a table before initialization, preserving its references.
+
+        IDs must be unique within their curve or timeseries namespace.
+        Other generation-checked structural views must be reacquired after editing.
+        """
+        if '\0' in new_id:
+            raise ValueError("new_id must not contain NUL")
+        cdef int index = _resolve_table(self._solver, key)
+        cdef bytes encoded = new_id.encode('utf-8')
+        _check(swmm_table_rename(_h(self._solver), index, encoded))
+        self._solver._bump_generation()
+
+    def set_type(self, key, kind) -> None:
+        """Change a curve's TableType, preserving points and references.
+
+        Conversion to or from TIMESERIES is refused. Edit before initialization.
+        """
+        cdef int index = _resolve_table(self._solver, key)
+        cdef int value = TableType(kind)
+        _check(swmm_table_set_type(_h(self._solver), index, value))
+        self._solver._bump_generation()
 
     # ---- Creation -----------------------------------------------
 
@@ -501,3 +598,8 @@ cdef class Patterns:
             return f"<Patterns n={len(self)}>"
         except Exception:
             return "<Patterns (engine closed)>"
+
+
+cdef extern from "openswmm/engine/openswmm_tables.h":
+    int swmm_timeseries_get_relative_info(SWMM_Engine, int, int*, double*)
+    int swmm_timeseries_set_relative_info(SWMM_Engine, int, int, double)

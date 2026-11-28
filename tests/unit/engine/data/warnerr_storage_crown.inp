@@ -1,0 +1,73 @@
+[TITLE]
+Issue #6 (USEPA #207): link openings above the maximum depth of a storage node
+;; WeirChamber, W2Chamber and their links are the deck from USEPA #207. Expected:
+;;   W2Chamber   junction, weir crown 16.5 > 10        WARNING 02 (depth raised)
+;;   SurChamber  storage with SurDepth 2, same weir    WARNING 02 (depth raised)
+;;   WeirChamber storage, no SurDepth, same weir       WARNING 14 (depth kept)
+;;   LowPond     storage, conduit crown 3 > 2          WARNING 14 (depth kept)
+;;   OkChamber   storage, weir crown exactly 10        no warning
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+LINK_OFFSETS         DEPTH
+START_DATE           12/03/2024
+START_TIME           00:00:00
+END_DATE             12/03/2024
+END_TIME             01:00:00
+
+[JUNCTIONS]
+;;Name           Elevation  MaxDepth   InitDepth  SurDepth   Aponded
+WUpstream        1.5        10         0          0          0
+Oupstream        1.5        10         0          0          0
+W2Chamber        1          10         0          0          0
+SUpstream        1.5        10         0          0          0
+PUpstream        1.5        10         0          0          0
+
+[OUTFALLS]
+;;Name           Elevation  Type       Stage Data       Gated
+Woutfall         0          FREE                        NO
+W2outfall        0          FREE                        NO
+W3outfall        0          FREE                        NO
+W4outfall        0          FREE                        NO
+Poutfall         -1         FREE                        NO
+
+[STORAGE]
+;;Name           Elev.    MaxDepth   InitDepth  Shape      Coeff  Expon  Const  SurDepth  Fevap
+WeirChamber      1        10         0          FUNCTIONAL 0      0      1000   0         0
+SurChamber       1        10         0          FUNCTIONAL 0      0      1000   2         0
+OkChamber        1        10         0          FUNCTIONAL 0      0      1000   0         0
+LowPond          0        2          0          FUNCTIONAL 0      0      1000   0         0
+
+[CONDUITS]
+;;Name           From Node        To Node          Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow
+WUpstreamPipe    WUpstream        WeirChamber      400        0.013      0          0          0          0
+OUpstreamPipe    Oupstream        W2Chamber        400        0.013      0          0          0          0
+SUpstreamPipe    SUpstream        SurChamber       400        0.013      0          0          0          0
+PondPipe         PUpstream        LowPond          400        0.013      0          0          0          0
+PondOut          LowPond          Poutfall         400        0.013      0          0          0          0
+
+[WEIRS]
+;;Name           From Node        To Node          Type         CrestHt    Qcoeff     Gated    EndCon   EndCoeff   Surcharge
+Weir             WeirChamber      Woutfall         TRANSVERSE   1.5        3.33       NO       0        0          YES
+Weir2            W2Chamber        W2outfall        TRANSVERSE   1.5        3.33       NO       0        0          YES
+Weir3            SurChamber       W3outfall        TRANSVERSE   1.5        3.33       NO       0        0          YES
+Weir4            OkChamber        W4outfall        TRANSVERSE   1.5        3.33       NO       0        0          YES
+
+[XSECTIONS]
+;;Link           Shape        Geom1            Geom2      Geom3      Geom4      Barrels
+WUpstreamPipe    CIRCULAR     5                0          0          0          1
+OUpstreamPipe    CIRCULAR     5                0          0          0          1
+SUpstreamPipe    CIRCULAR     5                0          0          0          1
+PondPipe         CIRCULAR     3                0          0          0          1
+PondOut          CIRCULAR     1                0          0          0          1
+Weir             RECT_OPEN    15               4          0          0
+Weir2            RECT_OPEN    15               4          0          0
+Weir3            RECT_OPEN    15               4          0          0
+Weir4            RECT_OPEN    8.5              4          0          0
+
+[DWF]
+;;Node           Constituent      Baseline   Patterns
+WUpstream        FLOW             25         ""
+Oupstream        FLOW             25         ""

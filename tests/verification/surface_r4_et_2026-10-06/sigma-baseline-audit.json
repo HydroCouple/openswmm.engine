@@ -1,0 +1,11 @@
+{
+  "parent": "b26b0a25b89e73c7e0f041b2eeca5021eb9481ca",
+  "uses_common_source_stage": false,
+  "uses_area_et_api": false,
+  "sigma_sha256": "9fb1e5373cef6bc853ebaa00a3cb4b0d1eb48c7e7ba1f8b967e94a910b8cb6d1",
+  "fire_cell_and_remaining_solver_sha256": "196d134d029d374ea3fd99e4f091f01d604e7140d425abc5f060adbde1f348e2",
+  "parent_matches": true,
+  "ks_m_per_s": 0.01,
+  "worst_no_et_residual_m3": 0.9848024660648468,
+  "status": "Unresolved existing SIGMA table/column conservation issue; must correct and requalify before runtime activation."
+}

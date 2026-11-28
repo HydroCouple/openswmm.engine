@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="605.549133pt" height="349.2pt" viewBox="0 0 605.549133 349.2" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 349.2 
+L 605.549133 349.2 
+L 605.549133 0 
+L 0 0 
+z
+" style="fill: #fcfcfb"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 0 257.358382 
+L 605.549133 257.358382 
+L 605.549133 156.433526 
+L 464.254335 156.433526 
+L 413.791908 222.034682 
+L 191.757225 222.034682 
+L 141.294798 156.433526 
+L 0 156.433526 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #e2d7bd"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 191.757225 257.358382 
+L 413.791908 257.358382 
+L 413.791908 222.034682 
+L 191.757225 222.034682 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #bda98a; opacity: 0.55"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 156.433526 176.618497 
+L 449.115607 176.618497 
+L 413.791908 222.034682 
+L 191.757225 222.034682 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #2a78d6; opacity: 0.35; stroke: #2a78d6; stroke-width: 1.2; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 550.040462 156.433526 
+L 559.123699 156.433526 
+L 559.123699 105.971098 
+L 550.040462 105.971098 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #7a5a3a"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 554.582081 116.063584 
+C 561.942617 116.063584 569.002675 113.139212 574.20736 107.934527 
+C 579.412044 102.729842 582.336416 95.669784 582.336416 88.309249 
+C 582.336416 80.948713 579.412044 73.888655 574.20736 68.68397 
+C 569.002675 63.479285 561.942617 60.554913 554.582081 60.554913 
+C 547.221545 60.554913 540.161487 63.479285 534.956802 68.68397 
+C 529.752118 73.888655 526.827746 80.948713 526.827746 88.309249 
+C 526.827746 95.669784 529.752118 102.729842 534.956802 107.934527 
+C 540.161487 113.139212 547.221545 116.063584 554.582081 116.063584 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #6aa15c"/>
+   </g>
+   <g id="patch_7">
+    <path d="M 65.601156 41.379191 
+C 69.88365 41.379191 73.99132 39.677738 77.0195 36.649558 
+C 80.04768 33.621378 81.749133 29.513707 81.749133 25.231214 
+C 81.749133 20.94872 80.04768 16.84105 77.0195 13.81287 
+C 73.99132 10.78469 69.88365 9.083237 65.601156 9.083237 
+C 61.318663 9.083237 57.210992 10.78469 54.182812 13.81287 
+C 51.154632 16.84105 49.453179 20.94872 49.453179 25.231214 
+C 49.453179 29.513707 51.154632 33.621378 54.182812 36.649558 
+C 57.210992 39.677738 61.318663 41.379191 65.601156 41.379191 
+z
+" clip-path="url(#p512908f5e3)" style="fill: #e6b422"/>
+   </g>
+   <g id="line2d_1">
+    <path d="M 10.092486 340.116763 
+L 35.323699 340.116763 
+" clip-path="url(#p512908f5e3)" style="fill: none; stroke: #eb6834; stroke-width: 2.2; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 131.202312 340.116763 
+L 156.433526 340.116763 
+" clip-path="url(#p512908f5e3)" style="fill: none; stroke: #2a78d6; stroke-width: 2.2; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-size: 9px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="302.774566" y="199.32659" transform="rotate(-0 302.774566 199.32659)">water  T_w</text>
+   </g>
+   <g id="text_2">
+    <text style="font-size: 8px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="95.878613" y="27.754335" transform="rotate(-0 95.878613 27.754335)">air  T_a,  RH,  wind w,  pressure p</text>
+   </g>
+   <g id="text_3">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #0b0b0b" transform="translate(536.687096 172.854166)">land cover</text>
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; fill: #0b0b0b" transform="translate(536.194361 180.692635)">(1 − f_sky)</text>
+   </g>
+   <g id="patch_8">
+    <path d="M 82.089302 39.320384 
+Q 143.817518 106.727597 203.884575 172.320823 
+" style="fill: none; stroke: #e6b422; stroke-width: 2.2; stroke-linecap: round"/>
+    <path d="M 202.290191 166.729943 
+L 203.884575 172.320823 
+L 198.455241 170.241803 
+z
+" style="fill: #e6b422; stroke: #e6b422; stroke-width: 2.2; stroke-linecap: round"/>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #a07a10" transform="translate(10.092486 124.209549)">J_sn  net shortwave</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #a07a10" transform="translate(10.092486 132.701743)">(1 − R_s) J_in max(0, 1 − f_s)</text>
+   </g>
+   <g id="patch_9">
+    <path d="M 262.404624 37.323008 
+Q 262.404624 105.46806 262.404624 171.600651 
+" style="fill: none; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 265.004624 166.400651 
+L 262.404624 171.600651 
+L 259.804624 166.400651 
+z
+" style="fill: #eb6834; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_5">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #eb6834" transform="translate(153.569913 63.654636)">J_an  atmospheric longwave</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #eb6834" transform="translate(162.396725 72.146829)">σ T_a⁴ ε_a (1 − R_L) f_sky</text>
+   </g>
+   <g id="patch_10">
+    <path d="M 530.747993 107.125075 
+Q 483.179001 140.789285 437.252723 173.290958 
+" style="fill: none; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 442.999273 172.409385 
+L 437.252723 173.290958 
+L 439.995395 168.164775 
+z
+" style="fill: #eb6834; stroke: #eb6834; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 7px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #eb6834" x="466.777457" y="156.706189" transform="rotate(-0 466.777457 156.706189)">J_lc  ε_lc σ (1 − f_sky) T_a⁴</text>
+   </g>
+   <g id="patch_11">
+    <path d="M 320.436416 173.60994 
+Q 320.436416 105.464888 320.436416 39.332297 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 317.836416 44.532297 
+L 320.436416 39.332297 
+L 323.036416 44.532297 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(325.482659 43.469665)">J_br  back radiation</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(325.482659 51.961858)">ε_w σ T_w⁴</text>
+   </g>
+   <g id="patch_12">
+    <path d="M 368.375723 173.612034 
+Q 368.375723 125.652402 368.375723 79.70523 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 365.775723 84.90523 
+L 368.375723 79.70523 
+L 370.975723 84.90523 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_8">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(373.421965 81.316485)">J_e  latent = ρ_w L_v E</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(373.421965 89.808679)">E = (a + b w)(e_w − e_a)</text>
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; fill: #2a78d6" transform="translate(373.421965 98.300873)">signed: condensation warms</text>
+   </g>
+   <g id="patch_13">
+    <path d="M 403.699422 173.607045 
+Q 403.699422 152.142642 403.699422 132.6907 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+    <path d="M 401.099422 137.8907 
+L 403.699422 132.6907 
+L 406.299422 137.8907 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.8; stroke-linecap: round"/>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #2a78d6" x="408.745665" y="130.769665" transform="rotate(-0 408.745665 130.769665)">J_h = B_r J_e  (Bowen)</text>
+   </g>
+   <g id="patch_14">
+    <path d="M 232.127168 226.5601 
+Q 232.127168 238.434896 232.127168 248.744444 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 1.4; stroke-linecap: round"/>
+    <path d="M 234.727168 243.544444 
+L 232.127168 248.744444 
+L 229.527168 243.544444 
+z
+" style="fill: #0b0b0b; stroke: #0b0b0b; stroke-width: 1.4; stroke-linecap: round"/>
+   </g>
+   <g id="patch_15">
+    <path d="M 249.789017 250.309842 
+Q 249.789017 238.435047 249.789017 228.125498 
+" style="fill: none; stroke: #0b0b0b; stroke-width: 1.4; stroke-linecap: round"/>
+    <path d="M 247.189017 233.325498 
+L 249.789017 228.125498 
+L 252.389017 233.325498 
+z
+" style="fill: #0b0b0b; stroke: #0b0b0b; stroke-width: 1.4; stroke-linecap: round"/>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="196.803468" y="266.866251" transform="rotate(-0 196.803468 266.866251)">conduction  G_cond (T_w − T_b)</text>
+   </g>
+   <g id="patch_16">
+    <path d="M 373.421965 249.303982 
+Q 373.421965 238.68751 373.421965 229.636286 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.4; stroke-linecap: round"/>
+    <path d="M 370.821965 234.836286 
+L 373.421965 229.636286 
+L 376.021965 234.836286 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.4; stroke-linecap: round"/>
+   </g>
+   <g id="patch_17">
+    <path d="M 391.083815 228.070585 
+Q 391.083815 238.687056 391.083815 247.73828 
+" style="fill: none; stroke: #2a78d6; stroke-width: 1.4; stroke-linecap: round"/>
+    <path d="M 393.683815 242.53828 
+L 391.083815 247.73828 
+L 388.483815 242.53828 
+z
+" style="fill: #2a78d6; stroke: #2a78d6; stroke-width: 1.4; stroke-linecap: round"/>
+   </g>
+   <g id="text_11">
+    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: end; fill: #2a78d6" x="413.791908" y="277.967985" transform="rotate(-0 413.791908 277.967985)">hyporheic advection  G_adv (T_w − T_b)</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="310.343931" y="235.154913" transform="rotate(-0 310.343931 235.154913)">bed zone  T_b</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 6.8px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #0b0b0b" x="310.343931" y="251.30289" transform="rotate(-0 310.343931 251.30289)">to deep ground:  G_bg (T_b − T_gr)</text>
+   </g>
+   <g id="text_14">
+    <text style="font-size: 8.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="10.092486" y="297.728324" transform="rotate(-0 10.092486 297.728324)">Positive flux is heat leaving the water:   J_net = (J_e + J_h)  +  (J_br − J_sn − J_an − J_lc)</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="10.092486" y="312.867052" transform="rotate(-0 10.092486 312.867052)">[HEAT_FLUXES]  SURFACE_EXCHANGE → J_e, J_h      RADIATIVE_EXCHANGE → J_sn, J_an, J_lc, J_br</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 7.2px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #898781" x="10.092486" y="325.987283" transform="rotate(-0 10.092486 325.987283)">SEDIMENT_EXCHANGE → bed conduction, hyporheic exchange      LAYER_CONDUCTION → LID layer conduction</text>
+   </g>
+   <g id="text_17">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="40.369942" y="342.158701" transform="rotate(-0 40.369942 342.158701)">warms the water</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 7.4px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #0b0b0b" x="161.479769" y="342.158701" transform="rotate(-0 161.479769 342.158701)">cools the water (when positive)</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p512908f5e3">
+   <rect x="0" y="0" width="605.549133" height="349.2"/>
+  </clipPath>
+ </defs>
+</svg>

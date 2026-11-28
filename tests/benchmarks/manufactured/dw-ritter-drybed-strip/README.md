@@ -11,67 +11,47 @@ front reaches the downstream boundary (t_max ≈ 11.0 s).
 See [definition.md](definition.md) for equations, setup parameters,
 and metric tolerances.
 
-## Engine-gap findings (open question)
+## Findings (assessed 23 November 2026)
 
-Running this benchmark against `DWSolver::execute` (Picard implicit
-Preissmann scheme) exposes two limitations that block the analytical
-accuracy targets in definition.md:
+Dynamic wave does not meet the analytical targets in definition.md on this
+strip, and that is the SWMM 5 formulation, not a defect of this engine:
+`FLOW_ROUTING DYNWAVE` in the full engine and SWMM 5.2.4 agree to three
+decimals at every node at 8 s, for `INERTIAL_DAMPING NONE` and `PARTIAL`.
 
-### 1 — Dam-station depth does not converge to 4h₀/9
+- **Front.** The front is detected where the depth last exceeds 0.01 ft, so
+  it is compared with the exact position of that depth,
+  x_d + (2c₀ − 3√(g·0.01))·t (202.2 ft at 8 s), not the zero-depth tip
+  x_d + 2c₀t (215.8 ft). The solver test reaches 147.5, 152.5 and 157.5 ft at
+  4, 6 and 8 s against 163.6, 182.9 and 202.2 ft. A 25 times smaller time
+  step does not move it toward the exact value.
+- **Dam station.** 0.80, 0.60, 0.60 and 0.57 ft at 2 to 8 s against
+  4h₀/9 = 0.444 ft. Part of that excess is the strip's start, not the
+  solver: a conduit starts at the mean of its end nodes' depths, so the first
+  5 ft conduit below the dam starts half full (see below).
+- **Profile.** With `INERTIAL_DAMPING NONE` the full-engine profile behind
+  the front is a cell-to-cell sawtooth (0.05 ft beside 1.38 ft at 8 s, above
+  the 1 ft reservoir), in 5.2.4 as well.
 
-The Ritter solution predicts h(ξ=0, t) = 4h₀/9 = 0.444 ft for all t > 0.
-The solver, starting from the step-function initial condition (h₀ = 1.0 ft
-at node 25), descends slowly:
+### Use finite-volume routing for dry-bed fronts
 
-| t (s) | solver h at ξ=0 (ft) | reference (ft) | error |
-|---|---|---|---|
-| 2 | 0.797 | 0.444 | 79 % |
-| 4 | 0.618 | 0.444 | 39 % |
-| 6 | 0.635 | 0.444 | 43 % |
-| 8 | 0.621 | 0.444 | 40 % |
+`FLOW_ROUTING FV` follows the exact solution on the same strip: front within
+10.4 ft of the exact 0.01 ft position at all four times, mean wet-depth
+error 0.021 to 0.024 ft, no oscillation. Its dam-station depth reads 0.64 ft
+at 2 s and 0.51 ft at 8 s. That excess is the half-full conduit below the
+dam, 12.6 ft³ of water the Ritter problem does not have: it grows with
+conduit length (0.73 ft at 2 s with 25 ft conduits, 0.58 ft with 2.5 ft
+ones) and does not change with cell size or second order. With that conduit
+shortened to 0.1 ft, a sharp step, the dam station reads 0.546 ft at 2 s
+falling to 0.473 ft at 8 s and the mean wet-depth error is 0.009 to 0.010 ft.
+The finite-volume test runs the strip with the sharp step.
 
-Root cause: the implicit scheme cannot instantaneously resolve the
-rarefaction origin from a discontinuous IC. The Picard iteration converges
-the head change per timestep to within `head_tol = 0.005 ft`, but many
-timesteps are required to let the depth relax from h₀ to 4h₀/9.
+### Test posture
 
-### 2 — Wet/dry front freezes well behind the analytical position
-
-The analytical front advances at 2c₀ ≈ 11.35 ft/s.  The solver tracks it
-correctly to t ≈ 2 s (front ≈ 147 ft, ref ≈ 148 ft), then stalls:
-
-| t (s) | solver front (ft) | reference (ft) | error (ft) |
-|---|---|---|---|
-| 2 | ~147.5 | 147.7 | ~0.2 |
-| 4 | 147.5 | 170.4 | 22.9 |
-| 6 | 147.5 | 193.1 | 45.6 |
-| 8 | 157.5 | 215.8 | 58.3 |
-
-Root cause: `MomentumCategory::SKIP_DRY` zeroes the momentum equation for
-conduits where both ends are at or below `FUDGE = 0.0001 ft`.  Once the
-wave front depth falls near zero (as it does for the Ritter profile near
-ξ_f), the head gradient across the wet/dry boundary is too small to advance
-the front within the Picard tolerance in a single timestep.  The front
-progresses in sporadic jumps rather than continuously at 2c₀.
-
-### What would fix this
-
-Either of the following engine enhancements (out of scope for this PR):
-
-1. **Wet/dry wetting criterion**: A dedicated `setWettingDepth` or
-   characteristic-speed check that explicitly advances the wet/dry
-   boundary by one cell per timestep when |dh/dx| implies a propagating
-   front, bypassing the SKIP_DRY zero-momentum assumption.
-2. **Shock-capturing scheme**: Replace (or augment) the Preissmann momentum
-   equation near wet/dry interfaces with a Godunov / HLL flux that
-   correctly computes the wave speed from the local Riemann problem.
-
-### Current test posture
-
-`DWSolverRitter/DryBedDamBreak` in `test_routing.cpp` runs as a
-**diagnostic regression test** with loosened tolerances calibrated to the
-solver's observed baseline performance (see above).  The L₁(h) wet-region
-metric passes at early times; the dam-station and front-position checks are
-retained but with tolerances that reflect current (limited) accuracy rather
-than the analytical targets in definition.md.  The test will tighten
-automatically if the engine is enhanced.
+- `DWSolverRitter.DryBedRegressionBaseline` (`test_routing.cpp`) pins the
+  dynamic-wave behavior above so it cannot get worse unnoticed.
+- `DWSolverRitter.DISABLED_DryBedMatchesRitterAnalytical` keeps the
+  analytical targets as a record; an opt-in front treatment for dynamic wave
+  would have to leave 5.2.4 parity when off.
+- `FvEngine.RitterDryBedFrontOnAJunctionChain`
+  (`test_fv_engine_integration.cpp`) runs the strip with the sharp step and
+  gates the finite-volume front, mean depth error and dam-station depth.

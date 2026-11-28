@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file TableData.hpp
- * @brief Time series and rating curve data with bidirectional cursor.
+ * @file      TableData.hpp
+ * @brief     Time series and rating curve data with bidirectional cursor.
  *
  * @details Provides the Table struct (a single time series or curve) and
  *          TableData (the SoA collection of all tables in the model), plus
@@ -24,15 +40,16 @@
  *
  * @ingroup engine_data
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #ifndef OPENSWMM_ENGINE_TABLE_DATA_HPP
 #define OPENSWMM_ENGINE_TABLE_DATA_HPP
 
 #include "../core/FilePathPair.hpp"
+#include "../core/StringCase.hpp"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -53,18 +70,19 @@ namespace openswmm {
  * @see Legacy reference: TableType in src/solver/enums.h
  */
 enum class TableType : int {
-    TIMESERIES    = 0,  ///< Rainfall, inflow, or other time-varying values
-    CURVE_STORAGE = 1,  ///< Storage node volume-depth curve
+    TIMESERIES = 0,      ///< Rainfall, inflow, or other time-varying values
+    CURVE_STORAGE = 1,   ///< Storage node volume-depth curve
     CURVE_DIVERSION = 2, ///< Diversion rating curve
-    CURVE_RATING  = 3,  ///< Outfall/weir rating curve
-    CURVE_SHAPE   = 4,  ///< Cross-section shape curve
-    CURVE_CONTROL = 5,  ///< Control rule action curve
-    CURVE_TIDAL   = 6,  ///< Tidal stage curve
-    CURVE_PUMP1   = 7,  ///< Pump curve type 1 (ON/OFF depth)
-    CURVE_PUMP2   = 8,  ///< Pump curve type 2 (head vs flow)
-    CURVE_PUMP3   = 9,  ///< Pump curve type 3 (volume vs time)
-    CURVE_PUMP4   = 10, ///< Pump curve type 4 (depth vs speed)
-    CURVE_PUMP5   = 11  ///< Pump curve type 5 (head vs flow, variable speed)
+    CURVE_RATING = 3,    ///< Outfall/weir rating curve
+    CURVE_SHAPE = 4,     ///< Cross-section shape curve
+    CURVE_CONTROL = 5,   ///< Control rule action curve
+    CURVE_TIDAL = 6,     ///< Tidal stage curve
+    CURVE_PUMP1 = 7,     ///< Pump curve type 1 (ON/OFF depth)
+    CURVE_PUMP2 = 8,     ///< Pump curve type 2 (head vs flow)
+    CURVE_PUMP3 = 9,     ///< Pump curve type 3 (volume vs time)
+    CURVE_PUMP4 = 10,    ///< Pump curve type 4 (depth vs speed)
+    CURVE_PUMP5 = 11,    ///< Pump curve type 5 (head vs flow, variable speed)
+    CURVE_WEIR = 12      ///< Weir rating curve (legacy CurveTypeWords "WEIR")
 };
 
 // ============================================================================
@@ -83,10 +101,18 @@ enum class TableType : int {
  * @ingroup engine_data
  */
 struct TableCursor {
-    int index     =  0;  ///< Index of the last successful lookup entry.
-    int direction = +1;  ///< Last seek direction: +1 = forward, -1 = backward.
+    int index = 0;      ///< Index of the last successful lookup entry.
+    int direction = +1; ///< Last seek direction: +1 = forward, -1 = backward.
 
-    void reset() noexcept { index = 0; direction = +1; }
+    /**
+     * @brief Restore the lookup hint to row zero and forward direction.
+     *
+     * Does not change table data or seek/reset a file stream; each cursor copy remains independent.
+     */
+    void reset() noexcept {
+        index = 0;
+        direction = +1;
+    }
 };
 
 // ============================================================================
@@ -108,46 +134,68 @@ struct TableCursor {
  * @brief Block of rows for file-backed table boundaries/cache.
  */
 struct TableBlock {
-    std::vector<double> x;           ///< Independent variable values
-    std::vector<double> y;           ///< Dependent values (flat: row-major, num_cols per row)
-    int                 num_cols = 1; ///< Number of value columns
-    std::size_t         file_row_start = 0; ///< Row offset in file (cache only)
+    std::vector<double> x;          ///< Independent variable values
+    std::vector<double> y;          ///< Dependent values (flat: row-major, num_cols per row)
+    int num_cols = 1;               ///< Number of value columns
+    std::size_t file_row_start = 0; ///< Row offset in file (cache only)
 
+    /**
+     * @brief Count boundary/cache rows from the independent-variable vector.
+     * @return x.size(); does not validate num_cols or flattened y length.
+     */
     std::size_t num_rows() const noexcept { return x.size(); }
-    bool        empty()    const noexcept { return x.empty(); }
+    /**
+     * @brief Test whether a boundary/cache has no independent-variable rows.
+     * @return x.empty(), regardless of any residual y storage.
+     */
+    bool empty() const noexcept { return x.empty(); }
 };
 
 struct Table {
-    std::string         id;      ///< Table identifier (from input file)
-    TableType           type;    ///< Table type (TIMESERIES, CURVE_*, etc.)
+    std::string id; ///< Table identifier (from input file)
+    TableType type; ///< Table type (TIMESERIES, CURVE_*, etc.)
 
     /**
      * @brief Object comment from the INP file (';'-prefixed lines immediately
      *        above the first row of this table), joined by literal "\\n".
      *        Empty string means no comment.
      */
-    std::string         comment;
-    std::vector<double> x;       ///< Independent variable (time, depth, etc.)
-    std::vector<double> y;       ///< Dependent variable (flow, volume, etc.)
-    TableCursor         cursor;  ///< Bidirectional lookup cursor
+    std::string comment;
+    std::vector<double> x; ///< Independent variable (time, depth, etc.)
+    std::vector<double> y; ///< Dependent variable (flow, volume, etc.)
+    TableCursor cursor;    ///< Bidirectional lookup cursor
+
+    // ---- Time-only (relative) timeseries rows ----
+    // Legacy SWMM seeds every timeseries' lastDate with StartDate+StartTime
+    // (input.c:170), so rows authored WITHOUT a date are elapsed times
+    // anchored at the simulation start, until an explicit date re-anchors
+    // the series. The parser counts those leading date-less rows here and
+    // resolve_cross_references() adds options.start_date to exactly those
+    // rows (recording the applied offset in rel_anchor so re-resolution is
+    // idempotent and a later START_DATE change re-anchors by the delta).
+    // InpWriter subtracts rel_anchor to emit the rows back in their
+    // authored time-only form; rows at index >= n_relative are absolute
+    // date/times and are written with explicit dates.
+    int n_relative = 0;      ///< Leading rows authored as elapsed time-of-start
+    double rel_anchor = 0.0; ///< start_date offset currently baked into them
 
     // ---- File-backed time series support ----
-    bool               is_file_based = false; ///< True if data is read from external file
-    std::FILE*         file_handle = nullptr;  ///< Open file handle (owned)
-    FilePathPair       file_path;              ///< Path to external data file
-                                               ///< (carries {absolute, original})
-    TableBlock         first_boundary;         ///< First rows from file (for validation)
-    TableBlock         last_boundary;          ///< Last rows from file (for validation)
-    TableBlock         cache;                  ///< Sliding cache window for file lookups
-    double             dx_min  = 0.0;          ///< Minimum inter-entry x spacing
-    double             x_min   = 0.0;          ///< Minimum x value in file
-    double             x_max   = 0.0;          ///< Maximum x value in file
-    int                num_cols = 1;           ///< Number of value columns
-    std::size_t        total_rows = 0;         ///< Total data rows in file
-    std::size_t        num_cache_rows = 8192;  ///< Cache window size (rows)
-    long               data_start_offset = 0;  ///< File offset to first data row
-    std::vector<long>  row_offsets;            ///< Sparse byte-offset index into file
-    std::vector<std::string> column_ids;       ///< Column identifiers
+    bool is_file_based = false;                      ///< True if data is read from external file
+    std::FILE* file_handle = nullptr;                ///< Open file handle (owned)
+    FilePathPair file_path;                          ///< Path to external data file
+                                                     ///< (carries {absolute, original})
+    TableBlock first_boundary;                       ///< First rows from file (for validation)
+    TableBlock last_boundary;                        ///< Last rows from file (for validation)
+    TableBlock cache;                                ///< Sliding cache window for file lookups
+    double dx_min = 0.0;                             ///< Minimum inter-entry x spacing
+    double x_min = 0.0;                              ///< Minimum x value in file
+    double x_max = 0.0;                              ///< Maximum x value in file
+    int num_cols = 1;                                ///< Number of value columns
+    std::size_t total_rows = 0;                      ///< Total data rows in file
+    std::size_t num_cache_rows = 8192;               ///< Cache window size (rows)
+    long data_start_offset = 0;                      ///< File offset to first data row
+    std::vector<long> row_offsets;                   ///< Sparse byte-offset index into file
+    std::vector<std::string> column_ids;             ///< Column identifiers
     std::unordered_map<std::string, int> column_map; ///< Column name → index
 
     static constexpr std::size_t INDEX_STRIDE = 4096; ///< Rows between offset index entries
@@ -186,12 +234,14 @@ struct Table {
  */
 inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
-    if (n == 1) return tbl.y[0];
+    if (n == 0)
+        return 0.0;
+    if (n == 1)
+        return tbl.y[0];
 
     // Clamp below first entry
     if (x_query <= tbl.x[0]) {
-        tbl.cursor.index     = 0;
+        tbl.cursor.index = 0;
         tbl.cursor.direction = +1;
         return tbl.y[0];
     }
@@ -201,7 +251,7 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
     // x == x[n-1] (its scan condition is `x <= x2`), so equality must fall
     // through to the interpolation below for bit parity.
     if (x_query > tbl.x[n - 1]) {
-        tbl.cursor.index     = n - 1;
+        tbl.cursor.index = n - 1;
         tbl.cursor.direction = -1;
         return tbl.y[n - 1];
     }
@@ -231,10 +281,11 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
     //   y1 + (x - x1) * (y2 - y1) / dx
     // (the previous t=(x-x1)/dx; y1+t*(y2-y1) form rounds differently by
     // 1 ULP), and the legacy degenerate-segment guard |dx| < 1e-20 → mean.
-    const double x1 = tbl.x[idx],     y1 = tbl.y[idx];
+    const double x1 = tbl.x[idx], y1 = tbl.y[idx];
     const double x2 = tbl.x[idx + 1], y2 = tbl.y[idx + 1];
     const double dx = x2 - x1;
-    if (std::fabs(dx) < 1.0e-20) return (y1 + y2) / 2.;
+    if (std::fabs(dx) < 1.0e-20)
+        return (y1 + y2) / 2.;
     return y1 + (x_query - x1) * (y2 - y1) / dx;
 }
 
@@ -257,16 +308,17 @@ inline double table_lookup_cursor(Table& tbl, double x_query) noexcept {
  */
 inline double table_tseries_lookup_cursor(Table& tbl, double x_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
+    if (n == 0)
+        return 0.0;
 
     // Before first entry or after last entry → 0 (series not active)
     if (x_query <= tbl.x[0]) {
-        tbl.cursor.index     = 0;
+        tbl.cursor.index = 0;
         tbl.cursor.direction = +1;
         return (x_query < tbl.x[0]) ? 0.0 : tbl.y[0];
     }
     if (x_query >= tbl.x[n - 1]) {
-        tbl.cursor.index     = n - 1;
+        tbl.cursor.index = n - 1;
         tbl.cursor.direction = -1;
         return (x_query > tbl.x[n - 1]) ? 0.0 : tbl.y[n - 1];
     }
@@ -291,12 +343,14 @@ inline double table_tseries_lookup_cursor(Table& tbl, double x_query) noexcept {
  */
 inline double table_step_cursor(Table& tbl, double x_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
-    if (n == 1) return tbl.y[0];
+    if (n == 0)
+        return 0.0;
+    if (n == 1)
+        return tbl.y[0];
 
     // Before first entry → 0 (no rain before first recorded value)
     if (x_query < tbl.x[0]) {
-        tbl.cursor.index     = 0;
+        tbl.cursor.index = 0;
         tbl.cursor.direction = +1;
         return 0.0;
     }
@@ -306,7 +360,7 @@ inline double table_step_cursor(Table& tbl, double x_query) noexcept {
     // after entry_time + rainInterval. This allows the last entry's value to
     // be used for its full recording interval before going to zero.
     if (x_query >= tbl.x[n - 1]) {
-        tbl.cursor.index     = n - 1;
+        tbl.cursor.index = n - 1;
         tbl.cursor.direction = -1;
         return tbl.y[n - 1];
     }
@@ -341,14 +395,16 @@ inline double table_step_cursor(Table& tbl, double x_query) noexcept {
  */
 inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0 || depth <= 0.0) return 0.0;
+    if (n == 0 || depth <= 0.0)
+        return 0.0;
 
     double x1 = tbl.x[0];
     double a1 = tbl.y[0];
 
     // Target below first entry — triangular approximation
     if (depth <= x1) {
-        if (x1 < 1.0e-6) return 0.0;
+        if (x1 < 1.0e-6)
+            return 0.0;
         return (a1 / x1) * depth * depth / 2.0;
     }
 
@@ -365,8 +421,10 @@ inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
             // |dx| < 1e-20 degenerate guard → mean of end areas.
             const double dxi = x2 - x1;
             double a;
-            if (std::fabs(dxi) < 1.0e-20) a = (a1 + a2) / 2.;
-            else a = a1 + (depth - x1) * (a2 - a1) / dxi;
+            if (std::fabs(dxi) < 1.0e-20)
+                a = (a1 + a2) / 2.;
+            else
+                a = a1 + (depth - x1) * (a2 - a1) / dxi;
             return v + (a1 + a) / 2.0 * (depth - x1);
         }
         dx = x2 - x1;
@@ -407,7 +465,8 @@ inline double table_getStorageVolume(Table& tbl, double depth) noexcept {
  */
 inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0 || volume <= 0.0) return 0.0;
+    if (n == 0 || volume <= 0.0)
+        return 0.0;
 
     double x1 = tbl.x[0];
     double a1 = tbl.y[0];
@@ -425,7 +484,8 @@ inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
             // Rearrange to standard form and apply quadratic formula.
             double dx = x2 - x1;
             double dv_need = volume - v_accum;
-            if (dx < 1.0e-10) return x1;
+            if (dx < 1.0e-10)
+                return x1;
 
             double s = (a2 - a1) / dx;
             double depth;
@@ -435,7 +495,8 @@ inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
             } else {
                 // Quadratic: s/2 * dd^2 + a1 * dd - dv_need = 0
                 double disc = a1 * a1 + 2.0 * s * dv_need;
-                if (disc < 0.0) disc = 0.0;
+                if (disc < 0.0)
+                    disc = 0.0;
                 depth = x1 + (-a1 + std::sqrt(disc)) / s;
             }
             return std::min(depth, x2);
@@ -451,7 +512,7 @@ inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
         int last = n - 1;
         double dx = tbl.x[last] - tbl.x[last - 1];
         double da = tbl.y[last] - tbl.y[last - 1];
-        double s  = (dx > 1.0e-10) ? da / dx : 0.0;
+        double s = (dx > 1.0e-10) ? da / dx : 0.0;
         double dv_need = volume - v_accum;
         double a1_ext = tbl.y[last];
         double depth;
@@ -459,7 +520,8 @@ inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
             depth = (a1_ext > 0.0) ? tbl.x[last] + dv_need / a1_ext : tbl.x[last];
         } else {
             double disc = a1_ext * a1_ext + 2.0 * s * dv_need;
-            if (disc < 0.0) disc = 0.0;
+            if (disc < 0.0)
+                disc = 0.0;
             depth = tbl.x[last] + (-a1_ext + std::sqrt(disc)) / s;
         }
         return depth;
@@ -483,16 +545,21 @@ inline double table_getStorageDepth(Table& tbl, double volume) noexcept {
  */
 inline double table_inverseLookup(const Table& tbl, double y_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
-    if (n == 1) return tbl.x[0];
+    if (n == 0)
+        return 0.0;
+    if (n == 1)
+        return tbl.x[0];
 
-    if (y_query <= tbl.y[0])         return tbl.x[0];
-    if (y_query >= tbl.y[n - 1])     return tbl.x[n - 1];
+    if (y_query <= tbl.y[0])
+        return tbl.x[0];
+    if (y_query >= tbl.y[n - 1])
+        return tbl.x[n - 1];
 
     for (int i = 1; i < n; ++i) {
         if (tbl.y[i] >= y_query) {
             double dy = tbl.y[i] - tbl.y[i - 1];
-            if (dy <= 0.0) return tbl.x[i - 1];
+            if (dy <= 0.0)
+                return tbl.x[i - 1];
             double t = (y_query - tbl.y[i - 1]) / dy;
             return tbl.x[i - 1] + t * (tbl.x[i] - tbl.x[i - 1]);
         }
@@ -527,28 +594,34 @@ inline double table_lookupEx(const Table& tbl, double x_query) noexcept {
     //     segment seen during the walk (skipping x2 == x1 segments),
     //     clamped at s >= 0.
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
+    if (n == 0)
+        return 0.0;
 
     double x1 = tbl.x[0];
     double y1 = tbl.y[0];
     double s = 0.0;
     if (x_query <= x1) {
-        if (x1 > 0.0) return x_query / x1 * y1;
-        else return y1;
+        if (x1 > 0.0)
+            return x_query / x1 * y1;
+        else
+            return y1;
     }
     for (int i = 1; i < n; ++i) {
         const double x2 = tbl.x[i];
         const double y2 = tbl.y[i];
-        if (x2 != x1) s = (y2 - y1) / (x2 - x1);
+        if (x2 != x1)
+            s = (y2 - y1) / (x2 - x1);
         if (x_query <= x2) {
             const double dx = x2 - x1;
-            if (std::fabs(dx) < 1.0e-20) return (y1 + y2) / 2.;
+            if (std::fabs(dx) < 1.0e-20)
+                return (y1 + y2) / 2.;
             return y1 + (x_query - x1) * (y2 - y1) / dx;
         }
         x1 = x2;
         y1 = y2;
     }
-    if (s < 0.0) s = 0.0;
+    if (s < 0.0)
+        s = 0.0;
     return y1 + s * (x_query - x1);
 }
 
@@ -571,10 +644,12 @@ inline double table_lookupEx(const Table& tbl, double x_query) noexcept {
  */
 inline double table_intervalLookup(const Table& tbl, double x_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
+    if (n == 0)
+        return 0.0;
 
     for (int i = 0; i < n; ++i) {
-        if (tbl.x[i] > x_query) return tbl.y[i];
+        if (tbl.x[i] > x_query)
+            return tbl.y[i];
     }
     return tbl.y[n - 1];
 }
@@ -596,7 +671,8 @@ inline double table_intervalLookup(const Table& tbl, double x_query) noexcept {
  */
 inline double table_getSlope(const Table& tbl, double x_query) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n < 2) return 0.0;
+    if (n < 2)
+        return 0.0;
 
     // Use first interval for x below range
     if (x_query <= tbl.x[0]) {
@@ -604,11 +680,16 @@ inline double table_getSlope(const Table& tbl, double x_query) noexcept {
         return (dx > 0.0) ? (tbl.y[1] - tbl.y[0]) / dx : 0.0;
     }
 
-    // Use last interval for x above range
-    if (x_query >= tbl.x[n - 1]) {
-        double dx = tbl.x[n - 1] - tbl.x[n - 2];
-        return (dx > 0.0) ? (tbl.y[n - 1] - tbl.y[n - 2]) / dx : 0.0;
-    }
+    // Above the last entry the slope is 0: legacy table_getSlope's scan
+    // runs off the end with x1 = x2 = the last entry (dx == 0 → 0.0). A
+    // head-based pump driven past its curve therefore contributes NO dqdh
+    // to its end nodes' surcharge denominator (session81-small-pump-fm-
+    // model's 5002 at 142 ft of head: the last segment's -15.6 GPM/ft
+    // here kept node 16's Picard update damped where legacy let it run).
+    // Exactly AT the last entry legacy breaks on `x <= x2` with the last
+    // segment bracketed, so that case falls through to the loop.
+    if (x_query > tbl.x[n - 1])
+        return 0.0;
 
     for (int i = 1; i < n; ++i) {
         if (tbl.x[i] >= x_query) {
@@ -634,10 +715,12 @@ inline double table_getSlope(const Table& tbl, double x_query) noexcept {
  */
 inline double table_getMaxY(const Table& tbl) noexcept {
     const int n = static_cast<int>(tbl.x.size());
-    if (n == 0) return 0.0;
+    if (n == 0)
+        return 0.0;
     double ymax = tbl.y[0];
     for (int i = 1; i < n; ++i) {
-        if (tbl.y[i] < ymax) break;
+        if (tbl.y[i] < ymax)
+            break;
         ymax = tbl.y[i];
     }
     return ymax;
@@ -656,27 +739,115 @@ inline double table_getMaxY(const Table& tbl) noexcept {
  * @ingroup engine_data
  */
 struct TableData {
-    std::vector<Table> tables;  ///< All tables in index order
+    std::vector<Table> tables; ///< All tables in index order
 
+    /**
+     * @brief Case-insensitive name → table indices, ascending.
+     *
+     * @details Replaces the linear `ieq` scan that find_timeseries() /
+     *          find_curve() used to run over every table. That scan was the
+     *          load path's worst complexity defect: `[TIMESERIES]` and
+     *          `[CURVES]` rows repeat their object's name on every row in
+     *          standard SWMM files, so parsing a model with many long series
+     *          cost O(total_rows x n_tables) string compares before anything
+     *          else happened.
+     *
+     *          A name maps to a *list* because legacy keeps TSERIES and CURVE
+     *          in separate hash tables, so one name may legitimately denote
+     *          both a timeseries and a curve. Lists are in ascending index
+     *          order (add() only appends), which is what makes a hash hit
+     *          return the same winner the old first-match scan did — the
+     *          duplicate-name parity the name-case tests pin.
+     */
+    std::unordered_map<std::string, std::vector<int>, CiHash, CiEqual> by_name;
+
+    /**
+     * @brief Count stored time-series and curve tables.
+     * @return Owned table vector size, independent of name-index synchronization.
+     */
     std::size_t count() const noexcept { return tables.size(); }
 
-    Table&       operator[](int idx)       { return tables[static_cast<std::size_t>(idx)]; }
+    /**
+     * @brief Borrow a mutable stored table.
+     *
+     * Caller rebuilds the name index after changing table IDs or structure; mutable access is not
+     * lifecycle/thread guarded.
+     *
+     * @param[in] idx Existing index in [0,count()); unchecked, including negatives.
+     * @return Owned table reference; vector growth/erasure or container destruction can invalidate it.
+     */
+    Table& operator[](int idx) { return tables[static_cast<std::size_t>(idx)]; }
+    /**
+     * @brief Borrow an immutable stored table.
+     *
+     * @param[in] idx Existing table index; unchecked.
+     * @return Owned reference, invalidated by vector relocation/erasure or destruction.
+     */
     const Table& operator[](int idx) const { return tables[static_cast<std::size_t>(idx)]; }
 
     /**
-     * @brief Add a new empty table with the given ID and type.
-     * @returns Index of the new table.
+     * @brief Append an empty table and index its copied name.
+     *
+     * Name index uses ASCII-insensitive equality and appends index in increasing order. tables push
+     * precedes map insertion; allocation failure may leave the lookup index incomplete. Existing table
+     * references may be invalidated.
+     *
+     * @param[in] id Borrowed table ID copied verbatim; duplicate and case-equivalent names are allowed.
+     * @param[in] type Table type stored without enum validation.
+     * @return New table index.
      */
     int add(const std::string& id, TableType type) {
-        tables.push_back({id, type, {}, {}, {}});
-        return static_cast<int>(tables.size()) - 1;
+        Table t;
+        t.id = id;
+        t.type = type;
+        tables.push_back(std::move(t));
+        const int idx = static_cast<int>(tables.size()) - 1;
+        by_name[id].push_back(idx);
+        return idx;
+    }
+
+    /**
+     * @brief Rebuilds by_name from `tables`.
+     * @details Required after any structural change that is not an append —
+     *          in practice only ObjectDeleter's erase-and-renumber, which is
+     *          already O(n). Anything that mutates `tables` directly without
+     *          calling this leaves lookups stale.
+     */
+    void rebuild_index() {
+        by_name.clear();
+        by_name.reserve(tables.size());
+        for (std::size_t i = 0; i < tables.size(); ++i)
+            by_name[tables[i].id].push_back(static_cast<int>(i));
+    }
+
+    /**
+     * @brief Find the first indexed table matching a case-insensitive name and kind.
+     *
+     * Normally lowest matching index because add/rebuild_index keep ordered lists. Caller must maintain
+     * a coherent map and valid stored indices after direct edits.
+     *
+     * @param[in] name Borrowed name, matched through the ASCII-insensitive name map.
+     * @param[in] want_timeseries True accepts TIMESERIES only; false accepts every non-TIMESERIES type.
+     * @return First matching indexed row, or -1.
+     */
+    int find_by_kind(std::string_view name, bool want_timeseries) const noexcept {
+        const auto it = by_name.find(name);
+        if (it == by_name.end())
+            return -1;
+        for (const int i : it->second) {
+            const bool is_ts = tables[static_cast<std::size_t>(i)].type == TableType::TIMESERIES;
+            if (is_ts == want_timeseries)
+                return i;
+        }
+        return -1;
     }
 
     /**
      * @brief Reset all cursors (call before re-running a simulation).
      */
     void reset_cursors() noexcept {
-        for (auto& t : tables) t.cursor.reset();
+        for (auto& t : tables)
+            t.cursor.reset();
     }
 };
 
@@ -690,20 +861,88 @@ struct TableValidation {
     std::vector<std::string> warnings;
 };
 
+/**
+ * @brief Check table structure and derive its smallest positive x interval.
+ *
+ * In-memory checks x ordering/finite values, y shape and duplicate x warning. File-backed checks
+ * handle/first boundary, boundary ordering/overlap and first-boundary y shape only, not the full
+ * file, finite values or all payloads. Equal x values are permitted. No universal positive-column
+ * or finite-y validation.
+ *
+ * @param[in,out] tbl Borrowed table; updates dx_min while leaving authored x/y values and cursor
+ *     unchanged.
+ * @return Owned validity/errors/warnings result; diagnostics do not update SimulationContext.
+ */
 TableValidation validate_table(Table& tbl);
 
 // ============================================================================
 // File-backed table API
 // ============================================================================
 
+/**
+ * @brief Open a legacy streaming table file and prepare sparse index/boundaries.
+ *
+ * Supports detected CSV headers or SWMM DAT text with fixed 2048-byte line reads and optional UTF-8
+ * BOM. Existing live handles are not closed here. Caller owns eventual table/handle cleanup and
+ * serializes seeking/lookups; exceptions after opening can leave partial state. No unit conversion.
+ *
+ * @param[in,out] tbl Table with authored file_path and no live file_handle to overwrite. Receives
+ *     raw FILE handle, metadata and boundary arrays.
+ * @param[in] boundary_rows Maximum first/last boundary rows; positive count is required for usable
+ *     boundaries.
+ * @return False for empty path/open refusal, true after setup even if parsing yields no rows;
+ *     validate separately.
+ */
 bool table_open_file(Table& tbl, std::size_t boundary_rows = 128);
+/**
+ * @brief Replace the streaming cache starting at a logical data-row offset.
+ *
+ * Uses sparse seek offsets then skips comments/blank lines; reads up to num_cache_rows. CSV-vs-DAT
+ * interpretation follows whether the first column ID parses as an integer. Caller validates
+ * positive column count and dimensions; no full ordering check or rollback.
+ *
+ * @param[in,out] tbl Opened file-backed table; seeks its shared FILE handle and replaces cache
+ *     vectors/metadata.
+ * @param[in] start_row Zero-based logical data-row offset; beyond EOF can yield zero rows.
+ * @return Number of parsed cache rows, or zero for no open file-backed handle.
+ */
 std::size_t table_load_cache(Table& tbl, std::size_t start_row);
 
 // ============================================================================
 // Multicolumn lookup API
 // ============================================================================
 
+/**
+ * @brief Read and linearly interpolate a selected value column.
+ *
+ * Requires finite sorted x and positive num_cols with aligned row-major y. Mutates cursor and may
+ * seek/reload a file cache; caller serializes shared access. File cache placement estimates a row
+ * from the x range rather than proving a bracketing full-file search; nonuniform files can clamp to
+ * a selected cache boundary. Linear lookup clamps both ends and returns the left value for a
+ * nonpositive bracket span.
+ *
+ * @param[in,out] tbl Borrowed in-memory or opened file-backed table with coherent
+ *     shape/cursor/cache.
+ * @param[in] col_idx Zero-based value column; negative or >=stride falls back to column zero.
+ * @param[in] x_query Query in the table x units (OADate days for time series).
+ * @return Value in the stored y units, or zero when no rows are available.
+ */
 double table_lookup_column(Table& tbl, int col_idx, double x_query);
+/**
+ * @brief Read and step-hold a selected value column.
+ *
+ * Requires finite sorted x and positive num_cols with aligned row-major y. Mutates cursor and may
+ * seek/reload a file cache; caller serializes shared access. File cache placement estimates a row
+ * from the x range rather than proving a bracketing full-file search; nonuniform files can clamp to
+ * a selected cache boundary. Step lookup returns zero before the selected first x, except a one-row
+ * table always returns its sole value; at/after the final x it holds the last value.
+ *
+ * @param[in,out] tbl Borrowed in-memory or opened file-backed table with coherent
+ *     shape/cursor/cache.
+ * @param[in] col_idx Zero-based value column; negative or >=stride falls back to column zero.
+ * @param[in] x_query Query in the table x units (OADate days for time series).
+ * @return Value in the stored y units, or zero when no rows are available.
+ */
 double table_step_column(Table& tbl, int col_idx, double x_query);
 
 } /* namespace openswmm */

@@ -3,7 +3,7 @@
 #
 # Project:     openswmm.engine
 # Description: Open Storm Water Management Model Engine
-# Version:     6.0.0-alpha.3 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
+# Version:     6.0.0-alpha.4 (refactored engine) / 5.3.0-beta.3 (legacy engine wrapper)
 #
 # This is the root CMake file for the openswmm.engine project which contains:
 #   - openswmm_legacy_engine : Original EPA SWMM 5.x C solver (preserved unmodified)
@@ -34,7 +34,7 @@ project(
 )
 
 # Pre-release label for the refactored engine (e.g. "alpha.1", "beta.1", "rc.1"). Leave empty for a final release.
-set(OPENSWMM_PRERELEASE "alpha.3" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
+set(OPENSWMM_PRERELEASE "alpha.4" CACHE STRING "Pre-release tag for the refactored engine (e.g. alpha.1, beta.1, rc.1). Empty for a final release.")
 
 # Legacy SWMM engine version (EPA SWMM 5.x lineage, independent of the OpenSWMM
 # Engine version). Single source of truth: src/legacy/engine/CMakeLists.txt
@@ -85,18 +85,100 @@ set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# No source here is a C++ module. CMake 4.5 gives every scanned C++20 target
+# `import std`; with MSVC 19.52 every C++ try_compile of a Debug configure then
+# failed before compiling, FindOpenMP's among them. try_compile inherits this.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Bit-exact parity with the legacy engine needs FMA contraction off in BOTH
+# languages: legacy xsect.c is C. The platform presets set it; a configure
+# without a preset (bare cmake -S/-B, a local pip build) would otherwise get
+# clang/GCC's default contraction and the legacy kernels drift by 1 ulp.
+# MSVC's default /fp:precise already does not contract.
+foreach(_lang C CXX)
+    if(CMAKE_${_lang}_COMPILER_ID MATCHES "Clang|GNU"
+       AND NOT CMAKE_${_lang}_FLAGS MATCHES "-ffp-contract=off")
+        string(APPEND CMAKE_${_lang}_FLAGS " -ffp-contract=off")
+    endif()
+endforeach()
+
+# The Windows presets set CMAKE_CXX_FLAGS, which replaces CMake's default MSVC flags and
+# with them /EHsc. Without it MSVC still catches exceptions but runs no destructors while
+# unwinding (warning C4530): locks stay held and scoped cleanups are skipped after any throw.
+if(MSVC AND NOT CMAKE_CXX_FLAGS MATCHES "/EH")
+    string(APPEND CMAKE_CXX_FLAGS " /EHsc")
+endif()
 
 # Modern feature options with namespacing
 option(OPENSWMM_BUILD_TESTS       "Build all tests (unit + regression). Convenience flag." OFF)
 option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
+option(OPENSWMM_BUILD_GPU_TESTS "Build Kokkos parity tests against the current engine (requires unit tests and GPU plugin)" OFF)
 option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
 option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
+option(OPENSWMM_BUILD_FV_BASELINE "Build the native implicit-FV feasibility baseline driver" OFF)
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
 option(OPENSWMM_WITH_GEOPACKAGE   "Build GeoPackage I/O library (requires sqlite3)" ON)
+option(OPENSWMM_WITH_HDF5         "Build HDF5 model I/O (requires hdf5)" ON)
 option(OPENSWMM_BUILD_2D          "Build optional 2D surface routing module (explicit local-inertial marcher; HDF5 output)" ON)
+option(OPENSWMM_2D_HDF5_OUTPUT    "With OPENSWMM_BUILD_2D: build the 2D HDF5 results writer ([2D_OPTIONS] OUTPUT_FILE; requires hdf5). OFF builds the 2D module without HDF5 (e.g. WebAssembly); OUTPUT_FILE is then ignored with a warning and 2D results are read through the swmm_2d_* API" ON)
 option(OPENSWMM_BUILD_GPU_PLUGIN  "Build the GPU/Kokkos surface-solver plugin (standalone, dlopen()ed at runtime — never linked into the core). ON by default: a from-source build gets the Kokkos-OpenMP plugin and runtime `auto` uses it (the `gpu` vcpkg feature is in default-features, supplying Kokkos). The portable base build/wheel turns this OFF explicitly and excludes the `gpu` feature (VCPKG_MANIFEST_NO_DEFAULT_FEATURES) to stay Kokkos-free; pip users get OpenMP via the separate `openswmm-gpu-omp` companion wheel. Backend selected via OPENSWMM_GPU_BACKEND (default omp)." ON)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(_openswmm_metal_default OFF)
+    if(OPENSWMM_BUILD_2D AND OPENSWMM_BUILD_GPU_PLUGIN AND
+       (NOT DEFINED OPENSWMM_GPU_BACKEND OR OPENSWMM_GPU_BACKEND STREQUAL "omp") AND
+       (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR
+        (NOT CMAKE_OSX_ARCHITECTURES AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")))
+        find_program(OPENSWMM_ACPP_EXECUTABLE NAMES acpp)
+        if(OPENSWMM_ACPP_EXECUTABLE)
+            get_filename_component(_openswmm_acpp_bin "${OPENSWMM_ACPP_EXECUTABLE}" REALPATH)
+            get_filename_component(_openswmm_acpp_bin "${_openswmm_acpp_bin}" DIRECTORY)
+            if(EXISTS "${_openswmm_acpp_bin}/../lib/hipSYCL/librt-backend-metal.dylib")
+                set(_openswmm_metal_default ON)
+            endif()
+        endif()
+    endif()
+    option(OPENSWMM_ENABLE_METAL_FACES "Build the Apple silicon Kokkos Metal face worker" ${_openswmm_metal_default})
+endif()
+if(OPENSWMM_ENABLE_METAL_FACES)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR NOT OPENSWMM_BUILD_2D OR NOT OPENSWMM_BUILD_GPU_PLUGIN)
+        message(FATAL_ERROR "Metal face flow requires a macOS build with the 2D module and GPU plugin enabled")
+    endif()
+    if(CMAKE_OSX_ARCHITECTURES)
+        set(_openswmm_metal_arch "${CMAKE_OSX_ARCHITECTURES}")
+    else()
+        set(_openswmm_metal_arch "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    if(NOT _openswmm_metal_arch STREQUAL "arm64")
+        message(FATAL_ERROR "Metal face flow requires a single arm64 macOS target")
+    endif()
+endif()
+
+# The browser build's WebGPU 2D marcher (src/engine/2d/webgpu, [2D_OPTIONS] BACKEND WEBGPU).
+# Emscripten only, and useful only in a threads build: the engine thread blocks while a
+# dedicated GPU pthread drives WebGPU (without threads the marcher reports no device and the
+# CPU marcher runs).
+option(OPENSWMM_ENABLE_WEBGPU "Build the WebGPU 2D surface marcher (Emscripten builds only)" OFF)
+if(OPENSWMM_ENABLE_WEBGPU AND (NOT EMSCRIPTEN OR NOT OPENSWMM_BUILD_2D))
+    message(FATAL_ERROR "OPENSWMM_ENABLE_WEBGPU requires an Emscripten build with the 2D module")
+endif()
+
+# Portable binaries by default. ON adds -mcpu=native to both engines on arm64,
+# tuning them for the build machine: on a host with SVE (Graviton3/4, Neoverse
+# N2/V2, Azure Cobalt) the compiler then emits SVE, and the libraries die with
+# SIGILL on CPUs without it (Graviton2, Ampere Altra, Apple Silicon VMs). That
+# is what broke the 6.0.0a4.dev1 aarch64 wheel. For local benchmarking only;
+# never for wheels or release packages.
+option(OPENSWMM_NATIVE_CPU        "Tune both engines for the build machine's CPU (arm64 -mcpu=native); the binaries are not portable" OFF)
+
+# HC-1 (2026-09-27): the HydroCouple component layer. OFF by default — the
+# engine has shipped without it and a from-source build should not suddenly
+# acquire a git fetch. Program plan D-C1 puts ONE `integrated2d` component
+# behind this (surface + two-zone groundwater + all transport, GW as capability
+# toggles), D-C2 puts the wrappers in `src/couplers/`, and D-C6 restricts the
+# dependency to the header-only interfaces — never `HydroCoupleSDK`.
+option(OPENSWMM_WITH_HYDROCOUPLE   "Build the HydroCouple component wrappers (src/couplers) — header-only interfaces only, no HydroCoupleSDK (D-C6)" OFF)
 
 # OPENSWMM_BUILD_TESTS is a convenience flag that enables both unit and regression
 if(OPENSWMM_BUILD_TESTS)
@@ -227,10 +309,27 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
     # unresolved-deps warnings on Windows and never get included in the
     # cpack zip. Linux/macOS usually resolve them via rpath, but the extra
     # dir is harmless on those platforms.
+    #
+    # vcpkg's DEBUG binaries live in <triplet>/debug/bin, not <triplet>/bin, so
+    # both trees are captured and the install script picks the order by config
+    # (issue #9). Searching only the release tree left Debug installs broken in
+    # two different ways:
+    #
+    #   - HDF5's debug DLLs carry a _D suffix (hdf5_D.dll, hdf5_hl_D.dll). The
+    #     name in the import table has no match under bin/, so it surfaced as
+    #     "unresolved runtime dep: hdf5_D.dll" and the installed exe died at
+    #     startup with STATUS_DLL_NOT_FOUND (0xC0000135).
+    #   - sqlite3's debug DLL keeps the release NAME, so it resolved happily —
+    #     against the RELEASE copy, quietly mixing a release sqlite3 into a
+    #     Debug package. That one never warned, which is why it looked fine.
+    #
     set(OPENSWMM_BUNDLE_EXTRA_DIRS "")
+    set(OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG "")
     if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
         list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/bin")
     elseif(DEFINED ENV{VCPKG_ROOT})
         # Fallback: use the env-var-rooted classic-mode layout.
         set(_triplet "${VCPKG_TARGET_TRIPLET}")
@@ -240,6 +339,8 @@ function(openswmm_bundle_runtime_deps TARGET_NAME SUBDIR)
         if(_triplet)
             list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS
                 "$ENV{VCPKG_ROOT}/installed/${_triplet}/bin")
+            list(APPEND OPENSWMM_BUNDLE_EXTRA_DIRS_DEBUG
+                "$ENV{VCPKG_ROOT}/installed/${_triplet}/debug/bin")
         endif()
     endif()
 
@@ -382,6 +483,14 @@ if(OPENSWMM_INSTALL OR OPENSWMMCORE_INSTALL)
     )
 endif()
 
+# HC-1: resolve the HydroCouple interface headers before src/, so
+# src/couplers/ can link HydroCouple::HydroCouple. Guarded, so a default build
+# neither fetches nor requires anything. See cmake/FetchHydroCouple.cmake for
+# why the pin is a SHA.
+if(OPENSWMM_WITH_HYDROCOUPLE)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/FetchHydroCouple.cmake)
+endif()
+
 # Add subdirectories
 add_subdirectory(src)
 
@@ -394,6 +503,17 @@ endif()
 if(OPENSWMM_BUILD_BENCHMARKS)
     find_package(benchmark CONFIG REQUIRED)
     add_subdirectory(tests/benchmarks)
+endif()
+
+if(OPENSWMM_BUILD_GPU_TESTS)
+    if(NOT OPENSWMM_BUILD_UNIT_TESTS)
+        message(FATAL_ERROR "OPENSWMM_BUILD_GPU_TESTS requires OPENSWMM_BUILD_UNIT_TESTS")
+    endif()
+    add_subdirectory(tests/gpu)
+endif()
+
+if(OPENSWMM_BUILD_FV_BASELINE)
+    add_subdirectory(tests/verification/fv_implicit_phase0)
 endif()
 
 # Optional Python bindings (Cython extensions compiled via scikit-build).

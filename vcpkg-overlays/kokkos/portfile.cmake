@@ -16,6 +16,20 @@ vcpkg_from_github(
     REF "${VERSION}"
     SHA512 34825f2d0f202f49fecc24050a4790cb721f3a4cca21381fd0eb0c302bbafe90f997dc96130c2b2479c4344d11dbb062d4b41f2aaab11e49f5bd1da2c9e5d929
     HEAD_REF master
+    PATCHES
+        # MSVC defines `_OPENMP` as 200203 even under `/openmp:llvm`, so Kokkos'
+        # `execute_in_serial()` falls back to the deprecated `omp_get_nested()`.
+        # MSVC's LLVM runtime (libomp140) prints "OMP: Info #276 ... deprecated"
+        # on every call (every kernel launch); in a GUI host it AllocConsole()s a
+        # console window to print it, and closing that window terminates the
+        # host (HydroCouple/openswmm.engine#160). The patch takes the
+        # `omp_get_max_active_levels()` path on MSVC. Drop once fixed upstream.
+        msvc-openmp-active-levels.patch
+        # Lets the CUDA build carry device code for several GPU architectures
+        # (OPENSWMM_KOKKOS_CUDA_ARCHITECTURES, CMake CUDA language only). Kokkos
+        # accepts one Kokkos_ARCH_* and builds for that architecture alone, and
+        # its relocatable device code does not run on another GPU generation.
+        cuda-multi-architecture.patch
 )
 
 # Kokkos' shared (DLL) build is broken on MSVC: kokkoscore.dll exports no
@@ -68,17 +82,31 @@ if("cuda" IN_LIST FEATURES)
         -DKokkos_ENABLE_CUDA_LAMBDA=ON
         -DKokkos_ENABLE_CUDA_CONSTEXPR=ON
         -DKokkos_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE=ON)
+    # GPU architecture. An explicit OPENSWMM_KOKKOS_CUDA_ARCH (a Kokkos_ARCH_*
+    # suffix, e.g. AMPERE80) builds for that one architecture; vcpkg clears the
+    # environment of its builds, so it only arrives when VCPKG_KEEP_ENV_VARS
+    # names it. Kokkos' own detection cannot run a device program inside vcpkg.
+    set(_kokkos_cuda_arch "")
     if(DEFINED ENV{OPENSWMM_KOKKOS_CUDA_ARCH} AND NOT "$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}" STREQUAL "")
-        list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}=ON")
+        set(_kokkos_cuda_arch "$ENV{OPENSWMM_KOKKOS_CUDA_ARCH}")
     elseif(DEFINED ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH} AND NOT "$ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH}" STREQUAL "")
-        list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_$ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH}=ON")
+        set(_kokkos_cuda_arch "$ENV{OPENSWMMENGINE_KOKKOS_CUDA_ARCH}")
+    endif()
+    if(_kokkos_cuda_arch)
+        list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_${_kokkos_cuda_arch}=ON")
+    elseif(VCPKG_TARGET_IS_WINDOWS)
+        # Default on Windows: one device binary for each GPU generation from
+        # Turing (RTX 20) to Blackwell (RTX 50), so a build made on one card
+        # runs on another. A binary for X.y runs on X.z with z >= y, hence one
+        # entry per major revision plus 8.9. Kokkos_ARCH_* names the lowest so
+        # Kokkos assumes no newer instruction. 10.0 and 12.0 need CUDA 12.8+.
+        list(APPEND BACKEND_OPTIONS
+            "-DKokkos_ARCH_TURING75=ON"
+            "-DOPENSWMM_KOKKOS_CUDA_ARCHITECTURES=75,80,89,90,100,120")
+        message(STATUS "kokkos[cuda]: building for CUDA architectures 75,80,89,90,100,120")
     else()
-        # vcpkg sanitizes its cmake subprocess environment, so OPENSWMM_KOKKOS_CUDA_ARCH
-        # does not reach this portfile script. Kokkos' GPU auto-detection also fails in
-        # vcpkg's sandboxed build (cannot run device executables during cmake configure).
-        # Fall back to ADA89 (Ada Lovelace SM 8.9) = NVIDIA RTX 2000 Ada series.
-        # To build for a different GPU, set OPENSWMM_KOKKOS_CUDA_ARCH in the environment
-        # or add -DKokkos_ARCH_<ARCH>=ON via VCPKG_CMAKE_CONFIGURE_OPTIONS in a triplet.
+        # nvcc_wrapper takes one architecture. Default to Ada (8.9); the plugin
+        # then refuses GPUs of other generations and the CPU solver runs.
         list(APPEND BACKEND_OPTIONS "-DKokkos_ARCH_ADA89=ON")
         message(STATUS
             "kokkos[cuda]: OPENSWMM_KOKKOS_CUDA_ARCH not in vcpkg env -- "

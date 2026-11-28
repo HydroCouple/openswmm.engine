@@ -180,6 +180,30 @@ Deletion
    * - :meth:`delete_hydrograph(uh_name)`
      - Delete a unit-hydrograph group (keyed by name).
 
+Undoable deletes
+~~~~~~~~~~~~~~~~
+
+Nodes, links, subcatchments and rain gages can be deleted with a record of
+how to undo the delete exactly. Each recorded method returns the same cascade
+report as its plain counterpart, plus a :class:`DeleteRecord`:
+
+.. code-block:: python
+
+   impacts, record = ed.delete_node_recorded("J1")   # J1 and the links it took
+   ...
+   record.restore()   # J1, its links and every reference, at their old indices
+
+``delete_node_recorded``, ``delete_link_recorded``, ``delete_subcatch_recorded``
+and ``delete_gage_recorded`` take a name or index; ``delete_nodes_recorded``,
+``delete_links_recorded``, ``delete_subcatchments_recorded`` and
+``delete_gages_recorded`` take a batch, and one record restores the whole
+batch. ``restore()`` works once, on the engine that made the delete, and
+refuses, changing nothing, when the model no longer matches the state the
+delete left (for example, an object of the same name was added since); undo
+several deletes in reverse order. ``close()`` releases a record early;
+otherwise it is released when garbage-collected. Like a delete, a successful
+restore invalidates existing element views.
+
 Type conversion
 ---------------
 

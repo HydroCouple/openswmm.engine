@@ -1,11 +1,32 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file GeoPackageReader.hpp
- * @brief Reads a GeoPackage file into a SimulationContext (model input tables).
+ * @file      GeoPackageReader.hpp
+ * @brief     Reads a GeoPackage file into a SimulationContext (model input tables).
  * @ingroup engine_geopackage
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
+ */
+
+/**
+ * @defgroup engine_geopackage GeoPackage model persistence
+ * @brief Reading, writing and external-content resolution for GeoPackage-backed model input. Each operation states dataset ownership, error handling and publication behavior.
  */
 
 #ifndef OPENSWMM_GEOPACKAGE_READER_HPP
@@ -16,7 +37,7 @@
 struct sqlite3;
 
 namespace openswmm {
-    struct SimulationContext;
+struct SimulationContext;
 }
 
 namespace openswmm::gpkg {
@@ -40,8 +61,7 @@ namespace openswmm::gpkg {
  *                       skip Part D hydration.
  * @returns 0 on success, non-zero on error.
  */
-int read_model(sqlite3* db, SimulationContext& ctx,
-               const std::string& simulation_id,
+int read_model(sqlite3* db, SimulationContext& ctx, const std::string& simulation_id,
                const std::string& scratch_dir = "");
 
 /**

@@ -1,0 +1,37 @@
+[TITLE]
+Sentinel: REPORT_STEP (00:00:01) against ROUTING_STEP 2 s. Legacy project_readInput
+refuses a reporting step shorter than the routing step (message 195).
+
+[OPTIONS]
+FLOW_UNITS           CFS
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             00:10:00
+REPORT_STEP          00:00:01
+ROUTING_STEP         2
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth
+J1      10.0  5.0       0.0
+
+[OUTFALLS]
+;;Name  Elev  Type  Gated
+O1      9.0   FREE  NO
+
+[CONDUITS]
+;;Name  From  To  Length  N      Z1  Z2
+C1      J1    O1  100.0   0.013  0   0
+
+[XSECTIONS]
+;;Link  Shape     G1   G2  G3  G4  Barrels
+C1      CIRCULAR  1.0  0   0   0   1
+
+[INFLOWS]
+;;Node  Constituent  Tseries  Type  Mfactor  Sfactor  Baseline
+J1      FLOW         ""       FLOW  1.0      1.0      0.5
+
+[REPORT]
+NODES ALL
+LINKS ALL

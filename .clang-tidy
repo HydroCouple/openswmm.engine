@@ -1,0 +1,5 @@
+Checks: '-*,bugprone-branch-clone,bugprone-unused-return-value'
+WarningsAsErrors: 'bugprone-unused-return-value'
+HeaderFilterRegex: '(^|/)(src|include)/'
+CheckOptions:
+  bugprone-unused-return-value.CheckedFunctions: '::fread'

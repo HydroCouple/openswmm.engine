@@ -27,7 +27,26 @@ water in each link and the volume of water within each storage node. The
 methods used to obtain this hydraulic solution are described in Volume
 II of this manual.
 
-![](quality/media/media/image2.png "Objects2")
+![Figure 5-1 Representation of the conveyance network](figures/png/eng_object_sketch.png)
+
+<div class="fig-hotspots" data-fig="eng_object_sketch">
+<span class="hs" data-box="0.0900,0.0768,0.2400,0.1375">@ref engine_manual_sect_RAINGAGES "Rain gage"</span>
+<span class="hs" data-box="0.0400,0.1696,0.2400,0.4911">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S1"</span>
+<span class="hs" data-box="0.2400,0.0982,0.4400,0.3839">@ref engine_manual_sect_SUBCATCHMENTS "Subcatchment S2"</span>
+<span class="hs" data-box="0.1500,0.4018,0.3000,0.5089">@ref engine_manual_sect_JUNCTIONS "Junction"</span>
+<span class="hs" data-box="0.3000,0.5446,0.4000,0.6071">@ref engine_manual_sect_CONDUITS "Conduit"</span>
+<span class="hs" data-box="0.3900,0.4821,0.5000,0.5893">@ref engine_manual_sect_VIRTUAL_JUNCTIONS "Virtual junction"</span>
+<span class="hs" data-box="0.5500,0.3482,0.8200,0.4375">@ref engine_manual_sect_INLET_JUNCTIONS "Inlet junction"</span>
+<span class="hs" data-box="0.5900,0.2232,0.6700,0.3482">@ref engine_manual_sect_STREETS "Street conduit"</span>
+<span class="hs" data-box="0.7200,0.5089,0.8000,0.6161">@ref engine_manual_sect_DIVIDERS "Divider"</span>
+<span class="hs" data-box="0.8100,0.5089,0.9000,0.6429">@ref engine_manual_sect_WEIRS "Weir"</span>
+<span class="hs" data-box="0.6900,0.6339,0.8000,0.7232">@ref engine_manual_sect_ORIFICES "Orifice"</span>
+<span class="hs" data-box="0.7600,0.7411,0.8400,0.8482">@ref engine_manual_sect_STORAGE "Storage unit"</span>
+<span class="hs" data-box="0.8400,0.7411,0.9200,0.8482">@ref engine_manual_sect_PUMPS "Pump"</span>
+<span class="hs" data-box="0.9200,0.5982,1.0000,0.6875">@ref engine_manual_sect_OUTFALLS "Outfall"</span>
+<span class="hs" data-box="0.4500,0.6696,0.6700,0.9375">@ref engine_manual_sect_2D_TRIANGLES "2D mesh"</span>
+<span class="hs" data-box="0.4700,0.5804,0.5600,0.6696">@ref engine_manual_sect_2D_VERTEX_NODE_MAP "1D–2D exchange"</span>
+</div>
 <p><span id="_Toc454288773"
 class="anchor"></span><strong>Figure 5‑1 Representation of the
 conveyance network in SWMM</strong></p>
@@ -190,7 +209,7 @@ above 100 mg/L, which are not physically possible. These results support
 using the simple mixing equation 5-6 in place of the analytical solution
 for SWMM 5 as it provides accurate and robust water quality solutions.
 
-![](quality/media/media/image20.png "image20")
+![](quality/media/media/quality-image20.png "image20")
 <p><span id="_Toc454288775"
 class="anchor"></span><strong>Figure 5‑3 Comparison of completely mixed
 reactor equations for a step inflow</strong></p>
@@ -651,7 +670,7 @@ at 100 mg/L and begins to settle out once the inflow ceases. As the pond
 depth decreases while it empties more solids settle out reducing the TSS
 level until the residual concentration of 20 mg/L is reached.
 
-![TreatmentExample.png](quality/media/media/image21.png)
+![TreatmentExample.png](quality/media/media/quality-image21.png)
 
 **Figure 5‑4 Gravity settling treatment of TSS within a detention pond**
 
@@ -751,5 +770,29 @@ mass-balance accounting are implemented in
 during quality initialization in `src/engine/core/SWMMEngine.cpp`, and
 the C API entry points are declared in @ref openswmm_quality.h.
 
+@note The transport model described in this chapter — one or more
+continuously stirred tanks per link — remains the default and is
+unchanged. OpenSWMM additionally provides two engines that resolve
+concentration *along* a conduit rather than treating it as fully mixed:
+an Eulerian finite-volume engine and a Lagrangian parcel-tracking
+engine, both described in @ref quality_ref_ch7_ard_transport. They are
+selected with `[OPTIONS] QUALITY_SOLVER` and share this chapter's
+external loads, treatment expressions and mass-balance ledger.
 
+### 5.4.5 Treatment in storage-node LIDs
 
+Open-Source SWMM 6's storage-node LIDs extend this chapter's mixed-reactor
+accounting with explicit retained-cell inventories. Accepted water transfers
+carry the donating compartment's concentration and are debited/credited once.
+Layer-exit fixed removal and optional expressions act once per authored layer;
+resident retained mass decays with background plus layer rates. The connected
+mobile volume remains one mixed reactor with volume-weighted layer decay,
+not a sequence of saturated layer reactors. Physical surface bypasses do not
+receive every underlying layer's treatment.
+
+Reverse outfall water carrying pollutant is an external source; clean ZERO
+backflow carries no pollutant mass. Assess exported, reacted, flooded, seeped
+and still-stored mass over a common horizon. The full equations and restart
+behavior are in @ref quality_ref_lid_storage_formulation; accepted-volume
+hydraulics and backwater wetting are in @ref hydraulics_ref_lid_storage_formulation.
+These LID layer rules require Dynamic Wave with the Legacy quality solver.

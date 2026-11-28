@@ -1,0 +1,235 @@
+# Keyword prefix parity cases (issue #96). One case per line, tab-separated:
+#   id    deck    find    replace    expect
+# The case deck is <deck> with the one occurrence of <find> replaced by <replace>
+# (\n and \t escapes allowed). expect is either
+#   same        the run gives the same .out bytes as <deck> itself, or
+#   refuse:NNN  the run is refused and the report has ERROR NNN.
+# Every expectation is checked against EPA SWMM 5.2.4 and OpenSWMM 5.3.0 by
+# tests/verification/name_keyword_case_96_2026-11-26/oracle_cases.py.
+#
+# Section headers: legacy findmatch over SectWords, a header that begins with a
+# section word is that section.
+hdr_junc	network.inp	[JUNCTIONS]	[JUNC]	same
+hdr_curve	network.inp	[CURVES]	[CURVE]	same
+hdr_xsect	network.inp	[XSECTIONS]	[XSECT]	same
+hdr_evap	network.inp	[EVAPORATION]	[EVAP]	same
+hdr_infil	network.inp	[INFILTRATION]	[INFIL]	same
+hdr_options_z	network.inp	[OPTIONS]	[OPTIONSZ]	same
+hdr_raingage	network.inp	[RAINGAGES]	[RAINGAGE]	same
+hdr_subcatch	network.inp	[SUBCATCHMENTS]	[SUBCATCHMENT]	same
+hdr_subarea	network.inp	[SUBAREAS]	[SUBAREA]	same
+hdr_outfall	network.inp	[OUTFALLS]	[OUTFALL]	same
+hdr_storage_z	network.inp	[STORAGE]	[STORAGEZ]	same
+hdr_conduit	network.inp	[CONDUITS]	[CONDUIT]	same
+hdr_pump	network.inp	[PUMPS]	[PUMP]	same
+hdr_weir	network.inp	[WEIRS]	[WEIR]	same
+hdr_outlet	network.inp	[OUTLETS]	[OUTLET]	same
+hdr_timeseries_z	network.inp	[TIMESERIES]	[TIMESERIESZ]	same
+hdr_control	network.inp	[CONTROLS]	[CONTROL]	same
+hdr_report_z	network.inp	[REPORT]	[REPORTZ]	same
+hdr_lower_prefix	network.inp	[JUNCTIONS]	[junc]	same
+#
+# YES/NO and OFF/ON flags: legacy findmatch over NoYesWords / OffOnWords; a
+# word that begins with neither is ERROR 205.
+flag_outfall_noz	network.inp	O1   80   FREE   NO\n	O1   80   FREE   NOZ\n	same
+flag_outfall_yesz	network.inp	O2   80   FREE   YES\n	O2   80   FREE   YESZ\n	same
+flag_outfall_bad	network.inp	O1   80   FREE   NO\n	O1   80   FREE   SHUT\n	refuse:205
+flag_pump_onz	network.inp	PC1   ON   0	PC1   ONZ   0	same
+flag_pump_bad	network.inp	PC1   ON   0	PC1   RUN   0	refuse:205
+flag_weir_gate_noz	network.inp	8   3.33   NO   0	8   3.33   NOZ   0	same
+flag_weir_gate_bad	network.inp	8   3.33   NO   0	8   3.33   MAYBE   0	refuse:205
+flag_weir_surcharge_noz	network.inp	8   3.33   NO   0   0   NO	8   3.33   NO   0   0   NOZ	same
+flag_weir_surcharge_bad	network.inp	8   3.33   NO   0   0   NO	8   3.33   NO   0   0   MAYBE	refuse:205
+flag_orifice_noz	network.inp	SIDE   0   0.65   NO	SIDE   0   0.65   NOZ	same
+flag_orifice_bad	network.inp	SIDE   0   0.65   NO	SIDE   0   0.65   MAYBE	refuse:205
+flag_outlet_noz	network.inp	OC1   NO	OC1   NOZ	same
+flag_outlet_bad	network.inp	OC1   NO	OC1   MAYBE	refuse:205
+flag_losses_noz	network.inp	C1   0   0   0   NO   0	C1   0   0   0   NOZ   0	same
+flag_losses_bad	network.inp	C1   0   0   0   NO   0	C1   0   0   0   MAYBE   0	refuse:205
+flag_snow_nope	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   NOPE	same
+flag_snow_bad	network.inp	MG/L   0   0   0   0   NO	MG/L   0   0   0   0   MAYBE	refuse:205
+#
+# [OPTIONS] keys: legacy project_readOption findmatch over OptionWords.
+opt_flow_routing_z	network.inp	FLOW_ROUTING         DYNWAVE	FLOW_ROUTINGZ        DYNWAVE	same
+opt_end_date_z	network.inp	END_DATE             01/01/2020	END_DATEZ            01/01/2020	same
+opt_end_time_z	network.inp	END_TIME             06:00:00	END_TIMEZ            06:00:00	same
+opt_report_step_z	network.inp	REPORT_STEP          00:05:00	REPORT_STEPZ         00:05:00	same
+opt_routing_step_z	network.inp	ROUTING_STEP         0:00:10	ROUTING_STEPZ        0:00:10	same
+opt_dry_step_lower_z	network.inp	DRY_STEP             01:00:00	dry_stepz            01:00:00	same
+#
+# Node type words: OutfallTypeWords, RelationWords (storage) and
+# DividerTypeWords, each read with findmatch; ERROR 205 when none matches.
+out_fixed_z	nodes.inp	OFIX    85   FIXED	OFIX    85   FIXED_STAGE	same
+out_tidal_z	nodes.inp	TIDAL        TC1	TIDALZ       TC1	same
+out_timeseries_z	nodes.inp	TIMESERIES   TSS	TIMESERIESZ  TSS	same
+out_normal_z	nodes.inp	NORMAL       NO	normalz      NO	same
+out_free_z	nodes.inp	FREE         NO	FREEZ        NO	same
+out_short_bad	nodes.inp	OFIX    85   FIXED	OFIX    85   FIX	refuse:205
+stor_tabular_z	network.inp	TABULAR   SC1	TABULARZ  SC1	same
+stor_functional_z	nodes.inp	FUNCTIONAL    100	FUNCTIONALZ   100	same
+stor_cylindrical_z	nodes.inp	CYLINDRICAL   20	CYLINDRICALZ  20	same
+stor_short_bad	nodes.inp	FUNCTIONAL    100	FUNC   100	refuse:205
+div_cutoff_z	nodes.inp	CUTOFF     2	CUTOFFZ    2	same
+div_tabular_z	nodes.inp	TABULAR    DVC	TABULARZ   DVC	same
+div_weir_z	nodes.inp	WEIR       1	WEIRZ      1	same
+div_overflow_z	nodes.inp	OVERFLOW 	OVERFLOWZ 	same
+div_short_bad	nodes.inp	CUTOFF     2	CUT        2	refuse:205
+#
+# Link words: OrificeTypeWords, WeirTypeWords, RelationWords (outlets, with a
+# whole-word HEAD qualifier) and TransectKeyWords, read with findmatch.
+lnk_orifice_side_z	network.inp	SIDE   0   0.65	SIDEZ  0   0.65	same
+lnk_orifice_bottom_z	network.inp	BOTTOM   0	BOTTOMZ  0	same
+lnk_orifice_bad	network.inp	SIDE   0   0.65	LATERAL   0   0.65	refuse:205
+lnk_weir_transverse_z	network.inp	TRANSVERSE   8	TRANSVERSEZ  8	same
+lnk_weir_sideflow_z	network.inp	SIDEFLOW     1	SIDEFLOWZ    1	same
+lnk_weir_vnotch_z	network.inp	V-NOTCH      1	V-NOTCHZ     1	same
+lnk_weir_trapezoidal_z	network.inp	TRAPEZOIDAL  1	TRAPEZOIDALZ 1	same
+lnk_weir_roadway_z	network.inp	ROADWAY      1	ROADWAYZ     1	same
+lnk_weir_bad	network.inp	TRANSVERSE   8	TRANS        8	refuse:205
+lnk_outlet_tabular_lower	network.inp	TABULAR/HEAD	tabular/head	same
+lnk_outlet_tabular_z	network.inp	TABULAR/HEAD	TABULARZ/HEAD	same
+lnk_outlet_functional_lower	network.inp	FUNCTIONAL/DEPTH	functional/depth	same
+lnk_outlet_bad	network.inp	TABULAR/HEAD	TAB/HEAD	refuse:205
+tr_nc_z	network.inp	NC   0.03	NCZ  0.03	same
+tr_x1_z	network.inp	X1   TR1	X1Z  TR1	same
+tr_gr_z	network.inp	GR   10	GRZ  10	same
+tr_bad	network.inp	GR   10	GG   10	refuse:205
+#
+# Hydrology and climate: RainTypeWords, GageDataWords, EvapTypeWords (DRY_ONLY
+# YES/NO compared as whole words), TempKeyWords (WINDSPEED FILE compared as a
+# whole word), ADC IMPERVIOUS/PERVIOUS, SnowmeltWords, LidTypeWords,
+# LidLayerWords, [GWF] LAT/DEEP and [ADJUSTMENTS] (already read by prefix).
+rg_intensity_z	hydrology.inp	G1   INTENSITY	G1   INTENSITYZ	same
+rg_volume_z	hydrology.inp	G2   VOLUME	G2   VOLUMEZ	same
+rg_cumulative_z	hydrology.inp	G3   CUMULATIVE	G3   CUMULATIVEZ	same
+rg_type_bad	hydrology.inp	G2   VOLUME	G2   VOL	refuse:205
+rg_source_z	hydrology.inp	TIMESERIES   R1	TIMESERIESZ  R1	same
+rg_source_bad	hydrology.inp	TIMESERIES   R1	SERIES   R1	refuse:205
+ev_monthly_z	hydrology.inp	MONTHLY       0.1	MONTHLYZ      0.1	same
+ev_recovery_z	hydrology.inp	RECOVERY      RP	RECOVERYZ     RP	same
+ev_dry_only_z	hydrology.inp	DRY_ONLY      YES	DRY_ONLYZ     YES	same
+ev_key_bad	hydrology.inp	RECOVERY      RP	RECOVER       RP	refuse:205
+ev_dry_only_suffix_bad	hydrology.inp	DRY_ONLY      YES	DRY_ONLY      YESZ	refuse:205
+ev_dry_only_word_bad	hydrology.inp	DRY_ONLY      YES	DRY_ONLY      MAYBE	refuse:205
+tmp_timeseries_z	hydrology.inp	TIMESERIES    TT	TIMESERIESZ   TT	same
+tmp_windspeed_z	hydrology.inp	WINDSPEED     MONTHLY	WINDSPEEDZ    MONTHLY	same
+tmp_wind_monthly_word	hydrology.inp	WINDSPEED     MONTHLY	WINDSPEED     MONTHLYZ	same
+tmp_snowmelt_z	hydrology.inp	SNOWMELT      34	SNOWMELTZ     34	same
+tmp_adc_z	hydrology.inp	ADC           IMPERVIOUS	ADCZ          IMPERVIOUS	same
+tmp_adc_imperv_z	hydrology.inp	ADC           IMPERVIOUS	ADC           IMPERVIOUSZ	same
+tmp_adc_perv_z	hydrology.inp	ADC           PERVIOUS	ADC           PERVIOUSZ	same
+tmp_adc_perv_short	hydrology.inp	ADC           PERVIOUS	ADC           PERV	same
+tmp_adc_bad	hydrology.inp	ADC           PERVIOUS	ADC           POROUS	refuse:205
+tmp_key_bad	hydrology.inp	SNOWMELT      34	MELT          34	refuse:205
+sp_plowable_z	hydrology.inp	SP1   PLOWABLE	SP1   PLOWABLEZ	same
+sp_impervious_z	hydrology.inp	SP1   IMPERVIOUS	SP1   IMPERVIOUSZ	same
+sp_pervious_z	hydrology.inp	SP1   PERVIOUS	SP1   PERVIOUSZ	same
+sp_imperv_short	hydrology.inp	SP1   IMPERVIOUS	SP1   IMPERV	same
+sp_removal_z	hydrology.inp	SP1   REMOVAL	SP1   REMOVALZ	same
+sp_bad	hydrology.inp	SP1   REMOVAL	SP1   REMOVE	refuse:205
+lid_type_z	hydrology.inp	LB   BC\n	LB   BCZ\n	same
+lid_type_lower	hydrology.inp	LR   RB\n	LR   rb\n	same
+lid_surface_z	hydrology.inp	LB   SURFACE	LB   SURFACEZ	same
+lid_soil_z	hydrology.inp	LB   SOIL	LB   SOILZ	same
+lid_storage_z	hydrology.inp	LR   STORAGE	LR   STORAGEZ	same
+lid_drain_z	hydrology.inp	LR   DRAIN 	LR   DRAINZ	same
+lid_drainmat_z	hydrology.inp	LG   DRAINMAT	LG   DRAINMATZ	same
+lid_pavement_z	hydrology.inp	LP   PAVEMENT	LP   PAVEMENTZ	same
+lid_layer_bad	hydrology.inp	LB   SOIL	LB   DIRT	refuse:205
+gwf_deep_z	hydrology.inp	S1   DEEP 	S1   DEEPER 	same
+gwf_lateral_short	hydrology.inp	S1   LATERAL	S1   LAT	same
+adj_temp_short	hydrology.inp	TEMPERATURE    2	TEMPZ          2	same
+#
+# Tables and inflows: CurveTypeWords, PatternTypeWords, [INFLOWS] FLOW,
+# CONCEN and MASS (match()), [DWF] FLOW, [HYDROGRAPHS] ALL (match()) and
+# UHTypeWords.
+crv_storage_z	network.inp	SC1  STORAGE	SC1  STORAGEZ	same
+crv_pump2_z	network.inp	PC1  PUMP2	PC1  PUMP2Z	same
+crv_rating_z	network.inp	OC1  RATING	OC1  RATINGZ	same
+crv_diversion_z	nodes.inp	DVC   DIVERSION	DVC   DIVERSIONZ	same
+crv_tidal_z	nodes.inp	TC1   TIDAL 	TC1   TIDALZ 	same
+crv_control_z	inflows.inp	CC1   CONTROL	CC1   CONTROLS	same
+crv_shape_z	inflows.inp	SH1   SHAPE	SH1   SHAPEZ	same
+crv_pump1_z	inflows.inp	PU1   PUMP1	PU1   PUMP1Z	same
+crv_bad	inflows.inp	CC1   CONTROL	CC1   CTRL	refuse:205
+pat_monthly_z	inflows.inp	MP   MONTHLY	MP   MONTHLYZ	same
+pat_daily_z	inflows.inp	DP   DAILY	DP   DAILYZ	same
+pat_hourly_z	inflows.inp	HP   HOURLY	HP   HOURLYZ	same
+pat_weekend_s	inflows.inp	WP   WEEKEND	WP   WEEKENDS	same
+pat_bad	inflows.inp	DP   DAILY	DP   DAY	refuse:205
+inf_flow_z	inflows.inp	J1   FLOW   QTS	J1   FLOWZ  QTS	same
+inf_concen_long	inflows.inp	CTS   CONCEN	CTS   CONCENTRATION	same
+inf_mass_z	inflows.inp	MTS   MASS	MTS   MASSZ	same
+inf_type_bad	inflows.inp	MTS   MASS	MTS   WEIGHT	refuse:205
+dwf_flow_z	inflows.inp	J2   FLOW   0.2	J2   FLOWS  0.2	same
+uh_all_z	inflows.inp	ALL   SHORT	ALLZ  SHORT	same
+uh_short_z	inflows.inp	ALL   SHORT	ALL   SHORTZ	same
+uh_medium_z	inflows.inp	ALL   MEDIUM	ALL   MEDIUMZ	same
+uh_long_z	inflows.inp	ALL   LONG	ALL   LONGZ	same
+#
+# Quality: QualUnitsWords and NormalizerWords (findmatch), and [TREATMENT]
+# process variables (ProcessVarWords, findmatch after this engine's exact
+# names and the pollutant names).
+q_units_mg_z	inflows.inp	TSS   MG/L	TSS   MG/LZ	same
+q_units_ug_z	inflows.inp	BOD   UG/L	BOD   UG/LZ	same
+q_units_bad	inflows.inp	BOD   UG/L	BOD   PPM	refuse:205
+q_norm_area_z	inflows.inp	2   AREA	2   AREAZ	same
+q_norm_curb_z	inflows.inp	2   CURB	2   CURBZ	same
+q_norm_bad	inflows.inp	2   AREA	2   ACRE	refuse:205
+q_treat_hrt_z	inflows.inp	*HRT)	*HRTZ)	same
+q_treat_dt_z	inflows.inp	0.3 * DT /	0.3 * DTZ /	same
+q_treat_hrt_lower	inflows.inp	*HRT)	*hrt)	same
+#
+# Streets and inlets: InletTypeWords, GrateTypeWords, ThroatAngleWords and
+# PlacementTypeWords, read with findmatch (an exact word first: legacy's list
+# order reads P_BAR-50x100 as P_BAR-50). No unknown-placement case: legacy's
+# PlacementTypeWords has no NULL terminator, so findmatch on a word it does
+# not know reads past the list.
+inl_grate_z	inlets.inp	IN_A   GRATE	IN_A   GRATEZ	same
+inl_curb_s	inlets.inp	IN_B   CURB	IN_B   CURBS	same
+inl_slotted_z	inlets.inp	IN_C   SLOTTED	IN_C   SLOTTEDZ	same
+inl_type_bad	inlets.inp	IN_A   GRATE	IN_A   GRID	refuse:205
+inl_grate_word_z	inlets.inp	P_BAR-50	P_BAR-50Z	same
+inl_grate_word_bad	inlets.inp	P_BAR-50	P_BAR	refuse:205
+inl_throat_z	inlets.inp	HORIZONTAL	HORIZONTALZ	same
+inl_throat_bad	inlets.inp	HORIZONTAL	FLAT	refuse:205
+inl_place_grade_z	inlets.inp	ON_GRADE	ON_GRADEZ	same
+inl_place_auto_z	inlets.inp	AUTOMATIC	AUTOMATICZ	same
+#
+# [CONTROLS]: VARIABLE and EXPRESSION (match()), RuleKeyWords, ObjectWords,
+# AttribWords, StatusWords/ConduitWords and SettingTypeWords (findmatch); an
+# EXPRESSION naming a variable not defined above it is ERROR 233.
+ctl_variable_z	network.inp	VARIABLE V1	VARIABLEZ V1	same
+ctl_expression_z	network.inp	EXPRESSION E1	EXPRESSIONZ E1	same
+ctl_rule_z	network.inp	RULE R2	RULES R2	same
+ctl_if_z	network.inp	IF SIMULATION	IFZ SIMULATION	same
+ctl_and_z	network.inp	AND NODE	ANDZ NODE	same
+ctl_then_z	network.inp	THEN OUTLET	THENZ OUTLET	same
+ctl_else_z	network.inp	ELSE PUMP	ELSEZ PUMP	same
+ctl_priority_z	network.inp	PRIORITY 2	PRIORITYZ 2	same
+ctl_node_z	network.inp	IF NODE SU1	IF NODES SU1	same
+ctl_simulation_z	network.inp	SIMULATION TIME	SIMULATIONZ TIME	same
+ctl_time_z	network.inp	SIMULATION TIME	SIMULATION TIMEZ	same
+ctl_volume_z	network.inp	SU1 VOLUME	SU1 VOLUMEZ	same
+ctl_depth_z	network.inp	SU1 DEPTH > 2	SU1 DEPTHZ > 2	same
+ctl_pump_z	network.inp	THEN PUMP P1 STATUS = ON	THEN PUMPS P1 STATUS = ON	same
+ctl_status_z	network.inp	THEN PUMP P1 STATUS = ON	THEN PUMP P1 STATUSZ = ON	same
+ctl_on_z	network.inp	STATUS = ON	STATUS = ONZ	same
+ctl_off_z	network.inp	ELSE PUMP P1 STATUS = OFF	ELSE PUMP P1 STATUS = OFFZ	same
+ctl_outlet_z	network.inp	THEN OUTLET OL1	THEN OUTLETZ OL1	same
+ctl_setting_z	network.inp	OL1 SETTING	OL1 SETTINGZ	same
+ctl_lower_words	network.inp	THEN OUTLET OL1 SETTING = 0.5	then outlet OL1 setting = 0.5	same
+ctl_keyword_bad	network.inp	PRIORITY 2	PRIO 2	refuse:205
+ctl_status_bad	network.inp	ELSE PUMP P1 STATUS = OFF	ELSE PUMP P1 STATUS = SHUT	refuse:205
+ctl_expr_undefined	network.inp	EXPRESSION E1 = V1 * 2	EXPRESSION E1 = V1 * 2 + V9	refuse:233
+#
+# [REPORT]: ReportWords and NoYesWords (findmatch); an unknown key or flag word
+# is ERROR 205. (An undefined name is WARNING 109 in this engine by design,
+# where legacy gives ERROR 209, so LINKS ALLZ has no case here.)
+rpt_input_z	network.inp	INPUT      NO	INPUTZ     NO	same
+rpt_controls_short	network.inp	CONTROLS   NO	CONTROL    NO	same
+rpt_nodes_z	network.inp	NODES      J1 J2	NODESZ     J1 J2	same
+rpt_links_z	network.inp	LINKS      ALL	LINKSZ     ALL	same
+rpt_flag_noz	network.inp	INPUT      NO	INPUT      NOZ	same
+rpt_key_bad	network.inp	CONTROLS   NO\n	CONTROLS   NO\nFOO        YES\n	refuse:205
+rpt_flag_bad	network.inp	INPUT      NO	INPUT      MAYBE	refuse:205

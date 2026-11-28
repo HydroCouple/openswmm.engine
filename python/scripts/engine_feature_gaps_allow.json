@@ -1,0 +1,4 @@
+{
+  "G1:STORAGE_MIXING": "not implemented: the ARD parser rejects [STORAGE_MIXING] ('arrives with plan phase E2b'); there is no stored data to expose, so its C API arrives with the feature",
+  "G2:REPORT.NODESTATS": "legacy no-op: report_readOptions matches NODESTATS and returns without storing anything ('NODESTATS deprecated'); this engine accepts the key the same way, so there is nothing to read or write"
+}

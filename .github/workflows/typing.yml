@@ -1,19 +1,29 @@
 name: Typing (mypy)
 
+permissions:
+  contents: read
+
 on:
   push:
+    # swmm6_rel is tested through its pull request.
     branches: [main, develop]
     paths:
       - 'python/openswmm/**/*.py'
       - 'python/openswmm/**/*.pyi'
+      - 'python/openswmm/**/*.pyx'
+      - 'python/openswmm/**/*.pxd'
+      - 'include/openswmm/engine/**'
       - 'python/tests/typing/**'
       - 'python/pyproject.toml'
       - '.github/workflows/typing.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, swmm6_rel]
     paths:
       - 'python/openswmm/**/*.py'
       - 'python/openswmm/**/*.pyi'
+      - 'python/openswmm/**/*.pyx'
+      - 'python/openswmm/**/*.pxd'
+      - 'include/openswmm/engine/**'
       - 'python/tests/typing/**'
       - 'python/pyproject.toml'
       - '.github/workflows/typing.yml'
@@ -34,7 +44,7 @@ jobs:
           - label: "openswmm.engine (default mode)"
             args: "openswmm/engine"
           - label: "tests/typing/ (strict mode)"
-            args: "--strict tests/typing/test_surface.py"
+            args: "--strict tests/typing/"
 
     steps:
       - name: Checkout repository

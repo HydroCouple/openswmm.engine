@@ -148,3 +148,13 @@ See also
 * :doc:`inflows` — DWF uses pattern ids; external inflows use time
   series ids.
 * :doc:`datetime` — how the time axis works.
+
+Relative-time metadata
+======================
+
+``timeseries.relative_info`` returns ``(leading_row_count, anchor)``. The anchor
+is a SWMM OADate in days. Stored point times remain absolute; subtract the
+anchor to recover the authored elapsed days. After rebuilding points, use
+``set_relative_info(count, anchor)`` to restore time-only INP serialization.
+A count of zero marks every row as explicitly dated. This operation changes
+metadata, not the stored point values.

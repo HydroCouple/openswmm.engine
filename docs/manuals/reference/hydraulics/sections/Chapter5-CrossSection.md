@@ -117,7 +117,7 @@ user supplies values for 1/γ, the full depth *Y*<sub>full</sub> and the top wid
 when full *b* (see Figure 5-1). Note that the parabolic shape is a
 special case of this power function shape where 1/γ equals 2.
 
-![](hydraulics/media/media/image22.png "image22")
+![Figure 5-1 Power law cross section shape](figures/png/hydraulics_ch5_power_law.png)
 
 **Figure 5-1 Power law cross section shape**
 
@@ -224,11 +224,11 @@ are listed in Table 5-4.
 | Hydraulic Radius | \f[R_{full} = 0.25Y_{full}\f] |
 | Section Factor | \f[\Psi_{full} = A_{full}R_{full}^{2/3}\f] |
 
-![](hydraulics/media/media/image23.png "image23")
+![](hydraulics/media/media/hydraulics-image23.png "image23")
 
 **Figure 5-2 Geometric properties of a partly filled circular shape based on depth**
 
-![](hydraulics/media/media/image24.png "image24")
+![](hydraulics/media/media/hydraulics-image24.png "image24")
 
 **Figure 5-3 Geometric properties of a partly filled circular shape based on area**
 
@@ -250,7 +250,7 @@ accuracy, analytical functions are used to compute *Y,* *Ψ,* and *Ψ'*
 for areas below 4% of *A*<sub>full</sub>. They are described in the side bar
 entitled "*Analytical Functions for Circular Cross Sections*".
 
-![](hydraulics/media/media/figure-theta.png "figure-theta")
+![Definition sketch of the circular section: central angle θ](figures/png/hydraulics_ch5_circular_theta.png)
 
 > **Analytical Functions for Circular Cross Sections**
 > 
@@ -287,7 +287,7 @@ entitled "*Analytical Functions for Circular Cross Sections*".
 
 ### 5.1.4 Ellipsoid and Arch Shapes
 
-![](hydraulics/media/media/image25.png "image25")
+![Figure 5-4 Elliptical and arch pipe cross sectional shapes](figures/png/hydraulics_ch5_shapes_elliptical_arch.png)
 
 **Figure 5-4 Ellipsoid and arch pipe cross sectional shapes**
 
@@ -352,30 +352,38 @@ table using the following expression with *N* = 26:
 
 ### 5.1.5 Older Masonry Sewer Shapes
 
-![OldShapes.png](hydraulics/media/media/image27.png)
+![Figure 5-5 Masonry sewer shapes](figures/png/hydraulics_ch5_shapes_masonry.png)
 
 **Figure 5-5 Masonry sewer shapes**
 
 SWMM contains seven pre-defined closed conduit shapes shown in Figure
 5-5 that were used primarily in older masonry sewers built over a
-century ago. Their geometric properties have been derived from
-information and drawings found in Metcalf and Eddy (1914) and Davis
-(1952). These properties are represented using the same type of lookup
-tables discussed previously for circular cross sections (see section
-5.2.3). The number of entries *N* in each table for each shape is listed
-in Table 5-6. The full tables are provided in Appendix F. The values of
-*A*<sub>full</sub>, *R*<sub>full</sub>, and *W*<sub>max</sub> used to normalize the entries in the
-tables for each shape are listed in Table 5-7. The full section factor
-*Ψ*<sub>full</sub> used to normalize the section factor table is computed as
-\f$A_{full}R_{full}^{2/3}\f$ .
+century ago. EPA SWMM's properties were digitized from drawings and charts
+in Metcalf and Eddy (1914) and Davis (1952), and the tables of one shape did
+not agree with one another: the area table was not the integral of the width
+table. OpenSWMM derives every table of a shape from one description of its
+geometry (`scripts/gen_xsect_masonry_tables.py`). The egg and horseshoe
+sections have exact circular-arc constructions, which reproduce EPA SWMM's
+full-section constants to four digits, and their tables and constants come
+from that geometry (the egg's maximum width lies at 2/3 of its height). The
+other five shapes keep EPA SWMM's width tables and full-section constants,
+and their remaining tables are derived from the width table. These
+properties are represented using the same type of lookup tables discussed
+previously for circular cross sections (see section 5.2.3). The number of
+entries *N* in each table for each shape is listed in Table 5-6. The full
+tables are provided in Appendix F. The values of *A*<sub>full</sub>,
+*R*<sub>full</sub>, and *W*<sub>max</sub> used to normalize the entries in the tables for
+each shape are listed in Table 5-7. The full section factor *Ψ*<sub>full</sub> used
+to normalize the section factor table is computed as \f$A_{full}R_{full}^{2/3}\f$ ;
+*Ψ*<sub>max</sub> is the largest value of the regenerated section factor table.
 
 **Table 5-6 Number of entries in geometric property tables for masonry sewer shapes**
 
 | Shape | *A*<sub>tbl</sub> | *R*<sub>tbl</sub> | *W*<sub>tbl</sub> | *Y*<sub>tbl</sub> | *Ψ*<sub>tbl</sub> |
 |-------|-------------------|-------------------|-------------------|-------------------|-------------------|
-| Basket Handle | 26 | 26 | 26 | 51 | 51 |
-| Egg | 26 | 26 | 26 | 51 | 51 |
-| Horseshoe | 26 | 26 | 26 | 51 | 51 |
+| Basket Handle | 51 | 51 | 26 | 51 | 51 |
+| Egg | 51 | 51 | 51 | 51 | 51 |
+| Horseshoe | 51 | 51 | 51 | 51 | 51 |
 | Catenary | — | — | 21 | 51 | 51 |
 | Gothic | — | — | 21 | 51 | 51 |
 | Semi-Circular | — | — | 21 | 51 | 51 |
@@ -385,13 +393,13 @@ tables for each shape are listed in Table 5-7. The full section factor
 
 | Shape | *A*<sub>full</sub> | *R*<sub>full</sub> | *W*<sub>max</sub> | *Ψ*<sub>max</sub> |
 |-------|-------------------|-------------------|-------------------|-------------------|
-| Basket Handle | \f[0.7862Y_{full}^{2}\f] | \f[0.2464Y_{full}\f] | \f[0.944Y_{full}\f] | \f[1.06078\Psi_{full}\f] |
-| Egg | \f[0.5105Y_{full}^{2}\f] | \f[0.1931Y_{full}\f] | \f[0.667Y_{full}\f] | \f[1.065\Psi_{full}\f] |
-| Horseshoe | \f[0.8293Y_{full}^{2}\f] | \f[0.2538Y_{full}\f] | \f[Y_{full}\f] | \f[1.077\Psi_{full}\f] |
-| Catenary | \f[0.70277Y_{full}^{2}\f] | \f[0.23172Y_{full}\f] | \f[0.9Y_{full}\f] | \f[1.05\Psi_{full}\f] |
-| Gothic | \f[0.6554Y_{full}^{2}\f] | \f[0.2269Y_{full}\f] | \f[0.84Y_{full}\f] | \f[1.065\Psi_{full}\f] |
-| Semi-Circular | \f[1.2697Y_{full}^{2}\f] | \f[0.2946Y_{full}\f] | \f[1.64Y_{full}\f] | \f[1.06637\Psi_{full}\f] |
-| Semi-Elliptical | \f[0.785Y_{full}^{2}\f] | \f[0.242Y_{full}\f] | \f[Y_{full}\f] | \f[1.045\Psi_{full}\f] |
+| Basket Handle | \f[0.7862Y_{full}^{2}\f] | \f[0.2464Y_{full}\f] | \f[0.944Y_{full}\f] | \f[1.06396\Psi_{full}\f] |
+| Egg | \f[0.51046Y_{full}^{2}\f] | \f[0.19311Y_{full}\f] | \f[0.66667Y_{full}\f] | \f[1.06321\Psi_{full}\f] |
+| Horseshoe | \f[0.82932Y_{full}^{2}\f] | \f[0.25385Y_{full}\f] | \f[Y_{full}\f] | \f[1.07299\Psi_{full}\f] |
+| Catenary | \f[0.70277Y_{full}^{2}\f] | \f[0.23172Y_{full}\f] | \f[0.9Y_{full}\f] | \f[1.05712\Psi_{full}\f] |
+| Gothic | \f[0.6554Y_{full}^{2}\f] | \f[0.2269Y_{full}\f] | \f[0.84Y_{full}\f] | \f[1.06058\Psi_{full}\f] |
+| Semi-Circular | \f[1.2697Y_{full}^{2}\f] | \f[0.2946Y_{full}\f] | \f[1.64Y_{full}\f] | \f[1.07951\Psi_{full}\f] |
+| Semi-Elliptical | \f[0.785Y_{full}^{2}\f] | \f[0.242Y_{full}\f] | \f[Y_{full}\f] | \f[1.06010\Psi_{full}\f] |
 
 The tables are used in the same manner as the ones for a circular shape
 to directly evaluate *A(Y), W(Y), R(Y), Y(A), Ψ(A),* and *Ψ'(A).* For
@@ -410,12 +418,9 @@ circular, rectangular, and triangular sections. The formulas for
 computing their geometrical properties are presented in the following
 paragraphs.
 
-![](hydraulics/media/media/image28.png "image28")
+![Figure 5-6 Composite cross section shapes](figures/png/hydraulics_ch5_shapes_composite.png)
 
-Figure 5-6 shows four cross section shapes that are combinations of
-circular, rectangular, and triangular sections. The formulas for
-computing their geometrical properties are presented in the following
-paragraphs.
+**Figure 5-6 Composite cross section shapes**
 
 <u>Sediment Filled Circular Shape</u>
 
@@ -632,7 +637,7 @@ table of width versus height is shown in Figure 5-7.
 
 | | |
 |---|---|
-| ![ShapeCurve2.png](hydraulics/media/media/image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
+| ![ShapeCurve2.png](hydraulics/media/media/hydraulics-image29.png) | <table><tr><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td><td>***Y/Y*<sub>full</sub>***</td><td>***W/Y*<sub>full</sub>***</td></tr><tr><td>0.00</td><td>0.000</td><td>0.56</td><td>0.928</td></tr><tr><td>0.08</td><td>0.667</td><td>0.64</td><td>0.874</td></tr><tr><td>0.16</td><td>0.930</td><td>0.72</td><td>0.798</td></tr><tr><td>0.24</td><td>1.000</td><td>0.80</td><td>0.697</td></tr><tr><td>0.32</td><td>0.997</td><td>0.88</td><td>0.567</td></tr><tr><td>0.40</td><td>0.988</td><td>0.96</td><td>0.342</td></tr><tr><td>0.48</td><td>0.967</td><td>1.00</td><td>0.000</td></tr></table> |
 
 **Figure 5-7 A Shape Curve with a depth segment shown**
 
@@ -676,7 +681,7 @@ to evaluate *A(Ψ).*
 
 ## 5.3 Irregular Natural Channels
 
-![](hydraulics/media/media/image30.png "image30")
+![](hydraulics/media/media/hydraulics-image30.png "image30")
 
 **Figure 5-8 A natural channel transect**
 
@@ -731,7 +736,7 @@ After the end of the transect is reached the sum of the compound
 conductances is used along with the main channel roughness to find the
 hydraulic radius for the current depth increment.
 
-![](hydraulics/media/media/image31.png "image31")
+![](hydraulics/media/media/hydraulics-image31.png "image31")
 
 **Figure 5-9 A transect depth increment with three compound segments**
 
@@ -819,7 +824,7 @@ A two sided street cross-section adds a mirror image of the one-sided
 street to the right of the street crown with the same roadway, gutter,
 curb, and backing dimensions.
 
-![Street.png](hydraulics/media/media/image32.png)
+![Figure 5-10 A one-sided street cross-section](figures/png/hydraulics_ch5_street_section.png)
 
 **Figure 5-10 A one-sided street cross-section (not to scale)**
 
@@ -859,10 +864,10 @@ as shown in Table 5-14.
 
 | Shape | | Coefficients | Dimensions |
 |---|---|---|---|
-| Elliptical Cylinder | ![cylindrical.png](hydraulics/media/media/image33.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
-| Elliptical Paraboloid | ![paraboloid.png](hydraulics/media/media/image34.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
-| Elliptical Cone | ![ConicStorageShape.bmp](hydraulics/media/media/image35.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
-| Rectangular Pyramid | ![PrismaticStorageShape.bmp](hydraulics/media/media/image36.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
+| Elliptical Cylinder | ![Elliptical cylinder](figures/png/hydraulics_ch5_storage_cylinder.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = a_{2} = 0\f] | *L* = major axis length<br>*W* = minor axis width |
+| Elliptical Paraboloid | ![Elliptical paraboloid](figures/png/hydraulics_ch5_storage_paraboloid.png) | \f[a_{0} = a_{2} = 0\f]<br>\f[a_{1} = (\frac{\pi}{4})\frac{LW}{H}\f] | *L* = major axis length<br>*W* = minor axis width<br>*H* = paraboloid height |
+| Elliptical Cone | ![Elliptical cone](figures/png/hydraulics_ch5_storage_cone.png) | \f[a_{0} = \left( \frac{\pi}{4} \right)LW\f]<br>\f[a_{1} = \pi WZ\f]<br>\f[a_{2} = \pi(\frac{W}{L})Z^{2}\f] | *L* = bottom major axis length<br>*W* = bottom minor axis width<br>*Z* = side slope (run/rise) along major axis |
+| Rectangular Pyramid | ![Rectangular pyramid](figures/png/hydraulics_ch5_storage_pyramid.png) | \f[a_{0} = LW\f]<br>\f[a_{1} = 2(L + W)Z\f]<br>\f[a_{2} = 4Z^{2}\f] | L = bottom length<br>W = bottom width<br>Z = wall slope (run/rise) (same for each face) |
 
 Dynamic wave analysis needs to know how volume *V* varies with depth
 *Y*. Integrating Equation 5-23 over depth yields:
@@ -983,9 +988,9 @@ be assumed that the unit has zero surface area at its base. The curve
 will be extrapolated outwards to meet the unit\'s maximum depth if need
 be.
 
-![StorageCurve2.png](hydraulics/media/media/image37.png)
+![StorageCurve2.png](hydraulics/media/media/hydraulics-image37.png)
 
-![](hydraulics/media/media/image38.png "image38")
+![](hydraulics/media/media/hydraulics-image38.png "image38")
 
 **Figure 5-11 Example of a storage curve and its section view**
 
@@ -1009,7 +1014,7 @@ first interpolated from the storage curve rather than converting the
 original area curve to a volume curve and interpolating directly from
 it.
 
-![](hydraulics/media/media/image39.png "image39")
+![](hydraulics/media/media/hydraulics-image39.png "image39")
 
 **Figure 5-12 Finding the volume at a given depth for a storage curve**
 

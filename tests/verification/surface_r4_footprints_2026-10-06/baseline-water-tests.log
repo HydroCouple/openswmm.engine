@@ -1,0 +1,24 @@
+Running main() from /Users/calebbuahin/Documents/Projects/vcpkg/buildtrees/gtest/src/v1.15.2-41f5afb119.clean/googletest/src/gtest_main.cc
+Note: Google Test filter = SourceWaterDriver.GeneralizedLayered*
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from SourceWaterDriver
+[ RUN      ] SourceWaterDriver.GeneralizedLayeredAndRoofUnitsUseExistingCompletedLaws
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_source_water_driver.cpp:371: Failure
+Expected equality of these values:
+  d.initialize(c,{0},areas(c))
+    Which is: "Source water driver currently qualifies storage trenches and rain barrels only."
+  ""
+Google Test trace:
+/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.gui/tests/verification/surface_r4_2026-10-05/isolated/openswmm.engine/tests/unit/engine/test_source_water_driver.cpp:368: BC
+
+[  FAILED  ] SourceWaterDriver.GeneralizedLayeredAndRoofUnitsUseExistingCompletedLaws (0 ms)
+[----------] 1 test from SourceWaterDriver (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 0 tests.
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] SourceWaterDriver.GeneralizedLayeredAndRoofUnitsUseExistingCompletedLaws
+
+ 1 FAILED TEST

@@ -1,6 +1,6 @@
 /**
- * @file bench_engine_vs_legacy.cpp
- * @brief Benchmark: new openswmm_engine vs legacy openswmm_legacy_engine.
+ * @file      bench_engine_vs_legacy.cpp
+ * @brief     Benchmark: new openswmm_engine vs legacy openswmm_legacy_engine.
  *
  * @details Measures total wall-time to run a complete simulation using each
  *          engine. Results are reported in milliseconds.
@@ -17,6 +17,10 @@
  *                                          --benchmark_out=bench_results.json
  *
  * @see docs/MASTER_IMPLEMENTATION_PLAN.md Phase 9
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <benchmark/benchmark.h>
@@ -26,16 +30,22 @@
 #include <openswmm/engine/openswmm_engine.h>
 
 static const char* EXAMPLE1_INP = "data/Example1.inp";
-static const char* LARGE_INP    = "data/LargeCity.inp";
+static const char* LARGE_INP = "data/LargeCity.inp";
 
 // ============================================================================
 // Legacy engine benchmarks
 // ============================================================================
 
 /**
- * @brief Benchmark the legacy swmm_run() function on Example1.
+ * @brief Time complete legacy runs of the Example1 deck.
  *
- * @note Legacy reference: src/solver/swmm5.c::swmm_run()
+ * Each iteration invokes swmm_run with data/Example1.inp and overwrites /tmp/bench_legacy.rpt/.out.
+ * The return code is protected against optimization but not validated, so rejected runs are still
+ * timed. The benchmark label identifies engine/model; shared artifact paths preclude concurrent
+ * identical invocations.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
  */
 static void BM_LegacyEngine_Example1(benchmark::State& state) {
     for (auto _ : state) {
@@ -50,7 +60,15 @@ BENCHMARK(BM_LegacyEngine_Example1)
     ->ReportAggregatesOnly(true);
 
 /**
- * @brief Benchmark legacy engine on LargeCity (stress test).
+ * @brief Time complete legacy runs of the LargeCity deck.
+ *
+ * Each iteration invokes swmm_run with data/LargeCity.inp and overwrites
+ * /tmp/bench_legacy_large.rpt/.out. The return code is protected against optimization but not
+ * validated, so rejected runs are still timed. The benchmark label identifies engine/model; shared
+ * artifact paths preclude concurrent identical invocations.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
  */
 static void BM_LegacyEngine_LargeCity(benchmark::State& state) {
     for (auto _ : state) {
@@ -69,11 +87,20 @@ BENCHMARK(BM_LegacyEngine_LargeCity)
 // ============================================================================
 
 /**
- * @brief Benchmark the new engine on Example1.
+ * @brief Time complete new runs of the Example1 deck.
+ *
+ * Each iteration invokes swmm_engine_run with data/Example1.inp and overwrites
+ * /tmp/bench_new.rpt/.out. The return code is protected against optimization but not validated, so
+ * rejected runs are still timed. The benchmark label identifies engine/model; shared artifact paths
+ * preclude concurrent identical invocations.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
  */
 static void BM_NewEngine_Example1(benchmark::State& state) {
     for (auto _ : state) {
-        int err = swmm_engine_run(EXAMPLE1_INP, "/tmp/bench_new.rpt", "/tmp/bench_new.out", nullptr);
+        int err =
+            swmm_engine_run(EXAMPLE1_INP, "/tmp/bench_new.rpt", "/tmp/bench_new.out", nullptr);
         benchmark::DoNotOptimize(err);
     }
     state.SetLabel("new engine, Example1.inp");
@@ -84,11 +111,20 @@ BENCHMARK(BM_NewEngine_Example1)
     ->ReportAggregatesOnly(true);
 
 /**
- * @brief Benchmark the new engine on LargeCity (stress test).
+ * @brief Time complete new runs of the LargeCity deck.
+ *
+ * Each iteration invokes swmm_engine_run with data/LargeCity.inp and overwrites
+ * /tmp/bench_new_large.rpt/.out. The return code is protected against optimization but not
+ * validated, so rejected runs are still timed. The benchmark label identifies engine/model; shared
+ * artifact paths preclude concurrent identical invocations.
+ *
+ * @param[in,out] state Borrowed Google Benchmark iteration/counter state; labels/counters or skip
+ *     status are written during this call.
  */
 static void BM_NewEngine_LargeCity(benchmark::State& state) {
     for (auto _ : state) {
-        int err = swmm_engine_run(LARGE_INP, "/tmp/bench_new_large.rpt", "/tmp/bench_new_large.out", nullptr);
+        int err = swmm_engine_run(LARGE_INP, "/tmp/bench_new_large.rpt", "/tmp/bench_new_large.out",
+                                  nullptr);
         benchmark::DoNotOptimize(err);
     }
     state.SetLabel("new engine, LargeCity.inp");

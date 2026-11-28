@@ -1,0 +1,13 @@
+# R3 verification artifacts
+
+Base: committed R2 engine `35547cd082944622b5da459e56967e0e1c7d677c`. `task.patch` and `source_hashes.json` describe only R3 changes, produced by merging HEAD with captured before/current file contents. Unrelated working-tree/index changes are excluded. The already untracked LTS plan is retained locally; `local_untracked_plan_updates.patch` records only its R3 amendment instead of adding the complete pre-existing document.
+
+`isolated/test_summary.json` records 136 passing engine cases and all groundwater gates. `test_summary.json` records 139 shared-checkout cases; three extra hotstart cases belong to concurrent work. Logs retain the individual checks. The new ET fixture proves `PET × area × duration` independently and explicitly exercises a pending restart and committed node withdrawal.
+
+`isolated/provenance.json` records the fresh isolated candidate and the separately frozen verified R2 candidate used as baseline, including binary hashes and library linkage. The same Release Ninja toolchain, dependency prefix, LTO and top-level static-HDF5 dependency shim are used. Build/source/binary working folders remain local and are excluded from the commit.
+
+`isolated/corpus/summary.json` records 25/25 identical corpus outputs. `api_census/summary.json` records 24/24 byte-identical ordinary/infiltration-OFF API trajectories. `aquifer_changes/manifest.json` records 20 named cases (10 intended changes, 10 unchanged controls), metrics and their attribution; controlled inputs and per-side metrics are retained. These are explicit manifests, not a recursive census of generated decks.
+
+`models/` contains the full-model ET decks, native HDF5 results and pending-demand restart. `result_provenance.json` records their hashes and generator. `output_fields.json` verifies native field shape, units, missing and zero counts. The GUI's two native SIGMA fixtures are copied from the isolated output, with separate provenance. `deployment.json` records the shared engine installed in the SDK/app and its verified signature. Signing changes Mach-O signature/mapping metadata; the documented normalized contents match and SDK/app complete hashes match.
+
+Local reruns: use `prepare_isolated.py` before building the fresh source archive; `verify.py isolated` runs the six unit suites and groundwater gates. `freeze_binaries.py`, `compare_corpus.py`, `api_census/compare.py` and `compare_aquifer.py` produce comparison evidence. They expect the recorded local dependency/toolchain and archived R2 candidate. Do not rerun preparation after moving HEAD without selecting the recorded base first.

@@ -1,0 +1,116 @@
+[TITLE]
+Transport demo for the SWMMVis user manual (tutorial T7).
+Five junctions in a line (J1 -> J5) discharging to the free outfall OUT1
+through five 100 m circular conduits. A constant 0.2 m3/s inflow enters at
+J1 carrying a conservative tracer, a first-order decaying constituent and
+an 18 C inlet temperature.
+Sidecar component configs (same folder):
+  transport_demo.rxn   reaction system  (chlorine-like species with an
+                                         Arrhenius temperature dependence)
+  transport_demo.ard   Eulerian ARD transport options
+  transport_demo.age   water-age source ages
+  transport_demo.heat  heat sources, flux modules, radiative + solar forcing
+
+;//! [options]
+[OPTIONS]
+FLOW_UNITS           CMS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2026
+START_TIME           00:00:00
+END_DATE             01/01/2026
+END_TIME             06:00:00
+REPORT_STEP          0:05:00
+ROUTING_STEP         5
+QUALITY_SOLVER       EULERIAN_ARD
+WATER_AGE            ON
+HEAT_TRANSPORT       ON
+;//! [options]
+
+[EVAPORATION]
+CONSTANT             0.0
+DRY_ONLY             NO
+
+;//! [temperature]
+[TEMPERATURE]
+TIMESERIES           AIR_TEMP
+HUMIDITY             50.0
+;//! [temperature]
+
+[JUNCTIONS]
+;;Name  Elev   MaxDepth  InitDepth  SurDepth  Aponded
+J1      10.0   3.0       0          0         0
+J2       9.5   3.0       0          0         0
+J3       9.0   3.0       0          0         0
+J4       8.5   3.0       0          0         0
+J5       8.0   3.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev   Type   Gated
+OUT1     7.5   FREE   NO
+
+[CONDUITS]
+;;Name  From  To    Length  Roughness  InOffset  OutOffset  InitFlow
+C1      J1    J2    100     0.013      0         0          0
+C2      J2    J3    100     0.013      0         0          0
+C3      J3    J4    100     0.013      0         0          0
+C4      J4    J5    100     0.013      0         0          0
+C5      J5    OUT1  100     0.013      0         0          0
+
+[XSECTIONS]
+;;Link  Shape     Geom1  Geom2  Geom3  Geom4
+C1      CIRCULAR  1.0    0      0      0
+C2      CIRCULAR  1.0    0      0      0
+C3      CIRCULAR  1.0    0      0      0
+C4      CIRCULAR  1.0    0      0      0
+C5      CIRCULAR  1.0    0      0      0
+
+;//! [pollutants]
+[POLLUTANTS]
+;;Name  Units  Crain  Cgw  Crdii  Kdecay  SnowOnly  CoPollut  CoFrac  Cdwf  Cinit
+TRACER  MG/L   0      0    0      0       NO        *         0       0     0
+DECAY   MG/L   0      0    0      2.0     NO        *         0       0     0
+;//! [pollutants]
+
+;//! [inflows]
+[INFLOWS]
+;;Node  Constituent      TimeSeries  Type    Mfactor  Sfactor  Baseline
+J1      FLOW             ""          FLOW    1.0      1.0      0.2
+J1      TRACER           ""          CONCEN  1.0      1.0      10.0
+J1      DECAY            ""          CONCEN  1.0      1.0      20.0
+J1      __TEMPERATURE__  ""          CONCEN  1.0      1.0      18.0
+;//! [inflows]
+
+[TIMESERIES]
+;;Name    Date        Time   Value
+AIR_TEMP  01/01/2026  00:00  12.0
+AIR_TEMP  01/01/2026  03:00  20.0
+AIR_TEMP  01/01/2026  06:00  22.0
+
+;//! [components]
+[PROCESS_COMPONENTS]
+org.hydrocouple.openswmm.reactions       config="transport_demo.rxn"
+org.hydrocouple.openswmm.transport.ard   config="transport_demo.ard"
+org.hydrocouple.openswmm.waterage        config="transport_demo.age"
+org.hydrocouple.openswmm.heat            config="transport_demo.heat"
+;//! [components]
+
+[REPORT]
+INPUT                NO
+CONTINUITY           YES
+FLOWSTATS            YES
+NODES                ALL
+LINKS                ALL
+
+[MAP]
+DIMENSIONS           0.000  0.000  600.000  200.000
+Units                Meters
+
+[COORDINATES]
+;;Node  X       Y
+J1       50.0   100.0
+J2      150.0   100.0
+J3      250.0   100.0
+J4      350.0   100.0
+J5      450.0   100.0
+OUT1    550.0   100.0

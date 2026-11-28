@@ -1,6 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright 2026 Caleb Buahin
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file test_output_node_stats.cpp
- * @brief Slice QA-01 — exercise swmm_output_get_node_stat_*.
+ * @file      test_output_node_stats.cpp
+ * @brief     Slice QA-01 — exercise swmm_output_get_node_stat_*.
  *
  * Uses the existing site_drainage_model.out fixture (already shipped in
  * tests/unit/engine/data/) so the test runs without re-simulating.
@@ -14,16 +30,18 @@
  *    only positive overflow values contribute).
  *  - time_flooded is a multiple of report_step (count × dt math).
  *
- * @author   Caleb Buahin <caleb.buahin@gmail.com>
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
  * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
- * @license  MIT License
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
 
+#include <openswmm/engine/openswmm_engine.h>
 #include <openswmm/engine/openswmm_output.h>
 
 #include <cmath>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -35,14 +53,28 @@ constexpr const char* kFixturePath = "site_drainage_model.out";
 // filename resolves correctly.
 class OutputNodeStatsTest : public ::testing::Test {
 protected:
+    /**
+     * @brief Open the configured binary-output fixture for node-statistics reads.
+     *
+     * Uses kFixturePath relative to the test working directory and requires a non-null output handle.
+     * Does not run an engine or create a new output file; fixture teardown owns handle closure. Fatal
+     * GoogleTest assertions return from this hook on failure; any created handle remains owned by the
+     * fixture for teardown.
+     */
     void SetUp() override {
         handle_ = swmm_output_open(kFixturePath);
-        ASSERT_NE(handle_, nullptr)
-            << "Failed to open fixture '" << kFixturePath
-            << "' — check the test WORKING_DIRECTORY is data/.";
+        ASSERT_NE(handle_, nullptr) << "Failed to open fixture '" << kFixturePath
+                                    << "' — check the test WORKING_DIRECTORY is data/.";
     }
+    /**
+     * @brief Close the fixture output-reader handle when present.
+     *
+     * Releases reader-owned metadata/stream; does not clear the member pointer or free any separately
+     * allocated result arrays.
+     */
     void TearDown() override {
-        if (handle_) swmm_output_close(handle_);
+        if (handle_)
+            swmm_output_close(handle_);
     }
     SWMM_Output handle_ = nullptr;
 };
@@ -53,8 +85,7 @@ protected:
 // Smoke: fixture has at least one node + one period.
 // ---------------------------------------------------------------------------
 
-TEST_F(OutputNodeStatsTest, FixtureHasNodesAndPeriods)
-{
+TEST_F(OutputNodeStatsTest, FixtureHasNodesAndPeriods) {
     EXPECT_GT(swmm_output_get_node_count(handle_), 0);
     EXPECT_GT(swmm_output_get_period_count(handle_), 0);
 }
@@ -64,52 +95,44 @@ TEST_F(OutputNodeStatsTest, FixtureHasNodesAndPeriods)
 // every node in the file.
 // ---------------------------------------------------------------------------
 
-TEST_F(OutputNodeStatsTest, MaxDepthAllNodesNonNegativeFinite)
-{
+TEST_F(OutputNodeStatsTest, MaxDepthAllNodesNonNegativeFinite) {
     const int n = swmm_output_get_node_count(handle_);
     for (int i = 0; i < n; ++i) {
         double v = -1.0;
-        ASSERT_EQ(swmm_output_get_node_stat_max_depth(handle_, i, &v), 0)
-            << "node_idx=" << i;
+        ASSERT_EQ(swmm_output_get_node_stat_max_depth(handle_, i, &v), 0) << "node_idx=" << i;
         EXPECT_TRUE(std::isfinite(v)) << "node_idx=" << i;
         EXPECT_GE(v, 0.0) << "node_idx=" << i;
     }
 }
 
-TEST_F(OutputNodeStatsTest, MaxOverflowAllNodesNonNegativeFinite)
-{
+TEST_F(OutputNodeStatsTest, MaxOverflowAllNodesNonNegativeFinite) {
     const int n = swmm_output_get_node_count(handle_);
     for (int i = 0; i < n; ++i) {
         double v = -1.0;
-        ASSERT_EQ(swmm_output_get_node_stat_max_overflow(handle_, i, &v), 0)
-            << "node_idx=" << i;
+        ASSERT_EQ(swmm_output_get_node_stat_max_overflow(handle_, i, &v), 0) << "node_idx=" << i;
         EXPECT_TRUE(std::isfinite(v)) << "node_idx=" << i;
         EXPECT_GE(v, 0.0) << "node_idx=" << i;
     }
 }
 
-TEST_F(OutputNodeStatsTest, VolFloodedAllNodesNonNegativeFinite)
-{
+TEST_F(OutputNodeStatsTest, VolFloodedAllNodesNonNegativeFinite) {
     const int n = swmm_output_get_node_count(handle_);
     for (int i = 0; i < n; ++i) {
         double v = -1.0;
-        ASSERT_EQ(swmm_output_get_node_stat_vol_flooded(handle_, i, &v), 0)
-            << "node_idx=" << i;
+        ASSERT_EQ(swmm_output_get_node_stat_vol_flooded(handle_, i, &v), 0) << "node_idx=" << i;
         EXPECT_TRUE(std::isfinite(v)) << "node_idx=" << i;
         EXPECT_GE(v, 0.0) << "node_idx=" << i;
     }
 }
 
-TEST_F(OutputNodeStatsTest, TimeFloodedAllNodesMultipleOfReportStep)
-{
+TEST_F(OutputNodeStatsTest, TimeFloodedAllNodesMultipleOfReportStep) {
     const int n = swmm_output_get_node_count(handle_);
     const int reportStep = swmm_output_get_report_step(handle_);
     ASSERT_GT(reportStep, 0);
 
     for (int i = 0; i < n; ++i) {
         double v = -1.0;
-        ASSERT_EQ(swmm_output_get_node_stat_time_flooded(handle_, i, &v), 0)
-            << "node_idx=" << i;
+        ASSERT_EQ(swmm_output_get_node_stat_time_flooded(handle_, i, &v), 0) << "node_idx=" << i;
         EXPECT_TRUE(std::isfinite(v)) << "node_idx=" << i;
         EXPECT_GE(v, 0.0) << "node_idx=" << i;
 
@@ -128,8 +151,7 @@ TEST_F(OutputNodeStatsTest, TimeFloodedAllNodesMultipleOfReportStep)
 // max_overflow > 0.
 // ---------------------------------------------------------------------------
 
-TEST_F(OutputNodeStatsTest, VolFloodedImpliesTimeFlooded)
-{
+TEST_F(OutputNodeStatsTest, VolFloodedImpliesTimeFlooded) {
     const int n = swmm_output_get_node_count(handle_);
     for (int i = 0; i < n; ++i) {
         double vol = 0.0, t = 0.0, ov = 0.0;
@@ -138,7 +160,7 @@ TEST_F(OutputNodeStatsTest, VolFloodedImpliesTimeFlooded)
         ASSERT_EQ(swmm_output_get_node_stat_max_overflow(handle_, i, &ov), 0);
 
         if (vol > 0.0) {
-            EXPECT_GT(t,  0.0) << "node_idx=" << i;
+            EXPECT_GT(t, 0.0) << "node_idx=" << i;
             EXPECT_GT(ov, 0.0) << "node_idx=" << i;
         }
     }
@@ -148,35 +170,63 @@ TEST_F(OutputNodeStatsTest, VolFloodedImpliesTimeFlooded)
 // Error paths — invalid arguments must return -1 without touching `value`.
 // ---------------------------------------------------------------------------
 
-TEST_F(OutputNodeStatsTest, NullHandleReturnsMinusOne)
-{
+// The .out header stores the report step as whole seconds, so a 0.5 s step
+// reads 0 there; the flooding statistics take the step from the saved dates.
+TEST(OutputNodeStatsSubSecond, FloodingStatsUseTheSavedHalfSecondStep) {
+    const char* inp = "node_stats_half_second.inp";
+    {
+        std::ofstream f(inp);
+        f << "[OPTIONS]\nFLOW_UNITS CMS\nFLOW_ROUTING DYNWAVE\n"
+             "START_DATE 01/01/2026\nEND_DATE 01/01/2026\nEND_TIME 00:00:10\n"
+             "REPORT_STEP 0:00:00.5\nROUTING_STEP 0.1\nVARIABLE_STEP 0\n"
+             "[JUNCTIONS]\nJ 10 0.5\n[OUTFALLS]\nO 0 FREE NO\n"
+             "[CONDUITS]\nC J O 100 0.013 0 0\n[XSECTIONS]\nC CIRCULAR 0.2 0 0 0 1\n"
+             "[INFLOWS]\nJ FLOW \"\" FLOW 1.0 1 5\n"
+             "[COORDINATES]\nJ 0 0\nO 100 0\n[REPORT]\nNODES ALL\nLINKS ALL\n";
+    }
+    ASSERT_EQ(
+        swmm_engine_run(inp, "node_stats_half_second.rpt", "node_stats_half_second.out", nullptr),
+        0);
+    SWMM_Output out = swmm_output_open("node_stats_half_second.out");
+    ASSERT_NE(out, nullptr);
+    EXPECT_EQ(swmm_output_get_report_step(out), 0);
+    ASSERT_EQ(swmm_output_get_period_count(out), 20);
+    double seconds = 0.0, volume = 0.0;
+    ASSERT_EQ(swmm_output_get_node_stat_time_flooded(out, 0, &seconds), 0);
+    ASSERT_EQ(swmm_output_get_node_stat_vol_flooded(out, 0, &volume), 0);
+    EXPECT_GT(seconds, 0.0);
+    EXPECT_GT(volume, 0.0);
+    EXPECT_DOUBLE_EQ(seconds / 0.5, std::round(seconds / 0.5));
+    EXPECT_LE(seconds, 10.0);
+    swmm_output_close(out);
+}
+
+TEST_F(OutputNodeStatsTest, NullHandleReturnsMinusOne) {
     double v = 42.0;
-    EXPECT_EQ(swmm_output_get_node_stat_max_depth(nullptr,    0, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_max_depth(nullptr, 0, &v), -1);
     EXPECT_EQ(swmm_output_get_node_stat_max_overflow(nullptr, 0, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(nullptr,  0, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(nullptr, 0, &v), -1);
     EXPECT_EQ(swmm_output_get_node_stat_time_flooded(nullptr, 0, &v), -1);
     EXPECT_DOUBLE_EQ(v, 42.0) << "value buffer must not be touched on error";
 }
 
-TEST_F(OutputNodeStatsTest, NullValueReturnsMinusOne)
-{
-    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_,    0, nullptr), -1);
+TEST_F(OutputNodeStatsTest, NullValueReturnsMinusOne) {
+    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_, 0, nullptr), -1);
     EXPECT_EQ(swmm_output_get_node_stat_max_overflow(handle_, 0, nullptr), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_,  0, nullptr), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_, 0, nullptr), -1);
     EXPECT_EQ(swmm_output_get_node_stat_time_flooded(handle_, 0, nullptr), -1);
 }
 
-TEST_F(OutputNodeStatsTest, OutOfRangeNodeIdxReturnsMinusOne)
-{
+TEST_F(OutputNodeStatsTest, OutOfRangeNodeIdxReturnsMinusOne) {
     const int n = swmm_output_get_node_count(handle_);
     double v = 42.0;
-    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_,    -1, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_,     n, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_, -1, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_max_depth(handle_, n, &v), -1);
     EXPECT_EQ(swmm_output_get_node_stat_max_overflow(handle_, -1, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_max_overflow(handle_,  n, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_,  -1, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_,   n, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_max_overflow(handle_, n, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_, -1, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_vol_flooded(handle_, n, &v), -1);
     EXPECT_EQ(swmm_output_get_node_stat_time_flooded(handle_, -1, &v), -1);
-    EXPECT_EQ(swmm_output_get_node_stat_time_flooded(handle_,  n, &v), -1);
+    EXPECT_EQ(swmm_output_get_node_stat_time_flooded(handle_, n, &v), -1);
     EXPECT_DOUBLE_EQ(v, 42.0) << "value buffer must not be touched on error";
 }

@@ -29,7 +29,7 @@ subcatchment as a nonlinear reservoir, as sketched in Figure 3-2.
 
 ![](hydrology/media/media/Figure3-1.png "Figure 3-1")
 
-![Figure 3-2](hydrology/media/media/Figure3-2.png)
+![Figure 3-2](figures/png/hydrology_ch3_nonlinear_reservoir.png)
 
 **Figure 3-1 Idealized representation of a subcatchment.**
 
@@ -133,7 +133,7 @@ or channel). How to model indirectly connected areas, such as roof
 drains that discharge to pervious lawn areas, is discussed in section
 3.6 below.
 
-![Figure 3-3](hydrology/media/media/image8.png)
+![Figure 3-3](hydrology/media/media/hydrology-image8.png)
 
 **Figure 3-3 Types of subareas within a subcatchment.**
 
@@ -226,6 +226,8 @@ b. Use a standard fifth-order Runge-Kutta integration routine with adaptive step
    for *d* over the time step Δ*t_x*. Here *d_x* = *d* - *d_s* for *d* > *d_s* and is 0 otherwise while *α* is *α_P* (Equation 3-8) if the subarea is pervious or is *α_I* (Equation 3-9) if the subarea is impervious.
 
 c. Compute the runoff per unit area *q* at the end of the time step: *q* = *αd_x*<sup>5/3</sup> where *α* and *d_x* are defined as above.
+
+With the option `RUNOFF_ODE_SOLVER EXACT`, steps b and c use the equation's exact solution instead of the Runge-Kutta routine. Because *i_x*, *α* and *d_s* are constant over the step, scaling the excess depth by the equilibrium value *x_e* = (|*i_x*|/*α*)<sup>3/5</sup> and time by *x_e*/|*i_x*| turns Equation 3-5 into *du*/*dτ* = ±1 − *u*<sup>5/3</sup>, which has one universal solution per sign; the engine tabulates those solutions once and evaluates each step as two table lookups, with the outflow *q* following from the slope. The result is within about 10<sup>-10</sup> of the exact solution at roughly a fifth of the Runge-Kutta cost; the Runge-Kutta routine at its tolerance of 10<sup>-4</sup> differs from the exact solution by about 10<sup>-4</sup> relative, which is also the difference between the two options' results. The default, `LEGACY`, keeps the Runge-Kutta routine and reproduces SWMM 5 bit for bit.
 
 Recall that the depression storage *d_s* can have different user-supplied values for subareas A1 (pervious) and A2 (impervious) while it is zero by definition for subarea A3. Also note that initially at time zero the ponded depth *d* on each subarea of each subcatchment is zero.
 
@@ -392,11 +394,11 @@ south, but the pipe connecting junctions 412 and 712 drains north! If
 only the surface contours were considered a quite different catchment
 response to rainfall would result than what actually exists.
 
-![Figure 3-6](hydrology/media/media/image10.png)
+![Figure 3-6](hydrology/media/media/hydrology-image10.jpg)
 
 **Figure 3-6 Fisk B catchment, Portland, Oregon (Portland BES, 1996).**
 
-![Figure 3-7](hydrology/media/media/image11.png)
+![Figure 3-7](hydrology/media/media/hydrology-image11.png)
 
 **Figure 3-7 Detailed view of two Fisk B subcatchments (Portland BES, 1996).**
 
@@ -583,7 +585,7 @@ length.) Note also in Figure 3-8 that for this idealized case, if the
 two sides of the subcatchment are symmetrical the total width is twice
 the length of the drainage channel.
 
-![](hydrology/media/media/Figure3-8.png "Figure 3-8")
+![](hydrology/media/media/Figure3-1.png "Figure 3-8")
 
 **Figure 3-8 Idealized representation of a subcatchment.**
 
@@ -639,7 +641,7 @@ sensitive to the time distribution of rainfall.
 
 **Parameters:** Slope = 1%, Imperviousness = 100%, Depression Storage = 0, n = 0.02, Equilibrium outflow = i*A = 0.926 cfs, *∆t* = 5 min = 300 sec, i* = Rainfall excess = 1.0 in./hr = 0.000023148 ft/sec
 
-![Figure 3-10](hydrology/media/media/image12.png)
+![Figure 3-10](hydrology/media/media/hydrology-image12.png)
 
 **Figure 3-10 Subcatchment hydrographs for different shapes of Figure 3-9.**
 
@@ -711,7 +713,7 @@ where:
 >
 > A = total area.
 
-![Figure 3-11](hydrology/media/media/image13.png)
+![Figure 3-11](hydrology/media/media/hydrology-image13.png)
 
 **Figure 3-11 Irregular subcatchment shape for width calculations (DiGiano et al., 1977, p. 165).**
 

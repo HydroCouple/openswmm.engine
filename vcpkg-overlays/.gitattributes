@@ -1,0 +1,3 @@
+# Port patches are applied by vcpkg with `git apply` against the upstream
+# (LF) sources; keep them byte-exact on Windows (core.autocrlf) checkouts.
+*.patch -text

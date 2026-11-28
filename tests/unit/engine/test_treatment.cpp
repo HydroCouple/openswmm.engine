@@ -1,9 +1,13 @@
 /**
- * @file test_treatment.cpp
- * @brief Unit tests for treatment expression parsing, evaluation, and application.
+ * @file      test_treatment.cpp
+ * @brief     Unit tests for treatment expression parsing, evaluation, and application.
  *
  * @see src/engine/quality/Treatment.hpp
  * @ingroup engine_quality
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com>
+ * @copyright Copyright (c) 2026 Caleb Buahin. All rights reserved.
+ * @license   Apache-2.0
  */
 
 #include <gtest/gtest.h>
@@ -150,26 +154,23 @@ TEST(TreatApply, RemovalClampedToZeroOne) {
 
 TEST(TreatApply, RemovalClampedAtOne) {
     TreatExpr expr;
-    ASSERT_EQ(parse("R = 1.5", expr), 0);  // > 1.0 clamped
+    ASSERT_EQ(parse("R = 1.5", expr), 0); // > 1.0 clamped
     double cOut = applyTreatment(expr, 100.0, 300.0, 0.0, 0.0, 0.0, 0.0);
-    EXPECT_NEAR(cOut, 0.0, 1e-6)
-        << "R > 1 should be clamped to 1 → zero outlet concentration";
+    EXPECT_NEAR(cOut, 0.0, 1e-6) << "R > 1 should be clamped to 1 → zero outlet concentration";
 }
 
 TEST(TreatApply, ConcentrationClampedToInput) {
     TreatExpr expr;
-    ASSERT_EQ(parse("C = 200.0", expr), 0);  // > c_in, should clamp
+    ASSERT_EQ(parse("C = 200.0", expr), 0); // > c_in, should clamp
     double cOut = applyTreatment(expr, 100.0, 300.0, 0.0, 0.0, 0.0, 0.0);
-    EXPECT_LE(cOut, 100.0)
-        << "C-type treatment should not increase concentration beyond input";
+    EXPECT_LE(cOut, 100.0) << "C-type treatment should not increase concentration beyond input";
 }
 
 TEST(TreatApply, ZeroInputNoTreatment) {
     TreatExpr expr;
     ASSERT_EQ(parse("R = 0.5", expr), 0);
     double cOut = applyTreatment(expr, 0.0, 300.0, 0.0, 0.0, 0.0, 0.0);
-    EXPECT_NEAR(cOut, 0.0, 1e-10)
-        << "Zero input concentration should produce zero output";
+    EXPECT_NEAR(cOut, 0.0, 1e-10) << "Zero input concentration should produce zero output";
 }
 
 TEST(TreatApply, HRTDependentRemoval) {
@@ -181,8 +182,7 @@ TEST(TreatApply, HRTDependentRemoval) {
     // High HRT → high removal
     double c_high = applyTreatment(expr, 100.0, 300.0, 10.0, 0.0, 0.0, 0.0);
 
-    EXPECT_GT(c_low, c_high)
-        << "Higher HRT should produce more removal (lower outlet conc)";
+    EXPECT_GT(c_low, c_high) << "Higher HRT should produce more removal (lower outlet conc)";
 }
 
 // ============================================================================
@@ -231,10 +231,21 @@ TEST(TreatmentData, CompilationProducesTokens) {
 // ============================================================================
 
 // Helper: mock pollutant lookup
+/**
+ * @brief Map the treatment-expression fixture's three pollutant names.
+ *
+ * Pure test lookup; does not access a model registry or normalize case.
+ *
+ * @param[in] name Case-sensitive name, unchanged.
+ * @return Zero for TSS, one Lead, two TP, or -1 for every other string.
+ */
 static int mock_pollut_lookup(const std::string& name) {
-    if (name == "TSS") return 0;
-    if (name == "Lead") return 1;
-    if (name == "TP") return 2;
+    if (name == "TSS")
+        return 0;
+    if (name == "Lead")
+        return 1;
+    if (name == "TP")
+        return 2;
     return -1;
 }
 
@@ -272,11 +283,10 @@ TEST(CoTreatment, EvaluateR_POLLUT) {
     ASSERT_EQ(parse("R = 0.5 * R_TSS", expr, mock_pollut_lookup), 0);
 
     // Provide removal array: TSS removal = 0.8, Lead removal = -1 (not computed)
-    double cin[3]     = {100.0, 50.0, 30.0};
+    double cin[3] = {100.0, 50.0, 30.0};
     double removal[3] = {0.8, -1.0, -1.0};
 
-    double result = evaluate(expr, 50.0, 300.0, 1.0, 10.0, 500.0, 3.0,
-                             cin, removal, 3);
+    double result = evaluate(expr, 50.0, 300.0, 1.0, 10.0, 500.0, 3.0, cin, removal, 3);
     // R = 0.5 * 0.8 = 0.4
     EXPECT_NEAR(result, 0.4, 1e-10);
 }
@@ -285,12 +295,11 @@ TEST(CoTreatment, EvaluateC_POLLUT) {
     TreatExpr expr;
     ASSERT_EQ(parse("C = C_Lead * 0.1", expr, mock_pollut_lookup), 0);
 
-    double cin[3]     = {100.0, 50.0, 30.0};
+    double cin[3] = {100.0, 50.0, 30.0};
     double removal[3] = {0.0, 0.0, 0.0};
 
     // C_Lead = cin[1] = 50.0 → C = 50 * 0.1 = 5.0
-    double result = evaluate(expr, 100.0, 300.0, 1.0, 10.0, 500.0, 3.0,
-                             cin, removal, 3);
+    double result = evaluate(expr, 100.0, 300.0, 1.0, 10.0, 500.0, 3.0, cin, removal, 3);
     EXPECT_NEAR(result, 5.0, 1e-10);
 }
 

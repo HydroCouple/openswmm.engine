@@ -1,0 +1,11 @@
+before/
+models/
+isolated/
+isolated-cases/
+build*.log
+*.patch
+*-index*
+prepare*.py
+commit*.py
+commit-*.json
+gui-implementation-before.md

@@ -1,0 +1,13 @@
+{
+  "parent": {
+    "sha256": "8469a51ae0de31155270a2387512092b4d467669e424cbb7ee3d93bfc9a39f4c",
+    "rows": 560,
+    "library": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/tests/verification/surface_r4_footprints_2026-10-06/parent-library"
+  },
+  "corrected": {
+    "sha256": "8469a51ae0de31155270a2387512092b4d467669e424cbb7ee3d93bfc9a39f4c",
+    "rows": 560,
+    "library": "/Users/calebbuahin/Documents/Projects/cbuahin_github/openswmm.engine/build/surface-r4-isolated/src/engine"
+  },
+  "byte_identical": true
+}

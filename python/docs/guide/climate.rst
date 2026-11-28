@@ -68,3 +68,23 @@ API reference
 =============
 
 :class:`Climate` in the :doc:`full API listing </api>`.
+
+Read-only evaporation previews
+==============================
+
+``climate.preview_evaporation(start, end, interval_days, config=None)`` samples
+source evaporation before a run. Dates accept OADate floats or naive datetimes;
+rates use the model's display units. The window must lie within simulation
+dates. Results contain ``samples``, ``summary`` and ``diagnostic``. Sample
+``status`` is an ``EvapPreviewStatus`` (AVAILABLE, HELD, MISSING, ESTIMATED).
+The summary includes counts, finite minimum/maximum rates and
+``runtime_forcing_unknown=True``: live forcing is excluded.
+
+Supply a partial ``config`` mapping to preview unsaved edits without changing
+the solver. Keys match ``SWMM_EvapPreviewConfig``: ``evap_type``,
+``evap_monthly``, ``pan_coeff``, ``adjust_evaporation``, ``evap_timeseries``,
+``temp_source``, ``temp_timeseries``, ``climate_file_path``,
+``climate_file_start``, ``climate_file_temp_units``, ``latitude``,
+``longitude_correction_minutes`` and ``adjust_temperature``. Monthly arrays
+require twelve values. Omitted fields inherit current configuration. Invalid
+windows and sources raise engine errors carrying the native diagnostic.

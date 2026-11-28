@@ -1,0 +1,806 @@
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -22,6 +22,12 @@
+ > here. See `git log v6.0.0-alpha.1..` for the interim record.
+ 
+ ## [Unreleased]
++
++### Surface–subsurface ET (2026-10-05)
++
++- Spatial aquifers now resolve automatic groundwater ET to `BOTH` and automatic conduit exchange to `TWO_WAY`. Explicit `GW_ET NONE`, `LINK_SEEPAGE NONE` / `ONE_WAY`, and `GROUNDWATER NO` remain opt-outs. Legacy explicitly authored `LINK_SEEPAGE AUTO` still means one-way and saves as `ONE_WAY`; new automatic authoring uses `DEFAULT`.
++- Mesh surface evaporation and soil ET share one atmospheric demand per cell. Actual surface evaporation spends it first; soil ET consumes only accumulated past remainder with one stress calculation. Capillary rise stays an internal transfer and cannot spend water already committed to node/conduit exchange.
++- Add positive project-length `WILTING_SUCTION`, with automatic 150 m in either unit system, ET budget result fields and V13 pending-demand restart. The sigma threshold and automatic mesh modes intentionally change aquifer trajectories. Legacy no-aquifer controls retain byte identity; area partitioning with subcatchments/LIDs and UEB integration remain later rounds.
+ 
+ ### Python bindings
+ 
+--- a/include/openswmm/engine/openswmm_gw2d.h
++++ b/include/openswmm/engine/openswmm_gw2d.h
+@@ -102,6 +102,15 @@
+ #define SWMM_GW2D_VAR_REJECT 18 /**< Rejected top-interface delivery returned to surface (m3 s-1) */
+ #define SWMM_GW2D_VAR_REJECT_CUM 19 /**< Cumulative rejected top-interface delivery (m3) */
+ #define SWMM_GW2D_VAR_DUNNE_CUM 20 /**< Cumulative physical saturation excess (m3) */
++#define SWMM_GW2D_VAR_ET_PENDING 21 /**< Pending past atmospheric demand after actual surface evaporation (m3) */
++#define SWMM_GW2D_VAR_ET_POTENTIAL_CUM 22 /**< Cumulative single mesh-area potential atmospheric demand (m3) */
++#define SWMM_GW2D_VAR_ET_SURFACE_CUM 23 /**< Cumulative actual surface evaporation (m3) */
++#define SWMM_GW2D_VAR_ET_SOIL_CUM 24 /**< Cumulative actual soil ET (m3) */
++#define SWMM_GW2D_VAR_ET_UNUSED_CUM 25 /**< Cumulative expired unused soil demand (m3) */
++#define SWMM_GW2D_VAR_ET_SURFACE 26 /**< Actual surface evaporation at last surface interval (m s-1) */
++#define SWMM_GW2D_VAR_ET_POTENTIAL 27 /**< Potential demand at last surface interval (m s-1) */
++#define SWMM_GW2D_VAR_ET_STRESS 28 /**< Single extraction-site moisture stress factor (1) */
++#define SWMM_GW2D_VAR_ET_REFRESH 29 /**< Last completed demand interval end since start (s) */
+ 
+ /* ---- Ledger selectors (m3, cumulative) ---------------------------------- */
+ 
+@@ -169,12 +178,23 @@
+ 
+ /** Read one option as text. Keys: SOIL_CHAR, CLOSURE, M_LAYERS,
+  *  CAPILLARY_DIFF, C_GW, C_COL, FORCE_CLOSED_FORM, MODE, DUNNE, GW_ET,
+- *  NODE_ENROLMENT (AUTO | ROWS — G-X2), LINK_SEEPAGE (AUTO | NONE — G-X3). */
++ *  NODE_ENROLMENT (AUTO | ROWS), LINK_SEEPAGE (DEFAULT | ONE_WAY | TWO_WAY | NONE),
++ *  WILTING_SUCTION (AUTO | positive project length). Read-only keys:
++ *  GW_ET_EFFECTIVE, LINK_SEEPAGE_EFFECTIVE, WILTING_SUCTION_EFFECTIVE,
++ *  CONFIGURED and OPTIONS_AUTHORED. Legacy LINK_SEEPAGE AUTO means ONE_WAY. */
+ SWMM_ENGINE_API int swmm_gw2d_option_get(SWMM_Engine engine, const char* key,
+                                          char* buf, int buflen);
+ 
+-/** Set one option from text. Same keys and the same token spellings the
+- *  `.inp` accepts — one parser, so the file and the API cannot drift. */
++/** Atomically replace GW_ET, LINK_SEEPAGE and WILTING_SUCTION before a run.
++ * GW_ET AUTO defaults to BOTH on a mesh, NONE in PER_SUBCATCH.
++ * LINK_SEEPAGE DEFAULT defaults to TWO_WAY on a mesh; ONE_WAY and legacy
++ * AUTO retain explicit one-way delivery. WILTING_SUCTION AUTO means 150 m;
++ * a custom positive number is in project length units. authored must be 0
++ * or 1 and restores section provenance for atomic GUI Undo. */
++SWMM_ENGINE_API int swmm_gw2d_process_options_set(SWMM_Engine engine,
++    const char* et, const char* link, const char* wilting, int authored);
++
++/** Set an authored option from text through the same parser as the file. */
+ SWMM_ENGINE_API int swmm_gw2d_option_set(SWMM_Engine engine, const char* key,
+                                          const char* value);
+ 
+--- a/include/openswmm/plugin_sdk/SimulationSnapshot.hpp
++++ b/include/openswmm/plugin_sdk/SimulationSnapshot.hpp
+@@ -377,6 +377,15 @@
+     std::vector<double> gw2d_reject; ///< Rejected top-interface delivery returned to surface (m3 s-1)
+     std::vector<double> gw2d_reject_cum; ///< Cumulative rejected top-interface delivery (m3)
+     std::vector<double> gw2d_dunne_cum; ///< Cumulative physical saturation excess (m3)
++    std::vector<double> gw2d_et_pending;
++    std::vector<double> gw2d_et_potential_cum;
++    std::vector<double> gw2d_et_surface_cum;
++    std::vector<double> gw2d_et_soil_cum;
++    std::vector<double> gw2d_et_unused_cum;
++    std::vector<double> gw2d_et_surface;
++    std::vector<double> gw2d_et_potential;
++    std::vector<double> gw2d_et_stress;
++    std::vector<double> gw2d_et_refresh;
+ };
+ 
+ } /* namespace openswmm */
+--- a/src/engine/2d/api/ApiGw2D.cpp
++++ b/src/engine/2d/api/ApiGw2D.cpp
+@@ -37,6 +37,7 @@
+ #include "../../core/SWMMEngine.hpp"
+ #include "../subsurface/SubsurfaceSections.hpp"
+ #include "../subsurface/SubsurfaceSolver.hpp"
++#include "../../core/UnitConversion.hpp"
+ 
+ #include <algorithm>
+ #include <cmath>
+@@ -119,13 +120,29 @@
+     else if (ieq(key, "MODE"))            v = o.per_subcatch ? "PER_SUBCATCH" : "MESH";
+     else if (ieq(key, "DUNNE"))           v = yn(o.dunne);
+     else if (ieq(key, "GW_ET"))           v = o.gw_et;
++    else if (ieq(key,"WILTING_SUCTION"))v=o.wilting_suction_set?num(o.wilting_suction):"AUTO";
++    else if (ieq(key,"OPTIONS_AUTHORED"))v=yn(o.authored);
++    else if (ieq(key,"CONFIGURED"))v=yn(!cfg.empty());
++    else if (ieq(key,"GW_ET_EFFECTIVE"))v=eng->surfaceRouter2D().options().groundwater==0||cfg.empty()?"NONE":o.gw_et=="AUTO"?(o.per_subcatch?"NONE":"BOTH"):o.gw_et;
++    else if (ieq(key,"LINK_SEEPAGE_EFFECTIVE"))v=eng->surfaceRouter2D().options().groundwater==0||cfg.empty()?"NONE":o.link_seepage==GwLinkMode::NONE?"NONE":o.link_seepage==GwLinkMode::TWO_WAY||(o.link_seepage==GwLinkMode::DEFAULT&&!o.per_subcatch)?"TWO_WAY":"ONE_WAY";
++    else if (ieq(key,"WILTING_SUCTION_EFFECTIVE"))v=num(o.wilting_suction_set?o.wilting_suction:150.0/(openswmm::ucf::getUnitSystem(static_cast<int>(eng->context().options.flow_units))==0?.3048:1.0));
+     else if (ieq(key, "NODE_ENROLMENT"))  v = o.node_auto ? "AUTO" : "ROWS";   // G-X2
+     else if (ieq(key, "LINK_SEEPAGE"))                                          // G-X3/G-X4
+         v = (o.link_seepage == GwLinkMode::NONE)    ? "NONE"
+-          : (o.link_seepage == GwLinkMode::TWO_WAY) ? "TWO_WAY" : "AUTO";
++          : (o.link_seepage == GwLinkMode::TWO_WAY) ? "TWO_WAY" : (o.link_seepage == GwLinkMode::DEFAULT ? "DEFAULT" : "ONE_WAY");
+     else return SWMM_ERR_BADPARAM;
+     copy_to(v, buf, buflen);
+     return SWMM_OK;
++}
++
++SWMM_ENGINE_API int swmm_gw2d_process_options_set(SWMM_Engine engine,
++    const char* et,const char* link,const char* wilting,int authored) {
++    AQ_CFG(engine); AQ_EDITABLE(eng);
++    if(!et||!link||!wilting||(authored!=0&&authored!=1))return SWMM_ERR_BADPARAM;
++    auto candidate=cfg.options;
++    for(const auto& kv:std::vector<std::pair<std::string,std::string>>{{"GW_ET",et},{"LINK_SEEPAGE",link},{"WILTING_SUCTION",wilting}})
++        if(!openswmm::twoD::parseAquiferOptionsLine({kv.first,kv.second},candidate).empty())return SWMM_ERR_BADPARAM;
++    candidate.authored=authored!=0;cfg.options=std::move(candidate);return SWMM_OK;
+ }
+ 
+ SWMM_ENGINE_API int swmm_gw2d_option_set(SWMM_Engine engine, const char* key,
+@@ -404,6 +421,15 @@
+         case SWMM_GW2D_VAR_REJECT: return st.reject_last[u];
+         case SWMM_GW2D_VAR_REJECT_CUM: return st.reject_cumulative[u];
+         case SWMM_GW2D_VAR_DUNNE_CUM: return st.dunne_cumulative[u];
++        case SWMM_GW2D_VAR_ET_PENDING: return st.et_pending[u];
++        case SWMM_GW2D_VAR_ET_POTENTIAL_CUM: return st.et_potential_cumulative[u];
++        case SWMM_GW2D_VAR_ET_SURFACE_CUM: return st.et_surface_cumulative[u];
++        case SWMM_GW2D_VAR_ET_SOIL_CUM: return st.et_soil_cumulative[u];
++        case SWMM_GW2D_VAR_ET_UNUSED_CUM: return st.et_unused_cumulative[u];
++        case SWMM_GW2D_VAR_ET_SURFACE: return st.et_surface_last[u];
++        case SWMM_GW2D_VAR_ET_POTENTIAL: return st.et_potential_last[u];
++        case SWMM_GW2D_VAR_ET_STRESS: return st.et_stress[u];
++        case SWMM_GW2D_VAR_ET_REFRESH: return st.et_refresh[u];
+         default: ok = false; return 0.0;
+     }
+ }
+--- a/src/engine/2d/input/SectionHandlers2D.cpp
++++ b/src/engine/2d/input/SectionHandlers2D.cpp
+@@ -372,7 +372,7 @@
+         else if (iequals(val, "AUTO"))                       opts.groundwater = -1;
+         else return "Unknown GROUNDWATER: " + val + " (expected YES|NO|AUTO)";
+     } else if (iequals(key, "GW_ET")) {
+-        static const char* kEt[] = {"NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
++        static const char* kEt[] = {"AUTO", "NONE", "CAPILLARY_RISE", "BOUNDARY_ET", "BOTH"};
+         bool known = false;
+         for (const char* e : kEt)
+             if (iequals(val, e)) { opts.gw_et = e; known = true; break; }
+@@ -562,7 +562,7 @@
+         // alias that open() folds away, so the staging field is normally empty
+         // and the authoritative value is the only one to report.
+         if (iequals(key, "GW_ET") && opts.gw_et.empty())
+-            return aquifer->options.gw_et.empty() ? "NONE"
++            return aquifer->options.gw_et.empty() ? "AUTO"
+                                                   : aquifer->options.gw_et;
+         // GROUNDWATER is deliberately NOT resolved here: like INFILTRATION it
+         // reports AUTO | YES | NO exactly AS STORED, so a host round-trips
+--- a/src/engine/2d/output/Default2DOutputPlugin.cpp
++++ b/src/engine/2d/output/Default2DOutputPlugin.cpp
+@@ -895,7 +895,16 @@
+             &snap.gw2d_table_elev, &snap.gw2d_hg, &snap.gw2d_hu, &snap.gw2d_recharge,
+             &snap.gw2d_lateral, &snap.gw2d_node_exchange, &snap.gw2d_deep, &snap.gw2d_et,
+             &snap.gw2d_dunne, &snap.gw2d_infil_in, &snap.gw2d_link_seepage,
+-            &snap.gw2d_infil_capacity, &snap.gw2d_infil_remaining, &snap.gw2d_infil_refresh, &snap.gw2d_infil_pending, &snap.gw2d_reject, &snap.gw2d_reject_cum, &snap.gw2d_dunne_cum};   // G-X3
++            &snap.gw2d_infil_capacity, &snap.gw2d_infil_remaining, &snap.gw2d_infil_refresh, &snap.gw2d_infil_pending, &snap.gw2d_reject, &snap.gw2d_reject_cum, &snap.gw2d_dunne_cum,
++                &snap.gw2d_et_pending,
++                &snap.gw2d_et_potential_cum,
++                &snap.gw2d_et_surface_cum,
++                &snap.gw2d_et_soil_cum,
++                &snap.gw2d_et_unused_cum,
++                &snap.gw2d_et_surface,
++                &snap.gw2d_et_potential,
++                &snap.gw2d_et_stress,
++                &snap.gw2d_et_refresh};
+         for (int k = 0; k < kGwFaceFields; ++k) face(ds_gw_face_[k], *fields[k]);
+         if (ds_gw_ledger_ != H5I_INVALID_HID && snap.gw2d_ledger.size() == kGwLedgerTerms)
+             extendAndWrite2D(ds_gw_ledger_, snap.gw2d_ledger.data(), kGwLedgerTerms);
+@@ -973,6 +982,15 @@
+         {"Mesh2_face_gw_reject", "Rejected top-interface delivery returned to surface", "m3 s-1"},
+         {"Mesh2_face_gw_reject_cum", "Cumulative rejected top-interface delivery", "m3"},
+         {"Mesh2_face_gw_dunne_cum", "Cumulative physical saturation excess", "m3"},
++        {"Mesh2_face_et_pending", "Atmospheric demand awaiting the aquifer firing", "m3"},
++        {"Mesh2_face_et_potential_cum", "Cumulative single atmospheric demand", "m3"},
++        {"Mesh2_face_et_surface_cum", "Cumulative actual surface evaporation", "m3"},
++        {"Mesh2_face_et_soil_cum", "Cumulative actual soil ET", "m3"},
++        {"Mesh2_face_et_unused_cum", "Cumulative unused expired atmospheric demand", "m3"},
++        {"Mesh2_face_et_surface", "Actual surface evaporation last surface interval", "m s-1"},
++        {"Mesh2_face_et_potential", "Potential atmospheric loss last surface interval", "m s-1"},
++        {"Mesh2_face_et_stress", "Single stress factor at the soil ET extraction location", "1"},
++        {"Mesh2_face_et_refresh", "End of the last integrated surface ET interval", "s"},
+     };
+     for (int k = 0; k < kGwFaceFields; ++k) {
+         hid_t ds = createUnlimitedDataset(kFields[k].name, 2, zero2, face_chunk);
+--- a/src/engine/2d/output/Default2DOutputPlugin.hpp
++++ b/src/engine/2d/output/Default2DOutputPlugin.hpp
+@@ -264,15 +264,9 @@
+     /// [nTime, mLayers, nFace]. Created lazily on the first update() with a
+     /// live kernel; absent otherwise. `Mesh2_face_gw_bed_elev` and
+     /// `Mesh2_face_gw_closure` are static [nFace] and written once.
+-    static constexpr int kGwFaceFields = 18;   // G-X3: + Mesh2_face_gw_link_seepage
++    static constexpr int kGwFaceFields = 27;   // G-X3: + Mesh2_face_gw_link_seepage
+     static constexpr hsize_t kGwLedgerTerms = 15;   // G-X3: + link (LED 10), residual last
+-    hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID,
+-                                          H5I_INVALID_HID};
++    hid_t   ds_gw_face_[kGwFaceFields] = {H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID, H5I_INVALID_HID};
+     hid_t   ds_gw_ledger_          = H5I_INVALID_HID;
+     /// T7.5: the aquifer's species fields, created with the rest of the
+     /// groundwater group when the kernel carries a tuple.
+--- a/src/engine/2d/solver/ExplicitInertialSolver.cpp
++++ b/src/engine/2d/solver/ExplicitInertialSolver.cpp
+@@ -426,7 +426,10 @@
+         evapSink(state_->evap_rate[i], state_->depth[i], opts_->dry_depth)) * area_dt;
+     const double back = gw_ ? gw_->takeToSurface(i) : 0.0;
+     if (rain == 0.0 && coupling == 0.0 && requested_infil == 0.0 &&
+-        requested_evap == 0.0 && back == 0.0) return false;
++        requested_evap == 0.0 && back == 0.0) {
++        if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],0.0);
++        return false;
++    }
+ 
+     const double incoming = rain + std::max(coupling, 0.0) + back;
+     const double available = std::max(0.0, state_->volume[i] + incoming);
+@@ -438,6 +441,7 @@
+     const double infil = gw_ ? gw_->acceptSurfaceInfiltration(i, requested_infil * scale)
+                              : requested_infil * scale;
+     const double evap = requested_evap * scale;
++    if(gw_)gw_->bookSurfaceEt(i,dt,state_->evap_rate[i],evap);
+     const double out = requested_out * scale;
+     state_->infil_applied[i] += infil / area;
+     state_->coupling_applied[i] += std::max(coupling, 0.0) - out;
+--- a/src/engine/2d/subsurface/SigmaColumn.cpp
++++ b/src/engine/2d/subsurface/SigmaColumn.cpp
+@@ -185,10 +185,10 @@
+         // the Feddes stress at its own suction — no `if (infil <= 0)` gate.
+         const double avail = std::max(th_top - p.theta_r, 0.0) * dz0 / st.dt;
+         const double psi_top = psiOf(th_top);
+-        // Wilting suction from the law's own residual end: the suction at
+-        // 1 % effective saturation is a stable, law-agnostic proxy.
+-        const double psi_w = soil::suctionAtSaturation(p, 0.01);
++        // The reviewed wilting suction is a shared SI model parameter.
++        const double psi_w = st.wilting_suction;
+         const double stress = soil::feddesStress(psi_top, psi_w);
++        st.et_stress=stress;
+         st.et_taken = std::min(std::max(st.q_et, 0.0) * stress, avail);
+         f[0] = st.f_top - st.et_taken;
+     }
+@@ -224,6 +224,9 @@
+             }
+         }
+     }
++
++    // Positivity sharing may reduce the net top export; report actual ET.
++    st.et_taken=std::max(0.0,st.f_top-f[0]);
+ 
+     // ---- 6. Update w, then re-derive θ from the NEW geometry. This is where
+     //         the layers compress: same water, new dz.
+--- a/src/engine/2d/subsurface/SigmaColumn.hpp
++++ b/src/engine/2d/subsurface/SigmaColumn.hpp
+@@ -91,6 +91,8 @@
+     double L_new   = 1.0;    ///< …and after (m). `L̇ = (L_new − L_old)/dt`.
+     double dt      = 1.0;    ///< the cell's tier step (s)
+     double q_in    = 0.0;    ///< infiltration offered at the top (m/s, ≥ 0)
++    double wilting_suction=150.0; ///< SI suction magnitude; one top-boundary stress evaluation
++    double et_stress=0.0;
+     double q_et    = 0.0;    ///< ET demand at the top (m/s, ≥ 0)
+     double handover_theta = -1.0; ///< <0: actual bottom layer; otherwise paired table storage coefficient
+     double q0_phys = 0.0;    ///< physical Darcy flux across the table (m/s)
+--- a/src/engine/2d/subsurface/SubsurfaceData.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceData.cpp
+@@ -71,6 +71,10 @@
+     infil_remaining.assign(nn, std::numeric_limits<double>::quiet_NaN()); infil_interval.assign(nn, 0.0);
+     wetting_front.assign(nn, 0.0); reject_last.assign(nn, 0.0);
+     reject_cumulative.assign(nn, 0.0); dunne_cumulative.assign(nn, 0.0);
++    et_pending.assign(nn,0.0); et_potential_cumulative.assign(nn,0.0);
++    et_surface_cumulative.assign(nn,0.0); et_soil_cumulative.assign(nn,0.0); et_unused_cumulative.assign(nn,0.0);
++    et_surface_last.assign(nn,std::numeric_limits<double>::quiet_NaN());
++    et_potential_last=et_surface_last; et_stress=et_surface_last; et_refresh=et_surface_last;
+     qlink_last.assign(nn, 0.0);   // G-X3
+ 
+     dt_cell.assign(nn, 0.0);
+--- a/src/engine/2d/subsurface/SubsurfaceData.hpp
++++ b/src/engine/2d/subsurface/SubsurfaceData.hpp
+@@ -97,7 +97,9 @@
+ /// (the conduit's existing `[LOSSES]` seepage volume is routed to the cells
+ /// it crosses); TWO_WAY replaces the legacy loss law with the signed
+ /// MODFLOW-River conductance, so a conduit below the water table GAINS.
+-enum class GwLinkMode : int8_t { NONE = 0, AUTO = 1, TWO_WAY = 2 };
++/// DEFAULT resolves TWO_WAY on a mesh and one-way in PER_SUBCATCH. Explicit
++/// legacy AUTO is retained as one-way and written canonically as ONE_WAY.
++enum class GwLinkMode : int8_t { NONE = 0, AUTO = 1, TWO_WAY = 2, DEFAULT = 3 };
+ 
+ /// G-X4: one authored `[2D_AQUIFER_LINKS]` row — the per-conduit override of
+ /// the signed exchange. `link` is a NAME until `resolveLinkSeepage` maps it.
+@@ -136,22 +138,27 @@
+     /// it IS the mass balance (G0 sign-off, draft decision 9); the flag
+     /// exists for compatibility comparisons, not as a modelling choice.
+     bool      dunne = true;
+-    /// GW_ET: NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH.
+-    std::string gw_et = "NONE";
++    /// GW_ET AUTO: BOTH for an active mesh aquifer, NONE in PER_SUBCATCH.
++    /// Explicit NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH remain authored.
++    std::string gw_et = "AUTO";
++    double wilting_suction = 150.0; ///< automatic SI default; authored values are project lengths
++    bool wilting_suction_set = false;
+     /// G-X2: `NODE_ENROLMENT AUTO | ROWS`. AUTO (default, program plan
+     /// §B.4b): every node whose [COORDINATES] fall in a mesh cell gets a bed
+     /// (direct Darcy, the cell's area) unless a `[2D_AQUIFER_NODE]` row
+     /// names it — rows override, `EXCHANGE NO` opts out. ROWS: only the
+     /// authored rows exchange (the pre-G-X2 behaviour).
+     bool      node_auto = true;
+-    /// G-X3/G-X4: `LINK_SEEPAGE AUTO | NONE | TWO_WAY`. AUTO (default,
++    /// R3: DEFAULT resolves to TWO_WAY for a mesh, one-way in PER_SUBCATCH.
++    /// ONE_WAY and legacy AUTO preserve explicit one-way delivery.
++    /// G-X3/G-X4: `LINK_SEEPAGE AUTO | NONE | TWO_WAY`. AUTO (legacy,
+     /// program plan §B.4b): every conduit with a [LOSSES] seepage rate whose
+     /// polyline crosses the mesh delivers its seepage volume into the cells
+     /// it crosses, length-weighted (one-way; the 1D still books the loss).
+     /// NONE: seepage is a system loss, as before. TWO_WAY (G-X4): the signed
+     /// conductance law replaces the fixed loss, and a conduit under the
+     /// water table gains.
+-    GwLinkMode link_seepage = GwLinkMode::AUTO;
++    GwLinkMode link_seepage = GwLinkMode::DEFAULT;
+     /// True once any [2D_AQUIFER*] row was authored.
+     bool      authored = false;
+ };
+@@ -224,6 +231,10 @@
+     std::vector<double> infil_capacity, infil_remaining, infil_refresh, infil_interval;
+     std::vector<double> wetting_front, reject_last, reject_cumulative;
+     std::vector<double> dunne_cumulative;
++    // R3: atmospheric demand is integrated at the surface cadence, in m3.
++    std::vector<double> et_pending, et_potential_cumulative, et_surface_cumulative;
++    std::vector<double> et_soil_cumulative, et_unused_cumulative;
++    std::vector<double> et_surface_last, et_potential_last, et_stress, et_refresh;
+     std::vector<double>  qlink_last;  ///< G-X3: conduit seepage delivered in (m³/s)
+ 
+     // ---- LTS ------------------------------------------------------------
+--- a/src/engine/2d/subsurface/SubsurfaceSections.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceSections.cpp
+@@ -157,13 +157,14 @@
+         return "NODE_ENROLMENT must be AUTO or ROWS: " + v;
+     }
+     if (iequals(k, "LINK_SEEPAGE")) {                   // G-X3 / G-X4
+-        if (iequals(v, "AUTO"))    { opts.link_seepage = GwLinkMode::AUTO;    return {}; }
++        if (iequals(v, "DEFAULT")) { opts.link_seepage = GwLinkMode::DEFAULT; return {}; }
++        if (iequals(v, "AUTO") || iequals(v, "ONE_WAY")) { opts.link_seepage = GwLinkMode::AUTO; return {}; }
+         if (iequals(v, "NONE"))    { opts.link_seepage = GwLinkMode::NONE;    return {}; }
+         if (iequals(v, "TWO_WAY")) { opts.link_seepage = GwLinkMode::TWO_WAY; return {}; }
+-        return "LINK_SEEPAGE must be AUTO, NONE or TWO_WAY: " + v;
++        return "LINK_SEEPAGE must be DEFAULT, ONE_WAY (legacy AUTO), NONE or TWO_WAY: " + v;
+     }
+     if (iequals(k, "GW_ET")) {
+-        if (iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
++        if (iequals(v, "AUTO") || iequals(v, "NONE") || iequals(v, "CAPILLARY_RISE") ||
+             iequals(v, "BOUNDARY_ET") || iequals(v, "BOTH")) {
+             opts.gw_et.assign(v.size(), '\0');
+             std::transform(v.begin(), v.end(), opts.gw_et.begin(),
+@@ -173,6 +174,12 @@
+             return {};
+         }
+         return "GW_ET must be NONE, CAPILLARY_RISE, BOUNDARY_ET or BOTH: " + v;
++    }
++    if (iequals(k,"WILTING_SUCTION")) {
++        if(iequals(v,"AUTO")){opts.wilting_suction=150.0;opts.wilting_suction_set=false;return {};}
++        double suction=0.0;
++        if(!num(v,suction)||!std::isfinite(suction)||!(suction>0.0))return "WILTING_SUCTION must be AUTO or a positive finite project length";
++        opts.wilting_suction=suction;opts.wilting_suction_set=true;return {};
+     }
+     return "unknown option: " + k;
+ }
+@@ -614,7 +621,8 @@
+         for (const auto& r : cfg.link_rows) if (r.link == link) return &r;
+         return nullptr;
+     };
+-    const bool two_way = cfg.options.link_seepage == GwLinkMode::TWO_WAY;
++    const bool two_way = cfg.options.link_seepage == GwLinkMode::TWO_WAY ||
++                         (cfg.options.link_seepage == GwLinkMode::DEFAULT && !cfg.options.per_subcatch);
+ 
+     auto xy = [&](int ni, double& x, double& y) -> bool {
+         const auto u = static_cast<std::size_t>(ni);
+@@ -726,13 +734,15 @@
+         if (cfg.options.dunne != d.dunne)
+             kv("DUNNE", cfg.options.dunne ? "YES" : "NO");
+         if (cfg.options.gw_et != d.gw_et) kv("GW_ET", cfg.options.gw_et);
++        if(cfg.options.wilting_suction_set)kv("WILTING_SUCTION",fmt(cfg.options.wilting_suction));
+         if (cfg.options.node_auto != d.node_auto)
+             kv("NODE_ENROLMENT", cfg.options.node_auto ? "AUTO" : "ROWS");   // G-X2
+         if (cfg.options.link_seepage != d.link_seepage)                    // G-X3/G-X4
+             kv("LINK_SEEPAGE",
+                cfg.options.link_seepage == GwLinkMode::NONE    ? "NONE"
+              : cfg.options.link_seepage == GwLinkMode::TWO_WAY ? "TWO_WAY"
+-                                                               : "AUTO");
++                                                               : "ONE_WAY");
++        if(body.empty()&&cfg.rows.empty())kv("GW_ET","AUTO"); // Preserve implicit aquifer configuration.
+         if (!body.empty()) {
+             out += "\n[2D_AQUIFER_OPTIONS]\n";
+             out += body;
+--- a/src/engine/2d/subsurface/SubsurfaceSections.hpp
++++ b/src/engine/2d/subsurface/SubsurfaceSections.hpp
+@@ -28,7 +28,7 @@
+  *
+  * | quantity | US | SI |
+  * |---|---|---|
+- * | lengths — `ZS`, `PSI_B`, `HG0`, `DC` | ft | m |
++ * | lengths — `ZS`, `PSI_B`, `HG0`, `DC`, `WILTING_SUCTION` | ft | m |
+  * | rates — `KS`, `C_LOSS`, `KC`        | in/hr | mm/hr |
+  * | inverse lengths — `ALPHA`           | 1/ft | 1/m |
+  * | areas — `AREA`                      | ft² | m² |
+@@ -53,7 +53,13 @@
+  * FORCE_CLOSED_FORM NO
+  * MODE           MESH | PER_SUBCATCH
+  * DUNNE          YES
+- * GW_ET          NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH
++ * GW_ET          AUTO | NONE | CAPILLARY_RISE | BOUNDARY_ET | BOTH
++ * WILTING_SUCTION AUTO | positive_project_length
++ * LINK_SEEPAGE   DEFAULT | ONE_WAY | TWO_WAY | NONE
++ * ;; GW_ET AUTO resolves BOTH on a mesh, NONE in PER_SUBCATCH.
++ * ;; LINK_SEEPAGE DEFAULT resolves TWO_WAY on a mesh; legacy AUTO
++ * ;; remains an accepted explicit ONE_WAY spelling.
++ * ;; Automatic wilting suction is 150 m in either project unit system.
+  *
+  * [2D_AQUIFER]
+  * ;;scope         KS      ZS   THETA_S THETA_R ALPHA  [key value]…
+--- a/src/engine/2d/subsurface/SubsurfaceSolver.cpp
++++ b/src/engine/2d/subsurface/SubsurfaceSolver.cpp
+@@ -70,6 +70,7 @@
+ #include <algorithm>
+ #include <cmath>
+ #include <cstdio>
++#include <limits>
+ 
+ namespace openswmm::twoD {
+ 
+@@ -246,6 +247,9 @@
+     if (cfg.empty()) return {};
+ 
+     options_   = cfg.options;
++    if(options_.gw_et=="AUTO")options_.gw_et=options_.per_subcatch?"NONE":"BOTH";
++    if(options_.link_seepage==GwLinkMode::DEFAULT)options_.link_seepage=options_.per_subcatch?GwLinkMode::AUTO:GwLinkMode::TWO_WAY;
++    options_.wilting_suction=cfg.options.wilting_suction_set?cfg.options.wilting_suction*uf.length:150.0;
+     node_beds_ = cfg.node_beds;
+     mesh_  = &mesh;
+     edges_ = &edges;
+@@ -1185,6 +1189,17 @@
+ // the cell firing (steps 3, 7, 12, 14)
+ // ---------------------------------------------------------------------------
+ 
++void SubsurfaceSolver::bookSurfaceEt(int cell,double dt,double rate,double surface) {
++    if(!active()||options_.per_subcatch||cell<0||cell>=state_.n_cells||!(dt>0.0))return;
++    const auto u=static_cast<std::size_t>(cell);
++    const double potential=std::max(0.0,rate)*state_.area[u]*dt;
++    const double taken=std::clamp(surface,0.0,potential);
++    state_.et_pending[u]+=potential-taken;
++    state_.et_potential_cumulative[u]+=potential; state_.et_surface_cumulative[u]+=taken;
++    state_.et_surface_last[u]=taken/(state_.area[u]*dt); state_.et_potential_last[u]=std::max(0.0,rate);
++    state_.et_refresh[u]=(std::isfinite(state_.et_refresh[u])?state_.et_refresh[u]:0.0)+dt;
++}
++
+ void SubsurfaceSolver::fireCell(int i, double dt, SurfaceStateData& surf, double time) {
+     const auto u = static_cast<std::size_t>(i);
+     const int  n = state_.n_cells;
+@@ -1213,29 +1228,16 @@
+     state_.qplus_last[u] = q_in;
+     state_.led_infil_in += infil_vol;
+ 
+-    // --- ET demand (step 7) -----------------------------------------------
+-    // BOUNDARY_ET removes water from the unsaturated column's top with a
+-    // Feddes stress from its mean suction. The retired behaviour was a hard
+-    // `if (infil <= 0)` gate; the smooth multiplier is what §7 asks for, and
+-    // it is why a drying column stops taking ET gradually instead of at a
+-    // step.
+-    double q_et = 0.0;
+-    const bool et_boundary = (options_.gw_et == "BOUNDARY_ET" ||
+-                              options_.gw_et == "BOTH");
+-    const bool et_caprise  = (options_.gw_et == "CAPILLARY_RISE" ||
+-                              options_.gw_et == "BOTH");
+-    if (et_boundary && u < surf.evap_rate.size()) {
+-        const double demand = std::max(surf.evap_rate[u], 0.0);
+-        if (demand > 0.0) {
+-            const double Se = (state_.hu[u] > 0.0 && L0 > kTiny)
+-                ? std::clamp((state_.hu[u] / L0 - state_.theta_r[u]) /
+-                                 std::max(ts - state_.theta_r[u], kTiny),
+-                             1.0e-6, 1.0)
+-                : 1.0e-6;
+-            const double psi   = soil::suctionAtSaturation(p, Se);
+-            const double psi_w = 150.0;   // ≈ −15 bar wilting point, in metres
+-            q_et = demand * soil::feddesStress(psi, psi_w);
+-        }
++    // Surface-cadence demand has already paid actual surface evaporation.
++    const bool et_boundary=(options_.gw_et=="BOUNDARY_ET"||options_.gw_et=="BOTH");
++    const bool et_caprise=(options_.gw_et=="CAPILLARY_RISE"||options_.gw_et=="BOTH");
++    const double budget=options_.per_subcatch?std::max(0.0,surf.evap_rate[u])*A*dt:consumePending(state_.et_pending[u]);
++    double q_et=et_boundary?budget/(A*dt):0.0;
++    if(et_boundary && cl!=GwClosure::SIGMA){
++        const double Se=L0>kTiny?std::clamp((state_.hu[u]/L0-state_.theta_r[u])/std::max(ts-state_.theta_r[u],kTiny),1.0e-6,1.0):1.0;
++        const double psi=cl==GwClosure::ENSLAVED?L0:soil::suctionAtSaturation(p,Se);
++        state_.et_stress[u]=soil::feddesStress(psi,options_.wilting_suction);
++        q_et*=state_.et_stress[u];
+     }
+ 
+     // --- 1. recharge across the table -------------------------------------
+@@ -1274,7 +1276,7 @@
+         // the floor does not bind (every deck that was already right).
+         theta_bot = ts - Sy;
+     }
+-    if (!et_caprise && q0 < 0.0) q0 = 0.0;   // GW_ET NONE: no capillary rise
++    if (cl!=GwClosure::ENSLAVED && !et_caprise && q0 < 0.0) q0 = 0.0;   // GW_ET NONE: no capillary rise
+ 
+     // Availability, the same idiom as every other flux here: a column may not
+     // hand down more than it holds above residual, and the table may not hand
+@@ -1288,10 +1290,22 @@
+                                          0.0) / dt;
+             q0 = std::min(q0, give);
+         } else if (q0 < 0.0) {
+-            const double take = std::max(hg0, 0.0) *
+-                                std::max(ts - state_.theta_r[u], 0.0) / dt;
++            // Already delivered node/pipe withdrawals cannot be refunded
++            // from the aquifer alone. Internal rise spends only the water
++            // remaining after those committed signed exchanges.
++            const double available = std::max(0.0, Sy * hg0 * A
++                                              + lat_vol - node_vol + link_vol);
++            // Leave a few ulps so multiply/divide roundoff cannot make
++            // the saturated update refund an already delivered node debit.
++            const double take = available / (A * dt) * (1.0 - 8.0 * std::numeric_limits<double>::epsilon());
+             q0 = std::max(q0, -take);
+         }
++    }
++    if(cl==GwClosure::CLOSED_FORM)q_et=std::min(q_et,std::max(0.0,state_.hu[u]-state_.theta_r[u]*L0-std::max(0.0,q0)*dt)/dt);
++    if(cl==GwClosure::ENSLAVED){
++        const double donor=std::max(0.0,ts*hg0+soil::equilibriumStorage(p,L0)-soil::equilibriumStorage(p,zs)
++                                       +q_in*dt+(lat_vol-node_vol+link_vol)/A);
++        q_et=std::min(q_et,donor/dt); q0=q_in-q_et;
+     }
+     state_.q0_last[u] = q0;
+ 
+@@ -1409,7 +1423,7 @@
+         }
+     }
+     state_.led_recharge += q0 * A * dt;
+-    if (q0 < 0.0) state_.led_caprise += -q0 * A * dt;
++    if (cl!=GwClosure::ENSLAVED && q0 < 0.0) state_.led_caprise += -q0 * A * dt;
+     state_.led_deep += state_.qdeep_last[u] * A * dt;
+     state_.led_lateral += lat_vol;
+     state_.led_node    += state_.qnode_last[u] * dt;
+@@ -1425,11 +1439,13 @@
+         cs.dt        = dt;
+         cs.q_in      = q_in;
+         cs.q_et      = q_et;
++        cs.wilting_suction=options_.wilting_suction;
+         cs.q0_phys   = q0;
+         cs.handover_theta = ts - Sy;
+         cs.capillary = options_.capillary_diff;
+         sigma::advanceColumn(p, &state_.theta_sigma[u], state_.m_layers, n, cs);
+         rejected = cs.rejected;
++        state_.et_stress[u]=et_boundary?cs.et_stress:std::numeric_limits<double>::quiet_NaN();
+         state_.qet_last[u] = cs.et_taken;
+         state_.led_et += cs.et_taken * A * dt;
+         state_.hu[u] = sigma::columnStorage(&state_.theta_sigma[u],
+@@ -1510,6 +1526,12 @@
+         state_.hu[u] = hu1;
+     }
+ 
++    if(!options_.per_subcatch){
++        const double taken=state_.qet_last[u]*A*dt;
++        state_.et_soil_cumulative[u]+=taken;
++        state_.et_unused_cumulative[u]+=std::max(0.0,budget-taken);
++    }
++
+     // --- 5. Dunne saturation excess (step 12) -----------------------------
+     // Two routes reach the surface twin and they are physically distinct:
+     // `dunne_vol` is the table itself arriving at the ground (`h_g → z_s`),
+--- a/src/engine/2d/subsurface/SubsurfaceSolver.hpp
++++ b/src/engine/2d/subsurface/SubsurfaceSolver.hpp
+@@ -139,6 +139,9 @@
+                            const GwUnitFactors& uf, int n_nodes,
+                            SubsurfaceConfig& cfg,
+                            std::vector<std::string>& warnings);
++
++    /// One surface interval: reserve actual pond evaporation first. No forcing refresh resets this budget.
++    void bookSurfaceEt(int cell,double dt,double potential_rate,double actual_surface_volume);
+ 
+     bool active() const noexcept { return state_.active; }
+     SubsurfaceState&       state()       noexcept { return state_; }
+--- a/src/engine/core/HotStartManager.cpp
++++ b/src/engine/core/HotStartManager.cpp
+@@ -372,7 +372,7 @@
+ 
+     // Header
+     if (!read_pod(is, hs.header.version))    return false;
+-    if (hs.header.version < 1u || hs.header.version > 12u) {
++    if (hs.header.version < 1u || hs.header.version > 13u) {
+         tl_last_io_error = "Unsupported hot start version " +
+                            std::to_string(hs.header.version) + " in '" + path + "'";
+         return false;
+@@ -785,6 +785,8 @@
+         hs.gw_interface.push_back({router->infiltrationElapsed()});
+         hs.gw_interface.push_back(surf.transport.cell_mass);
+     }
++    for(const auto* row:std::vector<const std::vector<double>*>{&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh})hs.gw_interface.push_back(*row);
++    if(router){hs.gw_interface.push_back(router->state().evap_rate);hs.gw_interface.push_back({router->state().evap_loss_total});}
+     return true;
+ #else
+     (void)ctx; (void)hs;
+@@ -904,7 +906,12 @@
+     else fields.resize(21,nullptr);
+     if(router){const auto& surf=router->state();fields.insert(fields.end(),{&surf.volume,&surf.head,&surf.depth,&surf.infil_rate,&surf.infil_applied});}
+     const auto& rows=hs.gw_interface;
+-    if(rows.size()!=(router?29u:21u))return false;
++    const std::size_t base=router?29u:21u;
++    if(rows.size()!=base+(hs.header.version>=13u?(router?11u:9u):0u))return false;
++    if(hs.header.version>=13u){
++        for(std::size_t k=0;k<9;++k)if(rows[base+k].size()!=static_cast<std::size_t>(st->n_cells))return false;
++        if(router&&(rows[base+9].size()!=router->state().evap_rate.size()||rows[base+10].size()!=1))return false;
++    }
+     for(std::size_t k=0;k<fields.size();++k)
+         if(rows[k].size()!=(fields[k]?fields[k]->size():0u))return false;
+     return !router || (rows[26].size()==router->infilCumulative().size()&&rows[27].size()==1&&rows[28].size()==router->state().transport.cell_mass.size());
+@@ -983,6 +990,12 @@
+         }
+         const auto& rows = hs.gw_interface;
+         if (validAquiferInterface(hs,ctx)) {
++            if(hs.header.version>=13u){
++                const std::size_t base=router?29u:21u;
++                std::vector<std::vector<double>*> et={&st->et_pending, &st->et_potential_cumulative, &st->et_surface_cumulative, &st->et_soil_cumulative, &st->et_unused_cumulative, &st->et_surface_last, &st->et_potential_last, &st->et_stress, &st->et_refresh};
++                for(std::size_t k=0;k<et.size();++k)*et[k]=rows[base+k];
++                if(router){router->state().evap_rate=rows[base+9];router->state().evap_loss_total=rows[base+10][0];}
++            }else warn("Hot start V12 lacks pending shared ET demand; atmospheric accounting begins with subsequent surface intervals.");
+             for (std::size_t k=0;k<targets.size();++k) if(targets[k]) *targets[k]=rows[k];
+             if(router){
+                 router->restoreInfiltration(rows[26], rows[27][0]);
+@@ -1107,7 +1120,7 @@
+         }
+     }
+ 
+-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
++    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+     if (!write_file(*hs, path)) {
+         delete hs;
+         return nullptr;
+@@ -1228,7 +1241,7 @@
+         }
+     }
+ 
+-    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 12u);
++    if (!hs->gw_interface.empty()) hs->header.version = std::max(hs->header.version, 13u);
+     if (!write_file(*hs, path)) {
+         delete hs;
+         return nullptr;
+--- a/src/engine/core/HotStartManager.hpp
++++ b/src/engine/core/HotStartManager.hpp
+@@ -199,7 +199,7 @@
+     std::vector<double> gw_hg;           ///< saturated thickness (m)
+     std::vector<double> gw_hu;           ///< unsaturated storage (m of water)
+     std::vector<double> gw_theta_sigma;  ///< closure-B layers, layer-major
+-    std::vector<std::vector<double>> gw_interface; ///< V12: held capacity, pending water/mass, surface intake state
++    std::vector<std::vector<double>> gw_interface; ///< V12: receiving interface; V13 appends pending/cumulative ET and held surface evaporation
+     std::vector<double> gw_ledger;       ///< the cumulative terms (m3): 9, +link since G-X3
+ 
+     /// T7.5 (2026-09-21) — V6 block: the aquifer's TRANSPORTED tuple.
+--- a/src/engine/core/SWMMEngine.cpp
++++ b/src/engine/core/SWMMEngine.cpp
+@@ -7126,6 +7126,15 @@
+             snap.gw2d_reject = g.reject_last;
+             snap.gw2d_reject_cum = g.reject_cumulative;
+             snap.gw2d_dunne_cum = g.dunne_cumulative;
++            snap.gw2d_et_pending = g.et_pending;
++            snap.gw2d_et_potential_cum = g.et_potential_cumulative;
++            snap.gw2d_et_surface_cum = g.et_surface_cumulative;
++            snap.gw2d_et_soil_cum = g.et_soil_cumulative;
++            snap.gw2d_et_unused_cum = g.et_unused_cumulative;
++            snap.gw2d_et_surface = g.et_surface_last;
++            snap.gw2d_et_potential = g.et_potential_last;
++            snap.gw2d_et_stress = g.et_stress;
++            snap.gw2d_et_refresh = g.et_refresh;
+             snap.gw2d_hg            = g.hg;
+             snap.gw2d_hu            = g.hu;
+             snap.gw2d_recharge      = g.q0_last;
+--- a/src/engine/input/geopackage/GeoPackageReader.cpp
++++ b/src/engine/input/geopackage/GeoPackageReader.cpp
+@@ -233,7 +233,7 @@
+     else if (key == "2D_GROUNDWATER")
+         o->groundwater = (val == "AUTO" || val.empty()) ? int8_t{-1}
+                        : ((val == "ON" || val == "YES") ? int8_t{1} : int8_t{0});
+-    else if (key == "2D_GW_ET")       o->gw_et = (val == "NONE") ? "" : val;
++    else if (key == "2D_GW_ET")       o->gw_et = val;
+     // HDF5 results path — restoring it lets SWMMEngine::open re-create the
+     // Default2DOutputPlugin (2D results always stream to HDF5, never gpkg).
+     else if (key == "2D_OUTPUT_FILE")   o->output_file = val;
+--- a/tests/unit/engine/CMakeLists.txt
++++ b/tests/unit/engine/CMakeLists.txt
+@@ -675,6 +675,8 @@
+     # everything between a user's .inp and that kernel. Decks under
+     # tests/output/aquifer_2d.
+     add_gtest_unit(test_engine_2d_aquifer test_2d_aquifer.cpp)
++    add_gtest_unit(test_engine_surface_et_budget test_surface_et_budget.cpp)
++    target_compile_definitions(test_engine_surface_et_budget PRIVATE OPENSWMM_R3_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r3_2026-10-05/models")
+     add_gtest_unit(test_engine_surface_aquifer_receiving test_surface_aquifer_receiving.cpp)
+     target_compile_definitions(test_engine_surface_aquifer_receiving PRIVATE OPENSWMM_R2_OUT="${PROJECT_SOURCE_DIR}/tests/verification/surface_r2_2026-10-05/models")
+     target_compile_definitions(test_engine_2d_aquifer PRIVATE
+--- a/tests/unit/engine/test_2d_aquifer.cpp
++++ b/tests/unit/engine/test_2d_aquifer.cpp
+@@ -882,7 +882,7 @@
+ TEST(Aquifer2D, ConduitSeepageReachesTheAquiferCellsItCrosses) {
+     // (d) x = 1 → 9 at y = 5: 4 m in the upper-left cell, 4 m in the
+     // lower-right one — every metre of C1 is over the mesh.
+-    const SeepResult a = runSeep("seep_auto", seepDeck("", 1.0, 9.0));
++    const SeepResult a = runSeep("seep_auto", seepDeck("LINK_SEEPAGE ONE_WAY", 1.0, 9.0));
+     EXPECT_TRUE(a.warned) << "the enrolment was not announced";
+     EXPECT_GT(a.seep_1d, 1.0e-3) << "the conduit did not seep";
+     EXPECT_GT(a.led_link, 0.0);
+@@ -916,7 +916,7 @@
+ TEST(Aquifer2D, ConduitSeepageIsSharedByTheLengthOverTheMesh) {
+     // (e) x = 5 → 15: the first 5 m lie in the lower-right cell, the rest
+     // is off the mesh — half the seepage arrives, all of it in cell 0.
+-    const SeepResult h = runSeep("seep_half", seepDeck("", 5.0, 15.0));
++    const SeepResult h = runSeep("seep_half", seepDeck("LINK_SEEPAGE ONE_WAY", 5.0, 15.0));
+     EXPECT_TRUE(h.warned);
+     EXPECT_GT(h.seep_1d, 1.0e-3);
+     EXPECT_NEAR(h.led_link + h.pending, 0.5 * h.seep_1d, 1.0e-9 * h.seep_1d)
+@@ -928,14 +928,14 @@
+ 
+     // entirely off the mesh: nothing enrols, nothing arrives, the 1D still
+     // seeps (to nowhere, as before G-X3)
+-    const SeepResult o = runSeep("seep_outside", seepDeck("", 20.0, 30.0));
++    const SeepResult o = runSeep("seep_outside", seepDeck("LINK_SEEPAGE ONE_WAY", 20.0, 30.0));
+     EXPECT_FALSE(o.warned);
+     EXPECT_GT(o.seep_1d, 1.0e-3);
+     EXPECT_EQ(o.led_link, 0.0);
+     EXPECT_EQ(o.pending, 0.0);
+ }
+ 
+-TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndDefaultsToAuto) {   // G-X3
++TEST(Aquifer2D, LinkSeepageOptionRoundTripsAndPreservesLegacyAuto) {   // G-X3
+     DeckRun r = openDeck("seep_rt", seepDeck("LINK_SEEPAGE NONE", 1.0, 9.0));
+     ASSERT_TRUE(r.opened);
+     char buf[16] = {0};
+@@ -951,7 +951,7 @@
+     }
+     ASSERT_EQ(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "AUTO"), SWMM_OK);
+     ASSERT_EQ(swmm_gw2d_option_get(r.e, "LINK_SEEPAGE", buf, sizeof buf), SWMM_OK);
+-    EXPECT_STREQ(buf, "AUTO");
++    EXPECT_STREQ(buf, "ONE_WAY");
+     EXPECT_NE(swmm_gw2d_option_set(r.e, "LINK_SEEPAGE", "MAYBE"), SWMM_OK);
+     finish(r);
+ }
+@@ -1079,7 +1079,7 @@
+     const TwoWayResult down = runTwoWay(
+         "gain_two_way_low", twoWayDeck(2.0, "", "LINK_SEEPAGE TWO_WAY\n", /*drowned=*/true));
+     const TwoWayResult legacy = runTwoWay(
+-        "gain_auto_low", twoWayDeck(2.0, "", "", /*drowned=*/true));
++        "gain_auto_low", twoWayDeck(2.0, "", "LINK_SEEPAGE ONE_WAY\n", /*drowned=*/true));
+     EXPECT_GT(down.seep_loss, 1.0e-3);
+     EXPECT_EQ(down.gw_inflow, 0.0);
+     // The RATE is the invariant, not the cumulative volume: the run starts
+@@ -1096,7 +1096,7 @@
+ TEST(Aquifer2D, LinkSeepageAutoIsUnchangedByTheSignedLaw) {   // gate (g)
+     // AUTO is G-X3: one-way, the legacy rate, whatever the table does. The
+     // high-table deck that gains under TWO_WAY must still LOSE under AUTO.
+-    const TwoWayResult a = runTwoWay("gain_auto_high", twoWayDeck(6.0));
++    const TwoWayResult a = runTwoWay("gain_auto_high", twoWayDeck(6.0, "", "LINK_SEEPAGE AUTO\n"));
+     EXPECT_FALSE(a.warned);
+     EXPECT_GT(a.seep_loss, 1.0e-3) << "AUTO stopped losing";
+     EXPECT_EQ(a.gw_inflow, 0.0) << "AUTO gained — the signed law leaked into it";
+@@ -1205,3 +1205,15 @@
+     EXPECT_LT(std::fabs(resid), 1.0e-6) << "residual " << resid;
+     finish(r);
+ }
++
++TEST(Aquifer2D, AutomaticLinkSeepageUsesTheSignedLaw) {
++    const auto automatic=runTwoWay("default_signed",twoWayDeck(6.0));
++    const auto explicitMode=runTwoWay("explicit_signed",twoWayDeck(6.0,"","LINK_SEEPAGE TWO_WAY\n"));
++    EXPECT_GT(automatic.gw_inflow,0.0);
++    EXPECT_EQ(automatic.seep_loss,explicitMode.seep_loss);
++    EXPECT_EQ(automatic.gw_inflow,explicitMode.gw_inflow);
++    EXPECT_EQ(automatic.storage,explicitMode.storage);
++    EXPECT_EQ(automatic.led_link,explicitMode.led_link);
++    EXPECT_EQ(automatic.pending,explicitMode.pending);
++    EXPECT_LT(std::fabs(automatic.resid),1e-9*automatic.storage+1e-12);
++}
+--- a/tests/unit/engine/test_gw_transport_kernel.cpp
++++ b/tests/unit/engine/test_gw_transport_kernel.cpp
+@@ -1168,7 +1168,10 @@
+     // A seeping conduit over the mesh, no node inflow. The 1D already
+     // debits this mass as its exfiltration loss, so the aquifer receiving
+     // it completes a transfer rather than creating one.
+-    const SeamResult s = runSeam("seam_link", seamDeck(0.5, 0.0, 100.0, 0.0));
++    std::string body=seamDeck(0.5,0.0,100.0,0.0);
++    const std::string anchor="[2D_AQUIFER_OPTIONS]\n";
++    body.insert(body.find(anchor)+anchor.size(),"LINK_SEEPAGE ONE_WAY\n");
++    const SeamResult s = runSeam("seam_link",body);
+     EXPECT_GT(s.gained_link, 0.0)
+         << "a leaking conduit delivered no mass — the seam is still closed";
+     // …and it did not come out of the aquifer's own books: the residual
+--- a/tests/unit/engine/test_surface_aquifer_receiving.cpp
++++ b/tests/unit/engine/test_surface_aquifer_receiving.cpp
+@@ -133,7 +133,7 @@
+  a.subsurface().bookInfiltrationMass(0,0,3.0);
+  a.state().volume[0]-=take;a.state().infil_applied[0]+=take/a.mesh().tri_area[0];
+  const auto file=(std::filesystem::path(OPENSWMM_R2_OUT)/"pending.hsf").string();
+- std::unique_ptr<HotStartFile> saved(HotStartManager::save(original.engine().context(),file));ASSERT_TRUE(saved);EXPECT_EQ(saved->header.version,12u);
++ std::unique_ptr<HotStartFile> saved(HotStartManager::save(original.engine().context(),file));ASSERT_TRUE(saved);EXPECT_EQ(saved->header.version,13u);
+  std::unique_ptr<HotStartFile> loaded(HotStartManager::open(file));ASSERT_TRUE(loaded);
+  auto invalid=*loaded;invalid.gw_interface[21].push_back(1.0);
+  const auto nodes_before=resumed.engine().context().nodes.depth;

@@ -1,11 +1,11 @@
-/*!
- * \file consts.h
- * \brief Header file for SWMM constants.
- * \author L. Rossman
- * \date Created: 2023-07-15
- * \date Last updated: 2024-12-30
- * \version 5.3.0
- * \details
+/**
+ * @file      consts.h
+ * @brief     Header file for SWMM constants.
+ * @author    L. Rossman
+ * @date      Created: 2023-07-15
+ * @date      Last updated: 2024-12-30
+ * @version 5.3.0
+ * @details
  * Various constants used in the SWMM model.
  *
  * Update history
@@ -13,7 +13,13 @@
  * - Build 5.3.0 (2024-12-30)
  *   - Added MAXHOTSTARTFILES constant to support saving multiple hotstart files
  *     at different times.
+ *
+ * @author    Caleb Buahin <caleb.buahin@gmail.com> (OpenSWMM maintenance and extensions)
+ * @copyright Copyright (c) 2026 Caleb Buahin. OpenSWMM contributions only; original EPA SWMM
+ *            credits are retained.
+ * @license   Apache-2.0 for OpenSWMM contributions; original EPA SWMM provenance is retained.
  */
+
 #ifndef CONSTS_H
 #define CONSTS_H
 
@@ -165,7 +171,7 @@
 /*!
  * \def MAXTIMESERIESCACHESIZE
  * \brief Maximum number of time series rows that can be cached to memory to speed up simulation
- * \TODO Allow users to set this value in the input file and GUI
+ * \todo Allow users to set this value in the input file and GUI
  */
 #define MAXTIMESERIESCACHESIZE 10 // maximum number of time series that can be cached
 
@@ -405,7 +411,7 @@
 #define SEPSTR " \t\n\r"
 
 /*!
- * \addtogroup Token_Separators Table Separator Characters
+ * \def TBLSEPSTR
  * \brief Table separator characters
  */
 #define TBLSEPSTR " \t\n\r,"

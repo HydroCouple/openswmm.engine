@@ -1,0 +1,69 @@
+[TITLE]
+InpWriter round-trip fixture: IRREGULAR cross-sections referencing [TRANSECTS]
+The [XSECTIONS] writer had STREET and CUSTOM branches but none for IRREGULAR, so
+the transect NAME was replaced by derived y_full/w_max numerics on save. On
+reload the numeric parsed as an (undefined) transect name, the reference failed
+to resolve silently, and the conduit degenerated to zero area. TRAP_MAIN
+exercises the full X1 tail (banks, Lfactor, Xfactor, Yfactor as an elevation
+offset) and 7 GR pairs so the writer emits more than one GR line; CREEK_A
+carries a 6-decimal station to pin full-precision GR emission; C2 has 2 barrels
+to pin the barrels column surviving in position 7.
+
+[OPTIONS]
+FLOW_UNITS           CFS
+INFILTRATION         HORTON
+FLOW_ROUTING         DYNWAVE
+START_DATE           01/01/2020
+START_TIME           00:00:00
+END_DATE             01/02/2020
+END_TIME             00:00:00
+REPORT_STEP          00:15:00
+WET_STEP             00:05:00
+DRY_STEP             01:00:00
+ROUTING_STEP         0:00:30
+MIN_SLOPE            0
+
+[EVAPORATION]
+CONSTANT   0.0
+DRY_ONLY   NO
+
+[JUNCTIONS]
+;;Name  Elev  MaxDepth  InitDepth  SurDepth  Aponded
+J1       10.0  8.0       0          0         0
+J2       9.0   8.0       0          0         0
+
+[OUTFALLS]
+;;Name  Elev  Type  StageData  Gated
+O1       8.0   FREE  *          NO
+
+[CONDUITS]
+;;Name  FromNode  ToNode  Length  Roughness  InOffset  OutOffset
+C1       J1        J2      400.0   0.013      0         0
+C2       J2        O1      400.0   0.013      0         0
+
+[XSECTIONS]
+;;Link  Shape      Geom1      Geom2  Geom3  Geom4  Barrels
+C1       IRREGULAR  TRAP_MAIN
+C2       IRREGULAR  CREEK_A    0      0      0      2
+
+[TRANSECTS]
+NC 0.015    0.015    0.030
+X1 TRAP_MAIN 7        20.0     80.0     0        0        1.5      2.0      0.5
+GR 10.0     0        8.0      20.0     6.0      40.0     5.5      50.0     6.0      60.0
+GR 8.0      80.0     10.0     100.0
+NC 0.020    0.020    0.035
+X1 CREEK_A   6        10.0     30.0     0        0        0        0        0
+GR 5.0      0        3.0      10.0     2.0      12.123456 2.0     20.0     3.5      30.0
+GR 5.0      40.0
+
+[REPORT]
+INPUT       NO
+CONTROLS    NO
+NODES       ALL
+LINKS       ALL
+
+[COORDINATES]
+;;Node  X-Coord  Y-Coord
+J1       0.0      0.0
+J2       500.0    0.0
+O1       1000.0   0.0

@@ -20,11 +20,15 @@ class MassBalance:
 
     @property
     def runoff_continuity_error(self) -> float:
-        """Runoff continuity (mass-balance) error, as a percentage."""
+        """Runoff continuity (mass-balance) error as a fraction (0.001 means 0.1%)."""
         ...
     @property
     def routing_continuity_error(self) -> float:
-        """Flow-routing continuity (mass-balance) error, as a percentage."""
+        """Flow-routing continuity (mass-balance) error as a fraction (0.001 means 0.1%)."""
+        ...
+    @property
+    def routing_report_continuity_error(self) -> float:
+        """Flow-routing continuity error as the report prints it, as a fraction (0.001 means 0.1%)."""
         ...
     @property
     def routing_diagnostics(self) -> RoutingDiagnostics:

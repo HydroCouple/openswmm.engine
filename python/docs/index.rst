@@ -1,7 +1,3 @@
-.. image:: images/hydrocouple_logo.png
-   :alt: HydroCouple Logo
-   :width: 200px
-
 ========
 OpenSWMM
 ========
@@ -137,7 +133,7 @@ Project at a glance
    * - **Build system**
      - scikit-build-core + CMake + Cython.
    * - **License**
-     - MIT.
+     - Apache License, Version 2.0.
 
 Related documentation
 =====================

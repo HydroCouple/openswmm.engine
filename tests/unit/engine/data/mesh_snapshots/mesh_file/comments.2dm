@@ -1,0 +1,18 @@
+;; header comment
+[2D_VERTICES] ; trailing
+; full line
+0 0 1 ; c
+10 0 1 ; c
+10 10 1.5 ; c
+0 10 1.25 ; c
+5 5 0.5 ; c
+20 0 1 ; c
+20 10 1 ; c
+;;
+;
+[2D_TRIANGLES];x
+0 1 4 0.03
+1 2 4 0.03
+2 3 4 0.03
+3 0 4 0.03
+; tail

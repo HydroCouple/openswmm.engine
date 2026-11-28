@@ -1,0 +1,32 @@
+{
+  "baseline_commit": "85ebe25152bf516355d2702944242b856479a4f8",
+  "baseline_working_changes": false,
+  "candidate_patch_sha256": "0b80e8e02868608a22c0c6b0cd8901b82f1768da1f93e27d05d484f3a45a4400",
+  "baseline_engine_sha256": "549bb2b2dff5cee14f724a5cecc0d4ce56df062f7e8c0cceadcbcee3304e37b7",
+  "candidate_engine_sha256": "67ca5d1a760fa3cd04901db7e8b33e6aa66c93f5e3a3a2c47bbf68da831f52a7",
+  "p0a_staged_engine_sha256": "87a77515e6f161f9554e0c4a440187c3aa689bb56d6d8db1a492080960d3d363",
+  "corpus": {
+    "identical": 25,
+    "moved": 0,
+    "missing": 0
+  },
+  "mesh_census": {
+    "identical": 7,
+    "moved": 0,
+    "skipped": 3
+  },
+  "api_trajectories": {
+    "identical": 12,
+    "fields": [
+      "elapsed_days",
+      "depth_m",
+      "held_rate_m_s",
+      "applied_depth_m",
+      "infil_volume_m3"
+    ]
+  },
+  "engine_suites": {
+    "passed": 6,
+    "failed": 0
+  }
+}
