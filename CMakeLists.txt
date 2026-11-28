@@ -116,6 +116,7 @@ option(OPENSWMM_BUILD_UNIT_TESTS  "Build unit tests only" OFF)
 option(OPENSWMM_BUILD_GPU_TESTS "Build Kokkos parity tests against the current engine (requires unit tests and GPU plugin)" OFF)
 option(OPENSWMM_BUILD_REGRESSION_TESTS "Build regression tests only" OFF)
 option(OPENSWMM_BUILD_BENCHMARKS  "Build Google Benchmark performance tests" OFF)
+option(OPENSWMM_BUILD_FUZZERS     "Build fuzz targets for untrusted inputs (tests/fuzz; libFuzzer when available)" OFF)
 option(OPENSWMM_BUILD_FV_BASELINE "Build the native implicit-FV feasibility baseline driver" OFF)
 option(OPENSWMM_INSTALL           "Install openswmm libraries" ON)
 option(OPENSWMM_BUILD_PYTHON      "Build Python bindings" OFF)
@@ -498,6 +499,10 @@ add_subdirectory(src)
 # sees the imported runtime targets created during the engine configure.
 if(OPENSWMM_BUILD_UNIT_TESTS OR OPENSWMM_BUILD_REGRESSION_TESTS)
     add_subdirectory(tests)
+endif()
+
+if(OPENSWMM_BUILD_FUZZERS)
+    add_subdirectory(tests/fuzz)
 endif()
 
 if(OPENSWMM_BUILD_BENCHMARKS)

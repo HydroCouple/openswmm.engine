@@ -359,8 +359,10 @@ int SWMMEngine::open(const char* inp_path, const char* rpt_path, const char* out
 
     // Zero the load-phase accumulators so a process that opens several models
     // reports each one separately (see core/PerfTimers.hpp).
-    perf::reset_load();
-    perf::reset_fv();
+    if (perf::enabled()) {
+        perf::reset_load();
+        perf::reset_fv();
+    }
 
     // Stamp the report wall clock before any parsing work. Legacy takes this
     // timestamp in report_writeLogo(), which swmm_open() calls before
@@ -1907,7 +1909,8 @@ int SWMMEngine::initialize() noexcept {
     ctx_.next_report_ms = 1000.0 * ctx_.options.report_step;
     new_rule_time_ms_ = 0.0; // legacy NewRuleTime (routing.c:131)
 
-    perf::sec_init_state += perf::since(_pt_state0);
+    if (perf::enabled())
+        perf::sec_init_state += perf::since(_pt_state0);
 
     // Initialize all computational modules (batch SoA setup)
     init_modules();
@@ -2268,7 +2271,8 @@ int SWMMEngine::start(int save_results) noexcept {
                                   "supported by this engine and was ignored");
     }
 
-    perf::sec_start_iface += perf::since(_pt_iface0);
+    if (perf::enabled())
+        perf::sec_start_iface += perf::since(_pt_iface0);
 
     // Phase 4: call prepare() on all plugins (opens output files/headers)
     if (!plugins_.empty()) {

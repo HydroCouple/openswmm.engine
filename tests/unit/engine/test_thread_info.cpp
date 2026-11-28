@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -167,6 +168,25 @@ TEST(ThreadInfo, ExplicitAboveLogicalIsHonouredAndWarned) {
     EXPECT_TRUE(hasWarningContaining(w, "logical processors"));
     EXPECT_TRUE(ti::isOversubscribed(req));
     EXPECT_FALSE(ti::isOversubscribed(logical));
+}
+
+// Deliberate oversubscription is honoured (above), but only up to a ceiling:
+// THREADS 2147483647 must not ask the runtime for a 2^31 team (fuzz F2).
+TEST(ThreadInfo, ExplicitAboveCeilingIsLoweredAndWarned) {
+    const int ceiling = ti::maxExplicitThreads();
+    EXPECT_GE(ceiling, ti::kMaxThreadsUnknownCpus);
+    EXPECT_GE(ceiling, ti::logicalCpus() * ti::kMaxThreadsPerLogicalCpu);
+
+    std::vector<std::string> w;
+    EXPECT_EQ(ti::resolveRequested(ceiling, "test", &w), ceiling);
+    EXPECT_FALSE(hasWarningContaining(w, "ceiling"));
+
+    for (const int req : {ceiling + 1, 1215752191, std::numeric_limits<int>::max()}) {
+        std::vector<std::string> wc;
+        EXPECT_EQ(ti::resolveRequested(req, "test", &wc), ceiling) << req;
+        EXPECT_TRUE(hasWarningContaining(wc, "ceiling")) << req;
+        EXPECT_EQ(ti::resolveRequested(req, "test", nullptr), ceiling) << req;
+    }
 }
 
 namespace {

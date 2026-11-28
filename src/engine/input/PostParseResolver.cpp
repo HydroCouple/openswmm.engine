@@ -2313,7 +2313,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         // ---------------------------------------------------------------------
         load_external_rain_files_impl(ctx, series_file_cache);
     }
-    perf::sec_res_extfiles += perf::since(_pt_extfiles0);
+    if (perf::enabled())
+        perf::sec_res_extfiles += perf::since(_pt_extfiles0);
 
     // -------------------------------------------------------------------------
     // Timeseries date offset resolution
@@ -2721,7 +2722,8 @@ void resolve_cross_references(SimulationContext& ctx) {
     // index field, only ts_name, and InflowSolver::init resolves the name
     // itself (hydrology/Inflow.cpp). This used to run find_timeseries() once
     // per external inflow and discard the result.
-    perf::sec_res_tables += perf::since(_pt_tables0);
+    if (perf::enabled())
+        perf::sec_res_tables += perf::since(_pt_tables0);
 
     // -------------------------------------------------------------------------
     // [INFLOWS] / [DWF] / [RDII] node re-resolution
@@ -3861,7 +3863,8 @@ void resolve_cross_references(SimulationContext& ctx) {
         ctx.links.xsect_yw_max[uj] = yw_max;
     }
 
-    perf::sec_res_xsect += perf::since(_pt_xsect0);
+    if (perf::enabled())
+        perf::sec_res_xsect += perf::since(_pt_xsect0);
 
     // -------------------------------------------------------------------------
     // Conduit slope computation (matches legacy conduit_getSlope in link.c)

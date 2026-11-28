@@ -1,0 +1,194 @@
+name: Native assurance
+
+# Thread-safety, coverage and fuzzing for the native engine: the three checks
+# Native code quality (ASan, UBSan, clang-tidy) does not run.
+#
+#   tsan      unit tests under ThreadSanitizer with OpenMP at 4 threads, so the
+#             parallel kernels actually run concurrently. libomp is not built
+#             with TSan, so its runtime is observed through the Archer OMPT
+#             tool; without Archer every OpenMP barrier would be a false race.
+#   coverage  clang source-based line/region coverage of the engine library
+#             over the unit tests; summary in the job page, lcov as artifact.
+#   fuzz      libFuzzer on tests/fuzz targets with ASan+UBSan, seeded from the
+#             repository's own small decks. A crash fails the job and uploads
+#             the reproducer.
+#
+# TSan and coverage start report-only (continue-on-error) until a first
+# baseline is reviewed; fuzz gates from the start, because a crash on an
+# input file is a defect whatever the baseline.
+
+# Nightly and manual only, to keep these long jobs off every pull request.
+# GitHub runs scheduled and workflow_dispatch workflows from the copy of this
+# file on the repository's default branch, so neither trigger fires until the
+# file is there.
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: Seconds of fuzzing per target
+        default: '1800'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CC: clang-19
+  CXX: clang++-19
+
+jobs:
+  tsan:
+    name: ThreadSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-19 libclang-rt-19-dev \
+            libomp-19-dev libgtest-dev libgmock-dev libsqlite3-dev libhdf5-dev
+      - name: Locate the Archer OpenMP tool
+        id: archer
+        run: |
+          lib=$(find /usr/lib/llvm-19 -name 'libarcher.so' | head -1)
+          if [[ -z "$lib" ]]; then
+            echo "::warning::libarcher.so not found; OpenMP regions will report false races"
+          fi
+          echo "lib=$lib" >> "$GITHUB_OUTPUT"
+      - name: Configure
+        run: |
+          export CFLAGS="-fsanitize=thread -fno-omit-frame-pointer -g1"
+          export CXXFLAGS="$CFLAGS"
+          export LDFLAGS="-fsanitize=thread"
+          cmake -S . -B build/tsan -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DOPENSWMM_BUILD_UNIT_TESTS=ON -DOPENSWMM_BUILD_GPU_PLUGIN=OFF \
+            -DOPENSWMM_ENGINE_FORCE_OPTIMIZED=OFF -DOPENSWMM_ENABLE_LTO=OFF \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+      - run: cmake --build build/tsan --parallel 2
+      - name: Run unit tests at 4 OpenMP threads
+        env:
+          OMP_NUM_THREADS: 4
+          OMP_TOOL_LIBRARIES: ${{ steps.archer.outputs.lib }}
+          TSAN_OPTIONS: halt_on_error=0:second_deadlock_stack=1:report_signal_unsafe=0
+        run: >-
+          ctest --test-dir build/tsan -L unit --no-tests=error --parallel 1 --timeout 1800
+          --output-on-failure
+          -E "^(test_engine_checkpoint|test_engine_2d_exchange_rubinato_model)$"
+
+  # Possibly droppable: coverage reports which lines the unit tests reach but
+  # gates nothing and finds no bugs by itself (report-only below). Keep it only
+  # if someone reads the numbers; deleting this job does not affect tsan/fuzz.
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-19 llvm-19 libclang-rt-19-dev \
+            libomp-19-dev libgtest-dev libgmock-dev libsqlite3-dev libhdf5-dev
+      - name: Configure
+        run: |
+          export CFLAGS="-fprofile-instr-generate -fcoverage-mapping"
+          export CXXFLAGS="$CFLAGS"
+          export LDFLAGS="-fprofile-instr-generate"
+          cmake -S . -B build/cov -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS_DEBUG="-O1 -g1" -DCMAKE_CXX_FLAGS_DEBUG="-O1 -g1" \
+            -DOPENSWMM_BUILD_UNIT_TESTS=ON -DOPENSWMM_BUILD_GPU_PLUGIN=OFF \
+            -DOPENSWMM_ENGINE_FORCE_OPTIMIZED=OFF -DOPENSWMM_ENABLE_LTO=OFF \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+      - run: cmake --build build/cov --parallel 2
+      - name: Run unit tests
+        env:
+          OMP_NUM_THREADS: 1
+          LLVM_PROFILE_FILE: ${{ github.workspace }}/build/cov/profiles/%p-%m.profraw
+        run: >-
+          ctest --test-dir build/cov -L unit --no-tests=error --parallel 2 --timeout 1800
+          -E "^(test_engine_checkpoint|test_engine_2d_exchange_rubinato_model)$"
+      - name: Report
+        if: always()
+        run: |
+          set -euo pipefail
+          llvm-profdata-19 merge -sparse build/cov/profiles/*.profraw -o build/cov/merged.profdata
+          lib=$(find build/cov -name 'libopenswmm.engine.so*' -type f | head -1)
+          ignore='(/tests/|/usr/|_deps/|vcpkg_installed/)'
+          llvm-cov-19 report "$lib" -instr-profile=build/cov/merged.profdata \
+            -ignore-filename-regex="$ignore" > build/cov/report.txt
+          llvm-cov-19 export "$lib" -instr-profile=build/cov/merged.profdata \
+            -ignore-filename-regex="$ignore" -format=lcov > build/cov/engine.lcov
+          {
+            echo "### Engine coverage (unit tests)"
+            echo '```'
+            tail -3 build/cov/report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-coverage
+          path: |
+            build/cov/report.txt
+            build/cov/engine.lcov
+          retention-days: 30
+
+  fuzz:
+    name: Fuzz (libFuzzer, ASan+UBSan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install CPU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-19 libclang-rt-19-dev \
+            libomp-19-dev libsqlite3-dev libhdf5-dev
+      - name: Configure
+        run: |
+          export CFLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g1"
+          export CXXFLAGS="$CFLAGS"
+          export LDFLAGS="-fsanitize=address,undefined"
+          cmake -S . -B build/fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DOPENSWMM_BUILD_FUZZERS=ON -DOPENSWMM_BUILD_GPU_PLUGIN=OFF \
+            -DOPENSWMM_ENGINE_FORCE_OPTIMIZED=OFF -DOPENSWMM_ENABLE_LTO=OFF \
+            -DCMAKE_CXX_SCAN_FOR_MODULES=OFF -DOPENSWMM_2D_HDF5_OUTPUT=OFF
+      - run: cmake --build build/fuzz --target fuzz_inp_open --parallel 2
+      - name: Collect seeds
+        run: |
+          mkdir -p fuzz/seeds fuzz/corpus fuzz/artifacts
+          # Numbered names: many decks share a basename (model.inp).
+          i=0
+          while IFS= read -r -d '' f; do
+            i=$((i+1)); cp "$f" "fuzz/seeds/$(printf '%04d' "$i")_$(basename "$f")"
+          done < <(find examples tests -name '*.inp' -size -64k -print0)
+          echo "$i seed decks"
+      - name: Fuzz fuzz_inp_open
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          SECONDS_PER_TARGET: ${{ github.event.inputs.fuzz_seconds || '1800' }}
+        run: >-
+          build/fuzz/tests/fuzz/fuzz_inp_open fuzz/corpus fuzz/seeds
+          -max_total_time="$SECONDS_PER_TARGET" -timeout=20 -rss_limit_mb=4096
+          -max_len=262144 -artifact_prefix=fuzz/artifacts/ -print_final_stats=1
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-crashes
+          path: fuzz/artifacts/
+          retention-days: 30
