@@ -611,7 +611,7 @@ void RunoffSolver::execute(SimulationContext& ctx, double dt, double evap_rate_i
             // If evaporation + infiltration >= total available moisture,
             // all water is consumed — no runoff, depth goes to zero.
             double runoff_rate = 0.0;
-            double t_runoff = dt; // legacy tRunoff
+            double t_runoff = dt;       // legacy tRunoff
             double exact_outflow = 0.0; // EXACT: alpha (depth - dStore)^m at the end of the step
             bool have_exact_outflow = false;
             if (surfEvap + infil >= surfMoisture) {
