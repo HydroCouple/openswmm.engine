@@ -171,6 +171,14 @@ IView devCopy(const char* name, const std::vector<int>& v) {
     return d;
 }
 
+// On a host-resident execution space (OpenMP, Serial) the "device" views live in host
+// memory, and Kokkos::deep_copy still runs a parallel kernel and a fence for what is a
+// memcpy: ~0.25 ms per 27k-double array on a loaded machine, and the publish does about
+// twenty of them per routing step (Bellinge 6 h: 7.4 s of copies, 3.8 s of fills, against
+// 3.0 s of face fluxes). Copy and fill directly there; a real device space keeps deep_copy.
+constexpr bool kHostResident =
+    Kokkos::SpaceAccessibility<Kokkos::HostSpace, ExecSpace::memory_space>::accessible;
+
 /**
  * @brief Refresh an existing device view from a host vector (no realloc).
  *
@@ -179,9 +187,14 @@ IView devCopy(const char* name, const std::vector<int>& v) {
  * @param[in] v Borrowed host values, stable through synchronous deep_copy; not retained.
  * @note Replaces device contents, without allocation of the destination or shape validation
  * here. Requires initialized Kokkos and serialized view access; Kokkos failure propagates/aborts
- * per runtime.
+ * per runtime. On a host-resident space this is a memcpy.
  */
 void devRefresh(const DView& d, const std::vector<double>& v) {
+    if constexpr (kHostResident) {
+        if (!v.empty())
+            std::memcpy(d.data(), v.data(), v.size() * sizeof(double));
+        return;
+    }
     Kokkos::View<const double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(
         v.data(), v.size());
     Kokkos::deep_copy(d, h);
@@ -195,12 +208,29 @@ void devRefresh(const DView& d, const std::vector<double>& v) {
  * @param[in] d Readable execution-space double view, not modified.
  * @note Copies synchronously through an unmanaged HostSpace view; never resizes v or retains its
  * address. Caller serializes device/host owner access. Kokkos failure propagates/aborts per
- * runtime.
+ * runtime. On a host-resident space this is a memcpy; the caller's fence has already completed
+ * the kernels that wrote d.
  */
 void hostRefresh(std::vector<double>& v, const DView& d) {
+    if constexpr (kHostResident) {
+        if (!v.empty())
+            std::memcpy(v.data(), d.data(), v.size() * sizeof(double));
+        return;
+    }
     Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(v.data(),
                                                                                         v.size());
     Kokkos::deep_copy(h, d);
+}
+
+/**
+ * @brief Zero an execution-space double view.
+ * @param[in] d Writable view; on a host-resident space a plain fill, otherwise deep_copy(d, 0).
+ */
+void zeroFill(const DView& d) {
+    if constexpr (kHostResident)
+        std::fill_n(d.data(), d.extent(0), 0.0);
+    else
+        Kokkos::deep_copy(d, 0.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -3350,7 +3380,7 @@ void ExplicitKokkosSurfaceSolver::pushNodeState() {
 
 void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_target) {
     const int ne = edges_.ne;
-    Kokkos::deep_copy(d_edge_flux_, 0.0);
+    zeroFill(d_edge_flux_);
     {
         auto ef = d_edge_flux_;
         auto cLv = d_cL_, cRv = d_cR_, slotL = d_slotL_, slotR = d_slotR_;
@@ -3421,16 +3451,16 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         state_->boundary_last_flow[k] = bc_last_flow_host_[k];
         state_->boundary_last_dt[k] = bc_last_dt_host_[k];
     }
-    Kokkos::deep_copy(d_bc_in_, 0.0);
-    Kokkos::deep_copy(d_bc_out_, 0.0);
-    Kokkos::deep_copy(d_bc_requested_, 0.0);
+    zeroFill(d_bc_in_);
+    zeroFill(d_bc_out_);
+    zeroFill(d_bc_requested_);
 
     // Fixed cell-order host fold avoids a floating-point device sum and drains
     // only once per publication, including exact macro-cycle landings.
     hostRefresh(evap_applied_host_, d_evap_applied_);
     for (double v : evap_applied_host_)
         state_->evap_loss_total += v;
-    Kokkos::deep_copy(d_evap_applied_, 0.0);
+    zeroFill(d_evap_applied_);
 
     // Drain the applied-infiltration accumulator ADDITIVELY: the host array is
     // consumed and zeroed by the mass balance on the routing-step cadence,
@@ -3439,11 +3469,11 @@ void ExplicitKokkosSurfaceSolver::publishAndCopyBack(double t_current, double t_
         hostRefresh(infil_applied_host_, d_infil_applied_);
         for (std::size_t i = 0; i < infil_applied_host_.size(); ++i)
             state_->infil_applied[i] += infil_applied_host_[i];
-        Kokkos::deep_copy(d_infil_applied_, 0.0);
+        zeroFill(d_infil_applied_);
         hostRefresh(coupling_applied_host_, d_coupling_applied_);
         for (std::size_t i = 0; i < coupling_applied_host_.size(); ++i)
             state_->coupling_applied[i] += coupling_applied_host_[i];
-        Kokkos::deep_copy(d_coupling_applied_, 0.0);
+        zeroFill(d_coupling_applied_);
     }
     publishSpecies();
 }
@@ -3895,9 +3925,9 @@ double ExplicitKokkosSurfaceSolver::advance(double t_current, double t_target) {
             d_bc_conv_ = DView("bc_conv", bc_conv_host_.size());
         devRefresh(d_bc_conv_, bc_conv_host_);
     }
-    Kokkos::deep_copy(d_bc_accum_, 0.0);
-    Kokkos::deep_copy(d_exch_, 0.0);
-    Kokkos::deep_copy(d_node_drawn_, 0.0);
+    zeroFill(d_bc_accum_);
+    zeroFill(d_exch_);
+    zeroFill(d_node_drawn_);
     last_steps_ = 0;
     int cycles_since_rebuild = cycles_since_rebuild_;
     Kokkos::Profiling::popRegion();
